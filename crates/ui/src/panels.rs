@@ -13,8 +13,17 @@ use crate::workbench::{Mode, Workbench};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExtentChoice {
     Distance,
-    Symmetric,
     ThroughAll,
+}
+
+/// Which way a feature goes from its sketch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Direction {
+    Default,
+    Flipped,
+    Symmetric,
+    /// Two distances, one each way.
+    Asymmetric,
 }
 
 #[derive(Clone, Debug)]
@@ -22,8 +31,10 @@ pub(crate) struct ExtrudePanel {
     pub editing: Option<FeatureId>,
     pub sketch: FeatureId,
     pub extent: ExtentChoice,
+    pub direction: Direction,
     pub distance: f64,
-    pub reverse: bool,
+    /// The second distance (asymmetric).
+    pub distance_b: f64,
     pub operation: Operation,
     pub regions: RegionSel,
 }
@@ -77,6 +88,15 @@ impl ValuePanel {
     }
 }
 
+/// A request to finish the open panel from outside it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PanelRequest {
+    Ok,
+    Cancel,
+    /// OK, then start the same command again.
+    Apply,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum Panel {
     NewSketch,
@@ -87,24 +107,16 @@ pub(crate) enum Panel {
     Rename { feature: FeatureId, name: String },
 }
 
-fn operation_ui(ui: &mut Ui, op: &mut Operation) {
-    ui.horizontal(|ui| {
-        ui.label("Output");
-        ui.radio_value(op, Operation::Join, "Join");
-        ui.radio_value(op, Operation::Cut, "Cut");
-        ui.radio_value(op, Operation::Intersect, "Intersect");
-        ui.radio_value(op, Operation::NewBody, "New body");
-    });
-}
-
 impl ExtrudePanel {
     pub(crate) fn kind(&self) -> FeatureKind {
-        let extent = match self.extent {
-            ExtentChoice::Distance => ExtrudeExtent::Distance(self.distance),
-            ExtentChoice::Symmetric => ExtrudeExtent::Symmetric(self.distance),
-            ExtentChoice::ThroughAll => ExtrudeExtent::ThroughAll,
+        let extent = match (self.extent, self.direction) {
+            (ExtentChoice::ThroughAll, _) => ExtrudeExtent::ThroughAll,
+            (ExtentChoice::Distance, Direction::Symmetric) => ExtrudeExtent::Symmetric(self.distance),
+            (ExtentChoice::Distance, Direction::Asymmetric) => ExtrudeExtent::TwoSided { forward: self.distance, backward: self.distance_b },
+            (ExtentChoice::Distance, _) => ExtrudeExtent::Distance(self.distance),
         };
-        FeatureKind::Extrude(Extrude { sketch: self.sketch, regions: self.regions.clone(), extent, reverse: self.reverse, operation: self.operation })
+        let reverse = self.direction == Direction::Flipped;
+        FeatureKind::Extrude(Extrude { sketch: self.sketch, regions: self.regions.clone(), extent, reverse, operation: self.operation })
     }
 }
 
@@ -161,18 +173,20 @@ impl Workbench {
         let panel = match editing {
             Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
                 FeatureKind::Extrude(e) => {
-                    let (extent, distance) = match e.extent {
-                        ExtrudeExtent::Distance(d) => (ExtentChoice::Distance, d),
-                        ExtrudeExtent::Symmetric(d) => (ExtentChoice::Symmetric, d),
-                        ExtrudeExtent::TwoSided { forward, .. } => (ExtentChoice::Distance, forward),
-                        ExtrudeExtent::ThroughAll => (ExtentChoice::ThroughAll, 10.0),
+                    let way = if e.reverse { Direction::Flipped } else { Direction::Default };
+                    let (extent, direction, distance, distance_b) = match e.extent {
+                        ExtrudeExtent::Distance(d) => (ExtentChoice::Distance, way, d, d),
+                        ExtrudeExtent::Symmetric(d) => (ExtentChoice::Distance, Direction::Symmetric, d, d),
+                        ExtrudeExtent::TwoSided { forward, backward } => (ExtentChoice::Distance, Direction::Asymmetric, forward, backward),
+                        ExtrudeExtent::ThroughAll => (ExtentChoice::ThroughAll, way, 10.0, 10.0),
                     };
                     ExtrudePanel {
                         editing,
                         sketch: e.sketch,
                         extent,
+                        direction,
                         distance,
-                        reverse: e.reverse,
+                        distance_b,
                         operation: e.operation,
                         regions: e.regions.clone(),
                     }
@@ -186,8 +200,9 @@ impl Workbench {
                     editing: None,
                     sketch,
                     extent: ExtentChoice::Distance,
+                    direction: Direction::Default,
                     distance: 10.0,
-                    reverse: false,
+                    distance_b: 10.0,
                     operation: Operation::Join,
                     regions: RegionSel::Default,
                 }
@@ -251,7 +266,11 @@ impl Workbench {
                         match e.extent {
                             ExtrudeExtent::Distance(d) => p["distance"] = json!(d),
                             ExtrudeExtent::Symmetric(d) => p["symmetric"] = json!(d),
-                            ExtrudeExtent::ThroughAll | ExtrudeExtent::TwoSided { .. } => p["through_all"] = json!(true),
+                            ExtrudeExtent::TwoSided { forward, backward } => {
+                                p["distance"] = json!(forward);
+                                p["backward"] = json!(backward);
+                            }
+                            ExtrudeExtent::ThroughAll => p["through_all"] = json!(true),
                         }
                         ("model.extrude", p)
                     }
@@ -282,12 +301,13 @@ impl Workbench {
     pub(crate) fn panels(&mut self, ui: &mut Ui) {
         let Some(mut panel) = self.panel.take() else { return };
         let at = self.view.rect.left_top() + egui::vec2(12.0, 44.0);
-        // OK or Cancel from outside the panel (radial menu).
+        // OK, Cancel or Apply from the properties panel, the mini-toolbar or the radial menu.
         let request = self.panel_request.take();
-        let mut keep = request != Some(false);
-        let mut commit = request == Some(true);
+        let mut keep = request != Some(PanelRequest::Cancel);
+        let commit = matches!(request, Some(PanelRequest::Ok | PanelRequest::Apply));
+        let again = request == Some(PanelRequest::Apply);
+        let mut reopen: Option<&'static str> = None;
         let ctx = ui.ctx().clone();
-        let sketches = self.sketches();
         match &mut panel {
             Panel::NewSketch => {
                 egui::Window::new("New Sketch").collapsible(false).resizable(false).default_pos(at).show(&ctx, |ui| {
@@ -309,97 +329,21 @@ impl Workbench {
                 });
             }
             Panel::Extrude(p) => {
-                egui::Window::new(if p.editing.is_some() { "Edit Extrude" } else { "Extrude" })
-                    .collapsible(false)
-                    .resizable(false)
-                    .default_pos(at)
-                    .show(&ctx, |ui| {
-                        egui::ComboBox::from_label("Profile sketch")
-                            .selected_text(sketches.iter().find(|s| s.0 == p.sketch).map_or("?".into(), |s| s.1.clone()))
-                            .show_ui(ui, |ui| {
-                                for (id, name) in &sketches {
-                                    ui.selectable_value(&mut p.sketch, *id, name);
-                                }
-                            });
-                        ui.horizontal(|ui| {
-                            ui.label("Extent");
-                            ui.radio_value(&mut p.extent, ExtentChoice::Distance, "Distance");
-                            ui.radio_value(&mut p.extent, ExtentChoice::Symmetric, "Symmetric");
-                            ui.radio_value(&mut p.extent, ExtentChoice::ThroughAll, "Through all");
-                        });
-                        if p.extent != ExtentChoice::ThroughAll {
-                            ui.horizontal(|ui| {
-                                ui.label("Distance");
-                                ui.add(egui::DragValue::new(&mut p.distance).speed(0.5).range(0.001..=100_000.0).suffix(" mm"));
-                            });
-                        }
-                        ui.checkbox(&mut p.reverse, "Reverse direction");
-                        operation_ui(ui, &mut p.operation);
-                        ui.horizontal(|ui| {
-                            if ui.button("OK").clicked() {
-                                commit = true;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                keep = false;
-                            }
-                        });
-                    });
                 if commit {
                     let (editing, kind) = (p.editing, p.kind());
                     keep = !self.commit_feature(editing, kind);
+                    if !keep && again {
+                        reopen = Some("model.extrude");
+                    }
                 }
             }
             Panel::Revolve(p) => {
-                let lines: Vec<EntityId> = self
-                    .document()
-                    .sketch(p.sketch)
-                    .map(|s| s.entities().filter(|(id, _)| s.is_line(*id)).map(|(id, _)| id).collect())
-                    .unwrap_or_default();
-                egui::Window::new(if p.editing.is_some() { "Edit Revolve" } else { "Revolve" })
-                    .collapsible(false)
-                    .resizable(false)
-                    .default_pos(at)
-                    .show(&ctx, |ui| {
-                        egui::ComboBox::from_label("Profile sketch")
-                            .selected_text(sketches.iter().find(|s| s.0 == p.sketch).map_or("?".into(), |s| s.1.clone()))
-                            .show_ui(ui, |ui| {
-                                for (id, name) in &sketches {
-                                    ui.selectable_value(&mut p.sketch, *id, name);
-                                }
-                            });
-                        let axis_name = |a: &AxisChoice| match a {
-                            AxisChoice::Origin(o) => format!("{o:?} axis"),
-                            AxisChoice::Line(l) => format!("Sketch line {}", l.0),
-                        };
-                        egui::ComboBox::from_label("Axis").selected_text(axis_name(&p.axis)).show_ui(ui, |ui| {
-                            for o in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
-                                ui.selectable_value(&mut p.axis, AxisChoice::Origin(o), format!("{o:?} axis"));
-                            }
-                            for l in &lines {
-                                ui.selectable_value(&mut p.axis, AxisChoice::Line(*l), format!("Sketch line {}", l.0));
-                            }
-                        });
-                        ui.checkbox(&mut p.full, "Full turn");
-                        if !p.full {
-                            ui.horizontal(|ui| {
-                                ui.label("Angle");
-                                ui.add(egui::DragValue::new(&mut p.degrees).speed(1.0).range(0.1..=360.0).suffix(" deg"));
-                                ui.checkbox(&mut p.symmetric, "Symmetric");
-                            });
-                        }
-                        operation_ui(ui, &mut p.operation);
-                        ui.horizontal(|ui| {
-                            if ui.button("OK").clicked() {
-                                commit = true;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                keep = false;
-                            }
-                        });
-                    });
                 if commit {
                     let (editing, kind) = (p.editing, p.kind());
                     keep = !self.commit_feature(editing, kind);
+                    if !keep && again {
+                        reopen = Some("model.revolve");
+                    }
                 }
             }
             Panel::Value(v) => {
@@ -500,6 +444,9 @@ impl Workbench {
         }
         if keep && self.panel.is_none() {
             self.panel = Some(panel);
+        }
+        if let Some(id) = reopen {
+            self.command(id);
         }
     }
 }

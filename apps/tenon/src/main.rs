@@ -1,6 +1,8 @@
 //! Tenon desktop application.
 //!
-//! Usage: `tenon [PROJECT.tenon] [--theme light|dark] [--screenshot OUT.png] [--size WIDTHxHEIGHT] [--version]`
+//! Usage: `tenon [PROJECT.tenon] [--theme light|dark] [--run COMMAND]... [--screenshot OUT.png] [--size WIDTHxHEIGHT] [--version]`
+//!
+//! `--run` runs a ribbon command (e.g. `model.extrude`) after the project opens.
 //!
 //! `--screenshot` renders the window (after the model has regenerated), saves it as PNG and exits,
 //! so agents and CI can check the UI without screen capture.
@@ -112,6 +114,7 @@ fn main() -> eframe::Result {
     let mut screenshot = None;
     let mut project = None;
     let mut theme = None;
+    let mut run: Vec<String> = Vec::new();
     let mut size = [1440.0, 900.0];
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -121,6 +124,10 @@ fn main() -> eframe::Result {
                 return Ok(());
             }
             "--screenshot" => screenshot = args.next().map(PathBuf::from),
+            "--run" => match args.next() {
+                Some(id) => run.push(id),
+                None => eprintln!("warning: --run expects a command id, e.g. model.extrude"),
+            },
             "--theme" => match args.next().as_deref().and_then(parse_theme) {
                 Some(t) => theme = Some(t),
                 None => eprintln!("warning: --theme expects light or dark"),
@@ -155,6 +162,12 @@ fn main() -> eframe::Result {
             {
                 eprintln!("error: {e}");
                 wb.report_error(e);
+            }
+            for id in &run {
+                if let Err(e) = wb.run_ui(id) {
+                    eprintln!("error: {id}: {e}");
+                    wb.report_error(e);
+                }
             }
             Ok(Box::new(App { wb, screenshot, frames: 0, requested: false }))
         }),

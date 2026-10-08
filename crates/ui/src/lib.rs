@@ -14,6 +14,7 @@ pub mod commands;
 mod cube;
 pub mod icons;
 mod panels;
+mod properties;
 mod radial;
 mod sketcher;
 pub mod theme;

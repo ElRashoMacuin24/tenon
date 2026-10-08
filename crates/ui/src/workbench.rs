@@ -66,8 +66,8 @@ pub struct Workbench {
     step_export: Option<(u64, PathBuf)>,
     /// The last modelling or sketch command (for "Repeat").
     pub(crate) last_command: Option<&'static str>,
-    /// OK or Cancel asked for from outside the open panel (radial menu, Enter).
-    pub(crate) panel_request: Option<bool>,
+    /// OK, Cancel or Apply asked for from outside the open panel (properties, radial menu).
+    pub(crate) panel_request: Option<crate::panels::PanelRequest>,
     /// A sketch tool to start once the sketch being created exists.
     pub(crate) pending_tool: Option<&'static str>,
 }
@@ -276,7 +276,7 @@ impl Workbench {
             "ui.ok" | "ui.cancel" => {
                 let ok = id == "ui.ok";
                 if self.panel.is_some() {
-                    self.panel_request = Some(ok);
+                    self.panel_request = Some(if ok { crate::panels::PanelRequest::Ok } else { crate::panels::PanelRequest::Cancel });
                 } else if let Mode::Sketch(s) = &mut self.mode {
                     // Ends the running sketch tool, like Esc.
                     s.clicks.clear();
@@ -468,13 +468,34 @@ impl Workbench {
         egui::Panel::top("tn_ribbon").exact_size(RIBBON_H).frame(Frame::NONE.fill(t.ribbon)).show(ui, |ui| self.ribbon(ui, &t));
         egui::Panel::bottom("tn_status").exact_size(STATUS_H).frame(Frame::NONE.fill(t.status_bar)).show(ui, |ui| self.status_bar(ui, &t));
         egui::Panel::bottom("tn_docs").exact_size(DOC_TABS_H).frame(Frame::NONE.fill(t.tab_strip)).show(ui, |ui| self.doc_tabs(ui, &t));
-        if self.chrome.show_browser {
-            egui::Panel::left("tn_browser")
-                .default_size(250.0)
-                .size_range(180.0..=480.0)
-                .resizable(true)
-                .frame(Frame::NONE.fill(t.panel))
-                .show(ui, |ui| self.browser(ui, &t));
+        // Left column: the properties panel of a running feature command above the browser.
+        let props = self.has_properties();
+        if self.chrome.show_browser || props {
+            egui::Panel::left("tn_browser").default_size(262.0).size_range(200.0..=480.0).resizable(true).frame(Frame::NONE.fill(t.panel)).show(
+                ui,
+                |ui| {
+                    let full = ui.max_rect();
+                    let split = match (props, self.chrome.show_browser) {
+                        (true, true) => full.top() + full.height() * 0.58,
+                        (true, false) => full.bottom(),
+                        _ => full.top(),
+                    };
+                    if props {
+                        let r = egui::Rect::from_min_max(full.min, egui::pos2(full.right(), split));
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(r), |ui| {
+                            ui.set_clip_rect(r);
+                            self.properties(ui, &t);
+                        });
+                    }
+                    if self.chrome.show_browser {
+                        let r = egui::Rect::from_min_max(egui::pos2(full.left(), split), full.max);
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(r), |ui| {
+                            ui.set_clip_rect(r);
+                            self.browser(ui, &t);
+                        });
+                    }
+                },
+            );
         }
         egui::CentralPanel::default().frame(Frame::NONE.fill(t.viewport_bottom)).show(ui, |ui| self.viewport(ui, render, &t));
         self.file_menu(ui, &t);

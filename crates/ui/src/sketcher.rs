@@ -277,14 +277,21 @@ impl Workbench {
             return Err(format!("{feature} is not a sketch"));
         }
         self.panel = None;
+        let was_sketching = matches!(self.mode, Mode::Sketch(_));
         self.mode = Mode::Sketch(Box::new(SketchMode::new(feature)));
         self.chrome.tab = crate::commands::SKETCH_TAB;
+        let before = self.view.anim.map_or(self.view.camera, |a| a.to);
         if let Some(f) = self.sketch_frame(feature) {
-            self.look_at_frame(&f);
+            // Look square at the sketch plane, X to the right, framing what is drawn.
+            let mut to = self.square_to(&f);
             match self.sketch_box() {
-                Some(b) if b.diagonal() > 1e-6 => self.view.camera.fit(&b),
-                _ => self.view.camera.target = f.origin(),
+                Some(b) if b.diagonal() > 1e-6 => to.fit(&b),
+                _ => to.target = f.origin(),
             }
+            self.animate_to(to);
+        }
+        if !was_sketching {
+            self.view.sketch_return = Some(before);
         }
         self.set_status(format!("Editing {}. {}", self.feature_name(feature), Tool::Select.hint()));
         Ok(())
@@ -296,6 +303,10 @@ impl Workbench {
             self.mode = Mode::Model;
             self.chrome.tab = crate::commands::MODEL_TAB;
             self.set_status(format!("Finished {name}. Extrude or revolve it from the 3D Model tab."));
+            // Back to the view from before the sketch.
+            if let Some(c) = self.view.sketch_return.take() {
+                self.animate_to(c);
+            }
         }
     }
 

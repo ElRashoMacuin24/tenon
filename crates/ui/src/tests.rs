@@ -124,7 +124,7 @@ fn sketch_extrude_and_sketch_on_the_top_face_through_the_ui() {
     if let Some(Panel::Extrude(p)) = &mut wb.panel {
         p.sketch = sk2;
         p.extent = crate::panels::ExtentChoice::ThroughAll;
-        p.reverse = true;
+        p.direction = crate::panels::Direction::Flipped;
         p.operation = tenon_model::Operation::Cut;
     }
     let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!() };
@@ -378,6 +378,55 @@ fn sketching_with_real_clicks_and_drags() {
         _ => false,
     });
     assert!(moved, "the dragged corner follows the pointer: {}", tenon_model::cmd::sketch_info_value(sk));
+}
+
+#[test]
+fn properties_panel_and_drag_arrow_drive_the_extrusion() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    d.settle(&mut wb);
+    // E starts Extrude: the properties panel docks above the browser, the preview shows 10 mm.
+    d.key(&mut wb, egui::Key::E, true);
+    d.settle(&mut wb);
+    assert!(wb.has_properties(), "properties panel open");
+    assert!((volume(&wb) - 8000.0).abs() < 1e-6);
+
+    // Type 25 into Distance and press Enter: OK.
+    let field = d.ctx.read_response(egui::Id::new("tn_props_dist")).expect("distance field").rect;
+    d.click(&mut wb, field.center());
+    d.frame(
+        &mut wb,
+        vec![egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }],
+    );
+    d.frame(&mut wb, vec![egui::Event::Text("25".into())]);
+    d.frame(&mut wb, vec![]);
+    assert!((volume(&wb) - 20000.0).abs() < 1e-6, "the preview follows the typing: {}", volume(&wb));
+    d.key(&mut wb, egui::Key::Enter, true);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.has_properties(), "Enter is OK");
+    assert_eq!(wb.document().features().len(), 2);
+    assert!((volume(&wb) - 20000.0).abs() < 1e-6);
+
+    // Edit it again and drag the arrow's tip outwards.
+    let ext = wb.document().features()[1].id;
+    wb.edit_feature(ext).unwrap();
+    d.settle(&mut wb);
+    let (base, n) = wb.profile_anchor(f).unwrap();
+    let a = on_screen(&wb, base);
+    let tip = on_screen(&wb, base + n * 25.0);
+    let out = tip + (tip - a).normalized() * 40.0;
+    d.drag(&mut wb, tip, out, egui::PointerButton::Primary);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("still editing") };
+    assert!(p.distance > 26.0, "dragging the arrow lengthens the extrusion: {}", p.distance);
+    wb.panel_request = Some(crate::panels::PanelRequest::Ok);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(volume(&wb) > 40.0 * 20.0 * 26.0, "{}", volume(&wb));
+    let _ = Vec3::ZERO;
 }
 
 #[test]

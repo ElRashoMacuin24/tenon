@@ -27,7 +27,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.offset` | Offset | sketch, curves: [ids], distance (positive: outward / left) | yes |
 | `sketch.mirror` | Mirror | sketch, entities: [ids], axis (line id) | yes |
 | `sketch.info` | Sketch Info | sketch | no |
-| `model.extrude` | Extrude | sketch; distance, or symmetric: total, or through_all: true; reverse; operation: join \| cut \| new_body \| intersect; regions: [[curve ids]] | yes |
+| `model.extrude` | Extrude | sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join \| cut \| new_body \| intersect; regions: [[curve ids]] | yes |
 | `model.revolve` | Revolve | sketch; axis: line id or "x" \| "y" \| "z"; angle (rad, default full); symmetric; operation; regions | yes |
 | `feature.update` | Edit Feature | feature (id), kind: the feature definition as in model.tree / the file format | yes |
 | `feature.rename` | Rename Feature | feature, name | yes |

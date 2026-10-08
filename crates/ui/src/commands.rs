@@ -370,10 +370,15 @@ pub fn search(query: &str) -> Vec<&'static UiCommand> {
     scored.into_iter().map(|(_, c)| c).collect()
 }
 
-/// The command for a single-key shortcut in the current mode.
+/// The command for a single-key shortcut. While sketching, sketch keys come first and the rest
+/// still work (E extrudes, finishing the sketch).
 pub fn for_key(key: &str, sketching: bool) -> Option<&'static UiCommand> {
-    let tab = if sketching { SKETCH_TAB } else { MODEL_TAB };
-    RIBBON.get(tab)?.panels.iter().flat_map(|p| p.commands.iter()).find(|c| c.key == Some(key) && c.available())
+    let tabs: &[usize] = if sketching { &[SKETCH_TAB, MODEL_TAB] } else { &[MODEL_TAB] };
+    tabs.iter()
+        .filter_map(|t| RIBBON.get(*t))
+        .flat_map(|t| t.panels.iter())
+        .flat_map(|p| p.commands.iter())
+        .find(|c| c.key == Some(key) && c.available())
 }
 
 #[cfg(test)]

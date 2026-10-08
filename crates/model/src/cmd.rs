@@ -512,6 +512,8 @@ fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
         ExtrudeExtent::ThroughAll
     } else if let Some(d) = opt_num(p, "symmetric")? {
         ExtrudeExtent::Symmetric(d)
+    } else if let Some(back) = opt_num(p, "backward")? {
+        ExtrudeExtent::TwoSided { forward: num(p, "distance")?, backward: back }
     } else {
         ExtrudeExtent::Distance(num(p, "distance")?)
     };
@@ -727,7 +729,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.extrude",
         "Extrude",
-        "sketch; distance, or symmetric: total, or through_all: true; reverse; operation: join | cut | new_body | intersect; regions: [[curve ids]]",
+        "sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join | cut | new_body | intersect; regions: [[curve ids]]",
         true,
         model_extrude
     ),

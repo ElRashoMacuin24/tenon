@@ -93,6 +93,8 @@ pub(crate) struct View {
     pub home: (f64, f64, f64),
     /// Earlier views, most recent last.
     pub previous: Vec<Camera>,
+    /// The view to return to when the sketch being edited is finished.
+    pub sketch_return: Option<Camera>,
     /// Input time of the current frame (seconds).
     pub now: f64,
     gpu: Option<Gpu>,
@@ -116,6 +118,7 @@ impl Default for View {
             box_start: None,
             home: (c.yaw, c.pitch, c.roll),
             previous: Vec::new(),
+            sketch_return: None,
             now: 0.0,
             gpu: None,
             uploaded: None,
@@ -281,12 +284,18 @@ impl Workbench {
         Ok(())
     }
 
-    /// Looks square at a plane with its X axis pointing right (sketch planes).
-    pub(crate) fn look_at_frame(&mut self, f: &tenon_geom::Frame) {
+    /// The current camera turned square to a plane, with the plane's X axis pointing right.
+    pub(crate) fn square_to(&self, f: &tenon_geom::Frame) -> Camera {
         let mut to = self.view.anim.map_or(self.view.camera, |a| a.to);
         to.look_along(f.z());
         let (r, u) = (to.right(), to.up());
         to.roll = (-f.x().dot(u)).atan2(f.x().dot(r));
+        to
+    }
+
+    /// Looks square at a plane with its X axis pointing right (sketch planes).
+    pub(crate) fn look_at_frame(&mut self, f: &tenon_geom::Frame) {
+        let to = self.square_to(f);
         self.animate_to(to);
     }
 
@@ -360,6 +369,10 @@ impl Workbench {
             self.model_pointer(ui, &resp, rect);
         }
         self.draw_scene(ui, rect, render);
+        if self.has_properties() {
+            self.manipulator(ui, rect, t);
+            self.mini_toolbar(ui, rect, t);
+        }
         if sketching {
             self.sketch_ui(ui, &resp, rect, t);
         }

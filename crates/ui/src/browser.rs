@@ -153,7 +153,7 @@ impl Workbench {
         }
 
         let mut action: Option<BrowserAction> = None;
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("tn_browser_scroll").auto_shrink([false, false]).show(ui, |ui| {
             let name = self.document().name.clone();
             row(ui, t, 0, Icon::Part, &name, None, RowStyle::Normal);
             let bodies = self.scene.bodies.len();
