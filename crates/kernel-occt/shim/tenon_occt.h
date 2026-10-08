@@ -28,6 +28,7 @@ struct EdgeOut;
 struct MeshOut;
 struct MassOut;
 struct BoxOut;
+struct ProfileIn;
 
 using ShapeMap = NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>;
 
@@ -64,6 +65,12 @@ std::unique_ptr<Shape> make_sphere(const V3& center, double radius);
 std::unique_ptr<Shape> make_torus(const Frame3& frame, double major_radius, double minor_radius);
 
 std::unique_ptr<Shape> boolean_op(std::uint8_t op, const Shape& target, const ShapeList& tools, HistoryOut& hist);
+
+std::unique_ptr<Shape> make_face(const ProfileIn& profile, double offset, HistoryOut& hist);
+std::unique_ptr<Shape> extrude(const ProfileIn& profile, double start, double length, HistoryOut& hist);
+std::unique_ptr<Shape> revolve(const ProfileIn& profile, const V3& origin, const V3& dir, double start, double sweep, bool full,
+                               HistoryOut& hist);
+std::unique_ptr<Shape> transform(const Shape& shape, std::uint8_t kind, const V3& a, const V3& b, double value, HistoryOut& hist);
 
 void topology(const Shape& shape, TopoOut& out);
 void face_info(const Shape& shape, std::uint32_t index, FaceOut& out);

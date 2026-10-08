@@ -49,11 +49,52 @@ pub(crate) mod bridge {
         gen_index: u32,
     }
 
+    /// One result sub-shape swept from a tagged profile curve.
+    #[derive(Clone, Copy, Debug)]
+    struct TagGen {
+        tag: u64,
+        gen_kind: u8,
+        gen_index: u32,
+    }
+
     #[derive(Debug, Default)]
     struct HistoryOut {
         roles: Vec<RoleFace>,
         images: Vec<ImageEntry>,
         generated: Vec<GenEntry>,
+        tagged: Vec<TagGen>,
+    }
+
+    /// One profile curve in sketch coordinates. `kind`: 0 line (x0,y0)-(x1,y1), 1 arc (cx,cy,r,
+    /// a0..a1 counter-clockwise), 2 circle (cx,cy,r), 3 clamped B-spline (`pole_count` poles from
+    /// `ProfileIn::poles[pole_start..]`, `degree`). Curves of one loop are consecutive; loop 0 of
+    /// a region is its outer boundary.
+    #[derive(Clone, Copy, Debug, Default)]
+    struct CurveIn {
+        kind: u8,
+        tag: u64,
+        region: u32,
+        loop_index: u32,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        cx: f64,
+        cy: f64,
+        r: f64,
+        a0: f64,
+        a1: f64,
+        pole_start: u32,
+        pole_count: u32,
+        degree: u32,
+    }
+
+    #[derive(Debug, Default)]
+    struct ProfileIn {
+        frame: Frame3,
+        curves: Vec<CurveIn>,
+        /// x, y pairs.
+        poles: Vec<f64>,
     }
 
     /// Topology with adjacency in compressed rows: entries of row `i` are
@@ -153,6 +194,18 @@ pub(crate) mod bridge {
 
         /// `op`: 0 union, 1 cut, 2 intersect.
         fn boolean_op(op: u8, target: &Shape, tools: &ShapeList, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+
+        /// Planar face(s) of the profile, moved `offset` along the frame normal.
+        fn make_face(profile: &ProfileIn, offset: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// Prism of the profile placed at `start` along the normal, `length` long (may be negative).
+        fn extrude(profile: &ProfileIn, start: f64, length: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// Revolution of the profile about an axis, from angle `start` sweeping `sweep` radians;
+        /// `full` makes a closed revolution.
+        fn revolve(profile: &ProfileIn, origin: &V3, dir: &V3, start: f64, sweep: f64, full: bool, hist: &mut HistoryOut)
+        -> Result<UniquePtr<Shape>>;
+        /// `kind`: 0 translate by `a`; 1 rotate `value` rad about axis (`a` origin, `b` direction);
+        /// 2 mirror across the plane through `a` with normal `b`; 3 scale by `value` about `a`.
+        fn transform(shape: &Shape, kind: u8, a: &V3, b: &V3, value: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
 
         fn topology(shape: &Shape, out: &mut TopoOut) -> Result<()>;
         fn face_info(shape: &Shape, index: u32, out: &mut FaceOut) -> Result<()>;

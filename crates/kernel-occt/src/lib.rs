@@ -13,10 +13,11 @@ use std::sync::Mutex;
 
 use cxx::UniquePtr;
 use ffi::bridge as sys;
-use tenon_geom::{Aabb3, Axis, Frame, Vec3, tol};
+use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3, tol};
 use tenon_kernel::{
-    BoolOp, CancelToken, CurveKind, EdgeId, EdgeInfo, EdgePolyline, FaceId, FaceInfo, FaceRange, Generated, History, Image, InputRef, KResult,
-    Kernel, KernelError, MassProps, Mesh, MeshTol, Op, Origin, PrimitiveRole, ShapeHandle, ShapeKind, SurfaceKind, TopoId, TopoKind, Topology, check,
+    AngleExtent, BoolOp, CancelToken, Curve2, CurveKind, EdgeId, EdgeInfo, EdgePolyline, Extent, FaceId, FaceInfo, FaceRange, Generated, History,
+    Image, InputRef, KResult, Kernel, KernelError, MassProps, Mesh, MeshTol, Op, Origin, PrimitiveRole, Profile, ShapeHandle, ShapeKind, SurfaceKind,
+    TopoId, TopoKind, Topology, Transform, check,
 };
 
 /// OCCT's STEP translator keeps global state; exchange calls are serialised process-wide.
@@ -83,7 +84,82 @@ fn topo_kind(code: u8) -> Option<TopoKind> {
 
 fn role(code: u8) -> Option<PrimitiveRole> {
     use PrimitiveRole::*;
-    [BoxXMin, BoxXMax, BoxYMin, BoxYMax, BoxZMin, BoxZMax, Lateral, Bottom, Top].get(usize::from(code)).copied()
+    [BoxXMin, BoxXMax, BoxYMin, BoxYMax, BoxZMin, BoxZMax, Lateral, Bottom, Top, StartCap, EndCap].get(usize::from(code)).copied()
+}
+
+/// Most curves a profile may have (hostile-input cap).
+const MAX_PROFILE_CURVES: usize = 20_000;
+/// Most poles of one profile spline.
+const MAX_SPLINE_POLES: usize = 2_000;
+
+fn bad(msg: impl Into<String>) -> KernelError {
+    KernelError::InvalidInput(msg.into())
+}
+
+fn finite2(what: &str, p: Vec2) -> KResult<Vec2> {
+    if tol::is_valid_coord(p.x) && tol::is_valid_coord(p.y) { Ok(p) } else { Err(bad(format!("{what} must be finite and in range, got {p:?}"))) }
+}
+
+/// Validates a profile and flattens it for the shim.
+fn profile_in(p: &Profile) -> KResult<sys::ProfileIn> {
+    check::point("profile origin", p.frame.origin())?;
+    if p.regions.is_empty() {
+        return Err(bad("the profile has no regions"));
+    }
+    let mut out = sys::ProfileIn { frame: frame3(&p.frame), curves: Vec::new(), poles: Vec::new() };
+    for (ri, region) in p.regions.iter().enumerate() {
+        let region_index = u32::try_from(ri).map_err(|_| bad("too many regions"))?;
+        for (li, lp) in std::iter::once(&region.outer).chain(&region.holes).enumerate() {
+            if lp.curves.is_empty() {
+                return Err(bad("a profile loop has no curves"));
+            }
+            let loop_index = u32::try_from(li).map_err(|_| bad("too many loops"))?;
+            for tc in &lp.curves {
+                if out.curves.len() >= MAX_PROFILE_CURVES {
+                    return Err(bad(format!("a profile may have at most {MAX_PROFILE_CURVES} curves")));
+                }
+                let mut c = sys::CurveIn { tag: tc.tag, region: region_index, loop_index, ..Default::default() };
+                match &tc.curve {
+                    Curve2::Line { start, end } => {
+                        let (a, b) = (finite2("line start", *start)?, finite2("line end", *end)?);
+                        (c.kind, c.x0, c.y0, c.x1, c.y1) = (0, a.x, a.y, b.x, b.y);
+                    }
+                    Curve2::Arc { center, radius, start_angle, end_angle } => {
+                        let cc = finite2("arc centre", *center)?;
+                        check::size("arc radius", *radius)?;
+                        if !(start_angle.is_finite() && end_angle.is_finite()) {
+                            return Err(bad("arc angles must be finite"));
+                        }
+                        (c.kind, c.cx, c.cy, c.r, c.a0, c.a1) = (1, cc.x, cc.y, *radius, *start_angle, *end_angle);
+                    }
+                    Curve2::Circle { center, radius } => {
+                        let cc = finite2("circle centre", *center)?;
+                        check::size("circle radius", *radius)?;
+                        (c.kind, c.cx, c.cy, c.r) = (2, cc.x, cc.y, *radius);
+                    }
+                    Curve2::BSpline { poles, degree } => {
+                        if !(1..=8).contains(degree) || poles.len() <= *degree as usize || poles.len() > MAX_SPLINE_POLES {
+                            return Err(bad(format!("a spline needs degree 1..=8 and more poles than its degree (at most {MAX_SPLINE_POLES})")));
+                        }
+                        c.kind = 3;
+                        c.degree = *degree;
+                        c.pole_start = u32::try_from(out.poles.len() / 2).map_err(|_| bad("too many poles"))?;
+                        c.pole_count = u32::try_from(poles.len()).map_err(|_| bad("too many poles"))?;
+                        for p in poles {
+                            let p = finite2("spline pole", *p)?;
+                            out.poles.extend([p.x, p.y]);
+                        }
+                    }
+                }
+                out.curves.push(c);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn non_zero_length(what: &str, v: f64) -> KResult<f64> {
+    check::size(what, v.abs()).map(|_| v)
 }
 
 fn convert_history(h: sys::HistoryOut) -> History {
@@ -98,16 +174,19 @@ fn convert_history(h: sys::HistoryOut) -> History {
         })
         .collect();
     let mut generated: Vec<Generated> = Vec::new();
+    let mut add = |origin: Origin, id: TopoId| match generated.iter_mut().find(|x| x.origin == origin) {
+        Some(x) if !x.result.contains(&id) => x.result.push(id),
+        Some(_) => {}
+        None => generated.push(Generated { origin, result: vec![id] }),
+    };
     for g in &h.generated {
-        let (Some(kind), Some(gen_kind)) = (topo_kind(g.kind), topo_kind(g.gen_kind)) else {
-            continue;
-        };
-        let origin = Origin::Input(InputRef { input: g.input, id: TopoId { kind, index: g.index } });
-        let id = TopoId { kind: gen_kind, index: g.gen_index };
-        match generated.iter_mut().find(|x| x.origin == origin) {
-            Some(x) if !x.result.contains(&id) => x.result.push(id),
-            Some(_) => {}
-            None => generated.push(Generated { origin, result: vec![id] }),
+        if let (Some(kind), Some(gen_kind)) = (topo_kind(g.kind), topo_kind(g.gen_kind)) {
+            add(Origin::Input(InputRef { input: g.input, id: TopoId { kind, index: g.index } }), TopoId { kind: gen_kind, index: g.gen_index });
+        }
+    }
+    for t in &h.tagged {
+        if let Some(kind) = topo_kind(t.gen_kind) {
+            add(Origin::ProfileCurve { tag: t.tag }, TopoId { kind, index: t.gen_index });
         }
     }
     History { images, generated, roles }
@@ -268,6 +347,85 @@ impl Kernel for OcctKernel {
         let mut hist = sys::HistoryOut::default();
         let shape = sys::boolean_op(code, self.get(target)?, &list, &mut hist).map_err(failed("boolean"))?;
         self.finish(shape, hist)
+    }
+
+    fn make_face(&mut self, profile: &Profile) -> KResult<Op> {
+        self.not_cancelled()?;
+        let p = profile_in(profile)?;
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::make_face(&p, 0.0, &mut hist).map_err(failed("make_face"))?;
+        self.finish(shape, hist)
+    }
+
+    fn extrude(&mut self, profile: &Profile, extent: &Extent, taper: Option<f64>) -> KResult<Op> {
+        self.not_cancelled()?;
+        if taper.is_some_and(|t| t.abs() > tol::ANGULAR) {
+            return Err(KernelError::Unsupported("tapered extrude"));
+        }
+        let (start, length) = match extent {
+            Extent::Distance(d) => (0.0, non_zero_length("extrude distance", *d)?),
+            Extent::Symmetric(d) => {
+                let d = check::size("extrude distance", *d)?;
+                (-d / 2.0, d)
+            }
+            Extent::TwoSided { forward, backward } => {
+                if !(forward.is_finite() && backward.is_finite() && *forward >= 0.0 && *backward >= 0.0) {
+                    return Err(bad("two-sided extrude distances must be finite and non-negative"));
+                }
+                (-*backward, check::size("extrude total distance", forward + backward)?)
+            }
+            Extent::ThroughAll { .. } => return Err(KernelError::Unsupported("through-all extrude without a target (the model resolves it)")),
+            Extent::ToFace(_) => return Err(KernelError::Unsupported("extrude to face")),
+        };
+        let p = profile_in(profile)?;
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::extrude(&p, start, length, &mut hist).map_err(failed("extrude"))?;
+        self.finish(shape, hist)
+    }
+
+    fn revolve(&mut self, profile: &Profile, axis: &Axis, angle: &AngleExtent) -> KResult<Op> {
+        self.not_cancelled()?;
+        check::point("revolve axis origin", axis.origin())?;
+        let tau = std::f64::consts::TAU;
+        let ok = |a: f64| a.is_finite() && a.abs() > tol::ANGULAR && a.abs() <= tau + tol::ANGULAR;
+        let (start, sweep, full) = match angle {
+            AngleExtent::Full => (0.0, tau, true),
+            AngleExtent::Angle(a) if ok(*a) => (0.0, *a, (a.abs() - tau).abs() <= tol::ANGULAR),
+            AngleExtent::Symmetric(a) if ok(*a) => (-a / 2.0, *a, (a.abs() - tau).abs() <= tol::ANGULAR),
+            AngleExtent::TwoSided { forward, backward } if forward.is_finite() && backward.is_finite() && ok(forward + backward) => {
+                (-*backward, forward + backward, (forward + backward - tau).abs() <= tol::ANGULAR)
+            }
+            _ => return Err(bad("revolve angles must be finite, non-zero and at most a full turn")),
+        };
+        let p = profile_in(profile)?;
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::revolve(&p, &v3(axis.origin()), &v3(axis.dir()), if full { 0.0 } else { start }, sweep, full, &mut hist)
+            .map_err(failed("revolve"))?;
+        self.finish(shape, hist)
+    }
+
+    fn transform(&mut self, shape: ShapeHandle, transform: &Transform) -> KResult<Op> {
+        self.not_cancelled()?;
+        let zero = sys::V3::default();
+        let (kind, a, b, value) = match transform {
+            Transform::Translate(v) => (0, v3(check::point("translation", *v)?), zero, 0.0),
+            Transform::Rotate { axis, angle } => {
+                if !angle.is_finite() {
+                    return Err(bad("rotation angle must be finite"));
+                }
+                (1, v3(check::point("rotation axis origin", axis.origin())?), v3(axis.dir()), *angle)
+            }
+            Transform::Mirror { plane } => (2, v3(check::point("mirror plane origin", plane.origin())?), v3(plane.z()), 0.0),
+            Transform::Scale { center, factor } => {
+                if !(factor.is_finite() && *factor > 1e-6 && *factor < 1e6) {
+                    return Err(bad("scale factor must be between 1e-6 and 1e6"));
+                }
+                (3, v3(check::point("scale centre", *center)?), zero, *factor)
+            }
+        };
+        let mut hist = sys::HistoryOut::default();
+        let out = sys::transform(self.get(shape)?, kind, &a, &b, value, &mut hist).map_err(failed("transform"))?;
+        self.finish(out, hist)
     }
 
     fn topology(&self, shape: ShapeHandle) -> KResult<Topology> {

@@ -47,7 +47,7 @@ pub struct Generated {
     pub result: Vec<TopoId>,
 }
 
-/// Named faces of primitives, in the primitive's own frame.
+/// Named faces of primitives and sweeps, in the operation's own frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PrimitiveRole {
     BoxXMin,
@@ -62,6 +62,10 @@ pub enum PrimitiveRole {
     Bottom,
     /// Cap at the far end of the axis (cylinder, cone).
     Top,
+    /// Face(s) where an extrusion or partial revolution starts (the swept profile).
+    StartCap,
+    /// Face(s) where an extrusion or partial revolution ends.
+    EndCap,
 }
 
 /// Lineage of one operation's result.
@@ -84,9 +88,13 @@ impl History {
     pub fn is_deleted(&self, source: InputRef) -> bool {
         self.image_of(source).is_some_and(<[TopoId]>::is_empty)
     }
-    /// Result face playing `role`, for primitives.
+    /// Result face playing `role`, for primitives (the first one when several faces share it).
     pub fn role(&self, role: PrimitiveRole) -> Option<TopoId> {
         self.roles.iter().find(|(r, _)| *r == role).map(|(_, t)| *t)
+    }
+    /// Every result face playing `role` (a multi-region extrusion has several start caps).
+    pub fn roles_of(&self, role: PrimitiveRole) -> impl Iterator<Item = TopoId> + '_ {
+        self.roles.iter().filter(move |(r, _)| *r == role).map(|(_, t)| *t)
     }
     /// Result sub-shapes generated from `origin`.
     pub fn generated_from(&self, origin: Origin) -> impl Iterator<Item = TopoId> + '_ {

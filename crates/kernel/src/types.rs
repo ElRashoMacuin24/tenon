@@ -26,6 +26,11 @@ pub enum Curve2 {
         center: Vec2,
         radius: f64,
     },
+    /// Clamped uniform B-spline through its control `poles` (`poles.len() > degree`).
+    BSpline {
+        poles: Vec<Vec2>,
+        degree: u32,
+    },
 }
 
 /// A profile curve with the caller's tag, usually the id of the sketch entity it came from. The
