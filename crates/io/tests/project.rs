@@ -98,7 +98,8 @@ fn bad_files_are_rejected_with_reasons() {
     let mut s = Session::default();
     plate(&mut s);
     let good = serde_json::to_string(&json!({ "format": "tenon", "version": 1, "document": s.document() })).unwrap();
-    let broken = good.replacen("\"start\":1", "\"start\":9999", 1);
+    // (Point 1 is the projected origin; the plate's first line starts at point 2.)
+    let broken = good.replacen("\"start\":2", "\"start\":9999", 1);
     assert_ne!(broken, good);
     assert!(matches!(project::from_bytes(&zip_with("project.json", broken.as_bytes())), Err(ProjectError::Damaged(_))));
     // Truncated file.

@@ -3,9 +3,7 @@
 
 use egui::{Align2, Ui};
 use serde_json::{Value, json};
-use tenon_model::{
-    AxisRef, Document, Extrude, ExtrudeExtent, FeatureId, FeatureKind, Operation, OriginAxis, OriginPlane, RegionSel, Revolve, RevolveAngle,
-};
+use tenon_model::{AxisRef, Document, Extrude, ExtrudeExtent, FeatureId, FeatureKind, Operation, OriginAxis, RegionSel, Revolve, RevolveAngle};
 use tenon_sketch::{Constraint, ConstraintId, EntityId};
 
 use crate::workbench::{Mode, Workbench};
@@ -99,7 +97,6 @@ pub(crate) enum PanelRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) enum Panel {
-    NewSketch,
     Extrude(ExtrudePanel),
     Revolve(RevolvePanel),
     Value(ValuePanel),
@@ -300,7 +297,6 @@ impl Workbench {
 
     pub(crate) fn panels(&mut self, ui: &mut Ui) {
         let Some(mut panel) = self.panel.take() else { return };
-        let at = self.view.rect.left_top() + egui::vec2(12.0, 44.0);
         // OK, Cancel or Apply from the properties panel, the mini-toolbar or the radial menu.
         let request = self.panel_request.take();
         let mut keep = request != Some(PanelRequest::Cancel);
@@ -308,26 +304,8 @@ impl Workbench {
         let again = request == Some(PanelRequest::Apply);
         let mut reopen: Option<&'static str> = None;
         let ctx = ui.ctx().clone();
+        let t = crate::theme::Tokens::of(self.chrome.theme);
         match &mut panel {
-            Panel::NewSketch => {
-                egui::Window::new("New Sketch").collapsible(false).resizable(false).default_pos(at).show(&ctx, |ui| {
-                    ui.label("Choose a plane (or select a planar face of the part first):");
-                    ui.horizontal(|ui| {
-                        for (label, plane) in [("XY (top)", OriginPlane::XY), ("XZ (front)", OriginPlane::XZ), ("YZ (right)", OriginPlane::YZ)] {
-                            if ui.button(label).clicked() {
-                                let name = format!("{plane:?}").to_lowercase();
-                                if let Err(e) = self.create_sketch(json!({ "plane": name })) {
-                                    self.set_error(e);
-                                }
-                                keep = false;
-                            }
-                        }
-                    });
-                    if ui.button("Cancel").clicked() {
-                        keep = false;
-                    }
-                });
-            }
             Panel::Extrude(p) => {
                 if commit {
                     let (editing, kind) = (p.editing, p.kind());
@@ -344,6 +322,40 @@ impl Workbench {
                     if !keep && again {
                         reopen = Some("model.revolve");
                     }
+                }
+            }
+            Panel::Value(v) if matches!(v.what, ValueFor::Dimension { .. }) => {
+                // A new dimension: the inline box sits on the dimension itself.
+                let ValueFor::Dimension { sketch, constraint } = &v.what else { return };
+                let (sketch, constraint) = (*sketch, constraint.clone());
+                let unit = if constraint.is_angular() { "deg" } else { "mm" };
+                let at = self.dimension_anchor(sketch, &constraint).unwrap_or(self.view.rect.center());
+                let (ok, cancel) = inline_value(&ctx, at, &mut v.value, unit, &t);
+                if cancel {
+                    keep = false;
+                } else if ok || commit {
+                    let mut c = constraint;
+                    let value = if c.is_angular() { v.value.to_radians() } else { v.value };
+                    let signed = matches!(c, Constraint::HorizontalDistance { .. } | Constraint::VerticalDistance { .. });
+                    c.set_value(if signed { value } else { value.abs() });
+                    keep = self
+                        .exec_status("sketch.constrain", json!({ "sketch": sketch.0, "constraint": serde_json::to_value(&c).unwrap_or(Value::Null) }))
+                        .is_none();
+                }
+            }
+            Panel::EditDimension { sketch, constraint, value, angular } => {
+                // Double-clicked dimension: the same inline box.
+                let c = self.document().sketch(*sketch).and_then(|s| s.constraint(*constraint).cloned());
+                let at = c.as_ref().and_then(|c| self.dimension_anchor(*sketch, c)).unwrap_or(self.view.rect.center());
+                let mut shown = if *angular { value.to_degrees() } else { *value };
+                let (ok, cancel) = inline_value(&ctx, at, &mut shown, if *angular { "deg" } else { "mm" }, &t);
+                *value = if *angular { shown.to_radians() } else { shown };
+                if cancel {
+                    keep = false;
+                } else if ok || commit {
+                    keep = self
+                        .exec_status("sketch.set_dimension", json!({ "sketch": sketch.0, "constraint": constraint.0, "value": *value }))
+                        .is_none();
                 }
             }
             Panel::Value(v) => {
@@ -389,34 +401,6 @@ impl Workbench {
                     keep = done.is_none();
                 }
             }
-            Panel::EditDimension { sketch, constraint, value, angular } => {
-                let mut ok = commit;
-                egui::Window::new("Edit Dimension").collapsible(false).resizable(false).anchor(Align2::CENTER_TOP, [0.0, 160.0]).show(&ctx, |ui| {
-                    let mut shown = if *angular { value.to_degrees() } else { *value };
-                    ui.horizontal(|ui| {
-                        ui.label(if *angular { "Degrees" } else { "Millimetres" });
-                        let r = ui.add(egui::DragValue::new(&mut shown).speed(0.1));
-                        r.request_focus();
-                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            ok = true;
-                        }
-                    });
-                    *value = if *angular { shown.to_radians() } else { shown };
-                    ui.horizontal(|ui| {
-                        if ui.button("OK").clicked() {
-                            ok = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            keep = false;
-                        }
-                    });
-                });
-                if ok {
-                    keep = self
-                        .exec_status("sketch.set_dimension", json!({ "sketch": sketch.0, "constraint": constraint.0, "value": *value }))
-                        .is_none();
-                }
-            }
             Panel::Rename { feature, name } => {
                 let mut ok = commit;
                 egui::Window::new("Rename").collapsible(false).resizable(false).anchor(Align2::CENTER_TOP, [0.0, 160.0]).show(&ctx, |ui| {
@@ -449,6 +433,31 @@ impl Workbench {
             self.command(id);
         }
     }
+}
+
+/// The edit box placed on a dimension: the value (selected, so typing replaces it) and a check
+/// mark. Enter or the check is OK, Esc cancels. Returns `(ok, cancel)`.
+fn inline_value(ctx: &egui::Context, at: egui::Pos2, value: &mut f64, unit: &str, t: &crate::theme::Tokens) -> (bool, bool) {
+    let (mut ok, mut cancel) = (false, false);
+    let field = egui::Id::new("tn_inline_dimension");
+    egui::Area::new(egui::Id::new("tn_inline_box")).order(egui::Order::Foreground).fixed_pos(at - egui::vec2(48.0, 13.0)).show(ctx, |ui| {
+        egui::Frame::popup(ui.style()).fill(t.panel).inner_margin(3.0).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                if ui.memory(|m| m.focused().is_none()) {
+                    ui.memory_mut(|m| m.request_focus(field));
+                }
+                ok |= crate::properties::value_field(ui, field, value, unit, -1.0e6..=1.0e6, 72.0, t).entered;
+                if ui.add(egui::Button::new(egui::RichText::new("✔").color(t.ok)).small()).on_hover_text("OK (Enter)").clicked() {
+                    ok = true;
+                }
+            });
+        });
+    });
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        cancel = true;
+    }
+    (ok, cancel)
 }
 
 fn op_name(o: Operation) -> &'static str {

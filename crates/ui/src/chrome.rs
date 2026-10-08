@@ -106,7 +106,7 @@ fn ribbon_button(ui: &Ui, rect: Rect, cmd: &UiCommand, active: bool, t: &Tokens)
         Size::Small if has_more => Some(Rect::from_min_max(pos2(rect.right() - 13.0, rect.top()), rect.max)),
         _ => None,
     };
-    let resp = ui.interact(rect, ui.id().with(cmd.id), Sense::click());
+    let resp = ui.interact(rect, ui.id().with(cmd.id), Sense::CLICK);
     let p = ui.painter();
     if active || resp.is_pointer_button_down_on() {
         p.rect_filled(rect, 3.0, t.pressed);
@@ -164,7 +164,7 @@ fn ribbon_button(ui: &Ui, rect: Rect, cmd: &UiCommand, active: bool, t: &Tokens)
 
 /// An icon-only button (quick access, navigation bar). Returns true when clicked.
 pub(crate) fn icon_button(ui: &Ui, rect: Rect, cmd: &UiCommand, active: bool, t: &Tokens) -> bool {
-    let resp = ui.interact(rect, ui.id().with(cmd.id), Sense::click());
+    let resp = ui.interact(rect, ui.id().with(cmd.id), Sense::CLICK);
     if active {
         ui.painter().rect_filled(rect, 3.0, t.pressed);
     } else if resp.hovered() {
@@ -208,7 +208,7 @@ impl Workbench {
 
         // Help, then command search to its left.
         let help = Rect::from_min_size(pos2(r.right() - 32.0, r.center().y - 11.0), vec2(22.0, 22.0));
-        let hresp = ui.interact(help, ui.id().with("help"), Sense::click());
+        let hresp = ui.interact(help, ui.id().with("help"), Sense::CLICK);
         if hresp.hovered() {
             ui.painter().rect_filled(help, 3.0, t.hover);
         }
@@ -250,6 +250,10 @@ impl Workbench {
             .text_color(t.text)
             .desired_width(rect.width() - 28.0);
         let resp = ui.put(Rect::from_min_max(rect.min + vec2(22.0, 3.0), rect.max - vec2(4.0, 1.0)), edit);
+        // Only a click puts the cursor in the search box: Tab is for the value boxes.
+        if resp.gained_focus() && !resp.clicked() && !ui.input(|i| i.pointer.any_pressed()) {
+            resp.surrender_focus();
+        }
         if resp.changed() {
             self.chrome.search_pick = 0;
         }
@@ -265,7 +269,7 @@ impl Workbench {
                     Frame::menu(ui.style()).fill(t.panel).show(ui, |ui| {
                         ui.set_width(rect.width() + 60.0);
                         for (i, c) in results.iter().enumerate() {
-                            let (row, rresp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+                            let (row, rresp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::CLICK);
                             if i == self.chrome.search_pick || rresp.hovered() {
                                 ui.painter().rect_filled(row, 3.0, t.hover);
                             }
@@ -310,7 +314,7 @@ impl Workbench {
     pub(crate) fn ribbon_tabs(&mut self, ui: &mut Ui, t: &Tokens) {
         let r = ui.max_rect();
         let file = Rect::from_min_size(pos2(r.left() + 6.0, r.top() + 3.0), vec2(48.0, r.height() - 3.0));
-        let resp = ui.interact(file, ui.id().with("file"), Sense::click());
+        let resp = ui.interact(file, ui.id().with("file"), Sense::CLICK);
         ui.painter().rect_filled(
             file,
             egui::CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 },
@@ -325,7 +329,7 @@ impl Workbench {
         for (i, tab) in RIBBON.iter().enumerate() {
             let w = text_width(ui, tab.name, theme::body()) + 22.0;
             let tr = Rect::from_min_size(pos2(x, r.top() + 3.0), vec2(w, r.height() - 3.0));
-            let resp = ui.interact(tr, ui.id().with(("tab", i)), Sense::click());
+            let resp = ui.interact(tr, ui.id().with(("tab", i)), Sense::CLICK);
             let active = i == self.chrome.tab;
             if active {
                 ui.painter().rect_filled(tr, egui::CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 }, t.ribbon);
@@ -421,7 +425,7 @@ impl Workbench {
                 for m in cmd.more {
                     let Some(c) = commands::find(m) else { continue };
                     let enabled = c.available();
-                    let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(170.0), 26.0), Sense::click());
+                    let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(170.0), 26.0), Sense::CLICK);
                     if resp.hovered() {
                         ui.painter().rect_filled(row, 3.0, t.hover);
                     }

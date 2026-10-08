@@ -33,7 +33,7 @@ enum RowStyle {
 /// One browser row. `expand` draws a +/- box; returns the row response and whether the box was
 /// clicked.
 fn row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, expand: Option<bool>, style: RowStyle) -> (egui::Response, bool) {
-    let (rr, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+    let (rr, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::CLICK);
     if style == RowStyle::Active {
         ui.painter().rect_filled(rr, 0.0, t.pressed);
     } else if resp.hovered() {
@@ -65,7 +65,7 @@ fn row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, expand: Opti
 
 fn header_button(ui: &Ui, at: Pos2, icon: Icon, tip: &str, t: &Tokens, key: &str) -> bool {
     let r = Rect::from_center_size(at, vec2(18.0, 18.0));
-    let resp = ui.interact(r, ui.id().with(("browser-head", key)), Sense::click());
+    let resp = ui.interact(r, ui.id().with(("browser-head", key)), Sense::CLICK);
     if resp.hovered() {
         ui.painter().rect_filled(r, 2.0, t.hover);
     }
@@ -183,7 +183,7 @@ impl Workbench {
                     let (resp, _) = row(ui, t, 2, icon, label, None, RowStyle::Normal);
                     if let Some(p) = plane {
                         let resp = resp.on_hover_text("Click while starting a sketch, or double-click, to sketch on this plane");
-                        if resp.double_clicked() || (resp.clicked() && matches!(self.panel, Some(Panel::NewSketch))) {
+                        if resp.double_clicked() || (resp.clicked() && self.pick_plane) {
                             action = Some(BrowserAction::SketchOn(p));
                         }
                     }

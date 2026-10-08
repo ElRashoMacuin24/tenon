@@ -234,20 +234,20 @@ impl Workbench {
         let cam = self.view.camera;
         let cv = CubeView::new(&cam, center, CUBE_SCALE);
         let area = Rect::from_center_size(center, vec2(CUBE_SCALE * 3.7, CUBE_SCALE * 3.7));
-        let resp = ui.interact(area, ui.id().with("cube"), Sense::click_and_drag());
+        let resp = ui.interact(area, ui.id().with("cube"), Sense::CLICK | Sense::DRAG);
         let pointer = resp.hover_pos();
         let hover = pointer.and_then(|p| cv.hit(p));
         cv.paint(ui, if resp.dragged() { None } else { hover }, t);
 
         // Home, top left of the cube.
         let home = Rect::from_center_size(center + vec2(-CUBE_SCALE * 1.75, -CUBE_SCALE * 1.75), vec2(16.0, 16.0));
-        let hresp = ui.interact(home, ui.id().with("cube-home"), Sense::click());
+        let hresp = ui.interact(home, ui.id().with("cube-home"), Sense::CLICK);
         icons::paint(ui.painter(), home, Icon::Home, if hresp.hovered() { t.accent } else { t.cube_edge });
         let mut home_clicked = hresp.on_hover_text("Home view").clicked();
 
         let mut chosen: Option<Arrow> = None;
         for (i, (r, a)) in arrows(&cv, &cam).into_iter().enumerate() {
-            let ar = ui.interact(r.expand(2.0), ui.id().with(("cube-arrow", i)), Sense::click());
+            let ar = ui.interact(r.expand(2.0), ui.id().with(("cube-arrow", i)), Sense::CLICK);
             paint_arrow(ui, r, a, center, ar.hovered(), t);
             if ar.clicked() {
                 chosen = Some(a);

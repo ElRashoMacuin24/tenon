@@ -55,7 +55,13 @@ pub(crate) fn value_field(
         t.history_marker
     }));
     if resp.gained_focus() {
+        // Select the whole value, so typing replaces it.
         text = fmt_value(*value);
+        if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), id) {
+            let all = egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
+            state.cursor.set_char_range(Some(all));
+            state.store(ui.ctx(), id);
+        }
     }
     if resp.has_focus() || resp.gained_focus() {
         ui.data_mut(|d| d.insert_temp(id, text.clone()));
@@ -153,7 +159,7 @@ fn glyph_row(ui: &mut Ui, items: &[(Glyph, &str, bool)], selected: usize, t: &To
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         for (i, (g, tip, enabled)) in items.iter().enumerate() {
-            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 26.0), if *enabled { Sense::click() } else { Sense::hover() });
+            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 26.0), if *enabled { Sense::CLICK } else { Sense::hover() });
             let on = i == selected;
             ui.painter().rect_filled(
                 r,
@@ -446,7 +452,7 @@ impl Workbench {
         let along = b - a;
         let len = along.length();
         let handle = Rect::from_center_size(b, vec2(16.0, 16.0));
-        let resp = ui.interact(handle, ui.id().with("tn_manipulator"), Sense::drag());
+        let resp = ui.interact(handle, ui.id().with("tn_manipulator"), Sense::DRAG);
         let hot = resp.hovered() || resp.dragged();
         let color = if hot { t.accent } else { Color32::from_rgb(0xf0, 0xb4, 0x3c) };
         let p = ui.painter();

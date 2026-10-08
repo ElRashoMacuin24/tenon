@@ -188,3 +188,20 @@ The camera gained a roll angle, so the orientation cube's quarter-turn arrows ca
 View changes from the cube, Home, Zoom All, Look At and sketch entry animate over 0.3 s; any
 navigation input stops the animation where it is. The cube has 26 targets (6 faces, 12 edges,
 8 corners), drag-to-orbit and a context menu (home, perspective/orthographic, set home).
+
+## DEC-021 Sketch workflow details (2026-10-08)
+
+- **Projected origin:** `sketch.create` puts the part origin into every new sketch as a fixed
+  construction point (`project_origin`, default true; its id is returned as `origin`). Drawing from
+  it, or attaching a rectangle corner to it, fixes the sketch's position, as the familiar
+  workflow expects. Scripts that count entities see one more.
+- **Plane picking:** Start 2D Sketch shows the origin planes in the viewport; a click on a plane
+  or a planar face (the nearer one along the pointer ray) starts the sketch. The dialog is gone.
+- **While drawing:** lines within 3° of horizontal or vertical snap and get that constraint.
+  Typed values go into boxes beside the cursor (line length and angle, circle diameter,
+  rectangle width and height) and become dimensions. Dimensions are edited in a box placed on
+  the dimension.
+- **Views:** entering a sketch glides square to it, X to the right, framed; finishing glides back
+  to the view from before.
+- **Keyboard focus:** Tenon's own drawn controls are not keyboard-focusable, so Tab belongs to the
+  value boxes and Enter never presses a toolbar button.

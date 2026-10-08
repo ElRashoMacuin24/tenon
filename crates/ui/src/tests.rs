@@ -30,7 +30,7 @@ fn sketching(wb: &Workbench) -> FeatureId {
 fn click(wb: &mut Workbench, x: f64, y: f64) {
     let f = sketching(wb);
     let sketch = wb.document().sketch(f).unwrap().clone();
-    wb.sketch_click(f, &sketch, Click { at: Vec2::new(x, y), point: None }, None, false);
+    wb.sketch_click(f, &sketch, Click { at: Vec2::new(x, y), point: None, infer: None }, None, false);
 }
 
 fn volume(wb: &Workbench) -> f64 {
@@ -79,17 +79,17 @@ fn sketch_extrude_and_sketch_on_the_top_face_through_the_ui() {
     let size = vec2(1400.0, 860.0);
     frame(&mut wb, &ctx, size);
 
-    // New Sketch with nothing selected asks for a plane; pick XY.
+    // Start 2D Sketch with nothing selected waits for a plane; pick XY.
     wb.run_ui("sketch.new").unwrap();
-    assert!(matches!(wb.panel, Some(Panel::NewSketch)));
+    assert!(wb.pick_plane, "waiting for a plane");
     wb.create_sketch(json!({ "plane": "xy" })).unwrap();
     let sk1 = sketching(&wb);
 
-    // Rectangle by two clicks.
+    // Rectangle by two clicks (plus the projected origin point).
     wb.run_ui("sketch.rectangle").unwrap();
     click(&mut wb, 0.0, 0.0);
     click(&mut wb, 40.0, 20.0);
-    assert_eq!(wb.document().sketch(sk1).unwrap().entity_count(), 8);
+    assert_eq!(wb.document().sketch(sk1).unwrap().entity_count(), 9);
     frame(&mut wb, &ctx, size);
     assert_eq!(wb.sketch_dof_text().unwrap(), "4 dimensions needed");
 
@@ -175,8 +175,14 @@ impl Driver {
         }
         panic!("the view never settled");
     }
+    /// Holds a key down (`true`) or lets it go.
     fn key(&mut self, wb: &mut Workbench, key: egui::Key, pressed: bool) {
         self.frame(wb, vec![egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::default() }]);
+    }
+    /// Presses and releases a key (a second press without a release counts as a repeat).
+    fn tap(&mut self, wb: &mut Workbench, key: egui::Key) {
+        let ev = |pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::default() };
+        self.frame(wb, vec![ev(true), ev(false)]);
     }
     fn button(pos: Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
         egui::Event::PointerButton { pos, button, pressed, modifiers: egui::Modifiers::default() }
@@ -281,10 +287,10 @@ fn viewport_responds_to_real_pointer_input() {
 
     // F6 goes home, F5 goes back to where we were.
     let before_home = wb.view.camera;
-    d.key(&mut wb, egui::Key::F6, true);
+    d.tap(&mut wb, egui::Key::F6);
     d.settle(&mut wb);
     assert!((wb.view.camera.yaw - wb.view.home.0).abs() < 1e-9);
-    d.key(&mut wb, egui::Key::F5, true);
+    d.tap(&mut wb, egui::Key::F5);
     d.settle(&mut wb);
     assert!(wb.view.camera.target.near(before_home.target, 1e-9) && (wb.view.camera.yaw - before_home.yaw).abs() < 1e-9, "previous view");
 
@@ -390,7 +396,7 @@ fn properties_panel_and_drag_arrow_drive_the_extrusion() {
     wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
     d.settle(&mut wb);
     // E starts Extrude: the properties panel docks above the browser, the preview shows 10 mm.
-    d.key(&mut wb, egui::Key::E, true);
+    d.tap(&mut wb, egui::Key::E);
     d.settle(&mut wb);
     assert!(wb.has_properties(), "properties panel open");
     assert!((volume(&wb) - 8000.0).abs() < 1e-6);
@@ -405,7 +411,7 @@ fn properties_panel_and_drag_arrow_drive_the_extrusion() {
     d.frame(&mut wb, vec![egui::Event::Text("25".into())]);
     d.frame(&mut wb, vec![]);
     assert!((volume(&wb) - 20000.0).abs() < 1e-6, "the preview follows the typing: {}", volume(&wb));
-    d.key(&mut wb, egui::Key::Enter, true);
+    d.tap(&mut wb, egui::Key::Enter);
     d.frame(&mut wb, vec![]);
     assert!(!wb.has_properties(), "Enter is OK");
     assert_eq!(wb.document().features().len(), 2);
@@ -427,6 +433,166 @@ fn properties_panel_and_drag_arrow_drive_the_extrusion() {
     d.frame(&mut wb, vec![]);
     assert!(volume(&wb) > 40.0 * 20.0 * 26.0, "{}", volume(&wb));
     let _ = Vec3::ZERO;
+}
+
+#[test]
+fn start_2d_sketch_picks_a_plane_or_face_in_the_viewport() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    d.frame(&mut wb, vec![]);
+    // S starts a sketch: the origin planes appear; Esc gives up.
+    d.tap(&mut wb, egui::Key::S);
+    assert!(wb.pick_plane);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(!wb.pick_plane && !wb.is_sketching());
+
+    // Again, and click on the XY plane where the other two are not in front of it (from the
+    // home view the ray to (20, -20, 0) crosses neither x = 0 nor y = 0).
+    d.tap(&mut wb, egui::Key::S);
+    let on_xy = on_screen(&wb, Vec3::new(20.0, -20.0, 0.0));
+    d.click(&mut wb, on_xy);
+    assert!(wb.is_sketching(), "{}", wb.status());
+    let f = sketching(&wb);
+    let sk = wb.document().sketch(f).unwrap();
+    assert_eq!(sk.entity_count(), 1, "the projected origin point");
+    assert!(matches!(
+        wb.document().feature(f).map(|x| &x.kind),
+        Some(tenon_model::FeatureKind::Sketch { plane: tenon_model::PlaneRef::Origin(tenon_model::OriginPlane::XY), .. })
+    ));
+
+    // Draw, extrude, then S and a click on the block's top face sketches on that face.
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 30, "y2": 30 })).unwrap();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    wb.run_ui("view.home").unwrap();
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::S);
+    let on_top = on_screen(&wb, Vec3::new(20.0, 20.0, 10.0));
+    d.click(&mut wb, on_top);
+    assert!(wb.is_sketching(), "{}", wb.status());
+    let f2 = sketching(&wb);
+    assert_ne!(f, f2);
+    d.settle(&mut wb);
+    let frame = wb.sketch_frame(f2).unwrap();
+    assert!((frame.origin().z - 10.0).abs() < 1e-9, "on the top face, nearer than the XY plane below it");
+}
+
+#[test]
+fn typed_values_and_inference_constrain_while_drawing() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+    let typed = |d: &mut Driver, wb: &mut Workbench, s: &str| d.frame(wb, vec![egui::Event::Text(s.into())]);
+
+    // Rectangle from the projected origin: type 40, Tab, 25, Enter. The corner stays on the
+    // origin and both sizes become dimensions, so the sketch is fully constrained.
+    wb.run_ui("sketch.rectangle").unwrap();
+    let origin = at(&wb, 0.0, 0.0);
+    d.click(&mut wb, origin);
+    let toward = at(&wb, 30.0, 20.0);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(toward)]);
+    typed(&mut d, &mut wb, "40");
+    d.tap(&mut wb, egui::Key::Tab);
+    typed(&mut d, &mut wb, "25");
+    d.tap(&mut wb, egui::Key::Enter);
+    let sk = wb.document().sketch(f).unwrap().clone();
+    let info = tenon_model::cmd::sketch_info_value(&sk);
+    let regions = info["regions"].as_array().unwrap();
+    assert_eq!(regions.len(), 1, "{info}");
+    assert!((regions[0]["area"].as_f64().unwrap() - 1000.0).abs() < 1e-6, "40 x 25: {}", regions[0]);
+    assert_eq!(info["dof"], 0, "fully constrained: {info}");
+    assert_eq!(wb.sketch_dof_text().as_deref(), Some("Fully Constrained"));
+
+    // A line drawn almost horizontally becomes horizontal.
+    d.tap(&mut wb, egui::Key::Escape);
+    wb.run_ui("sketch.line").unwrap();
+    let a = at(&wb, 60.0, 0.0);
+    d.click(&mut wb, a);
+    let b = at(&wb, 90.0, 0.8);
+    d.click(&mut wb, b);
+    let sk = wb.document().sketch(f).unwrap().clone();
+    let horizontal = sk.constraints().any(|(_, c)| matches!(c, tenon_sketch::Constraint::Horizontal { line } if sk.line(*line).is_some_and(|(p, q)| (p.x - 60.0).abs() < 0.5 && (q.x - 90.0).abs() < 0.5)));
+    assert!(horizontal, "inferred horizontal: {}", tenon_model::cmd::sketch_info_value(&sk));
+    // The chain continues; typed values place the next line exactly: 15 long at 90 degrees.
+    typed(&mut d, &mut wb, "15");
+    d.tap(&mut wb, egui::Key::Tab);
+    typed(&mut d, &mut wb, "90");
+    d.tap(&mut wb, egui::Key::Enter);
+    let sk = wb.document().sketch(f).unwrap().clone();
+    let vertical = sk.constraints().find_map(|(_, c)| match c {
+        tenon_sketch::Constraint::Vertical { line } => sk.line(*line).filter(|(p, _)| (p.x - 90.0).abs() < 0.5),
+        _ => None,
+    });
+    let (p, q) = vertical.expect("a vertical line");
+    assert!((p.dist(q) - 15.0).abs() < 1e-6 && (q.y - p.y - 15.0).abs() < 1e-6, "{p:?} -> {q:?}");
+    assert!(sk.constraints().any(|(_, c)| matches!(c, tenon_sketch::Constraint::Length { value, .. } if (*value - 15.0).abs() < 1e-9)));
+}
+
+#[test]
+fn dimensions_are_typed_into_a_box_on_the_dimension() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    let lines = wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 30, "y2": 10 })).unwrap();
+    let bottom = tenon_sketch::EntityId(lines["lines"][0].as_u64().unwrap() as u32);
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+    let len = |wb: &Workbench| {
+        let (a, b) = wb.document().sketch(f).unwrap().line(bottom).unwrap();
+        a.dist(b)
+    };
+
+    // D, click the bottom line, click below it to place: the box opens on the dimension with
+    // the measured value selected; typing replaces it, Enter applies.
+    d.tap(&mut wb, egui::Key::D);
+    let on_line = at(&wb, 15.0, 0.0);
+    d.click(&mut wb, on_line);
+    let below = at(&wb, 15.0, -6.0);
+    d.click(&mut wb, below);
+    assert!(matches!(wb.panel, Some(Panel::Value(_))), "the edit box is open");
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![egui::Event::Text("45".into())]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "Enter applied it");
+    assert!((len(&wb) - 45.0).abs() < 1e-6, "{}", len(&wb));
+
+    // Double-click the dimension's label: the same box, now editing it.
+    d.tap(&mut wb, egui::Key::Escape);
+    let sk = wb.document().sketch(f).unwrap().clone();
+    let c = sk.constraints().find(|(_, c)| matches!(c, tenon_sketch::Constraint::Length { .. })).map(|(_, c)| c.clone()).unwrap();
+    let label = wb.dimension_anchor(f, &c).unwrap();
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(label)]);
+    // (Pause first: clicks less than 0.6 s after the earlier ones would count as a triple click.)
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    for pressed in [true, false, true, false] {
+        d.frame(&mut wb, vec![Driver::button(label, egui::PointerButton::Primary, pressed)]);
+    }
+    assert!(matches!(wb.panel, Some(Panel::EditDimension { .. })), "double-click edits: {:?}", wb.panel.is_some());
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![egui::Event::Text("50".into())]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!((len(&wb) - 50.0).abs() < 1e-6, "{}", len(&wb));
+}
+
+#[test]
+fn grid_steps_and_line_inference() {
+    use crate::sketcher::grid_step;
+    assert_eq!(grid_step(10.0, 18.0), 2.0, "10 px per mm: 2 mm lines are 20 px apart");
+    assert_eq!(grid_step(1.0, 18.0), 20.0);
+    assert_eq!(grid_step(0.3, 18.0), 100.0);
+    assert_eq!(grid_step(100.0, 18.0), 0.2);
 }
 
 #[test]

@@ -70,6 +70,8 @@ pub struct Workbench {
     pub(crate) panel_request: Option<crate::panels::PanelRequest>,
     /// A sketch tool to start once the sketch being created exists.
     pub(crate) pending_tool: Option<&'static str>,
+    /// Start 2D Sketch is waiting for a plane or planar face to be picked.
+    pub(crate) pick_plane: bool,
 }
 
 impl Workbench {
@@ -97,6 +99,7 @@ impl Workbench {
             last_command: None,
             panel_request: None,
             pending_tool: None,
+            pick_plane: false,
         }
     }
 
@@ -562,6 +565,7 @@ impl Workbench {
         let r = self.exec("sketch.create", params)?;
         let id = r["feature"].as_u64().and_then(|v| u32::try_from(v).ok()).ok_or("internal: no feature id")?;
         self.panel = None;
+        self.pick_plane = false;
         self.enter_sketch(FeatureId(id))?;
         if let Some(tool) = self.pending_tool.take() {
             self.sketch_tool(tool)?;
@@ -573,8 +577,11 @@ impl Workbench {
         if let Some(face_ref) = self.selected_face_ref() {
             return self.create_sketch(json!({ "face": face_ref }));
         }
-        self.panel = Some(Panel::NewSketch);
-        self.set_status("Choose a plane for the sketch, or select a planar face first.");
+        // Show the origin planes in the viewport and wait for a plane or planar face.
+        self.panel = None;
+        self.pick_plane = true;
+        self.chrome.origin_open = true;
+        self.set_status("Select a plane to create a sketch on, or a planar face of the part (Esc cancels).");
         Ok(())
     }
 

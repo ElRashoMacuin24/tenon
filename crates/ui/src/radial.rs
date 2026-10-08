@@ -137,7 +137,7 @@ impl Workbench {
                     anchor.y - size.y / 2.0,
                 );
                 let r = Rect::from_min_size(min, size);
-                let resp = ui.interact(r, ui.id().with(("radial", i)), Sense::click());
+                let resp = ui.interact(r, ui.id().with(("radial", i)), Sense::CLICK);
                 inside_any |= pointer.is_some_and(|q| r.contains(q));
                 let hot = resp.hovered();
                 p.line_segment([menu.center + dir * 8.0, anchor - dir * 4.0], Stroke::new(1.0, t.border));
@@ -153,7 +153,7 @@ impl Workbench {
                 let w = 140.0;
                 for (j, e) in menu.more.iter().enumerate() {
                     let r = Rect::from_min_size(top + vec2(0.0, j as f32 * 24.0), vec2(w, 24.0));
-                    let resp = ui.interact(r, ui.id().with(("radial-more", j)), Sense::click());
+                    let resp = ui.interact(r, ui.id().with(("radial-more", j)), Sense::CLICK);
                     inside_any |= pointer.is_some_and(|q| r.contains(q));
                     p.rect_filled(r, 0.0, if resp.hovered() { t.hover } else { t.panel });
                     p.text(r.left_center() + vec2(10.0, 0.0), Align2::LEFT_CENTER, &e.label, theme::body(), t.text);

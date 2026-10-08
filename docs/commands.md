@@ -7,7 +7,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | Command | Name | Parameters | Undoable |
 |---|---|---|---|
 | `document.rename` | Rename Part | name: text | yes |
-| `sketch.create` | New Sketch | plane: "xy" \| "yz" \| "xz" (default xy), or face: a face reference from model.face_ref | yes |
+| `sketch.create` | New Sketch | plane: "xy" \| "yz" \| "xz" (default xy), or face: a face reference from model.face_ref; project_origin (default true: a fixed point at the part origin, returned as `origin`) | yes |
 | `sketch.point` | Point | sketch, x, y | yes |
 | `sketch.line` | Line | sketch; start (point id) or x1, y1; end (point id) or x2, y2 | yes |
 | `sketch.circle` | Circle | sketch; center (point id) or cx, cy; r | yes |

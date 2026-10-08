@@ -308,9 +308,20 @@ fn sketch_create(s: &mut Session, p: &Value) -> CmdResult {
             _ => return Err(format!("unknown plane `{name}` (xy, yz or xz)").into()),
         })
     };
-    let id = s.edit(|d| d.add(FeatureKind::Sketch { plane, sketch: Sketch::new() }).map_err(CmdError))?;
+    // The part origin projected into the sketch: a fixed construction point at (0, 0) that
+    // geometry can snap and be constrained to.
+    let mut sketch = Sketch::new();
+    let origin = if p.get("project_origin").and_then(Value::as_bool).unwrap_or(true) {
+        let o = sketch.add_point(Vec2::new(0.0, 0.0))?;
+        sketch.set_construction(o, true)?;
+        sketch.add_constraint(Constraint::Fix { point: o })?;
+        Some(o.0)
+    } else {
+        None
+    };
+    let id = s.edit(|d| d.add(FeatureKind::Sketch { plane, sketch }).map_err(CmdError))?;
     let name = s.document().feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    Ok(json!({ "feature": id.0, "name": name }))
+    Ok(json!({ "feature": id.0, "name": name, "origin": origin }))
 }
 
 fn sketch_point(s: &mut Session, p: &Value) -> CmdResult {
@@ -697,7 +708,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sketch.create",
         "New Sketch",
-        "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref",
+        "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref; project_origin (default true: a fixed point at the part origin, returned as `origin`)",
         true,
         sketch_create
     ),

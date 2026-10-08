@@ -4,9 +4,10 @@
 use std::hash::{Hash, Hasher};
 
 use egui::{Align2, Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
+use serde_json::json;
 use tenon_geom::{Aabb3, Vec3};
 use tenon_kernel::SurfaceKind;
-use tenon_model::{FaceRef, Fingerprint, Scene};
+use tenon_model::{FaceRef, Fingerprint, OriginPlane, Scene};
 use tenon_render::gpu::{BodyColors, Viewport};
 use tenon_render::pick::{pick_edge, pick_face};
 use tenon_render::raster::{self, Style};
@@ -84,6 +85,8 @@ pub(crate) struct View {
     pub fitted: bool,
     pub nav: Nav,
     pub hover: Option<Pick>,
+    /// The origin plane under the pointer while picking a sketch plane.
+    pub plane_hover: Option<OriginPlane>,
     pub selection: Vec<Pick>,
     pub anim: Option<ViewAnim>,
     pub style: VisualStyle,
@@ -112,6 +115,7 @@ impl Default for View {
             fitted: false,
             nav: Nav::Select,
             hover: None,
+            plane_hover: None,
             selection: Vec::new(),
             anim: None,
             style: VisualStyle::default(),
@@ -346,7 +350,7 @@ impl Workbench {
         mesh.add_triangle(0, 2, 3);
         ui.painter().add(Shape::mesh(mesh));
 
-        let resp = ui.interact(rect, ui.id().with("viewport"), Sense::click_and_drag());
+        let resp = ui.interact(rect, ui.id().with("viewport"), Sense::CLICK | Sense::DRAG);
         // Right button: the radial menu. A click opens it; a flick picks the slot it points at.
         if resp.drag_started_by(egui::PointerButton::Secondary)
             && let Some(o) = ui.input(|i| i.pointer.press_origin())
@@ -369,6 +373,9 @@ impl Workbench {
             self.model_pointer(ui, &resp, rect);
         }
         self.draw_scene(ui, rect, render);
+        if self.pick_plane {
+            self.draw_origin_planes(ui, rect, self.view.plane_hover, t);
+        }
         if self.has_properties() {
             self.manipulator(ui, rect, t);
             self.mini_toolbar(ui, rect, t);
@@ -480,12 +487,115 @@ impl Workbench {
         out
     }
 
+    /// Half the size of the origin planes shown while picking a sketch plane.
+    fn origin_plane_half(&self) -> f64 {
+        self.scene_box().map_or(40.0, |b| (b.diagonal() * 0.4).max(20.0))
+    }
+
+    /// The origin plane under a screen point, and how far along the pointer ray it is.
+    pub(crate) fn origin_plane_at(&self, p: Pos2, rect: Rect) -> Option<(OriginPlane, f64)> {
+        let (o, d) =
+            self.view.camera.ray(f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+        let half = self.origin_plane_half();
+        [OriginPlane::XY, OriginPlane::XZ, OriginPlane::YZ]
+            .into_iter()
+            .filter_map(|pl| {
+                let f = pl.frame();
+                let den = d.dot(f.z());
+                if den.abs() < 1e-9 {
+                    return None;
+                }
+                let t = (f.origin() - o).dot(f.z()) / den;
+                let local = f.to_local(o + d * t);
+                (t > 0.0 && local.x.abs() <= half && local.y.abs() <= half).then_some((pl, t))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    /// While Start 2D Sketch waits: the origin planes, the one under the pointer highlighted.
+    fn draw_origin_planes(&self, ui: &Ui, rect: Rect, hover: Option<OriginPlane>, t: &Tokens) {
+        let half = self.origin_plane_half();
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        for pl in [OriginPlane::XY, OriginPlane::XZ, OriginPlane::YZ] {
+            let f = pl.frame();
+            let corners: Option<Vec<Pos2>> = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+                .iter()
+                .map(|(a, b)| {
+                    let q = f.plane_point(tenon_geom::Vec2::new(a * half, b * half));
+                    self.view.camera.project(q, w, h).map(|(x, y, _)| rect.min + vec2(x as f32, y as f32))
+                })
+                .collect();
+            let Some(c) = corners else { continue };
+            let hot = hover == Some(pl);
+            let fill = t.tint_work.gamma_multiply(if hot { 0.45 } else { 0.16 });
+            let p = ui.painter();
+            p.add(Shape::convex_polygon(c.clone(), fill, Stroke::NONE));
+            p.add(Shape::closed_line(c.clone(), Stroke::new(if hot { 2.0 } else { 1.2 }, t.tint_work)));
+            let label = match pl {
+                OriginPlane::XY => "XY Plane",
+                OriginPlane::XZ => "XZ Plane",
+                OriginPlane::YZ => "YZ Plane",
+            };
+            p.text(c[3] + vec2(4.0, 4.0), Align2::LEFT_TOP, label, theme::small(), if hot { t.text } else { t.viewport_text });
+        }
+    }
+
     /// The model point under a screen position (face hit), if any.
     pub(crate) fn point_under(&self, p: Pos2, rect: Rect) -> Option<Vec3> {
         let (o, d) =
             self.view.camera.ray(f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
         let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
         pick_face(&meshes, o, d).map(|h| h.point)
+    }
+
+    /// Start 2D Sketch: a click on an origin plane or a planar face starts the sketch there,
+    /// whichever is nearer along the pointer ray.
+    fn pick_sketch_plane(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect) {
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.pick_plane = false;
+            self.set_status("Ready");
+            return;
+        }
+        let Some(p) = resp.hover_pos() else {
+            self.view.hover = None;
+            return;
+        };
+        let (o, d) =
+            self.view.camera.ray(f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+        let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+        let face = pick_face(&meshes, o, d)
+            .filter(|h| {
+                self.scene
+                    .bodies
+                    .get(h.body)
+                    .and_then(|b| b.faces.get(h.face as usize))
+                    .is_some_and(|(name, info)| name.is_some() && matches!(info.surface, SurfaceKind::Plane { .. }))
+            })
+            .map(|h| (Pick::Face { body: h.body, face: h.face }, (h.point - o).dot(d)));
+        let plane = self.origin_plane_at(p, rect);
+        let face_first = match (face, plane) {
+            (Some((_, tf)), Some((_, tp))) => tf <= tp,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        self.view.hover = if face_first { face.map(|f| f.0) } else { None };
+        self.view.plane_hover = if face_first { None } else { plane.map(|p| p.0) };
+        if resp.clicked() {
+            let r = if face_first {
+                self.view.selection = face.map(|f| vec![f.0]).unwrap_or_default();
+                match self.selected_face_ref() {
+                    Some(fr) => self.create_sketch(json!({ "face": fr })),
+                    None => Err("that face cannot hold a sketch".into()),
+                }
+            } else if let Some((pl, _)) = plane {
+                self.create_sketch(json!({ "plane": format!("{pl:?}").to_lowercase() }))
+            } else {
+                Ok(())
+            };
+            if let Err(e) = r {
+                self.set_error(e);
+            }
+        }
     }
 
     fn model_pointer(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect) {
@@ -514,6 +624,10 @@ impl Workbench {
                 });
                 self.set_status(format!("{faces} faces and {edges} edges selected"));
             }
+            return;
+        }
+        if self.pick_plane {
+            self.pick_sketch_plane(ui, resp, rect);
             return;
         }
         let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();

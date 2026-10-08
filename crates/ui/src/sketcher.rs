@@ -96,10 +96,37 @@ impl Tool {
     }
 }
 
+/// A constraint inferred while drawing (the pointer is nearly horizontal or vertical).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Infer {
+    Horizontal,
+    Vertical,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Click {
     pub at: Vec2,
     pub point: Option<EntityId>,
+    pub infer: Option<Infer>,
+}
+
+/// Inference tolerance: within this angle of horizontal or vertical, lines snap to it.
+const INFER_ANGLE: f64 = 3.0 * std::f64::consts::PI / 180.0;
+
+/// The value boxes beside the cursor while drawing (typed text per field).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Hud {
+    pub fields: [String; 2],
+    pub active: usize,
+}
+
+impl Hud {
+    fn typed(&self, i: usize) -> Option<f64> {
+        self.fields.get(i).and_then(|s| s.parse::<f64>().ok()).filter(|v| v.is_finite())
+    }
+    fn is_empty(&self) -> bool {
+        self.fields.iter().all(String::is_empty)
+    }
 }
 
 /// State of sketch mode.
@@ -111,13 +138,60 @@ pub(crate) struct SketchMode {
     pub selection: Vec<EntityId>,
     pub hover: Option<EntityId>,
     pub drag: Option<(EntityId, Sketch)>,
+    pub hud: Hud,
     dof: Option<(u64, Option<usize>, BTreeSet<EntityId>)>,
 }
 
 impl SketchMode {
     fn new(feature: FeatureId) -> Self {
-        SketchMode { feature, tool: Tool::Select, clicks: Vec::new(), picks: Vec::new(), selection: Vec::new(), hover: None, drag: None, dof: None }
+        SketchMode {
+            feature,
+            tool: Tool::Select,
+            clicks: Vec::new(),
+            picks: Vec::new(),
+            selection: Vec::new(),
+            hover: None,
+            drag: None,
+            hud: Hud::default(),
+            dof: None,
+        }
     }
+}
+
+/// The value boxes a drawing tool offers once it has its first point: labels and units.
+fn hud_fields(tool: Tool) -> &'static [(&'static str, &'static str)] {
+    match tool {
+        Tool::Line => &[("Length", "mm"), ("Angle", "deg")],
+        Tool::Circle => &[("Diameter", "mm")],
+        Tool::Rectangle => &[("Width", "mm"), ("Height", "mm")],
+        _ => &[],
+    }
+}
+
+/// Snaps a line end to horizontal or vertical from `start` when it is nearly so.
+fn infer_line(start: Vec2, cursor: Vec2) -> (Vec2, Option<Infer>) {
+    let d = cursor - start;
+    let len = d.len();
+    if len < 1e-9 {
+        return (cursor, None);
+    }
+    if (d.y / len).abs() < INFER_ANGLE.sin() {
+        (Vec2::new(cursor.x, start.y), Some(Infer::Horizontal))
+    } else if (d.x / len).abs() < INFER_ANGLE.sin() {
+        (Vec2::new(start.x, cursor.y), Some(Infer::Vertical))
+    } else {
+        (cursor, None)
+    }
+}
+
+/// A sketch grid step: 1, 2 or 5 times a power of ten, at least `min_px` apart on screen.
+pub(crate) fn grid_step(px_per_mm: f64, min_px: f64) -> f64 {
+    if !(px_per_mm.is_finite() && px_per_mm > 0.0) {
+        return 10.0;
+    }
+    let raw = min_px / px_per_mm;
+    let p = 10f64.powf(raw.log10().floor());
+    [1.0, 2.0, 5.0, 10.0].iter().map(|m| m * p).find(|s| *s >= raw).unwrap_or(10.0 * p)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -217,6 +291,38 @@ fn hit_test(s: &Sketch, plane: &Plane, p: Pos2) -> Option<EntityId> {
         }
     }
     best_point.or(best_curve).map(|(_, id)| id)
+}
+
+/// The sketch grid: lines every grid step, stronger every fifth, the sketch axes coloured. Only
+/// drawn when the whole viewport maps onto the plane (looking at it, not edge-on).
+fn draw_grid(ui: &Ui, plane: &Plane, rect: Rect, t: &Tokens) {
+    let (Some(o), Some(x1)) = (plane.project(Vec2::new(0.0, 0.0)), plane.project(Vec2::new(1.0, 0.0))) else { return };
+    let step = grid_step(f64::from(o.distance(x1)), 18.0);
+    let corners: Option<Vec<Vec2>> =
+        [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()].iter().map(|c| plane.unproject(*c)).collect();
+    let Some(c) = corners else { return };
+    let (lo, hi) = c.iter().fold((c[0], c[0]), |(a, b), p| (a.min(*p), b.max(*p)));
+    let (i0, i1) = ((lo.x / step).floor() as i64, (hi.x / step).ceil() as i64);
+    let (j0, j1) = ((lo.y / step).floor() as i64, (hi.y / step).ceil() as i64);
+    if i1 - i0 > 400 || j1 - j0 > 400 {
+        return;
+    }
+    let p = ui.painter();
+    let line = |a: Vec2, b: Vec2, color: Color32| {
+        if let (Some(a), Some(b)) = (plane.project(a), plane.project(b)) {
+            p.line_segment([a, b], Stroke::new(1.0, color));
+        }
+    };
+    for i in i0..=i1 {
+        let x = i as f64 * step;
+        let color = if i == 0 { t.axis_y.gamma_multiply(0.55) } else { t.text_dim.gamma_multiply(if i % 5 == 0 { 0.22 } else { 0.09 }) };
+        line(Vec2::new(x, lo.y), Vec2::new(x, hi.y), color);
+    }
+    for j in j0..=j1 {
+        let y = j as f64 * step;
+        let color = if j == 0 { t.axis_x.gamma_multiply(0.55) } else { t.text_dim.gamma_multiply(if j % 5 == 0 { 0.22 } else { 0.09 }) };
+        line(Vec2::new(lo.x, y), Vec2::new(hi.x, y), color);
+    }
 }
 
 /// Where a dimension label sits (sketch coordinates) and its text.
@@ -403,9 +509,20 @@ impl Workbench {
         };
         let plane = Plane { frame, cam: self.view.camera, rect };
         let pointer = resp.hover_pos().or_else(|| resp.interact_pointer_pos());
-        let cursor = pointer.and_then(|p| plane.unproject(p));
+        let raw_cursor = pointer.and_then(|p| plane.unproject(p));
         let hover = pointer.and_then(|p| hit_test(&doc_sketch, &plane, p));
         let snap = hover.filter(|h| doc_sketch.is_point(*h));
+        // Lines snap to horizontal or vertical near those directions (unless on a point).
+        let (cursor, infer) = match (&self.mode, raw_cursor) {
+            (Mode::Sketch(sm), Some(c)) if sm.tool == Tool::Line && snap.is_none() => match sm.clicks.last() {
+                Some(start) => {
+                    let (c, i) = infer_line(start.at, c);
+                    (Some(c), i)
+                }
+                None => (Some(c), None),
+            },
+            _ => (raw_cursor, None),
+        };
         let labels: Vec<(Rect, ConstraintId, Constraint)> = doc_sketch
             .constraints()
             .filter_map(|(cid, c)| {
@@ -420,9 +537,50 @@ impl Workbench {
         if let Mode::Sketch(sm) = &mut self.mode {
             sm.hover = hover;
         }
-        let (enter, esc, delete) =
+        let (mut enter, mut esc, delete) =
             ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Delete)));
         let typing = ui.ctx().egui_wants_keyboard_input();
+        // Value boxes: once a drawing tool has its first point, digits go into the boxes beside
+        // the cursor; Tab moves between them, Enter places the geometry.
+        if !typing
+            && let Mode::Sketch(sm) = &mut self.mode
+            && !sm.clicks.is_empty()
+            && !hud_fields(sm.tool).is_empty()
+        {
+            let n = hud_fields(sm.tool).len();
+            let (text, tab, back) = ui.input(|i| {
+                let text: String = i
+                    .events
+                    .iter()
+                    .filter_map(|e| match e {
+                        egui::Event::Text(t) => Some(t.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect::<String>()),
+                        _ => None,
+                    })
+                    .collect();
+                (text, i.key_pressed(egui::Key::Tab), i.key_pressed(egui::Key::Backspace))
+            });
+            let field = sm.hud.active.min(n - 1);
+            if let Some(s) = sm.hud.fields.get_mut(field) {
+                s.push_str(&text);
+                if back {
+                    s.pop();
+                }
+            }
+            if tab {
+                sm.hud.active = (field + 1) % n;
+            }
+            if esc && !sm.hud.is_empty() {
+                // Esc first clears what was typed, then ends the tool as usual.
+                sm.hud = Hud::default();
+                esc = false;
+            }
+            if enter && !sm.hud.is_empty() {
+                enter = false;
+                if let Some(c) = cursor {
+                    self.hud_commit(feature, c);
+                }
+            }
+        }
         if !typing && esc {
             self.sketch_escape();
         }
@@ -442,7 +600,7 @@ impl Workbench {
             && let Some(at) = cursor
         {
             let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
-            self.sketch_click(feature, &doc_sketch, Click { at, point: snap }, hover, add);
+            self.sketch_click(feature, &doc_sketch, Click { at, point: snap, infer }, hover, add);
         }
         // Dragging a point (select tool): preview on a copy, one command on release.
         let tool = match &self.mode {
@@ -496,6 +654,7 @@ impl Workbench {
                 under
             }
         };
+        draw_grid(ui, &plane, rect, t);
         for (id, e) in shown.entities() {
             if e.geometry.is_point() {
                 continue;
@@ -515,7 +674,12 @@ impl Workbench {
                 && let Some(q) = plane.project(pos)
             {
                 let s = if sm.hover == Some(id) { 4.0 } else { 2.5 };
-                p.rect_filled(Rect::from_center_size(q, vec2(s * 2.0, s * 2.0)), 1.0, color_of(id));
+                if e.construction {
+                    // Projected geometry (the part origin): a round amber dot.
+                    p.circle_filled(q, s + 1.0, if sm.hover == Some(id) { hot } else { t.tint_work });
+                } else {
+                    p.rect_filled(Rect::from_center_size(q, vec2(s * 2.0, s * 2.0)), 1.0, color_of(id));
+                }
             }
         }
         // Constraint glyphs next to their first entity.
@@ -577,6 +741,169 @@ impl Workbench {
         }
         if let Some(q) = snap.and_then(|s| shown.point(s)).and_then(|v| plane.project(v)) {
             p.circle_stroke(q, 7.0, Stroke::new(1.5, hot));
+        }
+        // The inferred constraint, beside the cursor.
+        if let (Some(i), Some(q)) = (infer.filter(|_| !sm.clicks.is_empty()), cursor.and_then(|c| plane.project(c))) {
+            let r = Rect::from_min_size(q + vec2(10.0, -26.0), vec2(16.0, 16.0));
+            p.rect_filled(r, 2.0, t.panel.gamma_multiply(0.9));
+            crate::icons::paint(
+                p,
+                r.shrink(2.0),
+                if i == Infer::Horizontal { crate::icons::Icon::Horizontal } else { crate::icons::Icon::Vertical },
+                hot,
+            );
+        }
+        // Value boxes beside the cursor: typed values, else the live ones.
+        let fields = hud_fields(sm.tool);
+        if let (Some(first), Some(cur), Some(q)) = (sm.clicks.last(), cursor, cursor.and_then(|c| plane.project(c)))
+            && !fields.is_empty()
+        {
+            let d = cur - first.at;
+            let live = match sm.tool {
+                Tool::Line => [d.len(), d.y.atan2(d.x).to_degrees()],
+                Tool::Circle => [2.0 * d.len(), 0.0],
+                _ => [d.x.abs(), d.y.abs()],
+            };
+            let mut at = q + vec2(18.0, 14.0);
+            for (i, (name, unit)) in fields.iter().enumerate() {
+                let typed = sm.hud.fields.get(i).filter(|s| !s.is_empty());
+                let text = match typed {
+                    Some(s) => format!("{s} {unit}"),
+                    None => format!("{} {unit}", fmt_len(live[i])),
+                };
+                let galley = p.layout_no_wrap(text, theme::small(), if typed.is_some() { t.text } else { t.text_dim });
+                let r = Rect::from_min_size(at, vec2(galley.size().x.max(46.0) + 10.0, 18.0));
+                p.rect_filled(r, 2.0, t.field);
+                let active = i == sm.hud.active.min(fields.len() - 1);
+                p.rect_stroke(r, 2.0, Stroke::new(1.0, if active { t.accent } else { t.border }), egui::StrokeKind::Inside);
+                p.galley(r.min + vec2(5.0, 3.0), galley, t.text);
+                let _ = name;
+                at.x = r.right() + 4.0;
+            }
+        }
+    }
+
+    /// Where a dimension's label is on screen (for the inline edit box).
+    pub(crate) fn dimension_anchor(&self, sketch: FeatureId, c: &Constraint) -> Option<Pos2> {
+        let frame = self.sketch_frame(sketch)?;
+        let sk = self.document().sketch(sketch)?;
+        let (at, _) = dimension_label(sk, c)?;
+        Plane { frame, cam: self.view.camera, rect: self.view.rect }.project(at)
+    }
+
+    /// Adds the horizontal or vertical constraint inferred while drawing a line. Inference is a
+    /// convenience: if the sketch refuses it (redundant, conflicting), the line stays as drawn.
+    fn add_inferred(&mut self, sketch: u32, line: u64, infer: Option<Infer>) {
+        let c = match infer {
+            Some(Infer::Horizontal) => json!({ "type": "horizontal", "line": line }),
+            Some(Infer::Vertical) => json!({ "type": "vertical", "line": line }),
+            None => return,
+        };
+        let _ = self.exec("sketch.constrain", json!({ "sketch": sketch, "constraint": c }));
+    }
+
+    /// Ties the rectangle corner at `at` to the existing point `to` (a rectangle started on the
+    /// projected origin stays on it).
+    fn attach_corner(&mut self, feature: FeatureId, lines: &[u64], at: Vec2, to: EntityId) {
+        let Some(sk) = self.document().sketch(feature) else { return };
+        let corner = lines
+            .iter()
+            .filter_map(|l| u32::try_from(*l).ok())
+            .filter_map(|l| match sk.geometry(EntityId(l)) {
+                Some(Geometry::Line { start, .. }) => Some(*start),
+                _ => None,
+            })
+            .find(|p| sk.point(*p).is_some_and(|q| q.dist(at) < 1e-6));
+        if let Some(c) = corner {
+            let _ = self.exec("sketch.constrain", json!({ "sketch": feature.0, "constraint": { "type": "coincident", "a": to.0, "b": c.0 } }));
+        }
+    }
+
+    /// Places what the value boxes describe, from the tool's first point towards the cursor.
+    fn hud_commit(&mut self, feature: FeatureId, cursor: Vec2) {
+        let Mode::Sketch(sm) = &mut self.mode else { return };
+        let hud = std::mem::take(&mut sm.hud);
+        let (tool, Some(first)) = (sm.tool, sm.clicks.last().copied()) else { return };
+        let f = feature.0;
+        let sign = |v: f64| if v < 0.0 { -1.0 } else { 1.0 };
+        match tool {
+            Tool::Line => {
+                let d = cursor - first.at;
+                let len = hud.typed(0).unwrap_or(d.len());
+                let angle = hud.typed(1).map_or(d.y.atan2(d.x), f64::to_radians);
+                if len.is_nan() || len <= 0.0 {
+                    self.set_error("a line needs a length above zero");
+                    return;
+                }
+                let end = first.at + Vec2::from_angle(angle) * len;
+                let mut m = Map::new();
+                m.insert("sketch".into(), json!(f));
+                put_point(&mut m, "start", "x1", "y1", &first);
+                m.insert("x2".into(), json!(end.x));
+                m.insert("y2".into(), json!(end.y));
+                let Some(r) = self.exec_status("sketch.line", Value::Object(m)) else { return };
+                let (line, end_id) = (r["line"].as_u64(), r["end"].as_u64().and_then(|v| u32::try_from(v).ok()));
+                if let Some(l) = line {
+                    if hud.typed(0).is_some() {
+                        let _ = self.exec("sketch.constrain", json!({ "sketch": f, "constraint": { "type": "length", "line": l, "value": len } }));
+                    }
+                    if let Some(a) = hud.typed(1) {
+                        let a = a.rem_euclid(180.0);
+                        let infer = if a.abs() < 1e-9 || (a - 180.0).abs() < 1e-9 {
+                            Some(Infer::Horizontal)
+                        } else if (a - 90.0).abs() < 1e-9 {
+                            Some(Infer::Vertical)
+                        } else {
+                            None
+                        };
+                        self.add_inferred(f, l, infer);
+                    }
+                }
+                if let Mode::Sketch(sm) = &mut self.mode {
+                    sm.clicks = end_id.map(|e| vec![Click { at: end, point: Some(EntityId(e)), infer: None }]).unwrap_or_default();
+                }
+            }
+            Tool::Circle => {
+                let r = hud.typed(0).map_or(first.at.dist(cursor), |d| d / 2.0);
+                let mut m = Map::new();
+                m.insert("sketch".into(), json!(f));
+                put_point(&mut m, "center", "cx", "cy", &first);
+                m.insert("r".into(), json!(r));
+                if let Some(res) = self.exec_status("sketch.circle", Value::Object(m))
+                    && let (Some(c), Some(d)) = (res["circle"].as_u64(), hud.typed(0))
+                {
+                    let _ = self.exec("sketch.constrain", json!({ "sketch": f, "constraint": { "type": "diameter", "curve": c, "value": d } }));
+                }
+                if let Mode::Sketch(sm) = &mut self.mode {
+                    sm.clicks.clear();
+                }
+            }
+            Tool::Rectangle => {
+                let d = cursor - first.at;
+                let w = hud.typed(0).map_or(d.x, |w| w.abs() * sign(d.x));
+                let h = hud.typed(1).map_or(d.y, |h| h.abs() * sign(d.y));
+                let b = first.at + Vec2::new(w, h);
+                if let Some(res) =
+                    self.exec_status("sketch.rectangle", json!({ "sketch": f, "x1": first.at.x, "y1": first.at.y, "x2": b.x, "y2": b.y }))
+                {
+                    let lines: Vec<u64> = res["lines"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
+                    if let (Some(l), true) = (lines.first(), hud.typed(0).is_some()) {
+                        let _ =
+                            self.exec("sketch.constrain", json!({ "sketch": f, "constraint": { "type": "length", "line": l, "value": w.abs() } }));
+                    }
+                    if let (Some(l), true) = (lines.get(1), hud.typed(1).is_some()) {
+                        let _ =
+                            self.exec("sketch.constrain", json!({ "sketch": f, "constraint": { "type": "length", "line": l, "value": h.abs() } }));
+                    }
+                    if let Some(p) = first.point {
+                        self.attach_corner(feature, &lines, first.at, p);
+                    }
+                }
+                if let Mode::Sketch(sm) = &mut self.mode {
+                    sm.clicks.clear();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -640,10 +967,16 @@ impl Workbench {
                     put_point(&mut m, "end", "x2", "y2", &click);
                     if let Some(r) = self.exec_status("sketch.line", Value::Object(m))
                         && let Some(end) = r["end"].as_u64().and_then(|v| u32::try_from(v).ok())
-                        && let Mode::Sketch(sm) = &mut self.mode
                     {
-                        // Continue the chain from the new end point (stop on an existing point).
-                        sm.clicks = if click.point.is_some() { vec![] } else { vec![Click { at: click.at, point: Some(EntityId(end)) }] };
+                        if let Some(line) = r["line"].as_u64() {
+                            self.add_inferred(f, line, click.infer);
+                        }
+                        if let Mode::Sketch(sm) = &mut self.mode {
+                            // Continue the chain from the new end point (stop on an existing point).
+                            sm.clicks =
+                                if click.point.is_some() { vec![] } else { vec![Click { at: click.at, point: Some(EntityId(end)), infer: None }] };
+                            sm.hud = Hud::default();
+                        }
                     }
                 } else {
                     sm.clicks.push(click);
@@ -656,18 +989,28 @@ impl Workbench {
                 };
                 let tool = sm.tool;
                 sm.clicks.clear();
+                sm.hud = Hud::default();
                 let (a, b) = (first.at, click.at);
-                let _ = match tool {
+                match tool {
                     Tool::Circle => {
                         let mut m = Map::new();
                         m.insert("sketch".into(), json!(f));
                         put_point(&mut m, "center", "cx", "cy", &first);
                         m.insert("r".into(), json!(a.dist(b)));
-                        self.exec_status("sketch.circle", Value::Object(m))
+                        let _ = self.exec_status("sketch.circle", Value::Object(m));
                     }
-                    Tool::Rectangle => self.exec_status("sketch.rectangle", json!({ "sketch": f, "x1": a.x, "y1": a.y, "x2": b.x, "y2": b.y })),
-                    _ => self.exec_status("sketch.polygon", json!({ "sketch": f, "cx": a.x, "cy": a.y, "x": b.x, "y": b.y, "sides": 6 })),
-                };
+                    Tool::Rectangle => {
+                        if let Some(res) = self.exec_status("sketch.rectangle", json!({ "sketch": f, "x1": a.x, "y1": a.y, "x2": b.x, "y2": b.y }))
+                            && let Some(p) = first.point
+                        {
+                            let lines: Vec<u64> = res["lines"].as_array().map(|x| x.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
+                            self.attach_corner(feature, &lines, a, p);
+                        }
+                    }
+                    _ => {
+                        let _ = self.exec_status("sketch.polygon", json!({ "sketch": f, "cx": a.x, "cy": a.y, "x": b.x, "y": b.y, "sides": 6 }));
+                    }
+                }
             }
             Tool::Arc => {
                 if sm.clicks.len() < 2 {
