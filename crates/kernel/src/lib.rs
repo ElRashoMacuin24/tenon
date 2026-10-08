@@ -238,6 +238,12 @@ pub trait Kernel: Send {
     fn release(&mut self, shape: ShapeHandle) {
         let _ = shape;
     }
+    /// A second handle to the same shape (same topology and indices), released separately.
+    /// Cheap: no geometry is copied.
+    fn duplicate(&mut self, shape: ShapeHandle) -> KResult<ShapeHandle> {
+        let _ = shape;
+        Err(KernelError::Unsupported("duplicate"))
+    }
     /// Number of live shapes (leak checks in tests).
     fn live_shapes(&self) -> usize {
         0

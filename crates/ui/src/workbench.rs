@@ -10,7 +10,7 @@ use egui::{Frame, Ui};
 use serde_json::{Value, json};
 use tenon_kernel::{Kernel, MeshTol};
 use tenon_model::worker::{Response, Worker};
-use tenon_model::{Document, FeatureId, FeatureKind, FeatureStatus, PlaneRef, Scene, Session, regenerate, scene};
+use tenon_model::{Document, FeatureId, FeatureKind, FeatureStatus, PlaneRef, Scene, Session, regenerate_with, scene};
 
 use crate::chrome::{Chrome, DOC_TABS_H, RIBBON_H, STATUS_H, TABS_H, TITLE_H};
 use crate::commands;
@@ -51,6 +51,11 @@ pub struct Workbench {
     pub(crate) scene: Scene,
     pub(crate) scene_seq: u64,
     shown: Option<Document>,
+    /// Document revision and open panel the shown document was made from: when neither
+    /// changed, nothing needs comparing.
+    shown_key: Option<u64>,
+    /// Rebuild All: the next regeneration starts from scratch.
+    rebuild_all: bool,
     seq: u64,
     pub(crate) waiting: bool,
     pub(crate) regen_note: Option<String>,
@@ -76,6 +81,8 @@ pub struct Workbench {
     pub(crate) param_env: (u64, std::sync::Arc<std::collections::BTreeMap<String, f64>>),
     /// Equations typed into the open feature panel's fields.
     pub(crate) panel_eqs: crate::properties::Equations,
+    /// Regeneration checkpoints for the kernel on this thread (headless use).
+    sync_cache: tenon_model::RegenCache,
 }
 
 impl Workbench {
@@ -87,6 +94,8 @@ impl Workbench {
             scene: Scene::default(),
             scene_seq: 0,
             shown: None,
+            shown_key: None,
+            rebuild_all: false,
             seq: 0,
             waiting: false,
             regen_note: None,
@@ -106,6 +115,7 @@ impl Workbench {
             pick_plane: false,
             param_env: (0, Default::default()),
             panel_eqs: Default::default(),
+            sync_cache: Default::default(),
         }
     }
 
@@ -227,8 +237,10 @@ impl Workbench {
             "view.perspective" => self.view.camera.projection = tenon_render::Projection::Perspective,
             "tools.options" => self.chrome.options = true,
             "model.rebuild" => {
-                // Forget what is shown so the whole tree regenerates.
+                // Forget what is shown so the whole tree regenerates, from scratch.
                 self.shown = None;
+                self.shown_key = None;
+                self.rebuild_all = true;
                 self.set_status("Rebuilding all features...");
             }
             "app.about" => self.chrome.about = true,
@@ -390,16 +402,27 @@ impl Workbench {
 
     /// Sends the shown document for regeneration when it changed; takes finished results.
     fn sync_geometry(&mut self) {
-        let doc = self.preview_document().unwrap_or_else(|| self.session.document().clone());
-        if self.shown.as_ref() != Some(&doc) {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.session.revision().hash(&mut h);
+        format!("{:?}", self.panel).hash(&mut h);
+        let key = h.finish();
+        let changed = self.shown_key != Some(key);
+        self.shown_key = Some(key);
+        let doc = if changed { Some(self.preview_document().unwrap_or_else(|| self.session.document().clone())) } else { None };
+        if let Some(doc) = doc.filter(|d| self.shown.as_ref() != Some(d)) {
             self.seq += 1;
+            let fresh = std::mem::take(&mut self.rebuild_all);
             match &mut self.geo {
                 Geo::Worker(w) => {
-                    w.regenerate(self.seq, doc.clone());
+                    w.regenerate(self.seq, doc.clone(), fresh);
                     self.waiting = true;
                 }
                 Geo::Sync(k) => {
-                    let mut r = regenerate(&doc, k.as_mut());
+                    if fresh {
+                        self.sync_cache.release(k.as_mut());
+                    }
+                    let mut r = regenerate_with(&doc, k.as_mut(), Some(&mut self.sync_cache));
                     let s = scene(&r, k.as_mut(), &MeshTol::default());
                     r.release(k.as_mut());
                     match s {

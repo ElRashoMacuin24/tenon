@@ -138,3 +138,21 @@ fn a_drill_profile_on_the_axis_revolves_into_a_valid_solid() {
     // Top, wall and point; the edge on the axis makes no face.
     assert_eq!(k.topology(op.shape).unwrap().faces, 3);
 }
+
+#[test]
+fn duplicates_share_the_shape_and_are_released_separately() {
+    let mut k = OcctKernel::new();
+    let b = cube(&mut k);
+    let live = k.live_shapes();
+    let d = k.duplicate(b).unwrap();
+    assert_eq!(k.live_shapes(), live + 1);
+    assert_eq!(k.topology(d).unwrap(), k.topology(b).unwrap());
+    // Same face indices, same geometry.
+    for f in 0..6 {
+        assert_eq!(k.face_info(d.face(f)).unwrap(), k.face_info(b.face(f)).unwrap());
+    }
+    k.release(b);
+    assert!(close(volume(&k, d), 8000.0), "the duplicate lives on");
+    k.release(d);
+    assert_eq!(k.live_shapes(), live - 1);
+}

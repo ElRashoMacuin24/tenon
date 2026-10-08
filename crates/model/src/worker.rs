@@ -9,11 +9,19 @@ use std::thread::JoinHandle;
 use tenon_kernel::{CancelToken, Kernel, MeshTol, ShapeHandle};
 
 use crate::Document;
-use crate::regen::{Regen, Scene, regenerate, scene};
+use crate::regen::{Regen, RegenCache, Scene, regenerate, regenerate_with, scene};
 
 enum Request {
-    Regenerate { revision: u64, doc: Box<Document> },
-    ExportStep { request: u64, doc: Box<Document> },
+    /// `fresh`: from scratch, not from the last checkpoint (Rebuild All).
+    Regenerate {
+        revision: u64,
+        doc: Box<Document>,
+        fresh: bool,
+    },
+    ExportStep {
+        request: u64,
+        doc: Box<Document>,
+    },
     Shutdown,
 }
 
@@ -54,6 +62,8 @@ impl Worker {
             let mut k = make_kernel();
             k.set_cancel(token.clone());
             let mut current = Regen::default();
+            // Checkpoints between regenerations: an edit recomputes from the feature it changed.
+            let mut cache = RegenCache::default();
             let send = |r: Response| {
                 let _ = worker_tx.send(r);
                 if let Some(w) = &waker {
@@ -64,10 +74,14 @@ impl Worker {
                 // Only the newest regeneration request matters.
                 loop {
                     match worker_rx.try_recv() {
-                        Ok(next @ Request::Regenerate { .. }) if matches!(req, Request::Regenerate { .. }) => req = next,
+                        Ok(Request::Regenerate { revision, doc, fresh }) if matches!(req, Request::Regenerate { .. }) => {
+                            // A pending Rebuild All survives being superseded.
+                            let was = matches!(req, Request::Regenerate { fresh: true, .. });
+                            req = Request::Regenerate { revision, doc, fresh: fresh || was };
+                        }
                         Ok(next) => {
                             // Handle the pending one first, then this one.
-                            Self::handle(&mut *k, &mut current, req, &tol, &token, &send);
+                            Self::handle(&mut *k, &mut current, &mut cache, req, &tol, &token, &send);
                             req = next;
                         }
                         Err(TryRecvError::Empty) => break,
@@ -77,19 +91,31 @@ impl Worker {
                 if matches!(req, Request::Shutdown) {
                     break;
                 }
-                Self::handle(&mut *k, &mut current, req, &tol, &token, &send);
+                Self::handle(&mut *k, &mut current, &mut cache, req, &tol, &token, &send);
             }
             current.release(&mut *k);
+            cache.release(&mut *k);
         })?;
         Ok(Worker { tx, rx, cancel, handle: Some(handle) })
     }
 
-    fn handle(k: &mut dyn Kernel, current: &mut Regen, req: Request, tol: &MeshTol, token: &CancelToken, send: &dyn Fn(Response)) {
+    fn handle(
+        k: &mut dyn Kernel,
+        current: &mut Regen,
+        cache: &mut RegenCache,
+        req: Request,
+        tol: &MeshTol,
+        token: &CancelToken,
+        send: &dyn Fn(Response),
+    ) {
         match req {
-            Request::Regenerate { revision, doc } => {
+            Request::Regenerate { revision, doc, fresh } => {
                 token.reset();
                 current.release(k);
-                let regen = regenerate(&doc, k);
+                if fresh {
+                    cache.release(k);
+                }
+                let regen = regenerate_with(&doc, k, Some(cache));
                 if regen.cancelled {
                     let mut r = regen;
                     r.release(k);
@@ -117,9 +143,11 @@ impl Worker {
     }
 
     /// Regenerates `doc` (as revision `revision`), cancelling any regeneration in progress.
-    pub fn regenerate(&self, revision: u64, doc: Document) {
+    /// With `fresh`, every feature is recomputed (Rebuild All); otherwise the regeneration
+    /// resumes from the last checkpoint where the history before it is unchanged.
+    pub fn regenerate(&self, revision: u64, doc: Document, fresh: bool) {
         self.cancel.cancel();
-        let _ = self.tx.send(Request::Regenerate { revision, doc: Box::new(doc) });
+        let _ = self.tx.send(Request::Regenerate { revision, doc: Box::new(doc), fresh });
     }
 
     /// Exports the bodies of `doc` as STEP; the answer arrives as [`Response::Step`].

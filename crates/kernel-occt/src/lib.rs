@@ -635,4 +635,11 @@ impl Kernel for OcctKernel {
     fn live_shapes(&self) -> usize {
         self.slots.iter().filter(|s| s.shape.is_some()).count()
     }
+
+    fn duplicate(&mut self, shape: ShapeHandle) -> KResult<ShapeHandle> {
+        // A shape list holds copies of the shape handle: the same topology, no geometry copied.
+        let list = self.shape_list(&[shape])?;
+        let copy = sys::shape_list_get(&list, 0).map_err(failed("duplicate"))?;
+        self.insert(copy)
+    }
 }

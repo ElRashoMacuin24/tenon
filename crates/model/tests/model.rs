@@ -139,8 +139,8 @@ fn worker_regenerates_off_thread_and_reports_the_latest() {
     let doc = s.document().clone();
     let mut thinner = doc.clone();
     // Two quick requests: only the newest answer matters.
-    w.regenerate(1, Document::default());
-    w.regenerate(2, doc);
+    w.regenerate(1, Document::default(), false);
+    w.regenerate(2, doc, true);
     let mut last = None;
     while let Some(r) = w.recv_timeout(Duration::from_secs(30)) {
         match r {

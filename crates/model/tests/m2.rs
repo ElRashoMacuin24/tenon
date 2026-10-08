@@ -577,3 +577,107 @@ fn features_reorder_with_their_sketches_but_not_before_what_they_use() {
     assert_eq!(s.document(), &before);
     let _ = sk3;
 }
+
+#[test]
+fn regeneration_resumes_from_the_feature_being_edited() {
+    use tenon_kernel::Kernel;
+    use tenon_model::{FeatureId, RegenCache, regenerate, regenerate_with, scene};
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let ex = block_at(&mut s, &mut k, 0.0, 0.0, 60.0, 40.0, 10.0);
+    // A few holes, a fillet, then the boss whose height we keep changing.
+    let (sk, _) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0), (50.0, 10.0), (10.0, 30.0)]);
+    run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "through_all": true }));
+    let top_ref = run(&mut s, &mut k, "model.face_ref", json!({ "origin": top(ex) }));
+    let sk2 = run(&mut s, &mut k, "sketch.create", json!({ "face": top_ref }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk2, "cx": 40, "cy": 25, "r": 5 }));
+    let boss = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "distance": 5 }))["feature"].as_u64().unwrap();
+    let boss_index = s.document().index_of(FeatureId(boss as u32)).unwrap();
+    let mut doc = s.document().clone();
+    let mut cache = RegenCache::default();
+    let check = |doc: &Document, k: &mut OcctKernel, cache: &mut RegenCache| {
+        let mut cached = regenerate_with(doc, k, Some(cache));
+        let mut fresh = regenerate(doc, k);
+        let (a, b) = (scene(&cached, k, &Default::default()).unwrap(), scene(&fresh, k, &Default::default()).unwrap());
+        assert_eq!(a.bodies.len(), b.bodies.len());
+        for (x, y) in a.bodies.iter().zip(&b.bodies) {
+            assert!(approx(x.volume, y.volume), "{} vs {}", x.volume, y.volume);
+            assert_eq!(x.faces.iter().map(|f| f.0).collect::<Vec<_>>(), y.faces.iter().map(|f| f.0).collect::<Vec<_>>(), "same names");
+        }
+        assert_eq!(cached.status, fresh.status);
+        cached.release(k);
+        fresh.release(k);
+    };
+    let set_height = |doc: &mut Document, h: f64| {
+        let f = doc.feature_mut(FeatureId(boss as u32)).unwrap();
+        let mut kind = serde_json::to_value(&f.kind).unwrap();
+        kind["extent"] = json!({ "distance": h });
+        f.kind = serde_json::from_value(kind).unwrap();
+    };
+    check(&doc, &mut k, &mut cache);
+    assert_eq!(cache.resumed_at, 0, "the first run computes everything");
+    // Drag the boss height: the second run leaves a checkpoint before the boss, later runs start there.
+    for h in [6.0, 7.0, 8.0, 9.0] {
+        set_height(&mut doc, h);
+        check(&doc, &mut k, &mut cache);
+    }
+    assert_eq!(cache.resumed_at, boss_index, "only the boss is recomputed");
+    // An earlier change (the hole diameter) starts from scratch again.
+    let hole = doc.features().iter().find(|f| f.name == "Hole1").unwrap().id;
+    let f = doc.feature_mut(hole).unwrap();
+    let mut kind = serde_json::to_value(&f.kind).unwrap();
+    kind["diameter"] = json!(4.0);
+    f.kind = serde_json::from_value(kind).unwrap();
+    check(&doc, &mut k, &mut cache);
+    assert!(cache.resumed_at < boss_index);
+    // Nothing leaks.
+    cache.release(&mut k);
+    let mut r = s.regen(&mut k).clone();
+    let _ = &mut r;
+    s.replace_document(Document::default(), Some(&mut k));
+    assert_eq!(k.live_shapes(), 0, "every shape released");
+}
+
+/// Timing, not a check: `cargo test --release -p tenon-model --test m2 regeneration_speed -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn regeneration_speed() {
+    use std::time::Instant;
+    use tenon_model::{FeatureId, RegenCache, regenerate, regenerate_with};
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let ex = block_at(&mut s, &mut k, 0.0, 0.0, 200.0, 100.0, 10.0);
+    // 19 sketches of holes and 19 holes on the top face, then a boss.
+    for i in 0..19 {
+        let (sk, _) = points_on_top(&mut s, &mut k, ex, &[(10.0 + 10.0 * f64::from(i), 20.0), (10.0 + 10.0 * f64::from(i), 80.0)]);
+        run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 4, "through_all": true }));
+    }
+    let top_ref = run(&mut s, &mut k, "model.face_ref", json!({ "origin": top(ex) }));
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "face": top_ref }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 100, "cy": 50, "r": 8 }));
+    let boss = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 5 }))["feature"].as_u64().unwrap();
+    let mut doc = s.document().clone();
+    let n = doc.features().len();
+    let set = |doc: &mut Document, h: f64| {
+        let f = doc.feature_mut(FeatureId(boss as u32)).unwrap();
+        let mut kind = serde_json::to_value(&f.kind).unwrap();
+        kind["extent"] = json!({ "distance": h });
+        f.kind = serde_json::from_value(kind).unwrap();
+    };
+    let t = Instant::now();
+    for i in 0..5 {
+        set(&mut doc, 5.0 + f64::from(i));
+        regenerate(&doc, &mut k).release(&mut k);
+    }
+    let full = t.elapsed().as_secs_f64() * 1000.0 / 5.0;
+    let mut cache = RegenCache::default();
+    regenerate_with(&doc, &mut k, Some(&mut cache)).release(&mut k);
+    set(&mut doc, 20.0);
+    regenerate_with(&doc, &mut k, Some(&mut cache)).release(&mut k);
+    let t = Instant::now();
+    for i in 0..5 {
+        set(&mut doc, 10.0 + f64::from(i));
+        regenerate_with(&doc, &mut k, Some(&mut cache)).release(&mut k);
+    }
+    let resumed = t.elapsed().as_secs_f64() * 1000.0 / 5.0;
+    println!("{n} features: full regeneration {full:.1} ms, resumed at {} {resumed:.1} ms ({:.0}x)", cache.resumed_at, full / resumed);
+    cache.release(&mut k);
+}

@@ -831,6 +831,44 @@ fn end_of_part_and_features_are_dragged_in_the_browser() {
     assert!(!wb.status_error, "{}", wb.status());
 }
 
+/// The UI's own work per frame (layout, picking, the browser; not GPU drawing) stays well inside
+/// a 60 Hz frame on a 40-feature part. Numbers: `cargo test --release -p tenon-ui frame_time --
+/// --nocapture`.
+#[test]
+fn frame_time_stays_within_budget() {
+    use std::time::Instant;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1440.0, 900.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 200, "y2": 100 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    let ext = wb.document().features().last().unwrap().id.0;
+    for i in 0..19 {
+        let top = wb.exec("model.face_ref", json!({ "origin": { "type": "cap", "feature": ext, "end": "end" } })).unwrap();
+        let sk = wb.exec("sketch.create", json!({ "face": top })).unwrap()["feature"].as_u64().unwrap();
+        for y in [20.0, 80.0] {
+            wb.exec("sketch.point", json!({ "sketch": sk, "x": 10.0 + 10.0 * f64::from(i), "y": y })).unwrap();
+        }
+        wb.exec("model.hole", json!({ "sketch": sk, "diameter": 4, "through_all": true })).unwrap();
+    }
+    wb.mode = Mode::Model;
+    d.settle(&mut wb);
+    let time = |d: &mut Driver, wb: &mut Workbench, events: &dyn Fn(usize) -> Vec<egui::Event>| {
+        let t = Instant::now();
+        for i in 0..60 {
+            d.frame(wb, events(i));
+        }
+        t.elapsed().as_secs_f64() * 1000.0 / 60.0
+    };
+    let idle = time(&mut d, &mut wb, &|_| vec![]);
+    let c = wb.view.rect.center();
+    let hover = time(&mut d, &mut wb, &|i| vec![egui::Event::PointerMoved(c + vec2(i as f32 * 3.0, 0.0))]);
+    println!("{} features: idle frame {idle:.2} ms, pointer moving over the part {hover:.2} ms", wb.document().features().len());
+    assert!(idle < 16.0 && hover < 16.0, "over the 16 ms frame budget: idle {idle:.2} ms, moving {hover:.2} ms");
+}
+
 #[test]
 fn start_2d_sketch_picks_a_plane_or_face_in_the_viewport() {
     use tenon_geom::Vec3;
