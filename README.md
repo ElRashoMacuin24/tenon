@@ -4,8 +4,16 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: early development (milestone M0, foundations).** There is no modelling UI yet. What works
-today is listed, with the tests that prove it, in [ROADMAP.md](ROADMAP.md).
+**Status: milestone M0 (foundations) is done on Windows.**
+
+- The kernel layer works and is tested: primitives, booleans with history, topology, meshes,
+  mass properties and STEP, over OpenCASCADE 8.
+- It is driven from the command line today.
+- The desktop app is a layout shell; modelling in the UI starts in M1.
+
+What works, with the test that proves each item, is in [ROADMAP.md](ROADMAP.md).
+
+![Tenon M0 layout shell](docs/images/m0-shell.png)
 
 ## Design
 
@@ -33,8 +41,13 @@ Step-by-step instructions per platform are in [docs/setup.md](docs/setup.md).
 pixi install                       # once: OpenCASCADE 8 into .pixi/
 pixi run cargo test --workspace    # build and test
 pixi run cargo xtask ci            # the full gate CI runs
-pixi run cargo run -p tenon-cli -- demo m0 --out out
+pixi run cargo run -p tenon-cli -- demo m0 --out out    # M0 demo: STEP + STL of a bracket
+pixi run cargo run -p tenon-cli -- info out/bracket.step --json
+cargo run -p tenon                 # the desktop layout shell
 ```
+
+On Windows with Smart App Control enabled, freshly built binaries can be blocked; see
+[docs/setup.md](docs/setup.md#smart-app-control).
 
 ## Origins
 

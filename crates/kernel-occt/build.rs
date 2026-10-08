@@ -1,8 +1,8 @@
 //! Compiles the C++ shim (cxx) and links OpenCASCADE 8 dynamically.
 //!
 //! OCCT is looked up, in order, at:
-//! 1. `OCCT_ROOT`: an install prefix (pixi sets it to its environment),
-//! 2. `CONDA_PREFIX`: any active conda or pixi environment,
+//! 1. `OCCT_ROOT`: an install prefix you set to use your own OCCT 8 build,
+//! 2. `CONDA_PREFIX`: the active pixi (or conda) environment,
 //! 3. `<workspace>/.pixi/envs/default`: the pixi environment, when cargo runs outside `pixi run`.
 //!
 //! Headers are expected under `<prefix>/include/opencascade` (or `<prefix>/Library/include/opencascade`

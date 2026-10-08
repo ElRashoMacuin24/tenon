@@ -16,10 +16,10 @@ platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
 # "novtk" builds skip the VTK visualisation toolkit, which we do not use.
 occt = { version = "8.0.1.*", build = "novtk*" }
 
-[activation.env]
-# kernel-occt's build script reads OCCT_ROOT; CONDA_PREFIX is set by pixi.
-OCCT_ROOT = "$CONDA_PREFIX"
-
+# kernel-occt's build script finds OCCT through CONDA_PREFIX, which pixi sets. Set OCCT_ROOT
+# yourself only to use a different OCCT 8 install. The library paths below let test binaries and
+# tools load OCCT's shared libraries on Linux and macOS (Windows finds the DLLs through PATH,
+# which pixi sets).
 [target.linux-64.activation.env]
 LD_LIBRARY_PATH = "$CONDA_PREFIX/lib"
 

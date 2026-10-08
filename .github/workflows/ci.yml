@@ -1,0 +1,44 @@
+# The same gate as `pixi run cargo xtask ci` locally: fmt, clippy -D warnings, tests, asset
+# attribution, crate layering, unsafe audit, wasm check of the backend-neutral crates.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux packages for the windowing stack
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+
+      # OpenCASCADE 8 (conda-forge, pinned by pixi.lock), linked dynamically.
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: v0.81.0
+          cache: true
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: CI gate
+        run: pixi run cargo xtask ci
