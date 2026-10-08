@@ -2,7 +2,7 @@
 
 use std::f64::consts::PI;
 
-use egui::{Pos2, Rect, vec2};
+use egui::{Pos2, Rect, pos2, vec2};
 use serde_json::json;
 use tenon_geom::Vec2;
 use tenon_kernel_occt::OcctKernel;
@@ -142,6 +142,166 @@ fn sketch_extrude_and_sketch_on_the_top_face_through_the_ui() {
         wb.run_ui(id).unwrap();
         frame(&mut wb, &ctx, size);
     }
+}
+
+/// Feeds raw pointer events through egui, frame by frame, as the windowing layer would.
+struct Driver {
+    ctx: egui::Context,
+    time: f64,
+    size: egui::Vec2,
+}
+
+impl Driver {
+    fn new(size: egui::Vec2) -> Driver {
+        Driver { ctx: egui::Context::default(), time: 0.0, size }
+    }
+    fn frame(&mut self, wb: &mut Workbench, events: Vec<egui::Event>) {
+        self.time += 1.0 / 60.0;
+        let input =
+            egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)), time: Some(self.time), events, ..Default::default() };
+        self.ctx.run_ui(input, |ui| wb.ui(ui, None)).drop_without_applying_deltas();
+    }
+    fn button(pos: Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos, button, pressed, modifiers: egui::Modifiers::default() }
+    }
+    fn click(&mut self, wb: &mut Workbench, pos: Pos2) {
+        self.frame(wb, vec![egui::Event::PointerMoved(pos)]);
+        self.frame(wb, vec![Self::button(pos, egui::PointerButton::Primary, true)]);
+        self.frame(wb, vec![Self::button(pos, egui::PointerButton::Primary, false)]);
+    }
+    fn drag(&mut self, wb: &mut Workbench, from: Pos2, to: Pos2, button: egui::PointerButton) {
+        self.frame(wb, vec![egui::Event::PointerMoved(from)]);
+        self.frame(wb, vec![Self::button(from, button, true)]);
+        for k in 1..=10 {
+            self.frame(wb, vec![egui::Event::PointerMoved(from + (to - from) * (k as f32 / 10.0))]);
+        }
+        self.frame(wb, vec![Self::button(to, button, false)]);
+    }
+}
+
+/// Screen position of a model point in the last viewport.
+fn on_screen(wb: &Workbench, p: tenon_geom::Vec3) -> Pos2 {
+    let r = wb.view.rect;
+    let (x, y, _) = wb.view.camera.project(p, f64::from(r.width()), f64::from(r.height())).unwrap();
+    r.min + vec2(x as f32, y as f32)
+}
+
+#[test]
+fn viewport_responds_to_real_pointer_input() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.scene().bodies.len(), 1);
+    let rect = wb.view.rect;
+    let is_top = |wb: &Workbench| match wb.view.selection.as_slice() {
+        [Pick::Face { body, face }] => matches!(wb.scene().bodies[*body].faces[*face as usize].0, Some(FaceOrigin::Cap { end: CapEnd::End, .. })),
+        _ => false,
+    };
+
+    // A click on the top face selects it and names it in the status bar.
+    let top_centre = on_screen(&wb, Vec3::new(20.0, 10.0, 10.0));
+    d.click(&mut wb, top_centre);
+    assert!(is_top(&wb), "{:?}", wb.view.selection);
+    assert!(wb.status().contains("end face of Extrude1"), "{}", wb.status());
+    // A click on empty background clears it.
+    d.click(&mut wb, rect.left_top() + vec2(40.0, rect.height() / 2.0));
+    assert!(wb.view.selection.is_empty());
+
+    // Left drag orbits, middle drag pans, the wheel zooms.
+    let c = rect.center();
+    let yaw = wb.view.camera.yaw;
+    d.drag(&mut wb, c, c + vec2(120.0, 0.0), egui::PointerButton::Primary);
+    assert!((wb.view.camera.yaw - yaw).abs() > 0.1, "left drag orbits");
+    assert!(wb.view.selection.is_empty(), "a drag is not a click");
+    // (The view still looks straight down from sketching, so tilt by dragging upwards.)
+    let pitch = wb.view.camera.pitch;
+    d.drag(&mut wb, c, c + vec2(0.0, -80.0), egui::PointerButton::Secondary);
+    assert!(wb.view.camera.pitch < pitch - 0.3, "right drag orbits: pitch {pitch} -> {}", wb.view.camera.pitch);
+    let target = wb.view.camera.target;
+    d.drag(&mut wb, c, c + vec2(100.0, 40.0), egui::PointerButton::Middle);
+    assert!(wb.view.camera.target.dist(target) > 1.0, "middle drag pans");
+    let distance = wb.view.camera.distance;
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(c)]);
+    let wheel = egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, 120.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::default(),
+    };
+    d.frame(&mut wb, vec![wheel]);
+    for _ in 0..40 {
+        d.frame(&mut wb, vec![]);
+    }
+    assert!(wb.view.camera.distance < distance * 0.95, "wheel up zooms in: {distance} -> {}", wb.view.camera.distance);
+
+    // The orientation cube: clicking its TOP face looks down, and the click does not reach the
+    // model behind it (the selection survives).
+    wb.run_ui("view.home").unwrap();
+    d.frame(&mut wb, vec![]);
+    let top_centre = on_screen(&wb, Vec3::new(20.0, 10.0, 10.0));
+    d.click(&mut wb, top_centre);
+    assert!(is_top(&wb));
+    let cam = wb.view.camera;
+    let cube = pos2(rect.right() - 92.0, rect.top() + 82.0);
+    d.click(&mut wb, cube + vec2((Vec3::Z.dot(cam.right()) * 30.0) as f32, (-Vec3::Z.dot(cam.up()) * 30.0) as f32));
+    assert!((wb.view.camera.pitch - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "top view: pitch {}", wb.view.camera.pitch);
+    assert!(is_top(&wb), "the cube click left the selection alone");
+}
+
+#[test]
+fn sketching_with_real_clicks_and_drags() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+
+    // Line tool: three clicks, then a click on the first point closes the chain.
+    wb.run_ui("sketch.line").unwrap();
+    for (x, y) in [(0.0, 0.0), (30.0, 0.0), (30.0, 20.0), (0.0, 0.0)] {
+        let p = at(&wb, x, y);
+        d.click(&mut wb, p);
+    }
+    let sk = wb.document().sketch(f).unwrap().clone();
+    assert_eq!(sk.entity_count(), 6, "three lines and three shared points");
+    let info = tenon_model::cmd::sketch_info_value(&sk);
+    let regions = info["regions"].as_array().unwrap();
+    assert_eq!(regions.len(), 1, "the chain closed: {info}");
+    assert!((regions[0]["area"].as_f64().unwrap() - 300.0).abs() < 0.5, "{}", regions[0]);
+
+    // Escape twice: end the chain, then back to the select tool.
+    let esc = egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::default() };
+    d.frame(&mut wb, vec![esc.clone()]);
+    d.frame(&mut wb, vec![esc]);
+    assert_eq!(wb.active_tool_id(), None, "select tool");
+
+    // Drag the corner at (30, 20) quickly: a single 15 px pointer step already leaves the 9 px
+    // snap radius, so the point must be picked where the button went down.
+    let from = at(&wb, 30.0, 20.0);
+    let to = at(&wb, 36.0, 26.0);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(from)]);
+    d.frame(&mut wb, vec![Driver::button(from, egui::PointerButton::Primary, true)]);
+    let steps = ((to - from).length() / 15.0).ceil().max(2.0) as usize;
+    for k in 1..=steps {
+        d.frame(&mut wb, vec![egui::Event::PointerMoved(from + (to - from) * (k as f32 / steps as f32))]);
+    }
+    d.frame(&mut wb, vec![Driver::button(to, egui::PointerButton::Primary, false)]);
+    let sk = wb.document().sketch(f).unwrap();
+    let moved = sk.entities().any(|(_, e)| match e.geometry {
+        tenon_sketch::Geometry::Point { pos } => pos.dist(Vec2::new(36.0, 26.0)) < 0.2,
+        _ => false,
+    });
+    assert!(moved, "the dragged corner follows the pointer: {}", tenon_model::cmd::sketch_info_value(sk));
 }
 
 #[test]

@@ -422,8 +422,12 @@ impl Workbench {
             Mode::Model => Tool::Select,
         };
         if tool == Tool::Select {
+            // Pick the point where the button went down: a drag is only recognised once the
+            // pointer has moved, and a quick flick can already be outside the snap radius.
             if resp.drag_started_by(egui::PointerButton::Primary)
-                && let (Some(p), Mode::Sketch(sm)) = (snap, &mut self.mode)
+                && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+                && let Some(p) = hit_test(&doc_sketch, &plane, origin).filter(|h| doc_sketch.is_point(*h))
+                && let Mode::Sketch(sm) = &mut self.mode
             {
                 sm.drag = Some((p, doc_sketch.clone()));
             }
