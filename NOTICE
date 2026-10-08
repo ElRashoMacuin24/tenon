@@ -1,24 +1,44 @@
-CADCraft
-Copyright (c) 2026 ArtCraft Team and the CADCraft contributors.
+Tenon
+Copyright (c) 2026 the Tenon contributors.
 Licensed under the MIT License or the Apache License, Version 2.0, at your option
 (LICENSE-MIT, LICENSE-APACHE).
 
-The ArtCraft name, wordmark and logos in docs/brand/ are trademarks of the ArtCraft Team. They are
-not open source and are not covered by the license above; their terms are in
-docs/brand/LICENSE-brand.txt.
+Portions derived from CADCraft
+------------------------------
+Tenon is a fork of CADCraft (https://github.com/storytold/cadcraft) at commit 14e143b.
+crates/geom, crates/dxf and xtask originate there.
+Copyright (c) 2026 ArtCraft Team and the CADCraft contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option.
+The ArtCraft name, wordmark and logos are trademarks of the ArtCraft Team; per CADCraft's brand
+terms they were removed from this fork and are not used by Tenon.
 
-Third-party material
+OpenCASCADE Technology (OCCT)
+-----------------------------
+crates/kernel-occt calls OpenCASCADE Technology 8, Copyright (c) Open CASCADE SAS, licensed under
+the GNU Lesser General Public License version 2.1 with the Open CASCADE Exception 1.0
+(https://dev.opencascade.org/resources/licensing). OCCT is NOT part of this repository and is not
+compiled into Tenon: it is linked dynamically as shared libraries (TKernel, TKMath, TKBRep, ...).
 
-Software dependencies are listed in Cargo.lock. One is under a weak-copyleft licence: the acadrust
-crate (DWG reading and writing, https://github.com/hakanaktt/acadrust) is licensed under the
-Mozilla Public License 2.0 and is used unmodified as a separate library (crates/dwg). Its source
-is available from crates.io and the repository above.
+- Obtaining the source: the exact OCCT version used is pinned in pixi.toml and pixi.lock (the
+  conda-forge "occt" package). Its source is available from
+  https://github.com/Open-Cascade-SAS/OCCT and from the conda-forge feedstock
+  https://github.com/conda-forge/occt-feedstock.
+- Replacing it: build any compatible OCCT 8.0.x yourself and point Tenon at it, either by setting
+  OCCT_ROOT to its install prefix when building, or by replacing the shared libraries next to a
+  packaged Tenon binary (DLLs on Windows, .so on Linux, .dylib on macOS). No relinking of Tenon is
+  needed for a binary-compatible OCCT.
+- Rebuilding Tenon against a modified OCCT: the complete source of Tenon is available in this
+  repository; `OCCT_ROOT=/your/occt cargo build --release` relinks it (docs/setup.md).
 
+The C++ shim in crates/kernel-occt/shim is original Tenon code (MIT OR Apache-2.0) written against
+OCCT's public headers.
 
-None: every bundled asset is original to CADCraft (icons, drafting font, hatch patterns and
-linetypes are drawn or defined in code). The per-file list is in ATTRIBUTION.md. Builds made with
-the optional craft-fonts input (CRAFT_FONTS_DIR) embed the fonts listed in its ATTRIBUTION.md,
-each under the SIL Open Font License 1.1.
+Other third-party material
+--------------------------
+Rust dependencies are listed in Cargo.lock with their own licences. Bundled assets (if any) are
+listed with author, source and licence in ATTRIBUTION.md.
 
-CADCraft is an independent project and is not affiliated with, sponsored by or endorsed by
-Autodesk, Inc. AutoCAD and DWG are trademarks of Autodesk, Inc.
+Trademarks
+----------
+Tenon is an independent project and is not affiliated with, sponsored by or endorsed by
+Autodesk, Inc. Autodesk, Inventor, AutoCAD and DWG are trademarks of Autodesk, Inc.

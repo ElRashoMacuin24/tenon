@@ -1,0 +1,34 @@
+# Native (C++) dependencies for Tenon, from conda-forge.
+#
+# Only OpenCASCADE (OCCT) lives here; everything else is a Cargo dependency.
+# OCCT is LGPL-2.1-only and is linked dynamically (see NOTICE).
+#
+#   pixi install            # once: downloads OCCT into .pixi/
+#   pixi run cargo test     # any cargo command, with OCCT on the search paths
+#   pixi run ci             # the full gate (same as GitHub Actions)
+
+[workspace]
+name = "tenon"
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
+
+[dependencies]
+# "novtk" builds skip the VTK visualisation toolkit, which we do not use.
+occt = { version = "8.0.1.*", build = "novtk*" }
+
+[activation.env]
+# kernel-occt's build script reads OCCT_ROOT; CONDA_PREFIX is set by pixi.
+OCCT_ROOT = "$CONDA_PREFIX"
+
+[target.linux-64.activation.env]
+LD_LIBRARY_PATH = "$CONDA_PREFIX/lib"
+
+[target.osx-64.activation.env]
+DYLD_FALLBACK_LIBRARY_PATH = "$CONDA_PREFIX/lib"
+
+[target.osx-arm64.activation.env]
+DYLD_FALLBACK_LIBRARY_PATH = "$CONDA_PREFIX/lib"
+
+[tasks]
+ci = "cargo xtask ci"
+test = "cargo test --workspace"

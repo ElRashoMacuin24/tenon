@@ -1,45 +1,54 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "xtask"]
-# default-members
+members = ["crates/*", "apps/*", "xtask"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.90"
-repository = "https://github.com/storytold/cadcraft"
 
 [workspace.dependencies]
-# internal
-cadcraft-geom = { path = "crates/geom" }
-cadcraft-dxf = { path = "crates/dxf" }
+# internal (layering: docs/architecture.md, enforced by `cargo xtask layers`)
+tenon-geom = { path = "crates/geom" }
+tenon-dxf = { path = "crates/dxf" }
+tenon-kernel = { path = "crates/kernel" }
+tenon-kernel-occt = { path = "crates/kernel-occt" }
+tenon-sketch = { path = "crates/sketch" }
+tenon-model = { path = "crates/model" }
+tenon-assembly = { path = "crates/assembly" }
+tenon-drawing = { path = "crates/drawing" }
+tenon-io = { path = "crates/io" }
+tenon-render = { path = "crates/render" }
+tenon-ui = { path = "crates/ui" }
 
 # foundation
 thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
-rayon = "1"
+robust = "1.2"
 
-# rendering / formats
-tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd", "png-format"] }
-skrifa = "0.47"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# native bindings (kernel-occt only; enforced by `cargo xtask layers`)
+cxx = "1.0.202"
+cxx-build = "1.0.202"
 
-# ui
+# ui (ui and app only)
 egui = "0.36"
 eframe = { version = "0.36", default-features = false }
-egui-wgpu = "0.36"
-rfd = "0.17"
-arboard = { version = "3.6", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
+# Never crash: production code returns errors instead (clippy.toml relaxes these in tests).
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
 dbg_macro = "warn"
-todo = "warn"
 too_many_arguments = "allow"
 type_complexity = "allow"
 

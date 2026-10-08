@@ -1,0 +1,13 @@
+[package]
+name = "tenon-cli"
+description = "Headless Tenon: scripted runs, inspection, conversion, MCP server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tenon-kernel = { workspace = true }

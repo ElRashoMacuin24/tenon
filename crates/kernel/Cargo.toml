@@ -1,6 +1,6 @@
 [package]
-name = "tenon-geom"
-description = "Tenon geometry: f64 2D/3D math, central tolerances, robust predicates"
+name = "tenon-kernel"
+description = "Backend-neutral B-rep kernel trait and types"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,5 +9,6 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+tenon-geom = { workspace = true }
+thiserror = { workspace = true }
 serde = { workspace = true }
-robust = { workspace = true }

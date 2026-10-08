@@ -1,6 +1,6 @@
 //! Workspace tooling: `cargo xtask <command>`.
 //!
-//! Pure Rust (std + serde_json). External tools (`cargo`, `curl`, `tar`) are
+//! Pure Rust (std + serde_json). External tools (`cargo`, `git`) are
 //! invoked through `std::process::Command`.
 
 mod assets;
@@ -15,12 +15,13 @@ usage: cargo xtask <command>
 
 commands:
   assets          check that every icon/image/font/asset is attributed in ATTRIBUTION.md
-  layers          enforce the crate dependency layering (plan/architecture.md §3)
+  layers          enforce the crate dependency layering (docs/architecture.md)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
   ci              fmt --check, clippy -D warnings, test, assets, layers, wasm (stops at first failure)
-  corpus [--download]
-                  show where test corpora live; --download fetches PngSuite into corpus/pngsuite
+  corpus          show where test corpora live
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
+
+Crates that link OpenCASCADE need the pixi environment: run `pixi run cargo xtask ci`.
 ";
 
 fn main() -> ExitCode {
@@ -31,7 +32,7 @@ fn main() -> ExitCode {
         Some("layers") => cmd_layers(),
         Some("wasm") => cmd_wasm(),
         Some("ci") => cmd_ci(),
-        Some("corpus") => cmd_corpus(rest.contains(&"--download")),
+        Some("corpus") => cmd_corpus(),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
@@ -50,7 +51,8 @@ fn main() -> ExitCode {
 
 /// Workspace root (parent of the xtask crate).
 pub fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask has a parent dir").to_path_buf()
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    dir.parent().unwrap_or(dir).to_path_buf()
 }
 
 pub fn cargo() -> Command {
@@ -75,7 +77,7 @@ pub fn metadata() -> Result<serde_json::Value, String> {
 
 fn cmd_layers() -> Result<(), String> {
     let crates = layers::from_metadata(&metadata()?)?;
-    println!("Dependency layering (plan/architecture.md §3)\n");
+    println!("Dependency layering (docs/architecture.md)\n");
     println!("{:<28} {:<14} workspace deps", "crate", "layer");
     for c in &crates {
         let ws: Vec<String> = c
@@ -107,14 +109,15 @@ fn cmd_layers() -> Result<(), String> {
     }
 }
 
-/// Workspace packages that must build for wasm32: all L0–L5 crates plus
-/// the egui shell.
+/// Workspace packages that must build for wasm32: the backend-neutral core (L0-L6). Kernel
+/// backends (C++ FFI) cannot target wasm32-unknown-unknown; the renderer and UI are checked once
+/// a wasm kernel exists (M6).
 fn wasm_set() -> Result<Vec<String>, String> {
     let crates = layers::from_metadata(&metadata()?)?;
     Ok(crates
         .into_iter()
         .filter(|c| match layers::classify(&c.name) {
-            Some(layers::Class::Layer(l)) => l <= 4 || layers::short_name(&c.name) == "ui-egui",
+            Some(layers::Class::Layer(l)) => l <= 6,
             Some(layers::Class::Standalone) => true,
             _ => false,
         })
@@ -190,7 +193,7 @@ fn cmd_ci() -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_corpus(_download: bool) -> Result<(), String> {
-    println!("Test corpora live in storytold/cadcraft-corpus (planned); never commit large binaries here.");
+fn cmd_corpus() -> Result<(), String> {
+    println!("Large test corpora live outside this repository (planned); never commit large binaries here.");
     Ok(())
 }

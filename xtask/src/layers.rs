@@ -1,4 +1,4 @@
-//! Dependency layering rules (plan/architecture.md §3).
+//! Dependency layering rules (docs/architecture.md, "Layering").
 //!
 //! The rule engine works on a small, metadata-independent model so it can be
 //! unit-tested; `from_metadata` builds that model from `cargo metadata`.
@@ -12,7 +12,11 @@ pub enum Class {
     Layer(u8),
     /// Layer 0, and additionally may depend on no workspace crate at all.
     Standalone,
-    /// Test tooling: may depend on anything up to L5 (it sits at L6 for rule
+    /// A kernel backend (the only home of FFI and `unsafe`). It sits at the given layer for its own
+    /// dependencies; layered crates may use it only as a dev-dependency, so everything above
+    /// `kernel` stays backend-neutral. Apps pick the backend.
+    Backend(u8),
+    /// Test tooling: may depend on anything below the UI (it sits at L9 for rule
     /// purposes); other crates may use it only as a dev-dependency.
     Testkit,
     /// Binaries and build tooling: exempt from the rules.
@@ -22,42 +26,36 @@ pub enum Class {
 impl Class {
     fn layer(self) -> Option<u8> {
         match self {
-            Class::Layer(l) => Some(l),
+            Class::Layer(l) | Class::Backend(l) => Some(l),
             Class::Standalone => Some(0),
-            Class::Testkit => Some(6),
+            Class::Testkit => Some(9),
             Class::Exempt => None,
         }
     }
 }
 
-/// The layering table. Names are package names without the `cadcraft-`
-/// prefix.
+/// The layering table. Names are package names without the `tenon-` prefix.
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
     ("dxf", Class::Standalone),
-    ("dwg", Class::Standalone),
-    ("color", Class::Layer(0)),
-    ("doc", Class::Layer(1)),
-    ("constraints", Class::Layer(2)),
-    ("fonts", Class::Layer(2)),
-    ("render", Class::Layer(2)),
-    ("io", Class::Layer(3)),
-    ("engine", Class::Layer(4)),
-    ("ui-egui", Class::Layer(5)),
-    ("mcp", Class::Layer(5)),
+    ("kernel", Class::Layer(1)),
+    ("kernel-occt", Class::Backend(2)),
+    ("sketch", Class::Layer(2)),
+    ("model", Class::Layer(3)),
+    ("assembly", Class::Layer(4)),
+    ("drawing", Class::Layer(5)),
+    ("io", Class::Layer(6)),
+    ("render", Class::Layer(7)),
+    ("ui", Class::Layer(8)),
     ("testkit", Class::Testkit),
     // apps and tooling
-    ("cadcraft", Class::Exempt),
+    ("tenon", Class::Exempt),
     ("cli", Class::Exempt),
-    ("web", Class::Exempt),
     ("xtask", Class::Exempt),
 ];
 
-/// Explicit orderings *within* a layer (earlier may be used by later).
-/// The L0 foundation is a small chain: `raster` builds on `color` and
-/// `geom`, which the §3 diagram draws on one line. The GPU backend (`gpu`)
-/// reuses the CPU reference (`compose`) for LUTs and parity tests.
-pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["geom", "color"], &["fonts", "render"]];
+/// Explicit orderings *within* a layer (earlier may be used by later). Empty today.
+pub const INTRA_LAYER_ORDER: &[&[&str]] = &[];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
     let (from, to) = (short_name(from), short_name(to));
@@ -69,13 +67,20 @@ fn intra_layer_allowed(from: &str, to: &str) -> bool {
 
 /// External crates that constitute a UI toolkit / windowing dependency.
 /// Entries ending in `*` are prefixes.
-pub const UI_CRATES: &[&str] = &["egui", "eframe", "egui-wgpu", "wgpu", "winit", "egui_kittest", "rfd", "bevy*"];
+pub const UI_CRATES: &[&str] = &["egui", "eframe", "egui-wgpu", "egui_extras", "egui_kittest", "winit", "rfd", "bevy*"];
+/// First layer allowed to use UI crates (`ui`).
+pub const UI_MIN_LAYER: u8 = 8;
 
-/// First layer allowed to use UI crates.
-pub const UI_MIN_LAYER: u8 = 5;
+/// GPU API crates: the renderer may use them without knowing about the UI toolkit.
+pub const GPU_CRATES: &[&str] = &["wgpu"];
+/// First layer allowed to use GPU crates (`render`).
+pub const GPU_MIN_LAYER: u8 = 7;
+
+/// Native-binding crates: only a kernel backend may use them (normal or build dependency).
+pub const NATIVE_CRATES: &[&str] = &["cxx", "cxx-build", "cc", "bindgen", "opencascade*", "occt*"];
 
 pub fn short_name(pkg: &str) -> &str {
-    pkg.strip_prefix("cadcraft-").unwrap_or(pkg)
+    pkg.strip_prefix("tenon-").unwrap_or(pkg)
 }
 
 pub fn classify(pkg: &str) -> Option<Class> {
@@ -83,8 +88,8 @@ pub fn classify(pkg: &str) -> Option<Class> {
     TABLE.iter().find(|(n, _)| *n == s).map(|(_, c)| *c)
 }
 
-fn is_ui_crate(name: &str) -> bool {
-    UI_CRATES.iter().any(|p| match p.strip_suffix('*') {
+fn matches_any(list: &[&str], name: &str) -> bool {
+    list.iter().any(|p| match p.strip_suffix('*') {
         Some(prefix) => name.starts_with(prefix),
         None => name == *p,
     })
@@ -117,14 +122,16 @@ pub enum Violation {
     Upward { krate: String, dep: String, from: u8, to: u8, kind: DepKind },
     StandaloneHasWorkspaceDep { krate: String, dep: String },
     TestkitAsNormalDep { krate: String },
-    UiBelowL6 { krate: String, dep: String, layer: u8 },
+    BackendAsNormalDep { krate: String, dep: String },
+    ToolkitTooLow { krate: String, dep: String, layer: u8, min: u8 },
+    NativeOutsideBackend { krate: String, dep: String },
 }
 
 impl std::fmt::Display for Violation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Violation::Unregistered { krate } => {
-                write!(f, "{krate}: unknown workspace crate; register it in xtask/src/layers.rs TABLE (see plan/architecture.md §3)")
+                write!(f, "{krate}: unknown workspace crate; register it in xtask/src/layers.rs TABLE (see docs/architecture.md)")
             }
             Violation::Upward { krate, dep, from, to, kind } => {
                 write!(f, "{krate} (L{from}) -> {dep} (L{to}) [{kind:?}]: may only depend on strictly lower layers")
@@ -133,10 +140,16 @@ impl std::fmt::Display for Violation {
                 write!(f, "{krate}: standalone crate must not depend on workspace crate {dep}")
             }
             Violation::TestkitAsNormalDep { krate } => {
-                write!(f, "{krate}: cadcraft-testkit may only be a dev-dependency")
+                write!(f, "{krate}: tenon-testkit may only be a dev-dependency")
             }
-            Violation::UiBelowL6 { krate, dep, layer } => {
-                write!(f, "{krate} (L{layer}) depends on UI crate `{dep}`; UI toolkits are only allowed in L6+")
+            Violation::BackendAsNormalDep { krate, dep } => {
+                write!(f, "{krate} -> {dep}: kernel backends may only be dev-dependencies of library crates; go through `dyn Kernel`")
+            }
+            Violation::ToolkitTooLow { krate, dep, layer, min } => {
+                write!(f, "{krate} (L{layer}) depends on `{dep}`, which is only allowed from L{min} up")
+            }
+            Violation::NativeOutsideBackend { krate, dep } => {
+                write!(f, "{krate} depends on native-binding crate `{dep}`; FFI belongs in a kernel backend crate only")
             }
         }
     }
@@ -172,6 +185,11 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
                             out.push(Violation::TestkitAsNormalDep { krate: c.name.clone() });
                         }
                     }
+                    Some(Class::Backend(_)) if !matches!(class, Class::Testkit) => {
+                        if d.kind != DepKind::Dev {
+                            out.push(Violation::BackendAsNormalDep { krate: c.name.clone(), dep: d.name.clone() });
+                        }
+                    }
                     Some(dc) => {
                         let to = dc.layer().unwrap_or(u8::MAX);
                         if to >= layer && !(to == layer && intra_layer_allowed(&c.name, &d.name)) {
@@ -179,14 +197,22 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
                                 krate: c.name.clone(),
                                 dep: d.name.clone(),
                                 from: layer,
-                                to: if to == u8::MAX { 7 } else { to },
+                                to: if to == u8::MAX { 10 } else { to },
                                 kind: d.kind,
                             });
                         }
                     }
                 }
-            } else if layer < UI_MIN_LAYER && is_ui_crate(&d.name) {
-                out.push(Violation::UiBelowL6 { krate: c.name.clone(), dep: d.name.clone(), layer });
+            } else {
+                if layer < UI_MIN_LAYER && matches_any(UI_CRATES, &d.name) {
+                    out.push(Violation::ToolkitTooLow { krate: c.name.clone(), dep: d.name.clone(), layer, min: UI_MIN_LAYER });
+                }
+                if layer < GPU_MIN_LAYER && matches_any(GPU_CRATES, &d.name) {
+                    out.push(Violation::ToolkitTooLow { krate: c.name.clone(), dep: d.name.clone(), layer, min: GPU_MIN_LAYER });
+                }
+                if !matches!(class, Class::Backend(_)) && matches_any(NATIVE_CRATES, &d.name) {
+                    out.push(Violation::NativeOutsideBackend { krate: c.name.clone(), dep: d.name.clone() });
+                }
             }
         }
     }
@@ -223,6 +249,7 @@ pub fn describe(class: Option<Class>) -> String {
     match class {
         Some(Class::Layer(l)) => format!("L{l}"),
         Some(Class::Standalone) => "L0 standalone".into(),
+        Some(Class::Backend(l)) => format!("L{l} backend"),
         Some(Class::Testkit) => "testkit".into(),
         Some(Class::Exempt) => "exempt".into(),
         None => "UNREGISTERED".into(),
@@ -241,74 +268,99 @@ mod tests {
     #[test]
     fn clean_downward_graph_passes() {
         let g = [
-            c("cadcraft-geom", &[("kurbo", Normal, false)]),
-            c("cadcraft-doc", &[("cadcraft-geom", Normal, true)]),
-            c("cadcraft-engine", &[("cadcraft-doc", Normal, true), ("cadcraft-testkit", Dev, true)]),
-            c("cadcraft-ui-egui", &[("cadcraft-engine", Normal, true), ("egui", Normal, false)]),
-            c("cadcraft-cli", &[("cadcraft-ui-egui", Normal, true)]),
+            c("tenon-geom", &[("robust", Normal, false)]),
+            c("tenon-kernel", &[("tenon-geom", Normal, true)]),
+            c("tenon-model", &[("tenon-kernel", Normal, true), ("tenon-kernel-occt", Dev, true), ("tenon-testkit", Dev, true)]),
+            c("tenon-render", &[("tenon-kernel", Normal, true), ("wgpu", Normal, false)]),
+            c("tenon-ui", &[("tenon-render", Normal, true), ("egui", Normal, false)]),
+            c("tenon-cli", &[("tenon-kernel-occt", Normal, true)]),
         ];
         assert!(check(&g).is_empty(), "{:?}", check(&g));
     }
 
     #[test]
     fn upward_dependency_flagged() {
-        let v = check(&[c("cadcraft-doc", &[("cadcraft-engine", Normal, true)])]);
-        assert!(matches!(v[..], [Violation::Upward { from: 1, to: 4, .. }]));
+        let v = check(&[c("tenon-kernel", &[("tenon-model", Normal, true)])]);
+        assert!(matches!(v[..], [Violation::Upward { from: 1, to: 3, .. }]));
     }
 
     #[test]
-    fn sideways_dependency_flagged() {
-        let v = check(&[c("cadcraft-fonts", &[("cadcraft-render", Normal, true)])]);
-        assert!(matches!(v[..], [Violation::Upward { from: 2, to: 2, .. }]));
+    fn drawing_may_not_use_io() {
+        let v = check(&[c("tenon-drawing", &[("tenon-drawing", Dev, true), ("tenon-io", Normal, true)])]);
+        assert!(matches!(v[..], [Violation::Upward { from: 5, to: 6, .. }]));
     }
 
     #[test]
-    fn l0_foundation_chain_allowed_one_way() {
-        assert!(check(&[c("cadcraft-color", &[("cadcraft-geom", Normal, true)])]).is_empty());
-        let v = check(&[c("cadcraft-geom", &[("cadcraft-color", Normal, true)])]);
-        assert!(matches!(v[..], [Violation::Upward { from: 0, to: 0, .. }]));
+    fn backend_only_as_dev_dependency_of_libraries() {
+        let v = check(&[c("tenon-model", &[("tenon-kernel-occt", Normal, true)])]);
+        assert!(matches!(v[..], [Violation::BackendAsNormalDep { .. }]), "{v:?}");
+        assert!(check(&[c("tenon-model", &[("tenon-kernel-occt", Dev, true)])]).is_empty());
+        assert!(check(&[c("tenon", &[("tenon-kernel-occt", Normal, true)])]).is_empty());
+    }
+
+    #[test]
+    fn backend_may_not_reach_above_kernel() {
+        let v = check(&[c("tenon-kernel-occt", &[("tenon-model", Normal, true)])]);
+        assert!(matches!(v[..], [Violation::Upward { from: 2, to: 3, .. }]), "{v:?}");
+        assert!(check(&[c("tenon-kernel-occt", &[("tenon-kernel", Normal, true), ("cxx", Normal, false), ("cxx-build", Build, false)])]).is_empty());
+    }
+
+    #[test]
+    fn native_crates_only_in_backend() {
+        for dep in ["cxx", "cxx-build", "cc", "opencascade-sys", "occt-sys"] {
+            let v = check(&[c("tenon-model", &[(dep, Normal, false)])]);
+            assert!(matches!(v[..], [Violation::NativeOutsideBackend { .. }]), "{dep}: {v:?}");
+        }
+    }
+
+    #[test]
+    fn toolkits_below_their_layer_flagged() {
+        for dep in ["egui", "eframe", "winit", "egui_kittest", "rfd", "bevy_ecs"] {
+            let v = check(&[c("tenon-render", &[(dep, Normal, false)])]);
+            assert!(matches!(v[..], [Violation::ToolkitTooLow { layer: 7, min: 8, .. }]), "{dep}");
+        }
+        let v = check(&[c("tenon-io", &[("wgpu", Normal, false)])]);
+        assert!(matches!(v[..], [Violation::ToolkitTooLow { layer: 6, min: 7, .. }]), "{v:?}");
+        assert!(check(&[c("tenon-render", &[("wgpu", Normal, false)])]).is_empty());
+        assert!(check(&[c("tenon-ui", &[("winit", Normal, false)])]).is_empty());
     }
 
     #[test]
     fn self_dev_dependency_ignored() {
-        assert!(check(&[c("cadcraft-doc", &[("cadcraft-doc", Dev, true)])]).is_empty());
+        assert!(check(&[c("tenon-model", &[("tenon-model", Dev, true)])]).is_empty());
     }
 
     #[test]
     fn upward_dev_dependency_flagged() {
-        let v = check(&[c("cadcraft-geom", &[("cadcraft-doc", Dev, true)])]);
+        let v = check(&[c("tenon-geom", &[("tenon-kernel", Dev, true)])]);
         assert!(matches!(v[..], [Violation::Upward { kind: Dev, .. }]));
     }
 
     #[test]
-    fn ui_crates_below_l6_flagged() {
-        for dep in ["egui", "eframe", "winit", "egui_kittest", "rfd", "bevy_ecs", "bevy"] {
-            let v = check(&[c("cadcraft-engine", &[(dep, Normal, false)])]);
-            assert!(matches!(v[..], [Violation::UiBelowL6 { layer: 4, .. }]), "{dep}");
-        }
-        assert!(check(&[c("cadcraft-engine", &[("egui_extras_not", Normal, false)])]).is_empty());
-        assert!(check(&[c("cadcraft-mcp", &[("winit", Normal, false)])]).is_empty());
-    }
-
-    #[test]
     fn unregistered_crate_is_error() {
-        let v = check(&[c("cadcraft-mystery", &[])]);
-        assert!(matches!(&v[..], [Violation::Unregistered { krate }] if krate == "cadcraft-mystery"));
+        let v = check(&[c("tenon-mystery", &[])]);
+        assert!(matches!(&v[..], [Violation::Unregistered { krate }] if krate == "tenon-mystery"));
         assert!(v[0].to_string().contains("register"));
     }
 
     #[test]
+    fn standalone_has_no_workspace_deps() {
+        let v = check(&[c("tenon-dxf", &[("tenon-geom", Normal, true)])]);
+        assert!(matches!(v[..], [Violation::StandaloneHasWorkspaceDep { .. }]));
+    }
+
+    #[test]
     fn testkit_only_as_dev_dependency() {
-        let v = check(&[c("cadcraft-render", &[("cadcraft-testkit", Normal, true)])]);
+        let v = check(&[c("tenon-render", &[("tenon-testkit", Normal, true)])]);
         assert!(matches!(v[..], [Violation::TestkitAsNormalDep { .. }]));
-        assert!(check(&[c("cadcraft-render", &[("cadcraft-testkit", Dev, true)])]).is_empty());
-        assert!(check(&[c("cadcraft-testkit", &[("cadcraft-engine", Normal, true)])]).is_empty());
+        assert!(check(&[c("tenon-render", &[("tenon-testkit", Dev, true)])]).is_empty());
+        assert!(check(&[c("tenon-testkit", &[("tenon-model", Normal, true), ("tenon-kernel-occt", Normal, true)])]).is_empty());
     }
 
     #[test]
     fn apps_and_xtask_exempt() {
-        for app in ["cadcraft", "cadcraft-cli", "cadcraft-web", "xtask"] {
-            assert!(check(&[c(app, &[("egui", Normal, false), ("cadcraft-ui-egui", Normal, true)])]).is_empty());
+        for app in ["tenon", "tenon-cli", "xtask"] {
+            assert!(check(&[c(app, &[("egui", Normal, false), ("tenon-ui", Normal, true)])]).is_empty());
         }
     }
 
@@ -316,19 +368,19 @@ mod tests {
     fn metadata_parsing() {
         let meta: Value = serde_json::from_str(
             r#"{"packages":[
-                {"name":"cadcraft-doc","dependencies":[
-                    {"name":"cadcraft-geom","kind":null,"path":"/x/crates/geom"},
+                {"name":"tenon-kernel","dependencies":[
+                    {"name":"tenon-geom","kind":null,"path":"/x/crates/geom"},
                     {"name":"serde","kind":null},
                     {"name":"proptest","kind":"dev"}]},
-                {"name":"cadcraft-geom","dependencies":[]}
+                {"name":"tenon-geom","dependencies":[]}
             ]}"#,
         )
         .unwrap();
         let g = from_metadata(&meta).unwrap();
         assert_eq!(g.len(), 2);
-        let doc = g.iter().find(|c| c.name == "cadcraft-doc").unwrap();
-        assert!(doc.deps[0].workspace && !doc.deps[1].workspace);
-        assert_eq!(doc.deps[2].kind, Dev);
+        let k = g.iter().find(|c| c.name == "tenon-kernel").unwrap();
+        assert!(k.deps[0].workspace && !k.deps[1].workspace);
+        assert_eq!(k.deps[2].kind, Dev);
         assert!(check(&g).is_empty());
     }
 }

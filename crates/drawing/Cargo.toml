@@ -1,0 +1,15 @@
+[package]
+name = "tenon-drawing"
+description = "Drawing views, dimensions, title blocks, PDF/SVG/DXF output"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tenon-geom = { workspace = true }
+tenon-model = { workspace = true }
+tenon-assembly = { workspace = true }
+tenon-dxf = { workspace = true }

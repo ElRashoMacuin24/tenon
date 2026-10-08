@@ -1,11 +1,10 @@
 *~
 /target
-/plan/
-/plans/
 /dist/
-/log/
 /temp/
+/out/
 .DS_Store
 *.swp
-/apps/cadcraft-web/dist/
+# pixi environments (OpenCASCADE); pixi.lock is committed
+.pixi/
 /.claude/worktrees/

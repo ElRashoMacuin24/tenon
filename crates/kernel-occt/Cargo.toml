@@ -1,0 +1,15 @@
+[package]
+name = "tenon-kernel-occt"
+description = "Kernel backend over OpenCASCADE (the only crate allowed unsafe)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[dependencies]
+tenon-kernel = { workspace = true }
+tenon-geom = { workspace = true }

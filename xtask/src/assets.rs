@@ -2,14 +2,14 @@
 //!
 //! Scans all git-tracked (and untracked, not ignored) files with an asset extension, plus
 //! everything under `assets/`, `docs/images/` and `examples/`, and fails if a path is not listed
-//! as `` `path` `` in ATTRIBUTION.md. See the asset policy in AGENTS.md.
+//! as `` `path` `` in ATTRIBUTION.md. See the asset policy in ATTRIBUTION.md.
 
 use std::path::Path;
 use std::process::Command;
 
 const ASSET_EXT: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ico", "icns", "svg", "pdf", "ai", "eps", "psd", "icc", "icm", "ttf", "otf", "woff",
-    "woff2", "ase", "indd", "idml", "aco", "abr", "dxf", "dwg", "mp4", "wav", "mp3",
+    "woff2", "ase", "indd", "idml", "aco", "abr", "dxf", "dwg", "mp4", "wav", "mp3", "step", "stp", "stl", "3mf", "iges", "igs", "brep",
 ];
 const ASSET_DIRS: &[&str] = &["assets/", "docs/images/", "examples/"];
 
@@ -51,5 +51,6 @@ mod tests {
         assert_eq!(missing(&files, md), vec!["docs/images/b.png".to_string(), "tests/fixture.png".into()]);
         assert!(!is_asset("crates/x/src/lib.rs"));
         assert!(is_asset("assets/fonts/OFL.txt"));
+        assert!(is_asset("crates/kernel-occt/tests/data/part.step"));
     }
 }

@@ -1,0 +1,13 @@
+[package]
+name = "tenon-render"
+description = "wgpu viewport: tessellation display, picking, edge overlay, orientation cube"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tenon-geom = { workspace = true }
+tenon-kernel = { workspace = true }

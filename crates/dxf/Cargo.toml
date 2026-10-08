@@ -1,5 +1,5 @@
 [package]
-name = "cadcraft-dxf"
+name = "tenon-dxf"
 description = "Standalone DXF tag reader/writer (ASCII and binary), from the published DXF reference"
 version.workspace = true
 edition.workspace = true
