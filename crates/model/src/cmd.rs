@@ -10,8 +10,11 @@ use tenon_geom::{Vec2, tol};
 use tenon_kernel::{Kernel, ShapeHandle};
 use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions};
 
-use crate::document::{AxisRef, Extrude, ExtrudeExtent, FeatureKind, Operation, OriginAxis, OriginPlane, PlaneRef, RegionSel, Revolve, RevolveAngle};
-use crate::naming::FaceRef;
+use crate::document::{
+    AxisRef, Chamfer, ChamferSize, Extrude, ExtrudeExtent, FeatureKind, Fillet, Operation, OriginAxis, OriginPlane, PlaneRef, RegionSel, Revolve,
+    RevolveAngle, Shell,
+};
+use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::regen::{Regen, regenerate};
 use crate::{Document, FeatureId};
 
@@ -551,6 +554,36 @@ fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::Revolve(Revolve { sketch, regions: region_sel(p)?, axis, angle, operation: operation(p)? }))
 }
 
+fn edge_refs(p: &Value) -> Result<Vec<EdgeRef>, CmdError> {
+    let v: Vec<EdgeRef> = parse(p, "edges")?;
+    if v.is_empty() || v.len() > 10_000 {
+        return Err("`edges` needs 1 to 10000 edge references (from model.edge_ref)".into());
+    }
+    Ok(v)
+}
+
+fn model_fillet(s: &mut Session, p: &Value) -> CmdResult {
+    add_feature(s, FeatureKind::Fillet(Fillet { edges: edge_refs(p)?, radius: num(p, "radius")? }))
+}
+
+fn model_chamfer(s: &mut Session, p: &Value) -> CmdResult {
+    let edges = edge_refs(p)?;
+    let d = num(p, "distance")?;
+    let size = match (opt_num(p, "distance2")?, opt_num(p, "angle")?) {
+        (None, None) => ChamferSize::Equal(d),
+        (Some(d2), None) => ChamferSize::TwoDistances { d1: d, d2, reference: parse(p, "reference")? },
+        (None, Some(angle)) => ChamferSize::DistanceAngle { distance: d, angle, reference: parse(p, "reference")? },
+        (Some(_), Some(_)) => return Err("give `distance2` or `angle`, not both".into()),
+    };
+    add_feature(s, FeatureKind::Chamfer(Chamfer { edges, size }))
+}
+
+fn model_shell(s: &mut Session, p: &Value) -> CmdResult {
+    let remove: Vec<FaceRef> = if p.get("remove").is_some() { parse(p, "remove")? } else { Vec::new() };
+    let outside = p.get("outside").and_then(Value::as_bool).unwrap_or(false);
+    add_feature(s, FeatureKind::Shell(Shell { remove, thickness: num(p, "thickness")?, outside }))
+}
+
 fn feature_update(s: &mut Session, p: &Value) -> CmdResult {
     let id = feature_id(p)?;
     let kind: FeatureKind = parse(p, "kind")?;
@@ -681,6 +714,54 @@ fn model_faces(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     Ok(json!({ "body": body, "faces": out }))
 }
 
+fn model_edges(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
+    let body = opt_id(p, "body")?.unwrap_or(0) as usize;
+    let r = s.regen(k).clone();
+    let b = r.bodies.get(body).ok_or("no such body")?;
+    let topo = k.topology(b.shape).map_err(|e| CmdError(e.to_string()))?;
+    let mut out = Vec::new();
+    for (i, adj) in topo.edge_faces.iter().enumerate() {
+        let i = u32::try_from(i).map_err(|_| "too many edges")?;
+        let info = k.edge_info(b.shape.edge(i)).map_err(|e| CmdError(e.to_string()))?;
+        out.push(json!({
+            "edge": i,
+            "faces": naming::edge_names(&b.names, adj),
+            "curve": info.curve,
+            "length": info.length,
+            "start": [info.start.x, info.start.y, info.start.z],
+            "end": [info.end.x, info.end.y, info.end.z],
+        }));
+    }
+    Ok(json!({ "body": body, "edges": out }))
+}
+
+fn model_edge_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
+    let r = s.regen(k).clone();
+    let er = if let Some(faces) = p.get("faces") {
+        // By the names of its two faces; there must be exactly one such edge.
+        let [a, b]: [FaceOrigin; 2] = serde_json::from_value(faces.clone()).map_err(|e| CmdError(format!("`faces`: {e}")))?;
+        let want = naming::EdgeRef::new(a, b, naming::EdgeFingerprint { mid: tenon_geom::Vec3::ZERO, length: 0.0 }).faces;
+        let mut found = Vec::new();
+        for (bi, body) in r.bodies.iter().enumerate() {
+            let topo = k.topology(body.shape).map_err(|e| CmdError(e.to_string()))?;
+            for (ei, adj) in topo.edge_faces.iter().enumerate() {
+                if naming::edge_names(&body.names, adj) == Some(want) {
+                    found.push((bi, u32::try_from(ei).map_err(|_| "too many edges")?));
+                }
+            }
+        }
+        match found.as_slice() {
+            [(b, e)] => r.edge_ref(*b, *e, k),
+            [] => Err("no edge joins those two faces".into()),
+            _ => Err("several edges join those two faces; choose one with `body` and `edge`".into()),
+        }
+    } else {
+        r.edge_ref(opt_id(p, "body")?.unwrap_or(0) as usize, id_u32(p, "edge")?, k)
+    }
+    .map_err(CmdError)?;
+    Ok(serde_json::to_value(er).unwrap_or(Value::Null))
+}
+
 fn model_face_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let r = s.regen(k).clone();
     let fr = if p.get("origin").is_some() {
@@ -751,6 +832,21 @@ static COMMANDS: &[CommandSpec] = &[
         true,
         model_revolve
     ),
+    doc_cmd!("model.fillet", "Fillet", "edges: [edge references from model.edge_ref], radius", true, model_fillet),
+    doc_cmd!(
+        "model.chamfer",
+        "Chamfer",
+        "edges: [edge references]; distance; and either distance2 or angle (rad) with reference: a face reference for the first distance",
+        true,
+        model_chamfer
+    ),
+    doc_cmd!(
+        "model.shell",
+        "Shell",
+        "thickness; remove: [face references] (faces to open, default none); outside (default false: walls grow inwards)",
+        true,
+        model_shell
+    ),
     doc_cmd!("feature.update", "Edit Feature", "feature (id), kind: the feature definition as in model.tree / the file format", true, feature_update),
     doc_cmd!("feature.rename", "Rename Feature", "feature, name", true, feature_rename),
     doc_cmd!("feature.suppress", "Suppress", "feature, suppressed (default true)", true, feature_suppress),
@@ -762,6 +858,13 @@ static COMMANDS: &[CommandSpec] = &[
     geo_cmd!("model.mass", "Mass Properties", "density (mass per mm^3, default 1)", model_mass),
     geo_cmd!("model.topology", "Topology", "", model_topology),
     geo_cmd!("model.faces", "Faces", "body (default 0)", model_faces),
+    geo_cmd!("model.edges", "Edges", "body (default 0): every edge with the names of its two faces", model_edges),
+    geo_cmd!(
+        "model.edge_ref",
+        "Edge Reference",
+        "faces: [face origin, face origin] (the two faces the edge joins); or body (default 0) and edge (index from model.edges)",
+        model_edge_ref
+    ),
     geo_cmd!(
         "model.face_ref",
         "Face Reference",

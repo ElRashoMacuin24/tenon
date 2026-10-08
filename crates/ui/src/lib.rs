@@ -13,6 +13,7 @@ mod chrome;
 pub mod commands;
 mod cube;
 pub mod icons;
+mod modify;
 mod panels;
 mod properties;
 mod radial;

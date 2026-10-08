@@ -29,6 +29,9 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.info` | Sketch Info | sketch | no |
 | `model.extrude` | Extrude | sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join \| cut \| new_body \| intersect; regions: [[curve ids]] | yes |
 | `model.revolve` | Revolve | sketch; axis: line id or "x" \| "y" \| "z"; angle (rad, default full); symmetric; operation; regions | yes |
+| `model.fillet` | Fillet | edges: [edge references from model.edge_ref], radius | yes |
+| `model.chamfer` | Chamfer | edges: [edge references]; distance; and either distance2 or angle (rad) with reference: a face reference for the first distance | yes |
+| `model.shell` | Shell | thickness; remove: [face references] (faces to open, default none); outside (default false: walls grow inwards) | yes |
 | `feature.update` | Edit Feature | feature (id), kind: the feature definition as in model.tree / the file format | yes |
 | `feature.rename` | Rename Feature | feature, name | yes |
 | `feature.suppress` | Suppress | feature, suppressed (default true) | yes |
@@ -40,6 +43,8 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `model.mass` | Mass Properties | density (mass per mm^3, default 1) | no |
 | `model.topology` | Topology | none | no |
 | `model.faces` | Faces | body (default 0) | no |
+| `model.edges` | Edges | body (default 0): every edge with the names of its two faces | no |
+| `model.edge_ref` | Edge Reference | faces: [face origin, face origin] (the two faces the edge joins); or body (default 0) and edge (index from model.edges) | no |
 | `model.face_ref` | Face Reference | origin: {"type": "cap", "feature": id, "end": "start" \| "end"} or {"type": "side", "feature": id, "curve": id}; or body (default 0) and face (index from model.faces) | no |
 | `file.save` | Save | path (.tenon) | no |
 | `file.open` | Open | path (.tenon); clears undo history | no |

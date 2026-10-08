@@ -68,7 +68,8 @@ fn every_available_command_has_a_handler() {
             assert!(!e.contains("unknown command"), "{id}: {e}");
         }
     }
-    assert!(Workbench::without_kernel().run_ui("model.fillet").unwrap_err().contains("M2"));
+    assert!(Workbench::without_kernel().run_ui("model.hole").unwrap_err().contains("M2"));
+    assert!(Workbench::without_kernel().run_ui("model.fillet").unwrap_err().contains("no solid"));
     assert!(Workbench::without_kernel().run_ui("nonsense.cmd").unwrap_err().contains("unknown"));
 }
 
@@ -433,6 +434,101 @@ fn properties_panel_and_drag_arrow_drive_the_extrusion() {
     d.frame(&mut wb, vec![]);
     assert!(volume(&wb) > 40.0 * 20.0 * 26.0, "{}", volume(&wb));
     let _ = Vec3::ZERO;
+}
+
+/// Selects all of a value field and types a new value (Enter is left to the caller).
+fn type_into(d: &mut Driver, wb: &mut Workbench, field: &str, text: &str) {
+    let r = d.ctx.read_response(egui::Id::new(field)).unwrap_or_else(|| panic!("no field {field}")).rect;
+    d.click(wb, r.center());
+    d.frame(wb, vec![egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }]);
+    d.frame(wb, vec![egui::Event::Text(text.into())]);
+}
+
+#[test]
+fn fillet_chamfer_and_shell_pick_edges_and_faces_in_the_viewport() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    let edges = |wb: &Workbench| match &wb.panel {
+        Some(Panel::Fillet(p)) => p.edges.len(),
+        Some(Panel::Chamfer(p)) => p.edges.len(),
+        _ => panic!("no fillet or chamfer panel"),
+    };
+
+    // F starts Fillet with nothing selected; clicks on edges add them, a second click removes.
+    d.tap(&mut wb, egui::Key::F);
+    assert!(wb.has_properties() && edges(&wb) == 0, "fillet panel open");
+    let (front, back) = (on_screen(&wb, Vec3::new(20.0, 0.0, 10.0)), on_screen(&wb, Vec3::new(20.0, 20.0, 10.0)));
+    d.click(&mut wb, front);
+    d.click(&mut wb, back);
+    assert_eq!(edges(&wb), 2);
+    assert_eq!(wb.panel_picks().len(), 2, "both edges are highlighted");
+    d.click(&mut wb, front);
+    assert_eq!(edges(&wb), 1, "a second click removes the edge");
+    // Avoid a double click (which would read as a triple click).
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, front);
+    assert_eq!(edges(&wb), 2);
+    // Faces are not taken by Fillet.
+    let top = on_screen(&wb, Vec3::new(20.0, 10.0, 10.0));
+    d.click(&mut wb, top);
+    assert_eq!(edges(&wb), 2);
+
+    // Radius 2 in the properties panel, Enter is OK.
+    type_into(&mut d, &mut wb, "tn_props_radius", "2");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.has_properties(), "{}", wb.status());
+    let rounded = 8000.0 - 2.0 * (1.0 - PI / 4.0) * 4.0 * 40.0;
+    assert!((volume(&wb) - rounded).abs() < 1e-6, "{}", volume(&wb));
+    let fillet = wb.document().features().last().unwrap().id;
+
+    // Editing shows the part rolled back to before the fillet, with its edges highlighted; Esc
+    // leaves it as it was.
+    wb.edit_feature(fillet).unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!((volume(&wb) - 8000.0).abs() < 1e-6, "rolled back: {}", volume(&wb));
+    assert_eq!(wb.panel_picks().len(), 2);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none() && (volume(&wb) - rounded).abs() < 1e-6);
+
+    // Chamfer takes the edge selected beforehand.
+    let bottom_right = on_screen(&wb, Vec3::new(40.0, 10.0, 0.0));
+    d.click(&mut wb, bottom_right);
+    assert!(matches!(wb.view.selection.as_slice(), [Pick::Edge { .. }]), "{:?}", wb.view.selection);
+    wb.run_ui("model.chamfer").unwrap();
+    assert_eq!(edges(&wb), 1);
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    let chamfered = rounded - 0.5 * 1.0 * 1.0 * 20.0;
+    assert!((volume(&wb) - chamfered).abs() < 1e-6, "{}", volume(&wb));
+
+    // Shell, opening the right-hand face, 1 mm thick.
+    wb.run_ui("model.shell").unwrap();
+    let right = on_screen(&wb, Vec3::new(40.0, 10.0, 5.0));
+    d.click(&mut wb, right);
+    let Some(Panel::Shell(p)) = wb.panel.clone() else { panic!("no shell panel") };
+    assert_eq!(p.faces.len(), 1);
+    d.frame(&mut wb, vec![]);
+    type_into(&mut d, &mut wb, "tn_props_thickness", "1");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!(volume(&wb) > 0.0 && volume(&wb) < chamfered * 0.4, "hollow: {}", volume(&wb));
+    assert_eq!(wb.document().features().len(), 5);
+    assert!(!wb.status_error, "{}", wb.status());
 }
 
 #[test]

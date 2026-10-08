@@ -6,7 +6,7 @@ use tenon_geom::Vec3;
 use tenon_model::{Operation, OriginAxis, RegionSel};
 use tenon_sketch::EntityId;
 
-use crate::panels::{AxisChoice, Direction, ExtentChoice, Panel, PanelRequest};
+use crate::panels::{AxisChoice, ChamferMethod, Direction, ExtentChoice, Panel, PanelRequest};
 use crate::theme::{self, Tokens};
 use crate::workbench::Workbench;
 
@@ -184,6 +184,18 @@ fn glyph_row(ui: &mut Ui, items: &[(Glyph, &str, bool)], selected: usize, t: &To
     clicked
 }
 
+/// "N selected" with a button that clears the picks; returns true when it was clicked.
+fn picked_row(ui: &mut Ui, n: usize, hint: &str) -> bool {
+    let mut clear = false;
+    ui.horizontal(|ui| {
+        ui.label(if n == 0 { hint.to_string() } else { format!("{n} selected") });
+        if n > 0 && ui.small_button("Clear").clicked() {
+            clear = true;
+        }
+    });
+    clear
+}
+
 fn section(ui: &mut Ui, title: &str, open: bool, body: impl FnOnce(&mut Ui)) {
     egui::CollapsingHeader::new(egui::RichText::new(title).font(theme::body()).strong()).default_open(open).show(ui, body);
 }
@@ -206,7 +218,7 @@ impl Workbench {
 
     /// True while a feature command shows the properties panel.
     pub(crate) fn has_properties(&self) -> bool {
-        matches!(self.panel, Some(Panel::Extrude(_) | Panel::Revolve(_)))
+        matches!(self.panel, Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_)))
     }
 
     /// The properties panel for the running feature command.
@@ -226,8 +238,12 @@ impl Workbench {
         let (kind, name) = match &panel {
             Panel::Extrude(p) => ("Extrusion", p.editing.map(|f| self.feature_name(f))),
             Panel::Revolve(p) => ("Revolution", p.editing.map(|f| self.feature_name(f))),
+            Panel::Fillet(p) => ("Fillet", p.editing.map(|f| self.feature_name(f))),
+            Panel::Chamfer(p) => ("Chamfer", p.editing.map(|f| self.feature_name(f))),
+            Panel::Shell(p) => ("Shell", p.editing.map(|f| self.feature_name(f))),
             _ => return,
         };
+        let mut clear = false;
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             ui.label(egui::RichText::new(kind).font(theme::heading()).color(t.text));
@@ -390,6 +406,97 @@ impl Workbench {
                             });
                         });
                     }
+                    Panel::Fillet(p) => {
+                        section(ui, "Input Geometry", true, |ui| {
+                            egui::Grid::new("tn_props_fillet_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Edges");
+                                clear |= picked_row(ui, p.edges.len(), "click edges");
+                                ui.end_row();
+                            });
+                        });
+                        section(ui, "Behavior", true, |ui| {
+                            egui::Grid::new("tn_props_fillet_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Radius");
+                                enter |= value_field(ui, egui::Id::new("tn_props_radius"), &mut p.radius, "mm", 0.001..=100_000.0, 110.0, t).entered;
+                                ui.end_row();
+                            });
+                        });
+                    }
+                    Panel::Chamfer(p) => {
+                        section(ui, "Input Geometry", true, |ui| {
+                            egui::Grid::new("tn_props_chamfer_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Edges");
+                                clear |= picked_row(ui, p.edges.len(), "click edges");
+                                ui.end_row();
+                                if p.method != ChamferMethod::Distance {
+                                    ui.label("Face");
+                                    ui.label(if p.reference.is_some() { "1 selected" } else { "click a face" })
+                                        .on_hover_text("The face the first distance is measured on");
+                                    ui.end_row();
+                                }
+                            });
+                        });
+                        section(ui, "Behavior", true, |ui| {
+                            egui::Grid::new("tn_props_chamfer_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Method");
+                                let label = |m: ChamferMethod| match m {
+                                    ChamferMethod::Distance => "Distance",
+                                    ChamferMethod::TwoDistances => "Two Distances",
+                                    ChamferMethod::DistanceAngle => "Distance and Angle",
+                                };
+                                egui::ComboBox::from_id_salt("tn_props_chamfer_method").selected_text(label(p.method)).show_ui(ui, |ui| {
+                                    for m in [ChamferMethod::Distance, ChamferMethod::TwoDistances, ChamferMethod::DistanceAngle] {
+                                        ui.selectable_value(&mut p.method, m, label(m));
+                                    }
+                                });
+                                ui.end_row();
+                                ui.label(if p.method == ChamferMethod::TwoDistances { "Distance 1" } else { "Distance" });
+                                enter |= value_field(ui, egui::Id::new("tn_props_chamfer_d1"), &mut p.d1, "mm", 0.001..=100_000.0, 110.0, t).entered;
+                                ui.end_row();
+                                match p.method {
+                                    ChamferMethod::TwoDistances => {
+                                        ui.label("Distance 2");
+                                        enter |= value_field(ui, egui::Id::new("tn_props_chamfer_d2"), &mut p.d2, "mm", 0.001..=100_000.0, 110.0, t)
+                                            .entered;
+                                        ui.end_row();
+                                    }
+                                    ChamferMethod::DistanceAngle => {
+                                        ui.label("Angle");
+                                        enter |=
+                                            value_field(ui, egui::Id::new("tn_props_chamfer_angle"), &mut p.degrees, "deg", 0.1..=89.9, 110.0, t)
+                                                .entered;
+                                        ui.end_row();
+                                    }
+                                    ChamferMethod::Distance => {}
+                                }
+                            });
+                        });
+                    }
+                    Panel::Shell(p) => {
+                        section(ui, "Input Geometry", true, |ui| {
+                            egui::Grid::new("tn_props_shell_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Remove Faces");
+                                clear |= picked_row(ui, p.faces.len(), "click faces");
+                                ui.end_row();
+                            });
+                        });
+                        section(ui, "Behavior", true, |ui| {
+                            egui::Grid::new("tn_props_shell_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Direction");
+                                egui::ComboBox::from_id_salt("tn_props_shell_dir")
+                                    .selected_text(if p.outside { "Outside" } else { "Inside" })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut p.outside, false, "Inside");
+                                        ui.selectable_value(&mut p.outside, true, "Outside");
+                                    });
+                                ui.end_row();
+                                ui.label("Thickness");
+                                enter |=
+                                    value_field(ui, egui::Id::new("tn_props_thickness"), &mut p.thickness, "mm", 0.001..=100_000.0, 110.0, t).entered;
+                                ui.end_row();
+                            });
+                        });
+                    }
                     _ => {}
                 }
             },
@@ -414,6 +521,9 @@ impl Workbench {
         // Keep edits unless the panel changed underneath (e.g. it was closed this frame).
         if self.panel.is_some() {
             self.panel = Some(panel);
+        }
+        if clear {
+            self.clear_panel_picks();
         }
         if request.is_some() {
             self.panel_request = request;
@@ -476,14 +586,15 @@ impl Workbench {
 
     /// The mini-toolbar beside the preview: the main value, flip, OK, Cancel and Apply.
     pub(crate) fn mini_toolbar(&mut self, ui: &Ui, rect: Rect, t: &Tokens) {
-        let (sketch, is_extrude) = match &self.panel {
-            Some(Panel::Extrude(p)) => (p.sketch, true),
-            Some(Panel::Revolve(p)) => (p.sketch, false),
+        let at3 = match &self.panel {
+            Some(Panel::Extrude(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
+            Some(Panel::Revolve(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
+            Some(Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_)) => self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center())),
             _ => return,
         };
-        let anchor: Pos2 = self
-            .profile_anchor(sketch)
-            .and_then(|(c, _)| {
+        let is_extrude = matches!(self.panel, Some(Panel::Extrude(_)));
+        let anchor: Pos2 = at3
+            .and_then(|c| {
                 let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
                 self.view.camera.project(c, w, h).map(|(x, y, _)| rect.min + vec2(x as f32 + 70.0, y as f32 + 45.0))
             })
@@ -511,6 +622,21 @@ impl Workbench {
                         }
                         Some(Panel::Revolve(_)) => {
                             ui.label("Full");
+                        }
+                        Some(Panel::Fillet(p)) => {
+                            if value_field(ui, egui::Id::new("tn_mini_radius"), &mut p.radius, "mm", 0.001..=100_000.0, 80.0, t).entered {
+                                request = Some(PanelRequest::Ok);
+                            }
+                        }
+                        Some(Panel::Chamfer(p)) => {
+                            if value_field(ui, egui::Id::new("tn_mini_chamfer"), &mut p.d1, "mm", 0.001..=100_000.0, 80.0, t).entered {
+                                request = Some(PanelRequest::Ok);
+                            }
+                        }
+                        Some(Panel::Shell(p)) => {
+                            if value_field(ui, egui::Id::new("tn_mini_thickness"), &mut p.thickness, "mm", 0.001..=100_000.0, 80.0, t).entered {
+                                request = Some(PanelRequest::Ok);
+                            }
                         }
                         _ => {}
                     }

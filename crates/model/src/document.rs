@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tenon_geom::{Axis, Frame, Vec3};
 use tenon_sketch::{EntityId, Sketch};
 
-use crate::naming::FaceRef;
+use crate::naming::{EdgeRef, FaceRef};
 
 /// Stable id of a feature within its document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -145,12 +145,51 @@ pub struct Revolve {
     pub operation: Operation,
 }
 
+/// Rounds edges with one radius.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Fillet {
+    pub edges: Vec<EdgeRef>,
+    pub radius: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChamferSize {
+    /// The same distance on both faces.
+    Equal(f64),
+    /// `d1` on the `reference` face, `d2` on the other.
+    TwoDistances { d1: f64, d2: f64, reference: FaceRef },
+    /// `distance` on the `reference` face, then `angle` (radians) from it.
+    DistanceAngle { distance: f64, angle: f64, reference: FaceRef },
+}
+
+/// Bevels edges.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Chamfer {
+    pub edges: Vec<EdgeRef>,
+    pub size: ChamferSize,
+}
+
+/// Hollows the body, leaving walls of `thickness` and removing the `remove` faces.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Shell {
+    #[serde(default)]
+    pub remove: Vec<FaceRef>,
+    pub thickness: f64,
+    /// Grow the wall outwards instead of inwards.
+    #[serde(default)]
+    pub outside: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FeatureKind {
     Sketch { plane: PlaneRef, sketch: Sketch },
     Extrude(Extrude),
     Revolve(Revolve),
+    Fillet(Fillet),
+    Chamfer(Chamfer),
+    Shell(Shell),
 }
 
 impl FeatureKind {
@@ -159,6 +198,9 @@ impl FeatureKind {
             FeatureKind::Sketch { .. } => "Sketch",
             FeatureKind::Extrude(_) => "Extrude",
             FeatureKind::Revolve(_) => "Revolve",
+            FeatureKind::Fillet(_) => "Fillet",
+            FeatureKind::Chamfer(_) => "Chamfer",
+            FeatureKind::Shell(_) => "Shell",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -167,16 +209,31 @@ impl FeatureKind {
             FeatureKind::Sketch { .. } => "Sketch",
             FeatureKind::Extrude(_) => "Extrusion",
             FeatureKind::Revolve(_) => "Revolution",
+            FeatureKind::Fillet(_) => "Fillet",
+            FeatureKind::Chamfer(_) => "Chamfer",
+            FeatureKind::Shell(_) => "Shell",
         }
     }
     /// Features this one depends on.
     pub fn depends_on(&self) -> Vec<FeatureId> {
-        match self {
+        let mut v = match self {
             FeatureKind::Sketch { plane: PlaneRef::Face(f), .. } => f.feature().into_iter().collect(),
             FeatureKind::Sketch { .. } => vec![],
             FeatureKind::Extrude(e) => vec![e.sketch],
             FeatureKind::Revolve(r) => vec![r.sketch],
-        }
+            FeatureKind::Fillet(f) => f.edges.iter().flat_map(EdgeRef::features).collect(),
+            FeatureKind::Chamfer(c) => {
+                let mut v: Vec<FeatureId> = c.edges.iter().flat_map(EdgeRef::features).collect();
+                if let ChamferSize::TwoDistances { reference, .. } | ChamferSize::DistanceAngle { reference, .. } = &c.size {
+                    v.extend(reference.feature());
+                }
+                v
+            }
+            FeatureKind::Shell(s) => s.remove.iter().filter_map(FaceRef::feature).collect(),
+        };
+        v.sort();
+        v.dedup();
+        v
     }
 }
 
@@ -251,6 +308,13 @@ impl Document {
         let n = (1..).find(|n| !self.features.iter().any(|f| f.name == format!("{base}{n}"))).unwrap_or(1);
         self.features.push(Feature { id, name: format!("{base}{n}"), suppressed: false, kind });
         Ok(id)
+    }
+
+    /// The document as it was before feature `id` (that feature and everything after it left out):
+    /// what a feature is edited against.
+    pub fn rolled_back_to(&self, id: FeatureId) -> Document {
+        let n = self.index_of(id).unwrap_or(self.features.len());
+        Document { name: self.name.clone(), features: self.features[..n].to_vec(), next_feature: self.next_feature }
     }
 
     /// Removes a feature that nothing depends on.

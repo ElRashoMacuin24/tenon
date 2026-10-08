@@ -82,26 +82,36 @@ fn seg_dist(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     (((p.0 - cx).powi(2) + (p.1 - cy).powi(2)).sqrt(), t)
 }
 
+/// The point of segment `ab` nearest to the line through `o` along `d`.
+fn nearest_on_segment(o: Vec3, d: Vec3, a: Vec3, b: Vec3) -> Vec3 {
+    let u = b - a;
+    let w0 = a - o;
+    let (uu, ud, dd, uw, dw) = (u.dot(u), u.dot(d), d.dot(d), u.dot(w0), d.dot(w0));
+    let den = uu * dd - ud * ud;
+    let s = if uu <= 0.0 || den.abs() < 1e-12 * uu * dd { 0.0 } else { ((ud * dw - dd * uw) / den).clamp(0.0, 1.0) };
+    a + u * s
+}
+
 /// Nearest edge within `radius` pixels of `(x, y)` that is not hidden behind a face.
 pub fn pick_edge(meshes: &[&Mesh], camera: &Camera, w: f64, h: f64, x: f64, y: f64, radius: f64) -> Option<EdgeHit> {
     let (o, d) = camera.ray(x, y, w, h);
-    let face = pick_face(meshes, o, d);
     let mut best: Option<EdgeHit> = None;
     for (bi, m) in meshes.iter().enumerate() {
         for e in &m.edges {
             for seg in e.points.windows(2) {
                 let (pa, pb) = (v3(seg[0]), v3(seg[1]));
                 let (Some(a), Some(b)) = (camera.project(pa, w, h), camera.project(pb, w, h)) else { continue };
-                let (dist, t) = seg_dist((x, y), (a.0, a.1), (b.0, b.1));
+                let (dist, _) = seg_dist((x, y), (a.0, a.1), (b.0, b.1));
                 if dist > radius || best.is_some_and(|b| dist >= b.pixels) {
                     continue;
                 }
-                let point = pa.lerp(pb, t);
-                // Hidden if a face is clearly in front of it along the ray.
-                if let Some(f) = face {
-                    let along = (point - o).dot(d);
+                // The 3D point under the pointer (a screen fraction is not a 3D fraction in
+                // perspective). It is hidden if a face is clearly in front of it along its own ray.
+                let point = nearest_on_segment(o, d, pa, pb);
+                if let Some((px, py, _)) = camera.project(point, w, h) {
+                    let (o2, d2) = camera.ray(px, py, w, h);
                     let slack = 1e-3 * camera.distance.max(1.0);
-                    if f.t + slack < along {
+                    if pick_face(meshes, o2, d2).is_some_and(|f| f.t + slack < (point - o2).dot(d2)) {
                         continue;
                     }
                 }

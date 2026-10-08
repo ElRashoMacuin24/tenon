@@ -58,6 +58,35 @@ fn edges_are_picked_near_the_pointer_and_not_through_faces() {
 }
 
 #[test]
+fn every_visible_edge_is_picked_along_its_length_in_perspective() {
+    // Regression: the hidden test used the screen fraction along an edge as the 3D fraction,
+    // which in perspective put the point behind the faces and rejected visible edges.
+    let m = cube();
+    let c = framed(StdView::Home);
+    let quads: [[usize; 4]; 6] = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [2, 3, 7, 6], [1, 2, 6, 5], [3, 0, 4, 7]];
+    let normals = [-Vec3::Z, Vec3::Z, -Vec3::Y, Vec3::Y, Vec3::X, -Vec3::X];
+    let pairs = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)];
+    let mut visible = 0;
+    for (i, (a, b)) in pairs.iter().enumerate() {
+        let facing = quads.iter().zip(normals).any(|(q, n)| q.contains(a) && q.contains(b) && n.dot(c.eye_dir()) > 0.0);
+        if !facing {
+            continue;
+        }
+        visible += 1;
+        let (pa, pb) = (m.positions[*a], m.positions[*b]);
+        let (pa, pb) = (Vec3::new(pa[0].into(), pa[1].into(), pa[2].into()), Vec3::new(pb[0].into(), pb[1].into(), pb[2].into()));
+        for t in [0.25, 0.5, 0.75] {
+            let p = pa.lerp(pb, t);
+            let (x, y, _) = c.project(p, 800.0, 600.0).unwrap();
+            let e = pick_edge(&[&m], &c, 800.0, 600.0, x, y, 3.0).unwrap_or_else(|| panic!("edge {i} at {t}: not picked"));
+            assert_eq!(e.edge, i as u32, "edge {i} at {t}");
+            assert!(e.point.dist(p) < 1e-6, "edge {i} at {t}: {:?} vs {p:?}", e.point);
+        }
+    }
+    assert_eq!(visible, 9, "three faces show in the home view");
+}
+
+#[test]
 fn software_render_draws_the_cube_and_encodes_png() {
     let m = cube();
     let c = framed(StdView::Home);

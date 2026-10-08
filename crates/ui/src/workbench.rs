@@ -276,6 +276,9 @@ impl Workbench {
             "sketch.finish" => self.finish_sketch(),
             "model.extrude" => self.open_extrude(None)?,
             "model.revolve" => self.open_revolve(None)?,
+            "model.fillet" => self.open_modify("fillet", None)?,
+            "model.chamfer" => self.open_modify("chamfer", None)?,
+            "model.shell" => self.open_modify("shell", None)?,
             "ui.ok" | "ui.cancel" => {
                 let ok = id == "ui.ok";
                 if self.panel.is_some() {
@@ -556,6 +559,9 @@ impl Workbench {
             Some(FeatureKind::Sketch { .. }) => self.enter_sketch(id),
             Some(FeatureKind::Extrude(_)) => self.open_extrude(Some(id)),
             Some(FeatureKind::Revolve(_)) => self.open_revolve(Some(id)),
+            Some(FeatureKind::Fillet(_)) => self.open_modify("fillet", Some(id)),
+            Some(FeatureKind::Chamfer(_)) => self.open_modify("chamfer", Some(id)),
+            Some(FeatureKind::Shell(_)) => self.open_modify("shell", Some(id)),
             None => Err(format!("{id} does not exist")),
         }
     }

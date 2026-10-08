@@ -78,6 +78,9 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::Sketch { .. } => Icon::NewSketch,
         FeatureKind::Extrude(_) => Icon::Extrude,
         FeatureKind::Revolve(_) => Icon::Revolve,
+        FeatureKind::Fillet(_) => Icon::Fillet,
+        FeatureKind::Chamfer(_) => Icon::Chamfer,
+        FeatureKind::Shell(_) => Icon::Shell,
     }
 }
 

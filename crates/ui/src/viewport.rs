@@ -618,6 +618,9 @@ impl Workbench {
                 } else {
                     self.view.selection = picks;
                 }
+                if self.absorb_selection() {
+                    return;
+                }
                 let (faces, edges) = self.view.selection.iter().fold((0, 0), |(f, e), p| match p {
                     Pick::Face { .. } => (f + 1, e),
                     Pick::Edge { .. } => (f, e + 1),
@@ -628,6 +631,9 @@ impl Workbench {
         }
         if self.pick_plane {
             self.pick_sketch_plane(ui, resp, rect);
+            return;
+        }
+        if self.panel_pointer(resp, rect) {
             return;
         }
         let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
@@ -667,14 +673,23 @@ impl Workbench {
         }
     }
 
+    /// Highlighted picks and their colours: the selection, an open panel's references, the hover.
+    fn highlights(&self) -> Vec<(Pick, Color32)> {
+        let mut v: Vec<(Pick, Color32)> = self.view.selection.iter().map(|p| (*p, SELECTED)).collect();
+        v.extend(self.panel_picks().into_iter().map(|p| (p, SELECTED)));
+        v.extend(self.view.hover.map(|p| (p, HOVER)));
+        v
+    }
+
     fn colors(&self) -> Vec<BodyColors> {
         let dim = matches!(self.mode, Mode::Sketch(_));
+        let lit = self.highlights();
         (0..self.scene.bodies.len())
             .map(|bi| {
                 // In wireframe the edges are all there is, so they take the body colour.
                 let edge = if self.view.style == VisualStyle::Wireframe { BODY } else { EDGE };
                 let mut c = BodyColors { face: srgb(if dim { BODY_DIM } else { BODY }), edge: srgb(edge), ..Default::default() };
-                for (p, color) in self.view.selection.iter().map(|p| (p, SELECTED)).chain(self.view.hover.iter().map(|p| (p, HOVER))) {
+                for (p, color) in lit.iter().map(|(p, c)| (p, *c)) {
                     match p {
                         Pick::Face { body, face } if *body == bi => c.faces.push((*face, srgb(color))),
                         Pick::Edge { body, edge } if *body == bi => c.edges.push((*edge, srgb(color))),
@@ -729,12 +744,14 @@ impl Workbench {
                 if self.view.soft.as_ref().is_none_or(|(_, k)| *k != skey) {
                     let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
                     let to8 = |c: Color32| [c.r(), c.g(), c.b(), 255];
-                    let mut face_colors = Vec::new();
-                    for p in self.view.selection.iter().chain(self.view.hover.iter()) {
-                        if let Pick::Face { body, face } = p {
-                            face_colors.push((*body, *face, to8(if Some(*p) == self.view.hover { HOVER } else { SELECTED })));
-                        }
-                    }
+                    let face_colors: Vec<_> = self
+                        .highlights()
+                        .into_iter()
+                        .filter_map(|(p, c)| match p {
+                            Pick::Face { body, face } => Some((body, face, to8(c))),
+                            Pick::Edge { .. } => None,
+                        })
+                        .collect();
                     let style = Style {
                         body: to8(BODY),
                         edge: to8(if self.view.style == VisualStyle::Wireframe { BODY } else { EDGE }),

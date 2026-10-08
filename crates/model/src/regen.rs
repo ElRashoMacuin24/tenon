@@ -5,12 +5,16 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tenon_geom::{Aabb3, Axis, Frame, Vec3};
-use tenon_kernel::{AngleExtent, BoolOp, Extent, FaceInfo, Kernel, KernelError, MassProps, Mesh, MeshTol, ShapeHandle, SurfaceKind};
+use tenon_kernel::{AngleExtent, BoolOp, ChamferSpec, Extent, FaceInfo, Kernel, KernelError, MassProps, Mesh, MeshTol, ShapeHandle, SurfaceKind};
 use tenon_sketch::{Sketch, SketchRegion, default_regions, profile, regions};
 
 use crate::FeatureId;
-use crate::document::{AxisRef, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Operation, PlaneRef, RegionSel, Revolve, RevolveAngle};
-use crate::naming::{FaceOrigin, FaceRef, Fingerprint, names_of_boolean, names_of_sweep, resolve};
+use crate::document::{
+    AxisRef, ChamferSize, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Operation, PlaneRef, RegionSel, Revolve, RevolveAngle,
+};
+use crate::naming::{
+    EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, edge_names, names_of_boolean, names_of_modify, names_of_sweep, resolve, resolve_edge,
+};
 
 /// A solid body of the part and the names of its faces.
 #[derive(Clone, Debug, PartialEq)]
@@ -87,6 +91,19 @@ impl Regen {
     /// Resolves a reference against this result.
     pub fn resolve(&self, fref: &FaceRef, k: &dyn Kernel) -> Result<(usize, u32), String> {
         resolve(fref, &self.views(), k)
+    }
+    /// A persistent reference to edge `edge` of body `body`, if both of its faces are named.
+    pub fn edge_ref(&self, body: usize, edge: u32, k: &dyn Kernel) -> Result<EdgeRef, String> {
+        let b = self.bodies.get(body).ok_or("no such body")?;
+        let topo = k.topology(b.shape).map_err(|e| e.to_string())?;
+        let adj = topo.edge_faces.get(edge as usize).ok_or("no such edge")?;
+        let [x, y] = edge_names(&b.names, adj).ok_or("this edge cannot be referenced yet")?;
+        let info = k.edge_info(b.shape.edge(edge)).map_err(|e| e.to_string())?;
+        Ok(EdgeRef::new(x, y, EdgeFingerprint::of(&info)))
+    }
+    /// Resolves an edge reference against this result: `(body, edge)`.
+    pub fn resolve_edge(&self, eref: &EdgeRef, k: &dyn Kernel) -> Result<(usize, u32), String> {
+        resolve_edge(eref, &self.views(), k)
     }
 }
 
@@ -190,7 +207,113 @@ impl<'a> Ctx<'a> {
             }
             FeatureKind::Extrude(e) => self.extrude(f.id, e),
             FeatureKind::Revolve(r) => self.revolve(f.id, r),
+            FeatureKind::Fillet(fi) => {
+                let (bi, edges) = self.resolve_edges(&fi.edges)?;
+                let shape = self.body_shape(bi)?;
+                let op = self.k.fillet(shape, &edges.iter().map(|e| shape.edge(*e)).collect::<Vec<_>>(), fi.radius)?;
+                self.replace_body(f.id, bi, op)
+            }
+            FeatureKind::Chamfer(c) => {
+                let (bi, edges) = self.resolve_edges(&c.edges)?;
+                let shape = self.body_shape(bi)?;
+                let ids: Vec<_> = edges.iter().map(|e| shape.edge(*e)).collect();
+                let spec = match &c.size {
+                    ChamferSize::Equal(d) => ChamferSpec::Equal(*d),
+                    ChamferSize::TwoDistances { d1, d2, reference } => {
+                        ChamferSpec::TwoDistances { d1: *d1, d2: *d2, reference: shape.face(self.face_on(bi, reference)?) }
+                    }
+                    ChamferSize::DistanceAngle { distance, angle, reference } => {
+                        ChamferSpec::DistanceAngle { distance: *distance, angle: *angle, reference: shape.face(self.face_on(bi, reference)?) }
+                    }
+                };
+                let op = self.k.chamfer(shape, &ids, &spec)?;
+                self.replace_body(f.id, bi, op)
+            }
+            FeatureKind::Shell(s) => {
+                // The body: the one holding the faces to remove, else the last one.
+                let mut bi = self.regen.bodies.len().checked_sub(1).ok_or("there is no body to shell")?;
+                let mut faces = Vec::new();
+                for (i, fref) in s.remove.iter().enumerate() {
+                    let (b, face) = self.regen.resolve(fref, &*self.k).map_err(|e| self.describe_ref(fref, &e))?;
+                    if i > 0 && b != bi {
+                        return Err("the faces to remove are on different bodies".into());
+                    }
+                    bi = b;
+                    faces.push(face);
+                }
+                let shape = self.body_shape(bi)?;
+                let t = if s.outside { -s.thickness } else { s.thickness };
+                let op = self.k.shell(shape, &faces.iter().map(|f| shape.face(*f)).collect::<Vec<_>>(), t)?;
+                self.replace_body(f.id, bi, op)
+            }
         }
+    }
+
+    fn body_shape(&self, bi: usize) -> Result<ShapeHandle, Stop> {
+        Ok(self.regen.bodies.get(bi).ok_or("no such body")?.shape)
+    }
+
+    /// "the referenced face no longer exists (end face of Extrusion1)".
+    fn describe_ref(&self, fref: &FaceRef, err: &str) -> String {
+        format!("{err} ({})", fref.origin.describe(&label(self.doc, fref.origin.feature())))
+    }
+
+    /// The face a reference means; it must be on body `bi`.
+    fn face_on(&self, bi: usize, fref: &FaceRef) -> Result<u32, Stop> {
+        let (b, face) = self.regen.resolve(fref, &*self.k).map_err(|e| self.describe_ref(fref, &e))?;
+        if b != bi {
+            return Err("the reference face is on another body".into());
+        }
+        Ok(face)
+    }
+
+    /// The body every edge is on, and the edges' indices there.
+    fn resolve_edges(&self, edges: &[EdgeRef]) -> Result<(usize, Vec<u32>), Stop> {
+        if edges.is_empty() {
+            return Err("select at least one edge".into());
+        }
+        let views = self.regen.views();
+        let mut body = None;
+        let mut out = Vec::with_capacity(edges.len());
+        for e in edges {
+            let (b, i) = resolve_edge(e, &views, &*self.k).map_err(|m| {
+                let [a, c] = &e.faces;
+                format!(
+                    "{m} (the edge between the {} and the {})",
+                    a.describe(&label(self.doc, a.feature())),
+                    c.describe(&label(self.doc, c.feature()))
+                )
+            })?;
+            if body.is_some_and(|x| x != b) {
+                return Err("the edges are on different bodies".into());
+            }
+            body = Some(b);
+            out.push(i);
+        }
+        out.sort_unstable();
+        out.dedup();
+        Ok((body.unwrap_or(0), out))
+    }
+
+    /// Puts the result of an operation on body `bi` in its place, naming its faces.
+    fn replace_body(&mut self, id: FeatureId, bi: usize, op: tenon_kernel::Op) -> Result<(), Stop> {
+        let Some(old) = self.regen.bodies.get(bi).cloned() else {
+            self.k.release(op.shape);
+            return Err("no such body".into());
+        };
+        let names = match (self.k.topology(old.shape), self.k.topology(op.shape)) {
+            (Ok(topo), Ok(new)) => names_of_modify(&op.history, &old.names, &topo, id, new.faces),
+            (Err(e), _) | (_, Err(e)) => {
+                self.k.release(op.shape);
+                return Err(e.into());
+            }
+        };
+        self.k.release(old.shape);
+        if let Some(body) = self.regen.bodies.get_mut(bi) {
+            body.shape = op.shape;
+            body.names = names;
+        }
+        Ok(())
     }
 
     fn plane_frame(&mut self, plane: &PlaneRef) -> Result<Frame, Stop> {
@@ -343,6 +466,17 @@ pub struct BodyView {
     /// Mass properties at unit density (mass = volume).
     pub mass: MassProps,
     pub bbox: Option<Aabb3>,
+    /// Per edge: the names of its two faces (if both are named) and its geometry.
+    pub edges: Vec<(Option<[FaceOrigin; 2]>, EdgeFingerprint)>,
+}
+
+impl BodyView {
+    /// A persistent reference to edge `edge`, if both its faces are named.
+    pub fn edge_ref(&self, edge: u32) -> Option<EdgeRef> {
+        let (names, fp) = self.edges.get(edge as usize)?;
+        let [a, b] = (*names)?;
+        Some(EdgeRef::new(a, b, fp.clone()))
+    }
 }
 
 /// Everything the UI needs to draw a regeneration result (no kernel handles).
@@ -372,8 +506,13 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
         for i in 0..topo.faces {
             faces.push((b.names.get(i as usize).copied().flatten(), k.face_info(b.shape.face(i)).map_err(kerr)?));
         }
+        let mut edges = Vec::with_capacity(topo.edges as usize);
+        for (i, adj) in topo.edge_faces.iter().enumerate() {
+            let info = k.edge_info(b.shape.edge(u32::try_from(i).map_err(|_| "too many edges")?)).map_err(kerr)?;
+            edges.push((edge_names(&b.names, adj), EdgeFingerprint::of(&info)));
+        }
         let mass = k.mass_properties(b.shape, 1.0).map_err(kerr)?;
-        bodies.push(BodyView { mesh, faces, volume: mass.volume, mass, bbox: k.bounding_box(b.shape).map_err(kerr)? });
+        bodies.push(BodyView { mesh, faces, edges, volume: mass.volume, mass, bbox: k.bounding_box(b.shape).map_err(kerr)? });
     }
     Ok(Scene {
         bodies,

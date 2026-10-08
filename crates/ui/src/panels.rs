@@ -3,9 +3,13 @@
 
 use egui::{Align2, Ui};
 use serde_json::{Value, json};
-use tenon_model::{AxisRef, Document, Extrude, ExtrudeExtent, FeatureId, FeatureKind, Operation, OriginAxis, RegionSel, Revolve, RevolveAngle};
+use tenon_model::{
+    AxisRef, Chamfer, ChamferSize, Document, EdgeRef, Extrude, ExtrudeExtent, FaceRef, FeatureId, FeatureKind, Fillet, Fingerprint, Operation,
+    OriginAxis, RegionSel, Revolve, RevolveAngle, Shell,
+};
 use tenon_sketch::{Constraint, ConstraintId, EntityId};
 
+use crate::viewport::Pick;
 use crate::workbench::{Mode, Workbench};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +90,69 @@ impl ValuePanel {
     }
 }
 
+/// Fillet: rounds the picked edges.
+#[derive(Clone, Debug)]
+pub(crate) struct FilletPanel {
+    pub editing: Option<FeatureId>,
+    pub edges: Vec<EdgeRef>,
+    pub radius: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChamferMethod {
+    Distance,
+    TwoDistances,
+    DistanceAngle,
+}
+
+/// Chamfer: bevels the picked edges; the two-sided methods measure the first value on a picked
+/// face.
+#[derive(Clone, Debug)]
+pub(crate) struct ChamferPanel {
+    pub editing: Option<FeatureId>,
+    pub edges: Vec<EdgeRef>,
+    pub method: ChamferMethod,
+    pub d1: f64,
+    pub d2: f64,
+    pub degrees: f64,
+    pub reference: Option<FaceRef>,
+}
+
+/// Shell: hollows the body, opening the picked faces.
+#[derive(Clone, Debug)]
+pub(crate) struct ShellPanel {
+    pub editing: Option<FeatureId>,
+    pub faces: Vec<FaceRef>,
+    pub thickness: f64,
+    pub outside: bool,
+}
+
+impl FilletPanel {
+    pub(crate) fn kind(&self) -> FeatureKind {
+        FeatureKind::Fillet(Fillet { edges: self.edges.clone(), radius: self.radius })
+    }
+}
+
+impl ChamferPanel {
+    pub(crate) fn kind(&self) -> Option<FeatureKind> {
+        let size = match (self.method, self.reference.clone()) {
+            (ChamferMethod::Distance, _) => ChamferSize::Equal(self.d1),
+            (ChamferMethod::TwoDistances, Some(reference)) => ChamferSize::TwoDistances { d1: self.d1, d2: self.d2, reference },
+            (ChamferMethod::DistanceAngle, Some(reference)) => {
+                ChamferSize::DistanceAngle { distance: self.d1, angle: self.degrees.to_radians(), reference }
+            }
+            _ => return None,
+        };
+        Some(FeatureKind::Chamfer(Chamfer { edges: self.edges.clone(), size }))
+    }
+}
+
+impl ShellPanel {
+    pub(crate) fn kind(&self) -> FeatureKind {
+        FeatureKind::Shell(Shell { remove: self.faces.clone(), thickness: self.thickness, outside: self.outside })
+    }
+}
+
 /// A request to finish the open panel from outside it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PanelRequest {
@@ -99,6 +166,9 @@ pub(crate) enum PanelRequest {
 pub(crate) enum Panel {
     Extrude(ExtrudePanel),
     Revolve(RevolvePanel),
+    Fillet(FilletPanel),
+    Chamfer(ChamferPanel),
+    Shell(ShellPanel),
     Value(ValuePanel),
     EditDimension { sketch: FeatureId, constraint: ConstraintId, value: f64, angular: bool },
     Rename { feature: FeatureId, name: String },
@@ -147,13 +217,95 @@ fn with_feature(doc: &Document, editing: Option<FeatureId>, kind: FeatureKind) -
 }
 
 impl Workbench {
-    /// The document to show while a feature panel previews.
+    /// The document to show while a feature panel is open. Extrude and Revolve preview their
+    /// result; Fillet, Chamfer and Shell show the part they act on (rolled back to before the
+    /// feature when editing it), so edges and faces can be picked on it.
     pub(crate) fn preview_document(&self) -> Option<Document> {
+        let rolled = |editing: Option<FeatureId>| editing.map(|id| self.document().rolled_back_to(id));
         match &self.panel {
             Some(Panel::Extrude(p)) => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Revolve(p)) => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::Fillet(p)) => rolled(p.editing),
+            Some(Panel::Chamfer(p)) => rolled(p.editing),
+            Some(Panel::Shell(p)) => rolled(p.editing),
             _ => None,
         }
+    }
+
+    /// Edge references of the edges picked in the viewport.
+    pub(crate) fn picked_edges(&self) -> Vec<EdgeRef> {
+        self.view
+            .selection
+            .iter()
+            .filter_map(|p| match p {
+                Pick::Edge { body, edge } => self.scene.bodies.get(*body)?.edge_ref(*edge),
+                Pick::Face { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Face references of the faces picked in the viewport.
+    pub(crate) fn picked_faces(&self) -> Vec<FaceRef> {
+        self.view
+            .selection
+            .iter()
+            .filter_map(|p| match p {
+                Pick::Face { body, face } => {
+                    let (name, info) = self.scene.bodies.get(*body)?.faces.get(*face as usize)?;
+                    Some(FaceRef { origin: (*name)?, fingerprint: Fingerprint::of(info) })
+                }
+                Pick::Edge { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Fillet, Chamfer or Shell: a new one starts from the edges or faces already selected.
+    pub(crate) fn open_modify(&mut self, which: &str, editing: Option<FeatureId>) -> Result<(), String> {
+        let existing = match editing {
+            Some(id) => Some(self.document().feature(id).ok_or("no such feature")?.kind.clone()),
+            None => None,
+        };
+        // The document, not the scene: the scene may still be regenerating.
+        let solid = self.document().features().iter().any(|f| matches!(f.kind, FeatureKind::Extrude(_) | FeatureKind::Revolve(_)));
+        if editing.is_none() && !solid {
+            return Err("there is no solid yet: extrude or revolve a sketch first".into());
+        }
+        let panel = match (which, existing) {
+            ("fillet", Some(FeatureKind::Fillet(f))) => Panel::Fillet(FilletPanel { editing, edges: f.edges, radius: f.radius }),
+            ("fillet", None) => Panel::Fillet(FilletPanel { editing, edges: self.picked_edges(), radius: 2.0 }),
+            ("chamfer", Some(FeatureKind::Chamfer(c))) => {
+                let (method, d1, d2, degrees, reference) = match c.size {
+                    ChamferSize::Equal(d) => (ChamferMethod::Distance, d, d, 45.0, None),
+                    ChamferSize::TwoDistances { d1, d2, reference } => (ChamferMethod::TwoDistances, d1, d2, 45.0, Some(reference)),
+                    ChamferSize::DistanceAngle { distance, angle, reference } => {
+                        (ChamferMethod::DistanceAngle, distance, distance, angle.to_degrees(), Some(reference))
+                    }
+                };
+                Panel::Chamfer(ChamferPanel { editing, edges: c.edges, method, d1, d2, degrees, reference })
+            }
+            ("chamfer", None) => Panel::Chamfer(ChamferPanel {
+                editing,
+                edges: self.picked_edges(),
+                method: ChamferMethod::Distance,
+                d1: 1.0,
+                d2: 1.0,
+                degrees: 45.0,
+                reference: None,
+            }),
+            ("shell", Some(FeatureKind::Shell(s))) => {
+                Panel::Shell(ShellPanel { editing, faces: s.remove, thickness: s.thickness, outside: s.outside })
+            }
+            ("shell", None) => Panel::Shell(ShellPanel { editing, faces: self.picked_faces(), thickness: 2.0, outside: false }),
+            _ => return Err("not a feature of that type".into()),
+        };
+        self.panel = Some(panel);
+        self.view.selection.clear();
+        self.set_status(match which {
+            "fillet" => "Fillet: click edges to round (click again to remove), set the radius, then OK.",
+            "chamfer" => "Chamfer: click edges to bevel, set the distance, then OK.",
+            _ => "Shell: click the faces to open, set the thickness, then OK.",
+        });
+        Ok(())
     }
 
     /// The sketch a new feature should use: the one being edited, else the newest.
@@ -287,6 +439,20 @@ impl Workbench {
                         }
                         ("model.revolve", p)
                     }
+                    FeatureKind::Fillet(f) => ("model.fillet", json!({ "edges": f.edges, "radius": f.radius })),
+                    FeatureKind::Chamfer(c) => {
+                        let p = match &c.size {
+                            ChamferSize::Equal(d) => json!({ "edges": c.edges, "distance": d }),
+                            ChamferSize::TwoDistances { d1, d2, reference } => {
+                                json!({ "edges": c.edges, "distance": d1, "distance2": d2, "reference": reference })
+                            }
+                            ChamferSize::DistanceAngle { distance, angle, reference } => {
+                                json!({ "edges": c.edges, "distance": distance, "angle": angle, "reference": reference })
+                            }
+                        };
+                        ("model.chamfer", p)
+                    }
+                    FeatureKind::Shell(s) => ("model.shell", json!({ "remove": s.remove, "thickness": s.thickness, "outside": s.outside })),
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
@@ -321,6 +487,40 @@ impl Workbench {
                     keep = !self.commit_feature(editing, kind);
                     if !keep && again {
                         reopen = Some("model.revolve");
+                    }
+                }
+            }
+            Panel::Fillet(p) => {
+                if commit {
+                    if p.edges.is_empty() {
+                        self.set_error("Fillet: select at least one edge".to_string());
+                    } else {
+                        keep = !self.commit_feature(p.editing, p.kind());
+                        if !keep && again {
+                            reopen = Some("model.fillet");
+                        }
+                    }
+                }
+            }
+            Panel::Chamfer(p) => {
+                if commit {
+                    match p.kind() {
+                        _ if p.edges.is_empty() => self.set_error("Chamfer: select at least one edge".to_string()),
+                        None => self.set_error("Chamfer: pick the face the first distance is measured on".to_string()),
+                        Some(kind) => {
+                            keep = !self.commit_feature(p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("model.chamfer");
+                            }
+                        }
+                    }
+                }
+            }
+            Panel::Shell(p) => {
+                if commit {
+                    keep = !self.commit_feature(p.editing, p.kind());
+                    if !keep && again {
+                        reopen = Some("model.shell");
                     }
                 }
             }
