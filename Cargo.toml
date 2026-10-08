@@ -28,6 +28,7 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
 robust = "1.2"
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # native bindings (kernel-occt only; enforced by `cargo xtask layers`)
 cxx = "1.0.202"
