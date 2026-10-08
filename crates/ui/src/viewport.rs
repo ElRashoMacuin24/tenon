@@ -377,6 +377,7 @@ impl Workbench {
             self.draw_origin_planes(ui, rect, self.view.plane_hover, t);
         }
         if self.has_properties() {
+            self.hole_markers(ui, rect, t);
             self.manipulator(ui, rect, t);
             self.mini_toolbar(ui, rect, t);
         }

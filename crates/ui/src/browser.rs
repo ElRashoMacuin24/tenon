@@ -81,6 +81,7 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::Fillet(_) => Icon::Fillet,
         FeatureKind::Chamfer(_) => Icon::Chamfer,
         FeatureKind::Shell(_) => Icon::Shell,
+        FeatureKind::Hole(_) => Icon::Hole,
     }
 }
 

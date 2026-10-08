@@ -4,16 +4,21 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use tenon_geom::{Aabb3, Axis, Frame, Vec3};
-use tenon_kernel::{AngleExtent, BoolOp, ChamferSpec, Extent, FaceInfo, Kernel, KernelError, MassProps, Mesh, MeshTol, ShapeHandle, SurfaceKind};
-use tenon_sketch::{Sketch, SketchRegion, default_regions, profile, regions};
+use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3};
+use tenon_kernel::{
+    AngleExtent, BoolOp, ChamferSpec, Curve2, Extent, FaceInfo, Kernel, KernelError, Loop, MassProps, Mesh, MeshTol, Profile, Region, ShapeHandle,
+    SurfaceKind, TaggedCurve2,
+};
+use tenon_sketch::{EntityId, Sketch, SketchRegion, default_regions, profile, regions};
 
 use crate::FeatureId;
 use crate::document::{
-    AxisRef, ChamferSize, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Operation, PlaneRef, RegionSel, Revolve, RevolveAngle,
+    AxisRef, ChamferSize, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent, HoleType, Operation, PlaneRef, RegionSel,
+    Revolve, RevolveAngle,
 };
 use crate::naming::{
-    EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, edge_names, names_of_boolean, names_of_modify, names_of_sweep, resolve, resolve_edge,
+    EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
+    names_of_tagged, resolve, resolve_edge,
 };
 
 /// A solid body of the part and the names of its faces.
@@ -246,7 +251,58 @@ impl<'a> Ctx<'a> {
                 let op = self.k.shell(shape, &faces.iter().map(|f| shape.face(*f)).collect::<Vec<_>>(), t)?;
                 self.replace_body(f.id, bi, op)
             }
+            FeatureKind::Hole(h) => self.hole(f.id, h),
         }
+    }
+
+    /// Each hole is its half cross-section revolved about the hole axis; all are cut at once.
+    fn hole(&mut self, id: FeatureId, h: &Hole) -> Result<(), Stop> {
+        h.check()?;
+        let (sketch, frame) = self.sketch_and_frame(h.sketch)?;
+        let dir = if h.reverse { frame.z() } else { -frame.z() };
+        let bbox = self.target_bbox().ok_or("there is no body to drill")?;
+        let mut tools: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)> = Vec::new();
+        let mut made = || -> Result<(), Stop> {
+            for p in &h.points {
+                let at = sketch.point(*p).ok_or_else(|| format!("hole centre point {} no longer exists in {}", p.0, label(self.doc, h.sketch)))?;
+                let origin = frame.plane_point(at);
+                let (depth, tip) = match h.extent {
+                    HoleExtent::Distance(d) => (d, h.tip_angle),
+                    HoleExtent::ThroughAll => {
+                        let reach = corners(&bbox).into_iter().map(|c| (c - origin).dot(dir)).fold(f64::NEG_INFINITY, f64::max);
+                        if reach <= 0.0 {
+                            return Err("the body is not on that side of the sketch".into());
+                        }
+                        (reach + 1.0, None)
+                    }
+                };
+                let section = hole_section(h, depth, tip, *p)?;
+                let curves = (0..section.len())
+                    .map(|i| TaggedCurve2 { tag: section[i].1, curve: Curve2::Line { start: section[i].0, end: section[(i + 1) % section.len()].0 } })
+                    .collect();
+                // Profile x is radial, y runs down the hole.
+                let pf = Frame::new(origin, frame.x().cross(dir), frame.x()).ok_or("the hole axis is not valid")?;
+                let profile = Profile { frame: pf, regions: vec![Region { outer: Loop { curves }, holes: vec![] }] };
+                let axis = Axis::new(origin, dir).ok_or("the hole axis is not valid")?;
+                let op = self.k.revolve(&profile, &axis, &AngleExtent::Full)?;
+                let faces = match self.k.topology(op.shape) {
+                    Ok(t) => t.faces,
+                    Err(e) => {
+                        self.k.release(op.shape);
+                        return Err(e.into());
+                    }
+                };
+                tools.push((op.shape, names_of_tagged(&op.history, id, faces)));
+            }
+            Ok(())
+        };
+        if let Err(e) = made() {
+            for (t, _) in tools {
+                self.k.release(t);
+            }
+            return Err(e);
+        }
+        self.combine(id, tools, Operation::Cut)
     }
 
     fn body_shape(&self, bi: usize) -> Result<ShapeHandle, Stop> {
@@ -374,7 +430,7 @@ impl<'a> Ctx<'a> {
         let op = self.k.extrude(&profile, &extent, None)?;
         let faces = self.k.topology(op.shape)?.faces;
         let names = names_of_sweep(&op.history, id, faces);
-        self.combine(id, op.shape, names, e.operation)
+        self.combine(id, vec![(op.shape, names)], e.operation)
     }
 
     fn revolve(&mut self, id: FeatureId, r: &Revolve) -> Result<(), Stop> {
@@ -397,11 +453,11 @@ impl<'a> Ctx<'a> {
         let op = self.k.revolve(&profile, &axis, &angle)?;
         let faces = self.k.topology(op.shape)?.faces;
         let names = names_of_sweep(&op.history, id, faces);
-        self.combine(id, op.shape, names, r.operation)
+        self.combine(id, vec![(op.shape, names)], r.operation)
     }
 
-    /// Adds a feature's tool solid to the part according to `operation`.
-    fn combine(&mut self, id: FeatureId, tool: ShapeHandle, names: Vec<Option<FaceOrigin>>, operation: Operation) -> Result<(), Stop> {
+    /// Adds a feature's tool solids to the part according to `operation`.
+    fn combine(&mut self, id: FeatureId, tools: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>, operation: Operation) -> Result<(), Stop> {
         let kind = match operation {
             Operation::NewBody => None,
             Operation::Join if self.regen.bodies.is_empty() => None,
@@ -410,29 +466,32 @@ impl<'a> Ctx<'a> {
             Operation::Intersect => Some(BoolOp::Intersect),
         };
         let Some(kind) = kind else {
-            self.regen.bodies.push(Body { shape: tool, names, created_by: id });
+            for (shape, names) in tools {
+                self.regen.bodies.push(Body { shape, names, created_by: id });
+            }
             return Ok(());
         };
+        let shapes: Vec<ShapeHandle> = tools.iter().map(|t| t.0).collect();
         let Some(target) = self.regen.bodies.last() else {
-            self.k.release(tool);
+            for s in shapes {
+                self.k.release(s);
+            }
             return Err("there is no body to combine with".into());
         };
         let (target_shape, target_names) = (target.shape, target.names.clone());
-        let op = match self.k.boolean(kind, target_shape, &[tool]) {
-            Ok(op) => op,
-            Err(e) => {
-                self.k.release(tool);
-                return Err(e.into());
-            }
-        };
-        self.k.release(tool);
+        let op = self.k.boolean(kind, target_shape, &shapes);
+        for s in shapes {
+            self.k.release(s);
+        }
+        let op = op?;
         let volume = self.k.mass_properties(op.shape, 1.0)?.volume;
         if volume.abs() <= tenon_geom::tol::MIN_SIZE {
             self.k.release(op.shape);
             return Err("the result has no volume left".into());
         }
         let faces = self.k.topology(op.shape)?.faces;
-        let new_names = names_of_boolean(&op.history, &[&target_names, &names], faces);
+        let inputs: Vec<&[Option<FaceOrigin>]> = std::iter::once(target_names.as_slice()).chain(tools.iter().map(|t| t.1.as_slice())).collect();
+        let new_names = names_of_boolean(&op.history, &inputs, faces);
         self.k.release(target_shape);
         if let Some(body) = self.regen.bodies.last_mut() {
             body.shape = op.shape;
@@ -440,6 +499,50 @@ impl<'a> Ctx<'a> {
         }
         Ok(())
     }
+}
+
+/// Half cross-section of one hole as a closed polygon in (radius, depth) coordinates, each corner
+/// with the name source of the segment that starts there. The last segment runs up the axis and
+/// makes no face.
+fn hole_section(h: &Hole, depth: f64, tip: Option<f64>, point: EntityId) -> Result<Vec<(Vec2, u64)>, String> {
+    let r = h.diameter / 2.0;
+    let tag = |f: HoleFace| f.source(point);
+    let mut pts = Vec::with_capacity(7);
+    match h.kind {
+        HoleType::Simple => {
+            pts.push((Vec2::new(0.0, 0.0), tag(HoleFace::Top)));
+            pts.push((Vec2::new(r, 0.0), tag(HoleFace::Wall)));
+        }
+        HoleType::Counterbore { diameter, depth: bore } => {
+            if bore >= depth {
+                return Err("the counterbore is deeper than the hole".into());
+            }
+            pts.push((Vec2::new(0.0, 0.0), tag(HoleFace::Top)));
+            pts.push((Vec2::new(diameter / 2.0, 0.0), tag(HoleFace::BoreWall)));
+            pts.push((Vec2::new(diameter / 2.0, bore), tag(HoleFace::BoreFloor)));
+            pts.push((Vec2::new(r, bore), tag(HoleFace::Wall)));
+        }
+        HoleType::Countersink { diameter, angle } => {
+            let sink = (diameter / 2.0 - r) / (angle / 2.0).tan();
+            if sink >= depth {
+                return Err("the countersink is deeper than the hole".into());
+            }
+            pts.push((Vec2::new(0.0, 0.0), tag(HoleFace::Top)));
+            pts.push((Vec2::new(diameter / 2.0, 0.0), tag(HoleFace::Sink)));
+            pts.push((Vec2::new(r, sink), tag(HoleFace::Wall)));
+        }
+    }
+    match tip {
+        Some(a) => {
+            pts.push((Vec2::new(r, depth), tag(HoleFace::Point)));
+            pts.push((Vec2::new(0.0, depth + r / (a / 2.0).tan()), 0));
+        }
+        None => {
+            pts.push((Vec2::new(r, depth), tag(HoleFace::Bottom)));
+            pts.push((Vec2::new(0.0, depth), 0));
+        }
+    }
+    Ok(pts)
 }
 
 fn corners(b: &Aabb3) -> [Vec3; 8] {

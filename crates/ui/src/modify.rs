@@ -2,11 +2,13 @@
 //! their panels is open, clicks in the viewport add or remove edges and faces, and the panel's
 //! references are highlighted on the part.
 
-use egui::Rect;
+use egui::{Pos2, Rect, Stroke, vec2};
 use tenon_model::{EdgeRef, FaceRef, Fingerprint, Scene};
 use tenon_render::pick::{pick_edge, pick_face};
+use tenon_sketch::EntityId;
 
 use crate::panels::{ChamferMethod, Panel};
+use crate::theme::Tokens;
 use crate::viewport::Pick;
 use crate::workbench::Workbench;
 
@@ -125,9 +127,69 @@ impl Workbench {
         true
     }
 
-    /// Hover and clicks in the viewport while a Fillet, Chamfer or Shell panel is open. Returns
-    /// false when no such panel is open.
+    /// Sketch points a hole can go at, with their screen positions.
+    fn hole_point_marks(&self, rect: Rect) -> Vec<(EntityId, Pos2)> {
+        let Some(Panel::Hole(p)) = &self.panel else { return Vec::new() };
+        let (Some(sk), Some(frame)) = (self.document().sketch(p.sketch), self.sketch_frame(p.sketch)) else { return Vec::new() };
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        sk.entities()
+            .filter(|(id, e)| !e.construction || p.points.contains(id))
+            .filter_map(|(id, _)| {
+                let at = frame.plane_point(sk.point(id)?);
+                self.view.camera.project(at, w, h).map(|(x, y, _)| (id, rect.min + vec2(x as f32, y as f32)))
+            })
+            .collect()
+    }
+
+    /// The hole centre candidate under the pointer.
+    fn hole_point_at(&self, pos: Option<Pos2>, rect: Rect) -> Option<EntityId> {
+        let pos = pos?;
+        self.hole_point_marks(rect)
+            .into_iter()
+            .map(|(id, at)| (id, at.distance(pos)))
+            .filter(|(_, d)| *d <= 9.0)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
+
+    /// The hole panel's centre points on the part: picked ones filled, the others hollow.
+    pub(crate) fn hole_markers(&self, ui: &egui::Ui, rect: Rect, t: &Tokens) {
+        let Some(Panel::Hole(p)) = &self.panel else { return };
+        let hover = self.hole_point_at(ui.input(|i| i.pointer.hover_pos()).filter(|q| rect.contains(*q)), rect);
+        let painter = ui.painter().with_clip_rect(rect);
+        for (id, at) in self.hole_point_marks(rect) {
+            let on = p.points.contains(&id);
+            let color = if on { t.accent } else { t.text_dim };
+            if hover == Some(id) {
+                painter.circle_stroke(at, 8.0, Stroke::new(2.0, t.accent));
+            }
+            if on {
+                painter.circle_filled(at, 4.5, color);
+                painter.line_segment([at - vec2(8.0, 0.0), at + vec2(8.0, 0.0)], Stroke::new(1.0, color));
+                painter.line_segment([at - vec2(0.0, 8.0), at + vec2(0.0, 8.0)], Stroke::new(1.0, color));
+            } else {
+                painter.circle_stroke(at, 4.5, Stroke::new(1.5, color));
+            }
+        }
+    }
+
+    /// Hover and clicks in the viewport while a Fillet, Chamfer, Shell or Hole panel is open.
+    /// Returns false when no such panel is open.
     pub(crate) fn panel_pointer(&mut self, resp: &egui::Response, rect: Rect) -> bool {
+        if matches!(self.panel, Some(Panel::Hole(_))) {
+            self.view.hover = None;
+            if resp.clicked()
+                && let Some(id) = self.hole_point_at(resp.interact_pointer_pos(), rect)
+                && let Some(Panel::Hole(p)) = &mut self.panel
+            {
+                if let Some(i) = p.points.iter().position(|q| *q == id) {
+                    p.points.remove(i);
+                } else {
+                    p.points.push(id);
+                }
+            }
+            return true;
+        }
         let Some(wants) = self.panel_wants() else { return false };
         let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
         let hover = resp.hover_pos().and_then(|p| {
@@ -173,6 +235,7 @@ impl Workbench {
             Some(Panel::Fillet(f)) => f.edges.clear(),
             Some(Panel::Chamfer(c)) => c.edges.clear(),
             Some(Panel::Shell(s)) => s.faces.clear(),
+            Some(Panel::Hole(h)) => h.points.clear(),
             _ => {}
         }
     }

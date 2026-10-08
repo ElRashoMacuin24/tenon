@@ -32,6 +32,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `model.fillet` | Fillet | edges: [edge references from model.edge_ref], radius | yes |
 | `model.chamfer` | Chamfer | edges: [edge references]; distance; and either distance2 or angle (rad) with reference: a face reference for the first distance | yes |
 | `model.shell` | Shell | thickness; remove: [face references] (faces to open, default none); outside (default false: walls grow inwards) | yes |
+| `model.hole` | Hole | sketch; points: [point ids] (default: the sketch's centre points, i.e. points on no curve); diameter; depth or through_all: true; type: simple \| counterbore (counterbore_diameter, counterbore_depth) \| countersink (countersink_diameter, countersink_angle: rad, default 90 deg); tip_angle (rad, default 118 deg) or flat_bottom: true; reverse (drill along the sketch normal) | yes |
 | `feature.update` | Edit Feature | feature (id), kind: the feature definition as in model.tree / the file format | yes |
 | `feature.rename` | Rename Feature | feature, name | yes |
 | `feature.suppress` | Suppress | feature, suppressed (default true) | yes |

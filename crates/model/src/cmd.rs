@@ -11,8 +11,8 @@ use tenon_kernel::{Kernel, ShapeHandle};
 use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions};
 
 use crate::document::{
-    AxisRef, Chamfer, ChamferSize, Extrude, ExtrudeExtent, FeatureKind, Fillet, Operation, OriginAxis, OriginPlane, PlaneRef, RegionSel, Revolve,
-    RevolveAngle, Shell,
+    AxisRef, Chamfer, ChamferSize, DRILL_POINT, Extrude, ExtrudeExtent, FeatureKind, Fillet, Hole, HoleExtent, HoleType, Operation, OriginAxis,
+    OriginPlane, PlaneRef, RegionSel, Revolve, RevolveAngle, Shell, hole_centres,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::regen::{Regen, regenerate};
@@ -584,6 +584,33 @@ fn model_shell(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::Shell(Shell { remove, thickness: num(p, "thickness")?, outside }))
 }
 
+fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
+    let sketch = sketch_id(p)?;
+    let sk = s.document().sketch(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
+    let points = if p.get("points").is_some() { ids(p, "points")? } else { hole_centres(sk) };
+    if let Some(bad) = points.iter().find(|e| sk.point(**e).is_none()) {
+        return Err(format!("{} is not a point of {sketch}", bad.0).into());
+    }
+    let diameter = num(p, "diameter")?;
+    let kind = match p.get("type").and_then(Value::as_str).unwrap_or("simple") {
+        "simple" => HoleType::Simple,
+        "counterbore" => HoleType::Counterbore { diameter: num(p, "counterbore_diameter")?, depth: num(p, "counterbore_depth")? },
+        "countersink" => HoleType::Countersink {
+            diameter: num(p, "countersink_diameter")?,
+            angle: opt_num(p, "countersink_angle")?.unwrap_or(std::f64::consts::FRAC_PI_2),
+        },
+        other => return Err(format!("unknown hole type `{other}` (simple, counterbore, countersink)").into()),
+    };
+    let extent =
+        if p.get("through_all").and_then(Value::as_bool).unwrap_or(false) { HoleExtent::ThroughAll } else { HoleExtent::Distance(num(p, "depth")?) };
+    let tip_angle =
+        if p.get("flat_bottom").and_then(Value::as_bool).unwrap_or(false) { None } else { Some(opt_num(p, "tip_angle")?.unwrap_or(DRILL_POINT)) };
+    let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);
+    let hole = Hole { sketch, points, diameter, kind, extent, tip_angle, reverse };
+    hole.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Hole(hole))
+}
+
 fn feature_update(s: &mut Session, p: &Value) -> CmdResult {
     let id = feature_id(p)?;
     let kind: FeatureKind = parse(p, "kind")?;
@@ -846,6 +873,13 @@ static COMMANDS: &[CommandSpec] = &[
         "thickness; remove: [face references] (faces to open, default none); outside (default false: walls grow inwards)",
         true,
         model_shell
+    ),
+    doc_cmd!(
+        "model.hole",
+        "Hole",
+        "sketch; points: [point ids] (default: the sketch's centre points, i.e. points on no curve); diameter; depth or through_all: true; type: simple | counterbore (counterbore_diameter, counterbore_depth) | countersink (countersink_diameter, countersink_angle: rad, default 90 deg); tip_angle (rad, default 118 deg) or flat_bottom: true; reverse (drill along the sketch normal)",
+        true,
+        model_hole
     ),
     doc_cmd!("feature.update", "Edit Feature", "feature (id), kind: the feature definition as in model.tree / the file format", true, feature_update),
     doc_cmd!("feature.rename", "Rename Feature", "feature, name", true, feature_rename),

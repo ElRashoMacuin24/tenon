@@ -119,3 +119,22 @@ fn bad_fillets_chamfers_and_shells_are_errors() {
     // Failures leave nothing behind.
     assert_eq!(k.live_shapes(), 2);
 }
+
+#[test]
+fn a_drill_profile_on_the_axis_revolves_into_a_valid_solid() {
+    use tenon_geom::{Axis, Vec2};
+    use tenon_kernel::{AngleExtent, Curve2, Loop, Profile, Region, TaggedCurve2};
+    let mut k = OcctKernel::new();
+    // Half cross-section of a 10 mm drilled hole, 10 deep with a 118 degree point; the last edge
+    // lies on the axis.
+    let tip = 5.0 / (59.0f64).to_radians().tan();
+    let pts = [Vec2::new(0.0, 0.0), Vec2::new(5.0, 0.0), Vec2::new(5.0, -10.0), Vec2::new(0.0, -10.0 - tip)];
+    let curves = (0..4).map(|i| TaggedCurve2 { tag: i as u64 + 1, curve: Curve2::Line { start: pts[i], end: pts[(i + 1) % 4] } }).collect();
+    let profile = Profile { frame: Frame::WORLD, regions: vec![Region { outer: Loop { curves }, holes: vec![] }] };
+    let op = k.revolve(&profile, &Axis::new(Vec3::ZERO, Vec3::Y).unwrap(), &AngleExtent::Full).unwrap();
+    assert!(k.is_valid(op.shape).unwrap());
+    let expected = PI * 25.0 * 10.0 + PI * 25.0 * tip / 3.0;
+    assert!(close(volume(&k, op.shape), expected), "{} vs {expected}", volume(&k, op.shape));
+    // Top, wall and point; the edge on the axis makes no face.
+    assert_eq!(k.topology(op.shape).unwrap().faces, 3);
+}

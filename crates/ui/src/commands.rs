@@ -104,7 +104,7 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Modify",
                 commands: &[
-                    large("model.hole", "Hole", "Simple, counterbore or countersink holes", Icon::Hole, 2).key("H"),
+                    large("model.hole", "Hole", "Simple, counterbore or countersink holes", Icon::Hole, 0).key("H"),
                     large("model.fillet", "Fillet", "Round edges", Icon::Fillet, 0).key("F"),
                     small("model.chamfer", "Chamfer", "Bevel edges", Icon::Chamfer, 0),
                     small("model.shell", "Shell", "Hollow a solid, removing faces", Icon::Shell, 0),

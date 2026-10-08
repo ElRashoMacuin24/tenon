@@ -68,7 +68,7 @@ fn every_available_command_has_a_handler() {
             assert!(!e.contains("unknown command"), "{id}: {e}");
         }
     }
-    assert!(Workbench::without_kernel().run_ui("model.hole").unwrap_err().contains("M2"));
+    assert!(Workbench::without_kernel().run_ui("model.rib").unwrap_err().contains("M2"));
     assert!(Workbench::without_kernel().run_ui("model.fillet").unwrap_err().contains("no solid"));
     assert!(Workbench::without_kernel().run_ui("nonsense.cmd").unwrap_err().contains("unknown"));
 }
@@ -438,6 +438,10 @@ fn properties_panel_and_drag_arrow_drive_the_extrusion() {
 
 /// Selects all of a value field and types a new value (Enter is left to the caller).
 fn type_into(d: &mut Driver, wb: &mut Workbench, field: &str, text: &str) {
+    // Grids size rows from the previous frame: let the layout settle before reading where the
+    // field is.
+    d.frame(wb, vec![]);
+    d.frame(wb, vec![]);
     let r = d.ctx.read_response(egui::Id::new(field)).unwrap_or_else(|| panic!("no field {field}")).rect;
     d.click(wb, r.center());
     d.frame(wb, vec![egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }]);
@@ -528,6 +532,71 @@ fn fillet_chamfer_and_shell_pick_edges_and_faces_in_the_viewport() {
     assert!(wb.panel.is_none(), "{}", wb.status());
     assert!(volume(&wb) > 0.0 && volume(&wb) < chamfered * 0.4, "hollow: {}", volume(&wb));
     assert_eq!(wb.document().features().len(), 5);
+    assert!(!wb.status_error, "{}", wb.status());
+}
+
+#[test]
+fn hole_takes_sketch_points_and_toggles_them_in_the_viewport() {
+    use tenon_geom::{Vec2, Vec3};
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    // Three centre points on the top face.
+    let top = wb.scene().bodies[0].faces.iter().position(|(n, _)| matches!(n, Some(FaceOrigin::Cap { end: CapEnd::End, .. }))).unwrap() as u32;
+    wb.view.selection = vec![Pick::Face { body: 0, face: top }];
+    wb.run_ui("sketch.new").unwrap();
+    let sk = sketching(&wb);
+    for (x, y) in [(10.0, 10.0), (30.0, 10.0), (20.0, 5.0)] {
+        wb.exec("sketch.point", json!({ "sketch": sk.0, "x": x, "y": y })).unwrap();
+    }
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+
+    // H starts Hole on every centre point; the preview drills them (12 deep goes through 10).
+    d.tap(&mut wb, egui::Key::H);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Hole(p)) = wb.panel.clone() else { panic!("no hole panel: {}", wb.status()) };
+    assert_eq!((p.sketch, p.points.len(), p.reverse), (sk, 3, false), "into the part, from the top face");
+    let through = PI * 9.0 * 10.0;
+    assert!((volume(&wb) - (8000.0 - 3.0 * through)).abs() < 1e-6, "preview: {}", volume(&wb));
+
+    // A click on a centre's marker takes it out.
+    let frame = wb.sketch_frame(sk).unwrap();
+    let third = on_screen(&wb, frame.plane_point(Vec2::new(20.0, 5.0)));
+    d.click(&mut wb, third);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Hole(p)) = wb.panel.clone() else { panic!() };
+    assert_eq!(p.points.len(), 2);
+    assert!((volume(&wb) - (8000.0 - 2.0 * through)).abs() < 1e-6, "{}", volume(&wb));
+
+    // Counterbored, through all, 4 mm: typed diameter, Enter is OK.
+    if let Some(Panel::Hole(p)) = &mut wb.panel {
+        p.seat = crate::panels::Seat::Counterbore;
+        p.through = true;
+    }
+    d.frame(&mut wb, vec![]);
+    type_into(&mut d, &mut wb, "tn_props_hole_dia", "4");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let bore = PI * 5.4 * 5.4 * 3.0 + PI * 4.0 * 7.0;
+    assert!((volume(&wb) - (8000.0 - 2.0 * bore)).abs() < 1e-6, "{} vs {}", volume(&wb), 8000.0 - 2.0 * bore);
+    let hole = wb.document().features().last().unwrap();
+    assert_eq!(hole.name, "Hole1");
+
+    // Editing brings the same settings back.
+    let id = hole.id;
+    wb.edit_feature(id).unwrap();
+    let Some(Panel::Hole(p)) = wb.panel.clone() else { panic!() };
+    assert_eq!((p.points.len(), p.seat, p.through, p.diameter), (2, crate::panels::Seat::Counterbore, true, 4.0));
+    d.tap(&mut wb, egui::Key::Escape);
     assert!(!wb.status_error, "{}", wb.status());
 }
 

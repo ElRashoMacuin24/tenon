@@ -181,6 +181,103 @@ pub struct Shell {
     pub outside: bool,
 }
 
+/// The shape of a hole's top.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HoleType {
+    Simple,
+    Counterbore {
+        diameter: f64,
+        depth: f64,
+    },
+    /// `angle` is the included angle of the countersink (radians).
+    Countersink {
+        diameter: f64,
+        angle: f64,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HoleExtent {
+    /// Depth of the full-diameter part, from the sketch plane (the drill point is extra).
+    Distance(f64),
+    ThroughAll,
+}
+
+/// Holes drilled at points of a sketch, against the sketch normal.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Hole {
+    pub sketch: FeatureId,
+    /// The sketch points at the hole centres.
+    pub points: Vec<EntityId>,
+    pub diameter: f64,
+    pub kind: HoleType,
+    pub extent: HoleExtent,
+    /// Included angle of the drill point (radians) for blind holes; `None` for a flat bottom.
+    #[serde(default)]
+    pub tip_angle: Option<f64>,
+    /// Drill along the sketch normal instead.
+    #[serde(default)]
+    pub reverse: bool,
+}
+
+/// The points of a sketch a hole goes at by default: centre points, i.e. points that are not
+/// construction and not on any curve.
+pub fn hole_centres(sk: &Sketch) -> Vec<EntityId> {
+    sk.entities().filter(|(id, e)| !e.construction && sk.point(*id).is_some() && sk.curves_at(*id).is_empty()).map(|(id, _)| id).collect()
+}
+
+/// The usual drill point angle, 118 degrees.
+pub const DRILL_POINT: f64 = 118.0 * std::f64::consts::PI / 180.0;
+
+impl Hole {
+    /// Why the hole's sizes cannot make a hole, if they cannot.
+    pub fn check(&self) -> Result<(), String> {
+        let positive = |v: f64| v.is_finite() && v > 0.0;
+        if !positive(self.diameter) {
+            return Err("the hole diameter must be positive".into());
+        }
+        let depth = match self.extent {
+            HoleExtent::Distance(d) if !positive(d) => return Err("the hole depth must be positive".into()),
+            HoleExtent::Distance(d) => Some(d),
+            HoleExtent::ThroughAll => None,
+        };
+        match self.kind {
+            HoleType::Simple => {}
+            HoleType::Counterbore { diameter, depth: cb } => {
+                if !positive(diameter) || diameter <= self.diameter {
+                    return Err("the counterbore must be wider than the hole".into());
+                }
+                if !positive(cb) || depth.is_some_and(|d| cb >= d) {
+                    return Err("the counterbore depth must be positive and less than the hole depth".into());
+                }
+            }
+            HoleType::Countersink { diameter, angle } => {
+                if !positive(diameter) || diameter <= self.diameter {
+                    return Err("the countersink must be wider than the hole".into());
+                }
+                if !(angle.is_finite() && angle > 0.0 && angle < std::f64::consts::PI) {
+                    return Err("the countersink angle must be between 0 and 180 degrees".into());
+                }
+                let sink = (diameter - self.diameter) / 2.0 / (angle / 2.0).tan();
+                if depth.is_some_and(|d| sink >= d) {
+                    return Err("the countersink is deeper than the hole".into());
+                }
+            }
+        }
+        if let Some(a) = self.tip_angle
+            && !(a.is_finite() && a > 0.0 && a < std::f64::consts::PI)
+        {
+            return Err("the drill point angle must be between 0 and 180 degrees".into());
+        }
+        if self.points.is_empty() {
+            return Err("the hole has no centre points".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FeatureKind {
@@ -190,6 +287,7 @@ pub enum FeatureKind {
     Fillet(Fillet),
     Chamfer(Chamfer),
     Shell(Shell),
+    Hole(Hole),
 }
 
 impl FeatureKind {
@@ -201,6 +299,7 @@ impl FeatureKind {
             FeatureKind::Fillet(_) => "Fillet",
             FeatureKind::Chamfer(_) => "Chamfer",
             FeatureKind::Shell(_) => "Shell",
+            FeatureKind::Hole(_) => "Hole",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -212,6 +311,7 @@ impl FeatureKind {
             FeatureKind::Fillet(_) => "Fillet",
             FeatureKind::Chamfer(_) => "Chamfer",
             FeatureKind::Shell(_) => "Shell",
+            FeatureKind::Hole(_) => "Hole",
         }
     }
     /// Features this one depends on.
@@ -230,6 +330,7 @@ impl FeatureKind {
                 v
             }
             FeatureKind::Shell(s) => s.remove.iter().filter_map(FaceRef::feature).collect(),
+            FeatureKind::Hole(h) => vec![h.sketch],
         };
         v.sort();
         v.dedup();
@@ -347,6 +448,10 @@ impl Document {
                 FeatureKind::Sketch { sketch, .. } => sketch.validate().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Extrude(e) if self.sketch(e.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, e.sketch)),
                 FeatureKind::Revolve(r) if self.sketch(r.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, r.sketch)),
+                FeatureKind::Hole(h) if self.sketch(h.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, h.sketch)),
+                // Sizes are checked here too: a file must not hold a hole that cannot be built
+                // without saying so. (Points that went missing are a regeneration error instead.)
+                FeatureKind::Hole(h) => h.check().map_err(|e| format!("{}: {e}", f.name))?,
                 _ => {}
             }
         }

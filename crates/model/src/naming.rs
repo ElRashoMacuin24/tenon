@@ -292,6 +292,41 @@ pub fn names_of_sweep(history: &History, feature: FeatureId, faces: u32) -> Vec<
     names
 }
 
+/// The faces of one hole, by the segment of its cross-section that made them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoleFace {
+    Top = 1,
+    Wall = 2,
+    Bottom = 3,
+    Point = 4,
+    BoreWall = 5,
+    BoreFloor = 6,
+    Sink = 7,
+}
+
+impl HoleFace {
+    /// The `source` of the face's name ([`FaceOrigin::From`]): its centre point and segment.
+    pub fn source(self, point: EntityId) -> u64 {
+        (u64::from(point.0) << 8) | self as u64
+    }
+}
+
+/// Face names of a revolved tool whose profile curves are tagged with name sources: each face is
+/// named after the tag of the curve that swept it.
+pub fn names_of_tagged(history: &History, feature: FeatureId, faces: u32) -> Vec<Option<FaceOrigin>> {
+    let mut names = vec![None; faces as usize];
+    for g in &history.generated {
+        if let Origin::ProfileCurve { tag } = g.origin {
+            for t in g.result.iter().filter(|t| t.kind == TopoKind::Face) {
+                if let Some(slot) = names.get_mut(t.index as usize) {
+                    *slot = Some(FaceOrigin::From { feature, source: tag, ordinal: 0 });
+                }
+            }
+        }
+    }
+    names
+}
+
 /// Face names of a boolean result: each result face inherits the name of the input face it came
 /// from. `inputs[i]` are the names of input `i` (target first, then tools).
 pub fn names_of_boolean(history: &History, inputs: &[&[Option<FaceOrigin>]], faces: u32) -> Vec<Option<FaceOrigin>> {

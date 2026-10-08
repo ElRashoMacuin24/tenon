@@ -4,8 +4,8 @@
 use egui::{Align2, Ui};
 use serde_json::{Value, json};
 use tenon_model::{
-    AxisRef, Chamfer, ChamferSize, Document, EdgeRef, Extrude, ExtrudeExtent, FaceRef, FeatureId, FeatureKind, Fillet, Fingerprint, Operation,
-    OriginAxis, RegionSel, Revolve, RevolveAngle, Shell,
+    AxisRef, Chamfer, ChamferSize, DRILL_POINT, Document, EdgeRef, Extrude, ExtrudeExtent, FaceRef, FeatureId, FeatureKind, Fillet, Fingerprint,
+    Hole, HoleExtent, HoleType, Operation, OriginAxis, RegionSel, Revolve, RevolveAngle, Shell, hole_centres,
 };
 use tenon_sketch::{Constraint, ConstraintId, EntityId};
 
@@ -127,6 +127,76 @@ pub(crate) struct ShellPanel {
     pub outside: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Seat {
+    None,
+    Counterbore,
+    Countersink,
+}
+
+/// Hole: drilled at points of a sketch.
+#[derive(Clone, Debug)]
+pub(crate) struct HolePanel {
+    pub editing: Option<FeatureId>,
+    pub sketch: FeatureId,
+    pub points: Vec<EntityId>,
+    pub diameter: f64,
+    pub seat: Seat,
+    pub seat_diameter: f64,
+    pub bore_depth: f64,
+    pub sink_degrees: f64,
+    pub through: bool,
+    pub depth: f64,
+    pub flat: bool,
+    pub tip_degrees: f64,
+    pub reverse: bool,
+}
+
+impl HolePanel {
+    pub(crate) fn kind(&self) -> FeatureKind {
+        FeatureKind::Hole(Hole {
+            sketch: self.sketch,
+            points: self.points.clone(),
+            diameter: self.diameter,
+            kind: match self.seat {
+                Seat::None => HoleType::Simple,
+                Seat::Counterbore => HoleType::Counterbore { diameter: self.seat_diameter, depth: self.bore_depth },
+                Seat::Countersink => HoleType::Countersink { diameter: self.seat_diameter, angle: self.sink_degrees.to_radians() },
+            },
+            extent: if self.through { HoleExtent::ThroughAll } else { HoleExtent::Distance(self.depth) },
+            tip_angle: if self.flat { None } else { Some(self.tip_degrees.to_radians()) },
+            reverse: self.reverse,
+        })
+    }
+
+    fn from_hole(editing: Option<FeatureId>, h: &Hole) -> HolePanel {
+        let (seat, seat_diameter, bore_depth, sink_degrees) = match h.kind {
+            HoleType::Simple => (Seat::None, h.diameter * 1.8, h.diameter / 2.0, 90.0),
+            HoleType::Counterbore { diameter, depth } => (Seat::Counterbore, diameter, depth, 90.0),
+            HoleType::Countersink { diameter, angle } => (Seat::Countersink, diameter, h.diameter / 2.0, angle.to_degrees()),
+        };
+        let (through, depth) = match h.extent {
+            HoleExtent::Distance(d) => (false, d),
+            HoleExtent::ThroughAll => (true, h.diameter * 2.0),
+        };
+        HolePanel {
+            editing,
+            sketch: h.sketch,
+            points: h.points.clone(),
+            diameter: h.diameter,
+            seat,
+            seat_diameter,
+            bore_depth,
+            sink_degrees,
+            through,
+            depth,
+            flat: h.tip_angle.is_none(),
+            tip_degrees: h.tip_angle.unwrap_or(DRILL_POINT).to_degrees(),
+            reverse: h.reverse,
+        }
+    }
+}
+
 impl FilletPanel {
     pub(crate) fn kind(&self) -> FeatureKind {
         FeatureKind::Fillet(Fillet { edges: self.edges.clone(), radius: self.radius })
@@ -169,6 +239,7 @@ pub(crate) enum Panel {
     Fillet(FilletPanel),
     Chamfer(ChamferPanel),
     Shell(ShellPanel),
+    Hole(HolePanel),
     Value(ValuePanel),
     EditDimension { sketch: FeatureId, constraint: ConstraintId, value: f64, angular: bool },
     Rename { feature: FeatureId, name: String },
@@ -225,6 +296,8 @@ impl Workbench {
         match &self.panel {
             Some(Panel::Extrude(p)) => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Revolve(p)) => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::Hole(p)) if !p.points.is_empty() => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::Hole(p)) => rolled(p.editing),
             Some(Panel::Fillet(p)) => rolled(p.editing),
             Some(Panel::Chamfer(p)) => rolled(p.editing),
             Some(Panel::Shell(p)) => rolled(p.editing),
@@ -404,6 +477,56 @@ impl Workbench {
         Ok(())
     }
 
+    pub(crate) fn open_hole(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::Hole(h) => HolePanel::from_hole(editing, h),
+                _ => return Err("not a hole".into()),
+            },
+            None => {
+                if !self.document().features().iter().any(|f| matches!(f.kind, FeatureKind::Extrude(_) | FeatureKind::Revolve(_))) {
+                    return Err("there is no solid to drill yet: extrude or revolve a sketch first".into());
+                }
+                // The sketch being edited, else the last sketch with centre points.
+                let sketch = match &self.mode {
+                    Mode::Sketch(s) => {
+                        let id = s.feature;
+                        self.finish_sketch();
+                        id
+                    }
+                    Mode::Model => self
+                        .sketches()
+                        .iter()
+                        .rev()
+                        .map(|s| s.0)
+                        .find(|id| self.document().sketch(*id).is_some_and(|sk| !hole_centres(sk).is_empty()))
+                        .ok_or("put points in a sketch for the hole centres first (Point tool in the Sketch tab)")?,
+                };
+                let points = self.document().sketch(sketch).map(hole_centres).unwrap_or_default();
+                let mut p = HolePanel::from_hole(
+                    None,
+                    &Hole {
+                        sketch,
+                        points,
+                        diameter: 6.0,
+                        kind: HoleType::Simple,
+                        extent: HoleExtent::Distance(12.0),
+                        tip_angle: Some(DRILL_POINT),
+                        reverse: false,
+                    },
+                );
+                // Drill into the part: flip when the part lies on the sketch normal's side.
+                if let (Some(frame), Some(b)) = (self.sketch_frame(sketch), self.scene.bbox()) {
+                    p.reverse = (b.center() - frame.origin()).dot(frame.z()) > 1e-9;
+                }
+                p
+            }
+        };
+        self.panel = Some(Panel::Hole(panel));
+        self.set_status("Hole: click sketch points to add or remove centres, set the sizes, then OK.");
+        Ok(())
+    }
+
     pub(crate) fn commit_feature(&mut self, editing: Option<FeatureId>, kind: FeatureKind) -> bool {
         let r = match editing {
             Some(id) => self.exec_status("feature.update", json!({ "feature": id.0, "kind": serde_json::to_value(&kind).unwrap_or(Value::Null) })),
@@ -453,6 +576,36 @@ impl Workbench {
                         ("model.chamfer", p)
                     }
                     FeatureKind::Shell(s) => ("model.shell", json!({ "remove": s.remove, "thickness": s.thickness, "outside": s.outside })),
+                    FeatureKind::Hole(h) => {
+                        let mut p = json!({
+                            "sketch": h.sketch.0,
+                            "points": h.points.iter().map(|e| e.0).collect::<Vec<_>>(),
+                            "diameter": h.diameter,
+                            "reverse": h.reverse,
+                        });
+                        match h.extent {
+                            HoleExtent::Distance(d) => p["depth"] = json!(d),
+                            HoleExtent::ThroughAll => p["through_all"] = json!(true),
+                        }
+                        match h.tip_angle {
+                            Some(a) => p["tip_angle"] = json!(a),
+                            None => p["flat_bottom"] = json!(true),
+                        }
+                        match h.kind {
+                            HoleType::Simple => {}
+                            HoleType::Counterbore { diameter, depth } => {
+                                p["type"] = json!("counterbore");
+                                p["counterbore_diameter"] = json!(diameter);
+                                p["counterbore_depth"] = json!(depth);
+                            }
+                            HoleType::Countersink { diameter, angle } => {
+                                p["type"] = json!("countersink");
+                                p["countersink_diameter"] = json!(diameter);
+                                p["countersink_angle"] = json!(angle);
+                            }
+                        }
+                        ("model.hole", p)
+                    }
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
@@ -521,6 +674,18 @@ impl Workbench {
                     keep = !self.commit_feature(p.editing, p.kind());
                     if !keep && again {
                         reopen = Some("model.shell");
+                    }
+                }
+            }
+            Panel::Hole(p) => {
+                if commit {
+                    if p.points.is_empty() {
+                        self.set_error("Hole: click at least one sketch point for a centre".to_string());
+                    } else {
+                        keep = !self.commit_feature(p.editing, p.kind());
+                        if !keep && again {
+                            reopen = Some("model.hole");
+                        }
                     }
                 }
             }

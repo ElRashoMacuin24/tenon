@@ -279,6 +279,7 @@ impl Workbench {
             "model.fillet" => self.open_modify("fillet", None)?,
             "model.chamfer" => self.open_modify("chamfer", None)?,
             "model.shell" => self.open_modify("shell", None)?,
+            "model.hole" => self.open_hole(None)?,
             "ui.ok" | "ui.cancel" => {
                 let ok = id == "ui.ok";
                 if self.panel.is_some() {
@@ -562,6 +563,7 @@ impl Workbench {
             Some(FeatureKind::Fillet(_)) => self.open_modify("fillet", Some(id)),
             Some(FeatureKind::Chamfer(_)) => self.open_modify("chamfer", Some(id)),
             Some(FeatureKind::Shell(_)) => self.open_modify("shell", Some(id)),
+            Some(FeatureKind::Hole(_)) => self.open_hole(Some(id)),
             None => Err(format!("{id} does not exist")),
         }
     }

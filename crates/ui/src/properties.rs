@@ -6,7 +6,7 @@ use tenon_geom::Vec3;
 use tenon_model::{Operation, OriginAxis, RegionSel};
 use tenon_sketch::EntityId;
 
-use crate::panels::{AxisChoice, ChamferMethod, Direction, ExtentChoice, Panel, PanelRequest};
+use crate::panels::{AxisChoice, ChamferMethod, Direction, ExtentChoice, Panel, PanelRequest, Seat};
 use crate::theme::{self, Tokens};
 use crate::workbench::Workbench;
 
@@ -218,7 +218,7 @@ impl Workbench {
 
     /// True while a feature command shows the properties panel.
     pub(crate) fn has_properties(&self) -> bool {
-        matches!(self.panel, Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_)))
+        matches!(self.panel, Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_) | Panel::Hole(_)))
     }
 
     /// The properties panel for the running feature command.
@@ -241,6 +241,7 @@ impl Workbench {
             Panel::Fillet(p) => ("Fillet", p.editing.map(|f| self.feature_name(f))),
             Panel::Chamfer(p) => ("Chamfer", p.editing.map(|f| self.feature_name(f))),
             Panel::Shell(p) => ("Shell", p.editing.map(|f| self.feature_name(f))),
+            Panel::Hole(p) => ("Hole", p.editing.map(|f| self.feature_name(f))),
             _ => return,
         };
         let mut clear = false;
@@ -497,6 +498,139 @@ impl Workbench {
                             });
                         });
                     }
+                    Panel::Hole(p) => {
+                        section(ui, "Input Geometry", true, |ui| {
+                            egui::Grid::new("tn_props_hole_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Positions");
+                                clear |= picked_row(ui, p.points.len(), "click sketch points");
+                                ui.end_row();
+                                ui.label("Sketch");
+                                ui.label(sketches.iter().find(|s| s.0 == p.sketch).map_or("?".into(), |s| s.1.clone()));
+                                ui.end_row();
+                            });
+                        });
+                        section(ui, "Type", true, |ui| {
+                            egui::Grid::new("tn_props_hole_type").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Hole");
+                                egui::ComboBox::from_id_salt("tn_props_hole_kind").selected_text("Simple").show_ui(ui, |ui| {
+                                    let _ = ui.selectable_label(true, "Simple");
+                                    ui.add_enabled(false, egui::Button::selectable(false, "Clearance (M5)"));
+                                    ui.add_enabled(false, egui::Button::selectable(false, "Tapped (M5)"));
+                                });
+                                ui.end_row();
+                                ui.label("Seat");
+                                let seat_name = |s: Seat| match s {
+                                    Seat::None => "None",
+                                    Seat::Counterbore => "Counterbore",
+                                    Seat::Countersink => "Countersink",
+                                };
+                                egui::ComboBox::from_id_salt("tn_props_hole_seat").selected_text(seat_name(p.seat)).show_ui(ui, |ui| {
+                                    for s in [Seat::None, Seat::Counterbore, Seat::Countersink] {
+                                        ui.selectable_value(&mut p.seat, s, seat_name(s));
+                                    }
+                                });
+                                ui.end_row();
+                            });
+                        });
+                        section(ui, "Behavior", true, |ui| {
+                            egui::Grid::new("tn_props_hole_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Termination");
+                                egui::ComboBox::from_id_salt("tn_props_hole_term")
+                                    .selected_text(if p.through { "Through All" } else { "Distance" })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut p.through, false, "Distance");
+                                        ui.selectable_value(&mut p.through, true, "Through All");
+                                    });
+                                ui.end_row();
+                                ui.label("Direction");
+                                let items =
+                                    [(Glyph::Flipped, "Default: into the part, against the sketch normal", true), (Glyph::Default, "Flipped", true)];
+                                if let Some(i) = glyph_row(ui, &items, usize::from(p.reverse), t) {
+                                    p.reverse = i == 1;
+                                }
+                                ui.end_row();
+                                if !p.through {
+                                    ui.label("Drill Point");
+                                    egui::ComboBox::from_id_salt("tn_props_hole_point").selected_text(if p.flat { "Flat" } else { "Angle" }).show_ui(
+                                        ui,
+                                        |ui| {
+                                            ui.selectable_value(&mut p.flat, true, "Flat");
+                                            ui.selectable_value(&mut p.flat, false, "Angle");
+                                        },
+                                    );
+                                    ui.end_row();
+                                }
+                            });
+                        });
+                        section(ui, "Dimensions", true, |ui| {
+                            egui::Grid::new("tn_props_hole_dims").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Diameter");
+                                enter |=
+                                    value_field(ui, egui::Id::new("tn_props_hole_dia"), &mut p.diameter, "mm", 0.001..=100_000.0, 110.0, t).entered;
+                                ui.end_row();
+                                if !p.through {
+                                    ui.label("Depth");
+                                    enter |= value_field(ui, egui::Id::new("tn_props_hole_depth"), &mut p.depth, "mm", 0.001..=100_000.0, 110.0, t)
+                                        .entered;
+                                    ui.end_row();
+                                }
+                                match p.seat {
+                                    Seat::None => {}
+                                    Seat::Counterbore => {
+                                        ui.label("Bore Diameter");
+                                        enter |= value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_seat_dia"),
+                                            &mut p.seat_diameter,
+                                            "mm",
+                                            0.001..=100_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
+                                        ui.end_row();
+                                        ui.label("Bore Depth");
+                                        enter |= value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_bore_depth"),
+                                            &mut p.bore_depth,
+                                            "mm",
+                                            0.001..=100_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
+                                        ui.end_row();
+                                    }
+                                    Seat::Countersink => {
+                                        ui.label("Sink Diameter");
+                                        enter |= value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_seat_dia"),
+                                            &mut p.seat_diameter,
+                                            "mm",
+                                            0.001..=100_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
+                                        ui.end_row();
+                                        ui.label("Sink Angle");
+                                        enter |=
+                                            value_field(ui, egui::Id::new("tn_props_sink_angle"), &mut p.sink_degrees, "deg", 1.0..=179.0, 110.0, t)
+                                                .entered;
+                                        ui.end_row();
+                                    }
+                                }
+                                if !p.through && !p.flat {
+                                    ui.label("Point Angle");
+                                    enter |= value_field(ui, egui::Id::new("tn_props_tip_angle"), &mut p.tip_degrees, "deg", 1.0..=179.0, 110.0, t)
+                                        .entered;
+                                    ui.end_row();
+                                }
+                            });
+                        });
+                    }
                     _ => {}
                 }
             },
@@ -590,6 +724,11 @@ impl Workbench {
             Some(Panel::Extrude(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Revolve(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_)) => self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center())),
+            Some(Panel::Hole(p)) => p
+                .points
+                .first()
+                .and_then(|e| Some(self.sketch_frame(p.sketch)?.plane_point(self.document().sketch(p.sketch)?.point(*e)?)))
+                .or_else(|| self.scene.bbox().map(|b| b.center())),
             _ => return,
         };
         let is_extrude = matches!(self.panel, Some(Panel::Extrude(_)));
@@ -635,6 +774,11 @@ impl Workbench {
                         }
                         Some(Panel::Shell(p)) => {
                             if value_field(ui, egui::Id::new("tn_mini_thickness"), &mut p.thickness, "mm", 0.001..=100_000.0, 80.0, t).entered {
+                                request = Some(PanelRequest::Ok);
+                            }
+                        }
+                        Some(Panel::Hole(p)) => {
+                            if value_field(ui, egui::Id::new("tn_mini_hole_dia"), &mut p.diameter, "mm", 0.001..=100_000.0, 80.0, t).entered {
                                 request = Some(PanelRequest::Ok);
                             }
                         }

@@ -167,3 +167,94 @@ fn edges_are_listed_with_the_faces_they_join() {
     assert!(s.exec("model.shell", &json!({ "thickness": "x" }), Some(&mut k)).is_err());
     assert_eq!(s.document(), &before);
 }
+
+/// A sketch on the top face of extrusion `ex` with centre points at `pts`.
+fn points_on_top(s: &mut Session, k: &mut OcctKernel, ex: u64, pts: &[(f64, f64)]) -> (u64, Vec<u64>) {
+    let top_ref = run(s, k, "model.face_ref", json!({ "origin": top(ex) }));
+    let sk = run(s, k, "sketch.create", json!({ "face": top_ref }))["feature"].as_u64().unwrap();
+    let ids = pts.iter().map(|(x, y)| run(s, k, "sketch.point", json!({ "sketch": sk, "x": x, "y": y }))["point"].as_u64().unwrap()).collect();
+    (sk, ids)
+}
+
+#[test]
+fn holes_simple_counterbore_and_countersink() {
+    let cone = |r1: f64, r2: f64, h: f64| PI * h / 3.0 * (r1 * r1 + r1 * r2 + r2 * r2);
+    let cases: Vec<(Value, f64)> = vec![
+        // Blind, 5 deep, with a 118 degree drill point.
+        (json!({ "diameter": 6, "depth": 5 }), PI * 9.0 * 5.0 + cone(3.0, 0.0, 3.0 / (59.0f64).to_radians().tan())),
+        (json!({ "diameter": 6, "depth": 5, "flat_bottom": true }), PI * 9.0 * 5.0),
+        (json!({ "diameter": 6, "through_all": true }), PI * 9.0 * 10.0),
+        (
+            json!({ "diameter": 6, "through_all": true, "type": "counterbore", "counterbore_diameter": 10, "counterbore_depth": 3 }),
+            PI * 25.0 * 3.0 + PI * 9.0 * 7.0,
+        ),
+        // A 90 degree countersink from 10 down to 6 is 2 deep.
+        (json!({ "diameter": 6, "through_all": true, "type": "countersink", "countersink_diameter": 10 }), cone(5.0, 3.0, 2.0) + PI * 9.0 * 8.0),
+    ];
+    for (params, removed) in cases {
+        let (mut s, mut k) = (Session::default(), OcctKernel::new());
+        let (_, ex, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+        let (sk, pts) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0), (30.0, 10.0)]);
+        let mut p = params.clone();
+        p["sketch"] = json!(sk);
+        let r = run(&mut s, &mut k, "model.hole", p);
+        assert_eq!(r["name"], "Hole1");
+        regenerates(&mut s, &mut k);
+        let v = volume(&mut s, &mut k);
+        assert!(approx(v, 8000.0 - 2.0 * removed), "{params}: {v} vs {}", 8000.0 - 2.0 * removed);
+        // Both points were taken by default; the hole walls are named after their points.
+        let faces = run(&mut s, &mut k, "model.faces", json!({}));
+        let walls: Vec<u64> = pts.iter().map(|p| (p << 8) | 2).collect();
+        for w in &walls {
+            let n = faces["faces"].as_array().unwrap().iter().filter(|f| f["name"]["type"] == "from" && f["name"]["source"] == *w).count();
+            assert_eq!(n, 1, "{params}: wall of point {}: {faces}", w >> 8);
+        }
+    }
+}
+
+#[test]
+fn a_hole_follows_its_point_and_keeps_its_edges() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    let (sk, pts) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0)]);
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "through_all": true }))["feature"].as_u64().unwrap();
+    // Chamfer the hole's top edge: between the top face and the hole wall.
+    let wall = json!({ "type": "from", "feature": hole, "source": (pts[0] << 8) | 2, "ordinal": 0 });
+    let edge = run(&mut s, &mut k, "model.edge_ref", json!({ "faces": [top(ex), wall] }));
+    run(&mut s, &mut k, "model.chamfer", json!({ "edges": [edge], "distance": 1.0 }));
+    regenerates(&mut s, &mut k);
+    let with_chamfer = volume(&mut s, &mut k);
+    assert!(with_chamfer < 8000.0 - PI * 90.0, "{with_chamfer}");
+    // Move the point: the hole and its chamfer go with it, nothing changes in volume.
+    run(&mut s, &mut k, "sketch.drag", json!({ "sketch": sk, "point": pts[0], "x": 25.0, "y": 8.0 }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), with_chamfer), "{} vs {with_chamfer}", volume(&mut s, &mut k));
+    let topo = run(&mut s, &mut k, "model.topology", json!({}));
+    assert_eq!(topo["bodies"][0]["faces"], 6 + 2, "block, wall and chamfer cone: {topo}");
+}
+
+#[test]
+fn bad_holes_are_refused_or_reported() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    let (sk, pts) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0)]);
+    let before = s.document().clone();
+    for bad in [
+        json!({ "sketch": sk, "diameter": -1, "depth": 5 }),
+        json!({ "sketch": sk, "diameter": 6, "depth": 5, "type": "counterbore", "counterbore_diameter": 4, "counterbore_depth": 1 }),
+        json!({ "sketch": sk, "diameter": 6, "depth": 5, "type": "counterbore", "counterbore_diameter": 10, "counterbore_depth": 6 }),
+        json!({ "sketch": sk, "diameter": 6, "depth": 5, "type": "countersink", "countersink_diameter": 30 }),
+        json!({ "sketch": sk, "diameter": 6, "depth": 5, "points": [] }),
+        json!({ "sketch": sk, "diameter": 6, "depth": 5, "points": [999] }),
+        json!({ "sketch": sk, "diameter": 6, "depth": 5, "type": "slot" }),
+    ] {
+        assert!(s.exec("model.hole", &bad, Some(&mut k)).is_err(), "{bad}");
+    }
+    assert_eq!(s.document(), &before);
+    // Deleting the centre point breaks the hole with a clear message.
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "depth": 5 }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.delete", json!({ "sketch": sk, "entities": [pts[0]] }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert_eq!(r["error"]["feature"], hole, "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().contains("no longer exists"), "{r}");
+}
