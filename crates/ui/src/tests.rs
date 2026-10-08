@@ -91,7 +91,7 @@ fn sketch_extrude_and_sketch_on_the_top_face_through_the_ui() {
     click(&mut wb, 40.0, 20.0);
     assert_eq!(wb.document().sketch(sk1).unwrap().entity_count(), 8);
     frame(&mut wb, &ctx, size);
-    assert_eq!(wb.sketch_dof_text().unwrap(), "4 degrees of freedom");
+    assert_eq!(wb.sketch_dof_text().unwrap(), "4 dimensions needed");
 
     // Extrude: the panel previews, OK commits.
     wb.run_ui("model.extrude").unwrap();
@@ -230,7 +230,7 @@ fn viewport_responds_to_real_pointer_input() {
     let top_centre = on_screen(&wb, Vec3::new(20.0, 10.0, 10.0));
     d.click(&mut wb, top_centre);
     assert!(is_top(&wb), "{:?}", wb.view.selection);
-    assert!(wb.status().contains("end face of Extrude1"), "{}", wb.status());
+    assert!(wb.status().contains("end face of Extrusion1"), "{}", wb.status());
     // A click on empty background clears it.
     let empty = rect.left_top() + vec2(40.0, rect.height() / 2.0);
     d.click(&mut wb, empty);

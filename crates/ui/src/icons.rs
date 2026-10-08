@@ -64,6 +64,58 @@ pub enum Icon {
     Folder,
     Body,
     Info,
+    EndOfPart,
+    // more modelling
+    Rib,
+    Draft,
+    Thread,
+    Combine,
+    Split,
+    Ucs,
+    // more sketching
+    Collinear,
+    Symmetric,
+    Fix,
+    Equal,
+    Concentric,
+    Construction,
+    Text,
+    Move,
+    Copy,
+    Rotate,
+    Extend,
+    Scale,
+    Stretch,
+    // chrome
+    Update,
+    Search,
+    Menu,
+    Close,
+    Plus,
+    VisualStyle,
+    Window,
+    PreviousView,
+    Projection,
+    Delete,
+}
+
+/// What an icon depicts, for its fill colour.
+fn category(icon: Icon) -> Option<Category> {
+    use Icon::*;
+    Some(match icon {
+        Extrude | Revolve | Sweep | Loft | Coil | Fillet | Chamfer | Shell | Hole | Rib | Draft | Thread | Combine | Split | Part | Body | Cube
+        | MassProps | PatternRect | PatternCircular | Mirror => Category::Solid,
+        Plane | Axis | Point | Ucs | LookAt => Category::Work,
+        NewSketch | FinishSketch => Category::Sketch,
+        _ => return None,
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Category {
+    Solid,
+    Work,
+    Sketch,
 }
 
 struct Pen<'a> {
@@ -113,14 +165,31 @@ impl Pen<'_> {
 const TAU: f32 = std::f32::consts::TAU;
 const PI: f32 = std::f32::consts::PI;
 
-/// Paints `icon` into `rect` in `color`.
+/// Paints `icon` into `rect` in `color`, with translucent fills.
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
+    draw(painter, rect, icon, color, color.gamma_multiply(0.35));
+}
+
+/// Paints `icon` with its category colour as the fill (ribbon and browser): solids blue, work
+/// features amber, sketches green. Disabled icons stay grey.
+pub fn paint_colored(painter: &Painter, rect: Rect, icon: Icon, color: Color32, t: &crate::theme::Tokens, enabled: bool) {
+    let fill = match (enabled, category(icon)) {
+        (true, Some(Category::Solid)) => t.tint_solid.gamma_multiply(0.85),
+        (true, Some(Category::Work)) => t.tint_work.gamma_multiply(0.85),
+        (true, Some(Category::Sketch)) => t.tint_sketch.gamma_multiply(0.85),
+        _ => color.gamma_multiply(0.35),
+    };
+    let color = if enabled && icon == Icon::FinishSketch { t.ok } else { color };
+    draw(painter, rect, icon, color, fill);
+}
+
+fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32) {
     let width = (rect.width() / 14.0).clamp(1.0, 2.2);
     let pen = Pen { p: painter, r: rect, s: Stroke::new(width, color) };
-    let soft = color.gamma_multiply(0.35);
-    let accent = Color32::from_rgb(0x2f, 0xb8, 0xb0);
+    let accent = soft;
     match icon {
         Icon::NewSketch => {
+            pen.fill(&[(0.1, 0.25), (0.75, 0.25), (0.75, 0.9), (0.1, 0.9)], soft);
             pen.closed(&[(0.1, 0.25), (0.75, 0.25), (0.75, 0.9), (0.1, 0.9)]);
             pen.line(&[(0.45, 0.6), (0.9, 0.12)]);
             pen.line(&[(0.38, 0.68), (0.45, 0.6)]);
@@ -172,6 +241,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.line(&[(0.25, 0.15), (0.25, 0.7), (0.75, 0.7), (0.75, 0.15)]);
         }
         Icon::Hole => {
+            painter.circle_filled(pen.at(0.5, 0.5), 0.4 * rect.width(), soft);
             pen.circle((0.5, 0.5), 0.4);
             pen.circle((0.5, 0.5), 0.2);
             pen.line(&[(0.5, 0.02), (0.5, 0.98)]);
@@ -195,6 +265,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         }
         Icon::PatternRect => {
             for (x, y) in [(0.1, 0.1), (0.58, 0.1), (0.1, 0.58), (0.58, 0.58)] {
+                pen.fill(&[(x, y), (x + 0.32, y), (x + 0.32, y + 0.32), (x, y + 0.32)], soft);
                 pen.closed(&[(x, y), (x + 0.32, y), (x + 0.32, y + 0.32), (x, y + 0.32)]);
             }
         }
@@ -393,6 +464,162 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.circle((0.5, 0.5), 0.42);
             pen.dot((0.5, 0.3), 0.06);
             pen.line(&[(0.5, 0.45), (0.5, 0.75)]);
+        }
+        Icon::EndOfPart => {
+            let red = Color32::from_rgb(0xd8, 0x44, 0x38);
+            painter.circle_filled(pen.at(0.5, 0.5), 0.42 * rect.width(), red);
+            let white = Pen { p: painter, r: rect, s: Stroke::new(width, Color32::WHITE) };
+            white.line(&[(0.32, 0.32), (0.68, 0.68)]);
+            white.line(&[(0.68, 0.32), (0.32, 0.68)]);
+        }
+        Icon::Rib => {
+            pen.fill(&[(0.1, 0.85), (0.9, 0.85), (0.9, 0.7), (0.1, 0.7)], soft);
+            pen.closed(&[(0.1, 0.85), (0.9, 0.85), (0.9, 0.7), (0.1, 0.7)]);
+            pen.fill(&[(0.42, 0.7), (0.58, 0.7), (0.58, 0.15), (0.42, 0.15)], soft);
+            pen.closed(&[(0.42, 0.7), (0.58, 0.7), (0.58, 0.15), (0.42, 0.15)]);
+        }
+        Icon::Draft => {
+            pen.fill(&[(0.25, 0.9), (0.75, 0.9), (0.65, 0.15), (0.35, 0.15)], soft);
+            pen.closed(&[(0.25, 0.9), (0.75, 0.9), (0.65, 0.15), (0.35, 0.15)]);
+        }
+        Icon::Thread => {
+            pen.closed(&[(0.3, 0.1), (0.7, 0.1), (0.7, 0.9), (0.3, 0.9)]);
+            for i in 0..4 {
+                let y = 0.2 + i as f32 * 0.18;
+                pen.line(&[(0.3, y + 0.1), (0.7, y)]);
+            }
+        }
+        Icon::Combine => {
+            pen.fill(&[(0.1, 0.35), (0.6, 0.35), (0.6, 0.85), (0.1, 0.85)], soft);
+            pen.closed(&[(0.1, 0.35), (0.6, 0.35), (0.6, 0.85), (0.1, 0.85)]);
+            pen.closed(&[(0.4, 0.15), (0.9, 0.15), (0.9, 0.65), (0.4, 0.65)]);
+        }
+        Icon::Split => {
+            pen.fill(&[(0.1, 0.2), (0.45, 0.2), (0.45, 0.8), (0.1, 0.8)], soft);
+            pen.closed(&[(0.1, 0.2), (0.45, 0.2), (0.45, 0.8), (0.1, 0.8)]);
+            pen.closed(&[(0.55, 0.2), (0.9, 0.2), (0.9, 0.8), (0.55, 0.8)]);
+        }
+        Icon::Ucs => {
+            pen.line(&[(0.2, 0.8), (0.85, 0.8)]);
+            pen.line(&[(0.2, 0.8), (0.2, 0.15)]);
+            pen.line(&[(0.2, 0.8), (0.55, 0.5)]);
+            pen.dot((0.2, 0.8), 0.07);
+        }
+        Icon::Collinear => {
+            pen.line(&[(0.05, 0.75), (0.4, 0.55)]);
+            pen.line(&[(0.6, 0.45), (0.95, 0.25)]);
+            for i in 0..2 {
+                let t = 0.42 + i as f32 * 0.1;
+                pen.line(&[(t, 0.54 - i as f32 * 0.05), (t + 0.04, 0.52 - i as f32 * 0.05)]);
+            }
+        }
+        Icon::Symmetric => {
+            pen.line(&[(0.5, 0.05), (0.5, 0.95)]);
+            pen.closed(&[(0.12, 0.3), (0.38, 0.5), (0.12, 0.7)]);
+            pen.closed(&[(0.88, 0.3), (0.62, 0.5), (0.88, 0.7)]);
+        }
+        Icon::Fix => {
+            pen.closed(&[(0.25, 0.45), (0.75, 0.45), (0.75, 0.9), (0.25, 0.9)]);
+            pen.arc((0.5, 0.45), 0.17, 0.22, PI, TAU);
+            pen.dot((0.5, 0.66), 0.06);
+        }
+        Icon::Equal => {
+            pen.line(&[(0.15, 0.38), (0.85, 0.38)]);
+            pen.line(&[(0.15, 0.62), (0.85, 0.62)]);
+        }
+        Icon::Concentric => {
+            pen.circle((0.5, 0.5), 0.4);
+            pen.circle((0.5, 0.5), 0.2);
+        }
+        Icon::Construction => {
+            for i in 0..4 {
+                let x = 0.08 + i as f32 * 0.23;
+                pen.line(&[(x, 0.92 - i as f32 * 0.23), (x + 0.13, 0.79 - i as f32 * 0.23)]);
+            }
+        }
+        Icon::Text => {
+            pen.line(&[(0.15, 0.15), (0.85, 0.15)]);
+            pen.line(&[(0.5, 0.15), (0.5, 0.88)]);
+            pen.line(&[(0.38, 0.88), (0.62, 0.88)]);
+        }
+        Icon::Move => {
+            pen.closed(&[(0.1, 0.5), (0.4, 0.5), (0.4, 0.85), (0.1, 0.85)]);
+            pen.line(&[(0.45, 0.4), (0.85, 0.15)]);
+            pen.arrow_head((0.85, 0.15), (0.45, 0.4));
+        }
+        Icon::Copy => {
+            pen.closed(&[(0.1, 0.4), (0.55, 0.4), (0.55, 0.9), (0.1, 0.9)]);
+            pen.closed(&[(0.35, 0.1), (0.85, 0.1), (0.85, 0.6), (0.65, 0.6)]);
+        }
+        Icon::Rotate => {
+            pen.arc((0.5, 0.55), 0.34, 0.34, -PI * 0.95, PI * 0.35);
+            pen.arrow_head((0.5 + 0.34 * (PI * 0.35).cos(), 0.55 + 0.34 * (PI * 0.35).sin()), (0.85, 0.6));
+            pen.dot((0.5, 0.55), 0.05);
+        }
+        Icon::Extend => {
+            pen.line(&[(0.1, 0.5), (0.55, 0.5)]);
+            for i in 0..2 {
+                let x = 0.6 + i as f32 * 0.12;
+                pen.line(&[(x, 0.5), (x + 0.06, 0.5)]);
+            }
+            pen.line(&[(0.9, 0.1), (0.9, 0.9)]);
+        }
+        Icon::Scale => {
+            pen.closed(&[(0.1, 0.55), (0.45, 0.55), (0.45, 0.9), (0.1, 0.9)]);
+            pen.closed(&[(0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)]);
+            pen.line(&[(0.5, 0.5), (0.8, 0.2)]);
+        }
+        Icon::Stretch => {
+            pen.closed(&[(0.1, 0.3), (0.55, 0.3), (0.55, 0.7), (0.1, 0.7)]);
+            pen.line(&[(0.55, 0.5), (0.92, 0.5)]);
+            pen.arrow_head((0.92, 0.5), (0.6, 0.5));
+        }
+        Icon::Update => {
+            pen.arc((0.5, 0.5), 0.36, 0.36, -PI * 0.8, PI * 0.3);
+            pen.arrow_head((0.5 + 0.36 * (PI * 0.3).cos(), 0.5 + 0.36 * (PI * 0.3).sin()), (0.88, 0.5));
+            pen.arc((0.5, 0.5), 0.36, 0.36, PI * 0.2, PI * 1.3);
+            pen.arrow_head((0.5 + 0.36 * (PI * 1.3).cos(), 0.5 + 0.36 * (PI * 1.3).sin()), (0.12, 0.5));
+        }
+        Icon::Search => {
+            pen.circle((0.42, 0.42), 0.27);
+            pen.line(&[(0.62, 0.62), (0.9, 0.9)]);
+        }
+        Icon::Menu => {
+            for y in [0.25, 0.5, 0.75] {
+                pen.line(&[(0.15, y), (0.85, y)]);
+            }
+        }
+        Icon::Close => {
+            pen.line(&[(0.25, 0.25), (0.75, 0.75)]);
+            pen.line(&[(0.75, 0.25), (0.25, 0.75)]);
+        }
+        Icon::Plus => {
+            pen.line(&[(0.5, 0.2), (0.5, 0.8)]);
+            pen.line(&[(0.2, 0.5), (0.8, 0.5)]);
+        }
+        Icon::VisualStyle => {
+            painter.circle_filled(pen.at(0.5, 0.5), 0.4 * rect.width(), soft);
+            pen.circle((0.5, 0.5), 0.4);
+            pen.arc((0.5, 0.5), 0.4, 0.14, 0.0, PI);
+        }
+        Icon::Window => {
+            pen.closed(&[(0.1, 0.15), (0.9, 0.15), (0.9, 0.85), (0.1, 0.85)]);
+            pen.line(&[(0.1, 0.3), (0.9, 0.3)]);
+            pen.line(&[(0.35, 0.3), (0.35, 0.85)]);
+        }
+        Icon::PreviousView => {
+            pen.line(&[(0.85, 0.5), (0.15, 0.5)]);
+            pen.arrow_head((0.15, 0.5), (0.5, 0.5));
+            pen.closed(&[(0.55, 0.25), (0.85, 0.25), (0.85, 0.75), (0.55, 0.75)]);
+        }
+        Icon::Projection => {
+            pen.closed(&[(0.1, 0.25), (0.45, 0.25), (0.45, 0.75), (0.1, 0.75)]);
+            pen.closed(&[(0.6, 0.35), (0.9, 0.2), (0.9, 0.8), (0.6, 0.65)]);
+        }
+        Icon::Delete => {
+            pen.closed(&[(0.25, 0.3), (0.75, 0.3), (0.7, 0.9), (0.3, 0.9)]);
+            pen.line(&[(0.15, 0.3), (0.85, 0.3)]);
+            pen.line(&[(0.4, 0.3), (0.42, 0.15), (0.58, 0.15), (0.6, 0.3)]);
         }
     }
 }

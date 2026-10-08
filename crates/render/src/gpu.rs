@@ -113,6 +113,9 @@ pub struct Viewport {
     bind: wgpu::BindGroup,
     bodies: Vec<GpuBody>,
     targets: Option<Targets>,
+    /// What to draw (visual style): shaded faces, edges.
+    show_faces: bool,
+    show_edges: bool,
 }
 
 fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -191,7 +194,15 @@ impl Viewport {
             bind,
             bodies: Vec::new(),
             targets: None,
+            show_faces: true,
+            show_edges: true,
         }
+    }
+
+    /// Visual style: shaded faces, edges, or both.
+    pub fn set_visible(&mut self, faces: bool, edges: bool) {
+        self.show_faces = faces;
+        self.show_edges = edges;
     }
 
     /// Uploads meshes (one per body) with their colours. Call again when colours change.
@@ -306,18 +317,22 @@ impl Viewport {
                 ..Default::default()
             });
             pass.set_bind_group(0, &self.bind, &[]);
-            pass.set_pipeline(&self.faces);
-            for b in &self.bodies {
-                if b.face_vertices > 0 {
-                    pass.set_vertex_buffer(0, b.faces.slice(..));
-                    pass.draw(0..b.face_vertices, 0..1);
+            if self.show_faces {
+                pass.set_pipeline(&self.faces);
+                for b in &self.bodies {
+                    if b.face_vertices > 0 {
+                        pass.set_vertex_buffer(0, b.faces.slice(..));
+                        pass.draw(0..b.face_vertices, 0..1);
+                    }
                 }
             }
-            pass.set_pipeline(&self.lines);
-            for b in &self.bodies {
-                if b.line_vertices > 0 {
-                    pass.set_vertex_buffer(0, b.lines.slice(..));
-                    pass.draw(0..b.line_vertices, 0..1);
+            if self.show_edges {
+                pass.set_pipeline(&self.lines);
+                for b in &self.bodies {
+                    if b.line_vertices > 0 {
+                        pass.set_vertex_buffer(0, b.lines.slice(..));
+                        pass.draw(0..b.line_vertices, 0..1);
+                    }
                 }
             }
         }

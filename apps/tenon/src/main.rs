@@ -1,6 +1,6 @@
 //! Tenon desktop application.
 //!
-//! Usage: `tenon [PROJECT.tenon] [--screenshot OUT.png] [--size WIDTHxHEIGHT] [--version]`
+//! Usage: `tenon [PROJECT.tenon] [--theme light|dark] [--screenshot OUT.png] [--size WIDTHxHEIGHT] [--version]`
 //!
 //! `--screenshot` renders the window (after the model has regenerated), saves it as PNG and exits,
 //! so agents and CI can check the UI without screen capture.
@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use tenon_kernel::Kernel;
-use tenon_ui::{Services, Workbench};
+use tenon_ui::{Services, ThemeName, Workbench};
 
 /// Frames to wait for regeneration before taking a screenshot anyway.
 const SCREENSHOT_MAX_FRAMES: u32 = 600;
@@ -22,7 +22,25 @@ struct App {
     requested: bool,
 }
 
+/// Settings kept between sessions (eframe storage).
+const THEME_KEY: &str = "tenon.theme";
+
+fn parse_theme(s: &str) -> Option<ThemeName> {
+    match s {
+        "light" => Some(ThemeName::Light),
+        "dark" => Some(ThemeName::Dark),
+        _ => None,
+    }
+}
+
 impl eframe::App for App {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        // Screenshot runs never change the user's settings.
+        if self.screenshot.is_none() {
+            storage.set_string(THEME_KEY, if self.wb.theme() == ThemeName::Light { "light".into() } else { "dark".into() });
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.wb.ui(ui, frame.wgpu_render_state());
         let ctx = ui.ctx().clone();
@@ -93,6 +111,7 @@ fn services() -> Services {
 fn main() -> eframe::Result {
     let mut screenshot = None;
     let mut project = None;
+    let mut theme = None;
     let mut size = [1440.0, 900.0];
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -102,6 +121,10 @@ fn main() -> eframe::Result {
                 return Ok(());
             }
             "--screenshot" => screenshot = args.next().map(PathBuf::from),
+            "--theme" => match args.next().as_deref().and_then(parse_theme) {
+                Some(t) => theme = Some(t),
+                None => eprintln!("warning: --theme expects light or dark"),
+            },
             "--size" => match args.next().as_deref().and_then(parse_size) {
                 Some(s) => size = s,
                 None => eprintln!("warning: --size expects WIDTHxHEIGHT, e.g. 1440x900; using the default"),
@@ -112,6 +135,7 @@ fn main() -> eframe::Result {
     }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_title("Tenon").with_inner_size(size).with_min_inner_size([900.0, 560.0]),
+        persist_window: screenshot.is_none(),
         ..Default::default()
     };
     eframe::run_native(
@@ -122,6 +146,10 @@ fn main() -> eframe::Result {
             let ctx = cc.egui_ctx.clone();
             let waker: Box<dyn Fn() + Send> = Box::new(move || ctx.request_repaint());
             let mut wb = Workbench::new(|| Box::new(tenon_kernel_occt::OcctKernel::new()) as Box<dyn Kernel>, Some(waker), services());
+            let saved = cc.storage.and_then(|s| s.get_string(THEME_KEY)).and_then(|s| parse_theme(&s));
+            if let Some(t) = theme.or(saved) {
+                wb.set_theme(t);
+            }
             if let Some(p) = project
                 && let Err(e) = wb.open(&p)
             {

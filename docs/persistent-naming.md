@@ -26,7 +26,7 @@ Booleans pass names on through `images` (`names_of_boolean`). A `FaceRef` is an 
 
 Resolving takes the faces with the same origin and, if there are several, the nearest
 fingerprint. If no face has the origin, the feature fails with a message naming the reference
-("the referenced face no longer exists (end face of Extrude1)"). The rest of the tree is not
+("the referenced face no longer exists (end face of Extrusion1)"). The rest of the tree is not
 computed, and the document is unchanged.
 
 Tests:
@@ -113,8 +113,8 @@ To find the sub-shape a `TopoRef` means in the newly regenerated body:
    required. Accept it only if it is closer than any other by a clear margin (tolerances from
    `tenon_geom::tol`).
 4. **Failure.** No candidate, or still ambiguous: the feature is **broken**. Regeneration stops at
-   that feature with an error naming the reference ("Fillet3: edge between Extrude1 side face (L7)
-   and Extrude1 end cap no longer exists"). The last good result stays visible, and the user
+   that feature with an error naming the reference ("Fillet3: edge between Extrusion1 side face (L7)
+   and Extrusion1 end cap no longer exists"). The last good result stays visible, and the user
    re-picks. Features after it are not computed.
 
 Origin match is preferred over geometry, so moving a face (a changed dimension) still resolves.

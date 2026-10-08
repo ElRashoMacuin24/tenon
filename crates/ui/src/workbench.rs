@@ -6,19 +6,18 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::{Align2, Frame, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Frame, Ui};
 use serde_json::{Value, json};
 use tenon_kernel::{Kernel, MeshTol};
 use tenon_model::worker::{Response, Worker};
-use tenon_model::{Document, FeatureId, FeatureKind, FeatureStatus, OriginPlane, PlaneRef, Scene, Session, regenerate, scene};
+use tenon_model::{Document, FeatureId, FeatureKind, FeatureStatus, PlaneRef, Scene, Session, regenerate, scene};
 
 use crate::chrome::{Chrome, DOC_TABS_H, RIBBON_H, STATUS_H, TABS_H, TITLE_H};
 use crate::commands;
-use crate::icons::{self, Icon};
 use crate::panels::Panel;
 use crate::sketcher::SketchMode;
 use crate::theme::{self, Tokens};
-use crate::viewport::View;
+use crate::viewport::{View, VisualStyle};
 
 /// Platform services the workbench may use (native file dialogs).
 #[derive(Default)]
@@ -69,6 +68,8 @@ pub struct Workbench {
     pub(crate) last_command: Option<&'static str>,
     /// OK or Cancel asked for from outside the open panel (radial menu, Enter).
     pub(crate) panel_request: Option<bool>,
+    /// A sketch tool to start once the sketch being created exists.
+    pub(crate) pending_tool: Option<&'static str>,
 }
 
 impl Workbench {
@@ -95,6 +96,7 @@ impl Workbench {
             step_export: None,
             last_command: None,
             panel_request: None,
+            pending_tool: None,
         }
     }
 
@@ -132,6 +134,13 @@ impl Workbench {
     }
     pub fn exit_requested(&self) -> bool {
         self.exit
+    }
+    /// The UI colour scheme (Tools > Application Options).
+    pub fn theme(&self) -> theme::ThemeName {
+        self.chrome.theme
+    }
+    pub fn set_theme(&mut self, name: theme::ThemeName) {
+        self.chrome.theme = name;
     }
     /// Shows an error in the status bar.
     pub fn report_error(&mut self, message: impl Into<String>) {
@@ -194,6 +203,25 @@ impl Workbench {
         match id {
             "view.browser" => self.chrome.show_browser = !self.chrome.show_browser,
             "view.cube" => self.chrome.show_cube = !self.chrome.show_cube,
+            "view.navbar" => self.chrome.show_navbar = !self.chrome.show_navbar,
+            "view.style" => {
+                self.view.style = match self.view.style {
+                    VisualStyle::ShadedEdges => VisualStyle::Shaded,
+                    VisualStyle::Shaded => VisualStyle::Wireframe,
+                    VisualStyle::Wireframe => VisualStyle::ShadedEdges,
+                };
+            }
+            "view.style.shaded_edges" => self.view.style = VisualStyle::ShadedEdges,
+            "view.style.shaded" => self.view.style = VisualStyle::Shaded,
+            "view.style.wireframe" => self.view.style = VisualStyle::Wireframe,
+            "view.orthographic" => self.view.camera.projection = tenon_render::Projection::Orthographic,
+            "view.perspective" => self.view.camera.projection = tenon_render::Projection::Perspective,
+            "tools.options" => self.chrome.options = true,
+            "model.rebuild" => {
+                // Forget what is shown so the whole tree regenerates.
+                self.shown = None;
+                self.set_status("Rebuilding all features...");
+            }
             "app.about" => self.chrome.about = true,
             "app.exit" => self.exit = true,
             "inspect.mass" => self.chrome.mass = true,
@@ -429,11 +457,16 @@ impl Workbench {
         self.view.now = ui.input(|i| i.time);
         self.sync_geometry();
         self.shortcuts(ui);
-        let t = Tokens::DARK;
+        let theme = self.chrome.theme;
+        if self.chrome.applied_theme != Some(theme) {
+            theme::apply_theme(ui.ctx(), theme);
+            self.chrome.applied_theme = Some(theme);
+        }
+        let t = Tokens::of(theme);
         egui::Panel::top("tn_title").exact_size(TITLE_H).frame(Frame::NONE.fill(t.title_bar)).show(ui, |ui| self.title_bar(ui, &t));
         egui::Panel::top("tn_tabs").exact_size(TABS_H).frame(Frame::NONE.fill(t.tab_strip)).show(ui, |ui| self.ribbon_tabs(ui, &t));
         egui::Panel::top("tn_ribbon").exact_size(RIBBON_H).frame(Frame::NONE.fill(t.ribbon)).show(ui, |ui| self.ribbon(ui, &t));
-        egui::Panel::bottom("tn_status").exact_size(STATUS_H).frame(Frame::NONE.fill(t.title_bar)).show(ui, |ui| self.status_bar(ui, &t));
+        egui::Panel::bottom("tn_status").exact_size(STATUS_H).frame(Frame::NONE.fill(t.status_bar)).show(ui, |ui| self.status_bar(ui, &t));
         egui::Panel::bottom("tn_docs").exact_size(DOC_TABS_H).frame(Frame::NONE.fill(t.tab_strip)).show(ui, |ui| self.doc_tabs(ui, &t));
         if self.chrome.show_browser {
             egui::Panel::left("tn_browser")
@@ -445,6 +478,7 @@ impl Workbench {
         }
         egui::CentralPanel::default().frame(Frame::NONE.fill(t.viewport_bottom)).show(ui, |ui| self.viewport(ui, render, &t));
         self.file_menu(ui, &t);
+        self.dropdown(ui, &t);
         self.panels(ui);
         self.windows(ui);
         self.radial_ui(ui, &t);
@@ -476,119 +510,19 @@ impl Workbench {
             } else if pressed(egui::Key::N) {
                 self.command("file.new");
             }
-        }
-    }
-
-    // ---- browser ----------------------------------------------------------------------------
-
-    fn browser(&mut self, ui: &mut Ui, t: &Tokens) {
-        let r = ui.max_rect();
-        let header = Rect::from_min_size(r.min, vec2(r.width(), 26.0));
-        ui.painter().rect_filled(header, 0.0, t.panel_header);
-        ui.painter().text(pos2(header.left() + 10.0, header.center().y), Align2::LEFT_CENTER, "Model", theme::heading(), t.text);
-        ui.painter().hline(header.x_range(), header.bottom(), Stroke::new(1.0, t.border));
-        ui.add_space(30.0);
-        let mut action: Option<BrowserAction> = None;
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            let name = self.document().name.clone();
-            row(ui, t, 0, Icon::Part, &name, None, RowStyle::Normal, "part");
-            let bodies = self.scene.bodies.len();
-            row(ui, t, 1, Icon::Folder, &format!("Solid Bodies ({bodies})"), None, RowStyle::Normal, "bodies");
-            let origin = row(ui, t, 1, Icon::Folder, "Origin", Some(self.chrome.origin_open), RowStyle::Normal, "origin");
-            if origin.clicked() {
-                self.chrome.origin_open = !self.chrome.origin_open;
+        } else {
+            // Single-letter shortcuts (E extrude, S sketch, L line, D dimension, ...).
+            let letter = ui.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } if modifiers.is_none() => Some(*key),
+                    _ => None,
+                })
+            });
+            if let Some(k) = letter
+                && let Some(c) = commands::for_key(k.name(), self.is_sketching())
+            {
+                self.command(c.id);
             }
-            if self.chrome.origin_open {
-                for (icon, label, plane) in [
-                    (Icon::Plane, "YZ Plane", Some(OriginPlane::YZ)),
-                    (Icon::Plane, "XZ Plane", Some(OriginPlane::XZ)),
-                    (Icon::Plane, "XY Plane", Some(OriginPlane::XY)),
-                    (Icon::Axis, "X Axis", None),
-                    (Icon::Axis, "Y Axis", None),
-                    (Icon::Axis, "Z Axis", None),
-                    (Icon::Point, "Center Point", None),
-                ] {
-                    let resp = row(ui, t, 2, icon, label, None, RowStyle::Normal, label);
-                    if let Some(p) = plane {
-                        let resp = resp.on_hover_text("Double-click to start a sketch on this plane");
-                        if resp.double_clicked() || (resp.clicked() && matches!(self.panel, Some(Panel::NewSketch))) {
-                            action = Some(BrowserAction::SketchOn(p));
-                        }
-                    }
-                }
-            }
-            let editing = match &self.mode {
-                Mode::Sketch(s) => Some(s.feature),
-                Mode::Model => None,
-            };
-            let features: Vec<(FeatureId, String, &'static str, bool)> =
-                self.document().features().iter().map(|f| (f.id, f.name.clone(), f.kind.type_name(), f.suppressed)).collect();
-            for (id, name, ty, suppressed) in features {
-                let icon = match ty {
-                    "Sketch" => Icon::NewSketch,
-                    "Extrude" => Icon::Extrude,
-                    _ => Icon::Revolve,
-                };
-                let status = self.scene.status.iter().find(|(f, _)| *f == id).map(|(_, s)| s.clone());
-                let style = match (&status, suppressed, editing == Some(id)) {
-                    (_, _, true) => RowStyle::Active,
-                    (_, true, _) => RowStyle::Dim,
-                    (Some(FeatureStatus::Error { .. }), _, _) => RowStyle::Error,
-                    (Some(FeatureStatus::NotComputed), _, _) => RowStyle::Dim,
-                    _ => RowStyle::Normal,
-                };
-                let mut resp = row(ui, t, 1, icon, &name, None, style, &format!("f{}", id.0));
-                if let Some(FeatureStatus::Error { message }) = &status {
-                    resp = resp.on_hover_text(message.clone());
-                }
-                if resp.double_clicked() {
-                    action = Some(BrowserAction::Edit(id));
-                }
-                resp.context_menu(|ui| {
-                    if ui.button("Edit").clicked() {
-                        action = Some(BrowserAction::Edit(id));
-                        ui.close();
-                    }
-                    if ui.button("Rename").clicked() {
-                        action = Some(BrowserAction::Rename(id));
-                        ui.close();
-                    }
-                    if ui.button(if suppressed { "Unsuppress" } else { "Suppress" }).clicked() {
-                        action = Some(BrowserAction::Suppress(id, !suppressed));
-                        ui.close();
-                    }
-                    if ui.button("Delete").clicked() {
-                        action = Some(BrowserAction::Delete(id));
-                        ui.close();
-                    }
-                });
-            }
-            let marker = row(ui, t, 1, Icon::FinishSketch, "End of history", None, RowStyle::Marker, "end");
-            let _ = marker.on_hover_text("Rollback marker: features below it are not computed. Dragging it arrives in milestone M2.");
-        });
-        if let Some(a) = action {
-            self.browser_action(a);
-        }
-    }
-
-    fn browser_action(&mut self, a: BrowserAction) {
-        let result = match a {
-            BrowserAction::SketchOn(p) => self.create_sketch(json!({ "plane": format!("{p:?}").to_lowercase() })),
-            BrowserAction::Edit(id) => self.edit_feature(id),
-            BrowserAction::Rename(id) => {
-                self.panel = Some(Panel::Rename { feature: id, name: self.feature_name(id) });
-                Ok(())
-            }
-            BrowserAction::Suppress(id, on) => self.exec("feature.suppress", json!({ "feature": id.0, "suppressed": on })).map(|_| ()),
-            BrowserAction::Delete(id) => {
-                if matches!(&self.mode, Mode::Sketch(s) if s.feature == id) {
-                    self.mode = Mode::Model;
-                }
-                self.exec("feature.delete", json!({ "feature": id.0 })).map(|_| ())
-            }
-        };
-        if let Err(e) = result {
-            self.set_error(e);
         }
     }
 
@@ -607,7 +541,11 @@ impl Workbench {
         let r = self.exec("sketch.create", params)?;
         let id = r["feature"].as_u64().and_then(|v| u32::try_from(v).ok()).ok_or("internal: no feature id")?;
         self.panel = None;
-        self.enter_sketch(FeatureId(id))
+        self.enter_sketch(FeatureId(id))?;
+        if let Some(tool) = self.pending_tool.take() {
+            self.sketch_tool(tool)?;
+        }
+        Ok(())
     }
 
     fn new_sketch(&mut self) -> Result<(), String> {
@@ -634,63 +572,4 @@ impl Workbench {
     pub(crate) fn sketches(&self) -> Vec<(FeatureId, String)> {
         self.document().features().iter().filter(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| (f.id, f.name.clone())).collect()
     }
-}
-
-enum BrowserAction {
-    SketchOn(OriginPlane),
-    Edit(FeatureId),
-    Rename(FeatureId),
-    Suppress(FeatureId, bool),
-    Delete(FeatureId),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RowStyle {
-    Normal,
-    Active,
-    Dim,
-    Error,
-    Marker,
-}
-
-/// One browser row. `expand` draws a disclosure triangle.
-#[allow(clippy::too_many_arguments)]
-fn row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, expand: Option<bool>, style: RowStyle, key: &str) -> egui::Response {
-    let (rr, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 21.0), Sense::click());
-    let resp = resp.on_hover_cursor(egui::CursorIcon::Default);
-    let _ = key;
-    if style == RowStyle::Active {
-        ui.painter().rect_filled(rr, 0.0, t.pressed);
-    } else if resp.hovered() {
-        ui.painter().rect_filled(rr, 0.0, t.hover);
-    }
-    let indent = rr.left() + 8.0 + f32::from(depth) * 16.0;
-    if let Some(open) = expand {
-        let c = pos2(indent + 5.0, rr.center().y);
-        let tri = if open {
-            vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
-        } else {
-            vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
-        };
-        ui.painter().add(egui::Shape::convex_polygon(tri, t.text_dim, Stroke::NONE));
-    }
-    let x = indent + 14.0;
-    let color = match style {
-        RowStyle::Normal | RowStyle::Active => t.text,
-        RowStyle::Dim => t.text_disabled,
-        RowStyle::Error | RowStyle::Marker => t.history_marker,
-    };
-    if style == RowStyle::Marker {
-        ui.painter().rect_filled(Rect::from_min_size(pos2(x, rr.center().y - 3.0), vec2(16.0, 6.0)), 1.0, t.history_marker);
-    } else {
-        icons::paint(
-            ui.painter(),
-            Rect::from_min_size(pos2(x, rr.center().y - 8.0), vec2(16.0, 16.0)),
-            icon,
-            if style == RowStyle::Error { color } else { t.icon },
-        );
-    }
-    let text = if style == RowStyle::Error { format!("{label}  (!)") } else { label.to_owned() };
-    ui.painter().text(pos2(x + 22.0, rr.center().y), Align2::LEFT_CENTER, text, theme::small(), color);
-    resp
 }

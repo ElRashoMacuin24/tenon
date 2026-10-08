@@ -7,11 +7,11 @@ constraints and extrusions, driven by the command script [`bracket.json`](bracke
 
 1. **Sketch1** on the XZ plane: an L profile of six lines with 12 constraints (fix, horizontal,
    vertical, four lengths). The script checks that it is fully constrained (0 degrees of freedom).
-2. **Extrude1**: 40 mm. The script checks the volume, 28 800 mm³.
+2. **Extrusion1**: 40 mm. The script checks the volume, 28 800 mm³.
 3. **Sketch2** on the base's top face, found by its persistent name ("the side face swept from the
-   `base_top` line of Extrude1"), with two 8 mm circles (a diameter and an equal constraint).
-4. **Extrude2**: cut through all.
-5. **Sketch3** on the upright's inner face, with one 10 mm circle, and **Extrude3**: cut through
+   `base_top` line of Extrusion1"), with two 8 mm circles (a diameter and an equal constraint).
+4. **Extrusion2**: cut through all.
+5. **Sketch3** on the upright's inner face, with one 10 mm circle, and **Extrusion3**: cut through
    all.
 
 The script then checks the result is one valid solid of 28 800 − 456π = 27 367.434 mm³, makes a

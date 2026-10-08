@@ -49,7 +49,7 @@ Files over a limit are rejected with an error, never a crash.
 Each feature is:
 
 ```json
-{ "id": 3, "name": "Extrude1", "suppressed": false, "kind": { "type": "...", ... } }
+{ "id": 3, "name": "Extrusion1", "suppressed": false, "kind": { "type": "...", ... } }
 ```
 
 | `kind.type` | Fields |

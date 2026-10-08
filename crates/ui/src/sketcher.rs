@@ -36,9 +36,13 @@ pub(crate) enum Tool {
     Equal,
     Concentric,
     Fix,
+    Collinear,
+    Symmetric,
 }
 
 const TOOLS: &[(&str, Tool)] = &[
+    ("sketch.collinear", Tool::Collinear),
+    ("sketch.symmetric", Tool::Symmetric),
     ("sketch.line", Tool::Line),
     ("sketch.circle", Tool::Circle),
     ("sketch.arc", Tool::Arc),
@@ -86,6 +90,8 @@ impl Tool {
             Tool::Equal => "Click two lines or two circles/arcs.",
             Tool::Concentric => "Click two circles/arcs.",
             Tool::Fix => "Click a point.",
+            Tool::Collinear => "Click two lines.",
+            Tool::Symmetric => "Click two points, then the line of symmetry.",
         }
     }
 }
@@ -272,7 +278,7 @@ impl Workbench {
         }
         self.panel = None;
         self.mode = Mode::Sketch(Box::new(SketchMode::new(feature)));
-        self.chrome.tab = 1;
+        self.chrome.tab = crate::commands::SKETCH_TAB;
         if let Some(f) = self.sketch_frame(feature) {
             self.look_at_frame(&f);
             match self.sketch_box() {
@@ -288,8 +294,8 @@ impl Workbench {
         if let Mode::Sketch(s) = &self.mode {
             let name = self.feature_name(s.feature);
             self.mode = Mode::Model;
-            self.chrome.tab = 0;
-            self.set_status(format!("Finished {name}. Extrude or revolve it from the Model tab."));
+            self.chrome.tab = crate::commands::MODEL_TAB;
+            self.set_status(format!("Finished {name}. Extrude or revolve it from the 3D Model tab."));
         }
     }
 
@@ -301,9 +307,25 @@ impl Workbench {
     }
 
     pub(crate) fn sketch_tool(&mut self, id: &str) -> Result<(), String> {
-        let Mode::Sketch(s) = &mut self.mode else {
-            return Err("start a sketch (New Sketch) or double-click one in the browser first".into());
-        };
+        if !matches!(self.mode, Mode::Sketch(_)) {
+            // A sketch tool outside a sketch starts one first, then the tool runs in it.
+            self.pending_tool = TOOLS.iter().find(|(t, _)| *t == id).map(|(t, _)| *t);
+            return self.run_ui("sketch.new");
+        }
+        let Mode::Sketch(s) = &mut self.mode else { return Ok(()) };
+        if id == "sketch.construction" {
+            let (feature, picked) = (s.feature, s.selection.clone());
+            if picked.is_empty() {
+                return Err("select the sketch geometry to change first".into());
+            }
+            let sk = self.document().sketch(feature).ok_or("the sketch is gone")?;
+            let on = !picked.iter().all(|e| sk.entity(*e).is_some_and(|x| x.construction));
+            for e in picked {
+                self.exec("sketch.construction", json!({ "sketch": feature.0, "entity": e.0, "on": on }))?;
+            }
+            self.set_status(if on { "Construction geometry (not part of profiles)." } else { "Normal geometry." });
+            return Ok(());
+        }
         if id == "sketch.offset" {
             if s.selection.is_empty() {
                 return Err("select the curves to offset first".into());
@@ -336,8 +358,9 @@ impl Workbench {
             });
         }
         match s.dof.as_ref() {
-            Some((_, Some(0), _)) => Some("Fully constrained".into()),
-            Some((_, Some(n), _)) => Some(format!("{n} degrees of freedom")),
+            Some((_, Some(0), _)) => Some("Fully Constrained".into()),
+            Some((_, Some(1), _)) => Some("1 dimension needed".into()),
+            Some((_, Some(n), _)) => Some(format!("{n} dimensions needed")),
             _ => Some("Over-constrained or inconsistent".into()),
         }
     }
@@ -749,6 +772,8 @@ impl Workbench {
             (Tool::Tangent, [a, b]) => Some(Constraint::Tangent { a: *a, b: *b }),
             (Tool::Equal, [a, b]) => Some(Constraint::Equal { a: *a, b: *b }),
             (Tool::Concentric, [a, b]) => Some(Constraint::Concentric { a: *a, b: *b }),
+            (Tool::Collinear, [a, b]) => Some(Constraint::Collinear { a: *a, b: *b }),
+            (Tool::Symmetric, [a, b, axis]) => Some(Constraint::Symmetric { a: *a, b: *b, axis: *axis }),
             _ => None,
         };
         let Some(c) = c else { return };

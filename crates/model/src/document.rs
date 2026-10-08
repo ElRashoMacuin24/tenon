@@ -161,6 +161,14 @@ impl FeatureKind {
             FeatureKind::Revolve(_) => "Revolve",
         }
     }
+    /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
+    pub fn default_name(&self) -> &'static str {
+        match self {
+            FeatureKind::Sketch { .. } => "Sketch",
+            FeatureKind::Extrude(_) => "Extrusion",
+            FeatureKind::Revolve(_) => "Revolution",
+        }
+    }
     /// Features this one depends on.
     pub fn depends_on(&self) -> Vec<FeatureId> {
         match self {
@@ -227,7 +235,7 @@ impl Document {
         }
     }
 
-    /// Appends a feature with a generated name ("Extrude2"). Returns its id.
+    /// Appends a feature with a generated name ("Extrusion2"). Returns its id.
     pub fn add(&mut self, kind: FeatureKind) -> Result<FeatureId, String> {
         if self.features.len() >= MAX_FEATURES {
             return Err("the document is full".into());
@@ -239,7 +247,7 @@ impl Document {
         }
         self.next_feature = self.next_feature.checked_add(1).ok_or("feature ids exhausted")?;
         let id = FeatureId(self.next_feature);
-        let base = kind.type_name();
+        let base = kind.default_name();
         let n = (1..).find(|n| !self.features.iter().any(|f| f.name == format!("{base}{n}"))).unwrap_or(1);
         self.features.push(Feature { id, name: format!("{base}{n}"), suppressed: false, kind });
         Ok(id)

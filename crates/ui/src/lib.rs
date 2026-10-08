@@ -8,6 +8,7 @@
 //! own.
 #![forbid(unsafe_code)]
 
+mod browser;
 mod chrome;
 pub mod commands;
 mod cube;
@@ -19,6 +20,7 @@ pub mod theme;
 mod viewport;
 mod workbench;
 
+pub use theme::ThemeName;
 pub use workbench::{Services, Workbench};
 
 #[cfg(test)]

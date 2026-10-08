@@ -47,6 +47,24 @@ struct Gpu {
     texture: Option<egui::TextureId>,
 }
 
+/// How the model is drawn (View > Visual Style).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) enum VisualStyle {
+    #[default]
+    ShadedEdges,
+    Shaded,
+    Wireframe,
+}
+
+impl VisualStyle {
+    fn faces(self) -> bool {
+        self != VisualStyle::Wireframe
+    }
+    fn edges(self) -> bool {
+        self != VisualStyle::Shaded
+    }
+}
+
 /// A camera move in progress (view changes glide rather than jump).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ViewAnim {
@@ -68,6 +86,7 @@ pub(crate) struct View {
     pub hover: Option<Pick>,
     pub selection: Vec<Pick>,
     pub anim: Option<ViewAnim>,
+    pub style: VisualStyle,
     /// Where a selection box started.
     pub box_start: Option<Pos2>,
     /// Home orientation: yaw, pitch, roll.
@@ -93,6 +112,7 @@ impl Default for View {
             hover: None,
             selection: Vec::new(),
             anim: None,
+            style: VisualStyle::default(),
             box_start: None,
             home: (c.yaw, c.pitch, c.roll),
             previous: Vec::new(),
@@ -348,7 +368,9 @@ impl Workbench {
         if self.chrome.show_cube {
             self.cube(ui, pos2(rect.right() - 92.0, rect.top() + 82.0), t);
         }
-        self.nav_bar(ui, rect, t);
+        if self.chrome.show_navbar {
+            self.nav_bar(ui, rect, t);
+        }
     }
 
     /// What a left-button drag does: a navigation-bar tool, or a function key held down
@@ -522,7 +544,9 @@ impl Workbench {
         let dim = matches!(self.mode, Mode::Sketch(_));
         (0..self.scene.bodies.len())
             .map(|bi| {
-                let mut c = BodyColors { face: srgb(if dim { BODY_DIM } else { BODY }), edge: srgb(EDGE), ..Default::default() };
+                // In wireframe the edges are all there is, so they take the body colour.
+                let edge = if self.view.style == VisualStyle::Wireframe { BODY } else { EDGE };
+                let mut c = BodyColors { face: srgb(if dim { BODY_DIM } else { BODY }), edge: srgb(edge), ..Default::default() };
                 for (p, color) in self.view.selection.iter().map(|p| (p, SELECTED)).chain(self.view.hover.iter().map(|p| (p, HOVER))) {
                     match p {
                         Pick::Face { body, face } if *body == bi => c.faces.push((*face, srgb(color))),
@@ -553,6 +577,7 @@ impl Workbench {
                     gpu.viewport.set_bodies(&rs.device, &pairs);
                     self.view.uploaded = Some(key);
                 }
+                gpu.viewport.set_visible(self.view.style.faces(), self.view.style.edges());
                 if let Some((view, recreated)) = gpu.viewport.render(&rs.device, &rs.queue, &self.view.camera, w, hgt, radius) {
                     let mut r = rs.renderer.write();
                     match gpu.texture {
@@ -571,6 +596,7 @@ impl Workbench {
                 let mut kh = std::collections::hash_map::DefaultHasher::new();
                 key.hash(&mut kh);
                 (sw, sh).hash(&mut kh);
+                self.view.style.hash(&mut kh);
                 format!("{:?}", self.view.camera).hash(&mut kh);
                 let skey = kh.finish();
                 if self.view.soft.as_ref().is_none_or(|(_, k)| *k != skey) {
@@ -582,7 +608,14 @@ impl Workbench {
                             face_colors.push((*body, *face, to8(if Some(*p) == self.view.hover { HOVER } else { SELECTED })));
                         }
                     }
-                    let style = Style { body: to8(BODY), edge: to8(EDGE), face_colors, ..Style::default() };
+                    let style = Style {
+                        body: to8(BODY),
+                        edge: to8(if self.view.style == VisualStyle::Wireframe { BODY } else { EDGE }),
+                        face_colors,
+                        faces: self.view.style.faces(),
+                        edges: self.view.style.edges(),
+                        ..Style::default()
+                    };
                     let img = raster::render(&meshes, &self.view.camera, sw, sh, &style);
                     let color = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.rgba);
                     let tex = ui.ctx().load_texture("tenon-viewport", color, egui::TextureOptions::LINEAR);

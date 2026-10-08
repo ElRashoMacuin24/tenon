@@ -18,6 +18,9 @@ pub struct Style {
     pub edge: Rgba,
     /// Per body and face, an override colour (e.g. a selection).
     pub face_colors: Vec<(usize, u32, Rgba)>,
+    /// Visual style: draw shaded faces, edges.
+    pub faces: bool,
+    pub edges: bool,
 }
 
 impl Default for Style {
@@ -28,6 +31,8 @@ impl Default for Style {
             body: [0xb8, 0xc0, 0xc8, 255],
             edge: [0x15, 0x18, 0x1c, 255],
             face_colors: Vec::new(),
+            faces: true,
+            edges: true,
         }
     }
 }
@@ -84,7 +89,7 @@ pub fn render(meshes: &[&Mesh], camera: &Camera, width: u32, height: u32, style:
     let mut depth = vec![f64::INFINITY; (w * h) as usize];
     let light = camera.key_light();
 
-    for (bi, m) in meshes.iter().enumerate() {
+    for (bi, m) in meshes.iter().enumerate().filter(|_| style.faces) {
         for range in &m.faces {
             let base = style.face_colors.iter().find(|(b, f, _)| *b == bi && *f == range.face).map_or(style.body, |c| c.2);
             let tris = m.indices.get(range.first as usize..(range.first as usize).saturating_add(range.count as usize)).unwrap_or(&[]);
@@ -100,7 +105,7 @@ pub fn render(meshes: &[&Mesh], camera: &Camera, width: u32, height: u32, style:
         }
     }
     // Edges on top of their faces (small depth slack), hidden behind other faces.
-    for m in meshes {
+    for m in meshes.iter().filter(|_| style.edges) {
         for e in &m.edges {
             for seg in e.points.windows(2) {
                 let (Some(a), Some(b)) = (camera.project(v3(seg[0]), wf, hf), camera.project(v3(seg[1]), wf, hf)) else { continue };
