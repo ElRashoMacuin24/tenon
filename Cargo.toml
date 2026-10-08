@@ -36,6 +36,7 @@ cxx-build = "1.0.202"
 # ui (ui and app only)
 egui = "0.36"
 eframe = { version = "0.36", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -54,6 +55,12 @@ type_complexity = "allow"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# Windows Smart App Control (when enabled) judges each freshly built DLL/EXE by reputation and may
+# refuse to load one, e.g. a proc-macro, which rustc then reports as "can't find crate". Changing a
+# package's codegen settings gives the file a new hash and a new verdict. See docs/setup.md.
+[profile.dev.package.zerocopy-derive]
+opt-level = 1
 
 [profile.dev]
 opt-level = 1
