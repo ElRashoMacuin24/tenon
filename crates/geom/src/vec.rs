@@ -148,9 +148,30 @@ pub struct Vec3 {
 
 impl Vec3 {
     pub const ZERO: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+    pub const X: Vec3 = Vec3 { x: 1.0, y: 0.0, z: 0.0 };
+    pub const Y: Vec3 = Vec3 { x: 0.0, y: 1.0, z: 0.0 };
     pub const Z: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 1.0 };
     pub const fn new(x: f64, y: f64, z: f64) -> Self {
         Vec3 { x, y, z }
+    }
+    pub fn len2(self) -> f64 {
+        self.dot(self)
+    }
+    pub fn dist(self, o: Vec3) -> f64 {
+        (self - o).len()
+    }
+    /// Within `tol` of `o` (Euclidean).
+    pub fn near(self, o: Vec3, tol: f64) -> bool {
+        (self - o).len2() <= tol * tol
+    }
+    pub fn lerp(self, o: Vec3, t: f64) -> Vec3 {
+        self + (o - self) * t
+    }
+    pub fn min(self, o: Vec3) -> Vec3 {
+        Vec3::new(self.x.min(o.x), self.y.min(o.y), self.z.min(o.z))
+    }
+    pub fn max(self, o: Vec3) -> Vec3 {
+        Vec3::new(self.x.max(o.x), self.y.max(o.y), self.z.max(o.z))
     }
     pub fn xy(self) -> Vec2 {
         Vec2::new(self.x, self.y)

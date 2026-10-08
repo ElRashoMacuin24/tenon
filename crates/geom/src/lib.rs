@@ -11,19 +11,23 @@ mod bounds;
 mod curve;
 mod intersect;
 mod mat;
+pub mod predicates;
 pub mod region;
+mod space;
 mod spline;
+pub mod tol;
 mod vec;
 
 pub use bounds::Bounds2;
 pub use curve::{Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Segment, arc_to_bulge, bulge_to_arc, point_in_polygon, shoelace};
 pub use intersect::{circle_circle, intersect_ext, intersect_segments, line_circle, line_line, line_line_infinite};
 pub use mat::{Mat3, Mat4};
+pub use space::{Aabb3, Axis, Frame};
 pub use spline::Spline;
 pub use vec::{Vec2, Vec3};
 
-/// Geometric tolerance for coincidence tests in drawing units.
-pub const EPS: f64 = 1e-9;
+/// Geometric tolerance for 2D coincidence tests in drawing units ([`tol::EPS_2D`]).
+pub const EPS: f64 = tol::EPS_2D;
 pub const TAU: f64 = std::f64::consts::TAU;
 pub const PI: f64 = std::f64::consts::PI;
 
