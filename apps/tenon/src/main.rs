@@ -68,7 +68,8 @@ impl eframe::App for App {
         }
         // Let layout settle and the model regenerate, then ask for the next frame's pixels.
         self.frames += 1;
-        let ready = self.frames >= 3 && !self.wb.is_busy();
+        // Half a second lets window fade-ins and view glides finish.
+        let ready = self.frames >= 3 && !self.wb.is_busy() && ctx.input(|i| i.time) >= 0.5;
         if (ready || self.frames >= SCREENSHOT_MAX_FRAMES) && !self.requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             self.requested = true;

@@ -84,11 +84,13 @@ pub(crate) struct ValuePanel {
     pub label: &'static str,
     pub value: f64,
     pub what: ValueFor,
+    /// An equation typed in place of the value (dimensions).
+    pub equation: Option<String>,
 }
 
 impl ValuePanel {
     pub(crate) fn new(title: &'static str, label: &'static str, value: f64, what: ValueFor) -> Self {
-        ValuePanel { title, label, value, what }
+        ValuePanel { title, label, value, what, equation: None }
     }
 }
 
@@ -391,8 +393,120 @@ pub(crate) enum Panel {
     Pattern(Box<PatternPanel>),
     Work(Box<crate::work::WorkPanel>),
     Value(ValuePanel),
-    EditDimension { sketch: FeatureId, constraint: ConstraintId, value: f64, angular: bool },
+    EditDimension { sketch: FeatureId, constraint: ConstraintId, value: f64, angular: bool, equation: Option<String> },
     Rename { feature: FeatureId, name: String },
+}
+
+impl Panel {
+    /// The feature the panel edits, if it edits one.
+    pub(crate) fn editing(&self) -> Option<FeatureId> {
+        match self {
+            Panel::Extrude(p) => p.editing,
+            Panel::Revolve(p) => p.editing,
+            Panel::Fillet(p) => p.editing,
+            Panel::Chamfer(p) => p.editing,
+            Panel::Shell(p) => p.editing,
+            Panel::Hole(p) => p.editing,
+            Panel::Pattern(p) => p.editing,
+            Panel::Work(w) => w.editing,
+            _ => None,
+        }
+    }
+
+    /// The value fields that take equations as the panel stands: field key and the feature value
+    /// (JSON pointer) it sets.
+    pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
+        match self {
+            Panel::Extrude(p) => match (p.extent, p.direction) {
+                (ExtentChoice::ThroughAll, _) => vec![],
+                (_, Direction::Symmetric) => vec![("distance", "/extent/symmetric")],
+                (_, Direction::Asymmetric) => vec![("distance", "/extent/two_sided/forward"), ("distance_b", "/extent/two_sided/backward")],
+                _ => vec![("distance", "/extent/distance")],
+            },
+            Panel::Revolve(p) if p.full => vec![],
+            Panel::Revolve(p) => vec![("degrees", if p.symmetric { "/angle/symmetric" } else { "/angle/angle" })],
+            Panel::Fillet(_) => vec![("radius", "/radius")],
+            Panel::Chamfer(p) => match p.method {
+                ChamferMethod::Distance => vec![("d1", "/size/equal")],
+                ChamferMethod::TwoDistances => vec![("d1", "/size/two_distances/d1"), ("d2", "/size/two_distances/d2")],
+                ChamferMethod::DistanceAngle => vec![("d1", "/size/distance_angle/distance"), ("degrees", "/size/distance_angle/angle")],
+            },
+            Panel::Shell(_) => vec![("thickness", "/thickness")],
+            Panel::Hole(p) => {
+                let mut v = vec![("diameter", "/diameter")];
+                if !p.through {
+                    v.push(("depth", "/extent/distance"));
+                    if !p.flat {
+                        v.push(("tip_degrees", "/tip_angle"));
+                    }
+                }
+                match p.seat {
+                    Seat::None => {}
+                    Seat::Counterbore => v.extend([("seat_diameter", "/kind/counterbore/diameter"), ("bore_depth", "/kind/counterbore/depth")]),
+                    Seat::Countersink => v.extend([("seat_diameter", "/kind/countersink/diameter"), ("sink_degrees", "/kind/countersink/angle")]),
+                }
+                v
+            }
+            Panel::Pattern(p) => match p.kind {
+                CopyKind::Rect => {
+                    let mut v = vec![("count1", "/count1"), ("spacing1", "/spacing1")];
+                    if p.dir2.is_some() && whole(p.count2) > 1 {
+                        v.extend([("count2", "/count2"), ("spacing2", "/spacing2")]);
+                    }
+                    v
+                }
+                CopyKind::Circular => vec![("count", "/count"), ("degrees", "/angle")],
+                CopyKind::Mirror => vec![],
+            },
+            Panel::Work(w) => match w.method {
+                crate::work::WorkMethod::Offset => vec![("distance", "/distance")],
+                crate::work::WorkMethod::Angle => vec![("degrees", "/angle")],
+                _ => vec![],
+            },
+            _ => vec![],
+        }
+    }
+}
+
+impl Workbench {
+    /// A feature panel just opened: its fields start with the equations the feature has.
+    pub(crate) fn start_equations(&mut self) {
+        self.panel_eqs.clear();
+        let Some(panel) = &self.panel else { return };
+        let Some(id) = panel.editing() else { return };
+        for (key, ptr) in panel.eq_pointers() {
+            let path = tenon_model::ValuePath::Feature { feature: id, field: ptr.to_owned() };
+            if let Some(name) = self.document().name_of(&path)
+                && let Some(m) = self.document().parameters().model.iter().find(|m| m.name == name)
+                && let Some(e) = &m.equation
+            {
+                self.panel_eqs.insert(key, e.clone());
+            }
+        }
+    }
+
+    /// The equations to send with a feature: every value field of the panel, with its equation
+    /// or (when editing, to drop an old equation) its plain value.
+    fn panel_equations(&self, ptrs: &[(&'static str, &'static str)], editing: bool, kind: &FeatureKind) -> serde_json::Map<String, Value> {
+        let json = serde_json::to_value(kind).unwrap_or(Value::Null);
+        let mut out = serde_json::Map::new();
+        for (key, ptr) in ptrs {
+            match self.panel_eqs.get(key) {
+                Some(e) => {
+                    out.insert((*ptr).to_owned(), json!(e));
+                }
+                None if editing => {
+                    if let Some(v) = json.pointer(ptr).and_then(Value::as_f64) {
+                        // Angles are stored in radians; equations and plain values are in degrees.
+                        let deg = tenon_model::params::field_unit(kind, ptr) == Some(tenon_model::ParamUnit::Deg);
+                        out.insert((*ptr).to_owned(), json!(if deg { v.to_degrees() } else { v }.to_string()));
+                    }
+                }
+                None => {}
+            }
+        }
+        out
+    }
 }
 
 impl ExtrudePanel {
@@ -531,6 +645,7 @@ impl Workbench {
             _ => return Err("not a feature of that type".into()),
         };
         self.panel = Some(panel);
+        self.start_equations();
         self.view.selection.clear();
         self.set_status(match which {
             "fillet" => "Fillet: click edges to round (click again to remove), set the radius, then OK.",
@@ -590,6 +705,7 @@ impl Workbench {
             }
         };
         self.panel = Some(Panel::Extrude(panel));
+        self.start_equations();
         self.set_status("Extrude: set the distance and output, then OK.");
         Ok(())
     }
@@ -633,6 +749,7 @@ impl Workbench {
             }
         };
         self.panel = Some(Panel::Revolve(panel));
+        self.start_equations();
         self.set_status("Revolve: choose the axis and angle, then OK.");
         Ok(())
     }
@@ -667,6 +784,7 @@ impl Workbench {
             CopyKind::Mirror => "Mirror: click the features to mirror, choose the plane, then OK.",
         });
         self.panel = Some(Panel::Pattern(Box::new(panel)));
+        self.start_equations();
         Ok(())
     }
 
@@ -716,13 +834,29 @@ impl Workbench {
             }
         };
         self.panel = Some(Panel::Hole(panel));
+        self.start_equations();
         self.set_status("Hole: click sketch points to add or remove centres, set the sizes, then OK.");
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn commit_feature(&mut self, editing: Option<FeatureId>, kind: FeatureKind) -> bool {
+        self.commit_feature_eq(editing, kind, serde_json::Map::new())
+    }
+
+    /// Commits a feature from a panel with the equations typed into its fields.
+    fn commit_panel(&mut self, ptrs: &[(&'static str, &'static str)], editing: Option<FeatureId>, kind: FeatureKind) -> bool {
+        let eqs = self.panel_equations(ptrs, editing.is_some(), &kind);
+        self.commit_feature_eq(editing, kind, eqs)
+    }
+
+    pub(crate) fn commit_feature_eq(&mut self, editing: Option<FeatureId>, kind: FeatureKind, equations: serde_json::Map<String, Value>) -> bool {
+        let kind_json = serde_json::to_value(&kind).unwrap_or(Value::Null);
         let r = match editing {
-            Some(id) => self.exec_status("feature.update", json!({ "feature": id.0, "kind": serde_json::to_value(&kind).unwrap_or(Value::Null) })),
+            Some(id) if equations.is_empty() => self.exec_status("feature.update", json!({ "feature": id.0, "kind": kind_json })),
+            Some(id) => self.exec_status("feature.update", json!({ "feature": id.0, "kind": kind_json, "equations": equations })),
+            // A new feature with equations: added with them in one step.
+            None if !equations.is_empty() => self.exec_status("feature.add", json!({ "kind": kind_json, "equations": equations })),
             None => {
                 // Through the registry, like every other edit.
                 let params = match &kind {
@@ -857,11 +991,12 @@ impl Workbench {
         let mut reopen: Option<&'static str> = None;
         let ctx = ui.ctx().clone();
         let t = crate::theme::Tokens::of(self.chrome.theme);
+        let ptrs = panel.eq_pointers();
         match &mut panel {
             Panel::Extrude(p) => {
                 if commit {
                     let (editing, kind) = (p.editing, p.kind());
-                    keep = !self.commit_feature(editing, kind);
+                    keep = !self.commit_panel(&ptrs, editing, kind);
                     if !keep && again {
                         reopen = Some("model.extrude");
                     }
@@ -870,7 +1005,7 @@ impl Workbench {
             Panel::Revolve(p) => {
                 if commit {
                     let (editing, kind) = (p.editing, p.kind());
-                    keep = !self.commit_feature(editing, kind);
+                    keep = !self.commit_panel(&ptrs, editing, kind);
                     if !keep && again {
                         reopen = Some("model.revolve");
                     }
@@ -881,7 +1016,7 @@ impl Workbench {
                     if p.edges.is_empty() {
                         self.set_error("Fillet: select at least one edge".to_string());
                     } else {
-                        keep = !self.commit_feature(p.editing, p.kind());
+                        keep = !self.commit_panel(&ptrs, p.editing, p.kind());
                         if !keep && again {
                             reopen = Some("model.fillet");
                         }
@@ -894,7 +1029,7 @@ impl Workbench {
                         _ if p.edges.is_empty() => self.set_error("Chamfer: select at least one edge".to_string()),
                         None => self.set_error("Chamfer: pick the face the first distance is measured on".to_string()),
                         Some(kind) => {
-                            keep = !self.commit_feature(p.editing, kind);
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
                             if !keep && again {
                                 reopen = Some("model.chamfer");
                             }
@@ -904,7 +1039,7 @@ impl Workbench {
             }
             Panel::Shell(p) => {
                 if commit {
-                    keep = !self.commit_feature(p.editing, p.kind());
+                    keep = !self.commit_panel(&ptrs, p.editing, p.kind());
                     if !keep && again {
                         reopen = Some("model.shell");
                     }
@@ -916,7 +1051,7 @@ impl Workbench {
                         _ if p.features.is_empty() => self.set_error("Click at least one feature to copy (in the part or the browser)".to_string()),
                         None => self.set_error("Check the counts, spacing and angle".to_string()),
                         Some(kind) => {
-                            keep = !self.commit_feature(p.editing, kind);
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
                             if !keep && again {
                                 reopen = Some(p.command());
                             }
@@ -929,7 +1064,7 @@ impl Workbench {
                     match w.kind() {
                         None => self.set_error(format!("{}: fill in every selection first", w.title())),
                         Some(kind) => {
-                            keep = !self.commit_feature(w.editing, kind);
+                            keep = !self.commit_panel(&ptrs, w.editing, kind);
                             if !keep && again {
                                 reopen = Some(w.command());
                             }
@@ -942,7 +1077,7 @@ impl Workbench {
                     if p.points.is_empty() {
                         self.set_error("Hole: click at least one sketch point for a centre".to_string());
                     } else {
-                        keep = !self.commit_feature(p.editing, p.kind());
+                        keep = !self.commit_panel(&ptrs, p.editing, p.kind());
                         if !keep && again {
                             reopen = Some("model.hole");
                         }
@@ -955,7 +1090,7 @@ impl Workbench {
                 let (sketch, constraint) = (*sketch, constraint.clone());
                 let unit = if constraint.is_angular() { "deg" } else { "mm" };
                 let at = self.dimension_anchor(sketch, &constraint).unwrap_or(self.view.rect.center());
-                let (ok, cancel) = inline_value(&ctx, at, &mut v.value, unit, &t);
+                let (ok, cancel) = inline_value(&ctx, at, &mut v.value, &mut v.equation, unit, &t);
                 if cancel {
                     keep = false;
                 } else if ok || commit {
@@ -963,24 +1098,28 @@ impl Workbench {
                     let value = if c.is_angular() { v.value.to_radians() } else { v.value };
                     let signed = matches!(c, Constraint::HorizontalDistance { .. } | Constraint::VerticalDistance { .. });
                     c.set_value(if signed { value } else { value.abs() });
-                    keep = self
-                        .exec_status("sketch.constrain", json!({ "sketch": sketch.0, "constraint": serde_json::to_value(&c).unwrap_or(Value::Null) }))
-                        .is_none();
+                    let mut p = json!({ "sketch": sketch.0, "constraint": serde_json::to_value(&c).unwrap_or(Value::Null) });
+                    if let Some(e) = &v.equation {
+                        p["equation"] = json!(e);
+                    }
+                    keep = self.exec_status("sketch.constrain", p).is_none();
                 }
             }
-            Panel::EditDimension { sketch, constraint, value, angular } => {
+            Panel::EditDimension { sketch, constraint, value, angular, equation } => {
                 // Double-clicked dimension: the same inline box.
                 let c = self.document().sketch(*sketch).and_then(|s| s.constraint(*constraint).cloned());
                 let at = c.as_ref().and_then(|c| self.dimension_anchor(*sketch, c)).unwrap_or(self.view.rect.center());
                 let mut shown = if *angular { value.to_degrees() } else { *value };
-                let (ok, cancel) = inline_value(&ctx, at, &mut shown, if *angular { "deg" } else { "mm" }, &t);
+                let (ok, cancel) = inline_value(&ctx, at, &mut shown, equation, if *angular { "deg" } else { "mm" }, &t);
                 *value = if *angular { shown.to_radians() } else { shown };
                 if cancel {
                     keep = false;
                 } else if ok || commit {
-                    keep = self
-                        .exec_status("sketch.set_dimension", json!({ "sketch": sketch.0, "constraint": constraint.0, "value": *value }))
-                        .is_none();
+                    let p = match equation {
+                        Some(e) => json!({ "sketch": sketch.0, "constraint": constraint.0, "equation": e }),
+                        None => json!({ "sketch": sketch.0, "constraint": constraint.0, "value": *value }),
+                    };
+                    keep = self.exec_status("sketch.set_dimension", p).is_none();
                 }
             }
             Panel::Value(v) => {
@@ -1053,6 +1192,8 @@ impl Workbench {
         }
         if keep && self.panel.is_none() {
             self.panel = Some(panel);
+        } else if !keep {
+            self.panel_eqs.clear();
         }
         if let Some(id) = reopen {
             self.command(id);
@@ -1062,7 +1203,7 @@ impl Workbench {
 
 /// The edit box placed on a dimension: the value (selected, so typing replaces it) and a check
 /// mark. Enter or the check is OK, Esc cancels. Returns `(ok, cancel)`.
-fn inline_value(ctx: &egui::Context, at: egui::Pos2, value: &mut f64, unit: &str, t: &crate::theme::Tokens) -> (bool, bool) {
+fn inline_value(ctx: &egui::Context, at: egui::Pos2, value: &mut f64, eq: &mut Option<String>, unit: &str, t: &crate::theme::Tokens) -> (bool, bool) {
     let (mut ok, mut cancel) = (false, false);
     let field = egui::Id::new("tn_inline_dimension");
     egui::Area::new(egui::Id::new("tn_inline_box")).order(egui::Order::Foreground).fixed_pos(at - egui::vec2(48.0, 13.0)).show(ctx, |ui| {
@@ -1072,7 +1213,7 @@ fn inline_value(ctx: &egui::Context, at: egui::Pos2, value: &mut f64, unit: &str
                 if ui.memory(|m| m.focused().is_none()) {
                     ui.memory_mut(|m| m.request_focus(field));
                 }
-                ok |= crate::properties::value_field(ui, field, value, unit, -1.0e6..=1.0e6, 72.0, t).entered;
+                ok |= crate::properties::eq_field(ui, field, value, Some(eq), unit, -1.0e6..=1.0e6, 96.0, t).entered;
                 if ui.add(egui::Button::new(egui::RichText::new("✔").color(t.ok)).small()).on_hover_text("OK (Enter)").clicked() {
                     ok = true;
                 }

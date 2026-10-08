@@ -34,12 +34,60 @@ pub(crate) struct FieldOut {
     pub entered: bool,
 }
 
-/// A value box with its unit, as in the properties panel and mini-toolbar. Typing edits the text;
-/// a valid number applies at once (so the preview follows), an invalid one shows red.
-pub(crate) fn value_field(
+/// Parameter values by name, for fields that take equations (set every frame).
+pub(crate) fn set_param_env(ctx: &egui::Context, env: std::sync::Arc<std::collections::BTreeMap<String, f64>>) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("tn_param_env"), env));
+}
+
+/// What was typed: a number (with no equation), or an equation and its value.
+fn parse_entry(ui: &Ui, text: &str, unit: &str) -> Option<(f64, Option<String>)> {
+    if let Some(v) = parse_value(text, unit) {
+        return Some((v, None));
+    }
+    let env: std::sync::Arc<std::collections::BTreeMap<String, f64>> = ui.data(|d| d.get_temp(egui::Id::new("tn_param_env"))).unwrap_or_default();
+    let v = tenon_model::expr::parse(text).ok()?.eval(&env).ok()?;
+    Some((v, Some(text.trim().to_owned())))
+}
+
+/// Equations typed into a panel's fields, by field key.
+pub(crate) type Equations = std::collections::BTreeMap<&'static str, String>;
+
+/// A value box that keeps the equation typed into it (in `eqs` under `key`), shown in place of
+/// the number until a plain number replaces it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn eq_value_field(
     ui: &mut Ui,
     id: egui::Id,
     value: &mut f64,
+    eqs: &mut Equations,
+    key: &'static str,
+    unit: &str,
+    range: std::ops::RangeInclusive<f64>,
+    width: f32,
+    t: &Tokens,
+) -> FieldOut {
+    let mut slot = eqs.get(key).cloned();
+    let out = eq_field(ui, id, value, Some(&mut slot), unit, range, width, t);
+    match slot {
+        Some(e) => {
+            eqs.insert(key, e);
+        }
+        None => {
+            eqs.remove(key);
+        }
+    }
+    out
+}
+
+/// A value box with its unit, as in the properties panel and mini-toolbar. Typing edits the text;
+/// a valid number applies at once (so the preview follows), an invalid one shows red. An
+/// equation (`d0 / 2`) is evaluated too, and kept in `eq` when given.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn eq_field(
+    ui: &mut Ui,
+    id: egui::Id,
+    value: &mut f64,
+    mut eq: Option<&mut Option<String>>,
     unit: &str,
     range: std::ops::RangeInclusive<f64>,
     width: f32,
@@ -47,17 +95,25 @@ pub(crate) fn value_field(
 ) -> FieldOut {
     let mut out = FieldOut::default();
     let focused = ui.memory(|m| m.has_focus(id));
-    let mut text: String =
-        if focused { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| fmt_value(*value)) } else { format!("{} {unit}", fmt_value(*value)) };
-    let valid = !focused || parse_value(&text, unit).is_some_and(|v| range.contains(&v));
+    let equation = eq.as_deref().cloned().flatten();
+    let mut text: String = if focused {
+        ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| equation.clone().unwrap_or_else(|| fmt_value(*value)))
+    } else {
+        match &equation {
+            Some(e) => format!("fx: {e}"),
+            None => format!("{} {unit}", fmt_value(*value)),
+        }
+    };
+    let entry = if focused { parse_entry(ui, &text, unit) } else { None };
+    let valid = !focused || entry.as_ref().is_some_and(|(v, _)| range.contains(v));
     let resp = ui.add(egui::TextEdit::singleline(&mut text).id(id).desired_width(width).font(theme::body()).text_color(if valid {
         t.text
     } else {
         t.history_marker
     }));
     if resp.gained_focus() {
-        // Select the whole value, so typing replaces it.
-        text = fmt_value(*value);
+        // Select the whole value (or equation), so typing replaces it.
+        text = equation.clone().unwrap_or_else(|| fmt_value(*value));
         if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), id) {
             let all = egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
             state.cursor.set_char_range(Some(all));
@@ -68,11 +124,18 @@ pub(crate) fn value_field(
         ui.data_mut(|d| d.insert_temp(id, text.clone()));
     }
     if resp.changed()
-        && let Some(v) = parse_value(&text, unit).filter(|v| range.contains(v))
-        && (v - *value).abs() > 0.0
+        && let Some((v, e)) = parse_entry(ui, &text, unit).filter(|(v, _)| range.contains(v))
     {
-        *value = v;
-        out.changed = true;
+        if (v - *value).abs() > 0.0 {
+            *value = v;
+            out.changed = true;
+        }
+        if let Some(slot) = &mut eq
+            && **slot != e
+        {
+            **slot = e;
+            out.changed = true;
+        }
     }
     if resp.lost_focus() {
         out.entered = ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -370,6 +433,7 @@ impl Workbench {
             .collect();
         let mut request = None;
         let mut enter = ui.input(|i| i.key_pressed(egui::Key::Enter)) && !ui.ctx().egui_wants_keyboard_input();
+        let mut eqs = self.panel_eqs.clone();
         let (kind, name) = match &panel {
             Panel::Extrude(p) => ("Extrusion", p.editing.map(|f| self.feature_name(f))),
             Panel::Revolve(p) => ("Revolution", p.editing.map(|f| self.feature_name(f))),
@@ -451,14 +515,33 @@ impl Workbench {
                                 ui.end_row();
                                 if p.extent == ExtentChoice::Distance {
                                     ui.label(if p.direction == Direction::Asymmetric { "Distance A" } else { "Distance" });
-                                    enter |=
-                                        value_field(ui, egui::Id::new("tn_props_dist"), &mut p.distance, "mm", 0.001..=100_000.0, 110.0, t).entered;
+                                    enter |= eq_value_field(
+                                        ui,
+                                        egui::Id::new("tn_props_dist"),
+                                        &mut p.distance,
+                                        &mut eqs,
+                                        "distance",
+                                        "mm",
+                                        0.001..=100_000.0,
+                                        110.0,
+                                        t,
+                                    )
+                                    .entered;
                                     ui.end_row();
                                     if p.direction == Direction::Asymmetric {
                                         ui.label("Distance B");
-                                        enter |=
-                                            value_field(ui, egui::Id::new("tn_props_dist_b"), &mut p.distance_b, "mm", 0.0..=100_000.0, 110.0, t)
-                                                .entered;
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_dist_b"),
+                                            &mut p.distance_b,
+                                            &mut eqs,
+                                            "distance_b",
+                                            "mm",
+                                            0.0..=100_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
                                         ui.end_row();
                                     }
                                 }
@@ -538,7 +621,18 @@ impl Workbench {
                                     }
                                     ui.end_row();
                                     ui.label("Angle");
-                                    enter |= value_field(ui, egui::Id::new("tn_props_angle"), &mut p.degrees, "deg", 0.1..=360.0, 110.0, t).entered;
+                                    enter |= eq_value_field(
+                                        ui,
+                                        egui::Id::new("tn_props_angle"),
+                                        &mut p.degrees,
+                                        &mut eqs,
+                                        "degrees",
+                                        "deg",
+                                        0.1..=360.0,
+                                        110.0,
+                                        t,
+                                    )
+                                    .entered;
                                     ui.end_row();
                                 }
                             });
@@ -566,7 +660,18 @@ impl Workbench {
                         section(ui, "Behavior", true, |ui| {
                             egui::Grid::new("tn_props_fillet_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                                 ui.label("Radius");
-                                enter |= value_field(ui, egui::Id::new("tn_props_radius"), &mut p.radius, "mm", 0.001..=100_000.0, 110.0, t).entered;
+                                enter |= eq_value_field(
+                                    ui,
+                                    egui::Id::new("tn_props_radius"),
+                                    &mut p.radius,
+                                    &mut eqs,
+                                    "radius",
+                                    "mm",
+                                    0.001..=100_000.0,
+                                    110.0,
+                                    t,
+                                )
+                                .entered;
                                 ui.end_row();
                             });
                         });
@@ -600,20 +705,50 @@ impl Workbench {
                                 });
                                 ui.end_row();
                                 ui.label(if p.method == ChamferMethod::TwoDistances { "Distance 1" } else { "Distance" });
-                                enter |= value_field(ui, egui::Id::new("tn_props_chamfer_d1"), &mut p.d1, "mm", 0.001..=100_000.0, 110.0, t).entered;
+                                enter |= eq_value_field(
+                                    ui,
+                                    egui::Id::new("tn_props_chamfer_d1"),
+                                    &mut p.d1,
+                                    &mut eqs,
+                                    "d1",
+                                    "mm",
+                                    0.001..=100_000.0,
+                                    110.0,
+                                    t,
+                                )
+                                .entered;
                                 ui.end_row();
                                 match p.method {
                                     ChamferMethod::TwoDistances => {
                                         ui.label("Distance 2");
-                                        enter |= value_field(ui, egui::Id::new("tn_props_chamfer_d2"), &mut p.d2, "mm", 0.001..=100_000.0, 110.0, t)
-                                            .entered;
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_chamfer_d2"),
+                                            &mut p.d2,
+                                            &mut eqs,
+                                            "d2",
+                                            "mm",
+                                            0.001..=100_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
                                         ui.end_row();
                                     }
                                     ChamferMethod::DistanceAngle => {
                                         ui.label("Angle");
-                                        enter |=
-                                            value_field(ui, egui::Id::new("tn_props_chamfer_angle"), &mut p.degrees, "deg", 0.1..=89.9, 110.0, t)
-                                                .entered;
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_chamfer_angle"),
+                                            &mut p.degrees,
+                                            &mut eqs,
+                                            "degrees",
+                                            "deg",
+                                            0.1..=89.9,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
                                         ui.end_row();
                                     }
                                     ChamferMethod::Distance => {}
@@ -640,8 +775,18 @@ impl Workbench {
                                     });
                                 ui.end_row();
                                 ui.label("Thickness");
-                                enter |=
-                                    value_field(ui, egui::Id::new("tn_props_thickness"), &mut p.thickness, "mm", 0.001..=100_000.0, 110.0, t).entered;
+                                enter |= eq_value_field(
+                                    ui,
+                                    egui::Id::new("tn_props_thickness"),
+                                    &mut p.thickness,
+                                    &mut eqs,
+                                    "thickness",
+                                    "mm",
+                                    0.001..=100_000.0,
+                                    110.0,
+                                    t,
+                                )
+                                .entered;
                                 ui.end_row();
                             });
                         });
@@ -713,23 +858,45 @@ impl Workbench {
                         section(ui, "Dimensions", true, |ui| {
                             egui::Grid::new("tn_props_hole_dims").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                                 ui.label("Diameter");
-                                enter |=
-                                    value_field(ui, egui::Id::new("tn_props_hole_dia"), &mut p.diameter, "mm", 0.001..=100_000.0, 110.0, t).entered;
+                                enter |= eq_value_field(
+                                    ui,
+                                    egui::Id::new("tn_props_hole_dia"),
+                                    &mut p.diameter,
+                                    &mut eqs,
+                                    "diameter",
+                                    "mm",
+                                    0.001..=100_000.0,
+                                    110.0,
+                                    t,
+                                )
+                                .entered;
                                 ui.end_row();
                                 if !p.through {
                                     ui.label("Depth");
-                                    enter |= value_field(ui, egui::Id::new("tn_props_hole_depth"), &mut p.depth, "mm", 0.001..=100_000.0, 110.0, t)
-                                        .entered;
+                                    enter |= eq_value_field(
+                                        ui,
+                                        egui::Id::new("tn_props_hole_depth"),
+                                        &mut p.depth,
+                                        &mut eqs,
+                                        "depth",
+                                        "mm",
+                                        0.001..=100_000.0,
+                                        110.0,
+                                        t,
+                                    )
+                                    .entered;
                                     ui.end_row();
                                 }
                                 match p.seat {
                                     Seat::None => {}
                                     Seat::Counterbore => {
                                         ui.label("Bore Diameter");
-                                        enter |= value_field(
+                                        enter |= eq_value_field(
                                             ui,
                                             egui::Id::new("tn_props_seat_dia"),
                                             &mut p.seat_diameter,
+                                            &mut eqs,
+                                            "seat_diameter",
                                             "mm",
                                             0.001..=100_000.0,
                                             110.0,
@@ -738,10 +905,12 @@ impl Workbench {
                                         .entered;
                                         ui.end_row();
                                         ui.label("Bore Depth");
-                                        enter |= value_field(
+                                        enter |= eq_value_field(
                                             ui,
                                             egui::Id::new("tn_props_bore_depth"),
                                             &mut p.bore_depth,
+                                            &mut eqs,
+                                            "bore_depth",
                                             "mm",
                                             0.001..=100_000.0,
                                             110.0,
@@ -752,10 +921,12 @@ impl Workbench {
                                     }
                                     Seat::Countersink => {
                                         ui.label("Sink Diameter");
-                                        enter |= value_field(
+                                        enter |= eq_value_field(
                                             ui,
                                             egui::Id::new("tn_props_seat_dia"),
                                             &mut p.seat_diameter,
+                                            &mut eqs,
+                                            "seat_diameter",
                                             "mm",
                                             0.001..=100_000.0,
                                             110.0,
@@ -764,16 +935,35 @@ impl Workbench {
                                         .entered;
                                         ui.end_row();
                                         ui.label("Sink Angle");
-                                        enter |=
-                                            value_field(ui, egui::Id::new("tn_props_sink_angle"), &mut p.sink_degrees, "deg", 1.0..=179.0, 110.0, t)
-                                                .entered;
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_sink_angle"),
+                                            &mut p.sink_degrees,
+                                            &mut eqs,
+                                            "sink_degrees",
+                                            "deg",
+                                            1.0..=179.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
                                         ui.end_row();
                                     }
                                 }
                                 if !p.through && !p.flat {
                                     ui.label("Point Angle");
-                                    enter |= value_field(ui, egui::Id::new("tn_props_tip_angle"), &mut p.tip_degrees, "deg", 1.0..=179.0, 110.0, t)
-                                        .entered;
+                                    enter |= eq_value_field(
+                                        ui,
+                                        egui::Id::new("tn_props_tip_angle"),
+                                        &mut p.tip_degrees,
+                                        &mut eqs,
+                                        "tip_degrees",
+                                        "deg",
+                                        1.0..=179.0,
+                                        110.0,
+                                        t,
+                                    )
+                                    .entered;
                                     ui.end_row();
                                 }
                             });
@@ -815,13 +1005,32 @@ impl Workbench {
                                         });
                                         ui.end_row();
                                         ui.label("Count");
-                                        enter |=
-                                            value_field(ui, egui::Id::new("tn_props_count1"), &mut p.count1, "", 1.0..=10_000.0, 110.0, t).entered;
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_count1"),
+                                            &mut p.count1,
+                                            &mut eqs,
+                                            "count1",
+                                            "",
+                                            1.0..=10_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
                                         ui.end_row();
                                         ui.label("Spacing");
-                                        enter |=
-                                            value_field(ui, egui::Id::new("tn_props_spacing1"), &mut p.spacing1, "mm", 0.001..=100_000.0, 110.0, t)
-                                                .entered;
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_spacing1"),
+                                            &mut p.spacing1,
+                                            &mut eqs,
+                                            "spacing1",
+                                            "mm",
+                                            0.001..=100_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
                                         ui.end_row();
                                     });
                                 });
@@ -841,14 +1050,26 @@ impl Workbench {
                                         ui.end_row();
                                         if p.dir2.is_some() {
                                             ui.label("Count");
-                                            enter |= value_field(ui, egui::Id::new("tn_props_count2"), &mut p.count2, "", 1.0..=10_000.0, 110.0, t)
-                                                .entered;
+                                            enter |= eq_value_field(
+                                                ui,
+                                                egui::Id::new("tn_props_count2"),
+                                                &mut p.count2,
+                                                &mut eqs,
+                                                "count2",
+                                                "",
+                                                1.0..=10_000.0,
+                                                110.0,
+                                                t,
+                                            )
+                                            .entered;
                                             ui.end_row();
                                             ui.label("Spacing");
-                                            enter |= value_field(
+                                            enter |= eq_value_field(
                                                 ui,
                                                 egui::Id::new("tn_props_spacing2"),
                                                 &mut p.spacing2,
+                                                &mut eqs,
+                                                "spacing2",
                                                 "mm",
                                                 0.001..=100_000.0,
                                                 110.0,
@@ -876,12 +1097,32 @@ impl Workbench {
                                         });
                                         ui.end_row();
                                         ui.label("Count");
-                                        enter |= value_field(ui, egui::Id::new("tn_props_count"), &mut p.count, "", 2.0..=10_000.0, 110.0, t).entered;
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_count"),
+                                            &mut p.count,
+                                            &mut eqs,
+                                            "count",
+                                            "",
+                                            2.0..=10_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
                                         ui.end_row();
                                         ui.label("Angle");
-                                        enter |=
-                                            value_field(ui, egui::Id::new("tn_props_pattern_angle"), &mut p.degrees, "deg", 0.1..=360.0, 110.0, t)
-                                                .entered;
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_pattern_angle"),
+                                            &mut p.degrees,
+                                            &mut eqs,
+                                            "degrees",
+                                            "deg",
+                                            0.1..=360.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
                                         ui.end_row();
                                     });
                                 });
@@ -953,10 +1194,12 @@ impl Workbench {
                                 match w.method {
                                     WorkMethod::Offset => {
                                         ui.label("Offset");
-                                        enter |= value_field(
+                                        enter |= eq_value_field(
                                             ui,
                                             egui::Id::new("tn_props_work_offset"),
                                             &mut w.distance,
+                                            &mut eqs,
+                                            "distance",
                                             "mm",
                                             -100_000.0..=100_000.0,
                                             110.0,
@@ -967,9 +1210,18 @@ impl Workbench {
                                     }
                                     WorkMethod::Angle => {
                                         ui.label("Angle");
-                                        enter |=
-                                            value_field(ui, egui::Id::new("tn_props_work_angle"), &mut w.degrees, "deg", -360.0..=360.0, 110.0, t)
-                                                .entered;
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_work_angle"),
+                                            &mut w.degrees,
+                                            &mut eqs,
+                                            "degrees",
+                                            "deg",
+                                            -360.0..=360.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
                                         ui.end_row();
                                     }
                                     _ => {}
@@ -1001,6 +1253,7 @@ impl Workbench {
         // Keep edits unless the panel changed underneath (e.g. it was closed this frame).
         if self.panel.is_some() {
             self.panel = Some(panel);
+            self.panel_eqs = eqs;
         }
         if clear {
             self.clear_panel_picks();
@@ -1088,13 +1341,26 @@ impl Workbench {
         let at = pos2(anchor.x.clamp(rect.left() + 8.0, rect.right() - 260.0), anchor.y.clamp(rect.top() + 8.0, rect.bottom() - 40.0));
         let mut request = None;
         let mut panel = self.panel.clone();
+        let mut eqs = self.panel_eqs.clone();
         egui::Area::new(egui::Id::new("tn_minibar")).order(egui::Order::Middle).fixed_pos(at).show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).fill(t.panel).inner_margin(4.0).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
                     match &mut panel {
                         Some(Panel::Extrude(p)) if p.extent == ExtentChoice::Distance => {
-                            if value_field(ui, egui::Id::new("tn_mini_dist"), &mut p.distance, "mm", 0.001..=100_000.0, 80.0, t).entered {
+                            if eq_value_field(
+                                ui,
+                                egui::Id::new("tn_mini_dist"),
+                                &mut p.distance,
+                                &mut eqs,
+                                "distance",
+                                "mm",
+                                0.001..=100_000.0,
+                                80.0,
+                                t,
+                            )
+                            .entered
+                            {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
@@ -1102,7 +1368,9 @@ impl Workbench {
                             ui.label("Through All");
                         }
                         Some(Panel::Revolve(p)) if !p.full => {
-                            if value_field(ui, egui::Id::new("tn_mini_angle"), &mut p.degrees, "deg", 0.1..=360.0, 80.0, t).entered {
+                            if eq_value_field(ui, egui::Id::new("tn_mini_angle"), &mut p.degrees, &mut eqs, "degrees", "deg", 0.1..=360.0, 80.0, t)
+                                .entered
+                            {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
@@ -1110,38 +1378,90 @@ impl Workbench {
                             ui.label("Full");
                         }
                         Some(Panel::Fillet(p)) => {
-                            if value_field(ui, egui::Id::new("tn_mini_radius"), &mut p.radius, "mm", 0.001..=100_000.0, 80.0, t).entered {
+                            if eq_value_field(
+                                ui,
+                                egui::Id::new("tn_mini_radius"),
+                                &mut p.radius,
+                                &mut eqs,
+                                "radius",
+                                "mm",
+                                0.001..=100_000.0,
+                                80.0,
+                                t,
+                            )
+                            .entered
+                            {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
                         Some(Panel::Chamfer(p)) => {
-                            if value_field(ui, egui::Id::new("tn_mini_chamfer"), &mut p.d1, "mm", 0.001..=100_000.0, 80.0, t).entered {
+                            if eq_value_field(ui, egui::Id::new("tn_mini_chamfer"), &mut p.d1, &mut eqs, "d1", "mm", 0.001..=100_000.0, 80.0, t)
+                                .entered
+                            {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
                         Some(Panel::Shell(p)) => {
-                            if value_field(ui, egui::Id::new("tn_mini_thickness"), &mut p.thickness, "mm", 0.001..=100_000.0, 80.0, t).entered {
+                            if eq_value_field(
+                                ui,
+                                egui::Id::new("tn_mini_thickness"),
+                                &mut p.thickness,
+                                &mut eqs,
+                                "thickness",
+                                "mm",
+                                0.001..=100_000.0,
+                                80.0,
+                                t,
+                            )
+                            .entered
+                            {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
                         Some(Panel::Hole(p)) => {
-                            if value_field(ui, egui::Id::new("tn_mini_hole_dia"), &mut p.diameter, "mm", 0.001..=100_000.0, 80.0, t).entered {
+                            if eq_value_field(
+                                ui,
+                                egui::Id::new("tn_mini_hole_dia"),
+                                &mut p.diameter,
+                                &mut eqs,
+                                "diameter",
+                                "mm",
+                                0.001..=100_000.0,
+                                80.0,
+                                t,
+                            )
+                            .entered
+                            {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
                         Some(Panel::Work(w)) if w.method == WorkMethod::Offset => {
-                            if value_field(ui, egui::Id::new("tn_mini_work"), &mut w.distance, "mm", -100_000.0..=100_000.0, 80.0, t).entered {
+                            if eq_value_field(
+                                ui,
+                                egui::Id::new("tn_mini_work"),
+                                &mut w.distance,
+                                &mut eqs,
+                                "distance",
+                                "mm",
+                                -100_000.0..=100_000.0,
+                                80.0,
+                                t,
+                            )
+                            .entered
+                            {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
                         Some(Panel::Work(w)) if w.method == WorkMethod::Angle => {
-                            if value_field(ui, egui::Id::new("tn_mini_work"), &mut w.degrees, "deg", -360.0..=360.0, 80.0, t).entered {
+                            if eq_value_field(ui, egui::Id::new("tn_mini_work"), &mut w.degrees, &mut eqs, "degrees", "deg", -360.0..=360.0, 80.0, t)
+                                .entered
+                            {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
                         Some(Panel::Pattern(p)) if p.kind != CopyKind::Mirror => {
-                            let count = if p.kind == CopyKind::Rect { &mut p.count1 } else { &mut p.count };
-                            if value_field(ui, egui::Id::new("tn_mini_count"), count, "", 1.0..=10_000.0, 60.0, t).entered {
+                            let (count, key) = if p.kind == CopyKind::Rect { (&mut p.count1, "count1") } else { (&mut p.count, "count") };
+                            if eq_value_field(ui, egui::Id::new("tn_mini_count"), count, &mut eqs, key, "", 1.0..=10_000.0, 60.0, t).entered {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
@@ -1167,6 +1487,7 @@ impl Workbench {
         });
         if self.panel.is_some() {
             self.panel = panel;
+            self.panel_eqs = eqs;
         }
         if request.is_some() {
             self.panel_request = request;

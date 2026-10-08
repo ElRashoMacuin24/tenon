@@ -16,6 +16,7 @@ use crate::document::{
     WorkPoint, hole_centres,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
+use crate::params::{ParamUnit, UserParam, ValuePath};
 use crate::regen::{Regen, regenerate};
 use crate::{Document, FeatureId};
 
@@ -115,8 +116,10 @@ impl Session {
     }
 
     /// Replaces the document (e.g. after opening a file); undo history is cleared.
-    pub fn replace_document(&mut self, doc: Document, k: Option<&mut dyn Kernel>) {
+    pub fn replace_document(&mut self, mut doc: Document, k: Option<&mut dyn Kernel>) {
         self.release_regen(k);
+        // Files from before parameters get their names now.
+        doc.name_values();
         self.doc = doc;
         self.undo.clear();
         self.redo.clear();
@@ -137,7 +140,9 @@ impl Session {
     /// Applies `f` to the document as one undoable step; on error nothing changes.
     pub fn edit<T>(&mut self, f: impl FnOnce(&mut Document) -> Result<T, CmdError>) -> Result<T, CmdError> {
         let before = self.doc.clone();
-        match f(&mut self.doc) {
+        // Equations follow every change, in the same undo step; a change they cannot follow
+        // is refused.
+        match f(&mut self.doc).and_then(|v| if self.doc != before { self.doc.sync_parameters().map(|()| v).map_err(CmdError) } else { Ok(v) }) {
             Ok(v) => {
                 if self.doc != before {
                     self.undo.push(before);
@@ -584,14 +589,52 @@ fn sketch_spline(s: &mut Session, p: &Value) -> CmdResult {
 
 fn sketch_constrain(s: &mut Session, p: &Value) -> CmdResult {
     let c: Constraint = parse(p, "constraint")?;
-    let id = on_sketch(s, p, |sk| Ok(sk.add_constraint(c)?))?;
-    Ok(json!({ "constraint": id.0 }))
+    let sketch = sketch_id(p)?;
+    // A dimension may come with an equation that drives it (`d0 / 2`).
+    let eq = param_value(p, "equation")?.filter(|e| e.trim().parse::<f64>().is_err());
+    let id = s.edit(|d| {
+        let sk = d.sketch_mut(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
+        let id = sk.add_constraint(c)?;
+        if let Some(eq) = &eq {
+            d.name_values();
+            let name = d.name_of(&ValuePath::Dimension { sketch, constraint: id }).ok_or("only a dimension can have an equation")?.to_owned();
+            d.set_equation(&name, Some(eq)).map_err(CmdError)?;
+        }
+        Ok(id)
+    })?;
+    let name = s.document().name_of(&ValuePath::Dimension { sketch, constraint: id }).map(str::to_owned);
+    Ok(json!({ "constraint": id.0, "name": name }))
 }
 
+/// Sets a dimension's value (clearing its equation), or with `equation` drives it by one.
 fn sketch_set_dimension(s: &mut Session, p: &Value) -> CmdResult {
-    let (c, v) = (ConstraintId(id_u32(p, "constraint")?), num(p, "value")?);
-    on_sketch(s, p, |sk| Ok(sk.set_dimension(c, v)?))?;
-    Ok(json!({}))
+    let (sketch, c) = (sketch_id(p)?, ConstraintId(id_u32(p, "constraint")?));
+    let path = ValuePath::Dimension { sketch, constraint: c };
+    match param_value(p, "equation")? {
+        Some(eq) if eq.trim().parse::<f64>().is_err() => s.edit(|d| {
+            d.sketch(sketch)
+                .and_then(|sk| sk.constraint(c))
+                .filter(|x| x.is_dimensional())
+                .ok_or_else(|| CmdError(format!("{c} is not a dimension of {sketch}")))?;
+            d.name_values();
+            let name = d.name_of(&path).ok_or("the dimension has no name")?.to_owned();
+            d.set_equation(&name, Some(&eq)).map_err(CmdError)
+        })?,
+        given => {
+            let v = match given {
+                Some(eq) => eq.trim().parse::<f64>().map_err(|_| CmdError("not a number".into()))?,
+                None => num(p, "value")?,
+            };
+            s.edit(|d| {
+                let sk = d.sketch_mut(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
+                sk.set_dimension(c, v)?;
+                d.clear_equation_at(&path);
+                Ok(())
+            })?;
+        }
+    }
+    let name = s.document().name_of(&path).map(str::to_owned);
+    Ok(json!({ "name": name }))
 }
 
 fn sketch_remove_constraint(s: &mut Session, p: &Value) -> CmdResult {
@@ -813,18 +856,178 @@ fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::Hole(hole))
 }
 
+/// `equations: {field pointer: equation}` for a feature's values.
+fn equations_param(p: &Value) -> Result<Vec<(String, String)>, CmdError> {
+    match p.get("equations") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Object(o)) => o
+            .iter()
+            .map(|(k, v)| match v {
+                Value::String(e) => Ok((k.clone(), e.clone())),
+                Value::Number(n) => Ok((k.clone(), n.to_string())),
+                _ => Err(CmdError(format!("the equation for `{k}` must be text"))),
+            })
+            .collect(),
+        Some(_) => Err("`equations` must map value fields to equations".into()),
+    }
+}
+
+/// Values of a feature that changed directly lose their equations; `equations` set new ones.
+fn apply_feature_equations(d: &mut Document, id: FeatureId, before: &[(ValuePath, f64)], equations: &[(String, String)]) -> Result<(), CmdError> {
+    for (path, old) in before {
+        if d.value_at(path).is_some_and(|(v, _)| (v - old).abs() > 1e-12 * (1.0 + v.abs())) {
+            d.clear_equation_at(path);
+        }
+    }
+    d.name_values();
+    for (field, eq) in equations {
+        let path = ValuePath::Feature { feature: id, field: field.clone() };
+        let name = d.name_of(&path).ok_or_else(|| CmdError(format!("`{field}` is not a value of {id}")))?.to_owned();
+        let plain = eq.trim().parse::<f64>().is_ok();
+        d.set_equation(&name, if plain { None } else { Some(eq) }).map_err(CmdError)?;
+        if plain {
+            d.set_value_at(&path, eq.trim().parse::<f64>().unwrap_or_default()).map_err(CmdError)?;
+        }
+    }
+    Ok(())
+}
+
+fn feature_values(d: &Document, id: FeatureId) -> Vec<(ValuePath, f64)> {
+    d.value_paths()
+        .into_iter()
+        .filter(|(p, _)| matches!(p, ValuePath::Feature { feature, .. } if *feature == id))
+        .filter_map(|(p, _)| d.value_at(&p).map(|(v, _)| (p, v)))
+        .collect()
+}
+
+/// Adds a feature from its definition, with equations for its values, in one step.
+fn feature_add(s: &mut Session, p: &Value) -> CmdResult {
+    let kind: FeatureKind = parse(p, "kind")?;
+    if matches!(kind, FeatureKind::Sketch { .. }) {
+        return Err("use sketch.create for sketches".into());
+    }
+    let equations = equations_param(p)?;
+    s.document().check_copies(&kind).map_err(CmdError)?;
+    check_work_refs(s, &kind)?;
+    let id = s.edit(|d| {
+        let id = d.add(kind).map_err(CmdError)?;
+        d.validate().map_err(CmdError)?;
+        apply_feature_equations(d, id, &[], &equations)?;
+        Ok(id)
+    })?;
+    let name = s.document().feature(id).map(|f| f.name.clone()).unwrap_or_default();
+    Ok(json!({ "feature": id.0, "name": name }))
+}
+
 fn feature_update(s: &mut Session, p: &Value) -> CmdResult {
     let id = feature_id(p)?;
     let kind: FeatureKind = parse(p, "kind")?;
+    let equations = equations_param(p)?;
     s.edit(|d| {
+        let before = feature_values(d, id);
         let f = d.feature_mut(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?;
         if std::mem::discriminant(&f.kind) != std::mem::discriminant(&kind) {
             return Err("a feature cannot change its type".into());
         }
         f.kind = kind;
         d.validate().map_err(CmdError)?;
+        apply_feature_equations(d, id, &before, &equations)?;
         Ok(json!({}))
     })
+}
+
+fn param_value(p: &Value, key: &str) -> Result<Option<String>, CmdError> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(e)) if e.trim().is_empty() => Ok(None),
+        Some(Value::String(e)) => Ok(Some(e.clone())),
+        Some(Value::Number(n)) => Ok(Some(n.to_string())),
+        Some(_) => Err(format!("`{key}` must be an equation (text) or a number").into()),
+    }
+}
+
+fn param_list(s: &mut Session, _p: &Value) -> CmdResult {
+    let d = s.document();
+    let model: Vec<Value> = d
+        .parameters()
+        .model
+        .iter()
+        .map(|m| {
+            let (value, unit) = d.value_at(&m.target).map_or((Value::Null, Value::Null), |(v, u)| (json!(v), json!(u.label())));
+            json!({ "name": m.name, "of": d.describe_path(&m.target), "target": m.target, "unit": unit, "equation": m.equation, "value": value, "comment": m.comment })
+        })
+        .collect();
+    let env = d.parameter_values();
+    let user: Vec<Value> = d
+        .parameters()
+        .user
+        .iter()
+        .map(|u| json!({ "name": u.name, "unit": u.unit.label(), "equation": u.equation, "value": env.get(&u.name), "comment": u.comment }))
+        .collect();
+    Ok(json!({ "model": model, "user": user }))
+}
+
+fn param_unit(p: &Value) -> Result<ParamUnit, CmdError> {
+    match p.get("unit").and_then(Value::as_str).unwrap_or("mm") {
+        "mm" => Ok(ParamUnit::Mm),
+        "deg" => Ok(ParamUnit::Deg),
+        "ul" => Ok(ParamUnit::Ul),
+        other => Err(format!("unknown unit `{other}` (mm, deg or ul)").into()),
+    }
+}
+
+fn param_add(s: &mut Session, p: &Value) -> CmdResult {
+    let name = field(p, "name")?.as_str().ok_or("`name` must be text")?.trim().to_owned();
+    let equation = param_value(p, "equation")?.ok_or("a user parameter needs an equation")?;
+    let comment = p.get("comment").and_then(Value::as_str).unwrap_or("").to_owned();
+    let param = UserParam { name: name.clone(), equation, unit: param_unit(p)?, comment };
+    s.edit(|d| d.add_user_parameter(param).map_err(CmdError))?;
+    Ok(json!({ "name": name, "value": s.document().parameter_values().get(&name) }))
+}
+
+fn param_set(s: &mut Session, p: &Value) -> CmdResult {
+    let name = field(p, "name")?.as_str().ok_or("`name` must be text")?.to_owned();
+    let has_equation = p.get("equation").is_some();
+    let equation = param_value(p, "equation")?;
+    let comment = match p.get("comment") {
+        None => None,
+        Some(Value::String(c)) => Some(c.clone()),
+        Some(_) => return Err("`comment` must be text".into()),
+    };
+    if !has_equation && comment.is_none() {
+        return Err("give an equation or a comment".into());
+    }
+    s.edit(|d| {
+        if let Some(c) = &comment {
+            d.set_comment(&name, c).map_err(CmdError)?;
+        }
+        if !has_equation {
+            return Ok(());
+        }
+        let target = d.parameters().model.iter().find(|m| m.name == name).map(|m| m.target.clone());
+        match (target, equation.as_deref().map(|e| (e, e.trim().parse::<f64>()))) {
+            // A plain number on a model value: the value itself, no equation.
+            (Some(path), Some((_, Ok(v)))) => {
+                d.set_equation(&name, None).map_err(CmdError)?;
+                d.set_value_at(&path, v).map_err(CmdError)
+            }
+            (_, e) => d.set_equation(&name, e.map(|(e, _)| e)).map_err(CmdError),
+        }
+    })?;
+    Ok(json!({ "name": name, "value": s.document().parameter_values().get(&name) }))
+}
+
+fn param_rename(s: &mut Session, p: &Value) -> CmdResult {
+    let from = field(p, "name")?.as_str().ok_or("`name` must be text")?.to_owned();
+    let to = field(p, "to")?.as_str().ok_or("`to` must be text")?.trim().to_owned();
+    s.edit(|d| d.rename_parameter(&from, &to).map_err(CmdError))?;
+    Ok(json!({ "name": to }))
+}
+
+fn param_delete(s: &mut Session, p: &Value) -> CmdResult {
+    let name = field(p, "name")?.as_str().ok_or("`name` must be text")?.to_owned();
+    s.edit(|d| d.delete_user_parameter(&name).map_err(CmdError))?;
+    Ok(json!({}))
 }
 
 fn feature_rename(s: &mut Session, p: &Value) -> CmdResult {
@@ -1050,11 +1253,17 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sketch.constrain",
         "Constrain",
-        "sketch, constraint: {\"type\": \"horizontal\", \"line\": 3} etc. (see docs/commands.md)",
+        "sketch, constraint: {\"type\": \"horizontal\", \"line\": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. \"width / 2\")",
         true,
         sketch_constrain
     ),
-    doc_cmd!("sketch.set_dimension", "Edit Dimension", "sketch, constraint (id), value (mm or rad)", true, sketch_set_dimension),
+    doc_cmd!(
+        "sketch.set_dimension",
+        "Edit Dimension",
+        "sketch, constraint (id); value (mm or rad), or equation (e.g. \"d0 / 2\", lengths in mm, angles in degrees)",
+        true,
+        sketch_set_dimension
+    ),
     doc_cmd!("sketch.remove_constraint", "Delete Constraint", "sketch, constraint (id)", true, sketch_remove_constraint),
     doc_cmd!("sketch.drag", "Drag Point", "sketch, point (id), x, y", true, sketch_drag),
     doc_cmd!("sketch.delete", "Delete", "sketch, entities: [ids]", true, sketch_delete),
@@ -1136,7 +1345,37 @@ static COMMANDS: &[CommandSpec] = &[
         work_axis
     ),
     doc_cmd!("work.point", "Work Point", "edge: a circular edge reference (its centre); or axis and plane (where they meet)", true, work_point),
-    doc_cmd!("feature.update", "Edit Feature", "feature (id), kind: the feature definition as in model.tree / the file format", true, feature_update),
+    doc_cmd!(
+        "feature.add",
+        "Add Feature",
+        "kind: a feature definition as in model.tree / the file format; equations: {value field: equation}",
+        true,
+        feature_add
+    ),
+    doc_cmd!("param.list", "Parameters", "every model parameter (named dimensions and feature values) and user parameter", false, param_list),
+    doc_cmd!(
+        "param.add",
+        "Add Parameter",
+        "name; equation (e.g. \"40 mm\", \"width / 2\"); unit: mm | deg | ul (default mm); comment",
+        true,
+        param_add
+    ),
+    doc_cmd!(
+        "param.set",
+        "Set Parameter",
+        "name; equation: text, or a number (for a model parameter: its plain value, no equation), or null to drop a model parameter's equation; comment",
+        true,
+        param_set
+    ),
+    doc_cmd!("param.rename", "Rename Parameter", "name, to: the new name (every equation using it follows)", true, param_rename),
+    doc_cmd!("param.delete", "Delete Parameter", "name: a user parameter no equation uses", true, param_delete),
+    doc_cmd!(
+        "feature.update",
+        "Edit Feature",
+        "feature (id), kind: the feature definition as in model.tree / the file format; equations: {value field: equation} (e.g. {\"/extent/distance\": \"d0 * 2\"})",
+        true,
+        feature_update
+    ),
     doc_cmd!("feature.rename", "Rename Feature", "feature, name", true, feature_rename),
     doc_cmd!("feature.suppress", "Suppress", "feature, suppressed (default true)", true, feature_suppress),
     doc_cmd!("feature.delete", "Delete Feature", "feature", true, feature_delete),

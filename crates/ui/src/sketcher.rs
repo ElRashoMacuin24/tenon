@@ -523,10 +523,15 @@ impl Workbench {
             },
             _ => (raw_cursor, None),
         };
+        // Dimensions driven by an equation read "fx: 20".
+        let fx: std::collections::BTreeSet<ConstraintId> =
+            doc_sketch.constraints().map(|(cid, _)| cid).filter(|cid| self.dimension_equation(feature, *cid).is_some()).collect();
+        let label_text = |cid: ConstraintId, text: String| if fx.contains(&cid) { format!("fx: {text}") } else { text };
         let labels: Vec<(Rect, ConstraintId, Constraint)> = doc_sketch
             .constraints()
             .filter_map(|(cid, c)| {
                 let (at, text) = dimension_label(&doc_sketch, c)?;
+                let text = label_text(cid, text);
                 let p = plane.project(at)?;
                 let galley = ui.painter().layout_no_wrap(text, theme::small(), Color32::WHITE);
                 Some((Rect::from_center_size(p, galley.size() + vec2(8.0, 4.0)), cid, c.clone()))
@@ -595,7 +600,9 @@ impl Workbench {
             && let Some(p) = pointer
             && let Some((_, cid, c)) = labels.iter().find(|(r, _, _)| r.contains(p))
         {
-            self.panel = Some(Panel::EditDimension { sketch: feature, constraint: *cid, value: c.value().unwrap_or(0.0), angular: c.is_angular() });
+            let equation = self.dimension_equation(feature, *cid);
+            self.panel =
+                Some(Panel::EditDimension { sketch: feature, constraint: *cid, value: c.value().unwrap_or(0.0), angular: c.is_angular(), equation });
         } else if resp.clicked_by(egui::PointerButton::Primary)
             && let Some(at) = cursor
         {
@@ -697,8 +704,9 @@ impl Workbench {
                 }
             }
         }
-        for (r, _, c) in &labels {
+        for (r, cid, c) in &labels {
             if let Some((_, text)) = dimension_label(shown, c) {
+                let text = label_text(*cid, text);
                 p.rect_filled(*r, 2.0, t.panel.gamma_multiply(0.92));
                 p.text(r.center(), Align2::CENTER_CENTER, text, theme::small(), done);
             }
@@ -781,6 +789,13 @@ impl Workbench {
                 at.x = r.right() + 4.0;
             }
         }
+    }
+
+    /// The equation driving a dimension, if any.
+    pub(crate) fn dimension_equation(&self, sketch: FeatureId, constraint: ConstraintId) -> Option<String> {
+        let path = tenon_model::ValuePath::Dimension { sketch, constraint };
+        let name = self.document().name_of(&path)?;
+        self.document().parameters().model.iter().find(|m| m.name == name)?.equation.clone()
     }
 
     /// Where a dimension's label is on screen (for the inline edit box).

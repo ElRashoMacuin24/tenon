@@ -72,6 +72,10 @@ pub struct Workbench {
     pub(crate) pending_tool: Option<&'static str>,
     /// Start 2D Sketch is waiting for a plane or planar face to be picked.
     pub(crate) pick_plane: bool,
+    /// Parameter values by name for the document revision they were computed at.
+    pub(crate) param_env: (u64, std::sync::Arc<std::collections::BTreeMap<String, f64>>),
+    /// Equations typed into the open feature panel's fields.
+    pub(crate) panel_eqs: crate::properties::Equations,
 }
 
 impl Workbench {
@@ -100,6 +104,8 @@ impl Workbench {
             panel_request: None,
             pending_tool: None,
             pick_plane: false,
+            param_env: (0, Default::default()),
+            panel_eqs: Default::default(),
         }
     }
 
@@ -283,6 +289,7 @@ impl Workbench {
             "model.pattern.rect" => self.open_pattern(crate::panels::CopyKind::Rect, None)?,
             "model.pattern.circular" => self.open_pattern(crate::panels::CopyKind::Circular, None)?,
             "model.mirror" => self.open_pattern(crate::panels::CopyKind::Mirror, None)?,
+            "tools.parameters" => self.chrome.params = !self.chrome.params,
             "work.plane" => self.open_work(crate::work::WorkMethod::Offset, None)?,
             "work.axis" => self.open_work(crate::work::WorkMethod::Along, None)?,
             "work.point" => self.open_work(crate::work::WorkMethod::Center, None)?,
@@ -469,6 +476,11 @@ impl Workbench {
     pub fn ui(&mut self, ui: &mut Ui, render: Option<&egui_wgpu::RenderState>) {
         self.view.now = ui.input(|i| i.time);
         self.sync_geometry();
+        // Parameter values, for value fields that take equations.
+        if self.param_env.0 != self.session.revision() {
+            self.param_env = (self.session.revision(), std::sync::Arc::new(self.document().parameter_values()));
+        }
+        crate::properties::set_param_env(ui.ctx(), self.param_env.1.clone());
         self.shortcuts(ui);
         let theme = self.chrome.theme;
         if self.chrome.applied_theme != Some(theme) {

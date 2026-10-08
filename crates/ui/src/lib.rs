@@ -15,6 +15,7 @@ mod cube;
 pub mod icons;
 mod modify;
 mod panels;
+mod params_dialog;
 mod properties;
 mod radial;
 mod sketcher;

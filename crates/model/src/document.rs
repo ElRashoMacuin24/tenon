@@ -609,11 +609,14 @@ pub struct Document {
     pub name: String,
     features: Vec<Feature>,
     next_feature: u32,
+    /// Parameter names and equations.
+    #[serde(default)]
+    pub(crate) params: crate::params::Parameters,
 }
 
 impl Default for Document {
     fn default() -> Self {
-        Document { name: "Part1".into(), features: Vec::new(), next_feature: 0 }
+        Document { name: "Part1".into(), features: Vec::new(), next_feature: 0, params: Default::default() }
     }
 }
 
@@ -668,7 +671,7 @@ impl Document {
     /// what a feature is edited against.
     pub fn rolled_back_to(&self, id: FeatureId) -> Document {
         let n = self.index_of(id).unwrap_or(self.features.len());
-        Document { name: self.name.clone(), features: self.features[..n].to_vec(), next_feature: self.next_feature }
+        Document { name: self.name.clone(), features: self.features[..n].to_vec(), next_feature: self.next_feature, params: self.params.clone() }
     }
 
     /// Removes a feature that nothing depends on.

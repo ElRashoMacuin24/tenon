@@ -34,6 +34,8 @@ pub(crate) struct Chrome {
     pub about: bool,
     pub mass: bool,
     pub options: bool,
+    /// The Parameters dialog is open.
+    pub params: bool,
     pub radial: Option<crate::radial::Radial>,
     pub theme: ThemeName,
     /// The theme egui's own widgets were last styled with.
@@ -60,6 +62,7 @@ impl Default for Chrome {
             about: false,
             mass: false,
             options: false,
+            params: false,
             radial: None,
             theme: ThemeName::default(),
             applied_theme: None,
@@ -591,6 +594,8 @@ impl Workbench {
             ui.small("Mass equals volume at unit density; materials arrive in M5.");
         });
         self.chrome.mass = mass;
+        let t = crate::theme::Tokens::of(self.chrome.theme);
+        self.parameters_window(ui, &t);
     }
 }
 

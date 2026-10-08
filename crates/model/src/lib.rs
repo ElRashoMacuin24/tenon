@@ -7,7 +7,9 @@
 
 pub mod cmd;
 mod document;
+pub mod expr;
 pub mod naming;
+pub mod params;
 pub mod regen;
 pub mod worker;
 
@@ -18,4 +20,5 @@ pub use document::{
     RegionSel, Revolve, RevolveAngle, Shell, WorkAxis, WorkPlane, WorkPoint, hole_centres,
 };
 pub use naming::{CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace};
+pub use params::{ModelParam, ParamUnit, Parameters, UserParam, ValuePath};
 pub use regen::{Body, BodyView, FeatureStatus, Regen, Scene, Tool, WorkGeom, regenerate, scene};

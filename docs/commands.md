@@ -16,8 +16,8 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.rectangle` | Rectangle | sketch, x1, y1, x2, y2 (opposite corners) | yes |
 | `sketch.polygon` | Polygon | sketch, cx, cy, x, y (a corner), sides | yes |
 | `sketch.spline` | Spline | sketch, points: [[x, y], ...] (control points), degree (default 3) | yes |
-| `sketch.constrain` | Constrain | sketch, constraint: {"type": "horizontal", "line": 3} etc. (see docs/commands.md) | yes |
-| `sketch.set_dimension` | Edit Dimension | sketch, constraint (id), value (mm or rad) | yes |
+| `sketch.constrain` | Constrain | sketch, constraint: {"type": "horizontal", "line": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. "width / 2") | yes |
+| `sketch.set_dimension` | Edit Dimension | sketch, constraint (id); value (mm or rad), or equation (e.g. "d0 / 2", lengths in mm, angles in degrees) | yes |
 | `sketch.remove_constraint` | Delete Constraint | sketch, constraint (id) | yes |
 | `sketch.drag` | Drag Point | sketch, point (id), x, y | yes |
 | `sketch.delete` | Delete | sketch, entities: [ids] | yes |
@@ -39,7 +39,13 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `work.plane` | Work Plane | by: offset (base: plane, distance) \| angle (base: plane, axis: in the base plane, angle: rad) \| midplane (a, b: parallel planes); a plane is "xy" \| "yz" \| "xz", a face reference or {"work": plane id} | yes |
 | `work.axis` | Work Axis | axis: "x" \| "y" \| "z", an edge reference, a cylindrical face reference or {"work": id}; or a, b: two planes it lies on | yes |
 | `work.point` | Work Point | edge: a circular edge reference (its centre); or axis and plane (where they meet) | yes |
-| `feature.update` | Edit Feature | feature (id), kind: the feature definition as in model.tree / the file format | yes |
+| `feature.add` | Add Feature | kind: a feature definition as in model.tree / the file format; equations: {value field: equation} | yes |
+| `param.list` | Parameters | every model parameter (named dimensions and feature values) and user parameter | no |
+| `param.add` | Add Parameter | name; equation (e.g. "40 mm", "width / 2"); unit: mm \| deg \| ul (default mm); comment | yes |
+| `param.set` | Set Parameter | name; equation: text, or a number (for a model parameter: its plain value, no equation), or null to drop a model parameter's equation; comment | yes |
+| `param.rename` | Rename Parameter | name, to: the new name (every equation using it follows) | yes |
+| `param.delete` | Delete Parameter | name: a user parameter no equation uses | yes |
+| `feature.update` | Edit Feature | feature (id), kind: the feature definition as in model.tree / the file format; equations: {value field: equation} (e.g. {"/extent/distance": "d0 * 2"}) | yes |
 | `feature.rename` | Rename Feature | feature, name | yes |
 | `feature.suppress` | Suppress | feature, suppressed (default true) | yes |
 | `feature.delete` | Delete Feature | feature | yes |

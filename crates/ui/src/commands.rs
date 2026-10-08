@@ -232,7 +232,7 @@ pub const RIBBON: &[RibbonTab] = &[
         panels: &[
             RibbonPanel {
                 title: "Parameters",
-                commands: &[large("tools.parameters", "Parameters", "Named parameters and expressions", Icon::Parameters, 2)],
+                commands: &[large("tools.parameters", "Parameters", "Named parameters and expressions", Icon::Parameters, 0)],
             },
             RibbonPanel {
                 title: "Update",
@@ -307,7 +307,7 @@ pub const QUICK_ACCESS: &[&[UiCommand]] = &[
         small("model.rebuild", "Rebuild All", "Regenerate every feature from scratch", Icon::Update, 0),
     ],
     &[
-        small("tools.parameters", "Parameters", "Named parameters and expressions", Icon::Parameters, 2),
+        small("tools.parameters", "Parameters", "Named parameters and expressions", Icon::Parameters, 0),
         small("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 2),
     ],
 ];

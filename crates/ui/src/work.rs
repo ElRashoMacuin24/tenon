@@ -414,6 +414,7 @@ impl Workbench {
             _ => "Work Point: click a circular edge, then OK.",
         });
         self.panel = Some(Panel::Work(Box::new(panel)));
+        self.start_equations();
         Ok(())
     }
 

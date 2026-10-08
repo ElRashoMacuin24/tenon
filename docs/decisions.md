@@ -205,3 +205,32 @@ navigation input stops the animation where it is. The cube has 26 targets (6 fac
   to the view from before.
 - **Keyboard focus:** Tenon's own drawn controls are not keyboard-focusable, so Tab belongs to the
   value boxes and Enter never presses a toolbar button.
+
+## DEC-022 Patterns and mirrors copy feature solids (2026-10-08)
+
+A pattern or mirror copies features, as the familiar workflow does, not the whole body.
+Regeneration keeps the tool solid of every feature that some pattern copies (the extruded,
+revolved or drilled solid before it was combined with the part), transforms copies of it, and
+combines each copy the way its feature did (join, cut, ...). Fillets, chamfers and shells have
+no tool solid and are refused with a message. Copying a pattern copies all of its occurrences,
+the first one too. Copied faces are named `From { feature: pattern, source: key of the copied
+face's name, ordinal: copy number }`, so edges of copies can be referenced. "Through All"
+extents are sized once, for the original; a copy reaching past the part is the known limit.
+
+## DEC-023 Parameters and equations (2026-10-08)
+
+- Every driving sketch dimension and every numeric feature value gets a name when it is
+  created: `d0`, `d1`, ... in creation order (files from before parameters get theirs when
+  opened). A name may be given an equation; user parameters add values of their own.
+- The document stores the names, equations and comments (`params`, additive: older files
+  load). Values stay where they always were (in the sketch constraints and feature
+  definitions); equations write them.
+- After every edit, in the same undo step, equations are evaluated in dependency order and their
+  values written into the document. An unknown name, a cycle, or a value the document refuses
+  (a non-whole count, an unsolvable dimension) refuses the whole edit with a message.
+- Setting a value directly (typing a number, dragging the extrude arrow) drops its equation.
+- Equations are in the units shown: millimetres and degrees, with `mm cm m in ft deg rad ul`
+  suffixes, `+ - * / ^`, parentheses, and `sin cos tan` (degrees) `asin acos atan sqrt abs round
+  floor ceil ln log exp min max`. Units are converted, not checked.
+- Every value field takes an equation; it shows `fx: <equation>` until a plain number replaces
+  it, and driven dimensions read `fx: 20`.
