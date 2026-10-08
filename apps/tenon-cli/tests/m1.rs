@@ -168,6 +168,10 @@ fn mcp_transport_survives_garbage() {
     assert_eq!(replies[0]["error"]["code"], -32700);
     assert_eq!(replies[1]["error"]["code"], -32700);
     assert_eq!(replies[2]["result"], json!({}));
+    // Non-objects and requests without a method are invalid; client responses get no reply.
+    assert_eq!(server.handle(&json!(42)).unwrap()["error"]["code"], -32600);
+    assert_eq!(server.handle(&json!({ "jsonrpc": "2.0", "id": 7 })).unwrap()["error"]["code"], -32600);
+    assert!(server.handle(&json!({ "jsonrpc": "2.0", "id": 7, "result": {} })).is_none());
     // Unknown protocol versions get the newest one we speak.
     let r = server.handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": { "protocolVersion": "1999-01-01" } })).unwrap();
     assert_eq!(r["result"]["protocolVersion"], tenon_cli::mcp::PROTOCOL_VERSIONS[0]);
@@ -189,7 +193,9 @@ fn command_docs_are_generated_from_the_registry() {
 
 #[test]
 fn base64_matches_rfc_4648_vectors() {
-    for (input, out) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")] {
+    for (input, out) in
+        [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")]
+    {
         assert_eq!(base64(input.as_bytes()), out);
     }
 }

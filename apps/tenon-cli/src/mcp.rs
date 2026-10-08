@@ -121,10 +121,16 @@ impl Server {
             let out: Vec<Value> = batch.iter().filter_map(|m| self.handle(m)).collect();
             return (!out.is_empty()).then_some(Value::Array(out));
         }
-        let id = msg.get("id").cloned();
-        let Some(method) = msg.get("method").and_then(Value::as_str) else {
-            // A response from the client (we send no requests) or garbage.
-            return id.map(|id| rpc_error(id, -32600, "invalid request"));
+        let Value::Object(o) = msg else {
+            return Some(rpc_error(Value::Null, -32600, "a message must be a JSON object"));
+        };
+        let id = o.get("id").cloned();
+        let Some(method) = o.get("method").and_then(Value::as_str) else {
+            // A response from the client needs no answer (we send no requests anyway).
+            if o.contains_key("result") || o.contains_key("error") {
+                return None;
+            }
+            return Some(rpc_error(id.unwrap_or(Value::Null), -32600, "missing `method`"));
         };
         let id = id?; // notifications get no response
         let params = msg.get("params").cloned().unwrap_or(json!({}));

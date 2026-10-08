@@ -12,15 +12,15 @@ rules are enforced by `cargo xtask layers` (table in `xtask/src/layers.rs`) and
 | L0 | `dxf` | standalone DXF tag reader/writer (no workspace deps) | inherited |
 | L1 | `kernel` | backend-neutral `Kernel` trait, handles, operation history, query types, validation | M0 |
 | L2 (backend) | `kernel-occt` | OpenCASCADE 8 backend: cxx bridge + C++ shim; the only crate with `unsafe` | M0 |
-| L2 | `sketch` | 2D sketch entities, constraint solver behind `SketchSolver` | placeholder (M1) |
-| L3 | `model` | feature tree, parameters/expressions, regeneration, persistent naming, commands | placeholder (M1/M2) |
+| L2 | `sketch` | 2D sketch entities, constraints, solver behind `SketchSolver`, sketch tools, profile regions | M1 |
+| L3 | `model` | feature tree, regeneration, face naming, command registry and undo, regeneration worker | M1 (parameters: M2) |
 | L4 | `assembly` | components, joints, DOF, BOM | placeholder (M3) |
 | L5 | `drawing` | views, dimensions, title blocks, PDF/SVG/DXF | placeholder (M4) |
-| L6 | `io` | STL (done), 3MF, DXF mapping, native project format; STEP via the kernel | M0: STL |
-| L7 | `render` | wgpu viewport, picking, edges, orientation cube (no UI toolkit) | placeholder (M1) |
-| L8 | `ui` | egui front end: ribbon, browser, viewport chrome, dialogs | M0: layout shell |
-| exempt | `apps/tenon` | desktop binary (eframe + wgpu) | M0 |
-| exempt | `apps/tenon-cli` | headless CLI (MCP server from M1) | M0 |
+| L6 | `io` | `.tenon` project files, file and export commands, STL; STEP via the kernel | M1 (3MF, DXF: later) |
+| L7 | `render` | camera, picking, software rasteriser, wgpu viewport renderer (no UI toolkit) | M1 |
+| L8 | `ui` | egui part workbench: ribbon, browser, sketcher, feature panels, viewport, dialogs | M1 |
+| exempt | `apps/tenon` | desktop binary (eframe + wgpu, OCCT, native file dialogs) | M1 |
+| exempt | `apps/tenon-cli` | headless CLI: command scripts, MCP server, PNG render, STEP tools | M1 |
 | exempt | `xtask` | workspace tooling and the CI gate | M0 |
 
 Rules:
@@ -55,17 +55,47 @@ model / io / cli  ──>  dyn Kernel  ──>  OcctKernel (Rust arena of shapes
 - **History.** Every modelling op returns `Op { shape, history }`: the image of every input face
   and edge, sub-shapes generated from inputs or tagged profile curves, and primitive face roles.
   This is what persistent naming builds on (docs/persistent-naming.md).
-- **Threading.** `Kernel: Send`. A kernel is owned by one thread at a time (the regeneration
-  worker from M1); OCCT's STEP translator, which has global state, is serialised by a lock.
+- **Threading.** `Kernel: Send`. A kernel is owned by one thread at a time (in the app, the
+  regeneration worker); OCCT's STEP translator, which has global state, is serialised by a lock.
 - **Quiet.** OCCT's default message printers are removed so nothing writes to stdout.
 
 ## Commands
 
-Every user action is a named command (`area.verb`, e.g. `model.extrude`). In M0 the ribbon's
-command table lives in `ui::commands` with the milestone that implements each command. From M1 the
-command registry moves into `model`, following CADCraft's `CommandSpec` pattern (id, label,
-parameters, `enabled`, JSON `run`, optional interactive prompts), and the same registry serves the
-UI, the CLI, scripts and the MCP server.
+Every change to a part is a named command (`area.verb`, e.g. `model.extrude`) with JSON
+parameters and a JSON result. The list is generated in [commands.md](commands.md).
+
+- **Registry.** `tenon_model::cmd` holds the document and geometry commands (`CommandSpec`: id,
+  label, parameter help, whether it adds an undo step, and a `Doc` or `Geo` function). The file and
+  export commands live in `tenon_io::cmd`, and `tenon_io::cmd::run` dispatches over both.
+- **Session.** `Session` owns the document with snapshot undo (200 steps). A command either
+  succeeds as one undo step or leaves the document unchanged. Regeneration is cached per revision.
+- **Front ends.** The ribbon (`ui::commands`) maps buttons to registry commands or interactive
+  tools; commands whose milestone has not arrived say so. Scripts (`tenon-cli run`,
+  [scripts.md](scripts.md)) and the MCP server ([mcp.md](mcp.md)) call the registry directly. The
+  headless host adds `render.png`.
+
+## The desktop app's data flow
+
+```
+ egui frame (UI thread)                          worker thread (owns the kernel)
+ ──────────────────────                          ───────────────────────────────
+ input → Workbench → registry command → Session (document, undo)
+                │  document changed (or panel preview)
+                └──── Document snapshot ───────────▶  regenerate → tessellate, measure
+                                                                │
+ viewport ◀─ Scene (meshes, face names, mass, status) ◀─────────┘
+```
+
+The UI thread never calls the kernel in the app. It sends a snapshot whenever the shown document
+changes, including live Extrude/Revolve previews, and keeps drawing the last `Scene` until the
+new one arrives. A newer snapshot cancels the one in progress (`tenon_model::worker`). STEP
+export also runs on the worker. Tests and tools can run the same workbench synchronously with a
+kernel on the calling thread (`Workbench::headless`).
+
+The viewport renders through wgpu into an offscreen MSAA texture that egui shows as an image. It
+falls back to the software rasteriser when the app has no wgpu render state. Picking casts rays
+against the same meshes the viewport shows. Face names come with the `Scene`, so selecting a
+face yields a persistent `FaceRef` without asking the kernel.
 
 ## Tolerances
 
@@ -89,6 +119,10 @@ still has local literal epsilons; they move to `tol` as that code is touched.
 ## Inheritance from CADCraft
 
 Tenon forked CADCraft at `14e143b`. Kept: `geom` (2D core), `dxf`, `xtask` (ci, layers, assets,
-wasm, stats). Planned ports from that commit: the constraint solver (M1), the command registry and
-undo model (M1), the MCP server and control channel (M1), and the drafting stack (fonts,
-dimensions, PDF plot) for drawings (M4). Not taken: DWG, AutoCAD command set, hatch/blocks/layers.
+wasm, stats).
+
+- **Ported in M1:** the Gauss-Newton constraint solver (`sketch/src/lm.rs`, attributed in
+  NOTICE).
+- **Written for Tenon instead of ported (DEC-014):** the command registry and the MCP server.
+- **Still to come:** the drafting stack (fonts, dimensions, PDF plot) for drawings (M4).
+- **Not taken:** DWG, the AutoCAD command set, hatch/blocks/layers.

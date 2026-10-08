@@ -4,16 +4,22 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestone M0 (foundations) is done on Windows.**
+**Status: milestone M1 (sketch to solid) is done.** CI runs on Linux, macOS and Windows.
 
-- The kernel layer works and is tested: primitives, booleans with history, topology, meshes,
-  mass properties and STEP, over OpenCASCADE 8.
-- It is driven from the command line today.
-- The desktop app is a layout shell; modelling in the UI starts in M1.
+You can:
 
-What works, with the test that proves each item, is in [ROADMAP.md](ROADMAP.md).
+- sketch on a plane or on a face of the part (lines, arcs, circles, rectangles, polygons,
+  splines);
+- constrain and dimension the sketch, with live solving and a degrees-of-freedom readout;
+- extrude and revolve to add, cut or intersect, with a live preview;
+- edit any feature later; faces you sketched on are found again after upstream edits;
+- save `.tenon` projects and export STEP and STL.
 
-![Tenon M0 layout shell](docs/images/m0-shell.png)
+The same commands drive scripts and an MCP server for AI agents. Fillets, holes, patterns,
+parameters, assemblies and drawings are later milestones. What works, with the test that proves
+each item, is in [ROADMAP.md](ROADMAP.md).
+
+![The M1 demo bracket in the Tenon workbench](examples/m1-bracket/workbench.png)
 
 ## Design
 
@@ -24,8 +30,12 @@ What works, with the test that proves each item, is in [ROADMAP.md](ROADMAP.md).
 - **Persistent naming from day one.** Every kernel operation reports where faces and edges came
   from, so features can refer to geometry in a way that survives upstream edits
   ([docs/persistent-naming.md](docs/persistent-naming.md)).
-- **Everything is a command.** Every UI action maps to a named command that scripts, the CLI and
-  the MCP server can drive as well.
+- **Everything is a command.** Every change to a part is a named command with JSON parameters
+  ([docs/commands.md](docs/commands.md)). The ribbon, command scripts
+  ([docs/scripts.md](docs/scripts.md)) and the MCP server for AI agents
+  ([docs/mcp.md](docs/mcp.md)) all use the same registry.
+- **The UI thread never waits for geometry.** Regeneration runs on a worker thread; the viewport
+  keeps drawing the last result.
 - **Strict layering.** `cargo xtask layers` enforces the crate graph: nothing below `ui` knows
   about egui, nothing above `kernel` knows about OpenCASCADE.
 
@@ -39,12 +49,16 @@ Step-by-step instructions per platform are in [docs/setup.md](docs/setup.md).
 
 ```sh
 pixi install                       # once: OpenCASCADE 8 into .pixi/
+pixi run app                       # the desktop app (release build)
+pixi run app examples/m1-bracket/bracket.tenon
 pixi run cargo test --workspace    # build and test
-pixi run cargo xtask ci            # the full gate CI runs
-pixi run cargo run -p tenon-cli -- demo m0 --out out    # M0 demo: STEP + STL of a bracket
-pixi run cargo run -p tenon-cli -- info out/bracket.step --json
-cargo run -p tenon                 # the desktop layout shell
+pixi run ci                        # the full gate CI runs
+pixi run cargo run -p tenon-cli -- run examples/m1-bracket/bracket.json --out out
+pixi run cargo run -p tenon-cli -- render out/bracket.tenon out/bracket.png --view front
+pixi run mcp                       # MCP server on stdio (docs/mcp.md)
 ```
+
+`pixi run` puts the OpenCASCADE libraries on the library path, so start Tenon through it.
 
 On Windows with Smart App Control enabled, freshly built binaries can be blocked; see
 [docs/setup.md](docs/setup.md#smart-app-control).
@@ -53,8 +67,8 @@ On Windows with Smart App Control enabled, freshly built binaries can be blocked
 
 Tenon is a fork of [CADCraft](https://github.com/storytold/cadcraft) (MIT OR Apache-2.0) at
 commit `14e143b`. It keeps CADCraft's 2D geometry, DXF reader/writer and workspace tooling, and
-will port its sketch constraint solver, command registry and MCP server. CADCraft's AutoCAD-style
-drafting stack and the ArtCraft brand were removed. See [NOTICE](NOTICE).
+its sketch constraint solver was ported in M1. CADCraft's AutoCAD-style drafting stack and the
+ArtCraft brand were removed. See [NOTICE](NOTICE).
 
 ## License
 

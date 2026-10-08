@@ -29,14 +29,15 @@ new PATH entries apply. Then, in the repository:
 
 ```powershell
 pixi install
-pixi run cargo xtask ci
-pixi run cargo run -p tenon-cli -- demo m0 --out out
-cargo run -p tenon
+pixi run ci
+pixi run app examples/m1-bracket/bracket.tenon
+pixi run cargo run -p tenon-cli -- demo m1 --out out
 ```
 
-The desktop app (`tenon`) does not link OpenCASCADE yet, so it runs without pixi. Anything that
-links the kernel (`tenon-cli`, kernel tests) needs `pixi run`, because Windows finds the OCCT DLLs
-through PATH. Without it, programs exit with `STATUS_DLL_NOT_FOUND` (0xc0000135).
+Everything that links the kernel (the desktop app, `tenon-cli`, the kernel and UI tests) needs
+`pixi run`, because Windows finds the OCCT DLLs through PATH. Without it, programs exit with
+`STATUS_DLL_NOT_FOUND` (0xc0000135). On Linux and macOS, `pixi run` sets the library path the same
+way.
 
 ### Smart App Control
 

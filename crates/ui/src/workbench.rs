@@ -261,8 +261,7 @@ impl Workbench {
 
     /// Opens a project file.
     pub fn open(&mut self, path: &Path) -> Result<(), String> {
-        self.exec("file.open", json!({ "path": path.to_string_lossy() }))
-            .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        self.exec("file.open", json!({ "path": path.to_string_lossy() })).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
         self.path = Some(path.to_path_buf());
         self.mode = Mode::Model;
         self.panel = None;

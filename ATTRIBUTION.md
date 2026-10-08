@@ -24,3 +24,11 @@ Generated-in-code assets are original and have no file to list:
 | `examples/m0-bracket/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m0-bracket/bracket.step` | Tenon contributors | generated: `tenon-cli demo m0 --out examples/m0-bracket` | MIT OR Apache-2.0 | Original |
 | `examples/m0-bracket/bracket.stl` | Tenon contributors | generated: `tenon-cli demo m0 --out examples/m0-bracket` | MIT OR Apache-2.0 | Original |
+| `examples/m1-bracket/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
+| `examples/m1-bracket/bracket.json` | Tenon contributors | written for this repository (the M1 demo command script) | MIT OR Apache-2.0 | Original |
+| `examples/m1-bracket/bracket.tenon` | Tenon contributors | generated: `tenon-cli run examples/m1-bracket/bracket.json --out examples/m1-bracket` | MIT OR Apache-2.0 | Original |
+| `examples/m1-bracket/bracket.step` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m1-bracket/bracket.stl` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m1-bracket/bracket.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m1-bracket/bracket-thick-base.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m1-bracket/workbench.png` | Tenon contributors | screenshot of Tenon itself: `tenon examples/m1-bracket/bracket.tenon --screenshot examples/m1-bracket/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |

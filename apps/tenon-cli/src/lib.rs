@@ -329,7 +329,9 @@ pub fn commands() -> Report {
     let all = engine::all_commands();
     let width = all.iter().map(|c| c.0.len()).max().unwrap_or(0);
     let text = all.iter().map(|(id, label, _, _)| format!("{id:<width$}  {label}")).collect::<Vec<_>>().join("\n");
-    let json = json!(all.iter().map(|(id, label, help, mutates)| json!({ "id": id, "label": label, "params": help, "undoable": mutates })).collect::<Vec<_>>());
+    let json = json!(
+        all.iter().map(|(id, label, help, mutates)| json!({ "id": id, "label": label, "params": help, "undoable": mutates })).collect::<Vec<_>>()
+    );
     Report { text, json }
 }
 

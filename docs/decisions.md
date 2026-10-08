@@ -100,3 +100,51 @@ menu" (not marking menu), "New Sketch", "Mass" and "Parameters".
 `clippy.toml`'s test exemptions do not cover helper functions in `tests/*.rs`. Those files carry
 `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]` at the top; production code
 stays under the deny lints.
+
+## DEC-014 Command registry and MCP server written for the feature tree, not ported (2026-10-07)
+
+DEC-002 planned to port CADCraft's command registry and MCP server. CADCraft's commands are 2D
+drafting verbs over a flat entity list, typed with command-line syntax. Tenon's commands edit a
+feature tree, with undo per command, and some need the kernel. So the registry
+(`tenon_model::cmd`, with file commands in `tenon_io::cmd`) was written for that model.
+
+The MCP server (`apps/tenon-cli/src/mcp.rs`) has the same shape as CADCraft's, as checked
+afterwards: newline-delimited JSON-RPC, protocol-version negotiation, and tool failures returned
+as `isError` results. It differs in two ways:
+
+- It drives a headless session only. CADCraft can also drive a running app through a loopback
+  control port; for Tenon that is listed as missing in the ROADMAP.
+- It offers tools only, no resources.
+
+It is hand-written over `serde_json`, with no MCP SDK, to avoid an async runtime in the CLI.
+
+## DEC-015 Command scripts are a tooling format (2026-10-07)
+
+`tenon-cli run` takes a JSON list of commands, with `$name.path` references and `expect` checks
+(docs/scripts.md). Demos and end-to-end tests are written in it. It is not a document format:
+projects are `.tenon` files (DEC-004). So it can change between milestones; changes are logged
+here.
+
+## DEC-016 Scripts name faces by origin (2026-10-07)
+
+`model.face_ref` accepts a face origin (`{type: side, feature, curve}` or `{type: cap, feature,
+end}`) as well as a face index. Face indices depend on the kernel's enumeration order, which
+would make scripts kernel-specific; origins are Tenon's own persistent names
+(docs/persistent-naming.md). An origin that matches no face, or several faces, is an error.
+
+## DEC-017 Viewport colour pipeline and lighting (2026-10-07)
+
+- **Colour:** egui-wgpu 0.36 samples native textures as gamma-encoded `Rgba8Unorm`. The viewport
+  renders into `Rgba8Unorm`, lights in linear space, and encodes to sRGB in the shader. An
+  `Rgba8UnormSrgb` target made the model look about twice as dark.
+- **Lighting:** both renderers use a key light above and slightly left of the eye
+  (`Camera::key_light`) and the same shading formula. A headlight along the view direction lit
+  the three faces of an iso view identically.
+- **Test:** `gpu_viewport_renders_when_an_adapter_exists` reads the GPU image back and compares a
+  lit face with the software renderer.
+
+## DEC-018 Native file dialogs: rfd (2026-10-07)
+
+The desktop app opens and saves files through `rfd` (MIT), which uses the platform dialogs: Win32,
+macOS panels, and the XDG portal on Linux (no GTK dependency). The workbench takes dialogs as
+injected `Services`, so the UI crate and its tests do not depend on rfd.
