@@ -11,4 +11,3 @@ workspace = true
 [dependencies]
 tenon-geom = { workspace = true }
 tenon-kernel = { workspace = true }
-thiserror = { workspace = true }

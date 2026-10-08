@@ -154,6 +154,7 @@ fn cut_through_hole_with_history() {
     let cut = k.boolean(BoolOp::Cut, plate_op.shape, &[c]).unwrap();
     assert!(approx(volume(&k, cut.shape), 4000.0 - PI * 16.0 * 10.0));
     let t = k.topology(cut.shape).unwrap();
+    assert_eq!(t.kind, ShapeKind::Solid, "a single-solid boolean result is the solid, not a compound");
     assert_eq!(t.faces, 7, "six plate faces plus the hole wall");
     assert!(k.is_valid(cut.shape).unwrap());
 

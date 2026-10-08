@@ -1,6 +1,6 @@
 [package]
 name = "tenon-cli"
-description = "Headless Tenon: scripted runs, inspection, conversion, MCP server"
+description = "Headless Tenon: scripted runs, inspection, conversion (MCP server from M1)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,5 +9,19 @@ publish = false
 [lints]
 workspace = true
 
+[lib]
+name = "tenon_cli"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "tenon-cli"
+path = "src/main.rs"
+test = false
+
 [dependencies]
+tenon-geom = { workspace = true }
 tenon-kernel = { workspace = true }
+tenon-kernel-occt = { workspace = true }
+tenon-io = { workspace = true }
+serde_json = { workspace = true }

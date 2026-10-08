@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -36,6 +37,8 @@
 #include <GCPnts_TangentialDeflection.hxx>
 #include <GProp_GProps.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <Message.hxx>
+#include <Message_Messenger.hxx>
 #include <NCollection_IndexedDataMap.hxx>
 #include <NCollection_List.hxx>
 #include <Poly_Triangulation.hxx>
@@ -48,6 +51,7 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Circ.hxx>
@@ -92,11 +96,19 @@ std::string describe(const Standard_Failure& e) {
   return type;
 }
 
+// OCCT's default messenger prints progress and statistics (for example STEP transfer reports) to
+// stdout, which would corrupt machine-readable CLI output. Tenon reports through its own errors.
+void silence_occt_messages() {
+  static std::once_flag once;
+  std::call_once(once, [] { Message::DefaultMessenger()->ChangePrinters().Clear(); });
+}
+
 // Runs `f`; converts every exception into std::runtime_error prefixed with `op`, so cxx
 // reports it as Err(cxx::Exception) and nothing else can unwind into Rust.
 template <class F>
 auto guarded(const char* op, F&& f) -> decltype(f()) {
   try {
+    silence_occt_messages();
     return f();
   } catch (const Standard_Failure& e) {
     throw std::runtime_error(std::string(op) + ": " + describe(e));
@@ -113,6 +125,21 @@ gp_Ax2 ax2(const Frame3& f) { return gp_Ax2(pnt(f.origin), dir(f.z_dir), dir(f.x
 V3 v3(const gp_XYZ& p) { return V3{p.X(), p.Y(), p.Z()}; }
 V3 v3(const gp_Pnt& p) { return v3(p.XYZ()); }
 V3 v3(const gp_Dir& d) { return v3(d.XYZ()); }
+
+// Booleans return a compound even when the result is one solid; downstream features want the
+// solid itself. Sub-shape enumerations are identical either way.
+TopoDS_Shape single_solid(const TopoDS_Shape& s) {
+  if (s.IsNull() || s.ShapeType() != TopAbs_COMPOUND) {
+    return s;
+  }
+  TopoDS_Iterator it(s);
+  if (!it.More()) {
+    return s;
+  }
+  const TopoDS_Shape first = it.Value();
+  it.Next();
+  return (!it.More() && first.ShapeType() == TopAbs_SOLID) ? first : s;
+}
 
 std::unique_ptr<Shape> wrap(const TopoDS_Shape& s) {
   if (s.IsNull()) {
@@ -347,7 +374,7 @@ std::unique_ptr<Shape> boolean_op(std::uint8_t op, const Shape& target, const Sh
     if (!algo->IsDone()) {
       throw std::runtime_error("boolean did not complete");
     }
-    auto out = wrap(algo->Shape());
+    auto out = wrap(single_solid(algo->Shape()));
     record_history(*algo, 0, target.shape, *out, hist);
     for (std::size_t i = 0; i < tools.items.size(); ++i) {
       record_history(*algo, static_cast<std::uint32_t>(i + 1), tools.items[i], *out, hist);

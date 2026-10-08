@@ -735,7 +735,11 @@ dependencies = [
 name = "tenon-cli"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "tenon-geom",
+ "tenon-io",
  "tenon-kernel",
+ "tenon-kernel-occt",
 ]
 
 [[package]]
@@ -769,7 +773,6 @@ version = "0.1.0"
 dependencies = [
  "tenon-geom",
  "tenon-kernel",
- "thiserror",
 ]
 
 [[package]]
