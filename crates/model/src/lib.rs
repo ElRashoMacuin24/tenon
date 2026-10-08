@@ -13,8 +13,9 @@ pub mod worker;
 
 pub use cmd::{CmdError, CmdResult, CommandSpec, Run, Session};
 pub use document::{
-    AxisRef, Chamfer, ChamferSize, DRILL_POINT, Document, Extrude, ExtrudeExtent, Feature, FeatureId, FeatureKind, Fillet, Hole, HoleExtent,
-    HoleType, MAX_FEATURES, Operation, OriginAxis, OriginPlane, PlaneRef, RegionSel, Revolve, RevolveAngle, Shell, hole_centres,
+    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, DRILL_POINT, DirectionRef, Document, Extrude, ExtrudeExtent, Feature, FeatureId,
+    FeatureKind, Fillet, Hole, HoleExtent, HoleType, MAX_COPIES, MAX_FEATURES, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern,
+    RegionSel, Revolve, RevolveAngle, Shell, hole_centres,
 };
 pub use naming::{CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace};
-pub use regen::{Body, BodyView, FeatureStatus, Regen, Scene, regenerate, scene};
+pub use regen::{Body, BodyView, FeatureStatus, Regen, Scene, Tool, regenerate, scene};

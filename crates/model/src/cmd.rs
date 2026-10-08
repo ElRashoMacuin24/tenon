@@ -11,8 +11,8 @@ use tenon_kernel::{Kernel, ShapeHandle};
 use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions};
 
 use crate::document::{
-    AxisRef, Chamfer, ChamferSize, DRILL_POINT, Extrude, ExtrudeExtent, FeatureKind, Fillet, Hole, HoleExtent, HoleType, Operation, OriginAxis,
-    OriginPlane, PlaneRef, RegionSel, Revolve, RevolveAngle, Shell, hole_centres,
+    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, DRILL_POINT, DirectionRef, Extrude, ExtrudeExtent, FeatureKind, Fillet, Hole, HoleExtent,
+    HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle, Shell, hole_centres,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::regen::{Regen, regenerate};
@@ -299,18 +299,104 @@ fn document_rename(s: &mut Session, p: &Value) -> CmdResult {
     })
 }
 
-fn sketch_create(s: &mut Session, p: &Value) -> CmdResult {
-    let plane = if let Some(face) = p.get("face") {
-        PlaneRef::Face(serde_json::from_value::<FaceRef>(face.clone()).map_err(|e| CmdError(format!("`face`: {e}")))?)
-    } else {
-        let name = p.get("plane").and_then(Value::as_str).unwrap_or("xy");
-        PlaneRef::Origin(match name.to_ascii_lowercase().as_str() {
-            "xy" => OriginPlane::XY,
-            "yz" => OriginPlane::YZ,
-            "xz" => OriginPlane::XZ,
-            _ => return Err(format!("unknown plane `{name}` (xy, yz or xz)").into()),
-        })
+/// `face: <face reference>` or `plane: "xy" | "yz" | "xz"` (default xy).
+fn plane_param(p: &Value) -> Result<PlaneRef, CmdError> {
+    if let Some(face) = p.get("face") {
+        return Ok(PlaneRef::Face(serde_json::from_value::<FaceRef>(face.clone()).map_err(|e| CmdError(format!("`face`: {e}")))?));
+    }
+    let name = p.get("plane").and_then(Value::as_str).unwrap_or("xy");
+    Ok(PlaneRef::Origin(match name.to_ascii_lowercase().as_str() {
+        "xy" => OriginPlane::XY,
+        "yz" => OriginPlane::YZ,
+        "xz" => OriginPlane::XZ,
+        _ => return Err(format!("unknown plane `{name}` (xy, yz or xz)").into()),
+    }))
+}
+
+fn origin_axis(name: &str) -> Result<OriginAxis, CmdError> {
+    match name.to_ascii_lowercase().as_str() {
+        "x" => Ok(OriginAxis::X),
+        "y" => Ok(OriginAxis::Y),
+        "z" => Ok(OriginAxis::Z),
+        _ => Err(format!("unknown axis `{name}` (x, y or z)").into()),
+    }
+}
+
+/// A pattern direction: `"x" | "y" | "z"` or an edge reference.
+fn direction_param(p: &Value, key: &str) -> Result<DirectionRef, CmdError> {
+    match field(p, key)? {
+        Value::String(a) => Ok(DirectionRef::Origin(origin_axis(a)?)),
+        _ => Ok(DirectionRef::Edge(parse(p, key)?)),
+    }
+}
+
+/// A turning axis: `"x" | "y" | "z"`, an edge reference, or a face reference.
+fn axis_param(p: &Value, key: &str) -> Result<AxisSel, CmdError> {
+    match field(p, key)? {
+        Value::String(a) => Ok(AxisSel::Origin(origin_axis(a)?)),
+        Value::Object(o) if o.contains_key("faces") => Ok(AxisSel::Edge(parse(p, key)?)),
+        Value::Object(o) if o.contains_key("origin") => Ok(AxisSel::Face(parse(p, key)?)),
+        _ => Err(format!("`{key}` must be x, y, z, an edge reference or a face reference").into()),
+    }
+}
+
+fn feature_list(p: &Value) -> Result<Vec<FeatureId>, CmdError> {
+    Ok(ids(p, "features")?.into_iter().map(|e| FeatureId(e.0)).collect())
+}
+
+fn count(p: &Value, key: &str, default: Option<u32>) -> Result<u32, CmdError> {
+    match (p.get(key), default) {
+        (None | Some(Value::Null), Some(d)) => Ok(d),
+        _ => id_u32(p, key).map_err(|_| CmdError(format!("`{key}` must be a whole number"))),
+    }
+}
+
+/// Adds a pattern or mirror after checking what it copies.
+fn add_copy(s: &mut Session, kind: FeatureKind) -> CmdResult {
+    s.document().check_copies(&kind).map_err(CmdError)?;
+    add_feature(s, kind)
+}
+
+fn model_pattern_rect(s: &mut Session, p: &Value) -> CmdResult {
+    let flag = |k: &str| p.get(k).and_then(Value::as_bool).unwrap_or(false);
+    let dir2 = if p.get("direction2").is_some_and(|v| !v.is_null()) { Some(direction_param(p, "direction2")?) } else { None };
+    let pat = RectPattern {
+        features: feature_list(p)?,
+        dir1: direction_param(p, "direction")?,
+        count1: count(p, "count", None)?,
+        spacing1: num(p, "spacing")?,
+        reverse1: flag("reverse"),
+        count2: count(p, "count2", Some(1))?,
+        spacing2: opt_num(p, "spacing2")?.unwrap_or(0.0),
+        reverse2: flag("reverse2"),
+        dir2,
     };
+    pat.check().map_err(CmdError)?;
+    add_copy(s, FeatureKind::PatternRect(pat))
+}
+
+fn model_pattern_circular(s: &mut Session, p: &Value) -> CmdResult {
+    let pat = CircPattern {
+        features: feature_list(p)?,
+        axis: axis_param(p, "axis")?,
+        count: count(p, "count", None)?,
+        angle: opt_num(p, "angle")?.unwrap_or(std::f64::consts::TAU),
+        reverse: p.get("reverse").and_then(Value::as_bool).unwrap_or(false),
+    };
+    pat.check().map_err(CmdError)?;
+    add_copy(s, FeatureKind::PatternCircular(pat))
+}
+
+fn model_mirror(s: &mut Session, p: &Value) -> CmdResult {
+    let features = feature_list(p)?;
+    if features.is_empty() {
+        return Err("choose at least one feature to mirror".into());
+    }
+    add_copy(s, FeatureKind::Mirror(Mirror { features, plane: plane_param(p)? }))
+}
+
+fn sketch_create(s: &mut Session, p: &Value) -> CmdResult {
+    let plane = plane_param(p)?;
     // The part origin projected into the sketch: a fixed construction point at (0, 0) that
     // geometry can snap and be constrained to.
     let mut sketch = Sketch::new();
@@ -880,6 +966,27 @@ static COMMANDS: &[CommandSpec] = &[
         "sketch; points: [point ids] (default: the sketch's centre points, i.e. points on no curve); diameter; depth or through_all: true; type: simple | counterbore (counterbore_diameter, counterbore_depth) | countersink (countersink_diameter, countersink_angle: rad, default 90 deg); tip_angle (rad, default 118 deg) or flat_bottom: true; reverse (drill along the sketch normal)",
         true,
         model_hole
+    ),
+    doc_cmd!(
+        "model.pattern.rect",
+        "Rectangular Pattern",
+        "features: [feature ids]; direction: \"x\" | \"y\" | \"z\" or an edge reference (straight edge); count; spacing; reverse; optional direction2, count2, spacing2, reverse2",
+        true,
+        model_pattern_rect
+    ),
+    doc_cmd!(
+        "model.pattern.circular",
+        "Circular Pattern",
+        "features: [feature ids]; axis: \"x\" | \"y\" | \"z\", an edge reference (straight or circular edge) or a face reference (cylinder or cone); count; angle (rad, default a full turn: copies spread evenly); reverse",
+        true,
+        model_pattern_circular
+    ),
+    doc_cmd!(
+        "model.mirror",
+        "Mirror",
+        "features: [feature ids]; plane: \"xy\" | \"yz\" | \"xz\", or face: a planar face reference",
+        true,
+        model_mirror
     ),
     doc_cmd!("feature.update", "Edit Feature", "feature (id), kind: the feature definition as in model.tree / the file format", true, feature_update),
     doc_cmd!("feature.rename", "Rename Feature", "feature, name", true, feature_rename),

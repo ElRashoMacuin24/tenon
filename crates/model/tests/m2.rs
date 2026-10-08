@@ -258,3 +258,132 @@ fn bad_holes_are_refused_or_reported() {
     assert_eq!(r["error"]["feature"], hole, "{r}");
     assert!(r["error"]["message"].as_str().unwrap().contains("no longer exists"), "{r}");
 }
+
+/// A block `w` x `d` x `h` with its corner at (x0, y0, 0).
+fn block_at(s: &mut Session, k: &mut OcctKernel, x0: f64, y0: f64, w: f64, d: f64, h: f64) -> u64 {
+    let sk = run(s, k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(s, k, "sketch.rectangle", json!({ "sketch": sk, "x1": x0, "y1": y0, "x2": x0 + w, "y2": y0 + d }));
+    run(s, k, "model.extrude", json!({ "sketch": sk, "distance": h }))["feature"].as_u64().unwrap()
+}
+
+/// Faces named as made by feature `f`.
+fn faces_of(s: &mut Session, k: &mut OcctKernel, f: u64) -> Vec<Value> {
+    let faces = run(s, k, "model.faces", json!({}));
+    faces["faces"].as_array().unwrap().iter().filter(|x| x["name"]["type"] == "from" && x["name"]["feature"] == f).cloned().collect()
+}
+
+#[test]
+fn rectangular_pattern_of_a_hole_follows_the_hole() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let ex = block_at(&mut s, &mut k, 0.0, 0.0, 60.0, 40.0, 10.0);
+    let (sk, _) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0)]);
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "through_all": true }))["feature"].as_u64().unwrap();
+    let pat = run(
+        &mut s,
+        &mut k,
+        "model.pattern.rect",
+        json!({ "features": [hole], "direction": "x", "count": 3, "spacing": 20, "direction2": "y", "count2": 2, "spacing2": 20 }),
+    );
+    assert_eq!(pat["name"], "Rectangular Pattern1");
+    let pat = pat["feature"].as_u64().unwrap();
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 24000.0 - 6.0 * PI * 9.0 * 10.0), "{}", volume(&mut s, &mut k));
+    assert_eq!(faces_of(&mut s, &mut k, pat).len(), 5, "one wall per copy");
+
+    // A bigger hole: every copy follows.
+    let mut kind = serde_json::to_value(&s.document().feature(tenon_model::FeatureId(hole as u32)).unwrap().kind).unwrap();
+    kind["diameter"] = json!(8.0);
+    run(&mut s, &mut k, "feature.update", json!({ "feature": hole, "kind": kind }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 24000.0 - 6.0 * PI * 16.0 * 10.0), "{}", volume(&mut s, &mut k));
+
+    // A copy's edge can be referenced: chamfer the top edge of one copied hole.
+    let copy_wall = faces_of(&mut s, &mut k, pat)[0]["name"].clone();
+    let edge = run(&mut s, &mut k, "model.edge_ref", json!({ "faces": [top(ex), copy_wall] }));
+    run(&mut s, &mut k, "model.chamfer", json!({ "edges": [edge], "distance": 1.0 }));
+    regenerates(&mut s, &mut k);
+    assert!(volume(&mut s, &mut k) < 24000.0 - 6.0 * PI * 16.0 * 10.0);
+}
+
+#[test]
+fn circular_pattern_full_and_partial() {
+    for (angle, count, copies) in [(None, 4, 4.0), (Some(PI / 2.0), 3, 3.0)] {
+        let (mut s, mut k) = (Session::default(), OcctKernel::new());
+        let ex = block_at(&mut s, &mut k, -20.0, -20.0, 40.0, 40.0, 10.0);
+        // A boss 3 mm in radius, 5 tall, at x = 15 on the top face.
+        let top_ref = run(&mut s, &mut k, "model.face_ref", json!({ "origin": top(ex) }));
+        let sk = run(&mut s, &mut k, "sketch.create", json!({ "face": top_ref }))["feature"].as_u64().unwrap();
+        run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 15, "cy": 0, "r": 3 }));
+        let boss = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 5 }))["feature"].as_u64().unwrap();
+        let mut p = json!({ "features": [boss], "axis": "z", "count": count });
+        if let Some(a) = angle {
+            p["angle"] = json!(a);
+        }
+        let pat = run(&mut s, &mut k, "model.pattern.circular", p)["feature"].as_u64().unwrap();
+        regenerates(&mut s, &mut k);
+        let v = volume(&mut s, &mut k);
+        assert!(approx(v, 16000.0 + copies * PI * 9.0 * 5.0), "{angle:?}: {v}");
+        // Where the copies' round walls are (their centroids lie on the boss axes).
+        let at = |x: f64, y: f64, s: &mut Session, k: &mut OcctKernel| {
+            faces_of(s, k, pat)
+                .iter()
+                .any(|f| (f["centroid"][0].as_f64().unwrap() - x).abs() < 1e-6 && (f["centroid"][1].as_f64().unwrap() - y).abs() < 1e-6)
+        };
+        let r45 = 15.0 * std::f64::consts::FRAC_1_SQRT_2;
+        if angle.is_none() {
+            assert!(at(0.0, 15.0, &mut s, &mut k) && at(-15.0, 0.0, &mut s, &mut k) && at(0.0, -15.0, &mut s, &mut k), "quarter turns");
+        } else {
+            assert!(at(r45, r45, &mut s, &mut k) && at(0.0, 15.0, &mut s, &mut k), "45 and 90 degrees");
+        }
+    }
+}
+
+#[test]
+fn mirror_a_cut_and_a_boss_across_an_origin_plane() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let ex = block_at(&mut s, &mut k, -20.0, 0.0, 40.0, 20.0, 10.0);
+    let (sk, _) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0)]);
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "through_all": true }))["feature"].as_u64().unwrap();
+    let mirror = run(&mut s, &mut k, "model.mirror", json!({ "features": [hole], "plane": "yz" }));
+    assert_eq!(mirror["name"], "Mirror1");
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 8000.0 - 2.0 * PI * 9.0 * 10.0), "{}", volume(&mut s, &mut k));
+    // The mirrored hole is at x = -10.
+    let walls = faces_of(&mut s, &mut k, mirror["feature"].as_u64().unwrap());
+    assert_eq!(walls.len(), 1, "{walls:?}");
+    assert!((walls[0]["centroid"][0].as_f64().unwrap() + 10.0).abs() < 1e-6, "{}", walls[0]);
+}
+
+#[test]
+fn patterns_refuse_what_they_cannot_copy() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, l, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    let edge = run(&mut s, &mut k, "model.edge_ref", json!({ "faces": [side(ex, l[0]), side(ex, l[1])] }));
+    let fillet = run(&mut s, &mut k, "model.fillet", json!({ "edges": [edge], "radius": 2.0 }))["feature"].as_u64().unwrap();
+    let before = s.document().clone();
+    for bad in [
+        json!({ "features": [fillet], "direction": "x", "count": 2, "spacing": 5 }),
+        json!({ "features": [], "direction": "x", "count": 2, "spacing": 5 }),
+        json!({ "features": [ex], "direction": "x", "count": 1, "spacing": 5 }),
+        json!({ "features": [ex], "direction": "x", "count": 2, "spacing": -5 }),
+        json!({ "features": [ex], "direction": "w", "count": 2, "spacing": 5 }),
+        json!({ "features": [ex], "direction": "x", "count": 100000, "spacing": 5 }),
+        json!({ "features": [99], "direction": "x", "count": 2, "spacing": 5 }),
+    ] {
+        assert!(s.exec("model.pattern.rect", &bad, Some(&mut k)).is_err(), "{bad}");
+    }
+    assert!(s.exec("model.pattern.circular", &json!({ "features": [ex], "axis": "z", "count": 1 }), Some(&mut k)).is_err());
+    assert!(s.exec("model.mirror", &json!({ "features": [fillet], "plane": "xy" }), Some(&mut k)).is_err());
+    assert_eq!(s.document(), &before);
+    // Copying a suppressed feature is reported at regeneration.
+    let pat = run(&mut s, &mut k, "model.pattern.rect", json!({ "features": [ex], "direction": "z", "count": 2, "spacing": 10 }))["feature"]
+        .as_u64()
+        .unwrap();
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 2.0 * 8000.0 - (4.0 - PI) * 10.0), "the fillet is not copied: {}", volume(&mut s, &mut k));
+    run(&mut s, &mut k, "feature.suppress", json!({ "feature": fillet }));
+    run(&mut s, &mut k, "feature.suppress", json!({ "feature": ex }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert_eq!(r["error"]["feature"], pat, "{r}");
+    assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("Extrusion1 has no result to copy")), "{r}");
+}

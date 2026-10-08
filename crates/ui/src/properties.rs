@@ -3,10 +3,10 @@
 
 use egui::{Align2, Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
 use tenon_geom::Vec3;
-use tenon_model::{Operation, OriginAxis, RegionSel};
+use tenon_model::{AxisSel, DirectionRef, Operation, OriginAxis, OriginPlane, PlaneRef, RegionSel};
 use tenon_sketch::EntityId;
 
-use crate::panels::{AxisChoice, ChamferMethod, Direction, ExtentChoice, Panel, PanelRequest, Seat};
+use crate::panels::{AxisChoice, ChamferMethod, CopyKind, Direction, ExtentChoice, Panel, PanelRequest, Seat, Slot};
 use crate::theme::{self, Tokens};
 use crate::workbench::Workbench;
 
@@ -184,6 +184,44 @@ fn glyph_row(ui: &mut Ui, items: &[(Glyph, &str, bool)], selected: usize, t: &To
     clicked
 }
 
+/// A selector: shows what is chosen; pressed while it takes clicks in the part. Returns true when
+/// clicked (to make it the active one).
+fn slot_button(ui: &mut Ui, active: bool, label: &str, t: &Tokens) -> bool {
+    let text = egui::RichText::new(label).color(if active { t.accent_text } else { t.text });
+    let b = egui::Button::new(text).fill(if active { t.accent } else { t.field }).min_size(vec2(96.0, 22.0));
+    ui.add(b).on_hover_text("Click, then pick in the part").clicked()
+}
+
+/// The flip toggle beside a direction.
+fn flip_button(ui: &mut Ui, flipped: &mut bool, t: &Tokens) {
+    let items = [(Glyph::Default, "Default direction", true), (Glyph::Flipped, "Flipped", true)];
+    if let Some(i) = glyph_row(ui, &items, usize::from(*flipped), t) {
+        *flipped = i == 1;
+    }
+}
+
+/// A direction selector: the chosen direction, a list of origin axes (and None when
+/// `optional`). Returns true when the selector was clicked to pick an edge.
+fn direction_picker(ui: &mut Ui, id: &str, d: &mut Option<DirectionRef>, optional: bool, active: bool, t: &Tokens) -> bool {
+    let label = match d {
+        Some(DirectionRef::Origin(a)) => format!("{a:?} Axis"),
+        Some(DirectionRef::Edge(_)) => "Edge".into(),
+        None => "None".into(),
+    };
+    let clicked = slot_button(ui, active, &label, t);
+    egui::ComboBox::from_id_salt(id).selected_text("").width(18.0).show_ui(ui, |ui| {
+        if optional && ui.selectable_label(d.is_none(), "None").clicked() {
+            *d = None;
+        }
+        for a in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
+            if ui.selectable_label(*d == Some(DirectionRef::Origin(a)), format!("{a:?} Axis")).clicked() {
+                *d = Some(DirectionRef::Origin(a));
+            }
+        }
+    });
+    clicked
+}
+
 /// "N selected" with a button that clears the picks; returns true when it was clicked.
 fn picked_row(ui: &mut Ui, n: usize, hint: &str) -> bool {
     let mut clear = false;
@@ -218,7 +256,10 @@ impl Workbench {
 
     /// True while a feature command shows the properties panel.
     pub(crate) fn has_properties(&self) -> bool {
-        matches!(self.panel, Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_) | Panel::Hole(_)))
+        matches!(
+            self.panel,
+            Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_) | Panel::Hole(_) | Panel::Pattern(_))
+        )
     }
 
     /// The properties panel for the running feature command.
@@ -242,6 +283,14 @@ impl Workbench {
             Panel::Chamfer(p) => ("Chamfer", p.editing.map(|f| self.feature_name(f))),
             Panel::Shell(p) => ("Shell", p.editing.map(|f| self.feature_name(f))),
             Panel::Hole(p) => ("Hole", p.editing.map(|f| self.feature_name(f))),
+            Panel::Pattern(p) => (
+                match p.kind {
+                    CopyKind::Rect => "Rectangular Pattern",
+                    CopyKind::Circular => "Circular Pattern",
+                    CopyKind::Mirror => "Mirror",
+                },
+                p.editing.map(|f| self.feature_name(f)),
+            ),
             _ => return,
         };
         let mut clear = false;
@@ -631,6 +680,147 @@ impl Workbench {
                             });
                         });
                     }
+                    Panel::Pattern(p) => {
+                        section(ui, "Input Geometry", true, |ui| {
+                            egui::Grid::new("tn_props_pattern_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Features");
+                                ui.horizontal(|ui| {
+                                    let label =
+                                        if p.features.is_empty() { "click features".to_string() } else { format!("{} selected", p.features.len()) };
+                                    if slot_button(ui, p.slot == Slot::Features, &label, t) {
+                                        p.slot = Slot::Features;
+                                    }
+                                    if !p.features.is_empty() && ui.small_button("Clear").clicked() {
+                                        clear = true;
+                                    }
+                                })
+                                .response
+                                .on_hover_text(p.features.iter().map(|f| self.feature_name(*f)).collect::<Vec<_>>().join(", "));
+                                ui.end_row();
+                            });
+                        });
+                        match p.kind {
+                            CopyKind::Rect => {
+                                section(ui, "Direction 1", true, |ui| {
+                                    egui::Grid::new("tn_props_dir1").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                        ui.label("Direction");
+                                        ui.horizontal(|ui| {
+                                            let mut d = Some(p.dir1.clone());
+                                            if direction_picker(ui, "tn_dir1", &mut d, false, p.slot == Slot::Dir1, t) {
+                                                p.slot = Slot::Dir1;
+                                            }
+                                            if let Some(d) = d {
+                                                p.dir1 = d;
+                                            }
+                                            flip_button(ui, &mut p.reverse1, t);
+                                        });
+                                        ui.end_row();
+                                        ui.label("Count");
+                                        enter |=
+                                            value_field(ui, egui::Id::new("tn_props_count1"), &mut p.count1, "", 1.0..=10_000.0, 110.0, t).entered;
+                                        ui.end_row();
+                                        ui.label("Spacing");
+                                        enter |=
+                                            value_field(ui, egui::Id::new("tn_props_spacing1"), &mut p.spacing1, "mm", 0.001..=100_000.0, 110.0, t)
+                                                .entered;
+                                        ui.end_row();
+                                    });
+                                });
+                                section(ui, "Direction 2", p.dir2.is_some(), |ui| {
+                                    egui::Grid::new("tn_props_dir2").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                        ui.label("Direction");
+                                        ui.horizontal(|ui| {
+                                            let had = p.dir2.is_some();
+                                            if direction_picker(ui, "tn_dir2", &mut p.dir2, true, p.slot == Slot::Dir2, t) {
+                                                p.slot = Slot::Dir2;
+                                            }
+                                            if !had && p.dir2.is_some() && p.count2 < 2.0 {
+                                                p.count2 = 2.0;
+                                            }
+                                            flip_button(ui, &mut p.reverse2, t);
+                                        });
+                                        ui.end_row();
+                                        if p.dir2.is_some() {
+                                            ui.label("Count");
+                                            enter |= value_field(ui, egui::Id::new("tn_props_count2"), &mut p.count2, "", 1.0..=10_000.0, 110.0, t)
+                                                .entered;
+                                            ui.end_row();
+                                            ui.label("Spacing");
+                                            enter |= value_field(
+                                                ui,
+                                                egui::Id::new("tn_props_spacing2"),
+                                                &mut p.spacing2,
+                                                "mm",
+                                                0.001..=100_000.0,
+                                                110.0,
+                                                t,
+                                            )
+                                            .entered;
+                                            ui.end_row();
+                                        }
+                                    });
+                                });
+                            }
+                            CopyKind::Circular => {
+                                section(ui, "Placement", true, |ui| {
+                                    egui::Grid::new("tn_props_circ").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                        ui.label("Axis");
+                                        ui.horizontal(|ui| {
+                                            let label = match &p.axis {
+                                                AxisSel::Origin(a) => format!("{a:?} Axis"),
+                                                AxisSel::Edge(_) => "Edge".into(),
+                                                AxisSel::Face(_) => "Face".into(),
+                                            };
+                                            if slot_button(ui, p.slot == Slot::Axis, &label, t) {
+                                                p.slot = Slot::Axis;
+                                            }
+                                            egui::ComboBox::from_id_salt("tn_props_axis_origin").selected_text("").width(18.0).show_ui(ui, |ui| {
+                                                for a in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
+                                                    if ui.selectable_label(p.axis == AxisSel::Origin(a), format!("{a:?} Axis")).clicked() {
+                                                        p.axis = AxisSel::Origin(a);
+                                                    }
+                                                }
+                                            });
+                                            flip_button(ui, &mut p.reverse, t);
+                                        });
+                                        ui.end_row();
+                                        ui.label("Count");
+                                        enter |= value_field(ui, egui::Id::new("tn_props_count"), &mut p.count, "", 2.0..=10_000.0, 110.0, t).entered;
+                                        ui.end_row();
+                                        ui.label("Angle");
+                                        enter |=
+                                            value_field(ui, egui::Id::new("tn_props_pattern_angle"), &mut p.degrees, "deg", 0.1..=360.0, 110.0, t)
+                                                .entered;
+                                        ui.end_row();
+                                    });
+                                });
+                            }
+                            CopyKind::Mirror => {
+                                section(ui, "Mirror Plane", true, |ui| {
+                                    egui::Grid::new("tn_props_mirror").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                        ui.label("Plane");
+                                        ui.horizontal(|ui| {
+                                            let label = match &p.plane {
+                                                PlaneRef::Origin(o) => format!("{o:?} Plane"),
+                                                PlaneRef::Face(_) => "Face".into(),
+                                            };
+                                            if slot_button(ui, p.slot == Slot::Plane, &label, t) {
+                                                p.slot = Slot::Plane;
+                                            }
+                                            egui::ComboBox::from_id_salt("tn_props_plane_origin").selected_text("").width(18.0).show_ui(ui, |ui| {
+                                                for o in [OriginPlane::YZ, OriginPlane::XZ, OriginPlane::XY] {
+                                                    if ui.selectable_label(p.plane == PlaneRef::Origin(o), format!("{o:?} Plane")).clicked() {
+                                                        p.plane = PlaneRef::Origin(o);
+                                                    }
+                                                }
+                                            });
+                                        });
+                                        ui.end_row();
+                                    });
+                                });
+                            }
+                        }
+                    }
                     _ => {}
                 }
             },
@@ -729,6 +919,7 @@ impl Workbench {
                 .first()
                 .and_then(|e| Some(self.sketch_frame(p.sketch)?.plane_point(self.document().sketch(p.sketch)?.point(*e)?)))
                 .or_else(|| self.scene.bbox().map(|b| b.center())),
+            Some(Panel::Pattern(_)) => self.scene.bbox().map(|b| Vec3::new(b.max.x, b.min.y, b.max.z)),
             _ => return,
         };
         let is_extrude = matches!(self.panel, Some(Panel::Extrude(_)));
@@ -779,6 +970,12 @@ impl Workbench {
                         }
                         Some(Panel::Hole(p)) => {
                             if value_field(ui, egui::Id::new("tn_mini_hole_dia"), &mut p.diameter, "mm", 0.001..=100_000.0, 80.0, t).entered {
+                                request = Some(PanelRequest::Ok);
+                            }
+                        }
+                        Some(Panel::Pattern(p)) if p.kind != CopyKind::Mirror => {
+                            let count = if p.kind == CopyKind::Rect { &mut p.count1 } else { &mut p.count };
+                            if value_field(ui, egui::Id::new("tn_mini_count"), count, "", 1.0..=10_000.0, 60.0, t).entered {
                                 request = Some(PanelRequest::Ok);
                             }
                         }

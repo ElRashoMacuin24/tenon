@@ -601,6 +601,67 @@ fn hole_takes_sketch_points_and_toggles_them_in_the_viewport() {
 }
 
 #[test]
+fn pattern_and_mirror_pick_features_in_the_viewport() {
+    use tenon_geom::Vec3;
+    use tenon_model::{DirectionRef, OriginAxis};
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    // A 60 x 40 x 10 block centred on the origin with a 3 mm boss, 5 tall, at (10, 10).
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": -30, "y1": -20, "x2": 30, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let b = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": b.0, "cx": 10, "cy": 10, "r": 3 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": b.0, "distance": 15 })).unwrap();
+    let boss_vol = PI * 9.0 * 5.0;
+    d.frame(&mut wb, vec![]);
+    assert!((volume(&wb) - (24000.0 + boss_vol)).abs() < 1e-6, "{}", volume(&wb));
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+
+    // Rectangular Pattern: a click on the boss picks its feature; the preview shows 2 along X.
+    wb.run_ui("model.pattern.rect").unwrap();
+    let boss_top = on_screen(&wb, Vec3::new(10.0, 10.0, 15.0));
+    d.click(&mut wb, boss_top);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Pattern(p)) = wb.panel.clone() else { panic!("no pattern panel") };
+    assert_eq!(p.features.len(), 1, "{}", wb.status());
+    assert!((volume(&wb) - (24000.0 + 2.0 * boss_vol)).abs() < 1e-6, "preview: {}", volume(&wb));
+    // Spacing 15, and a second direction 20 towards -Y: four bosses.
+    type_into(&mut d, &mut wb, "tn_props_spacing1", "15");
+    if let Some(Panel::Pattern(p)) = &mut wb.panel {
+        p.dir2 = Some(DirectionRef::Origin(OriginAxis::Y));
+        p.reverse2 = true;
+        p.count2 = 2.0;
+        p.spacing2 = 20.0;
+    }
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - (24000.0 + 4.0 * boss_vol)).abs() < 1e-6, "{}", volume(&wb));
+    let pattern = wb.document().features().last().unwrap().clone();
+    assert_eq!(pattern.name, "Rectangular Pattern1");
+
+    // Mirror the pattern across YZ: clicking one of its copies picks the pattern.
+    wb.run_ui("model.mirror").unwrap();
+    let copy_top = on_screen(&wb, Vec3::new(25.0, -10.0, 15.0));
+    d.click(&mut wb, copy_top);
+    let Some(Panel::Pattern(p)) = wb.panel.clone() else { panic!("no mirror panel") };
+    assert_eq!(p.features, vec![pattern.id], "the copy belongs to the pattern");
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - (24000.0 + 8.0 * boss_vol)).abs() < 1e-6, "every occurrence is mirrored, the first too: {}", volume(&wb));
+    assert!(!wb.status_error, "{}", wb.status());
+}
+
+#[test]
 fn start_2d_sketch_picks_a_plane_or_face_in_the_viewport() {
     use tenon_geom::Vec3;
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));

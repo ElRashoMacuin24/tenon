@@ -20,6 +20,8 @@ pub(crate) enum BrowserAction {
     Rename(FeatureId),
     Suppress(FeatureId, bool),
     Delete(FeatureId),
+    /// A single click: picks the feature for a pattern being set up.
+    Pick(FeatureId),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -82,6 +84,9 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::Chamfer(_) => Icon::Chamfer,
         FeatureKind::Shell(_) => Icon::Shell,
         FeatureKind::Hole(_) => Icon::Hole,
+        FeatureKind::PatternRect(_) => Icon::PatternRect,
+        FeatureKind::PatternCircular(_) => Icon::PatternCircular,
+        FeatureKind::Mirror(_) => Icon::Mirror,
     }
 }
 
@@ -232,6 +237,8 @@ impl Workbench {
                         }
                     } else if resp.double_clicked() {
                         action = Some(BrowserAction::Edit(id));
+                    } else if resp.clicked() {
+                        action = Some(BrowserAction::Pick(id));
                     }
                     let sketch_child = features.iter().find(|c| owner.get(&c.0) == Some(&id)).map(|c| c.0);
                     resp.context_menu(|ui| {
@@ -289,6 +296,10 @@ impl Workbench {
                     self.mode = Mode::Model;
                 }
                 self.exec("feature.delete", json!({ "feature": id.0 })).map(|_| ())
+            }
+            BrowserAction::Pick(id) => {
+                self.toggle_pattern_feature(id);
+                Ok(())
             }
         };
         if let Err(e) = result {

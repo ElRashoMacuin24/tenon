@@ -6,15 +6,15 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3};
 use tenon_kernel::{
-    AngleExtent, BoolOp, ChamferSpec, Curve2, Extent, FaceInfo, Kernel, KernelError, Loop, MassProps, Mesh, MeshTol, Profile, Region, ShapeHandle,
-    SurfaceKind, TaggedCurve2,
+    AngleExtent, BoolOp, ChamferSpec, Curve2, CurveKind, Extent, FaceInfo, Kernel, KernelError, Loop, MassProps, Mesh, MeshTol, Profile, Region,
+    ShapeHandle, SurfaceKind, TaggedCurve2, Transform,
 };
 use tenon_sketch::{EntityId, Sketch, SketchRegion, default_regions, profile, regions};
 
 use crate::FeatureId;
 use crate::document::{
-    AxisRef, ChamferSize, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent, HoleType, Operation, PlaneRef, RegionSel,
-    Revolve, RevolveAngle,
+    AxisRef, AxisSel, ChamferSize, DirectionRef, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent, HoleType, Operation,
+    PlaneRef, RegionSel, Revolve, RevolveAngle,
 };
 use crate::naming::{
     EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
@@ -48,15 +48,29 @@ pub struct Regen {
     pub bodies: Vec<Body>,
     pub status: Vec<(FeatureId, FeatureStatus)>,
     pub sketch_frames: BTreeMap<FeatureId, Frame>,
+    /// The solids of features that a later pattern or mirror copies, each with how it combined
+    /// with the part.
+    pub tools: BTreeMap<FeatureId, Vec<Tool>>,
     pub cancelled: bool,
     /// Wall time of the regeneration in milliseconds.
     pub millis: f64,
+}
+
+/// A feature's solid before it was combined with the part.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tool {
+    pub operation: Operation,
+    pub shape: ShapeHandle,
+    pub names: Vec<Option<FaceOrigin>>,
 }
 
 impl Regen {
     pub fn release(&mut self, k: &mut dyn Kernel) {
         for b in self.bodies.drain(..) {
             k.release(b.shape);
+        }
+        for t in std::mem::take(&mut self.tools).into_values().flatten() {
+            k.release(t.shape);
         }
     }
     pub fn status_of(&self, id: FeatureId) -> Option<&FeatureStatus> {
@@ -121,6 +135,8 @@ struct Ctx<'a> {
     doc: &'a Document,
     k: &'a mut dyn Kernel,
     regen: Regen,
+    /// Features some pattern or mirror copies: their solids are kept.
+    copied: std::collections::BTreeSet<FeatureId>,
 }
 
 fn kerr(e: KernelError) -> String {
@@ -130,7 +146,8 @@ fn kerr(e: KernelError) -> String {
 /// Rebuilds the part. Never panics; failures are reported per feature.
 pub fn regenerate(doc: &Document, k: &mut dyn Kernel) -> Regen {
     let t0 = Instant::now();
-    let mut cx = Ctx { doc, k, regen: Regen::default() };
+    let copied = doc.features().iter().flat_map(|f| f.kind.copies().iter().copied()).collect();
+    let mut cx = Ctx { doc, k, regen: Regen::default(), copied };
     let mut failed = false;
     for f in doc.features() {
         let status = if failed {
@@ -252,7 +269,134 @@ impl<'a> Ctx<'a> {
                 self.replace_body(f.id, bi, op)
             }
             FeatureKind::Hole(h) => self.hole(f.id, h),
+            FeatureKind::PatternRect(p) => {
+                p.check()?;
+                let sign = |r: bool| if r { -1.0 } else { 1.0 };
+                let d1 = self.direction(&p.dir1)? * sign(p.reverse1);
+                let d2 = match &p.dir2 {
+                    Some(d) => self.direction(d)? * sign(p.reverse2),
+                    None => Vec3::ZERO,
+                };
+                let mut moves = Vec::new();
+                for j in 0..p.count2 {
+                    for i in 0..p.count1 {
+                        if i > 0 || j > 0 {
+                            moves.push(Transform::Translate(d1 * (p.spacing1 * f64::from(i)) + d2 * (p.spacing2 * f64::from(j))));
+                        }
+                    }
+                }
+                self.copy_features(f.id, &p.features, &moves)
+            }
+            FeatureKind::PatternCircular(p) => {
+                p.check()?;
+                let axis = self.axis_of(&p.axis)?;
+                let moves: Vec<Transform> = (1..p.count).map(|i| Transform::Rotate { axis, angle: p.step() * f64::from(i) }).collect();
+                self.copy_features(f.id, &p.features, &moves)
+            }
+            FeatureKind::Mirror(m) => {
+                let plane = self.plane_frame(&m.plane)?;
+                self.copy_features(f.id, &m.features, &[Transform::Mirror { plane }])
+            }
         }
+    }
+
+    /// A pattern direction as a unit vector.
+    fn direction(&self, d: &DirectionRef) -> Result<Vec3, Stop> {
+        match d {
+            DirectionRef::Origin(a) => Ok(a.axis().dir()),
+            DirectionRef::Edge(e) => match self.edge_geometry(e)?.curve {
+                CurveKind::Line { dir, .. } => Ok(dir),
+                _ => Err("the direction edge is not straight".into()),
+            },
+        }
+    }
+
+    /// The axis a circular pattern turns about.
+    fn axis_of(&self, a: &AxisSel) -> Result<Axis, Stop> {
+        match a {
+            AxisSel::Origin(o) => Ok(o.axis()),
+            AxisSel::Edge(e) => match self.edge_geometry(e)?.curve {
+                CurveKind::Line { origin, dir } => Ok(Axis::new(origin, dir).ok_or("the axis edge has no direction")?),
+                CurveKind::Circle { axis, .. } => Ok(axis),
+                _ => Err("the axis edge is neither straight nor circular".into()),
+            },
+            AxisSel::Face(fref) => {
+                let (b, face) = self.regen.resolve(fref, &*self.k).map_err(|e| self.describe_ref(fref, &e))?;
+                match self.k.face_info(self.body_shape(b)?.face(face))?.surface {
+                    SurfaceKind::Cylinder { axis, .. } | SurfaceKind::Cone { axis, .. } => Ok(axis),
+                    _ => Err("the axis face is not cylindrical or conical".into()),
+                }
+            }
+        }
+    }
+
+    fn edge_geometry(&self, e: &EdgeRef) -> Result<tenon_kernel::EdgeInfo, Stop> {
+        let (b, i) = self.resolve_edges(std::slice::from_ref(e))?;
+        let edge = *i.first().ok_or("no edge")?;
+        Ok(self.k.edge_info(self.body_shape(b)?.edge(edge))?)
+    }
+
+    /// Copies the solids of `sources` by each of `moves` and combines every copy with the part as
+    /// its feature did. Copied faces are named after the face copied, numbered by copy.
+    fn copy_features(&mut self, id: FeatureId, sources: &[FeatureId], moves: &[Transform]) -> Result<(), Stop> {
+        let mut order: Vec<FeatureId> = sources.to_vec();
+        order.sort_by_key(|s| self.doc.index_of(*s));
+        order.dedup();
+        for src in order {
+            let tools = self
+                .regen
+                .tools
+                .get(&src)
+                .cloned()
+                .ok_or_else(|| format!("{} has no result to copy (it is suppressed or failed)", label(self.doc, src)))?;
+            // When this pattern is copied in turn, its first occurrence (the source) goes too.
+            if self.copied.contains(&id) {
+                for t in &tools {
+                    let op = self.k.transform(t.shape, &Transform::Translate(Vec3::ZERO))?;
+                    self.regen.tools.entry(id).or_default().push(Tool { operation: t.operation, shape: op.shape, names: t.names.clone() });
+                }
+            }
+            // Consecutive solids with the same operation combine together.
+            let mut groups: Vec<(Operation, Vec<&Tool>)> = Vec::new();
+            for t in &tools {
+                match groups.last_mut() {
+                    Some((op, g)) if *op == t.operation => g.push(t),
+                    _ => groups.push((t.operation, vec![t])),
+                }
+            }
+            for (operation, group) in groups {
+                let mut copies: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)> = Vec::new();
+                let mut made = || -> Result<(), Stop> {
+                    for (n, mv) in moves.iter().enumerate() {
+                        let ordinal = u32::try_from(n + 1).map_err(|_| "too many copies")?;
+                        for t in &group {
+                            let op = self.k.transform(t.shape, mv)?;
+                            let faces = match self.k.topology(op.shape) {
+                                Ok(topo) => topo.faces,
+                                Err(e) => {
+                                    self.k.release(op.shape);
+                                    return Err(e.into());
+                                }
+                            };
+                            let names = names_of_boolean(&op.history, &[&t.names], faces)
+                                .into_iter()
+                                .map(|o| o.map(|o| FaceOrigin::From { feature: id, source: o.key(), ordinal }))
+                                .collect();
+                            copies.push((op.shape, names));
+                        }
+                    }
+                    Ok(())
+                };
+                if let Err(e) = made() {
+                    for (s, _) in copies {
+                        self.k.release(s);
+                    }
+                    return Err(e);
+                }
+                self.combine(id, copies, operation)?;
+            }
+        }
+        Ok(())
     }
 
     /// Each hole is its half cross-section revolved about the hole axis; all are cut at once.
@@ -465,7 +609,25 @@ impl<'a> Ctx<'a> {
             Operation::Cut => Some(BoolOp::Cut),
             Operation::Intersect => Some(BoolOp::Intersect),
         };
+        // A pattern or mirror copies this feature later: keep its solids.
+        let keep = self.copied.contains(&id);
         let Some(kind) = kind else {
+            if keep {
+                // The solids become bodies (and change); the pattern gets copies of them.
+                let mut kept = Vec::new();
+                for (shape, names) in &tools {
+                    match self.k.transform(*shape, &Transform::Translate(Vec3::ZERO)) {
+                        Ok(op) => kept.push(Tool { operation, shape: op.shape, names: names.clone() }),
+                        Err(e) => {
+                            for s in kept.iter().map(|t| t.shape).chain(tools.iter().map(|t| t.0)) {
+                                self.k.release(s);
+                            }
+                            return Err(e.into());
+                        }
+                    }
+                }
+                self.regen.tools.entry(id).or_default().extend(kept);
+            }
             for (shape, names) in tools {
                 self.regen.bodies.push(Body { shape, names, created_by: id });
             }
@@ -480,8 +642,16 @@ impl<'a> Ctx<'a> {
         };
         let (target_shape, target_names) = (target.shape, target.names.clone());
         let op = self.k.boolean(kind, target_shape, &shapes);
-        for s in shapes {
-            self.k.release(s);
+        if keep && op.is_ok() {
+            self.regen.tools.entry(id).or_default().extend(tools.iter().map(|(shape, names)| Tool {
+                operation,
+                shape: *shape,
+                names: names.clone(),
+            }));
+        } else {
+            for s in shapes {
+                self.k.release(s);
+            }
         }
         let op = op?;
         let volume = self.k.mass_properties(op.shape, 1.0)?.volume;

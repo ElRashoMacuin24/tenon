@@ -4,8 +4,9 @@
 use egui::{Align2, Ui};
 use serde_json::{Value, json};
 use tenon_model::{
-    AxisRef, Chamfer, ChamferSize, DRILL_POINT, Document, EdgeRef, Extrude, ExtrudeExtent, FaceRef, FeatureId, FeatureKind, Fillet, Fingerprint,
-    Hole, HoleExtent, HoleType, Operation, OriginAxis, RegionSel, Revolve, RevolveAngle, Shell, hole_centres,
+    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, DRILL_POINT, DirectionRef, Document, EdgeRef, Extrude, ExtrudeExtent, FaceRef, FeatureId,
+    FeatureKind, Fillet, Fingerprint, Hole, HoleExtent, HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel,
+    Revolve, RevolveAngle, Shell, hole_centres,
 };
 use tenon_sketch::{Constraint, ConstraintId, EntityId};
 
@@ -197,6 +198,152 @@ impl HolePanel {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CopyKind {
+    Rect,
+    Circular,
+    Mirror,
+}
+
+/// Which selector of a pattern panel takes clicks in the viewport.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Slot {
+    Features,
+    Dir1,
+    Dir2,
+    Axis,
+    Plane,
+}
+
+/// Rectangular Pattern, Circular Pattern and Mirror.
+#[derive(Clone, Debug)]
+pub(crate) struct PatternPanel {
+    pub editing: Option<FeatureId>,
+    pub kind: CopyKind,
+    pub features: Vec<FeatureId>,
+    pub slot: Slot,
+    pub dir1: DirectionRef,
+    pub count1: f64,
+    pub spacing1: f64,
+    pub reverse1: bool,
+    pub dir2: Option<DirectionRef>,
+    pub count2: f64,
+    pub spacing2: f64,
+    pub reverse2: bool,
+    pub axis: AxisSel,
+    pub count: f64,
+    pub degrees: f64,
+    pub reverse: bool,
+    pub plane: PlaneRef,
+}
+
+fn whole(v: f64) -> u32 {
+    v.round().clamp(1.0, f64::from(tenon_model::MAX_COPIES)) as u32
+}
+
+impl PatternPanel {
+    fn new(kind: CopyKind, features: Vec<FeatureId>) -> PatternPanel {
+        PatternPanel {
+            editing: None,
+            kind,
+            features,
+            slot: Slot::Features,
+            dir1: DirectionRef::Origin(OriginAxis::X),
+            count1: 2.0,
+            spacing1: 10.0,
+            reverse1: false,
+            dir2: None,
+            count2: 1.0,
+            spacing2: 10.0,
+            reverse2: false,
+            axis: AxisSel::Origin(OriginAxis::Z),
+            count: 6.0,
+            degrees: 360.0,
+            reverse: false,
+            plane: PlaneRef::Origin(OriginPlane::YZ),
+        }
+    }
+
+    fn from_kind(editing: Option<FeatureId>, k: &FeatureKind) -> Option<PatternPanel> {
+        let mut p = match k {
+            FeatureKind::PatternRect(r) => {
+                let mut p = PatternPanel::new(CopyKind::Rect, r.features.clone());
+                p.dir1 = r.dir1.clone();
+                p.count1 = f64::from(r.count1);
+                p.spacing1 = r.spacing1;
+                p.reverse1 = r.reverse1;
+                p.dir2 = r.dir2.clone();
+                p.count2 = f64::from(r.count2);
+                p.spacing2 = if r.spacing2 > 0.0 { r.spacing2 } else { 10.0 };
+                p.reverse2 = r.reverse2;
+                p
+            }
+            FeatureKind::PatternCircular(c) => {
+                let mut p = PatternPanel::new(CopyKind::Circular, c.features.clone());
+                p.axis = c.axis.clone();
+                p.count = f64::from(c.count);
+                p.degrees = c.angle.to_degrees();
+                p.reverse = c.reverse;
+                p
+            }
+            FeatureKind::Mirror(m) => {
+                let mut p = PatternPanel::new(CopyKind::Mirror, m.features.clone());
+                p.plane = m.plane.clone();
+                p
+            }
+            _ => return None,
+        };
+        p.editing = editing;
+        Some(p)
+    }
+
+    /// The feature as set up, if it is complete.
+    pub(crate) fn kind(&self) -> Option<FeatureKind> {
+        if self.features.is_empty() {
+            return None;
+        }
+        let kind = match self.kind {
+            CopyKind::Rect => {
+                let two = self.dir2.is_some() && whole(self.count2) > 1;
+                let p = RectPattern {
+                    features: self.features.clone(),
+                    dir1: self.dir1.clone(),
+                    count1: whole(self.count1),
+                    spacing1: self.spacing1,
+                    reverse1: self.reverse1,
+                    dir2: if two { self.dir2.clone() } else { None },
+                    count2: if two { whole(self.count2) } else { 1 },
+                    spacing2: if two { self.spacing2 } else { 0.0 },
+                    reverse2: self.reverse2,
+                };
+                p.check().ok()?;
+                FeatureKind::PatternRect(p)
+            }
+            CopyKind::Circular => {
+                let p = CircPattern {
+                    features: self.features.clone(),
+                    axis: self.axis.clone(),
+                    count: whole(self.count),
+                    angle: self.degrees.to_radians(),
+                    reverse: self.reverse,
+                };
+                p.check().ok()?;
+                FeatureKind::PatternCircular(p)
+            }
+            CopyKind::Mirror => FeatureKind::Mirror(Mirror { features: self.features.clone(), plane: self.plane.clone() }),
+        };
+        Some(kind)
+    }
+
+    pub(crate) fn command(&self) -> &'static str {
+        match self.kind {
+            CopyKind::Rect => "model.pattern.rect",
+            CopyKind::Circular => "model.pattern.circular",
+            CopyKind::Mirror => "model.mirror",
+        }
+    }
+}
+
 impl FilletPanel {
     pub(crate) fn kind(&self) -> FeatureKind {
         FeatureKind::Fillet(Fillet { edges: self.edges.clone(), radius: self.radius })
@@ -240,6 +387,7 @@ pub(crate) enum Panel {
     Chamfer(ChamferPanel),
     Shell(ShellPanel),
     Hole(HolePanel),
+    Pattern(Box<PatternPanel>),
     Value(ValuePanel),
     EditDimension { sketch: FeatureId, constraint: ConstraintId, value: f64, angular: bool },
     Rename { feature: FeatureId, name: String },
@@ -298,6 +446,10 @@ impl Workbench {
             Some(Panel::Revolve(p)) => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Hole(p)) if !p.points.is_empty() => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Hole(p)) => rolled(p.editing),
+            Some(Panel::Pattern(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind),
+                None => rolled(p.editing),
+            },
             Some(Panel::Fillet(p)) => rolled(p.editing),
             Some(Panel::Chamfer(p)) => rolled(p.editing),
             Some(Panel::Shell(p)) => rolled(p.editing),
@@ -477,6 +629,39 @@ impl Workbench {
         Ok(())
     }
 
+    /// Rectangular Pattern, Circular Pattern or Mirror. A new one starts with the features of the
+    /// selected faces.
+    pub(crate) fn open_pattern(&mut self, kind: CopyKind, editing: Option<FeatureId>) -> Result<(), String> {
+        let panel = match editing {
+            Some(id) => PatternPanel::from_kind(editing, &self.document().feature(id).ok_or("no such feature")?.kind).ok_or("not a pattern")?,
+            None => {
+                if !self.document().features().iter().any(|f| f.kind.has_tool()) {
+                    return Err("there is no feature to copy yet: extrude, revolve or drill one first".into());
+                }
+                let mut features = Vec::new();
+                for p in &self.view.selection {
+                    if let Pick::Face { body, face } = p
+                        && let Some(id) =
+                            self.scene.bodies.get(*body).and_then(|b| b.faces.get(*face as usize)).and_then(|f| f.0).map(|o| o.feature())
+                        && self.document().feature(id).is_some_and(|f| f.kind.has_tool())
+                        && !features.contains(&id)
+                    {
+                        features.push(id);
+                    }
+                }
+                PatternPanel::new(kind, features)
+            }
+        };
+        self.view.selection.clear();
+        self.set_status(match kind {
+            CopyKind::Rect => "Rectangular Pattern: click the features to copy, set the direction, count and spacing, then OK.",
+            CopyKind::Circular => "Circular Pattern: click the features to copy, set the axis, count and angle, then OK.",
+            CopyKind::Mirror => "Mirror: click the features to mirror, choose the plane, then OK.",
+        });
+        self.panel = Some(Panel::Pattern(Box::new(panel)));
+        Ok(())
+    }
+
     pub(crate) fn open_hole(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
         let panel = match editing {
             Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
@@ -606,6 +791,45 @@ impl Workbench {
                         }
                         ("model.hole", p)
                     }
+                    FeatureKind::PatternRect(r) => {
+                        let mut p = json!({
+                            "features": r.features.iter().map(|f| f.0).collect::<Vec<_>>(),
+                            "direction": direction_json(&r.dir1),
+                            "count": r.count1,
+                            "spacing": r.spacing1,
+                            "reverse": r.reverse1,
+                        });
+                        if let Some(d2) = &r.dir2 {
+                            p["direction2"] = direction_json(d2);
+                            p["count2"] = json!(r.count2);
+                            p["spacing2"] = json!(r.spacing2);
+                            p["reverse2"] = json!(r.reverse2);
+                        }
+                        ("model.pattern.rect", p)
+                    }
+                    FeatureKind::PatternCircular(c) => {
+                        let axis = match &c.axis {
+                            AxisSel::Origin(a) => json!(format!("{a:?}").to_lowercase()),
+                            AxisSel::Edge(e) => json!(e),
+                            AxisSel::Face(f) => json!(f),
+                        };
+                        let p = json!({
+                            "features": c.features.iter().map(|f| f.0).collect::<Vec<_>>(),
+                            "axis": axis,
+                            "count": c.count,
+                            "angle": c.angle,
+                            "reverse": c.reverse,
+                        });
+                        ("model.pattern.circular", p)
+                    }
+                    FeatureKind::Mirror(m) => {
+                        let mut p = json!({ "features": m.features.iter().map(|f| f.0).collect::<Vec<_>>() });
+                        match &m.plane {
+                            PlaneRef::Origin(o) => p["plane"] = json!(format!("{o:?}").to_lowercase()),
+                            PlaneRef::Face(f) => p["face"] = json!(f),
+                        }
+                        ("model.mirror", p)
+                    }
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
@@ -674,6 +898,20 @@ impl Workbench {
                     keep = !self.commit_feature(p.editing, p.kind());
                     if !keep && again {
                         reopen = Some("model.shell");
+                    }
+                }
+            }
+            Panel::Pattern(p) => {
+                if commit {
+                    match p.kind() {
+                        _ if p.features.is_empty() => self.set_error("Click at least one feature to copy (in the part or the browser)".to_string()),
+                        None => self.set_error("Check the counts, spacing and angle".to_string()),
+                        Some(kind) => {
+                            keep = !self.commit_feature(p.editing, kind);
+                            if !keep && again {
+                                reopen = Some(p.command());
+                            }
+                        }
                     }
                 }
             }
@@ -823,6 +1061,13 @@ fn inline_value(ctx: &egui::Context, at: egui::Pos2, value: &mut f64, unit: &str
         cancel = true;
     }
     (ok, cancel)
+}
+
+fn direction_json(d: &DirectionRef) -> Value {
+    match d {
+        DirectionRef::Origin(a) => json!(format!("{a:?}").to_lowercase()),
+        DirectionRef::Edge(e) => json!(e),
+    }
 }
 
 fn op_name(o: Operation) -> &'static str {

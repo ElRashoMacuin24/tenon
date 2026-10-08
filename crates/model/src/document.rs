@@ -278,6 +278,119 @@ impl Hole {
     }
 }
 
+/// A direction for a pattern: an origin axis or a straight edge of the part.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectionRef {
+    Origin(OriginAxis),
+    Edge(EdgeRef),
+}
+
+/// An axis to turn about: an origin axis, a straight or circular edge, or a cylindrical or
+/// conical face.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AxisSel {
+    Origin(OriginAxis),
+    Edge(EdgeRef),
+    Face(FaceRef),
+}
+
+/// Copies of features in rows and columns.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RectPattern {
+    pub features: Vec<FeatureId>,
+    pub dir1: DirectionRef,
+    pub count1: u32,
+    pub spacing1: f64,
+    #[serde(default)]
+    pub reverse1: bool,
+    /// A second direction (`count2` 1 for a single row).
+    #[serde(default)]
+    pub dir2: Option<DirectionRef>,
+    #[serde(default = "one")]
+    pub count2: u32,
+    #[serde(default)]
+    pub spacing2: f64,
+    #[serde(default)]
+    pub reverse2: bool,
+}
+
+fn one() -> u32 {
+    1
+}
+
+/// Copies of features around an axis.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CircPattern {
+    pub features: Vec<FeatureId>,
+    pub axis: AxisSel,
+    pub count: u32,
+    /// Total angle (radians): a full turn spaces the copies evenly, less puts the last copy at
+    /// the end of the angle.
+    pub angle: f64,
+    #[serde(default)]
+    pub reverse: bool,
+}
+
+/// Mirror images of features across a plane.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Mirror {
+    pub features: Vec<FeatureId>,
+    pub plane: PlaneRef,
+}
+
+/// Most copies one pattern may make (hostile-input cap).
+pub const MAX_COPIES: u32 = 10_000;
+
+impl RectPattern {
+    pub fn check(&self) -> Result<(), String> {
+        check_sources(&self.features)?;
+        if self.count1 < 1 || self.count2 < 1 || self.count1.saturating_mul(self.count2) > MAX_COPIES {
+            return Err(format!("the counts must be at least 1 and make at most {MAX_COPIES} copies"));
+        }
+        if self.count1.saturating_mul(self.count2) < 2 {
+            return Err("a pattern needs at least two occurrences".into());
+        }
+        for (count, spacing) in [(self.count1, self.spacing1), (self.count2, self.spacing2)] {
+            if count > 1 && !(spacing.is_finite() && spacing > 0.0) {
+                return Err("the spacing must be positive".into());
+            }
+        }
+        if self.count2 > 1 && self.dir2.is_none() {
+            return Err("a second count needs a second direction".into());
+        }
+        Ok(())
+    }
+}
+
+impl CircPattern {
+    pub fn check(&self) -> Result<(), String> {
+        check_sources(&self.features)?;
+        if self.count < 2 || self.count > MAX_COPIES {
+            return Err(format!("the count must be 2 to {MAX_COPIES}"));
+        }
+        if !(self.angle.is_finite() && self.angle > 0.0 && self.angle <= std::f64::consts::TAU + 1e-9) {
+            return Err("the angle must be more than 0 and at most 360 degrees".into());
+        }
+        Ok(())
+    }
+
+    /// The turn from one copy to the next (radians).
+    pub fn step(&self) -> f64 {
+        let full = (self.angle - std::f64::consts::TAU).abs() < 1e-9;
+        let step = if full { self.angle / f64::from(self.count) } else { self.angle / f64::from(self.count.saturating_sub(1).max(1)) };
+        if self.reverse { -step } else { step }
+    }
+}
+
+fn check_sources(features: &[FeatureId]) -> Result<(), String> {
+    if features.is_empty() {
+        return Err("choose at least one feature to copy".into());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FeatureKind {
@@ -288,6 +401,33 @@ pub enum FeatureKind {
     Chamfer(Chamfer),
     Shell(Shell),
     Hole(Hole),
+    PatternRect(RectPattern),
+    PatternCircular(CircPattern),
+    Mirror(Mirror),
+}
+
+impl FeatureKind {
+    /// The features this one copies (patterns and mirrors).
+    pub fn copies(&self) -> &[FeatureId] {
+        match self {
+            FeatureKind::PatternRect(p) => &p.features,
+            FeatureKind::PatternCircular(p) => &p.features,
+            FeatureKind::Mirror(m) => &m.features,
+            _ => &[],
+        }
+    }
+    /// True for features whose solid adds or removes material, and so can be copied.
+    pub fn has_tool(&self) -> bool {
+        matches!(
+            self,
+            FeatureKind::Extrude(_)
+                | FeatureKind::Revolve(_)
+                | FeatureKind::Hole(_)
+                | FeatureKind::PatternRect(_)
+                | FeatureKind::PatternCircular(_)
+                | FeatureKind::Mirror(_)
+        )
+    }
 }
 
 impl FeatureKind {
@@ -300,6 +440,9 @@ impl FeatureKind {
             FeatureKind::Chamfer(_) => "Chamfer",
             FeatureKind::Shell(_) => "Shell",
             FeatureKind::Hole(_) => "Hole",
+            FeatureKind::PatternRect(_) => "Rectangular Pattern",
+            FeatureKind::PatternCircular(_) => "Circular Pattern",
+            FeatureKind::Mirror(_) => "Mirror",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -312,6 +455,9 @@ impl FeatureKind {
             FeatureKind::Chamfer(_) => "Chamfer",
             FeatureKind::Shell(_) => "Shell",
             FeatureKind::Hole(_) => "Hole",
+            FeatureKind::PatternRect(_) => "Rectangular Pattern",
+            FeatureKind::PatternCircular(_) => "Circular Pattern",
+            FeatureKind::Mirror(_) => "Mirror",
         }
     }
     /// Features this one depends on.
@@ -331,6 +477,31 @@ impl FeatureKind {
             }
             FeatureKind::Shell(s) => s.remove.iter().filter_map(FaceRef::feature).collect(),
             FeatureKind::Hole(h) => vec![h.sketch],
+            FeatureKind::PatternRect(p) => {
+                let mut v = p.features.clone();
+                for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
+                    if let DirectionRef::Edge(e) = d {
+                        v.extend(e.features());
+                    }
+                }
+                v
+            }
+            FeatureKind::PatternCircular(p) => {
+                let mut v = p.features.clone();
+                match &p.axis {
+                    AxisSel::Origin(_) => {}
+                    AxisSel::Edge(e) => v.extend(e.features()),
+                    AxisSel::Face(f) => v.extend(f.feature()),
+                }
+                v
+            }
+            FeatureKind::Mirror(m) => {
+                let mut v = m.features.clone();
+                if let PlaneRef::Face(f) = &m.plane {
+                    v.extend(f.feature());
+                }
+                v
+            }
         };
         v.sort();
         v.dedup();
@@ -428,6 +599,18 @@ impl Document {
         Ok(self.features.remove(i))
     }
 
+    /// A pattern or mirror copies only features that add or remove material.
+    pub fn check_copies(&self, kind: &FeatureKind) -> Result<(), String> {
+        for id in kind.copies() {
+            match self.feature(*id) {
+                Some(f) if f.kind.has_tool() => {}
+                Some(f) => return Err(format!("{} cannot be copied: only features that add or remove material can", f.name)),
+                None => return Err(format!("{id} does not exist")),
+            }
+        }
+        Ok(())
+    }
+
     /// Checks references and every sketch, e.g. after loading a file.
     pub fn validate(&self) -> Result<(), String> {
         if self.features.len() > MAX_FEATURES {
@@ -452,8 +635,12 @@ impl Document {
                 // Sizes are checked here too: a file must not hold a hole that cannot be built
                 // without saying so. (Points that went missing are a regeneration error instead.)
                 FeatureKind::Hole(h) => h.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,
                 _ => {}
             }
+            self.check_copies(&f.kind).map_err(|e| format!("{}: {e}", f.name))?;
         }
         Ok(())
     }

@@ -126,9 +126,9 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Pattern",
                 commands: &[
-                    small("model.pattern.rect", "Rectangular", "Repeat features in rows and columns", Icon::PatternRect, 2),
-                    small("model.pattern.circular", "Circular", "Repeat features around an axis", Icon::PatternCircular, 2),
-                    small("model.mirror", "Mirror", "Mirror features across a plane", Icon::Mirror, 2),
+                    small("model.pattern.rect", "Rectangular", "Repeat features in rows and columns", Icon::PatternRect, 0),
+                    small("model.pattern.circular", "Circular", "Repeat features around an axis", Icon::PatternCircular, 0),
+                    small("model.mirror", "Mirror", "Mirror features across a plane", Icon::Mirror, 0),
                 ],
             },
         ],

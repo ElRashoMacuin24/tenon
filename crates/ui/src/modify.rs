@@ -3,11 +3,12 @@
 //! references are highlighted on the part.
 
 use egui::{Pos2, Rect, Stroke, vec2};
-use tenon_model::{EdgeRef, FaceRef, Fingerprint, Scene};
+use tenon_kernel::SurfaceKind;
+use tenon_model::{AxisSel, DirectionRef, EdgeRef, FaceRef, FeatureId, Fingerprint, PlaneRef, Scene};
 use tenon_render::pick::{pick_edge, pick_face};
 use tenon_sketch::EntityId;
 
-use crate::panels::{ChamferMethod, Panel};
+use crate::panels::{ChamferMethod, CopyKind, Panel, Slot};
 use crate::theme::Tokens;
 use crate::viewport::Pick;
 use crate::workbench::Workbench;
@@ -61,7 +62,44 @@ impl Workbench {
             Some(Panel::Fillet(_)) => Some(Wants { edges: true, faces: false }),
             Some(Panel::Chamfer(p)) => Some(Wants { edges: true, faces: p.method != ChamferMethod::Distance }),
             Some(Panel::Shell(_)) => Some(Wants { edges: false, faces: true }),
+            Some(Panel::Pattern(p)) => Some(match p.slot {
+                Slot::Features | Slot::Plane => Wants { edges: false, faces: true },
+                Slot::Dir1 | Slot::Dir2 => Wants { edges: true, faces: false },
+                Slot::Axis => Wants { edges: true, faces: true },
+            }),
             _ => None,
+        }
+    }
+
+    /// The feature a pattern copies when this face is clicked: the one that made it, if it adds
+    /// or removes material and comes before the pattern.
+    fn copyable_feature(&self, body: usize, face: u32) -> Option<FeatureId> {
+        let id = self.scene.bodies.get(body)?.faces.get(face as usize)?.0?.feature();
+        let f = self.document().feature(id)?;
+        let before = match &self.panel {
+            Some(Panel::Pattern(p)) => p.editing.is_none_or(|e| self.document().index_of(id) < self.document().index_of(e)),
+            _ => true,
+        };
+        (f.kind.has_tool() && before).then_some(id)
+    }
+
+    /// Adds or removes a feature of the pattern being set up (a click on it in the browser).
+    pub(crate) fn toggle_pattern_feature(&mut self, id: FeatureId) {
+        let Some(Panel::Pattern(p)) = &self.panel else { return };
+        let ok = self.document().feature(id).is_some_and(|f| f.kind.has_tool())
+            && p.editing.is_none_or(|e| self.document().index_of(id) < self.document().index_of(e));
+        if !ok {
+            let name = self.feature_name(id);
+            self.set_error(format!("{name} cannot be copied: only earlier features that add or remove material can"));
+            return;
+        }
+        if let Some(Panel::Pattern(p)) = &mut self.panel {
+            p.slot = Slot::Features;
+            if let Some(i) = p.features.iter().position(|f| *f == id) {
+                p.features.remove(i);
+            } else {
+                p.features.push(id);
+            }
         }
     }
 
@@ -79,6 +117,40 @@ impl Workbench {
                 v
             }
             Some(Panel::Shell(p)) => p.faces.iter().filter_map(face).collect(),
+            Some(Panel::Pattern(p)) => {
+                // The faces of the features being copied, and the picked direction, axis or plane.
+                let mut v: Vec<Pick> = Vec::new();
+                for (bi, b) in self.scene.bodies.iter().enumerate() {
+                    for (fi, (name, _)) in b.faces.iter().enumerate() {
+                        if name.is_some_and(|n| p.features.contains(&n.feature()))
+                            && let Ok(face) = u32::try_from(fi)
+                        {
+                            v.push(Pick::Face { body: bi, face });
+                        }
+                    }
+                }
+                let refs: Vec<Pick> = match p.kind {
+                    CopyKind::Rect => [Some(&p.dir1), p.dir2.as_ref()]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|d| match d {
+                            DirectionRef::Edge(e) => find_edge(&self.scene, e).map(|(body, edge)| Pick::Edge { body, edge }),
+                            DirectionRef::Origin(_) => None,
+                        })
+                        .collect(),
+                    CopyKind::Circular => match &p.axis {
+                        AxisSel::Edge(e) => edges(std::slice::from_ref(e)),
+                        AxisSel::Face(f) => face(f).into_iter().collect(),
+                        AxisSel::Origin(_) => Vec::new(),
+                    },
+                    CopyKind::Mirror => match &p.plane {
+                        PlaneRef::Face(f) => face(f).into_iter().collect(),
+                        PlaneRef::Origin(_) => Vec::new(),
+                    },
+                };
+                v.extend(refs);
+                v
+            }
             _ => Vec::new(),
         }
     }
@@ -94,15 +166,69 @@ impl Workbench {
 
     /// True if the pick can go into the open panel.
     fn referable(&self, p: Pick, wants: Wants) -> bool {
-        match p {
-            Pick::Edge { body, edge } => wants.edges && self.edge_ref_of(body, edge).is_some(),
-            Pick::Face { body, face } => wants.faces && self.face_ref_of(body, face).is_some(),
+        let surface = |body: usize, face: u32| self.scene.bodies.get(body).and_then(|b| b.faces.get(face as usize)).map(|f| &f.1.surface);
+        match (p, &self.panel) {
+            (Pick::Face { body, face }, Some(Panel::Pattern(pp))) if wants.faces => match pp.slot {
+                Slot::Features => self.copyable_feature(body, face).is_some(),
+                Slot::Plane => self.face_ref_of(body, face).is_some() && matches!(surface(body, face), Some(SurfaceKind::Plane { .. })),
+                Slot::Axis => {
+                    self.face_ref_of(body, face).is_some()
+                        && matches!(surface(body, face), Some(SurfaceKind::Cylinder { .. } | SurfaceKind::Cone { .. }))
+                }
+                Slot::Dir1 | Slot::Dir2 => false,
+            },
+            (Pick::Edge { body, edge }, _) => wants.edges && self.edge_ref_of(body, edge).is_some(),
+            (Pick::Face { body, face }, _) => wants.faces && self.face_ref_of(body, face).is_some(),
         }
     }
 
     /// Adds a pick to the panel, or removes it when it is there already (`toggle`). Returns
     /// false when the panel does not take it.
     pub(crate) fn pick_into_panel(&mut self, p: Pick, toggle: bool) -> bool {
+        if let Some(Panel::Pattern(pp)) = &self.panel {
+            let slot = pp.slot;
+            match (slot, p) {
+                (Slot::Features, Pick::Face { body, face }) => {
+                    let Some(id) = self.copyable_feature(body, face) else { return false };
+                    if let Some(Panel::Pattern(pp)) = &mut self.panel {
+                        match pp.features.iter().position(|f| *f == id) {
+                            Some(i) if toggle => {
+                                pp.features.remove(i);
+                            }
+                            Some(_) => {}
+                            None => pp.features.push(id),
+                        }
+                    }
+                }
+                (Slot::Dir1 | Slot::Dir2 | Slot::Axis, Pick::Edge { body, edge }) => {
+                    let Some(r) = self.edge_ref_of(body, edge) else { return false };
+                    if let Some(Panel::Pattern(pp)) = &mut self.panel {
+                        match slot {
+                            Slot::Dir1 => pp.dir1 = DirectionRef::Edge(r),
+                            Slot::Dir2 => {
+                                pp.dir2 = Some(DirectionRef::Edge(r));
+                                if pp.count2 < 2.0 {
+                                    pp.count2 = 2.0;
+                                }
+                            }
+                            _ => pp.axis = AxisSel::Edge(r),
+                        }
+                    }
+                }
+                (Slot::Axis | Slot::Plane, Pick::Face { body, face }) => {
+                    let Some(r) = self.face_ref_of(body, face) else { return false };
+                    if let Some(Panel::Pattern(pp)) = &mut self.panel {
+                        if slot == Slot::Axis {
+                            pp.axis = AxisSel::Face(r);
+                        } else {
+                            pp.plane = PlaneRef::Face(r);
+                        }
+                    }
+                }
+                _ => return false,
+            }
+            return true;
+        }
         let present = self.panel_picks().contains(&p);
         let scene = &self.scene;
         let (eref, fref) = match p {
@@ -236,6 +362,7 @@ impl Workbench {
             Some(Panel::Chamfer(c)) => c.edges.clear(),
             Some(Panel::Shell(s)) => s.faces.clear(),
             Some(Panel::Hole(h)) => h.points.clear(),
+            Some(Panel::Pattern(p)) => p.features.clear(),
             _ => {}
         }
     }
