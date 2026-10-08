@@ -167,6 +167,15 @@ fn worker_regenerates_off_thread_and_reports_the_latest() {
         Some(Response::Step { request: 7, result: Ok(bytes) }) => assert!(bytes.starts_with(b"ISO-10303-21;")),
         other => panic!("{other:?}"),
     }
+
+    // Measuring on the part the worker last regenerated: a face's area.
+    let face = scene.bodies[0].faces.iter().position(|(_, info)| info.area > 0.0).unwrap() as u32;
+    let area = scene.bodies[0].faces[face as usize].1.area;
+    w.measure(8, tenon_model::measure::Entity::Face { body: 0, face }, None);
+    match w.recv_timeout(Duration::from_secs(30)) {
+        Some(Response::Measure { request: 8, result: Ok(m) }) => assert!(approx(m.get("Area").unwrap(), area)),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]

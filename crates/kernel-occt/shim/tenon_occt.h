@@ -29,6 +29,7 @@ struct MeshOut;
 struct MassOut;
 struct BoxOut;
 struct ProfileIn;
+struct DistOut;
 
 using ShapeMap = NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>;
 
@@ -83,6 +84,9 @@ void tessellate(const Shape& shape, double linear, double angular, MeshOut& out)
 void mass_properties(const Shape& shape, MassOut& out);
 void bounding_box(const Shape& shape, BoxOut& out);
 bool is_valid(const Shape& shape);
+// Minimum distance between sub-shapes: kind 0 the whole shape, 1 a face, 2 an edge, 3 a vertex.
+void min_distance(const Shape& a, std::uint8_t kind_a, std::uint32_t index_a, const Shape& b, std::uint8_t kind_b, std::uint32_t index_b,
+                  DistOut& out);
 
 rust::Vec<std::uint8_t> export_step(const ShapeList& shapes);
 std::unique_ptr<ShapeList> import_step(rust::Slice<const std::uint8_t> data);

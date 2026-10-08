@@ -681,3 +681,35 @@ fn regeneration_speed() {
     println!("{n} features: full regeneration {full:.1} ms, resumed at {} {resumed:.1} ms ({:.0}x)", cache.resumed_at, full / resumed);
     cache.release(&mut k);
 }
+
+#[test]
+fn measure_areas_lengths_distances_and_angles() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, l, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    let (sk, pts) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0)]);
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "through_all": true }))["feature"].as_u64().unwrap();
+    let face = |s: &mut Session, k: &mut OcctKernel, origin: Value| json!({ "face": run(s, k, "model.face_ref", json!({ "origin": origin })) });
+    let value = |m: &Value, label: &str| m["values"].as_array().unwrap().iter().find(|v| v["label"] == label).map(|v| v["value"].as_f64().unwrap());
+    let top_face = face(&mut s, &mut k, top(ex));
+    let bottom = face(&mut s, &mut k, json!({ "type": "cap", "feature": ex, "end": "start" }));
+    let front = face(&mut s, &mut k, side(ex, l[0]));
+    let wall = face(&mut s, &mut k, json!({ "type": "from", "feature": hole, "source": (pts[0] << 8) | 2, "ordinal": 0 }));
+
+    let m = run(&mut s, &mut k, "model.measure", json!({ "a": top_face }));
+    assert!(approx(value(&m, "Area").unwrap(), 800.0 - PI * 9.0), "{m}");
+    let m = run(&mut s, &mut k, "model.measure", json!({ "a": wall }));
+    assert!(approx(value(&m, "Diameter").unwrap(), 6.0), "{m}");
+    let m = run(&mut s, &mut k, "model.measure", json!({ "a": top_face, "b": bottom }));
+    assert!(approx(value(&m, "Distance").unwrap(), 10.0) && value(&m, "Angle").unwrap().abs() < 1e-9, "{m}");
+    assert!(approx(value(&m, "dZ").unwrap(), 10.0));
+    let m = run(&mut s, &mut k, "model.measure", json!({ "a": top_face, "b": front }));
+    assert!(value(&m, "Distance").unwrap().abs() < 1e-9 && approx(value(&m, "Angle").unwrap(), 90.0), "{m}");
+    // An edge: the front-right vertical edge is 10 long; from the hole wall it is the nearest
+    // corner distance minus the radius.
+    let edge = json!({ "edge": run(&mut s, &mut k, "model.edge_ref", json!({ "faces": [side(ex, l[0]), side(ex, l[1])] })) });
+    let m = run(&mut s, &mut k, "model.measure", json!({ "a": edge }));
+    assert!(approx(value(&m, "Length").unwrap(), 10.0), "{m}");
+    let m = run(&mut s, &mut k, "model.measure", json!({ "a": wall, "b": edge }));
+    assert!(approx(value(&m, "Distance").unwrap(), (30.0f64.powi(2) + 10.0f64.powi(2)).sqrt() - 3.0), "{m}");
+    assert!(s.exec("model.measure", &json!({ "a": { "body": 0, "face": 999 } }), Some(&mut k)).is_err());
+}

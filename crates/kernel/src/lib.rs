@@ -26,7 +26,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use handle::{EdgeId, FaceId, ShapeHandle, TopoId, TopoKind, VertexId};
 pub use history::{Generated, History, Image, InputRef, Op, Origin, PrimitiveRole};
-pub use query::{CurveKind, EdgeInfo, EdgePolyline, FaceInfo, FaceRange, MassProps, Mesh, MeshTol, ShapeKind, SurfaceKind, Topology};
+pub use query::{
+    CurveKind, Distance, EdgeInfo, EdgePolyline, FaceInfo, FaceRange, MassProps, Mesh, MeshTol, ShapeKind, SubShape, SurfaceKind, Topology,
+};
 use tenon_geom::{Aabb3, Axis, Frame, Vec3};
 pub use types::{
     AngleExtent, BoolOp, ChamferSpec, Curve2, Curve3, Extent, HoleDepth, HoleKind, HoleSpec, LoftOpts, Loop, Path3, Pattern, Profile, Region,
@@ -237,6 +239,12 @@ pub trait Kernel: Send {
     /// unknown handle is a no-op.
     fn release(&mut self, shape: ShapeHandle) {
         let _ = shape;
+    }
+    /// The shortest distance between two shapes (or faces, edges, vertices of them), and the
+    /// nearest points.
+    fn min_distance(&self, a: SubShape, b: SubShape) -> KResult<Distance> {
+        let _ = (a, b);
+        Err(KernelError::Unsupported("min_distance"))
     }
     /// A second handle to the same shape (same topology and indices), released separately.
     /// Cheap: no geometry is copied.

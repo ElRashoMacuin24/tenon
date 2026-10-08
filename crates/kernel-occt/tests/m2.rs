@@ -156,3 +156,23 @@ fn duplicates_share_the_shape_and_are_released_separately() {
     k.release(d);
     assert_eq!(k.live_shapes(), live - 1);
 }
+
+#[test]
+fn minimum_distances_between_faces_edges_and_shapes() {
+    use tenon_kernel::SubShape;
+    let mut k = OcctKernel::new();
+    let a = cube(&mut k);
+    // A second cube 30 to the right: the gap between them is 10.
+    let b = k.make_box(&Frame::new(Vec3::new(30.0, 0.0, 0.0), Vec3::Z, Vec3::X).unwrap(), Vec3::new(20.0, 20.0, 20.0)).unwrap().shape;
+    let d = k.min_distance(SubShape::Shape(a), SubShape::Shape(b)).unwrap();
+    assert!(close(d.value, 10.0), "{d:?}");
+    assert!((d.on_a.x - 20.0).abs() < 1e-9 && (d.on_b.x - 30.0).abs() < 1e-9);
+    // Face to face: the opposite sides of one cube are 20 apart.
+    let (x0, x1) = (face_with_normal(&k, a, -Vec3::X), face_with_normal(&k, a, Vec3::X));
+    assert!(close(k.min_distance(SubShape::Face(x0), SubShape::Face(x1)).unwrap().value, 20.0));
+    // An edge on the far face of b to a's near face: 10.
+    let far = face_with_normal(&k, b, -Vec3::X);
+    let edge = k.topology(b).unwrap().face_edges[far.index as usize][0];
+    assert!(close(k.min_distance(SubShape::Face(x1), SubShape::Edge(b.edge(edge))).unwrap().value, 10.0));
+    assert!(k.min_distance(SubShape::Face(a.face(99)), SubShape::Shape(b)).is_err());
+}

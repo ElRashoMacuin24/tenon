@@ -234,3 +234,20 @@ mod tests {
         assert!((m.signed_volume() - 1.0).abs() < 1e-12);
     }
 }
+
+/// A shape, or one face, edge or vertex of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubShape {
+    Shape(crate::ShapeHandle),
+    Face(crate::FaceId),
+    Edge(crate::EdgeId),
+    Vertex(crate::VertexId),
+}
+
+/// The shortest distance between two shapes and the nearest points on each.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Distance {
+    pub value: f64,
+    pub on_a: Vec3,
+    pub on_b: Vec3,
+}

@@ -15,9 +15,9 @@ use cxx::UniquePtr;
 use ffi::bridge as sys;
 use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3, tol};
 use tenon_kernel::{
-    AngleExtent, BoolOp, CancelToken, ChamferSpec, Curve2, CurveKind, EdgeId, EdgeInfo, EdgePolyline, Extent, FaceId, FaceInfo, FaceRange, Generated,
-    History, Image, InputRef, KResult, Kernel, KernelError, MassProps, Mesh, MeshTol, Op, Origin, PrimitiveRole, Profile, ShapeHandle, ShapeKind,
-    SurfaceKind, TopoId, TopoKind, Topology, Transform, check,
+    AngleExtent, BoolOp, CancelToken, ChamferSpec, Curve2, CurveKind, Distance, EdgeId, EdgeInfo, EdgePolyline, Extent, FaceId, FaceInfo, FaceRange,
+    Generated, History, Image, InputRef, KResult, Kernel, KernelError, MassProps, Mesh, MeshTol, Op, Origin, PrimitiveRole, Profile, ShapeHandle,
+    ShapeKind, SubShape, SurfaceKind, TopoId, TopoKind, Topology, Transform, check,
 };
 
 /// OCCT's STEP translator keeps global state; exchange calls are serialised process-wide.
@@ -634,6 +634,21 @@ impl Kernel for OcctKernel {
 
     fn live_shapes(&self) -> usize {
         self.slots.iter().filter(|s| s.shape.is_some()).count()
+    }
+
+    fn min_distance(&self, a: SubShape, b: SubShape) -> KResult<Distance> {
+        self.not_cancelled()?;
+        let part = |s: SubShape| match s {
+            SubShape::Shape(h) => (h, 0u8, 0u32),
+            SubShape::Face(f) => (f.shape, 1, f.index),
+            SubShape::Edge(e) => (e.shape, 2, e.index),
+            SubShape::Vertex(v) => (v.shape, 3, v.index),
+        };
+        let ((ha, ka, ia), (hb, kb, ib)) = (part(a), part(b));
+        let mut out = sys::DistOut::default();
+        sys::min_distance(self.get(ha)?, ka, ia, self.get(hb)?, kb, ib, &mut out).map_err(failed("min_distance"))?;
+        let v = |p: sys::V3| Vec3::new(p.x, p.y, p.z);
+        Ok(Distance { value: out.distance, on_a: v(out.on_a), on_b: v(out.on_b) })
     }
 
     fn duplicate(&mut self, shape: ShapeHandle) -> KResult<ShapeHandle> {

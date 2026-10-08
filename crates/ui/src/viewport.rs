@@ -382,6 +382,7 @@ impl Workbench {
         }
         if self.has_properties() {
             self.hole_markers(ui, rect, t);
+            self.measure_overlay(ui, rect, t);
             self.manipulator(ui, rect, t);
             self.mini_toolbar(ui, rect, t);
         }

@@ -83,6 +83,8 @@ pub struct Workbench {
     pub(crate) panel_eqs: crate::properties::Equations,
     /// Regeneration checkpoints for the kernel on this thread (headless use).
     sync_cache: tenon_model::RegenCache,
+    /// The part last regenerated on this thread (headless use), for measuring.
+    sync_regen: tenon_model::Regen,
 }
 
 impl Workbench {
@@ -116,6 +118,7 @@ impl Workbench {
             param_env: (0, Default::default()),
             panel_eqs: Default::default(),
             sync_cache: Default::default(),
+            sync_regen: Default::default(),
         }
     }
 
@@ -302,6 +305,10 @@ impl Workbench {
             "model.pattern.circular" => self.open_pattern(crate::panels::CopyKind::Circular, None)?,
             "model.mirror" => self.open_pattern(crate::panels::CopyKind::Mirror, None)?,
             "tools.parameters" => self.chrome.params = !self.chrome.params,
+            "inspect.measure" => {
+                self.panel = Some(Panel::Measure(Box::default()));
+                self.set_status("Measure: click a face or edge, then another for the distance and angle.");
+            }
             "work.plane" => self.open_work(crate::work::WorkMethod::Offset, None)?,
             "work.axis" => self.open_work(crate::work::WorkMethod::Along, None)?,
             "work.point" => self.open_work(crate::work::WorkMethod::Center, None)?,
@@ -365,6 +372,31 @@ impl Workbench {
         Ok(())
     }
 
+    /// Asks for a measurement of the open Measure panel's picks.
+    pub(crate) fn request_measure(&mut self) {
+        let Some(Panel::Measure(m)) = &self.panel else { return };
+        let entity = |p: &crate::viewport::Pick| match *p {
+            crate::viewport::Pick::Face { body, face } => tenon_model::measure::Entity::Face { body, face },
+            crate::viewport::Pick::Edge { body, edge } => tenon_model::measure::Entity::Edge { body, edge },
+        };
+        let Some(a) = m.a.as_ref().map(entity) else { return };
+        let b = m.b.as_ref().map(entity);
+        self.step_seq += 1;
+        let id = self.step_seq;
+        let result = match &mut self.geo {
+            Geo::Worker(w) => {
+                w.measure(id, a, b);
+                None
+            }
+            Geo::Sync(k) => Some(tenon_model::measure::measure(k.as_ref(), &self.sync_regen, a, b)),
+            Geo::Off => Some(Err("there is no geometry kernel".into())),
+        };
+        if let Some(Panel::Measure(m)) = &mut self.panel {
+            m.pending = result.is_none().then_some(id);
+            m.result = result;
+        }
+    }
+
     fn export_step(&mut self, path: &Path) -> Result<(), String> {
         match &mut self.geo {
             Geo::Worker(w) => {
@@ -422,9 +454,11 @@ impl Workbench {
                     if fresh {
                         self.sync_cache.release(k.as_mut());
                     }
-                    let mut r = regenerate_with(&doc, k.as_mut(), Some(&mut self.sync_cache));
+                    let r = regenerate_with(&doc, k.as_mut(), Some(&mut self.sync_cache));
                     let s = scene(&r, k.as_mut(), &MeshTol::default());
-                    r.release(k.as_mut());
+                    // Kept for measuring, like the worker keeps its result.
+                    let mut old = std::mem::replace(&mut self.sync_regen, r);
+                    old.release(k.as_mut());
                     match s {
                         Ok(s) => self.set_scene(s),
                         Err(e) => self.regen_note = Some(e),
@@ -460,6 +494,14 @@ impl Workbench {
                             Ok(()) => self.set_status(format!("Exported {}", path.display())),
                             Err(e) => self.set_error(format!("STEP export failed: {e}")),
                         }
+                    }
+                }
+                Response::Measure { request, result } => {
+                    if let Some(Panel::Measure(m)) = &mut self.panel
+                        && m.pending == Some(request)
+                    {
+                        m.pending = None;
+                        m.result = Some(result);
                     }
                 }
                 _ => {}

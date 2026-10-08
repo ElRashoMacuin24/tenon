@@ -201,6 +201,16 @@ impl HolePanel {
     }
 }
 
+/// Measure: one or two faces or edges picked in the part, and what they measure.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MeasurePanel {
+    pub a: Option<Pick>,
+    pub b: Option<Pick>,
+    pub result: Option<Result<tenon_model::measure::Measurement, String>>,
+    /// The measurement asked for and not answered yet.
+    pub pending: Option<u64>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CopyKind {
     Rect,
@@ -392,6 +402,7 @@ pub(crate) enum Panel {
     Hole(HolePanel),
     Pattern(Box<PatternPanel>),
     Work(Box<crate::work::WorkPanel>),
+    Measure(Box<MeasurePanel>),
     Value(ValuePanel),
     EditDimension { sketch: FeatureId, constraint: ConstraintId, value: f64, angular: bool, equation: Option<String> },
     Rename { feature: FeatureId, name: String },
@@ -1057,6 +1068,12 @@ impl Workbench {
                             }
                         }
                     }
+                }
+            }
+            // Measure has nothing to commit: OK and Cancel both close it.
+            Panel::Measure(_) => {
+                if commit {
+                    keep = false;
                 }
             }
             Panel::Work(w) => {

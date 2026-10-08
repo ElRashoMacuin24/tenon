@@ -9,6 +9,7 @@ use std::thread::JoinHandle;
 use tenon_kernel::{CancelToken, Kernel, MeshTol, ShapeHandle};
 
 use crate::Document;
+use crate::measure::{Entity, Measurement, measure};
 use crate::regen::{Regen, RegenCache, Scene, regenerate, regenerate_with, scene};
 
 enum Request {
@@ -22,6 +23,12 @@ enum Request {
         request: u64,
         doc: Box<Document>,
     },
+    /// Measures on the part last regenerated.
+    Measure {
+        request: u64,
+        a: Entity,
+        b: Option<Entity>,
+    },
     Shutdown,
 }
 
@@ -34,6 +41,8 @@ pub enum Response {
     Failed { revision: u64, message: String },
     /// STEP data of the bodies of a document snapshot.
     Step { request: u64, result: Result<Vec<u8>, String> },
+    /// A measurement on the part last regenerated.
+    Measure { request: u64, result: Result<Measurement, String> },
 }
 
 /// Handle to the regeneration thread.
@@ -138,6 +147,10 @@ impl Worker {
                 regen.release(k);
                 send(Response::Step { request, result });
             }
+            Request::Measure { request, a, b } => {
+                token.reset();
+                send(Response::Measure { request, result: measure(k, current, a, b) });
+            }
             Request::Shutdown => {}
         }
     }
@@ -148,6 +161,11 @@ impl Worker {
     pub fn regenerate(&self, revision: u64, doc: Document, fresh: bool) {
         self.cancel.cancel();
         let _ = self.tx.send(Request::Regenerate { revision, doc: Box::new(doc), fresh });
+    }
+
+    /// Measures on the part last regenerated; the answer arrives as [`Response::Measure`].
+    pub fn measure(&self, request: u64, a: Entity, b: Option<Entity>) {
+        let _ = self.tx.send(Request::Measure { request, a, b });
     }
 
     /// Exports the bodies of `doc` as STEP; the answer arrives as [`Response::Step`].

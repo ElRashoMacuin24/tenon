@@ -123,6 +123,7 @@ impl Workbench {
                 v
             }
             Some(Panel::Shell(p)) => p.faces.iter().filter_map(face).collect(),
+            Some(Panel::Measure(m)) => m.a.into_iter().chain(m.b).collect(),
             Some(Panel::Pattern(p)) => {
                 // The faces of the features being copied, and the picked direction, axis or plane.
                 let mut v: Vec<Pick> = Vec::new();
@@ -295,6 +296,25 @@ impl Workbench {
             .map(|(id, _)| id)
     }
 
+    /// Measure: the shortest distance drawn between its nearest points, with its value.
+    pub(crate) fn measure_overlay(&self, ui: &egui::Ui, rect: Rect, t: &Tokens) {
+        let Some(Panel::Measure(m)) = &self.panel else { return };
+        let Some(Ok(result)) = &m.result else { return };
+        let (Some((a, b)), Some(d)) = (result.nearest, result.get("Distance")) else { return };
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let screen = |q: tenon_geom::Vec3| self.view.camera.project(q, w, h).map(|(x, y, _)| rect.min + vec2(x as f32, y as f32));
+        let (Some(sa), Some(sb)) = (screen(a), screen(b)) else { return };
+        let p = ui.painter().with_clip_rect(rect);
+        p.line_segment([sa, sb], Stroke::new(1.5, t.accent));
+        p.circle_filled(sa, 3.0, t.accent);
+        p.circle_filled(sb, 3.0, t.accent);
+        let label = format!("{} mm", crate::properties::fmt_value(d));
+        let at = sa + (sb - sa) * 0.5 + vec2(6.0, -6.0);
+        let galley = p.layout_no_wrap(label, crate::theme::body(), t.text);
+        p.rect_filled(Rect::from_min_size(at - vec2(3.0, 2.0), galley.size() + vec2(6.0, 4.0)), 3.0, t.panel.gamma_multiply(0.9));
+        p.galley(at, galley, t.text);
+    }
+
     /// The hole panel's centre points on the part: picked ones filled, the others hollow.
     pub(crate) fn hole_markers(&self, ui: &egui::Ui, rect: Rect, t: &Tokens) {
         let Some(Panel::Hole(p)) = &self.panel else { return };
@@ -319,6 +339,36 @@ impl Workbench {
     /// Hover and clicks in the viewport while a Fillet, Chamfer, Shell or Hole panel is open.
     /// Returns false when no such panel is open.
     pub(crate) fn panel_pointer(&mut self, resp: &egui::Response, rect: Rect) -> bool {
+        if matches!(self.panel, Some(Panel::Measure(_))) {
+            // Any face or edge: the first click is the first entity, the second the second, a
+            // third starts over.
+            let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+            let hover = resp.hover_pos().and_then(|p| {
+                let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+                if let Some(e) = pick_edge(&meshes, &self.view.camera, w, h, x, y, 5.0) {
+                    return Some(Pick::Edge { body: e.body, edge: e.edge });
+                }
+                let (o, d) = self.view.camera.ray(x, y, w, h);
+                pick_face(&meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
+            });
+            self.view.hover = hover;
+            if resp.clicked()
+                && let Some(p) = hover
+            {
+                if let Some(Panel::Measure(m)) = &mut self.panel {
+                    match (m.a, m.b) {
+                        (None, _) => m.a = Some(p),
+                        (Some(_), None) => m.b = Some(p),
+                        _ => {
+                            m.a = Some(p);
+                            m.b = None;
+                        }
+                    }
+                }
+                self.request_measure();
+            }
+            return true;
+        }
         if matches!(self.panel, Some(Panel::Hole(_))) {
             self.view.hover = None;
             if resp.clicked()

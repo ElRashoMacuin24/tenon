@@ -784,6 +784,49 @@ fn equations_typed_into_fields_and_the_parameters_dialog() {
     assert!(!wb.status_error, "{}", wb.status());
 }
 
+#[test]
+fn measure_faces_and_edges_by_clicking_them() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    let result = |wb: &Workbench, label: &str| match &wb.panel {
+        Some(Panel::Measure(m)) => m.result.as_ref().and_then(|r| r.as_ref().ok()).and_then(|r| r.get(label)),
+        _ => panic!("no measure panel"),
+    };
+
+    wb.run_ui("inspect.measure").unwrap();
+    // The top face: its area.
+    let top = on_screen(&wb, Vec3::new(20.0, 10.0, 10.0));
+    d.click(&mut wb, top);
+    assert!((result(&wb, "Area").unwrap() - 800.0).abs() < 1e-6);
+    // Then the front face: they meet at 90 degrees.
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    let front = on_screen(&wb, Vec3::new(20.0, 0.0, 5.0));
+    d.click(&mut wb, front);
+    assert!(result(&wb, "Distance").unwrap().abs() < 1e-9);
+    assert!((result(&wb, "Angle").unwrap() - 90.0).abs() < 1e-9);
+    // A third click starts over: the front-right vertical edge is 10 long.
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    let edge = on_screen(&wb, Vec3::new(40.0, 0.0, 5.0));
+    d.click(&mut wb, edge);
+    assert!((result(&wb, "Length").unwrap() - 10.0).abs() < 1e-9, "{:?}", wb.panel.as_ref().map(|_| ()));
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none());
+}
+
 /// Where a browser row was drawn in the last frame.
 fn browser_row(d: &Driver, label: &str) -> Rect {
     d.ctx

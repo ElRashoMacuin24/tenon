@@ -60,6 +60,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `model.faces` | Faces | body (default 0) | no |
 | `model.edges` | Edges | body (default 0): every edge with the names of its two faces | no |
 | `model.work` | Work Features | where every work plane, axis and point is | no |
+| `model.measure` | Measure | a, and optionally b: {"face": face reference} \| {"edge": edge reference} \| {"body": n, "face" or "edge": index}; one gives its area, length or diameter, two give the distance (with the nearest points) and the angle | no |
 | `model.edge_ref` | Edge Reference | faces: [face origin, face origin] (the two faces the edge joins); or body (default 0) and edge (index from model.edges) | no |
 | `model.face_ref` | Face Reference | origin: {"type": "cap", "feature": id, "end": "start" \| "end"} or {"type": "side", "feature": id, "curve": id}; or body (default 0) and face (index from model.faces) | no |
 | `file.save` | Save | path (.tenon) | no |

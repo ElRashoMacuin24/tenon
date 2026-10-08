@@ -8,6 +8,7 @@
 pub mod cmd;
 mod document;
 pub mod expr;
+pub mod measure;
 pub mod naming;
 pub mod params;
 pub mod regen;

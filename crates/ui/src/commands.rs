@@ -212,7 +212,7 @@ pub const RIBBON: &[RibbonTab] = &[
         panels: &[RibbonPanel {
             title: "Measure",
             commands: &[
-                large("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 2),
+                large("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 0),
                 large("inspect.mass", "Mass\nProperties", "Volume, area, centre of mass, inertia", Icon::MassProps, 0),
             ],
         }],
@@ -308,7 +308,7 @@ pub const QUICK_ACCESS: &[&[UiCommand]] = &[
     ],
     &[
         small("tools.parameters", "Parameters", "Named parameters and expressions", Icon::Parameters, 0),
-        small("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 2),
+        small("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 0),
     ],
 ];
 

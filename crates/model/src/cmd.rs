@@ -1163,6 +1163,46 @@ fn model_faces(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     Ok(json!({ "body": body, "faces": out }))
 }
 
+/// A face or edge to measure: `{"face": <face reference>}`, `{"edge": <edge reference>}`, or
+/// `{"body": n, "face": index}` / `{"body": n, "edge": index}`.
+fn entity_param(r: &Regen, k: &dyn Kernel, v: &Value, key: &str) -> Result<crate::measure::Entity, CmdError> {
+    use crate::measure::Entity;
+    let body = v.get("body").and_then(Value::as_u64).map_or(0, |b| b as usize);
+    let index = |x: &Value| x.as_u64().and_then(|i| u32::try_from(i).ok());
+    match (v.get("face"), v.get("edge")) {
+        (Some(f), _) if f.is_object() => {
+            let fr: FaceRef = serde_json::from_value(f.clone()).map_err(|e| CmdError(format!("`{key}.face`: {e}")))?;
+            let (body, face) = r.resolve(&fr, k).map_err(CmdError)?;
+            Ok(Entity::Face { body, face })
+        }
+        (Some(f), _) => {
+            Ok(Entity::Face { body, face: index(f).ok_or_else(|| CmdError(format!("`{key}.face` must be an index or a face reference")))? })
+        }
+        (_, Some(e)) if e.is_object() => {
+            let er: EdgeRef = serde_json::from_value(e.clone()).map_err(|x| CmdError(format!("`{key}.edge`: {x}")))?;
+            let (body, edge) = r.resolve_edge(&er, k).map_err(CmdError)?;
+            Ok(Entity::Edge { body, edge })
+        }
+        (_, Some(e)) => {
+            Ok(Entity::Edge { body, edge: index(e).ok_or_else(|| CmdError(format!("`{key}.edge` must be an index or an edge reference")))? })
+        }
+        _ => Err(format!("`{key}` needs a face or an edge").into()),
+    }
+}
+
+fn model_measure(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
+    let r = s.regen(k).clone();
+    let a = entity_param(&r, k, field(p, "a")?, "a")?;
+    let b = match p.get("b") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(entity_param(&r, k, v, "b")?),
+    };
+    let m = crate::measure::measure(k, &r, a, b).map_err(CmdError)?;
+    let values: Vec<Value> = m.values.iter().map(|(l, v, u)| json!({ "label": l, "value": v, "unit": u })).collect();
+    let nearest = m.nearest.map(|(a, b)| json!([[a.x, a.y, a.z], [b.x, b.y, b.z]]));
+    Ok(json!({ "values": values, "nearest": nearest }))
+}
+
 fn model_work(s: &mut Session, k: &mut dyn Kernel, _p: &Value) -> CmdResult {
     let r = s.regen(k);
     let v3 = |v: tenon_geom::Vec3| json!([v.x, v.y, v.z]);
@@ -1419,6 +1459,12 @@ static COMMANDS: &[CommandSpec] = &[
     geo_cmd!("model.faces", "Faces", "body (default 0)", model_faces),
     geo_cmd!("model.edges", "Edges", "body (default 0): every edge with the names of its two faces", model_edges),
     geo_cmd!("model.work", "Work Features", "where every work plane, axis and point is", model_work),
+    geo_cmd!(
+        "model.measure",
+        "Measure",
+        "a, and optionally b: {\"face\": face reference} | {\"edge\": edge reference} | {\"body\": n, \"face\" or \"edge\": index}; one gives its area, length or diameter, two give the distance (with the nearest points) and the angle",
+        model_measure
+    ),
     geo_cmd!(
         "model.edge_ref",
         "Edge Reference",

@@ -1,7 +1,7 @@
 //! The properties panel (docked above the browser while a feature command runs), the
 //! mini-toolbar next to the preview, and the drag arrow that sets a distance in the viewport.
 
-use egui::{Align2, Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
+use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, pos2, vec2};
 use tenon_geom::Vec3;
 use tenon_model::{AxisSel, DirectionRef, Operation, OriginAxis, OriginPlane, PlaneRef, RegionSel};
 use tenon_sketch::EntityId;
@@ -403,6 +403,7 @@ impl Workbench {
                     | Panel::Hole(_)
                     | Panel::Pattern(_)
                     | Panel::Work(_)
+                    | Panel::Measure(_)
             )
         )
     }
@@ -450,6 +451,7 @@ impl Workbench {
                 p.editing.map(|f| self.feature_name(f)),
             ),
             Panel::Work(w) => (w.title(), w.editing.map(|f| self.feature_name(f))),
+            Panel::Measure(_) => ("Measure", Some("Distance, angle, length, area".to_string())),
             _ => return,
         };
         let mut clear = false;
@@ -1144,6 +1146,51 @@ impl Workbench {
                                     });
                                 });
                             }
+                        }
+                    }
+                    Panel::Measure(m) => {
+                        let label = |p: &crate::viewport::Pick| match p {
+                            crate::viewport::Pick::Face { body, face } => self
+                                .scene
+                                .bodies
+                                .get(*body)
+                                .and_then(|b| b.faces.get(*face as usize))
+                                .and_then(|f| f.0)
+                                .map_or_else(|| "Face".to_string(), |o| o.describe(&self.feature_name(o.feature()))),
+                            crate::viewport::Pick::Edge { .. } => "Edge".to_string(),
+                        };
+                        section(ui, "Selection", true, |ui| {
+                            egui::Grid::new("tn_props_measure_sel").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("First");
+                                ui.label(m.a.as_ref().map_or_else(|| "click a face or edge".to_string(), label));
+                                ui.end_row();
+                                ui.label("Second");
+                                ui.label(m.b.as_ref().map_or_else(|| "click another (for distance and angle)".to_string(), label));
+                                ui.end_row();
+                            });
+                        });
+                        section(ui, "Results", true, |ui| match &m.result {
+                            None if m.pending.is_some() => {
+                                ui.label(RichText::new("Measuring...").color(t.text_dim));
+                            }
+                            None => {
+                                ui.label(RichText::new("Nothing measured yet.").color(t.text_dim));
+                            }
+                            Some(Err(e)) => {
+                                ui.label(RichText::new(e).color(t.history_marker));
+                            }
+                            Some(Ok(r)) => {
+                                egui::Grid::new("tn_props_measure_res").num_columns(2).spacing([10.0, 4.0]).striped(true).show(ui, |ui| {
+                                    for (l, v, u) in &r.values {
+                                        ui.label(l);
+                                        ui.label(RichText::new(format!("{} {u}", fmt_value(*v))).strong());
+                                        ui.end_row();
+                                    }
+                                });
+                            }
+                        });
+                        if ui.button("Restart").on_hover_text("Clear the selection").clicked() {
+                            **m = Default::default();
                         }
                     }
                     Panel::Work(w) => {

@@ -168,6 +168,13 @@ pub(crate) mod bridge {
         max: V3,
     }
 
+    #[derive(Debug, Default)]
+    struct DistOut {
+        distance: f64,
+        on_a: V3,
+        on_b: V3,
+    }
+
     unsafe extern "C++" {
         include!("tenon-kernel-occt/shim/tenon_occt.h");
 
@@ -221,6 +228,8 @@ pub(crate) mod bridge {
         fn mass_properties(shape: &Shape, out: &mut MassOut) -> Result<()>;
         fn bounding_box(shape: &Shape, out: &mut BoxOut) -> Result<()>;
         fn is_valid(shape: &Shape) -> Result<bool>;
+        /// Minimum distance between sub-shapes: kind 0 the whole shape, 1 a face, 2 an edge, 3 a vertex.
+        fn min_distance(a: &Shape, kind_a: u8, index_a: u32, b: &Shape, kind_b: u8, index_b: u32, out: &mut DistOut) -> Result<()>;
 
         fn export_step(shapes: &ShapeList) -> Result<Vec<u8>>;
         fn import_step(data: &[u8]) -> Result<UniquePtr<ShapeList>>;

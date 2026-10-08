@@ -14,6 +14,7 @@
 #include <utility>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
@@ -1155,6 +1156,44 @@ std::unique_ptr<ShapeList> import_step(rust::Slice<const std::uint8_t> data) {
       throw std::runtime_error("the STEP data contains no shapes");
     }
     return list;
+  });
+}
+
+namespace {
+const TopoDS_Shape& sub_shape(const Shape& s, std::uint8_t kind, std::uint32_t index) {
+  const ShapeMap* map = nullptr;
+  switch (kind) {
+  case 0:
+    return s.shape;
+  case 1:
+    map = &s.faces;
+    break;
+  case 2:
+    map = &s.edges;
+    break;
+  case 3:
+    map = &s.vertices;
+    break;
+  default:
+    throw std::invalid_argument("unknown sub-shape kind");
+  }
+  if (index >= static_cast<std::uint32_t>(map->Extent())) {
+    throw std::out_of_range("sub-shape index out of range");
+  }
+  return (*map)(static_cast<int>(index) + 1);
+}
+} // namespace
+
+void min_distance(const Shape& a, std::uint8_t kind_a, std::uint32_t index_a, const Shape& b, std::uint8_t kind_b, std::uint32_t index_b,
+                  DistOut& out) {
+  guarded("min_distance", [&] {
+    BRepExtrema_DistShapeShape d(sub_shape(a, kind_a, index_a), sub_shape(b, kind_b, index_b));
+    if (!d.IsDone() || d.NbSolution() < 1) {
+      throw std::runtime_error("no distance found");
+    }
+    out.distance = d.Value();
+    out.on_a = v3(d.PointOnShape1(1));
+    out.on_b = v3(d.PointOnShape2(1));
   });
 }
 
