@@ -612,11 +612,15 @@ pub struct Document {
     /// Parameter names and equations.
     #[serde(default)]
     pub(crate) params: crate::params::Parameters,
+    /// The End of Part marker sits just before this feature: it and the features after it are
+    /// rolled back (not computed). `None`: after the last feature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    end_before: Option<FeatureId>,
 }
 
 impl Default for Document {
     fn default() -> Self {
-        Document { name: "Part1".into(), features: Vec::new(), next_feature: 0, params: Default::default() }
+        Document { name: "Part1".into(), features: Vec::new(), next_feature: 0, params: Default::default(), end_before: None }
     }
 }
 
@@ -663,7 +667,9 @@ impl Document {
         let id = FeatureId(self.next_feature);
         let base = kind.default_name();
         let n = (1..).find(|n| !self.features.iter().any(|f| f.name == format!("{base}{n}"))).unwrap_or(1);
-        self.features.push(Feature { id, name: format!("{base}{n}"), suppressed: false, kind });
+        // New features go in just above the End of Part marker.
+        let at = self.end_of_part();
+        self.features.insert(at, Feature { id, name: format!("{base}{n}"), suppressed: false, kind });
         Ok(id)
     }
 
@@ -671,7 +677,13 @@ impl Document {
     /// what a feature is edited against.
     pub fn rolled_back_to(&self, id: FeatureId) -> Document {
         let n = self.index_of(id).unwrap_or(self.features.len());
-        Document { name: self.name.clone(), features: self.features[..n].to_vec(), next_feature: self.next_feature, params: self.params.clone() }
+        Document {
+            name: self.name.clone(),
+            features: self.features[..n].to_vec(),
+            next_feature: self.next_feature,
+            params: self.params.clone(),
+            end_before: None,
+        }
     }
 
     /// Removes a feature that nothing depends on.
@@ -681,7 +693,82 @@ impl Document {
             return Err(format!("{} is used by {}", self.feature(id).map_or("?", |f| f.name.as_str()), users.join(", ")));
         }
         let i = self.index_of(id).ok_or_else(|| format!("{id} does not exist"))?;
+        if self.end_before == Some(id) {
+            self.end_before = self.features.get(i + 1).map(|f| f.id);
+        }
         Ok(self.features.remove(i))
+    }
+
+    /// How many features are computed: the index the End of Part marker sits at.
+    pub fn end_of_part(&self) -> usize {
+        self.end_before.and_then(|id| self.index_of(id)).unwrap_or(self.features.len())
+    }
+
+    /// The feature the End of Part marker sits just before, if it is not at the end.
+    pub fn end_before(&self) -> Option<FeatureId> {
+        self.end_before
+    }
+
+    /// Moves the End of Part marker to just before `before` (`None`: after the last feature).
+    pub fn set_end_of_part(&mut self, before: Option<FeatureId>) -> Result<(), String> {
+        if let Some(id) = before
+            && self.feature(id).is_none()
+        {
+            return Err(format!("{id} does not exist"));
+        }
+        self.end_before = before;
+        Ok(())
+    }
+
+    /// Moves a feature to just before `before` (`None`: to the end, above the End of Part marker
+    /// if it is not there). Sketches only it uses go with it. Refused when a feature would come
+    /// before one it uses.
+    pub fn move_feature(&mut self, id: FeatureId, before: Option<FeatureId>) -> Result<(), String> {
+        if before == Some(id) {
+            return Ok(());
+        }
+        let name = self.feature(id).ok_or_else(|| format!("{id} does not exist"))?.name.clone();
+        // The block: the sketches only this feature uses, then the feature.
+        let own: Vec<FeatureId> = self
+            .feature(id)
+            .map(|f| f.kind.depends_on())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| {
+                matches!(self.feature(*d).map(|f| &f.kind), Some(FeatureKind::Sketch { .. }))
+                    && self.features.iter().filter(|f| f.kind.depends_on().contains(d)).count() == 1
+            })
+            .collect();
+        if before.is_some_and(|b| own.contains(&b)) {
+            return Ok(());
+        }
+        let saved = (self.features.clone(), self.end_before);
+        let mut block: Vec<Feature> = Vec::new();
+        self.features.retain(|f| {
+            if f.id == id || own.contains(&f.id) {
+                block.push(f.clone());
+                false
+            } else {
+                true
+            }
+        });
+        // A marker on a moved feature stays where it was: on the next one that stays.
+        if self.end_before.is_some_and(|e| e == id || own.contains(&e)) {
+            let i = saved.0.iter().position(|f| Some(f.id) == self.end_before).unwrap_or(0);
+            self.end_before = saved.0[i..].iter().map(|f| f.id).find(|f| *f != id && !own.contains(f));
+        }
+        let at = match before {
+            Some(b) => self.index_of(b).ok_or_else(|| format!("{b} does not exist"))?,
+            None => self.end_of_part(),
+        };
+        for (k, f) in block.into_iter().enumerate() {
+            self.features.insert(at + k, f);
+        }
+        if let Err(e) = self.validate() {
+            (self.features, self.end_before) = saved;
+            return Err(format!("{name} cannot go there: {e}"));
+        }
+        Ok(())
     }
 
     /// A pattern or mirror copies only features that add or remove material.
@@ -700,6 +787,11 @@ impl Document {
     pub fn validate(&self) -> Result<(), String> {
         if self.features.len() > MAX_FEATURES {
             return Err("too many features".into());
+        }
+        if let Some(e) = self.end_before
+            && self.feature(e).is_none()
+        {
+            return Err(format!("the End of Part marker is before {e}, which does not exist"));
         }
         let mut seen = std::collections::BTreeSet::new();
         for (i, f) in self.features.iter().enumerate() {

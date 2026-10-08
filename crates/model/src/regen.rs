@@ -40,6 +40,8 @@ pub enum FeatureStatus {
     },
     /// After a failed feature, later features are not computed.
     NotComputed,
+    /// Below the End of Part marker.
+    RolledBack,
 }
 
 /// Result of a regeneration. Shapes live in the kernel; call [`Regen::release`] when done.
@@ -165,8 +167,11 @@ pub fn regenerate(doc: &Document, k: &mut dyn Kernel) -> Regen {
     let copied = doc.features().iter().flat_map(|f| f.kind.copies().iter().copied()).collect();
     let mut cx = Ctx { doc, k, regen: Regen::default(), copied };
     let mut failed = false;
-    for f in doc.features() {
-        let status = if failed {
+    let end = doc.end_of_part();
+    for (i, f) in doc.features().iter().enumerate() {
+        let status = if i >= end {
+            FeatureStatus::RolledBack
+        } else if failed {
             FeatureStatus::NotComputed
         } else if f.suppressed {
             FeatureStatus::Suppressed

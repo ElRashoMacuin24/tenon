@@ -49,6 +49,8 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `feature.rename` | Rename Feature | feature, name | yes |
 | `feature.suppress` | Suppress | feature, suppressed (default true) | yes |
 | `feature.delete` | Delete Feature | feature | yes |
+| `feature.end_of_part` | Move End of Part | before: the feature the marker goes just above (it and later ones are rolled back); omit or null for the end | yes |
+| `feature.move` | Reorder Feature | feature; before: the feature it goes just above (omit or null: last, above the End of Part); sketches only it uses go along | yes |
 | `edit.undo` | Undo | none | no |
 | `edit.redo` | Redo | none | no |
 | `model.tree` | Model Tree | none | no |

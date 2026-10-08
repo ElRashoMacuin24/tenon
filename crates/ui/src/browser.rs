@@ -24,6 +24,17 @@ pub(crate) enum BrowserAction {
     Pick(FeatureId),
     /// A single click on an origin plane or axis: picks it for the open panel.
     Reference(crate::work::Reference),
+    /// The End of Part marker dropped just above a feature (`None`: at the end).
+    EndOfPart(Option<FeatureId>),
+    /// A feature dropped just above another (`None`: last).
+    Move(FeatureId, Option<FeatureId>),
+}
+
+/// A browser row being dragged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BrowserDrag {
+    EndOfPart,
+    Feature(FeatureId),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -37,7 +48,8 @@ enum RowStyle {
 /// One browser row. `expand` draws a +/- box; returns the row response and whether the box was
 /// clicked.
 fn row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, expand: Option<bool>, style: RowStyle) -> (egui::Response, bool) {
-    let (rr, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::CLICK);
+    // Rows can be dragged (End of Part and features reorder that way).
+    let (rr, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::CLICK | Sense::DRAG);
     if style == RowStyle::Active {
         ui.painter().rect_filled(rr, 0.0, t.pressed);
     } else if resp.hovered() {
@@ -64,6 +76,8 @@ fn row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, expand: Opti
         _ => t.text,
     };
     ui.painter().text(pos2(ir.right() + 6.0, rr.center().y), Align2::LEFT_CENTER, label, theme::body(), color);
+    #[cfg(test)]
+    ui.data_mut(|d| d.get_temp_mut_or_default::<Vec<(String, Rect)>>(egui::Id::new("tn_browser_rows")).push((label.to_owned(), rr)));
     (resp, toggled)
 }
 
@@ -97,6 +111,8 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
 
 impl Workbench {
     pub(crate) fn browser(&mut self, ui: &mut Ui, t: &Tokens) {
+        #[cfg(test)]
+        ui.data_mut(|d| d.remove::<Vec<(String, Rect)>>(egui::Id::new("tn_browser_rows")));
         let r = ui.max_rect();
         let header = Rect::from_min_size(r.min, vec2(r.width(), 26.0));
         let p = ui.painter();
@@ -220,11 +236,30 @@ impl Workbench {
                 .iter()
                 .map(|f| (f.id, f.name.clone(), feature_icon(&f.kind), f.suppressed, matches!(f.kind, FeatureKind::Sketch { .. })))
                 .collect();
+            // The End of Part row sits where the marker is; rows below it are rolled back.
+            let end = self.document().end_of_part();
+            let end_row = |ui: &mut Ui, drag: &mut Option<BrowserDrag>| {
+                let (marker, _) = row(ui, t, 1, Icon::EndOfPart, "End of Part", None, RowStyle::Normal);
+                if marker.drag_started() {
+                    *drag = Some(BrowserDrag::EndOfPart);
+                }
+                let _ = marker.on_hover_text("Drag to roll the part back: features below it are not computed, and new ones go above it.");
+            };
+            let mut drag = self.chrome.browser_drag;
+            let mut drawn_end = false;
+            // Where each top-level entry is, and the first feature of it in history order.
+            let mut entries: Vec<(FeatureId, Rect)> = Vec::new();
             for (id, name, icon, suppressed, is_sketch) in &features {
                 if *is_sketch && owner.contains_key(id) {
                     continue; // shown under its feature
                 }
                 let kids: Vec<_> = features.iter().filter(|c| owner.get(&c.0) == Some(id)).collect();
+                let index = |f: FeatureId| self.document().index_of(f).unwrap_or(usize::MAX);
+                let first = kids.iter().map(|k| k.0).chain(std::iter::once(*id)).min_by_key(|f| index(*f)).unwrap_or(*id);
+                if !drawn_end && index(first) >= end && filter.is_empty() {
+                    end_row(ui, &mut drag);
+                    drawn_end = true;
+                }
                 let visible = filter.is_empty() || name.to_lowercase().contains(&filter) || kids.iter().any(|k| k.1.to_lowercase().contains(&filter));
                 if !visible {
                     continue;
@@ -236,10 +271,13 @@ impl Workbench {
                         (_, _, true) => RowStyle::Active,
                         (_, true, _) => RowStyle::Dim,
                         (Some(FeatureStatus::Error { .. }), _, _) => RowStyle::Error,
-                        (Some(FeatureStatus::NotComputed), _, _) => RowStyle::Dim,
+                        (Some(FeatureStatus::NotComputed | FeatureStatus::RolledBack), _, _) => RowStyle::Dim,
                         _ => RowStyle::Normal,
                     };
                     let (mut resp, toggled) = row(ui, t, depth, icon, name, expand, style);
+                    if resp.drag_started() && depth == 1 {
+                        drag = Some(BrowserDrag::Feature(id));
+                    }
                     if let Some(FeatureStatus::Error { message }) = &status {
                         resp = resp.on_hover_text(message.clone());
                     }
@@ -279,15 +317,37 @@ impl Workbench {
                         }
                     });
                 };
+                let top = ui.cursor().top();
                 draw(ui, *id, name, *icon, *suppressed, 1, (!kids.is_empty()).then_some(open));
                 if open {
                     for k in kids {
                         draw(ui, k.0, &k.1, k.2, k.3, 2, None);
                     }
                 }
+                entries.push((first, Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top())));
             }
-            let (marker, _) = row(ui, t, 1, Icon::EndOfPart, "End of Part", None, RowStyle::Normal);
-            let _ = marker.on_hover_text("Rollback marker: features below it are not computed. Dragging it arrives later in M2.");
+            if !drawn_end {
+                end_row(ui, &mut drag);
+            }
+            // Dragging a row: a line shows where it goes; letting go moves it there.
+            if let Some(d) = drag {
+                let pointer = ui.input(|i| i.pointer.interact_pos());
+                let target = pointer.map(|p| entries.iter().find(|(_, r)| p.y < r.center().y).map(|e| e.0));
+                if let Some(before) = target {
+                    let y = before.and_then(|b| entries.iter().find(|e| e.0 == b)).map_or(ui.cursor().top(), |e| e.1.top());
+                    ui.painter().hline(ui.max_rect().x_range(), y, Stroke::new(2.0, t.accent));
+                    if ui.input(|i| i.pointer.any_released()) {
+                        action = Some(match d {
+                            BrowserDrag::EndOfPart => BrowserAction::EndOfPart(before),
+                            BrowserDrag::Feature(f) => BrowserAction::Move(f, before),
+                        });
+                    }
+                }
+                if !ui.input(|i| i.pointer.any_down()) {
+                    drag = None;
+                }
+            }
+            self.chrome.browser_drag = drag;
         });
         if let Some(a) = action {
             self.browser_action(a);
@@ -325,6 +385,21 @@ impl Workbench {
             BrowserAction::Reference(r) => {
                 self.pick_reference(r);
                 Ok(())
+            }
+            BrowserAction::EndOfPart(before) => {
+                let p = match before {
+                    Some(b) => json!({ "before": b.0 }),
+                    None => json!({}),
+                };
+                self.exec("feature.end_of_part", p).map(|_| ())
+            }
+            BrowserAction::Move(f, before) if before == Some(f) => Ok(()),
+            BrowserAction::Move(f, before) => {
+                let p = match before {
+                    Some(b) => json!({ "feature": f.0, "before": b.0 }),
+                    None => json!({ "feature": f.0 }),
+                };
+                self.exec("feature.move", p).map(|_| ())
             }
         };
         if let Err(e) = result {

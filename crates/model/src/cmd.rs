@@ -1051,6 +1051,23 @@ fn feature_suppress(s: &mut Session, p: &Value) -> CmdResult {
     })
 }
 
+fn opt_feature(p: &Value, key: &str) -> Result<Option<FeatureId>, CmdError> {
+    Ok(opt_id(p, key)?.map(FeatureId))
+}
+
+fn feature_end_of_part(s: &mut Session, p: &Value) -> CmdResult {
+    let before = opt_feature(p, "before")?;
+    s.edit(|d| d.set_end_of_part(before).map_err(CmdError))?;
+    Ok(json!({ "computed": s.document().end_of_part() }))
+}
+
+fn feature_move(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, before) = (feature_id(p)?, opt_feature(p, "before")?);
+    s.edit(|d| d.move_feature(id, before).map_err(CmdError))?;
+    let order: Vec<u32> = s.document().features().iter().map(|f| f.id.0).collect();
+    Ok(json!({ "order": order }))
+}
+
 fn feature_delete(s: &mut Session, p: &Value) -> CmdResult {
     let id = feature_id(p)?;
     s.edit(|d| d.remove(id).map(|_| json!({})).map_err(CmdError))
@@ -1379,6 +1396,20 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!("feature.rename", "Rename Feature", "feature, name", true, feature_rename),
     doc_cmd!("feature.suppress", "Suppress", "feature, suppressed (default true)", true, feature_suppress),
     doc_cmd!("feature.delete", "Delete Feature", "feature", true, feature_delete),
+    doc_cmd!(
+        "feature.end_of_part",
+        "Move End of Part",
+        "before: the feature the marker goes just above (it and later ones are rolled back); omit or null for the end",
+        true,
+        feature_end_of_part
+    ),
+    doc_cmd!(
+        "feature.move",
+        "Reorder Feature",
+        "feature; before: the feature it goes just above (omit or null: last, above the End of Part); sketches only it uses go along",
+        true,
+        feature_move
+    ),
     doc_cmd!("edit.undo", "Undo", "", false, edit_undo),
     doc_cmd!("edit.redo", "Redo", "", false, edit_redo),
     doc_cmd!("model.tree", "Model Tree", "", false, model_tree),

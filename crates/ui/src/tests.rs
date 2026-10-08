@@ -784,6 +784,53 @@ fn equations_typed_into_fields_and_the_parameters_dialog() {
     assert!(!wb.status_error, "{}", wb.status());
 }
 
+/// Where a browser row was drawn in the last frame.
+fn browser_row(d: &Driver, label: &str) -> Rect {
+    d.ctx
+        .data(|x| x.get_temp::<Vec<(String, Rect)>>(egui::Id::new("tn_browser_rows")))
+        .unwrap_or_default()
+        .into_iter()
+        .find(|(l, _)| l == label)
+        .unwrap_or_else(|| panic!("no browser row {label}"))
+        .1
+}
+
+#[test]
+fn end_of_part_and_features_are_dragged_in_the_browser() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    for (x0, h) in [(0.0, 10.0), (50.0, 5.0)] {
+        wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+        let f = sketching(&wb);
+        wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": x0, "y1": 0, "x2": x0 + 10.0, "y2": 10 })).unwrap();
+        wb.finish_sketch();
+        wb.exec("model.extrude", json!({ "sketch": f.0, "distance": h, "operation": "new_body" })).unwrap();
+    }
+    d.settle(&mut wb);
+    assert!((volume(&wb) - 1500.0).abs() < 1e-6);
+    let names = |wb: &Workbench| wb.document().features().iter().map(|f| f.name.clone()).collect::<Vec<_>>();
+
+    // Drag End of Part up onto Extrusion2: it is rolled back.
+    let (eop, ex2) = (browser_row(&d, "End of Part"), browser_row(&d, "Extrusion2"));
+    d.drag(&mut wb, eop.center(), ex2.center() - vec2(0.0, 4.0), egui::PointerButton::Primary);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.document().end_of_part(), 2, "{:?}", names(&wb));
+    assert!((volume(&wb) - 1000.0).abs() < 1e-6, "{}", volume(&wb));
+    assert!(browser_row(&d, "End of Part").top() < browser_row(&d, "Extrusion2").top(), "the marker is drawn above it");
+
+    // Back to the bottom, then drag Extrusion2 above Extrusion1: its sketch goes along.
+    wb.exec("feature.end_of_part", json!({})).unwrap();
+    d.frame(&mut wb, vec![]);
+    let (ex1, ex2) = (browser_row(&d, "Extrusion1"), browser_row(&d, "Extrusion2"));
+    d.drag(&mut wb, ex2.center(), ex1.center() - vec2(0.0, 4.0), egui::PointerButton::Primary);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(names(&wb), ["Sketch2", "Extrusion2", "Sketch1", "Extrusion1"]);
+    assert!((volume(&wb) - 1500.0).abs() < 1e-6);
+    assert!(wb.chrome.browser_drag.is_none());
+    assert!(!wb.status_error, "{}", wb.status());
+}
+
 #[test]
 fn start_2d_sketch_picks_a_plane_or_face_in_the_viewport() {
     use tenon_geom::Vec3;

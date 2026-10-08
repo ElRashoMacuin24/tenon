@@ -499,3 +499,81 @@ fn work_axes_and_points() {
     let r = run(&mut s, &mut k, "model.regenerate", json!({}));
     assert_eq!(r["error"]["feature"], par, "{r}");
 }
+
+fn order(s: &Session) -> Vec<String> {
+    s.document().features().iter().map(|f| f.name.clone()).collect()
+}
+
+#[test]
+fn end_of_part_rolls_back_and_new_features_go_above_it() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let ex = block_at(&mut s, &mut k, 0.0, 0.0, 40.0, 20.0, 10.0);
+    let (sk, _) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0)]);
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "through_all": true }))["feature"].as_u64().unwrap();
+    regenerates(&mut s, &mut k);
+    let drilled = 8000.0 - PI * 9.0 * 10.0;
+    assert!(approx(volume(&mut s, &mut k), drilled));
+
+    // The marker above the hole's sketch: the hole is rolled back.
+    let r = run(&mut s, &mut k, "feature.end_of_part", json!({ "before": sk }));
+    assert_eq!(r["computed"], 2, "sketch and extrusion");
+    let reg = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(reg["error"].is_null(), "{reg}");
+    let status = |reg: &Value, id: u64| reg["features"].as_array().unwrap().iter().find(|f| f["id"] == id).unwrap()["status"]["state"].clone();
+    assert_eq!(status(&reg, hole), "rolled_back");
+    assert!(approx(volume(&mut s, &mut k), 8000.0));
+
+    // A new feature goes in above the marker.
+    let wp = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 5 }))["feature"].as_u64().unwrap();
+    assert_eq!(order(&s), ["Sketch1", "Extrusion1", "Work Plane1", "Sketch2", "Hole1"]);
+    let reg = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert_eq!(status(&reg, wp), "ok");
+
+    // Back to the end: everything is computed. Undo puts the marker back.
+    run(&mut s, &mut k, "feature.end_of_part", json!({}));
+    assert!(approx(volume(&mut s, &mut k), drilled));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    assert!(approx(volume(&mut s, &mut k), 8000.0));
+    run(&mut s, &mut k, "edit.redo", json!({}));
+
+    // Deleting the feature the marker sits above moves it down one.
+    run(&mut s, &mut k, "feature.end_of_part", json!({ "before": wp }));
+    run(&mut s, &mut k, "feature.delete", json!({ "feature": wp }));
+    assert_eq!(s.document().end_before().map(|f| f.0 as u64), Some(sk));
+    let text = serde_json::to_string(s.document()).unwrap();
+    let back: Document = serde_json::from_str(&text).unwrap();
+    assert_eq!(&back, s.document(), "the marker is saved");
+}
+
+#[test]
+fn features_reorder_with_their_sketches_but_not_before_what_they_use() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let ex = block_at(&mut s, &mut k, 0.0, 0.0, 40.0, 20.0, 10.0);
+    // A second, separate block from its own sketch.
+    let sk2 = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk2, "x1": 50, "y1": 0, "x2": 60, "y2": 10 }));
+    let ex2 = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "distance": 5, "operation": "new_body" }))["feature"].as_u64().unwrap();
+    let wp = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 5 }))["feature"].as_u64().unwrap();
+    assert_eq!(order(&s), ["Sketch1", "Extrusion1", "Sketch2", "Extrusion2", "Work Plane1"]);
+
+    // Extrusion2 to the top: its sketch goes along.
+    run(&mut s, &mut k, "feature.move", json!({ "feature": ex2, "before": 1 }));
+    assert_eq!(order(&s), ["Sketch2", "Extrusion2", "Sketch1", "Extrusion1", "Work Plane1"]);
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 8000.0 + 500.0));
+    // The work plane to just after Extrusion2.
+    run(&mut s, &mut k, "feature.move", json!({ "feature": wp, "before": 1 }));
+    assert_eq!(order(&s), ["Sketch2", "Extrusion2", "Work Plane1", "Sketch1", "Extrusion1"]);
+    // To the end.
+    run(&mut s, &mut k, "feature.move", json!({ "feature": wp }));
+    assert_eq!(order(&s), ["Sketch2", "Extrusion2", "Sketch1", "Extrusion1", "Work Plane1"]);
+
+    // A hole on Extrusion1's top cannot go above Extrusion1.
+    let (sk3, _) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0)]);
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk3, "diameter": 4, "through_all": true }))["feature"].as_u64().unwrap();
+    let before = s.document().clone();
+    let e = s.exec("feature.move", &json!({ "feature": hole, "before": ex }), Some(&mut k)).unwrap_err();
+    assert!(e.0.contains("Hole1 cannot go there"), "{e:?}");
+    assert_eq!(s.document(), &before);
+    let _ = sk3;
+}

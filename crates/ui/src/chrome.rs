@@ -36,6 +36,8 @@ pub(crate) struct Chrome {
     pub options: bool,
     /// The Parameters dialog is open.
     pub params: bool,
+    /// A browser row being dragged.
+    pub browser_drag: Option<crate::browser::BrowserDrag>,
     pub radial: Option<crate::radial::Radial>,
     pub theme: ThemeName,
     /// The theme egui's own widgets were last styled with.
@@ -63,6 +65,7 @@ impl Default for Chrome {
             mass: false,
             options: false,
             params: false,
+            browser_drag: None,
             radial: None,
             theme: ThemeName::default(),
             applied_theme: None,
