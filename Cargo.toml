@@ -42,6 +42,7 @@ egui-wgpu = "0.36"
 # Must match the version egui-wgpu uses (they share one device).
 wgpu = "30"
 bytemuck = { version = "1", features = ["derive"] }
+rfd = "0.17"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

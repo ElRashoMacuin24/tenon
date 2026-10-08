@@ -1,6 +1,7 @@
-//! The ribbon's command table. Every button maps to a named command id (`area.verb`); the same ids
-//! will be served by the command registry to the CLI, scripts and MCP from M1. `milestone` says
-//! when the command starts working: 0 means it works today.
+//! The ribbon's command table. Every button maps to a named command id (`area.verb`). Buttons that
+//! edit the model end in the shared command registry (`tenon_model::cmd`, `tenon_io::cmd`); the
+//! rest are UI actions (tools, views). `milestone` says when a command starts working: 0 means it
+//! works today.
 
 use crate::icons::Icon;
 
@@ -51,13 +52,13 @@ pub const RIBBON: &[RibbonTab] = &[
         panels: &[
             RibbonPanel {
                 title: "Sketch",
-                commands: &[large("sketch.new", "New Sketch", "Start a 2D sketch on a plane or planar face", Icon::NewSketch, 1)],
+                commands: &[large("sketch.new", "New Sketch", "Start a 2D sketch on an origin plane or a selected planar face", Icon::NewSketch, 0)],
             },
             RibbonPanel {
                 title: "Create",
                 commands: &[
-                    large("model.extrude", "Extrude", "Add or cut material by sweeping a profile straight", Icon::Extrude, 1),
-                    large("model.revolve", "Revolve", "Add or cut material by rotating a profile about an axis", Icon::Revolve, 1),
+                    large("model.extrude", "Extrude", "Add or cut material by sweeping a profile straight", Icon::Extrude, 0),
+                    large("model.revolve", "Revolve", "Add or cut material by rotating a profile about an axis", Icon::Revolve, 0),
                     small("model.sweep", "Sweep", "Sweep a profile along a path", Icon::Sweep, 5),
                     small("model.loft", "Loft", "Blend between two or more profiles", Icon::Loft, 5),
                     small("model.coil", "Coil", "Helical sweep", Icon::Coil, 5),
@@ -96,37 +97,40 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Create",
                 commands: &[
-                    large("sketch.line", "Line", "Lines and tangent arcs", Icon::Line, 1),
-                    small("sketch.circle", "Circle", "Circle by centre and radius", Icon::Circle, 1),
-                    small("sketch.arc", "Arc", "Three-point or centre arc", Icon::Arc, 1),
-                    small("sketch.rectangle", "Rectangle", "Two-point rectangle", Icon::Rectangle, 1),
-                    small("sketch.polygon", "Polygon", "Regular polygon", Icon::Polygon, 1),
-                    small("sketch.spline", "Spline", "Interpolated spline", Icon::Spline, 1),
-                    small("sketch.point", "Point", "Sketch point or hole centre", Icon::Point, 1),
+                    large("sketch.line", "Line", "Click points; each line starts where the last ended. Esc ends the chain.", Icon::Line, 0),
+                    small("sketch.circle", "Circle", "Click the centre, then a point on the circle", Icon::Circle, 0),
+                    small("sketch.arc", "Arc", "Click the start, the end, then a point on the arc", Icon::Arc, 0),
+                    small("sketch.rectangle", "Rectangle", "Click two opposite corners", Icon::Rectangle, 0),
+                    small("sketch.polygon", "Polygon", "Click the centre, then a corner (6 sides)", Icon::Polygon, 0),
+                    small("sketch.spline", "Spline", "Click control points; Enter finishes", Icon::Spline, 0),
+                    small("sketch.point", "Point", "Click to place a point (e.g. a hole centre)", Icon::Point, 0),
                 ],
             },
             RibbonPanel {
                 title: "Modify",
                 commands: &[
-                    small("sketch.trim", "Trim", "Trim curves to the nearest intersection", Icon::Trim, 1),
-                    small("sketch.offset", "Offset", "Offset a chain of curves", Icon::Offset, 1),
-                    small("sketch.mirror", "Mirror", "Mirror sketch geometry", Icon::Mirror, 1),
-                    small("sketch.fillet", "Fillet", "Round a sketch corner", Icon::Fillet, 1),
+                    small("sketch.trim", "Trim", "Click the piece of a curve to remove", Icon::Trim, 0),
+                    small("sketch.offset", "Offset", "Select curves, then choose a distance", Icon::Offset, 0),
+                    small("sketch.mirror", "Mirror", "Select geometry, then click the mirror line", Icon::Mirror, 0),
+                    small("sketch.fillet", "Fillet", "Click a corner where two lines meet", Icon::Fillet, 0),
                 ],
             },
             RibbonPanel {
                 title: "Constrain",
                 commands: &[
-                    large("sketch.dimension", "Dimension", "Driving dimension (distance, angle, radius, diameter)", Icon::Dimension, 1),
-                    small("sketch.coincident", "Coincident", "Make points coincide", Icon::Coincident, 1),
-                    small("sketch.horizontal", "Horizontal", "Make a line horizontal", Icon::Horizontal, 1),
-                    small("sketch.vertical", "Vertical", "Make a line vertical", Icon::Vertical, 1),
-                    small("sketch.parallel", "Parallel", "Make lines parallel", Icon::Parallel, 1),
-                    small("sketch.perpendicular", "Perpendicular", "Make lines perpendicular", Icon::Perpendicular, 1),
-                    small("sketch.tangent", "Tangent", "Make curves tangent", Icon::Tangent, 1),
+                    large("sketch.dimension", "Dimension", "Click a line, circle, arc, two points or two lines", Icon::Dimension, 0),
+                    small("sketch.coincident", "Coincident", "Two points, or a point and a curve", Icon::Coincident, 0),
+                    small("sketch.horizontal", "Horizontal", "A line", Icon::Horizontal, 0),
+                    small("sketch.vertical", "Vertical", "A line", Icon::Vertical, 0),
+                    small("sketch.parallel", "Parallel", "Two lines", Icon::Parallel, 0),
+                    small("sketch.perpendicular", "Perpendicular", "Two lines", Icon::Perpendicular, 0),
+                    small("sketch.tangent", "Tangent", "A line and a circle/arc, or two circles/arcs", Icon::Tangent, 0),
+                    small("sketch.equal", "Equal", "Two lines or two circles/arcs", Icon::Parallel, 0),
+                    small("sketch.concentric", "Concentric", "Two circles/arcs", Icon::Circle, 0),
+                    small("sketch.fix", "Fix", "A point that must not move", Icon::Point, 0),
                 ],
             },
-            RibbonPanel { title: "Exit", commands: &[large("sketch.finish", "Finish Sketch", "Leave the sketch", Icon::FinishSketch, 1)] },
+            RibbonPanel { title: "Exit", commands: &[large("sketch.finish", "Finish Sketch", "Leave the sketch", Icon::FinishSketch, 0)] },
         ],
     },
     RibbonTab {
@@ -134,8 +138,8 @@ pub const RIBBON: &[RibbonTab] = &[
         panels: &[RibbonPanel {
             title: "Measure",
             commands: &[
-                large("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 1),
-                large("inspect.mass", "Mass", "Volume, mass, centre of mass, inertia", Icon::MassProps, 1),
+                large("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 2),
+                large("inspect.mass", "Mass", "Volume, area, centre of mass, inertia", Icon::MassProps, 0),
             ],
         }],
     },
@@ -163,34 +167,44 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Navigate",
                 commands: &[
-                    small("view.home", "Home", "Home view", Icon::Home, 1),
-                    small("view.fit", "Zoom All", "Fit the model in the window", Icon::ZoomFit, 1),
-                    small("view.look_at", "Look At", "Look straight at a face or plane", Icon::LookAt, 1),
+                    small("view.home", "Home", "Three-quarter view of the whole part", Icon::Home, 0),
+                    small("view.fit", "Zoom All", "Fit the model in the window", Icon::ZoomFit, 0),
+                    small("view.look_at", "Look At", "Look straight at the selected planar face or the active sketch", Icon::LookAt, 0),
                 ],
             },
         ],
     },
 ];
 
-/// Navigation bar (right edge of the viewport).
+/// Navigation bar (right edge of the viewport). Orbit/Pan/Zoom make the left button do that.
 pub const NAV_BAR: &[UiCommand] = &[
-    small("view.orbit", "Orbit", "Orbit the view", Icon::Orbit, 1),
-    small("view.pan", "Pan", "Pan the view", Icon::Pan, 1),
-    small("view.zoom", "Zoom", "Zoom the view", Icon::Zoom, 1),
-    small("view.fit", "Zoom All", "Fit the model in the window", Icon::ZoomFit, 1),
-    small("view.look_at", "Look At", "Look straight at a face or plane", Icon::LookAt, 1),
+    small("view.orbit", "Orbit", "Left-drag orbits (also: right-drag)", Icon::Orbit, 0),
+    small("view.pan", "Pan", "Left-drag pans (also: middle-drag)", Icon::Pan, 0),
+    small("view.zoom", "Zoom", "Left-drag zooms (also: the wheel)", Icon::Zoom, 0),
+    small("view.fit", "Zoom All", "Fit the model in the window", Icon::ZoomFit, 0),
+    small("view.look_at", "Look At", "Look straight at the selected planar face or the active sketch", Icon::LookAt, 0),
 ];
 
 /// Quick-access toolbar (title bar).
 pub const QUICK_ACCESS: &[UiCommand] = &[
-    small("file.new", "New", "New part", Icon::New, 1),
-    small("file.open", "Open", "Open a project", Icon::Open, 1),
-    small("file.save", "Save", "Save the project", Icon::Save, 1),
-    small("edit.undo", "Undo", "Undo", Icon::Undo, 1),
-    small("edit.redo", "Redo", "Redo", Icon::Redo, 1),
+    small("file.new", "New", "New part (Ctrl+N)", Icon::New, 0),
+    small("file.open", "Open", "Open a project (Ctrl+O)", Icon::Open, 0),
+    small("file.save", "Save", "Save the project (Ctrl+S)", Icon::Save, 0),
+    small("edit.undo", "Undo", "Undo (Ctrl+Z)", Icon::Undo, 0),
+    small("edit.redo", "Redo", "Redo (Ctrl+Y)", Icon::Redo, 0),
 ];
 
-/// Every command reachable from the shell.
+/// File menu entries (label, command id).
+pub const FILE_MENU: &[(&str, &str)] = &[
+    ("New Part", "file.new"),
+    ("Open...", "file.open"),
+    ("Save", "file.save"),
+    ("Save As...", "file.save_as"),
+    ("Export STEP...", "export.step"),
+    ("Export STL...", "export.stl"),
+];
+
+/// Every command reachable from the ribbon and toolbars.
 pub fn all() -> impl Iterator<Item = &'static UiCommand> {
     RIBBON.iter().flat_map(|t| t.panels.iter()).flat_map(|p| p.commands.iter()).chain(NAV_BAR).chain(QUICK_ACCESS)
 }
@@ -210,7 +224,6 @@ mod tests {
             assert!(c.id.contains('.') && c.id.chars().all(|ch| ch.is_ascii_lowercase() || ch == '.' || ch == '_'), "{}", c.id);
             assert!(!c.label.is_empty() && !c.tip.is_empty(), "{}", c.id);
             assert!(c.milestone <= 6, "{}", c.id);
-            // A command that appears twice must be described identically.
             let first = find(c.id).unwrap();
             assert_eq!((first.label, first.milestone), (c.label, c.milestone), "{}", c.id);
         }
@@ -221,11 +234,5 @@ mod tests {
         let names: Vec<_> = RIBBON.iter().map(|t| t.name).collect();
         assert_eq!(names, ["Model", "Sketch", "Inspect", "Tools", "View"]);
         assert!(RIBBON.iter().all(|t| !t.panels.is_empty() && t.panels.iter().all(|p| !p.commands.is_empty())));
-    }
-
-    #[test]
-    fn only_shell_commands_claim_to_work_in_m0() {
-        let available: Vec<_> = all().filter(|c| c.available()).map(|c| c.id).collect();
-        assert_eq!(available, ["app.about", "view.browser", "view.cube"]);
     }
 }

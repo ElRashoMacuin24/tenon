@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tenon_geom::{Aabb3, Axis, Frame, Vec3};
-use tenon_kernel::{AngleExtent, BoolOp, Extent, FaceInfo, Kernel, KernelError, Mesh, MeshTol, ShapeHandle, SurfaceKind};
+use tenon_kernel::{AngleExtent, BoolOp, Extent, FaceInfo, Kernel, KernelError, MassProps, Mesh, MeshTol, ShapeHandle, SurfaceKind};
 use tenon_sketch::{Sketch, SketchRegion, default_regions, profile, regions};
 
 use crate::FeatureId;
@@ -326,6 +326,8 @@ pub struct BodyView {
     /// Per face: its persistent name (if any) and geometry.
     pub faces: Vec<(Option<FaceOrigin>, FaceInfo)>,
     pub volume: f64,
+    /// Mass properties at unit density (mass = volume).
+    pub mass: MassProps,
     pub bbox: Option<Aabb3>,
 }
 
@@ -356,8 +358,8 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
         for i in 0..topo.faces {
             faces.push((b.names.get(i as usize).copied().flatten(), k.face_info(b.shape.face(i)).map_err(kerr)?));
         }
-        let volume = k.mass_properties(b.shape, 1.0).map_err(kerr)?.volume;
-        bodies.push(BodyView { mesh, faces, volume, bbox: k.bounding_box(b.shape).map_err(kerr)? });
+        let mass = k.mass_properties(b.shape, 1.0).map_err(kerr)?;
+        bodies.push(BodyView { mesh, faces, volume: mass.volume, mass, bbox: k.bounding_box(b.shape).map_err(kerr)? });
     }
     Ok(Scene {
         bodies,

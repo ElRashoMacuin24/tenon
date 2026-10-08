@@ -11,6 +11,9 @@ workspace = true
 
 [dependencies]
 tenon-ui = { workspace = true }
+tenon-kernel = { workspace = true }
+tenon-kernel-occt = { workspace = true }
 egui = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
 image = { workspace = true }
+rfd = { workspace = true }

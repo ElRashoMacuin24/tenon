@@ -1,13 +1,23 @@
 //! Tenon egui front end. The only library crate that may know about egui (`cargo xtask layers`).
 //!
-//! Layout follows the established mechanical-CAD workflow (ribbon, model browser on the left,
-//! orientation cube and navigation bar in the viewport, document tabs and status bar at the
-//! bottom). Colours, icons and wording are Tenon's own.
+//! [`Workbench`] is the part-modelling window: ribbon, model browser, 3D viewport (wgpu or a
+//! software fallback), sketch mode and feature dialogs. Every model edit goes through the shared
+//! command registry, so what the UI can do, the CLI and MCP server can do too.
+//!
+//! Layout follows the established mechanical-CAD workflow; colours, icons and wording are Tenon's
+//! own.
 #![forbid(unsafe_code)]
 
+mod chrome;
 pub mod commands;
 pub mod icons;
-mod shell;
+mod panels;
+mod sketcher;
 pub mod theme;
+mod viewport;
+mod workbench;
 
-pub use shell::Shell;
+pub use workbench::{Services, Workbench};
+
+#[cfg(test)]
+mod tests;
