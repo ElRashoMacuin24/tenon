@@ -14,7 +14,7 @@ use tenon_sketch::{EntityId, Sketch, SketchRegion, default_regions, profile, reg
 use crate::FeatureId;
 use crate::document::{
     AxisRef, AxisSel, ChamferSize, DirectionRef, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent, HoleType, Operation,
-    PlaneRef, RegionSel, Revolve, RevolveAngle,
+    PlaneRef, RegionSel, Revolve, RevolveAngle, WorkAxis, WorkPlane, WorkPoint,
 };
 use crate::naming::{
     EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
@@ -51,9 +51,25 @@ pub struct Regen {
     /// The solids of features that a later pattern or mirror copies, each with how it combined
     /// with the part.
     pub tools: BTreeMap<FeatureId, Vec<Tool>>,
+    /// Work planes, axes and points.
+    pub work: BTreeMap<FeatureId, WorkGeom>,
     pub cancelled: bool,
     /// Wall time of the regeneration in milliseconds.
     pub millis: f64,
+}
+
+/// Where a work feature is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WorkGeom {
+    Plane(Frame),
+    Axis(Axis),
+    Point(Vec3),
+}
+
+/// `v` turned `angle` radians about the unit direction `k` (right-hand rule).
+fn rotate(v: Vec3, k: Vec3, angle: f64) -> Vec3 {
+    let (s, c) = angle.sin_cos();
+    v * c + k.cross(v) * s + k * (k.dot(v) * (1.0 - c))
 }
 
 /// A feature's solid before it was combined with the part.
@@ -297,6 +313,89 @@ impl<'a> Ctx<'a> {
                 let plane = self.plane_frame(&m.plane)?;
                 self.copy_features(f.id, &m.features, &[Transform::Mirror { plane }])
             }
+            FeatureKind::WorkPlane(w) => {
+                let g = WorkGeom::Plane(self.work_plane(w)?);
+                self.regen.work.insert(f.id, g);
+                Ok(())
+            }
+            FeatureKind::WorkAxis(w) => {
+                let g = WorkGeom::Axis(match w {
+                    WorkAxis::Along { axis } => self.axis_of(axis)?,
+                    WorkAxis::Planes { a, b } => {
+                        let (a, b) = (self.plane_frame(a)?, self.plane_frame(b)?);
+                        let (n1, n2) = (a.z(), b.z());
+                        let dir = n1.cross(n2);
+                        if dir.len() < 1e-9 {
+                            return Err("the planes are parallel: they do not meet in a line".into());
+                        }
+                        // The point on both planes nearest the origin side of the line.
+                        let (d1, d2, c) = (n1.dot(a.origin()), n2.dot(b.origin()), n1.dot(n2));
+                        let det = 1.0 - c * c;
+                        let p = n1 * ((d1 - d2 * c) / det) + n2 * ((d2 - d1 * c) / det);
+                        Axis::new(p, dir.normalized()).ok_or("the planes do not meet in a line")?
+                    }
+                });
+                self.regen.work.insert(f.id, g);
+                Ok(())
+            }
+            FeatureKind::WorkPoint(w) => {
+                let p = match w {
+                    WorkPoint::Center { edge } => match self.edge_geometry(edge)?.curve {
+                        CurveKind::Circle { axis, .. } => axis.origin(),
+                        _ => return Err("the edge is not circular".into()),
+                    },
+                    WorkPoint::Intersection { axis, plane } => {
+                        let (a, pl) = (self.axis_of(axis)?, self.plane_frame(plane)?);
+                        let along = a.dir().dot(pl.z());
+                        if along.abs() < 1e-9 {
+                            return Err("the axis is parallel to the plane".into());
+                        }
+                        a.origin() + a.dir() * ((pl.origin() - a.origin()).dot(pl.z()) / along)
+                    }
+                };
+                self.regen.work.insert(f.id, WorkGeom::Point(p));
+                Ok(())
+            }
+        }
+    }
+
+    fn work_plane(&mut self, w: &WorkPlane) -> Result<Frame, Stop> {
+        match w {
+            WorkPlane::Offset { base, distance } => {
+                if !distance.is_finite() {
+                    return Err("the offset is not a number".into());
+                }
+                let f = self.plane_frame(base)?;
+                Ok(Frame::new(f.origin() + f.z() * *distance, f.z(), f.x()).ok_or("the plane is not valid")?)
+            }
+            WorkPlane::Angle { base, axis, angle } => {
+                let (f, a) = (self.plane_frame(base)?, self.axis_of(axis)?);
+                let tol = 1e-6 * (1.0 + a.origin().len());
+                if a.dir().dot(f.z()).abs() > 1e-6 || (a.origin() - f.origin()).dot(f.z()).abs() > tol {
+                    return Err("the axis must lie in the base plane".into());
+                }
+                Ok(Frame::new(a.origin(), rotate(f.z(), a.dir(), *angle), a.dir()).ok_or("the plane is not valid")?)
+            }
+            WorkPlane::Midplane { a, b } => {
+                let (a, b) = (self.plane_frame(a)?, self.plane_frame(b)?);
+                if a.z().cross(b.z()).len() > 1e-6 {
+                    return Err("the planes are not parallel".into());
+                }
+                let gap = (b.origin() - a.origin()).dot(a.z());
+                Ok(Frame::new(a.origin() + a.z() * (gap / 2.0), a.z(), a.x()).ok_or("the plane is not valid")?)
+            }
+        }
+    }
+
+    /// The geometry of a work feature, or why there is none.
+    fn work(&self, id: FeatureId) -> Result<WorkGeom, Stop> {
+        self.regen.work.get(&id).copied().ok_or_else(|| format!("{} is suppressed, failed or not a work feature", label(self.doc, id)).into())
+    }
+
+    fn work_axis(&self, id: FeatureId) -> Result<Axis, Stop> {
+        match self.work(id)? {
+            WorkGeom::Axis(a) => Ok(a),
+            _ => Err(format!("{} is not a work axis", label(self.doc, id)).into()),
         }
     }
 
@@ -308,6 +407,7 @@ impl<'a> Ctx<'a> {
                 CurveKind::Line { dir, .. } => Ok(dir),
                 _ => Err("the direction edge is not straight".into()),
             },
+            DirectionRef::Work(id) => Ok(self.work_axis(*id)?.dir()),
         }
     }
 
@@ -327,6 +427,7 @@ impl<'a> Ctx<'a> {
                     _ => Err("the axis face is not cylindrical or conical".into()),
                 }
             }
+            AxisSel::Work(id) => self.work_axis(*id),
         }
     }
 
@@ -532,6 +633,10 @@ impl<'a> Ctx<'a> {
                     _ => Err(format!("{name} is not planar").into()),
                 }
             }
+            PlaneRef::Work(id) => match self.work(*id)? {
+                WorkGeom::Plane(f) => Ok(f),
+                _ => Err(format!("{} is not a work plane", label(self.doc, *id)).into()),
+            },
         }
     }
 
@@ -586,6 +691,7 @@ impl<'a> Ctx<'a> {
                 let (a3, b3) = (frame.plane_point(a), frame.plane_point(b));
                 Axis::new(a3, b3 - a3).ok_or("the revolve axis has no length")?
             }
+            AxisRef::Work(w) => self.work_axis(*w)?,
         };
         let all = regions(sketch);
         let profile = profile(sketch, frame, &select(&all, &r.regions)?);
@@ -758,6 +864,8 @@ pub struct Scene {
     pub bodies: Vec<BodyView>,
     pub status: Vec<(FeatureId, FeatureStatus)>,
     pub sketch_frames: BTreeMap<FeatureId, Frame>,
+    /// Work planes, axes and points, to draw.
+    pub work: Vec<(FeatureId, WorkGeom)>,
     pub regen_ms: f64,
     pub mesh_ms: f64,
 }
@@ -791,6 +899,7 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
         bodies,
         status: regen.status.clone(),
         sketch_frames: regen.sketch_frames.clone(),
+        work: regen.work.iter().map(|(id, g)| (*id, *g)).collect(),
         regen_ms: regen.millis,
         mesh_ms: t0.elapsed().as_secs_f64() * 1000.0,
     })

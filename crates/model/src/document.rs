@@ -63,6 +63,19 @@ pub enum PlaneRef {
     Origin(OriginPlane),
     /// A planar face of the part, by persistent reference.
     Face(FaceRef),
+    /// A work plane feature.
+    Work(FeatureId),
+}
+
+impl PlaneRef {
+    /// The feature this plane comes from, if any.
+    pub fn feature(&self) -> Option<FeatureId> {
+        match self {
+            PlaneRef::Origin(_) => None,
+            PlaneRef::Face(f) => f.feature(),
+            PlaneRef::Work(id) => Some(*id),
+        }
+    }
 }
 
 /// Which closed regions of the sketch a feature uses.
@@ -124,6 +137,8 @@ pub enum AxisRef {
     /// A line of the profile's own sketch.
     SketchLine(EntityId),
     Origin(OriginAxis),
+    /// A work axis feature.
+    Work(FeatureId),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -284,16 +299,63 @@ impl Hole {
 pub enum DirectionRef {
     Origin(OriginAxis),
     Edge(EdgeRef),
+    /// Along a work axis.
+    Work(FeatureId),
 }
 
-/// An axis to turn about: an origin axis, a straight or circular edge, or a cylindrical or
-/// conical face.
+/// An axis to turn about: an origin axis, a straight or circular edge, a cylindrical or conical
+/// face, or a work axis.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AxisSel {
     Origin(OriginAxis),
     Edge(EdgeRef),
     Face(FaceRef),
+    Work(FeatureId),
+}
+
+impl AxisSel {
+    /// The features this axis comes from.
+    pub fn features(&self) -> Vec<FeatureId> {
+        match self {
+            AxisSel::Origin(_) => vec![],
+            AxisSel::Edge(e) => e.features(),
+            AxisSel::Face(f) => f.feature().into_iter().collect(),
+            AxisSel::Work(id) => vec![*id],
+        }
+    }
+}
+
+/// A work plane: construction geometry to sketch on, mirror across, and so on.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "by", rename_all = "snake_case")]
+pub enum WorkPlane {
+    /// `base` moved `distance` along its normal.
+    Offset { base: PlaneRef, distance: f64 },
+    /// Through `axis` (which lies in `base`), turned `angle` radians from `base`.
+    Angle { base: PlaneRef, axis: AxisSel, angle: f64 },
+    /// Halfway between two parallel planes.
+    Midplane { a: PlaneRef, b: PlaneRef },
+}
+
+/// A work axis.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "by", rename_all = "snake_case")]
+pub enum WorkAxis {
+    /// Along an edge, the axis of a cylindrical face, or an origin axis.
+    Along { axis: AxisSel },
+    /// Where two planes meet.
+    Planes { a: PlaneRef, b: PlaneRef },
+}
+
+/// A work point.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "by", rename_all = "snake_case")]
+pub enum WorkPoint {
+    /// The centre of a circular edge.
+    Center { edge: EdgeRef },
+    /// Where an axis meets a plane.
+    Intersection { axis: AxisSel, plane: PlaneRef },
 }
 
 /// Copies of features in rows and columns.
@@ -404,6 +466,9 @@ pub enum FeatureKind {
     PatternRect(RectPattern),
     PatternCircular(CircPattern),
     Mirror(Mirror),
+    WorkPlane(WorkPlane),
+    WorkAxis(WorkAxis),
+    WorkPoint(WorkPoint),
 }
 
 impl FeatureKind {
@@ -443,6 +508,9 @@ impl FeatureKind {
             FeatureKind::PatternRect(_) => "Rectangular Pattern",
             FeatureKind::PatternCircular(_) => "Circular Pattern",
             FeatureKind::Mirror(_) => "Mirror",
+            FeatureKind::WorkPlane(_) => "Work Plane",
+            FeatureKind::WorkAxis(_) => "Work Axis",
+            FeatureKind::WorkPoint(_) => "Work Point",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -458,15 +526,20 @@ impl FeatureKind {
             FeatureKind::PatternRect(_) => "Rectangular Pattern",
             FeatureKind::PatternCircular(_) => "Circular Pattern",
             FeatureKind::Mirror(_) => "Mirror",
+            FeatureKind::WorkPlane(_) => "Work Plane",
+            FeatureKind::WorkAxis(_) => "Work Axis",
+            FeatureKind::WorkPoint(_) => "Work Point",
         }
     }
     /// Features this one depends on.
     pub fn depends_on(&self) -> Vec<FeatureId> {
         let mut v = match self {
-            FeatureKind::Sketch { plane: PlaneRef::Face(f), .. } => f.feature().into_iter().collect(),
-            FeatureKind::Sketch { .. } => vec![],
+            FeatureKind::Sketch { plane, .. } => plane.feature().into_iter().collect(),
             FeatureKind::Extrude(e) => vec![e.sketch],
-            FeatureKind::Revolve(r) => vec![r.sketch],
+            FeatureKind::Revolve(r) => match r.axis {
+                AxisRef::Work(a) => vec![r.sketch, a],
+                _ => vec![r.sketch],
+            },
             FeatureKind::Fillet(f) => f.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::Chamfer(c) => {
                 let mut v: Vec<FeatureId> = c.edges.iter().flat_map(EdgeRef::features).collect();
@@ -480,28 +553,37 @@ impl FeatureKind {
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
-                    if let DirectionRef::Edge(e) = d {
-                        v.extend(e.features());
+                    match d {
+                        DirectionRef::Origin(_) => {}
+                        DirectionRef::Edge(e) => v.extend(e.features()),
+                        DirectionRef::Work(id) => v.push(*id),
                     }
                 }
                 v
             }
             FeatureKind::PatternCircular(p) => {
                 let mut v = p.features.clone();
-                match &p.axis {
-                    AxisSel::Origin(_) => {}
-                    AxisSel::Edge(e) => v.extend(e.features()),
-                    AxisSel::Face(f) => v.extend(f.feature()),
-                }
+                v.extend(p.axis.features());
                 v
             }
             FeatureKind::Mirror(m) => {
                 let mut v = m.features.clone();
-                if let PlaneRef::Face(f) = &m.plane {
-                    v.extend(f.feature());
-                }
+                v.extend(m.plane.feature());
                 v
             }
+            FeatureKind::WorkPlane(w) => match w {
+                WorkPlane::Offset { base, .. } => base.feature().into_iter().collect(),
+                WorkPlane::Angle { base, axis, .. } => base.feature().into_iter().chain(axis.features()).collect(),
+                WorkPlane::Midplane { a, b } => a.feature().into_iter().chain(b.feature()).collect(),
+            },
+            FeatureKind::WorkAxis(w) => match w {
+                WorkAxis::Along { axis } => axis.features(),
+                WorkAxis::Planes { a, b } => a.feature().into_iter().chain(b.feature()).collect(),
+            },
+            FeatureKind::WorkPoint(w) => match w {
+                WorkPoint::Center { edge } => edge.features(),
+                WorkPoint::Intersection { axis, plane } => axis.features().into_iter().chain(plane.feature()).collect(),
+            },
         };
         v.sort();
         v.dedup();

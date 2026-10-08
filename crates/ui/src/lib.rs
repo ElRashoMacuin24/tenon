@@ -20,6 +20,7 @@ mod radial;
 mod sketcher;
 pub mod theme;
 mod viewport;
+mod work;
 mod workbench;
 
 pub use theme::ThemeName;

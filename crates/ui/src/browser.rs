@@ -22,6 +22,8 @@ pub(crate) enum BrowserAction {
     Delete(FeatureId),
     /// A single click: picks the feature for a pattern being set up.
     Pick(FeatureId),
+    /// A single click on an origin plane or axis: picks it for the open panel.
+    Reference(crate::work::Reference),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -87,6 +89,9 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::PatternRect(_) => Icon::PatternRect,
         FeatureKind::PatternCircular(_) => Icon::PatternCircular,
         FeatureKind::Mirror(_) => Icon::Mirror,
+        FeatureKind::WorkPlane(_) => Icon::Plane,
+        FeatureKind::WorkAxis(_) => Icon::Axis,
+        FeatureKind::WorkPoint(_) => Icon::Point,
     }
 }
 
@@ -180,21 +185,28 @@ impl Workbench {
                 self.chrome.origin_open = !self.chrome.origin_open;
             }
             if self.chrome.origin_open {
-                for (icon, label, plane) in [
-                    (Icon::Plane, "YZ Plane", Some(OriginPlane::YZ)),
-                    (Icon::Plane, "XZ Plane", Some(OriginPlane::XZ)),
-                    (Icon::Plane, "XY Plane", Some(OriginPlane::XY)),
-                    (Icon::Axis, "X Axis", None),
-                    (Icon::Axis, "Y Axis", None),
-                    (Icon::Axis, "Z Axis", None),
+                use crate::work::Reference;
+                for (icon, label, r) in [
+                    (Icon::Plane, "YZ Plane", Some(Reference::Plane(OriginPlane::YZ))),
+                    (Icon::Plane, "XZ Plane", Some(Reference::Plane(OriginPlane::XZ))),
+                    (Icon::Plane, "XY Plane", Some(Reference::Plane(OriginPlane::XY))),
+                    (Icon::Axis, "X Axis", Some(Reference::Axis(tenon_model::OriginAxis::X))),
+                    (Icon::Axis, "Y Axis", Some(Reference::Axis(tenon_model::OriginAxis::Y))),
+                    (Icon::Axis, "Z Axis", Some(Reference::Axis(tenon_model::OriginAxis::Z))),
                     (Icon::Point, "Center Point", None),
                 ] {
                     let (resp, _) = row(ui, t, 2, icon, label, None, RowStyle::Normal);
-                    if let Some(p) = plane {
-                        let resp = resp.on_hover_text("Click while starting a sketch, or double-click, to sketch on this plane");
-                        if resp.double_clicked() || (resp.clicked() && self.pick_plane) {
-                            action = Some(BrowserAction::SketchOn(p));
+                    match r {
+                        Some(Reference::Plane(p)) => {
+                            let resp = resp.on_hover_text("Click while starting a sketch, or double-click, to sketch on this plane");
+                            if resp.double_clicked() || (resp.clicked() && self.pick_plane) {
+                                action = Some(BrowserAction::SketchOn(p));
+                            } else if resp.clicked() {
+                                action = Some(BrowserAction::Reference(Reference::Plane(p)));
+                            }
                         }
+                        Some(r) if resp.clicked() => action = Some(BrowserAction::Reference(r)),
+                        _ => {}
                     }
                 }
             }
@@ -298,7 +310,20 @@ impl Workbench {
                 self.exec("feature.delete", json!({ "feature": id.0 })).map(|_| ())
             }
             BrowserAction::Pick(id) => {
-                self.toggle_pattern_feature(id);
+                // A work feature goes into a plane or axis selector; others into pattern features.
+                let work = self
+                    .document()
+                    .feature(id)
+                    .is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_)));
+                if work {
+                    self.pick_reference(crate::work::Reference::Work(id));
+                } else if matches!(self.panel, Some(crate::panels::Panel::Pattern(_))) {
+                    self.toggle_pattern_feature(id);
+                }
+                Ok(())
+            }
+            BrowserAction::Reference(r) => {
+                self.pick_reference(r);
                 Ok(())
             }
         };

@@ -12,7 +12,8 @@ use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions
 
 use crate::document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, DRILL_POINT, DirectionRef, Extrude, ExtrudeExtent, FeatureKind, Fillet, Hole, HoleExtent,
-    HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle, Shell, hole_centres,
+    HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle, Shell, WorkAxis, WorkPlane,
+    WorkPoint, hole_centres,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::regen::{Regen, regenerate};
@@ -301,6 +302,9 @@ fn document_rename(s: &mut Session, p: &Value) -> CmdResult {
 
 /// `face: <face reference>` or `plane: "xy" | "yz" | "xz"` (default xy).
 fn plane_param(p: &Value) -> Result<PlaneRef, CmdError> {
+    if p.get("work_plane").is_some() {
+        return Ok(PlaneRef::Work(FeatureId(id_u32(p, "work_plane")?)));
+    }
     if let Some(face) = p.get("face") {
         return Ok(PlaneRef::Face(serde_json::from_value::<FaceRef>(face.clone()).map_err(|e| CmdError(format!("`face`: {e}")))?));
     }
@@ -322,22 +326,123 @@ fn origin_axis(name: &str) -> Result<OriginAxis, CmdError> {
     }
 }
 
-/// A pattern direction: `"x" | "y" | "z"` or an edge reference.
+/// `{"work": id}`: a work feature.
+fn work_id(v: &Value) -> Option<FeatureId> {
+    v.get("work").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()).map(FeatureId)
+}
+
+/// A pattern direction: `"x" | "y" | "z"`, an edge reference, or `{"work": axis id}`.
 fn direction_param(p: &Value, key: &str) -> Result<DirectionRef, CmdError> {
-    match field(p, key)? {
+    let v = field(p, key)?;
+    if let Some(id) = work_id(v) {
+        return Ok(DirectionRef::Work(id));
+    }
+    match v {
         Value::String(a) => Ok(DirectionRef::Origin(origin_axis(a)?)),
         _ => Ok(DirectionRef::Edge(parse(p, key)?)),
     }
 }
 
-/// A turning axis: `"x" | "y" | "z"`, an edge reference, or a face reference.
+/// A turning axis: `"x" | "y" | "z"`, an edge reference, a face reference, or
+/// `{"work": axis id}`.
 fn axis_param(p: &Value, key: &str) -> Result<AxisSel, CmdError> {
-    match field(p, key)? {
+    let v = field(p, key)?;
+    if let Some(id) = work_id(v) {
+        return Ok(AxisSel::Work(id));
+    }
+    match v {
         Value::String(a) => Ok(AxisSel::Origin(origin_axis(a)?)),
         Value::Object(o) if o.contains_key("faces") => Ok(AxisSel::Edge(parse(p, key)?)),
         Value::Object(o) if o.contains_key("origin") => Ok(AxisSel::Face(parse(p, key)?)),
-        _ => Err(format!("`{key}` must be x, y, z, an edge reference or a face reference").into()),
+        _ => Err(format!("`{key}` must be x, y, z, an edge reference, a face reference or {{\"work\": id}}").into()),
     }
+}
+
+/// A plane value: `"xy" | "yz" | "xz"`, a face reference, or `{"work": plane id}`.
+fn plane_value(p: &Value, key: &str) -> Result<PlaneRef, CmdError> {
+    let v = field(p, key)?;
+    if let Some(id) = work_id(v) {
+        return Ok(PlaneRef::Work(id));
+    }
+    match v {
+        Value::String(s) => match s.to_ascii_lowercase().as_str() {
+            "xy" => Ok(PlaneRef::Origin(OriginPlane::XY)),
+            "yz" => Ok(PlaneRef::Origin(OriginPlane::YZ)),
+            "xz" => Ok(PlaneRef::Origin(OriginPlane::XZ)),
+            _ => Err(format!("unknown plane `{s}` (xy, yz or xz)").into()),
+        },
+        _ => Ok(PlaneRef::Face(parse(p, key)?)),
+    }
+}
+
+/// Work features must refer to work features of the right kind.
+fn check_work_refs(s: &Session, kind: &FeatureKind) -> Result<(), CmdError> {
+    let doc = s.document();
+    let is = |id: FeatureId, want: fn(&FeatureKind) -> bool, what: &str| -> Result<(), CmdError> {
+        match doc.feature(id) {
+            Some(f) if want(&f.kind) => Ok(()),
+            Some(f) => Err(format!("{} is not a {what}", f.name).into()),
+            None => Err(format!("{id} does not exist").into()),
+        }
+    };
+    let plane = |r: &PlaneRef| match r {
+        PlaneRef::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkPlane(_)), "work plane"),
+        _ => Ok(()),
+    };
+    let axis = |a: &AxisSel| match a {
+        AxisSel::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkAxis(_)), "work axis"),
+        _ => Ok(()),
+    };
+    match kind {
+        FeatureKind::WorkPlane(WorkPlane::Offset { base, .. }) => plane(base),
+        FeatureKind::WorkPlane(WorkPlane::Angle { base, axis: a, .. }) => plane(base).and(axis(a)),
+        FeatureKind::WorkPlane(WorkPlane::Midplane { a, b }) => plane(a).and(plane(b)),
+        FeatureKind::WorkAxis(WorkAxis::Along { axis: a }) => axis(a),
+        FeatureKind::WorkAxis(WorkAxis::Planes { a, b }) => plane(a).and(plane(b)),
+        FeatureKind::WorkPoint(WorkPoint::Intersection { axis: a, plane: p }) => axis(a).and(plane(p)),
+        FeatureKind::Mirror(m) => plane(&m.plane),
+        FeatureKind::PatternCircular(c) => axis(&c.axis),
+        FeatureKind::PatternRect(r) => std::iter::once(&r.dir1).chain(r.dir2.as_ref()).try_for_each(|d| match d {
+            DirectionRef::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkAxis(_)), "work axis"),
+            _ => Ok(()),
+        }),
+        FeatureKind::Sketch { plane: p, .. } => plane(p),
+        _ => Ok(()),
+    }
+}
+
+fn work_plane(s: &mut Session, p: &Value) -> CmdResult {
+    let def = match p.get("by").and_then(Value::as_str).unwrap_or("offset") {
+        "offset" => WorkPlane::Offset { base: plane_value(p, "base")?, distance: num(p, "distance")? },
+        "angle" => WorkPlane::Angle { base: plane_value(p, "base")?, axis: axis_param(p, "axis")?, angle: num(p, "angle")? },
+        "midplane" => WorkPlane::Midplane { a: plane_value(p, "a")?, b: plane_value(p, "b")? },
+        other => return Err(format!("unknown work plane `{other}` (offset, angle, midplane)").into()),
+    };
+    let kind = FeatureKind::WorkPlane(def);
+    check_work_refs(s, &kind)?;
+    add_feature(s, kind)
+}
+
+fn work_axis(s: &mut Session, p: &Value) -> CmdResult {
+    let def = if p.get("a").is_some() {
+        WorkAxis::Planes { a: plane_value(p, "a")?, b: plane_value(p, "b")? }
+    } else {
+        WorkAxis::Along { axis: axis_param(p, "axis")? }
+    };
+    let kind = FeatureKind::WorkAxis(def);
+    check_work_refs(s, &kind)?;
+    add_feature(s, kind)
+}
+
+fn work_point(s: &mut Session, p: &Value) -> CmdResult {
+    let def = if p.get("edge").is_some() {
+        WorkPoint::Center { edge: parse(p, "edge")? }
+    } else {
+        WorkPoint::Intersection { axis: axis_param(p, "axis")?, plane: plane_value(p, "plane")? }
+    };
+    let kind = FeatureKind::WorkPoint(def);
+    check_work_refs(s, &kind)?;
+    add_feature(s, kind)
 }
 
 fn feature_list(p: &Value) -> Result<Vec<FeatureId>, CmdError> {
@@ -354,6 +459,7 @@ fn count(p: &Value, key: &str, default: Option<u32>) -> Result<u32, CmdError> {
 /// Adds a pattern or mirror after checking what it copies.
 fn add_copy(s: &mut Session, kind: FeatureKind) -> CmdResult {
     s.document().check_copies(&kind).map_err(CmdError)?;
+    check_work_refs(s, &kind)?;
     add_feature(s, kind)
 }
 
@@ -397,6 +503,11 @@ fn model_mirror(s: &mut Session, p: &Value) -> CmdResult {
 
 fn sketch_create(s: &mut Session, p: &Value) -> CmdResult {
     let plane = plane_param(p)?;
+    if let PlaneRef::Work(id) = plane
+        && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
+    {
+        return Err(format!("{id} is not a work plane").into());
+    }
     // The part origin projected into the sketch: a fixed construction point at (0, 0) that
     // geometry can snap and be constrained to.
     let mut sketch = Sketch::new();
@@ -630,6 +741,11 @@ fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
             "z" => OriginAxis::Z,
             _ => return Err(format!("unknown axis `{a}` (x, y, z or a sketch line id)").into()),
         }),
+        v if work_id(v).is_some() => {
+            let id = work_id(v).ok_or("bad work axis")?;
+            check_work_refs(s, &FeatureKind::WorkAxis(WorkAxis::Along { axis: AxisSel::Work(id) }))?;
+            AxisRef::Work(id)
+        }
         _ => AxisRef::SketchLine(EntityId(id_u32(p, "axis")?)),
     };
     let angle = match opt_num(p, "angle")? {
@@ -827,6 +943,23 @@ fn model_faces(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     Ok(json!({ "body": body, "faces": out }))
 }
 
+fn model_work(s: &mut Session, k: &mut dyn Kernel, _p: &Value) -> CmdResult {
+    let r = s.regen(k);
+    let v3 = |v: tenon_geom::Vec3| json!([v.x, v.y, v.z]);
+    let out: Vec<Value> = r
+        .work
+        .iter()
+        .map(|(id, g)| match g {
+            crate::regen::WorkGeom::Plane(f) => {
+                json!({ "feature": id.0, "type": "plane", "origin": v3(f.origin()), "normal": v3(f.z()), "x": v3(f.x()) })
+            }
+            crate::regen::WorkGeom::Axis(a) => json!({ "feature": id.0, "type": "axis", "origin": v3(a.origin()), "direction": v3(a.dir()) }),
+            crate::regen::WorkGeom::Point(p) => json!({ "feature": id.0, "type": "point", "point": v3(*p) }),
+        })
+        .collect();
+    Ok(json!({ "work": out }))
+}
+
 fn model_edges(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let body = opt_id(p, "body")?.unwrap_or(0) as usize;
     let r = s.regen(k).clone();
@@ -988,6 +1121,21 @@ static COMMANDS: &[CommandSpec] = &[
         true,
         model_mirror
     ),
+    doc_cmd!(
+        "work.plane",
+        "Work Plane",
+        "by: offset (base: plane, distance) | angle (base: plane, axis: in the base plane, angle: rad) | midplane (a, b: parallel planes); a plane is \"xy\" | \"yz\" | \"xz\", a face reference or {\"work\": plane id}",
+        true,
+        work_plane
+    ),
+    doc_cmd!(
+        "work.axis",
+        "Work Axis",
+        "axis: \"x\" | \"y\" | \"z\", an edge reference, a cylindrical face reference or {\"work\": id}; or a, b: two planes it lies on",
+        true,
+        work_axis
+    ),
+    doc_cmd!("work.point", "Work Point", "edge: a circular edge reference (its centre); or axis and plane (where they meet)", true, work_point),
     doc_cmd!("feature.update", "Edit Feature", "feature (id), kind: the feature definition as in model.tree / the file format", true, feature_update),
     doc_cmd!("feature.rename", "Rename Feature", "feature, name", true, feature_rename),
     doc_cmd!("feature.suppress", "Suppress", "feature, suppressed (default true)", true, feature_suppress),
@@ -1000,6 +1148,7 @@ static COMMANDS: &[CommandSpec] = &[
     geo_cmd!("model.topology", "Topology", "", model_topology),
     geo_cmd!("model.faces", "Faces", "body (default 0)", model_faces),
     geo_cmd!("model.edges", "Edges", "body (default 0): every edge with the names of its two faces", model_edges),
+    geo_cmd!("model.work", "Work Features", "where every work plane, axis and point is", model_work),
     geo_cmd!(
         "model.edge_ref",
         "Edge Reference",

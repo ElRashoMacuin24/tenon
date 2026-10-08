@@ -662,6 +662,70 @@ fn pattern_and_mirror_pick_features_in_the_viewport() {
 }
 
 #[test]
+fn work_plane_from_a_face_carries_a_sketch_and_origin_axes_come_from_the_browser() {
+    use tenon_geom::Vec3;
+    use tenon_model::{PlaneRef, WorkGeom};
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+
+    // Select the top face, Plane: an offset plane 10 above it shows at once.
+    let top = on_screen(&wb, Vec3::new(20.0, 10.0, 10.0));
+    d.click(&mut wb, top);
+    wb.run_ui("work.plane").unwrap();
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Work(w)) = wb.panel.clone() else { panic!("no work panel") };
+    assert!(matches!(w.a, Some(PlaneRef::Face(_))), "the selected face is the base");
+    let plane_z = |wb: &Workbench| {
+        wb.scene().work.iter().find_map(|(_, g)| match g {
+            WorkGeom::Plane(f) => Some(f.origin().z),
+            _ => None,
+        })
+    };
+    assert_eq!(plane_z(&wb), Some(20.0), "preview");
+    type_into(&mut d, &mut wb, "tn_props_work_offset", "5");
+    d.frame(&mut wb, vec![]);
+    assert_eq!(plane_z(&wb), Some(15.0));
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let plane = wb.document().features().last().unwrap().clone();
+    assert_eq!(plane.name, "Work Plane1");
+
+    // Start 2D Sketch, then a click on the work plane (drawn over the part) sketches on it.
+    wb.run_ui("sketch.new").unwrap();
+    assert!(wb.pick_plane);
+    d.frame(&mut wb, vec![]);
+    let on_plane = on_screen(&wb, Vec3::new(20.0, 10.0, 15.0));
+    d.click(&mut wb, on_plane);
+    let sk = sketching(&wb);
+    assert!(
+        matches!(&wb.document().feature(sk).unwrap().kind, tenon_model::FeatureKind::Sketch { plane: PlaneRef::Work(id), .. } if *id == plane.id)
+    );
+    d.settle(&mut wb);
+    assert!((wb.sketch_frame(sk).unwrap().origin().z - 15.0).abs() < 1e-9);
+    wb.finish_sketch();
+    d.settle(&mut wb);
+
+    // Axis: the Z axis picked from the origin folder of the browser.
+    wb.run_ui("work.axis").unwrap();
+    wb.browser_action(crate::browser::BrowserAction::Reference(crate::work::Reference::Axis(tenon_model::OriginAxis::Z)));
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!(wb.scene().work.iter().any(|(_, g)| matches!(g, WorkGeom::Axis(a) if a.dir().near(Vec3::Z, 1e-12))), "{:?}", wb.scene().work);
+    assert!(!wb.status_error, "{}", wb.status());
+}
+
+#[test]
 fn start_2d_sketch_picks_a_plane_or_face_in_the_viewport() {
     use tenon_geom::Vec3;
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));

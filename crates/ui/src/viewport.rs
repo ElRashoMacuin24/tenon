@@ -87,6 +87,8 @@ pub(crate) struct View {
     pub hover: Option<Pick>,
     /// The origin plane under the pointer while picking a sketch plane.
     pub plane_hover: Option<OriginPlane>,
+    /// The work plane, axis or point under the pointer, when it can be picked.
+    pub work_hover: Option<tenon_model::FeatureId>,
     pub selection: Vec<Pick>,
     pub anim: Option<ViewAnim>,
     pub style: VisualStyle,
@@ -116,6 +118,7 @@ impl Default for View {
             nav: Nav::Select,
             hover: None,
             plane_hover: None,
+            work_hover: None,
             selection: Vec::new(),
             anim: None,
             style: VisualStyle::default(),
@@ -373,6 +376,7 @@ impl Workbench {
             self.model_pointer(ui, &resp, rect);
         }
         self.draw_scene(ui, rect, render);
+        self.draw_work(ui, rect, t);
         if self.pick_plane {
             self.draw_origin_planes(ui, rect, self.view.plane_hover, t);
         }
@@ -574,15 +578,21 @@ impl Workbench {
             })
             .map(|h| (Pick::Face { body: h.body, face: h.face }, (h.point - o).dot(d)));
         let plane = self.origin_plane_at(p, rect);
-        let face_first = match (face, plane) {
-            (Some((_, tf)), Some((_, tp))) => tf <= tp,
-            (Some(_), None) => true,
-            _ => false,
-        };
+        // A work plane is drawn over the part, so it wins over faces and origin planes.
+        let work = self.work_at(p, rect, true, false);
+        let face_first = work.is_none()
+            && match (face, plane) {
+                (Some((_, tf)), Some((_, tp))) => tf <= tp,
+                (Some(_), None) => true,
+                _ => false,
+            };
+        self.view.work_hover = work.map(|w| w.0);
         self.view.hover = if face_first { face.map(|f| f.0) } else { None };
-        self.view.plane_hover = if face_first { None } else { plane.map(|p| p.0) };
+        self.view.plane_hover = if face_first || work.is_some() { None } else { plane.map(|p| p.0) };
         if resp.clicked() {
-            let r = if face_first {
+            let r = if let Some((id, _)) = work {
+                self.create_sketch(json!({ "work_plane": id.0 }))
+            } else if face_first {
                 self.view.selection = face.map(|f| vec![f.0]).unwrap_or_default();
                 match self.selected_face_ref() {
                     Some(fr) => self.create_sketch(json!({ "face": fr })),
@@ -600,6 +610,7 @@ impl Workbench {
     }
 
     fn model_pointer(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect) {
+        self.view.work_hover = None;
         // Selection box: a left drag with no navigation tool.
         if resp.drag_started_by(egui::PointerButton::Primary) && self.left_drag_tool(ui) == Nav::Select {
             self.view.box_start = ui.input(|i| i.pointer.press_origin());

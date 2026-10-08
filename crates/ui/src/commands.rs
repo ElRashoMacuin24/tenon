@@ -117,9 +117,9 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Work Features",
                 commands: &[
-                    large("work.plane", "Plane", "Construction plane: offset, angled, mid-plane or through points", Icon::Plane, 2),
-                    small("work.axis", "Axis", "Construction axis", Icon::Axis, 2),
-                    small("work.point", "Point", "Construction point", Icon::Point, 2),
+                    large("work.plane", "Plane", "Construction plane: offset, angled or mid-plane", Icon::Plane, 0),
+                    small("work.axis", "Axis", "Construction axis: on an edge or cylinder, or where two planes meet", Icon::Axis, 0),
+                    small("work.point", "Point", "Construction point: a circle centre, or where an axis meets a plane", Icon::Point, 0),
                     small("work.ucs", "UCS", "User coordinate system", Icon::Ucs, 5),
                 ],
             },

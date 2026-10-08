@@ -8,6 +8,7 @@ use tenon_sketch::EntityId;
 
 use crate::panels::{AxisChoice, ChamferMethod, CopyKind, Direction, ExtentChoice, Panel, PanelRequest, Seat, Slot};
 use crate::theme::{self, Tokens};
+use crate::work::{WorkMethod, WorkSlot};
 use crate::workbench::Workbench;
 
 /// Formats a value for a field: up to 3 decimals, no trailing zeros.
@@ -202,10 +203,77 @@ fn flip_button(ui: &mut Ui, flipped: &mut bool, t: &Tokens) {
 
 /// A direction selector: the chosen direction, a list of origin axes (and None when
 /// `optional`). Returns true when the selector was clicked to pick an edge.
-fn direction_picker(ui: &mut Ui, id: &str, d: &mut Option<DirectionRef>, optional: bool, active: bool, t: &Tokens) -> bool {
+type WorkNames<'a> = [(tenon_model::FeatureId, String, &'a str)];
+
+fn work_name(work: &WorkNames, id: tenon_model::FeatureId) -> String {
+    work.iter().find(|x| x.0 == id).map_or_else(|| format!("{id}"), |x| x.1.clone())
+}
+
+/// An axis selector: what is chosen (or a hint), and a list of origin and work axes. Returns
+/// true when the selector was clicked to pick in the part.
+fn axis_picker(ui: &mut Ui, id: &str, a: &mut Option<AxisSel>, active: bool, work: &WorkNames, t: &Tokens) -> bool {
+    let label = match a {
+        None => "click an axis or edge".into(),
+        Some(AxisSel::Origin(o)) => format!("{o:?} Axis"),
+        Some(AxisSel::Edge(_)) => "Edge".into(),
+        Some(AxisSel::Face(_)) => "Cylinder".into(),
+        Some(AxisSel::Work(w)) => work_name(work, *w),
+    };
+    let clicked = slot_button(ui, active, &label, t);
+    egui::ComboBox::from_id_salt(id).selected_text("").width(18.0).show_ui(ui, |ui| {
+        for o in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
+            if ui.selectable_label(*a == Some(AxisSel::Origin(o)), format!("{o:?} Axis")).clicked() {
+                *a = Some(AxisSel::Origin(o));
+            }
+        }
+        for (w, n, _) in work.iter().filter(|x| x.2 == "axis") {
+            if ui.selectable_label(*a == Some(AxisSel::Work(*w)), n).clicked() {
+                *a = Some(AxisSel::Work(*w));
+            }
+        }
+    });
+    clicked
+}
+
+/// A plane selector: what is chosen (or a hint), and a list of origin and work planes.
+fn plane_picker(ui: &mut Ui, id: &str, p: &mut Option<PlaneRef>, active: bool, work: &WorkNames, t: &Tokens) -> bool {
+    let label = match p {
+        None => "click a plane".into(),
+        Some(PlaneRef::Origin(o)) => format!("{o:?} Plane"),
+        Some(PlaneRef::Face(_)) => "Face".into(),
+        Some(PlaneRef::Work(w)) => work_name(work, *w),
+    };
+    let clicked = slot_button(ui, active, &label, t);
+    egui::ComboBox::from_id_salt(id).selected_text("").width(18.0).show_ui(ui, |ui| {
+        for o in [OriginPlane::YZ, OriginPlane::XZ, OriginPlane::XY] {
+            if ui.selectable_label(*p == Some(PlaneRef::Origin(o)), format!("{o:?} Plane")).clicked() {
+                *p = Some(PlaneRef::Origin(o));
+            }
+        }
+        for (w, n, _) in work.iter().filter(|x| x.2 == "plane") {
+            if ui.selectable_label(*p == Some(PlaneRef::Work(*w)), n).clicked() {
+                *p = Some(PlaneRef::Work(*w));
+            }
+        }
+    });
+    clicked
+}
+
+#[allow(clippy::too_many_arguments)]
+fn direction_picker(
+    ui: &mut Ui,
+    id: &str,
+    d: &mut Option<DirectionRef>,
+    optional: bool,
+    active: bool,
+    work: &[(tenon_model::FeatureId, String, &str)],
+    t: &Tokens,
+) -> bool {
+    let name = |w: tenon_model::FeatureId| work.iter().find(|x| x.0 == w).map_or("Work Axis".to_string(), |x| x.1.clone());
     let label = match d {
         Some(DirectionRef::Origin(a)) => format!("{a:?} Axis"),
         Some(DirectionRef::Edge(_)) => "Edge".into(),
+        Some(DirectionRef::Work(w)) => name(*w),
         None => "None".into(),
     };
     let clicked = slot_button(ui, active, &label, t);
@@ -216,6 +284,11 @@ fn direction_picker(ui: &mut Ui, id: &str, d: &mut Option<DirectionRef>, optiona
         for a in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
             if ui.selectable_label(*d == Some(DirectionRef::Origin(a)), format!("{a:?} Axis")).clicked() {
                 *d = Some(DirectionRef::Origin(a));
+            }
+        }
+        for (w, n, _) in work.iter().filter(|x| x.2 == "axis") {
+            if ui.selectable_label(*d == Some(DirectionRef::Work(*w)), n).clicked() {
+                *d = Some(DirectionRef::Work(*w));
             }
         }
     });
@@ -258,7 +331,16 @@ impl Workbench {
     pub(crate) fn has_properties(&self) -> bool {
         matches!(
             self.panel,
-            Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_) | Panel::Hole(_) | Panel::Pattern(_))
+            Some(
+                Panel::Extrude(_)
+                    | Panel::Revolve(_)
+                    | Panel::Fillet(_)
+                    | Panel::Chamfer(_)
+                    | Panel::Shell(_)
+                    | Panel::Hole(_)
+                    | Panel::Pattern(_)
+                    | Panel::Work(_)
+            )
         )
     }
 
@@ -274,6 +356,18 @@ impl Workbench {
         ui.painter().hline(header.x_range(), header.bottom(), Stroke::new(1.0, t.border));
         ui.add_space(header.height() + 4.0);
         let sketches = self.sketches();
+        // Work planes and axes, for the lists: (id, name, "plane" | "axis" | "point").
+        let work_names: Vec<(tenon_model::FeatureId, String, &str)> = self
+            .document()
+            .features()
+            .iter()
+            .filter_map(|f| match f.kind {
+                tenon_model::FeatureKind::WorkPlane(_) => Some((f.id, f.name.clone(), "plane")),
+                tenon_model::FeatureKind::WorkAxis(_) => Some((f.id, f.name.clone(), "axis")),
+                _ => None,
+            })
+            .filter(|w| p_before(&panel, self, w.0))
+            .collect();
         let mut request = None;
         let mut enter = ui.input(|i| i.key_pressed(egui::Key::Enter)) && !ui.ctx().egui_wants_keyboard_input();
         let (kind, name) = match &panel {
@@ -291,6 +385,7 @@ impl Workbench {
                 },
                 p.editing.map(|f| self.feature_name(f)),
             ),
+            Panel::Work(w) => (w.title(), w.editing.map(|f| self.feature_name(f))),
             _ => return,
         };
         let mut clear = false;
@@ -408,6 +503,7 @@ impl Workbench {
                                 let axis_name = |a: &AxisChoice| match a {
                                     AxisChoice::Origin(o) => format!("{o:?} Axis"),
                                     AxisChoice::Line(l) => format!("Sketch line {}", l.0),
+                                    AxisChoice::Work(w) => work_names.iter().find(|x| x.0 == *w).map_or("Work Axis".into(), |x| x.1.clone()),
                                 };
                                 egui::ComboBox::from_id_salt("tn_props_axis").selected_text(axis_name(&p.axis)).show_ui(ui, |ui| {
                                     for o in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
@@ -415,6 +511,9 @@ impl Workbench {
                                     }
                                     for l in &lines {
                                         ui.selectable_value(&mut p.axis, AxisChoice::Line(*l), format!("Sketch line {}", l.0));
+                                    }
+                                    for (w, name, _) in work_names.iter().filter(|x| x.2 == "axis") {
+                                        ui.selectable_value(&mut p.axis, AxisChoice::Work(*w), name);
                                     }
                                 });
                                 ui.end_row();
@@ -706,7 +805,7 @@ impl Workbench {
                                         ui.label("Direction");
                                         ui.horizontal(|ui| {
                                             let mut d = Some(p.dir1.clone());
-                                            if direction_picker(ui, "tn_dir1", &mut d, false, p.slot == Slot::Dir1, t) {
+                                            if direction_picker(ui, "tn_dir1", &mut d, false, p.slot == Slot::Dir1, &work_names, t) {
                                                 p.slot = Slot::Dir1;
                                             }
                                             if let Some(d) = d {
@@ -731,7 +830,7 @@ impl Workbench {
                                         ui.label("Direction");
                                         ui.horizontal(|ui| {
                                             let had = p.dir2.is_some();
-                                            if direction_picker(ui, "tn_dir2", &mut p.dir2, true, p.slot == Slot::Dir2, t) {
+                                            if direction_picker(ui, "tn_dir2", &mut p.dir2, true, p.slot == Slot::Dir2, &work_names, t) {
                                                 p.slot = Slot::Dir2;
                                             }
                                             if !had && p.dir2.is_some() && p.count2 < 2.0 {
@@ -766,21 +865,13 @@ impl Workbench {
                                     egui::Grid::new("tn_props_circ").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                                         ui.label("Axis");
                                         ui.horizontal(|ui| {
-                                            let label = match &p.axis {
-                                                AxisSel::Origin(a) => format!("{a:?} Axis"),
-                                                AxisSel::Edge(_) => "Edge".into(),
-                                                AxisSel::Face(_) => "Face".into(),
-                                            };
-                                            if slot_button(ui, p.slot == Slot::Axis, &label, t) {
+                                            let mut a = Some(p.axis.clone());
+                                            if axis_picker(ui, "tn_props_axis_origin", &mut a, p.slot == Slot::Axis, &work_names, t) {
                                                 p.slot = Slot::Axis;
                                             }
-                                            egui::ComboBox::from_id_salt("tn_props_axis_origin").selected_text("").width(18.0).show_ui(ui, |ui| {
-                                                for a in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
-                                                    if ui.selectable_label(p.axis == AxisSel::Origin(a), format!("{a:?} Axis")).clicked() {
-                                                        p.axis = AxisSel::Origin(a);
-                                                    }
-                                                }
-                                            });
+                                            if let Some(a) = a {
+                                                p.axis = a;
+                                            }
                                             flip_button(ui, &mut p.reverse, t);
                                         });
                                         ui.end_row();
@@ -800,26 +891,91 @@ impl Workbench {
                                     egui::Grid::new("tn_props_mirror").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                                         ui.label("Plane");
                                         ui.horizontal(|ui| {
-                                            let label = match &p.plane {
-                                                PlaneRef::Origin(o) => format!("{o:?} Plane"),
-                                                PlaneRef::Face(_) => "Face".into(),
-                                            };
-                                            if slot_button(ui, p.slot == Slot::Plane, &label, t) {
+                                            let mut pl = Some(p.plane.clone());
+                                            if plane_picker(ui, "tn_props_plane_origin", &mut pl, p.slot == Slot::Plane, &work_names, t) {
                                                 p.slot = Slot::Plane;
                                             }
-                                            egui::ComboBox::from_id_salt("tn_props_plane_origin").selected_text("").width(18.0).show_ui(ui, |ui| {
-                                                for o in [OriginPlane::YZ, OriginPlane::XZ, OriginPlane::XY] {
-                                                    if ui.selectable_label(p.plane == PlaneRef::Origin(o), format!("{o:?} Plane")).clicked() {
-                                                        p.plane = PlaneRef::Origin(o);
-                                                    }
-                                                }
-                                            });
+                                            if let Some(pl) = pl {
+                                                p.plane = pl;
+                                            }
                                         });
                                         ui.end_row();
                                     });
                                 });
                             }
                         }
+                    }
+                    Panel::Work(w) => {
+                        section(ui, "Placement", true, |ui| {
+                            egui::Grid::new("tn_props_work").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Method");
+                                egui::ComboBox::from_id_salt("tn_props_work_method").selected_text(w.method.label()).show_ui(ui, |ui| {
+                                    for m in w.method.family() {
+                                        if ui.selectable_label(w.method == *m, m.label()).clicked() && w.method != *m {
+                                            w.method = *m;
+                                            w.slot = m.slots()[0];
+                                            w.advance();
+                                        }
+                                    }
+                                });
+                                ui.end_row();
+                                let two = w.method.slots().contains(&WorkSlot::B);
+                                for slot in w.method.slots() {
+                                    match slot {
+                                        WorkSlot::A => {
+                                            ui.label(if two { "Plane 1" } else { "Plane" });
+                                            if plane_picker(ui, "tn_work_a", &mut w.a, w.slot == WorkSlot::A, &work_names, t) {
+                                                w.slot = WorkSlot::A;
+                                            }
+                                        }
+                                        WorkSlot::B => {
+                                            ui.label("Plane 2");
+                                            if plane_picker(ui, "tn_work_b", &mut w.b, w.slot == WorkSlot::B, &work_names, t) {
+                                                w.slot = WorkSlot::B;
+                                            }
+                                        }
+                                        WorkSlot::Axis => {
+                                            ui.label("Axis");
+                                            if axis_picker(ui, "tn_work_axis", &mut w.axis, w.slot == WorkSlot::Axis, &work_names, t) {
+                                                w.slot = WorkSlot::Axis;
+                                            }
+                                        }
+                                        WorkSlot::Edge => {
+                                            ui.label("Edge");
+                                            let label = if w.edge.is_some() { "1 selected" } else { "click a circular edge" };
+                                            if slot_button(ui, w.slot == WorkSlot::Edge, label, t) {
+                                                w.slot = WorkSlot::Edge;
+                                            }
+                                        }
+                                    }
+                                    ui.end_row();
+                                }
+                                match w.method {
+                                    WorkMethod::Offset => {
+                                        ui.label("Offset");
+                                        enter |= value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_work_offset"),
+                                            &mut w.distance,
+                                            "mm",
+                                            -100_000.0..=100_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
+                                        ui.end_row();
+                                    }
+                                    WorkMethod::Angle => {
+                                        ui.label("Angle");
+                                        enter |=
+                                            value_field(ui, egui::Id::new("tn_props_work_angle"), &mut w.degrees, "deg", -360.0..=360.0, 110.0, t)
+                                                .entered;
+                                        ui.end_row();
+                                    }
+                                    _ => {}
+                                }
+                            });
+                        });
                     }
                     _ => {}
                 }
@@ -919,7 +1075,7 @@ impl Workbench {
                 .first()
                 .and_then(|e| Some(self.sketch_frame(p.sketch)?.plane_point(self.document().sketch(p.sketch)?.point(*e)?)))
                 .or_else(|| self.scene.bbox().map(|b| b.center())),
-            Some(Panel::Pattern(_)) => self.scene.bbox().map(|b| Vec3::new(b.max.x, b.min.y, b.max.z)),
+            Some(Panel::Pattern(_) | Panel::Work(_)) => self.scene.bbox().map(|b| Vec3::new(b.max.x, b.min.y, b.max.z)),
             _ => return,
         };
         let is_extrude = matches!(self.panel, Some(Panel::Extrude(_)));
@@ -973,6 +1129,16 @@ impl Workbench {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
+                        Some(Panel::Work(w)) if w.method == WorkMethod::Offset => {
+                            if value_field(ui, egui::Id::new("tn_mini_work"), &mut w.distance, "mm", -100_000.0..=100_000.0, 80.0, t).entered {
+                                request = Some(PanelRequest::Ok);
+                            }
+                        }
+                        Some(Panel::Work(w)) if w.method == WorkMethod::Angle => {
+                            if value_field(ui, egui::Id::new("tn_mini_work"), &mut w.degrees, "deg", -360.0..=360.0, 80.0, t).entered {
+                                request = Some(PanelRequest::Ok);
+                            }
+                        }
                         Some(Panel::Pattern(p)) if p.kind != CopyKind::Mirror => {
                             let count = if p.kind == CopyKind::Rect { &mut p.count1 } else { &mut p.count };
                             if value_field(ui, egui::Id::new("tn_mini_count"), count, "", 1.0..=10_000.0, 60.0, t).entered {
@@ -1006,6 +1172,17 @@ impl Workbench {
             self.panel_request = request;
         }
     }
+}
+
+/// True if feature `id` comes before the feature being edited (so the panel may refer to it).
+fn p_before(panel: &Panel, wb: &Workbench, id: tenon_model::FeatureId) -> bool {
+    let editing = match panel {
+        Panel::Revolve(p) => p.editing,
+        Panel::Pattern(p) => p.editing,
+        Panel::Work(w) => w.editing,
+        _ => None,
+    };
+    editing.is_none_or(|e| wb.document().index_of(id) < wb.document().index_of(e))
 }
 
 fn p_direction_symmetric(panel: &Option<Panel>) -> bool {

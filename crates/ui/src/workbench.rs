@@ -283,6 +283,9 @@ impl Workbench {
             "model.pattern.rect" => self.open_pattern(crate::panels::CopyKind::Rect, None)?,
             "model.pattern.circular" => self.open_pattern(crate::panels::CopyKind::Circular, None)?,
             "model.mirror" => self.open_pattern(crate::panels::CopyKind::Mirror, None)?,
+            "work.plane" => self.open_work(crate::work::WorkMethod::Offset, None)?,
+            "work.axis" => self.open_work(crate::work::WorkMethod::Along, None)?,
+            "work.point" => self.open_work(crate::work::WorkMethod::Center, None)?,
             "ui.ok" | "ui.cancel" => {
                 let ok = id == "ui.ok";
                 if self.panel.is_some() {
@@ -570,6 +573,9 @@ impl Workbench {
             Some(FeatureKind::PatternRect(_)) => self.open_pattern(crate::panels::CopyKind::Rect, Some(id)),
             Some(FeatureKind::PatternCircular(_)) => self.open_pattern(crate::panels::CopyKind::Circular, Some(id)),
             Some(FeatureKind::Mirror(_)) => self.open_pattern(crate::panels::CopyKind::Mirror, Some(id)),
+            Some(FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_)) => {
+                self.open_work(crate::work::WorkMethod::Offset, Some(id))
+            }
             None => Err(format!("{id} does not exist")),
         }
     }

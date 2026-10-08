@@ -11,6 +11,7 @@ use tenon_sketch::EntityId;
 use crate::panels::{ChamferMethod, CopyKind, Panel, Slot};
 use crate::theme::Tokens;
 use crate::viewport::Pick;
+use crate::work::{Reference, WorkSlot};
 use crate::workbench::Workbench;
 
 /// The edge of the scene a reference means: between the same two named faces, nearest by
@@ -66,6 +67,11 @@ impl Workbench {
                 Slot::Features | Slot::Plane => Wants { edges: false, faces: true },
                 Slot::Dir1 | Slot::Dir2 => Wants { edges: true, faces: false },
                 Slot::Axis => Wants { edges: true, faces: true },
+            }),
+            Some(Panel::Work(w)) => Some(match w.slot {
+                WorkSlot::A | WorkSlot::B => Wants { edges: false, faces: true },
+                WorkSlot::Axis => Wants { edges: true, faces: true },
+                WorkSlot::Edge => Wants { edges: true, faces: false },
             }),
             _ => None,
         }
@@ -135,17 +141,17 @@ impl Workbench {
                         .flatten()
                         .filter_map(|d| match d {
                             DirectionRef::Edge(e) => find_edge(&self.scene, e).map(|(body, edge)| Pick::Edge { body, edge }),
-                            DirectionRef::Origin(_) => None,
+                            DirectionRef::Origin(_) | DirectionRef::Work(_) => None,
                         })
                         .collect(),
                     CopyKind::Circular => match &p.axis {
                         AxisSel::Edge(e) => edges(std::slice::from_ref(e)),
                         AxisSel::Face(f) => face(f).into_iter().collect(),
-                        AxisSel::Origin(_) => Vec::new(),
+                        AxisSel::Origin(_) | AxisSel::Work(_) => Vec::new(),
                     },
                     CopyKind::Mirror => match &p.plane {
                         PlaneRef::Face(f) => face(f).into_iter().collect(),
-                        PlaneRef::Origin(_) => Vec::new(),
+                        PlaneRef::Origin(_) | PlaneRef::Work(_) => Vec::new(),
                     },
                 };
                 v.extend(refs);
@@ -177,6 +183,14 @@ impl Workbench {
                 }
                 Slot::Dir1 | Slot::Dir2 => false,
             },
+            (Pick::Face { body, face }, Some(Panel::Work(w))) if wants.faces => {
+                self.face_ref_of(body, face).is_some()
+                    && match w.slot {
+                        WorkSlot::A | WorkSlot::B => matches!(surface(body, face), Some(SurfaceKind::Plane { .. })),
+                        WorkSlot::Axis => matches!(surface(body, face), Some(SurfaceKind::Cylinder { .. } | SurfaceKind::Cone { .. })),
+                        WorkSlot::Edge => false,
+                    }
+            }
             (Pick::Edge { body, edge }, _) => wants.edges && self.edge_ref_of(body, edge).is_some(),
             (Pick::Face { body, face }, _) => wants.faces && self.face_ref_of(body, face).is_some(),
         }
@@ -185,6 +199,9 @@ impl Workbench {
     /// Adds a pick to the panel, or removes it when it is there already (`toggle`). Returns
     /// false when the panel does not take it.
     pub(crate) fn pick_into_panel(&mut self, p: Pick, toggle: bool) -> bool {
+        if matches!(self.panel, Some(Panel::Work(_))) {
+            return self.work_pick(p);
+        }
         if let Some(Panel::Pattern(pp)) = &self.panel {
             let slot = pp.slot;
             match (slot, p) {
@@ -317,6 +334,19 @@ impl Workbench {
             return true;
         }
         let Some(wants) = self.panel_wants() else { return false };
+        // Work planes and axes are drawn over the part, so they are picked first.
+        let (planes, axes) = self.work_accepted();
+        if (planes || axes)
+            && let Some(pos) = resp.hover_pos()
+            && let Some((id, _)) = self.work_at(pos, rect, planes, axes)
+        {
+            self.view.hover = None;
+            self.view.work_hover = Some(id);
+            if resp.clicked() {
+                self.pick_reference(Reference::Work(id));
+            }
+            return true;
+        }
         let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
         let hover = resp.hover_pos().and_then(|p| {
             let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));

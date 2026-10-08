@@ -387,3 +387,115 @@ fn patterns_refuse_what_they_cannot_copy() {
     assert_eq!(r["error"]["feature"], pat, "{r}");
     assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("Extrusion1 has no result to copy")), "{r}");
 }
+
+fn work(s: &mut Session, k: &mut OcctKernel, id: u64) -> Value {
+    let w = run(s, k, "model.work", json!({}));
+    w["work"].as_array().unwrap().iter().find(|x| x["feature"] == id).cloned().unwrap_or_else(|| panic!("no work feature {id}: {w}"))
+}
+
+fn v3(v: &Value) -> [f64; 3] {
+    [v[0].as_f64().unwrap(), v[1].as_f64().unwrap(), v[2].as_f64().unwrap()]
+}
+
+fn near3(a: [f64; 3], b: [f64; 3]) -> bool {
+    (0..3).all(|i| (a[i] - b[i]).abs() < 1e-6)
+}
+
+#[test]
+fn a_work_plane_offset_from_a_face_carries_a_sketch_and_follows_it() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    // 4 below the top face, inside the block.
+    let face = run(&mut s, &mut k, "model.face_ref", json!({ "origin": top(ex) }));
+    let wp = run(&mut s, &mut k, "work.plane", json!({ "base": face, "distance": -4 }));
+    assert_eq!(wp["name"], "Work Plane1");
+    let wp = wp["feature"].as_u64().unwrap();
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 15, "y1": 5, "x2": 25, "y2": 15 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "symmetric": 2, "operation": "cut" }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 8000.0 - 200.0), "{}", volume(&mut s, &mut k));
+    assert!(near3(v3(&work(&mut s, &mut k, wp)["origin"]), [0.0, 0.0, 6.0]), "{}", work(&mut s, &mut k, wp));
+    // A taller block: the plane moves with the top face.
+    let mut kind = serde_json::to_value(&s.document().feature(tenon_model::FeatureId(ex as u32)).unwrap().kind).unwrap();
+    kind["extent"] = json!({ "distance": 14.0 });
+    run(&mut s, &mut k, "feature.update", json!({ "feature": ex, "kind": kind }));
+    regenerates(&mut s, &mut k);
+    assert!(near3(v3(&work(&mut s, &mut k, wp)["origin"]), [0.0, 0.0, 10.0]));
+    assert!(approx(volume(&mut s, &mut k), 40.0 * 20.0 * 14.0 - 200.0));
+}
+
+#[test]
+fn angled_and_mid_planes_mirror_like_origin_planes() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let ex = block_at(&mut s, &mut k, 0.0, 0.0, 40.0, 20.0, 10.0);
+    let (sk, _) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0)]);
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 4, "through_all": true }))["feature"].as_u64().unwrap();
+    // Midplane between the two end faces (x = 0 and x = 40) is x = 20: the mirrored hole is at 30.
+    let faces = run(&mut s, &mut k, "model.faces", json!({}));
+    let at_x = |x: f64| {
+        faces["faces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| (f["centroid"][0].as_f64().unwrap() - x).abs() < 1e-9 && f["name"]["type"] == "side")
+            .unwrap()["name"]
+            .clone()
+    };
+
+    let (left, right) = (at_x(0.0), at_x(40.0));
+    let a = run(&mut s, &mut k, "model.face_ref", json!({ "origin": left }));
+    let b = run(&mut s, &mut k, "model.face_ref", json!({ "origin": right }));
+    let mid = run(&mut s, &mut k, "work.plane", json!({ "by": "midplane", "a": a, "b": b }))["feature"].as_u64().unwrap();
+    let m = run(&mut s, &mut k, "model.mirror", json!({ "features": [hole], "work_plane": mid }))["feature"].as_u64().unwrap();
+    regenerates(&mut s, &mut k);
+    assert!((v3(&work(&mut s, &mut k, mid)["origin"])[0] - 20.0).abs() < 1e-6, "{}", work(&mut s, &mut k, mid));
+    let walls = faces_of(&mut s, &mut k, m);
+    assert!((walls[0]["centroid"][0].as_f64().unwrap() - 30.0).abs() < 1e-6, "{walls:?}");
+    // XZ turned 90 degrees about Z is YZ.
+    let ang = run(&mut s, &mut k, "work.plane", json!({ "by": "angle", "base": "xz", "axis": "z", "angle": PI / 2.0 }))["feature"].as_u64().unwrap();
+    regenerates(&mut s, &mut k);
+    let n = v3(&work(&mut s, &mut k, ang)["normal"]);
+    assert!((n[0].abs() - 1.0).abs() < 1e-9 && n[1].abs() < 1e-9 && n[2].abs() < 1e-9, "{n:?}");
+    // An axis not in the base plane is refused at regeneration.
+    let bad = run(&mut s, &mut k, "work.plane", json!({ "by": "angle", "base": "xy", "axis": "z", "angle": 1.0 }))["feature"].as_u64().unwrap();
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert_eq!(r["error"]["feature"], bad);
+    assert!(r["error"]["message"].as_str().unwrap().contains("must lie in the base plane"));
+}
+
+#[test]
+fn work_axes_and_points() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let ex = block_at(&mut s, &mut k, -20.0, -20.0, 40.0, 40.0, 10.0);
+    // Where XZ and YZ meet is the Z axis.
+    let ax = run(&mut s, &mut k, "work.axis", json!({ "a": "xz", "b": "yz" }))["feature"].as_u64().unwrap();
+    // A hole at (12, 0), patterned 3 times about the work axis.
+    let (sk, pts) = points_on_top(&mut s, &mut k, ex, &[(12.0, 0.0)]);
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 4, "through_all": true }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "model.pattern.circular", json!({ "features": [hole], "axis": { "work": ax }, "count": 3 }));
+    // The centre of the hole's top edge.
+    let wall = json!({ "type": "from", "feature": hole, "source": (pts[0] << 8) | 2, "ordinal": 0 });
+    let rim = run(&mut s, &mut k, "model.edge_ref", json!({ "faces": [top(ex), wall] }));
+    let centre = run(&mut s, &mut k, "work.point", json!({ "edge": rim }))["feature"].as_u64().unwrap();
+    regenerates(&mut s, &mut k);
+    let w = work(&mut s, &mut k, ax);
+    let d = v3(&w["direction"]);
+    assert!(d[0].abs() < 1e-9 && d[1].abs() < 1e-9 && (d[2].abs() - 1.0).abs() < 1e-9, "{w}");
+    assert!(approx(volume(&mut s, &mut k), 16000.0 - 3.0 * PI * 4.0 * 10.0), "{}", volume(&mut s, &mut k));
+    // A point where the axis meets a plane 7 above XY, and the centre of the hole's top edge.
+    let wp = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 7 }))["feature"].as_u64().unwrap();
+    let pt = run(&mut s, &mut k, "work.point", json!({ "axis": { "work": ax }, "plane": { "work": wp } }))["feature"].as_u64().unwrap();
+
+    regenerates(&mut s, &mut k);
+    assert!(near3(v3(&work(&mut s, &mut k, pt)["point"]), [0.0, 0.0, 7.0]));
+    assert!(near3(v3(&work(&mut s, &mut k, centre)["point"]), [12.0, 0.0, 10.0]), "{}", work(&mut s, &mut k, centre));
+    // Wrong kinds are refused.
+    assert!(s.exec("work.point", &json!({ "axis": { "work": wp }, "plane": "xy" }), Some(&mut k)).is_err(), "a plane is not an axis");
+    assert!(s.exec("sketch.create", &json!({ "work_plane": ax }), Some(&mut k)).is_err(), "an axis is not a plane");
+    assert!(s.exec("work.axis", &json!({ "a": "xy", "b": { "work": 99 } }), Some(&mut k)).is_err());
+    // Parallel planes have no line.
+    let par = run(&mut s, &mut k, "work.axis", json!({ "a": "xy", "b": { "work": wp } }))["feature"].as_u64().unwrap();
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert_eq!(r["error"]["feature"], par, "{r}");
+}

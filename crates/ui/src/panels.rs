@@ -46,6 +46,7 @@ pub(crate) struct ExtrudePanel {
 pub(crate) enum AxisChoice {
     Origin(OriginAxis),
     Line(EntityId),
+    Work(FeatureId),
 }
 
 #[derive(Clone, Debug)]
@@ -388,6 +389,7 @@ pub(crate) enum Panel {
     Shell(ShellPanel),
     Hole(HolePanel),
     Pattern(Box<PatternPanel>),
+    Work(Box<crate::work::WorkPanel>),
     Value(ValuePanel),
     EditDimension { sketch: FeatureId, constraint: ConstraintId, value: f64, angular: bool },
     Rename { feature: FeatureId, name: String },
@@ -418,6 +420,7 @@ impl RevolvePanel {
         let axis = match self.axis {
             AxisChoice::Origin(a) => AxisRef::Origin(a),
             AxisChoice::Line(l) => AxisRef::SketchLine(l),
+            AxisChoice::Work(w) => AxisRef::Work(w),
         };
         FeatureKind::Revolve(Revolve { sketch: self.sketch, regions: self.regions.clone(), axis, angle, operation: self.operation })
     }
@@ -449,6 +452,10 @@ impl Workbench {
             Some(Panel::Pattern(p)) => match p.kind() {
                 Some(kind) => with_feature(self.document(), p.editing, kind),
                 None => rolled(p.editing),
+            },
+            Some(Panel::Work(w)) => match w.kind() {
+                Some(kind) => with_feature(self.document(), w.editing, kind),
+                None => rolled(w.editing),
             },
             Some(Panel::Fillet(p)) => rolled(p.editing),
             Some(Panel::Chamfer(p)) => rolled(p.editing),
@@ -599,6 +606,7 @@ impl Workbench {
                     let axis = match r.axis {
                         AxisRef::Origin(a) => AxisChoice::Origin(a),
                         AxisRef::SketchLine(l) => AxisChoice::Line(l),
+                        AxisRef::Work(w) => AxisChoice::Work(w),
                     };
                     RevolvePanel { editing, sketch: r.sketch, axis, full, degrees, symmetric, operation: r.operation, regions: r.regions.clone() }
                 }
@@ -736,6 +744,7 @@ impl Workbench {
                         p["axis"] = match r.axis {
                             AxisRef::Origin(a) => json!(format!("{a:?}").to_lowercase()),
                             AxisRef::SketchLine(l) => json!(l.0),
+                            AxisRef::Work(w) => json!({ "work": w.0 }),
                         };
                         match r.angle {
                             RevolveAngle::Full => {}
@@ -808,14 +817,9 @@ impl Workbench {
                         ("model.pattern.rect", p)
                     }
                     FeatureKind::PatternCircular(c) => {
-                        let axis = match &c.axis {
-                            AxisSel::Origin(a) => json!(format!("{a:?}").to_lowercase()),
-                            AxisSel::Edge(e) => json!(e),
-                            AxisSel::Face(f) => json!(f),
-                        };
                         let p = json!({
                             "features": c.features.iter().map(|f| f.0).collect::<Vec<_>>(),
-                            "axis": axis,
+                            "axis": crate::work::axis_json(&c.axis),
                             "count": c.count,
                             "angle": c.angle,
                             "reverse": c.reverse,
@@ -827,8 +831,13 @@ impl Workbench {
                         match &m.plane {
                             PlaneRef::Origin(o) => p["plane"] = json!(format!("{o:?}").to_lowercase()),
                             PlaneRef::Face(f) => p["face"] = json!(f),
+                            PlaneRef::Work(id) => p["work_plane"] = json!(id.0),
                         }
                         ("model.mirror", p)
+                    }
+                    k @ (FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_)) => {
+                        let Some(params) = crate::work::work_params(k) else { return false };
+                        params
                     }
                     FeatureKind::Sketch { .. } => return false,
                 };
@@ -910,6 +919,19 @@ impl Workbench {
                             keep = !self.commit_feature(p.editing, kind);
                             if !keep && again {
                                 reopen = Some(p.command());
+                            }
+                        }
+                    }
+                }
+            }
+            Panel::Work(w) => {
+                if commit {
+                    match w.kind() {
+                        None => self.set_error(format!("{}: fill in every selection first", w.title())),
+                        Some(kind) => {
+                            keep = !self.commit_feature(w.editing, kind);
+                            if !keep && again {
+                                reopen = Some(w.command());
                             }
                         }
                     }
@@ -1067,6 +1089,7 @@ fn direction_json(d: &DirectionRef) -> Value {
     match d {
         DirectionRef::Origin(a) => json!(format!("{a:?}").to_lowercase()),
         DirectionRef::Edge(e) => json!(e),
+        DirectionRef::Work(id) => json!({ "work": id.0 }),
     }
 }
 

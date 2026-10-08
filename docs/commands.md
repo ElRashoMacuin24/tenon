@@ -36,6 +36,9 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `model.pattern.rect` | Rectangular Pattern | features: [feature ids]; direction: "x" \| "y" \| "z" or an edge reference (straight edge); count; spacing; reverse; optional direction2, count2, spacing2, reverse2 | yes |
 | `model.pattern.circular` | Circular Pattern | features: [feature ids]; axis: "x" \| "y" \| "z", an edge reference (straight or circular edge) or a face reference (cylinder or cone); count; angle (rad, default a full turn: copies spread evenly); reverse | yes |
 | `model.mirror` | Mirror | features: [feature ids]; plane: "xy" \| "yz" \| "xz", or face: a planar face reference | yes |
+| `work.plane` | Work Plane | by: offset (base: plane, distance) \| angle (base: plane, axis: in the base plane, angle: rad) \| midplane (a, b: parallel planes); a plane is "xy" \| "yz" \| "xz", a face reference or {"work": plane id} | yes |
+| `work.axis` | Work Axis | axis: "x" \| "y" \| "z", an edge reference, a cylindrical face reference or {"work": id}; or a, b: two planes it lies on | yes |
+| `work.point` | Work Point | edge: a circular edge reference (its centre); or axis and plane (where they meet) | yes |
 | `feature.update` | Edit Feature | feature (id), kind: the feature definition as in model.tree / the file format | yes |
 | `feature.rename` | Rename Feature | feature, name | yes |
 | `feature.suppress` | Suppress | feature, suppressed (default true) | yes |
@@ -48,6 +51,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `model.topology` | Topology | none | no |
 | `model.faces` | Faces | body (default 0) | no |
 | `model.edges` | Edges | body (default 0): every edge with the names of its two faces | no |
+| `model.work` | Work Features | where every work plane, axis and point is | no |
 | `model.edge_ref` | Edge Reference | faces: [face origin, face origin] (the two faces the edge joins); or body (default 0) and edge (index from model.edges) | no |
 | `model.face_ref` | Face Reference | origin: {"type": "cap", "feature": id, "end": "start" \| "end"} or {"type": "side", "feature": id, "curve": id}; or body (default 0) and face (index from model.faces) | no |
 | `file.save` | Save | path (.tenon) | no |
