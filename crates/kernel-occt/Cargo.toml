@@ -1,15 +1,39 @@
 [package]
 name = "tenon-kernel-occt"
-description = "Kernel backend over OpenCASCADE (the only crate allowed unsafe)"
+description = "Kernel backend over OpenCASCADE 8 (the only crate allowed unsafe)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+build = "build.rs"
+
+# All tests are integration tests in tests/ (they need the linked library anyway). Not building
+# an empty unit-test executable also avoids one more unsigned binary for Windows Smart App
+# Control to judge (docs/setup.md).
+[lib]
+test = false
+doctest = false
+
+# Not `workspace = true`: this is the one crate where `unsafe` (the cxx bridge) is allowed.
+# Every other lint matches the workspace.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+dbg_macro = "warn"
+undocumented_unsafe_blocks = "deny"
+too_many_arguments = "allow"
+type_complexity = "allow"
 
 [dependencies]
 tenon-kernel = { workspace = true }
 tenon-geom = { workspace = true }
+cxx = { workspace = true }
+
+[build-dependencies]
+cxx-build = { workspace = true }
