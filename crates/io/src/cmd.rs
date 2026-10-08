@@ -87,7 +87,7 @@ fn export_stl(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
 
 static COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: "file.save", label: "Save", help: "path (.tenon)", mutates: false, run: Run::Doc(file_save) },
-    CommandSpec { id: "file.open", label: "Open", help: "path (.tenon)", mutates: true, run: Run::Doc(file_open) },
+    CommandSpec { id: "file.open", label: "Open", help: "path (.tenon); clears undo history", mutates: false, run: Run::Doc(file_open) },
     CommandSpec { id: "export.step", label: "Export STEP", help: "path (.step)", mutates: false, run: Run::Geo(export_step) },
     CommandSpec {
         id: "export.stl",

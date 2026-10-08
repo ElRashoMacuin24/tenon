@@ -55,7 +55,8 @@ pub struct CommandSpec {
     pub label: &'static str,
     /// Parameters, one line per parameter.
     pub help: &'static str,
-    /// Changes the document (undoable).
+    /// Edits the document as one undo step. (Undo, redo and opening a file change the document
+    /// too, but add no step.)
     pub mutates: bool,
     pub run: Run,
 }
@@ -120,7 +121,11 @@ impl Session {
     }
 
     fn release_regen(&mut self, k: Option<&mut dyn Kernel>) {
-        if let (Some((_, mut r)), Some(k)) = (self.regen.take(), k) {
+        // Without a kernel the stale result stays cached (its revision no longer matches), and
+        // the next `regen` releases its shapes; dropping it here would leak them in the kernel.
+        if let Some(k) = k
+            && let Some((_, mut r)) = self.regen.take()
+        {
             r.release(k);
         }
     }
@@ -664,10 +669,13 @@ fn model_faces(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
 }
 
 fn model_face_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
-    let body = opt_id(p, "body")?.unwrap_or(0) as usize;
-    let face = id_u32(p, "face")?;
     let r = s.regen(k).clone();
-    let fr = r.face_ref(body, face, k).map_err(CmdError)?;
+    let fr = if p.get("origin").is_some() {
+        r.face_ref_by_origin(parse(p, "origin")?, k)
+    } else {
+        r.face_ref(opt_id(p, "body")?.unwrap_or(0) as usize, id_u32(p, "face")?, k)
+    }
+    .map_err(CmdError)?;
     Ok(serde_json::to_value(fr).unwrap_or(Value::Null))
 }
 
@@ -741,7 +749,12 @@ static COMMANDS: &[CommandSpec] = &[
     geo_cmd!("model.mass", "Mass Properties", "density (mass per mm^3, default 1)", model_mass),
     geo_cmd!("model.topology", "Topology", "", model_topology),
     geo_cmd!("model.faces", "Faces", "body (default 0)", model_faces),
-    geo_cmd!("model.face_ref", "Face Reference", "body (default 0), face (index from model.faces)", model_face_ref),
+    geo_cmd!(
+        "model.face_ref",
+        "Face Reference",
+        "origin: {\"type\": \"cap\", \"feature\": id, \"end\": \"start\" | \"end\"} or {\"type\": \"side\", \"feature\": id, \"curve\": id}; or body (default 0) and face (index from model.faces)",
+        model_face_ref
+    ),
 ];
 
 /// This crate's commands.

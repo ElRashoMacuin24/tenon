@@ -70,6 +70,20 @@ impl Regen {
         let info = k.face_info(b.shape.face(face)).map_err(|e| e.to_string())?;
         Ok(FaceRef { origin, fingerprint: Fingerprint::of(&info) })
     }
+    /// A persistent reference to the one face named `origin` (scripts name faces this way, since
+    /// face indices depend on the kernel). Fails when no face or several faces have that name.
+    pub fn face_ref_by_origin(&self, origin: FaceOrigin, k: &dyn Kernel) -> Result<FaceRef, String> {
+        let mut found = self
+            .bodies
+            .iter()
+            .enumerate()
+            .flat_map(|(bi, b)| b.names.iter().enumerate().filter(|(_, n)| **n == Some(origin)).map(move |(fi, _)| (bi, fi)));
+        match (found.next(), found.next()) {
+            (Some((b, f)), None) => self.face_ref(b, u32::try_from(f).map_err(|_| "too many faces")?, k),
+            (None, _) => Err("no face has that origin".into()),
+            (Some(_), Some(_)) => Err("several faces have that origin; choose one with `body` and `face`".into()),
+        }
+    }
     /// Resolves a reference against this result.
     pub fn resolve(&self, fref: &FaceRef, k: &dyn Kernel) -> Result<(usize, u32), String> {
         resolve(fref, &self.views(), k)
