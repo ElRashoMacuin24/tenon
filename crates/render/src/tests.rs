@@ -82,6 +82,27 @@ fn software_render_draws_the_cube_and_encodes_png() {
     assert_eq!(render(&[&m], &c, 0, 0, &style).width, 1);
 }
 
+fn pixel(rgba: &[u8], w: u32, x: f64, y: f64) -> [u8; 4] {
+    let i = ((y as u32 * w + x as u32) * 4) as usize;
+    [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+}
+
+#[test]
+fn the_three_faces_of_an_iso_view_shade_differently() {
+    // Regression: a headlight along the view direction lit +X, -Y and +Z equally in iso view.
+    let (m, c) = (cube(), framed(StdView::Home));
+    let img = render(&[&m], &c, 320, 240, &Style::default());
+    let at = |p: Vec3| {
+        let (x, y, _) = c.project(p, 320.0, 240.0).unwrap();
+        pixel(&img.rgba, 320, x, y)[0]
+    };
+    let (top, front, right) = (at(Vec3::new(5.0, 5.0, 10.0)), at(Vec3::new(5.0, 0.0, 5.0)), at(Vec3::new(10.0, 5.0, 5.0)));
+    for (a, b) in [(top, front), (top, right), (front, right)] {
+        assert!(a.abs_diff(b) >= 8, "faces too alike: top {top}, front {front}, right {right}");
+    }
+    assert!(top > front && top > right, "the top is lit most: top {top}, front {front}, right {right}");
+}
+
 #[test]
 fn gpu_viewport_renders_when_an_adapter_exists() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
@@ -96,26 +117,43 @@ fn gpu_viewport_renders_when_an_adapter_exists() {
     };
     let mut vp = crate::gpu::Viewport::new(&device);
     let m = cube();
-    let colors = crate::gpu::BodyColors { face: [0.7, 0.7, 0.7], edge: [0.0; 3], ..Default::default() };
+    let style = Style::default();
+    let linear = |v: u8| {
+        let s = f32::from(v) / 255.0;
+        if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    };
+    let body = style.body;
+    let colors = crate::gpu::BodyColors { face: [linear(body[0]), linear(body[1]), linear(body[2])], edge: [0.0; 3], ..Default::default() };
     vp.set_bodies(&device, &[(&m, &colors)]);
     let c = framed(StdView::Home);
-    let (_, recreated) = vp.render(&device, &queue, &c, 64, 48, 10.0).unwrap();
+    let (w, h) = (160, 120);
+    let (_, recreated) = vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
     assert!(recreated);
-    let (_, again) = vp.render(&device, &queue, &c, 64, 48, 10.0).unwrap();
+    let (_, again) = vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
     assert!(!again, "same size keeps the texture");
-    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+
+    // Regression: the texture handed to egui must hold gamma-encoded colours. The GPU and the
+    // software renderer agree on the lit top face (the test cube's vertex normals are all +Z,
+    // so only the top face is meaningful on the GPU).
+    let (rw, rh, gpu) = vp.read_pixels(&device, &queue).unwrap();
+    assert_eq!((rw, rh, gpu.len()), (w, h, (w * h * 4) as usize));
+    let (x, y, _) = c.project(Vec3::new(5.0, 5.0, 10.0), f64::from(w), f64::from(h)).unwrap();
+    let g = pixel(&gpu, w, x, y);
+    let expected = crate::raster::shade(body, Vec3::Z, c.key_light());
+    let soft = render(&[&m], &c, w, h, &style);
+    let s = pixel(&soft.rgba, w, x, y);
+    for ch in 0..3 {
+        assert!(g[ch].abs_diff(expected[ch]) <= 3, "GPU {g:?} vs shade() {expected:?}");
+        assert!(g[ch].abs_diff(s[ch]) <= 3, "GPU {g:?} vs software {s:?}");
+    }
+    assert_eq!(g[3], 255, "opaque where the body is");
+    assert_eq!(pixel(&gpu, w, 1.0, 1.0)[3], 0, "transparent background");
 }
 
 /// Minimal executor for wgpu's futures (they complete immediately on native backends).
 fn pollster_block<F: std::future::Future>(f: F) -> F::Output {
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-    fn noop(_: *const ()) {}
-    fn clone(p: *const ()) -> RawWaker {
-        RawWaker::new(p, &VTABLE)
-    }
-    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+    use std::task::{Context, Poll, Waker};
     let waker = Waker::noop();
-    let _ = &VTABLE;
     let mut cx = Context::from_waker(waker);
     let mut f = std::pin::pin!(f);
     loop {

@@ -9,8 +9,10 @@ use wgpu::util::DeviceExt;
 
 use crate::Camera;
 
-/// Format of the texture handed to the UI.
-pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+/// Format of the texture handed to the UI. egui-wgpu samples native textures as gamma-encoded
+/// `Rgba8Unorm`, so the shaders light in linear space and encode to sRGB themselves (an
+/// `...Srgb` target would hand egui linear values and the model would look far too dark).
+pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SAMPLES: u32 = 4;
 
@@ -41,16 +43,23 @@ fn vs_main(v: VIn) -> VOut {
     return o;
 }
 
+fn srgb_from_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= vec3<f32>(0.0031308));
+}
+
 @fragment
 fn fs_face(i: VOut) -> @location(0) vec4<f32> {
     let n = normalize(i.normal);
     let d = abs(dot(n, u.light.xyz));
-    return vec4<f32>(i.color * (0.35 + 0.65 * d), 1.0);
+    // Same shading as raster::shade.
+    return vec4<f32>(srgb_from_linear(i.color * (0.35 + 0.65 * d)), 1.0);
 }
 
 @fragment
 fn fs_line(i: VOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(i.color, 1.0);
+    return vec4<f32>(srgb_from_linear(i.color), 1.0);
 }
 "#;
 
@@ -92,6 +101,7 @@ struct Targets {
     size: (u32, u32),
     msaa: wgpu::TextureView,
     depth: wgpu::TextureView,
+    color_texture: wgpu::Texture,
     color: wgpu::TextureView,
 }
 
@@ -233,29 +243,30 @@ impl Viewport {
             return;
         }
         let make = |format, samples, usage, label| {
-            device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-                    mip_level_count: 1,
-                    sample_count: samples,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: samples,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                view_formats: &[],
+            })
         };
+        let view = |t: wgpu::Texture| t.create_view(&Default::default());
+        let color_texture = make(
+            COLOR_FORMAT,
+            1,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            "tenon-color",
+        );
         self.targets = Some(Targets {
             size: (w, h),
-            msaa: make(COLOR_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT, "tenon-msaa"),
-            depth: make(DEPTH_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT, "tenon-depth"),
-            color: make(
-                COLOR_FORMAT,
-                1,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
-                "tenon-color",
-            ),
+            msaa: view(make(COLOR_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT, "tenon-msaa")),
+            depth: view(make(DEPTH_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT, "tenon-depth")),
+            color: color_texture.create_view(&Default::default()),
+            color_texture,
         });
     }
 
@@ -274,7 +285,7 @@ impl Viewport {
         let (w, h) = (w.clamp(1, 8192), h.clamp(1, 8192));
         let recreated = self.targets.as_ref().is_none_or(|t| t.size != (w, h));
         self.ensure_targets(device, w, h);
-        let f = camera.forward();
+        let f = camera.key_light();
         let u = Uniforms { view_proj: camera.view_proj(f64::from(w) / f64::from(h), radius), light: [f.x as f32, f.y as f32, f.z as f32, 0.0] };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&u));
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("tenon-viewport") });
@@ -312,5 +323,46 @@ impl Viewport {
         }
         queue.submit([enc.finish()]);
         self.targets.as_ref().map(|t| (&t.color, recreated))
+    }
+
+    /// The last rendered image as tightly packed RGBA rows, top to bottom (gamma-encoded, with
+    /// premultiplied alpha). Blocks until the GPU has finished; for tests and screenshots.
+    pub fn read_pixels(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(u32, u32, Vec<u8>)> {
+        let t = self.targets.as_ref()?;
+        let (w, h) = t.size;
+        // Rows of a texture-to-buffer copy are padded to 256 bytes.
+        let row = w * 4;
+        let padded = row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tenon-readback"),
+            size: u64::from(padded) * u64::from(h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("tenon-readback") });
+        enc.copy_texture_to_buffer(
+            t.color_texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: Some(h) },
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        queue.submit([enc.finish()]);
+        let slice = buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        rx.recv().ok()?.ok()?;
+        let data = slice.get_mapped_range().ok()?;
+        let mut out = Vec::with_capacity((row * h) as usize);
+        for r in 0..h as usize {
+            out.extend_from_slice(data.get(r * padded as usize..r * padded as usize + row as usize)?);
+        }
+        drop(data);
+        buffer.unmap();
+        Some((w, h, out))
     }
 }

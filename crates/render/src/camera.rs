@@ -108,6 +108,12 @@ impl Camera {
     pub fn up(&self) -> Vec3 {
         self.right().cross(self.forward()).normalized()
     }
+    /// Direction the key light travels: from above and a little to the left of the eye, so
+    /// faces at different angles shade differently even in the isometric view (a headlight
+    /// along `forward` lights all three faces of an iso cube equally).
+    pub fn key_light(&self) -> Vec3 {
+        (self.forward() - self.up() * 0.5 + self.right() * 0.15).normalized()
+    }
 
     /// Half the visible height at the target's depth.
     fn half_height(&self) -> f64 {

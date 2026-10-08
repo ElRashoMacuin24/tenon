@@ -52,6 +52,24 @@ fn lerp(a: Rgba, b: Rgba, t: f64) -> Rgba {
     [m(a[0], b[0]), m(a[1], b[1]), m(a[2], b[2]), m(a[3], b[3])]
 }
 
+fn linear_from_srgb(v: u8) -> f64 {
+    let s = f64::from(v) / 255.0;
+    if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+}
+
+fn srgb_from_linear(l: f64) -> u8 {
+    let s = if l <= 0.003_130_8 { l * 12.92 } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 };
+    (s * 255.0).round().clamp(0.0, 255.0) as u8
+}
+
+/// Lit colour of a face with unit normal `n`: ambient plus two-sided diffuse from `light`,
+/// computed in linear light. The GPU face shader does the same.
+pub fn shade(base: Rgba, n: Vec3, light: Vec3) -> Rgba {
+    let k = 0.35 + 0.65 * n.dot(light).abs();
+    let c = |v: u8| srgb_from_linear(linear_from_srgb(v) * k);
+    [c(base[0]), c(base[1]), c(base[2]), base[3]]
+}
+
 /// Renders `meshes` seen by `camera` into a `width x height` image.
 pub fn render(meshes: &[&Mesh], camera: &Camera, width: u32, height: u32, style: &Style) -> Image {
     let (w, h) = (width.clamp(1, MAX_SIDE), height.clamp(1, MAX_SIDE));
@@ -64,7 +82,7 @@ pub fn render(meshes: &[&Mesh], camera: &Camera, width: u32, height: u32, style:
         }
     }
     let mut depth = vec![f64::INFINITY; (w * h) as usize];
-    let light = camera.forward();
+    let light = camera.key_light();
 
     for (bi, m) in meshes.iter().enumerate() {
         for range in &m.faces {
@@ -74,8 +92,7 @@ pub fn render(meshes: &[&Mesh], camera: &Camera, width: u32, height: u32, style:
                 let pts: Option<Vec<Vec3>> = t.iter().map(|i| m.positions.get(*i as usize).map(|p| v3(*p))).collect();
                 let Some(pts) = pts else { continue };
                 let n = (pts[1] - pts[0]).cross(pts[2] - pts[0]).normalized();
-                let shade = 0.35 + 0.65 * n.dot(light).abs();
-                let color = [(f64::from(base[0]) * shade) as u8, (f64::from(base[1]) * shade) as u8, (f64::from(base[2]) * shade) as u8, 255];
+                let color = shade(base, n, light);
                 let proj: Option<Vec<(f64, f64, f64)>> = pts.iter().map(|p| camera.project(*p, wf, hf)).collect();
                 let Some(s) = proj else { continue };
                 fill_triangle(&mut rgba, &mut depth, w, h, [s[0], s[1], s[2]], color);
