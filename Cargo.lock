@@ -2943,9 +2943,13 @@ dependencies = [
 name = "tenon-model"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tenon-geom",
  "tenon-kernel",
+ "tenon-kernel-occt",
  "tenon-sketch",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

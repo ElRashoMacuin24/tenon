@@ -1,6 +1,6 @@
 [package]
 name = "tenon-model"
-description = "Parametric feature tree, parameters, regeneration, persistent naming"
+description = "Parametric feature tree, regeneration, persistent naming, commands, undo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,3 +12,9 @@ workspace = true
 tenon-geom = { workspace = true }
 tenon-kernel = { workspace = true }
 tenon-sketch = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tenon-kernel-occt = { workspace = true }

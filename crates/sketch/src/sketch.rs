@@ -38,10 +38,29 @@ fn invalid(msg: impl Into<String>) -> SketchError {
     SketchError::Invalid(msg.into())
 }
 
+/// Serialises an id-keyed map as a list of `[id, value]` pairs. JSON object keys are strings,
+/// which serde cannot turn back into integer ids inside internally tagged enums (the document's
+/// feature list), so a plain list is used.
+mod as_pairs {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer, K: Serialize, V: Serialize>(m: &BTreeMap<K, V>, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(m.iter())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>, K: Deserialize<'de> + Ord, V: Deserialize<'de>>(d: D) -> Result<BTreeMap<K, V>, D::Error> {
+        Ok(Vec::<(K, V)>::deserialize(d)?.into_iter().collect())
+    }
+}
+
 /// A 2D sketch. Coordinates are millimetres in the sketch plane.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Sketch {
+    #[serde(with = "as_pairs")]
     entities: BTreeMap<EntityId, Entity>,
+    #[serde(with = "as_pairs")]
     constraints: BTreeMap<ConstraintId, Constraint>,
     next_entity: u32,
     next_constraint: u32,
