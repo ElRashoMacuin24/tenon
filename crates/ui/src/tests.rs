@@ -865,6 +865,35 @@ fn rib_from_the_sketch_being_drawn() {
     assert_eq!(wb.document().features().last().unwrap().name, "Rib1");
 }
 
+#[test]
+fn editing_a_used_sketch_waits_for_finish_to_update_the_part() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    let r = wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    d.settle(&mut wb);
+    assert!((volume(&wb) - 8000.0).abs() < 1e-6);
+    // Edit the sketch and drag its far corner out: while sketching, the part is not rebuilt.
+    wb.edit_feature(f).unwrap();
+    d.settle(&mut wb);
+    let corner = r["corners"].as_array().map(|c| c[2].as_u64().unwrap()).unwrap_or_else(|| {
+        let sk = wb.document().sketch(f).unwrap();
+        sk.entities().find(|(id, _)| sk.point(*id).is_some_and(|p| p.dist(Vec2::new(40.0, 20.0)) < 1e-9)).unwrap().0.0 as u64
+    });
+    for i in 1..=5 {
+        wb.exec("sketch.drag", json!({ "sketch": f.0, "point": corner, "x": 40.0 + 2.0 * f64::from(i), "y": 20.0 })).unwrap();
+        d.frame(&mut wb, vec![]);
+    }
+    assert!((volume(&wb) - 8000.0).abs() < 1e-6, "still the part as the sketch was opened: {}", volume(&wb));
+    // Finish Sketch: now the part follows.
+    wb.finish_sketch();
+    d.frame(&mut wb, vec![]);
+    assert!((volume(&wb) - 50.0 * 20.0 * 10.0).abs() < 1e-6, "{}", volume(&wb));
+}
+
 /// Where a browser row was drawn in the last frame.
 fn browser_row(d: &Driver, label: &str) -> Rect {
     d.ctx
@@ -948,6 +977,49 @@ fn frame_time_stays_within_budget() {
     let hover = time(&mut d, &mut wb, &|i| vec![egui::Event::PointerMoved(c + vec2(i as f32 * 3.0, 0.0))]);
     println!("{} features: idle frame {idle:.2} ms, pointer moving over the part {hover:.2} ms", wb.document().features().len());
     assert!(idle < 16.0 && hover < 16.0, "over the 16 ms frame budget: idle {idle:.2} ms, moving {hover:.2} ms");
+}
+
+/// Timing, not a check: frames while sketching on a busy sketch.
+/// `cargo test --release -p tenon-ui sketch_frame_time -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn sketch_frame_time() {
+    use std::time::Instant;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1440.0, 900.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    // 25 rectangles (100 lines), each dimensioned.
+    for i in 0..5 {
+        for j in 0..5 {
+            let (x, y) = (f64::from(i) * 12.0, f64::from(j) * 12.0);
+            let r = wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": x, "y1": y, "x2": x + 8.0, "y2": y + 8.0 })).unwrap();
+            wb.exec("sketch.constrain", json!({ "sketch": f.0, "constraint": { "type": "length", "line": r["lines"][0], "value": 8 } })).unwrap();
+        }
+    }
+    d.settle(&mut wb);
+    let c = wb.view.rect.center();
+    let mut time = |wb: &mut Workbench, tool: &str| {
+        if !tool.is_empty() {
+            wb.run_ui(tool).unwrap();
+        }
+        let t = Instant::now();
+        for i in 0..60 {
+            d.frame(wb, vec![egui::Event::PointerMoved(c + vec2(i as f32 * 2.0, (i % 7) as f32))]);
+        }
+        t.elapsed().as_secs_f64() * 1000.0 / 60.0
+    };
+    let select = time(&mut wb, "");
+    let line = time(&mut wb, "sketch.line");
+    // One drag step: solve, undo snapshot, parameters.
+    let sk = wb.document().sketch(f).unwrap().clone();
+    let corner = sk.entities().find(|(id, e)| !e.construction && sk.point(*id).is_some_and(|p| p.dist(Vec2::new(24.0, 24.0)) < 1e-9)).unwrap().0;
+    let t = Instant::now();
+    for i in 0..30 {
+        wb.exec("sketch.drag", json!({ "sketch": f.0, "point": corner.0, "x": 0.1 * f64::from(i), "y": 0.0 })).unwrap();
+    }
+    let drag = t.elapsed().as_secs_f64() * 1000.0 / 30.0;
+    println!("100-line sketch: pointer moving {select:.2} ms (select), {line:.2} ms (line tool); a drag step {drag:.2} ms");
 }
 
 #[test]

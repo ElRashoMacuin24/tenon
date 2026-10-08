@@ -111,11 +111,67 @@ pub struct Viewport {
     lines: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
     bind: wgpu::BindGroup,
+    /// The meshes in their base colours, uploaded once per scene.
     bodies: Vec<GpuBody>,
+    /// Highlighted faces and edges (selection, hover), drawn over the base at the same depth;
+    /// small, rebuilt whenever the highlight changes.
+    highlights: Vec<GpuBody>,
     targets: Option<Targets>,
     /// What to draw (visual style): shaded faces, edges.
     show_faces: bool,
     show_edges: bool,
+}
+
+/// Vertex buffers for one body. Without `only`, every face and edge in the base colours; with
+/// `only` (face and edge colour overrides), just those faces and edges in their colours.
+fn upload(device: &wgpu::Device, m: &Mesh, face: Color, edge: Color, only: Option<(&[(u32, Color)], &[(u32, Color)])>) -> GpuBody {
+    let mut tri = Vec::new();
+    for range in &m.faces {
+        let color = match only {
+            None => face,
+            Some((faces, _)) => match faces.iter().rev().find(|(f, _)| *f == range.face) {
+                Some(c) => c.1,
+                None => continue,
+            },
+        };
+        let idx = m.indices.get(range.first as usize..(range.first as usize).saturating_add(range.count as usize)).unwrap_or(&[]);
+        for i in idx {
+            let (Some(p), n) = (m.positions.get(*i as usize), m.normals.get(*i as usize).copied().unwrap_or([0.0, 0.0, 1.0])) else {
+                continue;
+            };
+            tri.push(Vertex { pos: *p, normal: n, color });
+        }
+    }
+    let mut lines = Vec::new();
+    for e in &m.edges {
+        let color = match only {
+            None => edge,
+            Some((_, edges)) => match edges.iter().rev().find(|(id, _)| *id == e.edge) {
+                Some(c) => c.1,
+                None => continue,
+            },
+        };
+        for seg in e.points.windows(2) {
+            lines.push(Vertex { pos: seg[0], normal: [0.0; 3], color });
+            lines.push(Vertex { pos: seg[1], normal: [0.0; 3], color });
+        }
+    }
+    let make = |data: &[Vertex], label: &str| {
+        // wgpu rejects empty buffers; keep one zero vertex and draw none.
+        let fallback = [Vertex { pos: [0.0; 3], normal: [0.0; 3], color: [0.0; 3] }];
+        let contents: &[Vertex] = if data.is_empty() { &fallback } else { data };
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(contents),
+            usage: wgpu::BufferUsages::VERTEX,
+        })
+    };
+    GpuBody {
+        faces: make(&tri, "tenon-faces"),
+        face_vertices: u32::try_from(tri.len()).unwrap_or(0),
+        lines: make(&lines, "tenon-lines"),
+        line_vertices: u32::try_from(lines.len()).unwrap_or(0),
+    }
 }
 
 fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -193,6 +249,7 @@ impl Viewport {
             uniforms,
             bind,
             bodies: Vec::new(),
+            highlights: Vec::new(),
             targets: None,
             show_faces: true,
             show_edges: true,
@@ -205,48 +262,17 @@ impl Viewport {
         self.show_edges = edges;
     }
 
-    /// Uploads meshes (one per body) with their colours. Call again when colours change.
+    /// Uploads meshes (one per body) in their base colours, and their highlights. Call when the
+    /// meshes or base colours change; for highlight changes alone, [`Viewport::set_highlights`]
+    /// is far cheaper.
     pub fn set_bodies(&mut self, device: &wgpu::Device, meshes: &[(&Mesh, &BodyColors)]) {
-        self.bodies = meshes
-            .iter()
-            .map(|(m, colors)| {
-                let mut tri = Vec::with_capacity(m.indices.len());
-                for range in &m.faces {
-                    let color = colors.faces.iter().find(|(f, _)| *f == range.face).map_or(colors.face, |c| c.1);
-                    let idx = m.indices.get(range.first as usize..(range.first as usize).saturating_add(range.count as usize)).unwrap_or(&[]);
-                    for i in idx {
-                        let (Some(p), n) = (m.positions.get(*i as usize), m.normals.get(*i as usize).copied().unwrap_or([0.0, 0.0, 1.0])) else {
-                            continue;
-                        };
-                        tri.push(Vertex { pos: *p, normal: n, color });
-                    }
-                }
-                let mut lines = Vec::new();
-                for e in &m.edges {
-                    let color = colors.edges.iter().find(|(id, _)| *id == e.edge).map_or(colors.edge, |c| c.1);
-                    for seg in e.points.windows(2) {
-                        lines.push(Vertex { pos: seg[0], normal: [0.0; 3], color });
-                        lines.push(Vertex { pos: seg[1], normal: [0.0; 3], color });
-                    }
-                }
-                let make = |data: &[Vertex], label: &str| {
-                    // wgpu rejects empty buffers; keep one zero vertex and draw none.
-                    let fallback = [Vertex { pos: [0.0; 3], normal: [0.0; 3], color: [0.0; 3] }];
-                    let contents: &[Vertex] = if data.is_empty() { &fallback } else { data };
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some(label),
-                        contents: bytemuck::cast_slice(contents),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    })
-                };
-                GpuBody {
-                    faces: make(&tri, "tenon-faces"),
-                    face_vertices: u32::try_from(tri.len()).unwrap_or(0),
-                    lines: make(&lines, "tenon-lines"),
-                    line_vertices: u32::try_from(lines.len()).unwrap_or(0),
-                }
-            })
-            .collect();
+        self.bodies = meshes.iter().map(|(m, c)| upload(device, m, c.face, c.edge, None)).collect();
+        self.set_highlights(device, meshes);
+    }
+
+    /// Uploads only the highlighted faces and edges (the per-face and per-edge colours).
+    pub fn set_highlights(&mut self, device: &wgpu::Device, meshes: &[(&Mesh, &BodyColors)]) {
+        self.highlights = meshes.iter().map(|(m, c)| upload(device, m, c.face, c.edge, Some((&c.faces, &c.edges)))).collect();
     }
 
     fn ensure_targets(&mut self, device: &wgpu::Device, w: u32, h: u32) {
@@ -317,9 +343,10 @@ impl Viewport {
                 ..Default::default()
             });
             pass.set_bind_group(0, &self.bind, &[]);
+            // Highlights come after the base at the same depth (LessEqual), so they replace it.
             if self.show_faces {
                 pass.set_pipeline(&self.faces);
-                for b in &self.bodies {
+                for b in self.bodies.iter().chain(&self.highlights) {
                     if b.face_vertices > 0 {
                         pass.set_vertex_buffer(0, b.faces.slice(..));
                         pass.draw(0..b.face_vertices, 0..1);
@@ -328,7 +355,7 @@ impl Viewport {
             }
             if self.show_edges {
                 pass.set_pipeline(&self.lines);
-                for b in &self.bodies {
+                for b in self.bodies.iter().chain(&self.highlights) {
                     if b.line_vertices > 0 {
                         pass.set_vertex_buffer(0, b.lines.slice(..));
                         pass.draw(0..b.line_vertices, 0..1);

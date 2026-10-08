@@ -140,10 +140,13 @@ pub(crate) struct SketchMode {
     pub drag: Option<(EntityId, Sketch)>,
     pub hud: Hud,
     dof: Option<(u64, Option<usize>, BTreeSet<EntityId>)>,
+    /// The sketch as it was when opened. Until Finish Sketch the part is regenerated with this,
+    /// so drawing and dragging never wait for the features that use the sketch.
+    pub base: Option<Sketch>,
 }
 
 impl SketchMode {
-    fn new(feature: FeatureId) -> Self {
+    fn new(feature: FeatureId, base: Option<Sketch>) -> Self {
         SketchMode {
             feature,
             tool: Tool::Select,
@@ -154,6 +157,7 @@ impl SketchMode {
             drag: None,
             hud: Hud::default(),
             dof: None,
+            base,
         }
     }
 }
@@ -384,7 +388,8 @@ impl Workbench {
         }
         self.panel = None;
         let was_sketching = matches!(self.mode, Mode::Sketch(_));
-        self.mode = Mode::Sketch(Box::new(SketchMode::new(feature)));
+        let base = self.document().sketch(feature).cloned();
+        self.mode = Mode::Sketch(Box::new(SketchMode::new(feature, base)));
         self.chrome.tab = crate::commands::SKETCH_TAB;
         let before = self.view.anim.map_or(self.view.camera, |a| a.to);
         if let Some(f) = self.sketch_frame(feature) {

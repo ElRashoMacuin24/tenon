@@ -95,29 +95,31 @@ fn nearest_on_segment(o: Vec3, d: Vec3, a: Vec3, b: Vec3) -> Vec3 {
 /// Nearest edge within `radius` pixels of `(x, y)` that is not hidden behind a face.
 pub fn pick_edge(meshes: &[&Mesh], camera: &Camera, w: f64, h: f64, x: f64, y: f64, radius: f64) -> Option<EdgeHit> {
     let (o, d) = camera.ray(x, y, w, h);
-    let mut best: Option<EdgeHit> = None;
+    // Every segment near the pointer (cheap: projection only), nearest first.
+    let mut near: Vec<EdgeHit> = Vec::new();
     for (bi, m) in meshes.iter().enumerate() {
         for e in &m.edges {
             for seg in e.points.windows(2) {
                 let (pa, pb) = (v3(seg[0]), v3(seg[1]));
                 let (Some(a), Some(b)) = (camera.project(pa, w, h), camera.project(pb, w, h)) else { continue };
                 let (dist, _) = seg_dist((x, y), (a.0, a.1), (b.0, b.1));
-                if dist > radius || best.is_some_and(|b| dist >= b.pixels) {
-                    continue;
+                if dist <= radius {
+                    // The 3D point under the pointer (a screen fraction is not a 3D fraction in
+                    // perspective).
+                    near.push(EdgeHit { body: bi, edge: e.edge, point: nearest_on_segment(o, d, pa, pb), pixels: dist });
                 }
-                // The 3D point under the pointer (a screen fraction is not a 3D fraction in
-                // perspective). It is hidden if a face is clearly in front of it along its own ray.
-                let point = nearest_on_segment(o, d, pa, pb);
-                if let Some((px, py, _)) = camera.project(point, w, h) {
-                    let (o2, d2) = camera.ray(px, py, w, h);
-                    let slack = 1e-3 * camera.distance.max(1.0);
-                    if pick_face(meshes, o2, d2).is_some_and(|f| f.t + slack < (point - o2).dot(d2)) {
-                        continue;
-                    }
-                }
-                best = Some(EdgeHit { body: bi, edge: e.edge, point, pixels: dist });
             }
         }
     }
-    best
+    near.sort_by(|a, b| a.pixels.total_cmp(&b.pixels));
+    // The nearest one not hidden by a face clearly in front of it along its own ray. Each test
+    // casts a ray through the whole mesh, so only as many as needed are tested.
+    let slack = 1e-3 * camera.distance.max(1.0);
+    near.into_iter().find(|hit| match camera.project(hit.point, w, h) {
+        Some((px, py, _)) => {
+            let (o2, d2) = camera.ray(px, py, w, h);
+            !pick_face(meshes, o2, d2).is_some_and(|f| f.t + slack < (hit.point - o2).dot(d2))
+        }
+        None => true,
+    })
 }

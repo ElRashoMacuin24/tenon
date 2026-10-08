@@ -177,6 +177,19 @@ fn gpu_viewport_renders_when_an_adapter_exists() {
     }
     assert_eq!(g[3], 255, "opaque where the body is");
     assert_eq!(pixel(&gpu, w, 1.0, 1.0)[3], 0, "transparent background");
+
+    // Highlights draw over the base at the same depth: the top face (1) turns red, and clearing
+    // the highlight brings the base colour back, without uploading the geometry again.
+    let red = crate::gpu::BodyColors { faces: vec![(1, [1.0, 0.0, 0.0])], ..colors.clone() };
+    vp.set_highlights(&device, &[(&m, &red)]);
+    vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
+    let (_, _, lit) = vp.read_pixels(&device, &queue).unwrap();
+    let r = pixel(&lit, w, x, y);
+    assert!(r[0] > 150 && r[1] < 40 && r[2] < 40, "highlighted top face: {r:?}");
+    vp.set_highlights(&device, &[(&m, &colors)]);
+    vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
+    let (_, _, back) = vp.read_pixels(&device, &queue).unwrap();
+    assert_eq!(pixel(&back, w, x, y), g, "the base colour again");
 }
 
 /// Minimal executor for wgpu's futures (they complete immediately on native backends).

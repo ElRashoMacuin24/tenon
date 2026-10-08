@@ -1015,7 +1015,8 @@ void edge_info(const Shape& s, std::uint32_t index, EdgeOut& out) {
 
 void tessellate(const Shape& s, double linear, double angular, MeshOut& out) {
   guarded("tessellate", [&] {
-    BRepMesh_IncrementalMesh mesher(s.shape, linear, false, angular, false);
+    // Faces are meshed in parallel (OCCT's own thread pool).
+    BRepMesh_IncrementalMesh mesher(s.shape, linear, false, angular, true);
     if (!mesher.IsDone()) {
       throw std::runtime_error("meshing did not complete");
     }

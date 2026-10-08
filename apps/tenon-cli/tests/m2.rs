@@ -49,3 +49,52 @@ fn the_m2_demo_script_builds_a_verified_parametric_mount() {
     let thick = 34160.0 - 525.0 * PI;
     assert!((m["bodies"][0]["volume"].as_f64().unwrap() - thick).abs() < 1e-6 * thick, "{m}");
 }
+
+/// Timing, not a check: where a regeneration of the M2 demo mount spends its time.
+/// `cargo test --release -p tenon-cli --test m2 scene_time_breakdown -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn scene_time_breakdown() {
+    use std::time::Instant;
+    use tenon_kernel::MeshTol;
+    use tenon_model::{regenerate, scene};
+    let mut k = OcctKernel::new();
+    let (doc, _) =
+        tenon_io::project::open(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/m2-mount/mount.tenon"))).unwrap();
+    for _ in 0..3 {
+        let t = Instant::now();
+        let mut r = regenerate(&doc, &mut k);
+        let regen = t.elapsed().as_secs_f64() * 1000.0;
+        let b = r.bodies[0].shape;
+        let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+        let t = Instant::now();
+        let topo = k.topology(b).unwrap();
+        let t_topo = ms(t);
+        let t = Instant::now();
+        let mesh = k.tessellate(b, &MeshTol::default()).unwrap();
+        let t_mesh = ms(t);
+        let t = Instant::now();
+        for i in 0..topo.faces {
+            k.face_info(b.face(i)).unwrap();
+        }
+        let t_faces = ms(t);
+        let t = Instant::now();
+        for i in 0..topo.edges {
+            k.edge_info(b.edge(i)).unwrap();
+        }
+        let t_edges = ms(t);
+        let t = Instant::now();
+        k.mass_properties(b, 1.0).unwrap();
+        let t_mass = ms(t);
+        let t = Instant::now();
+        let _ = scene(&r, &mut k, &MeshTol::default()).unwrap();
+        let t_scene = ms(t);
+        println!(
+            "regen {regen:.1} ms | scene {t_scene:.1} ms = tessellate {t_mesh:.1} + {} face infos {t_faces:.1} + {} edge infos {t_edges:.1} + mass {t_mass:.1} + topology {t_topo:.1} | {} triangles",
+            topo.faces,
+            topo.edges,
+            mesh.indices.len() / 3
+        );
+        r.release(&mut k);
+    }
+}

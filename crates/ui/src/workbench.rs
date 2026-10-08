@@ -81,6 +81,8 @@ pub struct Workbench {
     pub(crate) param_env: (u64, std::sync::Arc<std::collections::BTreeMap<String, f64>>),
     /// Equations typed into the open feature panel's fields.
     pub(crate) panel_eqs: crate::properties::Equations,
+    /// The Parameters dialog's list and the document revision it was made at.
+    pub(crate) params_list: (u64, serde_json::Value),
     /// Regeneration checkpoints for the kernel on this thread (headless use).
     sync_cache: tenon_model::RegenCache,
     /// The part last regenerated on this thread (headless use), for measuring.
@@ -117,6 +119,7 @@ impl Workbench {
             pick_plane: false,
             param_env: (0, Default::default()),
             panel_eqs: Default::default(),
+            params_list: (0, serde_json::Value::Null),
             sync_cache: Default::default(),
             sync_regen: Default::default(),
         }
@@ -439,10 +442,26 @@ impl Workbench {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.session.revision().hash(&mut h);
         format!("{:?}", self.panel).hash(&mut h);
+        // Opening or finishing a sketch changes what is shown (see SketchMode::base).
+        match &self.mode {
+            Mode::Sketch(s) => Some(s.feature).hash(&mut h),
+            Mode::Model => None::<FeatureId>.hash(&mut h),
+        }
         let key = h.finish();
         let changed = self.shown_key != Some(key);
         self.shown_key = Some(key);
-        let doc = if changed { Some(self.preview_document().unwrap_or_else(|| self.session.document().clone())) } else { None };
+        let doc = if changed {
+            let mut d = self.preview_document().unwrap_or_else(|| self.session.document().clone());
+            // While a sketch is open the part shows it as it was opened (see SketchMode::base).
+            if let Mode::Sketch(s) = &self.mode
+                && let (Some(base), Some(sk)) = (&s.base, d.sketch_mut(s.feature))
+            {
+                *sk = base.clone();
+            }
+            Some(d)
+        } else {
+            None
+        };
         if let Some(doc) = doc.filter(|d| self.shown.as_ref() != Some(d)) {
             self.seq += 1;
             let fresh = std::mem::take(&mut self.rebuild_all);

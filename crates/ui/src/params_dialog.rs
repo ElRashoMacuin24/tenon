@@ -45,7 +45,11 @@ impl Workbench {
             return;
         }
         let mut open = true;
-        let list = self.exec("param.list", json!({})).unwrap_or(Value::Null);
+        // Listed again only when the document changes.
+        if self.params_list.0 != self.session.revision() {
+            self.params_list = (self.session.revision(), self.exec("param.list", json!({})).unwrap_or(Value::Null));
+        }
+        let list = self.params_list.1.clone();
         let mut changes: Vec<Change> = Vec::new();
         let mut done = false;
         egui::Window::new("Parameters")

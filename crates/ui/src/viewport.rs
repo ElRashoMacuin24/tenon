@@ -103,7 +103,8 @@ pub(crate) struct View {
     /// Input time of the current frame (seconds).
     pub now: f64,
     gpu: Option<Gpu>,
-    uploaded: Option<u64>,
+    /// What the GPU holds: (geometry and base colours, highlights) keys.
+    uploaded: Option<(u64, u64)>,
     soft: Option<(egui::TextureHandle, u64)>,
     /// Last viewport rectangle (points).
     pub rect: Rect,
@@ -716,8 +717,12 @@ impl Workbench {
 
     fn draw_scene(&mut self, ui: &Ui, rect: Rect, render: Option<&egui_wgpu::RenderState>) {
         let colors = self.colors();
+        // Geometry (with base colours) and highlights are uploaded separately: hovering only
+        // re-sends the few triangles of what is highlighted.
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.scene_seq.hash(&mut h);
+        format!("{:?}", colors.iter().map(|c| (c.face, c.edge)).collect::<Vec<_>>()).hash(&mut h);
+        let base_key = h.finish();
         format!("{colors:?}").hash(&mut h);
         let key = h.finish();
         let radius = self.scene_radius();
@@ -727,10 +732,14 @@ impl Workbench {
         match render {
             Some(rs) => {
                 let gpu = self.view.gpu.get_or_insert_with(|| Gpu { viewport: Viewport::new(&rs.device), texture: None });
-                if self.view.uploaded != Some(key) {
+                if self.view.uploaded != Some((base_key, key)) {
                     let pairs: Vec<(&tenon_kernel::Mesh, &BodyColors)> = self.scene.bodies.iter().map(|b| &b.mesh).zip(colors.iter()).collect();
-                    gpu.viewport.set_bodies(&rs.device, &pairs);
-                    self.view.uploaded = Some(key);
+                    if self.view.uploaded.is_some_and(|u| u.0 == base_key) {
+                        gpu.viewport.set_highlights(&rs.device, &pairs);
+                    } else {
+                        gpu.viewport.set_bodies(&rs.device, &pairs);
+                    }
+                    self.view.uploaded = Some((base_key, key));
                 }
                 gpu.viewport.set_visible(self.view.style.faces(), self.view.style.edges());
                 if let Some((view, recreated)) = gpu.viewport.render(&rs.device, &rs.queue, &self.view.camera, w, hgt, radius) {
