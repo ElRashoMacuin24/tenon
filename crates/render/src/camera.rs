@@ -55,13 +55,15 @@ impl StdView {
     }
 }
 
-/// An orbit camera around `target`. `yaw` turns about world Z, `pitch` lifts above the XY plane.
+/// An orbit camera around `target`. `yaw` turns about world Z, `pitch` lifts above the XY plane,
+/// `roll` turns the image about the view axis (counter-clockwise).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
     pub target: Vec3,
     pub distance: f64,
     pub yaw: f64,
     pub pitch: f64,
+    pub roll: f64,
     /// Vertical field of view (radians) for perspective; also sets the orthographic scale.
     pub fov_y: f64,
     pub projection: Projection,
@@ -70,7 +72,7 @@ pub struct Camera {
 impl Default for Camera {
     fn default() -> Self {
         let (yaw, pitch) = StdView::Home.angles();
-        Camera { target: Vec3::ZERO, distance: 200.0, yaw, pitch, fov_y: 0.6, projection: Projection::Perspective }
+        Camera { target: Vec3::ZERO, distance: 200.0, yaw, pitch, roll: 0.0, fov_y: 0.6, projection: Projection::Perspective }
     }
 }
 
@@ -101,12 +103,19 @@ impl Camera {
     pub fn forward(&self) -> Vec3 {
         -self.eye_dir()
     }
-    /// Screen right, defined from the yaw so it stays valid looking straight down.
+    /// Screen right and up before roll; right is defined from the yaw so it stays valid looking
+    /// straight down.
+    fn unrolled(&self) -> (Vec3, Vec3) {
+        let r = Vec3::new(-self.yaw.sin(), self.yaw.cos(), 0.0);
+        (r, r.cross(self.forward()).normalized())
+    }
     pub fn right(&self) -> Vec3 {
-        Vec3::new(-self.yaw.sin(), self.yaw.cos(), 0.0)
+        let (r, u) = self.unrolled();
+        r * self.roll.cos() - u * self.roll.sin()
     }
     pub fn up(&self) -> Vec3 {
-        self.right().cross(self.forward()).normalized()
+        let (r, u) = self.unrolled();
+        r * self.roll.sin() + u * self.roll.cos()
     }
     /// Direction the key light travels: from above and a little to the left of the eye, so
     /// faces at different angles shade differently even in the isometric view (a headlight
@@ -155,10 +164,49 @@ impl Camera {
         mul(&to_mat(self.projection_matrix(aspect, radius)), &to_mat(self.view()))
     }
 
-    /// Orbits by a pointer movement in pixels.
+    /// Orbits by a pointer movement in pixels (screen axes, so a rolled view orbits the way the
+    /// pointer moves).
     pub fn orbit(&mut self, dx: f64, dy: f64) {
+        let (s, c) = self.roll.sin_cos();
+        let (dx, dy) = (dx * c - dy * s, dx * s + dy * c);
         self.yaw -= dx * 0.008;
         self.pitch = (self.pitch + dy * 0.008).clamp(-FRAC_PI_2, FRAC_PI_2);
+    }
+
+    /// Looks along `-eye_dir` (from the `eye_dir` side) without roll. Straight down or up, the
+    /// front (-Y) is at the bottom of the screen.
+    pub fn look_along(&mut self, eye_dir: Vec3) {
+        let d = eye_dir.normalized();
+        if !d.is_finite() || d.len() < 0.5 {
+            return;
+        }
+        self.pitch = d.z.clamp(-1.0, 1.0).asin();
+        self.yaw = if d.x.abs() < 1e-9 && d.y.abs() < 1e-9 { -FRAC_PI_2 } else { d.y.atan2(d.x) };
+        self.roll = 0.0;
+    }
+
+    /// The camera a fraction `t` (0..=1) of the way from `a` to `b`: angles along the shorter
+    /// way round, distance geometrically (zoom feels even), target linearly.
+    pub fn lerp(a: &Camera, b: &Camera, t: f64) -> Camera {
+        let t = t.clamp(0.0, 1.0);
+        if t >= 1.0 {
+            return *b;
+        }
+        let turn = |x: f64, y: f64| {
+            let d = (y - x + PI).rem_euclid(2.0 * PI) - PI;
+            x + d * t
+        };
+        let distance =
+            if a.distance > 0.0 && b.distance > 0.0 { (a.distance.ln() + (b.distance.ln() - a.distance.ln()) * t).exp() } else { b.distance };
+        Camera {
+            target: a.target + (b.target - a.target) * t,
+            distance,
+            yaw: turn(a.yaw, b.yaw),
+            pitch: a.pitch + (b.pitch - a.pitch) * t,
+            roll: turn(a.roll, b.roll),
+            fov_y: a.fov_y + (b.fov_y - a.fov_y) * t,
+            projection: a.projection,
+        }
     }
 
     /// Pans by a pointer movement in pixels in a viewport `height` pixels tall.
@@ -180,6 +228,7 @@ impl Camera {
 
     pub fn set_view(&mut self, v: StdView) {
         (self.yaw, self.pitch) = v.angles();
+        self.roll = 0.0;
     }
 
     /// Frames the box (keeps the view direction).
@@ -251,6 +300,45 @@ mod tests {
         assert!(y < 300.0);
         c.set_view(StdView::Top);
         assert!(c.up().near(Vec3::Y, 1e-12) && c.forward().near(-Vec3::Z, 1e-12));
+    }
+
+    #[test]
+    fn roll_turns_the_image_and_orbit_follows_the_screen() {
+        let mut c = Camera { target: Vec3::ZERO, distance: 100.0, ..Default::default() };
+        c.set_view(StdView::Front);
+        c.roll = FRAC_PI_2;
+        // Rolled a quarter turn counter-clockwise: world up points to screen left.
+        assert!(c.right().near(-Vec3::Z, 1e-12) && c.up().near(Vec3::X, 1e-12), "{:?} {:?}", c.right(), c.up());
+        let (x, _, _) = c.project(Vec3::new(0.0, 0.0, 10.0), 800.0, 600.0).unwrap();
+        assert!(x < 400.0);
+        // Dragging right on screen orbits about the axis that is vertical on screen (world X).
+        let before = c;
+        c.orbit(50.0, 0.0);
+        assert!((c.yaw - before.yaw).abs() < 1e-12 && (c.pitch - before.pitch).abs() > 0.1);
+        // Every view axis is orthonormal.
+        for roll in [0.0, 0.3, -2.0] {
+            let c = Camera { yaw: 0.7, pitch: 0.4, roll, ..Default::default() };
+            let (r, u, f) = (c.right(), c.up(), c.forward());
+            assert!(r.dot(u).abs() < 1e-12 && r.dot(f).abs() < 1e-12 && u.dot(f).abs() < 1e-12);
+            assert!(r.cross(u).near(-f, 1e-12), "right-handed: right x up points at the viewer");
+        }
+    }
+
+    #[test]
+    fn look_along_and_lerp() {
+        let mut c = Camera::default();
+        for d in [Vec3::X, -Vec3::Y, Vec3::new(1.0, -1.0, 1.0), Vec3::new(-1.0, 0.0, -1.0)] {
+            c.look_along(d);
+            assert!(c.eye_dir().near(d.normalized(), 1e-12), "{d:?}");
+        }
+        c.look_along(Vec3::Z);
+        assert!(c.up().near(Vec3::Y, 1e-12), "top view: front at the bottom");
+        let a = Camera { yaw: 3.0, roll: 0.0, distance: 10.0, ..Default::default() };
+        let b = Camera { yaw: -3.0, roll: 0.0, distance: 1000.0, ..Default::default() };
+        let m = Camera::lerp(&a, &b, 0.5);
+        assert!((m.yaw.rem_euclid(2.0 * PI) - PI).abs() < 1e-9, "the short way round, through pi: {}", m.yaw);
+        assert!((m.distance - 100.0).abs() < 1e-9, "geometric mean");
+        assert_eq!(Camera::lerp(&a, &b, 1.0).distance, b.distance);
     }
 
     #[test]

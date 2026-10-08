@@ -10,11 +10,10 @@ use tenon_model::{FaceRef, Fingerprint, Scene};
 use tenon_render::gpu::{BodyColors, Viewport};
 use tenon_render::pick::{pick_edge, pick_face};
 use tenon_render::raster::{self, Style};
-use tenon_render::{Camera, Projection, StdView};
+use tenon_render::{Camera, Projection};
 
 use crate::chrome::icon_button;
 use crate::commands::NAV_BAR;
-use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 use crate::workbench::{Mode, Workbench};
 
@@ -48,6 +47,19 @@ struct Gpu {
     texture: Option<egui::TextureId>,
 }
 
+/// A camera move in progress (view changes glide rather than jump).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ViewAnim {
+    pub from: Camera,
+    pub to: Camera,
+    pub start: f64,
+}
+
+/// Length of a view transition in seconds.
+pub(crate) const VIEW_TRANSITION: f64 = 0.3;
+/// Views remembered for "Previous View".
+const VIEW_HISTORY: usize = 30;
+
 /// View state of the workbench.
 pub(crate) struct View {
     pub camera: Camera,
@@ -55,6 +67,15 @@ pub(crate) struct View {
     pub nav: Nav,
     pub hover: Option<Pick>,
     pub selection: Vec<Pick>,
+    pub anim: Option<ViewAnim>,
+    /// Where a selection box started.
+    pub box_start: Option<Pos2>,
+    /// Home orientation: yaw, pitch, roll.
+    pub home: (f64, f64, f64),
+    /// Earlier views, most recent last.
+    pub previous: Vec<Camera>,
+    /// Input time of the current frame (seconds).
+    pub now: f64,
     gpu: Option<Gpu>,
     uploaded: Option<u64>,
     soft: Option<(egui::TextureHandle, u64)>,
@@ -64,18 +85,46 @@ pub(crate) struct View {
 
 impl Default for View {
     fn default() -> Self {
+        let c = Camera::default();
         View {
-            camera: Camera::default(),
+            camera: c,
             fitted: false,
             nav: Nav::Select,
             hover: None,
             selection: Vec::new(),
+            anim: None,
+            box_start: None,
+            home: (c.yaw, c.pitch, c.roll),
+            previous: Vec::new(),
+            now: 0.0,
             gpu: None,
             uploaded: None,
             soft: None,
             rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)),
         }
     }
+}
+
+/// The selection rectangle: solid when dragged left to right (window: what is fully inside),
+/// dashed right to left (crossing: whatever it touches).
+fn draw_selection_box(ui: &Ui, a: Pos2, b: Pos2) {
+    let r = Rect::from_two_pos(a, b);
+    let crossing = b.x < a.x;
+    let color = if crossing { Color32::from_rgb(0x6c, 0xd0, 0x7a) } else { Color32::from_rgb(0x5a, 0xa8, 0xf0) };
+    let p = ui.painter();
+    p.rect_filled(r, 0.0, color.gamma_multiply(0.12));
+    let stroke = Stroke::new(1.0, color);
+    if crossing {
+        let pts = vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+        p.extend(Shape::dashed_line(&pts, stroke, 5.0, 3.0));
+    } else {
+        p.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Inside);
+    }
+}
+
+fn smoothstep(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 impl View {
@@ -103,15 +152,77 @@ const EDGE: Color32 = Color32::from_rgb(0x18, 0x1c, 0x22);
 const HOVER: Color32 = Color32::from_rgb(0x8f, 0xdc, 0xd6);
 const SELECTED: Color32 = Color32::from_rgb(0xf0, 0xa0, 0x3c);
 
-/// Eye direction (target to eye) as camera angles.
-pub(crate) fn angles_for(eye_dir: Vec3) -> (f64, f64) {
-    let d = eye_dir.normalized();
-    let pitch = d.z.clamp(-1.0, 1.0).asin();
-    let yaw = if d.x.abs() < 1e-9 && d.y.abs() < 1e-9 { -std::f64::consts::FRAC_PI_2 } else { d.y.atan2(d.x) };
-    (yaw, pitch)
-}
-
 impl Workbench {
+    /// Glides the camera to `to`, remembering the current view for "Previous View".
+    pub(crate) fn animate_to(&mut self, to: Camera) {
+        let from = self.view.camera;
+        if self.view.previous.last() != Some(&from) {
+            self.view.previous.push(from);
+            if self.view.previous.len() > VIEW_HISTORY {
+                self.view.previous.remove(0);
+            }
+        }
+        self.view.anim = Some(ViewAnim { from, to, start: self.view.now });
+    }
+
+    /// Advances a view transition; true while one runs.
+    pub(crate) fn step_view_anim(&mut self) -> bool {
+        let Some(a) = self.view.anim else { return false };
+        let t = (self.view.now - a.start) / VIEW_TRANSITION;
+        if t >= 1.0 || !t.is_finite() {
+            self.view.camera = a.to;
+            self.view.anim = None;
+            false
+        } else {
+            self.view.camera = Camera::lerp(&a.from, &a.to, smoothstep(t));
+            true
+        }
+    }
+
+    /// The camera framing the part from the eye direction `eye_dir`.
+    fn fitted_along(&self, eye_dir: Vec3) -> Camera {
+        let mut c = self.view.anim.map_or(self.view.camera, |a| a.to);
+        c.look_along(eye_dir);
+        if let Some(b) = self.scene_box().or_else(|| self.sketch_box()) {
+            c.fit(&b);
+        }
+        c
+    }
+
+    /// Looks from a direction (orientation cube, standard views), framing the part.
+    pub(crate) fn look_from(&mut self, eye_dir: Vec3) {
+        let to = self.fitted_along(eye_dir);
+        self.animate_to(to);
+    }
+
+    pub(crate) fn home_view(&mut self) {
+        let (yaw, pitch, roll) = self.view.home;
+        let mut to = self.view.anim.map_or(self.view.camera, |a| a.to);
+        (to.yaw, to.pitch, to.roll) = (yaw, pitch, roll);
+        if let Some(b) = self.scene_box().or_else(|| self.sketch_box()) {
+            to.fit(&b);
+        }
+        self.animate_to(to);
+    }
+
+    pub(crate) fn zoom_all(&mut self) {
+        let mut to = self.view.anim.map_or(self.view.camera, |a| a.to);
+        match self.scene_box().or_else(|| self.sketch_box()) {
+            Some(b) => to.fit(&b),
+            None => {
+                to.target = Vec3::ZERO;
+                to.distance = 200.0;
+            }
+        }
+        self.animate_to(to);
+    }
+
+    pub(crate) fn previous_view(&mut self) -> Result<(), String> {
+        let to = self.view.previous.pop().ok_or("there is no previous view")?;
+        self.view.anim = Some(ViewAnim { from: self.view.camera, to, start: self.view.now });
+        Ok(())
+    }
+
     pub(crate) fn scene_box(&self) -> Option<Aabb3> {
         self.scene.bbox()
     }
@@ -143,13 +254,20 @@ impl Workbench {
             return Ok(());
         }
         let (n, c) = self.selected_plane().ok_or("select a planar face first")?;
-        (self.view.camera.yaw, self.view.camera.pitch) = angles_for(n);
-        self.view.camera.target = c;
+        let mut to = self.view.anim.map_or(self.view.camera, |a| a.to);
+        to.look_along(n);
+        to.target = c;
+        self.animate_to(to);
         Ok(())
     }
 
+    /// Looks square at a plane with its X axis pointing right (sketch planes).
     pub(crate) fn look_at_frame(&mut self, f: &tenon_geom::Frame) {
-        (self.view.camera.yaw, self.view.camera.pitch) = angles_for(f.z());
+        let mut to = self.view.anim.map_or(self.view.camera, |a| a.to);
+        to.look_along(f.z());
+        let (r, u) = (to.right(), to.up());
+        to.roll = (-f.x().dot(u)).atan2(f.x().dot(r));
+        self.animate_to(to);
     }
 
     /// Normal and centroid of the selected planar face.
@@ -183,6 +301,9 @@ impl Workbench {
     pub(crate) fn viewport(&mut self, ui: &mut Ui, render: Option<&egui_wgpu::RenderState>, t: &Tokens) {
         let rect = ui.max_rect();
         self.view.rect = rect;
+        if self.step_view_anim() {
+            ui.ctx().request_repaint();
+        }
         let mut mesh = egui::Mesh::default();
         for (p, c) in [
             (rect.left_top(), t.viewport_top),
@@ -197,6 +318,22 @@ impl Workbench {
         ui.painter().add(Shape::mesh(mesh));
 
         let resp = ui.interact(rect, ui.id().with("viewport"), Sense::click_and_drag());
+        // Right button: the radial menu. A click opens it; a flick picks the slot it points at.
+        if resp.drag_started_by(egui::PointerButton::Secondary)
+            && let Some(o) = ui.input(|i| i.pointer.press_origin())
+        {
+            self.open_radial(o);
+        }
+        if resp.drag_stopped_by(egui::PointerButton::Secondary)
+            && let (Some(c), Some(p)) = (self.chrome.radial.as_ref().map(|r| r.center), resp.interact_pointer_pos().or_else(|| resp.hover_pos()))
+        {
+            self.radial_flick(c, p);
+        }
+        if resp.secondary_clicked()
+            && let Some(p) = resp.interact_pointer_pos().or_else(|| resp.hover_pos())
+        {
+            self.open_radial(p);
+        }
         self.navigate(ui, &resp, rect);
         let sketching = matches!(self.mode, Mode::Sketch(_));
         if !sketching {
@@ -214,28 +351,98 @@ impl Workbench {
         self.nav_bar(ui, rect, t);
     }
 
+    /// What a left-button drag does: a navigation-bar tool, or a function key held down
+    /// (F2 pan, F3 zoom, F4 orbit), else select.
+    pub(crate) fn left_drag_tool(&self, ui: &Ui) -> Nav {
+        let (f2, f3, f4) = ui.input(|i| (i.key_down(egui::Key::F2), i.key_down(egui::Key::F3), i.key_down(egui::Key::F4)));
+        if f4 {
+            Nav::Orbit
+        } else if f2 {
+            Nav::Pan
+        } else if f3 {
+            Nav::Zoom
+        } else {
+            self.view.nav
+        }
+    }
+
+    /// Middle drag pans, Shift + middle drag orbits, the wheel zooms about the pointer; the left
+    /// button navigates only with a navigation tool active.
     fn navigate(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect) {
         let d = resp.drag_delta();
         let (dx, dy) = (f64::from(d.x), f64::from(d.y));
-        let left_nav = resp.dragged_by(egui::PointerButton::Primary) && self.view.nav != Nav::Select;
-        let model_mode = matches!(self.mode, Mode::Model);
-        let orbit = resp.dragged_by(egui::PointerButton::Secondary)
-            || (left_nav && self.view.nav == Nav::Orbit)
-            || (model_mode && self.view.nav == Nav::Select && resp.dragged_by(egui::PointerButton::Primary));
-        if orbit {
+        let shift = ui.input(|i| i.modifiers.shift);
+        let tool = self.left_drag_tool(ui);
+        let left = resp.dragged_by(egui::PointerButton::Primary) && tool != Nav::Select;
+        let middle = resp.dragged_by(egui::PointerButton::Middle);
+        let mut moved = true;
+        if (middle && shift) || (left && tool == Nav::Orbit) {
             self.view.camera.orbit(dx, dy);
-        } else if resp.dragged_by(egui::PointerButton::Middle) || (left_nav && self.view.nav == Nav::Pan) {
+        } else if middle || (left && tool == Nav::Pan) {
             self.view.camera.pan(dx, dy, f64::from(rect.height()));
-        } else if left_nav && self.view.nav == Nav::Zoom {
+        } else if left && tool == Nav::Zoom {
             self.view.camera.zoom((dy * 0.01).exp(), None);
+        } else {
+            moved = false;
         }
         if resp.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y + (i.zoom_delta() - 1.0) * 200.0);
             if scroll.abs() > 0.01 {
                 let towards = resp.hover_pos().and_then(|p| self.point_under(p, rect));
                 self.view.camera.zoom((-f64::from(scroll) * 0.0015).exp(), towards);
+                moved = true;
             }
         }
+        if moved {
+            // The user took over: stop any view transition where it is.
+            self.view.anim = None;
+        }
+    }
+
+    /// Faces and edges inside (window, dragged left to right) or touching (crossing, right to
+    /// left) a screen rectangle.
+    pub(crate) fn box_pick(&self, a: Pos2, b: Pos2, rect: Rect) -> Vec<Pick> {
+        let sel = Rect::from_two_pos(a, b);
+        let crossing = b.x < a.x;
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let cam = &self.view.camera;
+        let screen = |p: [f32; 3]| {
+            cam.project(Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])), w, h).map(|(x, y, _)| rect.min + vec2(x as f32, y as f32))
+        };
+        let mut out = Vec::new();
+        for (bi, b) in self.scene.bodies.iter().enumerate() {
+            let m = &b.mesh;
+            for range in &m.faces {
+                let idx = m.indices.get(range.first as usize..(range.first as usize).saturating_add(range.count as usize)).unwrap_or(&[]);
+                let pts: Vec<Option<Pos2>> = idx.iter().map(|i| m.positions.get(*i as usize).and_then(|p| screen(*p))).collect();
+                let hit = if crossing {
+                    pts.iter().flatten().any(|p| sel.contains(*p))
+                        || pts.as_chunks::<3>().0.iter().any(|t| match (t[0], t[1], t[2]) {
+                            (Some(p0), Some(p1), Some(p2)) => {
+                                [sel.min, sel.max, sel.left_bottom(), sel.right_top()].iter().any(|c| inside(&[p0, p1, p2], *c))
+                            }
+                            _ => false,
+                        })
+                } else {
+                    !pts.is_empty() && pts.iter().all(|p| p.is_some_and(|p| sel.contains(p)))
+                };
+                if hit {
+                    out.push(Pick::Face { body: bi, face: range.face });
+                }
+            }
+            for e in &m.edges {
+                let pts: Vec<Option<Pos2>> = e.points.iter().map(|p| screen(*p)).collect();
+                let hit = if crossing {
+                    pts.iter().flatten().any(|p| sel.contains(*p))
+                } else {
+                    !pts.is_empty() && pts.iter().all(|p| p.is_some_and(|p| sel.contains(p)))
+                };
+                if hit {
+                    out.push(Pick::Edge { body: bi, edge: e.edge });
+                }
+            }
+        }
+        out
     }
 
     /// The model point under a screen position (face hit), if any.
@@ -247,6 +454,33 @@ impl Workbench {
     }
 
     fn model_pointer(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect) {
+        // Selection box: a left drag with no navigation tool.
+        if resp.drag_started_by(egui::PointerButton::Primary) && self.left_drag_tool(ui) == Nav::Select {
+            self.view.box_start = ui.input(|i| i.pointer.press_origin());
+        }
+        if let Some(start) = self.view.box_start {
+            let now = resp.interact_pointer_pos().or_else(|| resp.hover_pos()).unwrap_or(start);
+            draw_selection_box(ui, start, now);
+            if resp.drag_stopped() || !ui.input(|i| i.pointer.primary_down()) {
+                self.view.box_start = None;
+                let picks = self.box_pick(start, now, rect);
+                if ui.input(|i| i.modifiers.command || i.modifiers.shift) {
+                    for p in picks {
+                        if !self.view.selection.contains(&p) {
+                            self.view.selection.push(p);
+                        }
+                    }
+                } else {
+                    self.view.selection = picks;
+                }
+                let (faces, edges) = self.view.selection.iter().fold((0, 0), |(f, e), p| match p {
+                    Pick::Face { .. } => (f + 1, e),
+                    Pick::Edge { .. } => (f, e + 1),
+                });
+                self.set_status(format!("{faces} faces and {edges} edges selected"));
+            }
+            return;
+        }
         let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
         self.view.hover = resp.hover_pos().and_then(|p| {
             let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
@@ -406,82 +640,6 @@ impl Workbench {
             ui.painter().line_segment([origin, end], Stroke::new(2.0, color));
             ui.painter().text(origin + (end - origin) * 1.3, Align2::CENTER_CENTER, label, theme::small(), color);
         }
-    }
-
-    fn cube(&mut self, ui: &Ui, center: Pos2, t: &Tokens) {
-        let c = self.widget_camera();
-        let (r, u, eye) = (c.right(), c.up(), c.eye_dir());
-        let scale = 30.0;
-        let to_screen = |p: Vec3| center + vec2((p.dot(r) * scale) as f32, (-p.dot(u) * scale) as f32);
-        let faces: [(Vec3, [Vec3; 4], &str, StdView); 6] = [
-            (
-                Vec3::Z,
-                [Vec3::new(-1.0, -1.0, 1.0), Vec3::new(1.0, -1.0, 1.0), Vec3::new(1.0, 1.0, 1.0), Vec3::new(-1.0, 1.0, 1.0)],
-                "TOP",
-                StdView::Top,
-            ),
-            (
-                -Vec3::Z,
-                [Vec3::new(-1.0, -1.0, -1.0), Vec3::new(-1.0, 1.0, -1.0), Vec3::new(1.0, 1.0, -1.0), Vec3::new(1.0, -1.0, -1.0)],
-                "BOTTOM",
-                StdView::Bottom,
-            ),
-            (
-                -Vec3::Y,
-                [Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, -1.0, -1.0), Vec3::new(1.0, -1.0, 1.0), Vec3::new(-1.0, -1.0, 1.0)],
-                "FRONT",
-                StdView::Front,
-            ),
-            (
-                Vec3::Y,
-                [Vec3::new(1.0, 1.0, -1.0), Vec3::new(-1.0, 1.0, -1.0), Vec3::new(-1.0, 1.0, 1.0), Vec3::new(1.0, 1.0, 1.0)],
-                "BACK",
-                StdView::Back,
-            ),
-            (
-                Vec3::X,
-                [Vec3::new(1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, -1.0), Vec3::new(1.0, 1.0, 1.0), Vec3::new(1.0, -1.0, 1.0)],
-                "RIGHT",
-                StdView::Right,
-            ),
-            (
-                -Vec3::X,
-                [Vec3::new(-1.0, 1.0, -1.0), Vec3::new(-1.0, -1.0, -1.0), Vec3::new(-1.0, -1.0, 1.0), Vec3::new(-1.0, 1.0, 1.0)],
-                "LEFT",
-                StdView::Left,
-            ),
-        ];
-        let side = (scale * 3.6) as f32;
-        let area = Rect::from_center_size(center, vec2(side, side));
-        let resp = ui.interact(area, ui.id().with("cube"), Sense::click());
-        let hover = resp.hover_pos();
-        let mut picked = None;
-        for (n, corners, label, view) in faces.iter().filter(|f| f.0.dot(eye) > 1e-3) {
-            let poly: Vec<Pos2> = corners.iter().map(|p| to_screen(*p)).collect();
-            let hot = hover.is_some_and(|h| inside(&poly, h));
-            if hot {
-                picked = Some(*view);
-            }
-            let shade = (0.75 + 0.25 * n.dot(eye)) as f32;
-            let fill = if hot { t.cube_face_hover } else { t.cube_face.gamma_multiply(shade) };
-            ui.painter().add(Shape::convex_polygon(poly.clone(), fill, Stroke::new(1.0, t.cube_edge)));
-            if n.dot(eye) > 0.35 {
-                let mid = poly.iter().fold(Pos2::ZERO, |a, p| a + p.to_vec2() / 4.0);
-                ui.painter().text(mid, Align2::CENTER_CENTER, *label, theme::small(), t.cube_text);
-            }
-        }
-        let home = Rect::from_min_size(area.left_top() + vec2(-2.0, -4.0), vec2(18.0, 18.0));
-        let hresp = ui.interact(home, ui.id().with("cube-home"), Sense::click());
-        icons::paint(ui.painter(), home, Icon::Home, if hresp.hovered() { t.accent } else { t.icon });
-        if hresp.on_hover_text("Home view").clicked() {
-            self.view.camera.set_view(StdView::Home);
-            self.fit_view();
-        } else if resp.clicked()
-            && let Some(v) = picked
-        {
-            self.view.camera.set_view(v);
-        }
-        let _ = resp.on_hover_text("Orientation cube: click a face to look at it");
     }
 
     fn nav_bar(&mut self, ui: &Ui, viewport: Rect, t: &Tokens) {

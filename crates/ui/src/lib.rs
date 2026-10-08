@@ -10,8 +10,10 @@
 
 mod chrome;
 pub mod commands;
+mod cube;
 pub mod icons;
 mod panels;
+mod radial;
 mod sketcher;
 pub mod theme;
 mod viewport;

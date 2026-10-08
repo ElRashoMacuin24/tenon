@@ -282,8 +282,10 @@ impl Workbench {
     pub(crate) fn panels(&mut self, ui: &mut Ui) {
         let Some(mut panel) = self.panel.take() else { return };
         let at = self.view.rect.left_top() + egui::vec2(12.0, 44.0);
-        let mut keep = true;
-        let mut commit = false;
+        // OK or Cancel from outside the panel (radial menu).
+        let request = self.panel_request.take();
+        let mut keep = request != Some(false);
+        let mut commit = request == Some(true);
         let ctx = ui.ctx().clone();
         let sketches = self.sketches();
         match &mut panel {
@@ -401,7 +403,7 @@ impl Workbench {
                 }
             }
             Panel::Value(v) => {
-                let mut ok = false;
+                let mut ok = commit;
                 egui::Window::new(v.title).collapsible(false).resizable(false).anchor(Align2::CENTER_TOP, [0.0, 160.0]).show(&ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(v.label);
@@ -444,7 +446,7 @@ impl Workbench {
                 }
             }
             Panel::EditDimension { sketch, constraint, value, angular } => {
-                let mut ok = false;
+                let mut ok = commit;
                 egui::Window::new("Edit Dimension").collapsible(false).resizable(false).anchor(Align2::CENTER_TOP, [0.0, 160.0]).show(&ctx, |ui| {
                     let mut shown = if *angular { value.to_degrees() } else { *value };
                     ui.horizontal(|ui| {
@@ -472,7 +474,7 @@ impl Workbench {
                 }
             }
             Panel::Rename { feature, name } => {
-                let mut ok = false;
+                let mut ok = commit;
                 egui::Window::new("Rename").collapsible(false).resizable(false).anchor(Align2::CENTER_TOP, [0.0, 160.0]).show(&ctx, |ui| {
                     let r = ui.text_edit_singleline(name);
                     r.request_focus();

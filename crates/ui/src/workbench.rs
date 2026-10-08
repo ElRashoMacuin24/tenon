@@ -65,6 +65,10 @@ pub struct Workbench {
     exit: bool,
     step_seq: u64,
     step_export: Option<(u64, PathBuf)>,
+    /// The last modelling or sketch command (for "Repeat").
+    pub(crate) last_command: Option<&'static str>,
+    /// OK or Cancel asked for from outside the open panel (radial menu, Enter).
+    pub(crate) panel_request: Option<bool>,
 }
 
 impl Workbench {
@@ -89,6 +93,8 @@ impl Workbench {
             exit: false,
             step_seq: 0,
             step_export: None,
+            last_command: None,
+            panel_request: None,
         }
     }
 
@@ -170,8 +176,16 @@ impl Workbench {
 
     /// Runs a ribbon/menu command by id, reporting errors in the status bar.
     pub(crate) fn command(&mut self, id: &str) {
-        if let Err(e) = self.run_ui(id) {
-            self.set_error(e);
+        let repeatable = commands::find(id)
+            .filter(|c| ["sketch.", "model.", "work.", "inspect."].iter().any(|p| c.id.starts_with(p)) && c.id != "sketch.finish")
+            .map(|c| c.id);
+        match self.run_ui(id) {
+            Ok(()) => {
+                if repeatable.is_some() {
+                    self.last_command = repeatable;
+                }
+            }
+            Err(e) => self.set_error(e),
         }
     }
 
@@ -231,11 +245,25 @@ impl Workbench {
             "sketch.finish" => self.finish_sketch(),
             "model.extrude" => self.open_extrude(None)?,
             "model.revolve" => self.open_revolve(None)?,
-            "view.home" => {
-                self.view.camera.set_view(tenon_render::StdView::Home);
-                self.fit_view();
+            "ui.ok" | "ui.cancel" => {
+                let ok = id == "ui.ok";
+                if self.panel.is_some() {
+                    self.panel_request = Some(ok);
+                } else if let Mode::Sketch(s) = &mut self.mode {
+                    // Ends the running sketch tool, like Esc.
+                    s.clicks.clear();
+                    s.picks.clear();
+                    s.tool = crate::sketcher::Tool::Select;
+                    self.set_status("Ready");
+                }
             }
-            "view.fit" => self.fit_view(),
+            "ui.repeat" => {
+                let last = self.last_command.ok_or("there is no command to repeat")?;
+                self.run_ui(last)?;
+            }
+            "view.home" => self.home_view(),
+            "view.fit" => self.zoom_all(),
+            "view.previous" => self.previous_view()?,
             "view.look_at" => self.look_at()?,
             "view.orbit" | "view.pan" | "view.zoom" => self.view.toggle_nav(id),
             _ if id.starts_with("sketch.") => self.sketch_tool(id)?,
@@ -398,6 +426,7 @@ impl Workbench {
 
     /// Draws the whole window. `render` is the wgpu state when the app renders with wgpu.
     pub fn ui(&mut self, ui: &mut Ui, render: Option<&egui_wgpu::RenderState>) {
+        self.view.now = ui.input(|i| i.time);
         self.sync_geometry();
         self.shortcuts(ui);
         let t = Tokens::DARK;
@@ -418,6 +447,7 @@ impl Workbench {
         self.file_menu(ui, &t);
         self.panels(ui);
         self.windows(ui);
+        self.radial_ui(ui, &t);
         if self.waiting {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }
@@ -429,6 +459,11 @@ impl Workbench {
         }
         let (cmd, shift) = ui.input(|i| (i.modifiers.command, i.modifiers.shift));
         let pressed = |k: egui::Key| ui.input(|i| i.key_pressed(k));
+        if pressed(egui::Key::F5) {
+            self.command("view.previous");
+        } else if pressed(egui::Key::F6) {
+            self.command("view.home");
+        }
         if cmd {
             if pressed(egui::Key::Z) {
                 self.command(if shift { "edit.redo" } else { "edit.undo" });

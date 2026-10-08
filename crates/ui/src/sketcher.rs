@@ -398,12 +398,6 @@ impl Workbench {
         if !typing && delete {
             self.delete_selection(feature);
         }
-        if resp.secondary_clicked()
-            && let Mode::Sketch(sm) = &mut self.mode
-        {
-            sm.clicks.clear();
-            sm.picks.clear();
-        }
         // Double-clicking a dimension edits it.
         if resp.double_clicked()
             && let Some(p) = pointer

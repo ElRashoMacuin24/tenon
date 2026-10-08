@@ -161,6 +161,23 @@ impl Driver {
             egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)), time: Some(self.time), events, ..Default::default() };
         self.ctx.run_ui(input, |ui| wb.ui(ui, None)).drop_without_applying_deltas();
     }
+    /// Holds (or releases) modifier keys from the next frame on.
+    fn modifiers(&mut self, wb: &mut Workbench, m: egui::Modifiers) {
+        self.frame(wb, vec![egui::Event::ModifiersChanged(m)]);
+    }
+    /// Runs frames until view transitions have finished.
+    fn settle(&mut self, wb: &mut Workbench) {
+        for _ in 0..120 {
+            self.frame(wb, vec![]);
+            if wb.view.anim.is_none() {
+                return;
+            }
+        }
+        panic!("the view never settled");
+    }
+    fn key(&mut self, wb: &mut Workbench, key: egui::Key, pressed: bool) {
+        self.frame(wb, vec![egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::default() }]);
+    }
     fn button(pos: Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
         egui::Event::PointerButton { pos, button, pressed, modifiers: egui::Modifiers::default() }
     }
@@ -205,25 +222,46 @@ fn viewport_responds_to_real_pointer_input() {
         _ => false,
     };
 
+    d.settle(&mut wb);
+    wb.run_ui("view.home").unwrap();
+    d.settle(&mut wb);
+
     // A click on the top face selects it and names it in the status bar.
     let top_centre = on_screen(&wb, Vec3::new(20.0, 10.0, 10.0));
     d.click(&mut wb, top_centre);
     assert!(is_top(&wb), "{:?}", wb.view.selection);
     assert!(wb.status().contains("end face of Extrude1"), "{}", wb.status());
     // A click on empty background clears it.
-    d.click(&mut wb, rect.left_top() + vec2(40.0, rect.height() / 2.0));
+    let empty = rect.left_top() + vec2(40.0, rect.height() / 2.0);
+    d.click(&mut wb, empty);
     assert!(wb.view.selection.is_empty());
 
-    // Left drag orbits, middle drag pans, the wheel zooms.
+    // Selection boxes: left to right takes what is fully inside, right to left what it touches.
+    let (lo, hi) = (on_screen(&wb, Vec3::new(0.0, 0.0, 0.0)), on_screen(&wb, Vec3::new(40.0, 20.0, 10.0)));
+    let (all_a, all_b) = (pos2(rect.left() + 20.0, rect.top() + 20.0), pos2(rect.right() - 200.0, rect.bottom() - 20.0));
+    d.drag(&mut wb, all_a, all_b, egui::PointerButton::Primary);
+    let faces = |wb: &Workbench| wb.view.selection.iter().filter(|p| matches!(p, Pick::Face { .. })).count();
+    assert_eq!(faces(&wb), 6, "a window around the block takes all six faces");
+    let mid = lo + (hi - lo) * 0.5;
+    d.drag(&mut wb, mid + vec2(4.0, -4.0), mid - vec2(4.0, -4.0), egui::PointerButton::Primary);
+    assert!(faces(&wb) >= 1, "a small crossing box takes the face it touches: {:?}", wb.view.selection);
+    d.drag(&mut wb, mid - vec2(4.0, -4.0), mid + vec2(4.0, -4.0), egui::PointerButton::Primary);
+    assert_eq!(faces(&wb), 0, "the same box as a window holds no whole face");
+    d.click(&mut wb, empty);
+
+    // No left-drag orbit in select mode (that was a box); F4 + left drag and Shift + middle drag
+    // orbit, middle drag pans, the wheel zooms.
     let c = rect.center();
     let yaw = wb.view.camera.yaw;
+    d.key(&mut wb, egui::Key::F4, true);
     d.drag(&mut wb, c, c + vec2(120.0, 0.0), egui::PointerButton::Primary);
-    assert!((wb.view.camera.yaw - yaw).abs() > 0.1, "left drag orbits");
-    assert!(wb.view.selection.is_empty(), "a drag is not a click");
-    // (The view still looks straight down from sketching, so tilt by dragging upwards.)
+    d.key(&mut wb, egui::Key::F4, false);
+    assert!((wb.view.camera.yaw - yaw).abs() > 0.1, "F4 + left drag orbits");
     let pitch = wb.view.camera.pitch;
-    d.drag(&mut wb, c, c + vec2(0.0, -80.0), egui::PointerButton::Secondary);
-    assert!(wb.view.camera.pitch < pitch - 0.3, "right drag orbits: pitch {pitch} -> {}", wb.view.camera.pitch);
+    d.modifiers(&mut wb, egui::Modifiers::SHIFT);
+    d.drag(&mut wb, c, c + vec2(0.0, -80.0), egui::PointerButton::Middle);
+    d.modifiers(&mut wb, egui::Modifiers::default());
+    assert!(wb.view.camera.pitch < pitch - 0.3, "Shift + middle drag orbits: pitch {pitch} -> {}", wb.view.camera.pitch);
     let target = wb.view.camera.target;
     d.drag(&mut wb, c, c + vec2(100.0, 40.0), egui::PointerButton::Middle);
     assert!(wb.view.camera.target.dist(target) > 1.0, "middle drag pans");
@@ -241,18 +279,57 @@ fn viewport_responds_to_real_pointer_input() {
     }
     assert!(wb.view.camera.distance < distance * 0.95, "wheel up zooms in: {distance} -> {}", wb.view.camera.distance);
 
-    // The orientation cube: clicking its TOP face looks down, and the click does not reach the
-    // model behind it (the selection survives).
-    wb.run_ui("view.home").unwrap();
-    d.frame(&mut wb, vec![]);
+    // F6 goes home, F5 goes back to where we were.
+    let before_home = wb.view.camera;
+    d.key(&mut wb, egui::Key::F6, true);
+    d.settle(&mut wb);
+    assert!((wb.view.camera.yaw - wb.view.home.0).abs() < 1e-9);
+    d.key(&mut wb, egui::Key::F5, true);
+    d.settle(&mut wb);
+    assert!(wb.view.camera.target.near(before_home.target, 1e-9) && (wb.view.camera.yaw - before_home.yaw).abs() < 1e-9, "previous view");
+
+    // Right click opens the radial menu; its Home slot works like F6.
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(c)]);
+    d.frame(&mut wb, vec![Driver::button(c, egui::PointerButton::Secondary, true)]);
+    d.frame(&mut wb, vec![Driver::button(c, egui::PointerButton::Secondary, false)]);
+    let menu = wb.chrome.radial.clone().expect("radial menu open");
+    assert_eq!(menu.slots[2].as_ref().map(|e| e.id), Some("model.extrude"), "Extrude to the east");
+    // A flick south-west picks Home without opening the menu.
+    wb.chrome.radial = None;
+    d.drag(&mut wb, c, c + vec2(-70.0, 70.0), egui::PointerButton::Secondary);
+    assert!(wb.chrome.radial.is_none(), "a flick closes the menu");
+    d.settle(&mut wb);
+    assert!((wb.view.camera.yaw - wb.view.home.0).abs() < 1e-9 && (wb.view.camera.pitch - wb.view.home.1).abs() < 1e-9, "flicked to Home");
+
+    // The orientation cube: faces, edges and corners. Clicks glide the view there and do not
+    // reach the model behind (the selection survives).
     let top_centre = on_screen(&wb, Vec3::new(20.0, 10.0, 10.0));
     d.click(&mut wb, top_centre);
     assert!(is_top(&wb));
-    let cam = wb.view.camera;
-    let cube = pos2(rect.right() - 92.0, rect.top() + 82.0);
-    d.click(&mut wb, cube + vec2((Vec3::Z.dot(cam.right()) * 30.0) as f32, (-Vec3::Z.dot(cam.up()) * 30.0) as f32));
-    assert!((wb.view.camera.pitch - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "top view: pitch {}", wb.view.camera.pitch);
-    assert!(is_top(&wb), "the cube click left the selection alone");
+    let cube_centre = pos2(rect.right() - 92.0, rect.top() + 82.0);
+    for dir in [[0, 0, 1], [1, -1, 0], [1, -1, 1], [0, -1, 1]] {
+        wb.run_ui("view.home").unwrap();
+        d.settle(&mut wb);
+        let cv = crate::cube::CubeView::new(&wb.view.camera, cube_centre, crate::cube::CUBE_SCALE);
+        let at = cv.point_of(dir).unwrap();
+        d.click(&mut wb, at);
+        assert!(wb.view.anim.is_some(), "{dir:?}: the view glides");
+        d.settle(&mut wb);
+        let want = crate::cube::vec(dir).normalized();
+        assert!(wb.view.camera.eye_dir().near(want, 1e-9), "{dir:?}: looking from {:?}", wb.view.camera.eye_dir());
+        assert!(is_top(&wb), "the cube click left the selection alone");
+    }
+    // Square to the top face, the arrows turn by quarter turns: the bottom arrow brings the front.
+    let cv = crate::cube::CubeView::new(&wb.view.camera, cube_centre, crate::cube::CUBE_SCALE);
+    assert!(cv.face_on().is_none(), "the last view was a top-front edge");
+    wb.look_from(Vec3::Z);
+    d.settle(&mut wb);
+    let reach = crate::cube::CUBE_SCALE + 16.0;
+    d.click(&mut wb, cube_centre + vec2(0.0, reach));
+    d.settle(&mut wb);
+    assert!(wb.view.camera.eye_dir().near(-Vec3::Y, 1e-9), "front view: {:?}", wb.view.camera.eye_dir());
 }
 
 #[test]
@@ -262,8 +339,7 @@ fn sketching_with_real_clicks_and_drags() {
     let mut d = Driver::new(vec2(1400.0, 860.0));
     wb.create_sketch(json!({ "plane": "xy" })).unwrap();
     let f = sketching(&wb);
-    d.frame(&mut wb, vec![]);
-    d.frame(&mut wb, vec![]);
+    d.settle(&mut wb);
     let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
 
     // Line tool: three clicks, then a click on the first point closes the chain.

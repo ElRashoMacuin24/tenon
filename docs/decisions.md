@@ -148,3 +148,43 @@ would make scripts kernel-specific; origins are Tenon's own persistent names
 The desktop app opens and saves files through `rfd` (MIT), which uses the platform dialogs: Win32,
 macOS panels, and the XDG portal on Linux (no GTK dependency). The workbench takes dialogs as
 injected `Services`, so the UI crate and its tests do not depend on rfd.
+
+## DEC-019 UI fidelity: match the workflow one to one, keep brands out (2026-10-08, owner request)
+
+The owner asked for the UI to match Inventor's as closely as possible ("the workflow should feel
+exactly the same"). From M2 the UI follows Inventor's:
+
+- layout (panel order, button sizes and positions, browser structure, a docked properties panel);
+- mouse and keyboard behaviour;
+- interaction flow (pick a plane in the viewport, value boxes at the cursor, inline dimension
+  editing).
+
+Generic functional labels are used where they are the natural words, even if identical
+("Finish Sketch", "End of Part", "Extrusion1"). This supersedes the stricter vocabulary rule
+of DEC-012.
+
+The original hard rule still holds:
+
+- no Autodesk icons, artwork or screenshots in the repository;
+- no trademarked or branded names (ViewCube, SteeringWheels, iProperties, iLogic, Content Center,
+  Shape Generator). We say "orientation cube" and "radial menu";
+- colours are Tenon's own tokens.
+
+Reference screenshots stay out of the repository.
+
+## DEC-020 Navigation follows Inventor's mapping; views glide (2026-10-08)
+
+| Input | M1 | From M2 |
+|---|---|---|
+| Left drag (select mode) | orbit | selection box: window to the right, crossing to the left |
+| Middle drag | pan | pan |
+| Shift + middle drag | — | orbit |
+| Right click / drag | orbit | radial menu (a flick picks a slot) |
+| Wheel | zoom about the pointer | zoom about the pointer |
+| F2 / F3 / F4 + left drag | — | pan / zoom / orbit |
+| F5 / F6 | — | previous view / home view |
+
+The camera gained a roll angle, so the orientation cube's quarter-turn arrows can roll the view.
+View changes from the cube, Home, Zoom All, Look At and sketch entry animate over 0.3 s; any
+navigation input stops the animation where it is. The cube has 26 targets (6 faces, 12 edges,
+8 corners), drag-to-orbit and a context menu (home, perspective/orthographic, set home).

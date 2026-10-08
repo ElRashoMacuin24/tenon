@@ -24,11 +24,12 @@ pub(crate) struct Chrome {
     pub file_menu: Option<Pos2>,
     pub about: bool,
     pub mass: bool,
+    pub radial: Option<crate::radial::Radial>,
 }
 
 impl Default for Chrome {
     fn default() -> Self {
-        Chrome { tab: 0, show_browser: true, show_cube: true, origin_open: false, file_menu: None, about: false, mass: false }
+        Chrome { tab: 0, show_browser: true, show_cube: true, origin_open: false, file_menu: None, about: false, mass: false, radial: None }
     }
 }
 
