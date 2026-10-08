@@ -25,7 +25,7 @@ properties panel, orientation cube, radial menu). The same commands drive script
 server for AI agents. Assemblies and drawings are the next milestones. What works, with the test
 that proves each item, is in [ROADMAP.md](ROADMAP.md).
 
-![The M2 demo mount in the Tenon workbench](examples/m2-mount/workbench.png)
+![The M2 demo enclosure in the Tenon workbench](examples/m2-enclosure/workbench.png)
 
 ## Design
 
@@ -56,11 +56,11 @@ Step-by-step instructions per platform are in [docs/setup.md](docs/setup.md).
 ```sh
 pixi install                       # once: OpenCASCADE 8 into .pixi/
 pixi run app                       # the desktop app (release build)
-pixi run app examples/m2-mount/mount.tenon
+pixi run app examples/m2-enclosure/enclosure.tenon
 pixi run cargo test --workspace    # build and test
 pixi run ci                        # the full gate CI runs
-pixi run cargo run -p tenon-cli -- run examples/m2-mount/mount.json --out out
-pixi run cargo run -p tenon-cli -- render out/mount.tenon out/mount.png --view front
+pixi run cargo run -p tenon-cli -- run examples/m2-enclosure/enclosure.json --out out
+pixi run cargo run -p tenon-cli -- render out/enclosure.tenon out/enclosure.png --view front
 pixi run mcp                       # MCP server on stdio (docs/mcp.md)
 ```
 

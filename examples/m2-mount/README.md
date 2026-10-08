@@ -30,7 +30,7 @@ pixi run cargo run -p tenon-cli -- run examples/m2-mount/mount.json --out exampl
 pixi run cargo run -p tenon -- examples/m2-mount/mount.tenon
 ```
 
-`tenon-cli demo m2 --out DIR` runs the same script. `apps/tenon-cli/tests/m2.rs` runs it in CI,
+`tenon-cli demo m2-mount --out DIR` runs the same script. `apps/tenon-cli/tests/m2.rs` runs it in CI,
 reads the STEP file back, reopens the project and changes `t` again.
 
 | File | What |

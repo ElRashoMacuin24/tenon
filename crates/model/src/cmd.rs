@@ -569,7 +569,16 @@ fn sketch_arc3(s: &mut Session, p: &Value) -> CmdResult {
 fn sketch_rectangle(s: &mut Session, p: &Value) -> CmdResult {
     let (a, b) = (pos(p, "x1", "y1")?, pos(p, "x2", "y2")?);
     let lines = on_sketch(s, p, |sk| Ok(sk.add_rectangle(a, b)?))?;
-    Ok(json!({ "lines": lines.iter().map(|l| l.0).collect::<Vec<_>>() }))
+    // Each line's start point: the corners, in order (the first is at x1, y1).
+    let sk = s.document().sketch(sketch_id(p)?);
+    let corners: Vec<u32> = lines
+        .iter()
+        .filter_map(|l| match sk?.geometry(*l)? {
+            tenon_sketch::Geometry::Line { start, .. } => Some(start.0),
+            _ => None,
+        })
+        .collect();
+    Ok(json!({ "lines": lines.iter().map(|l| l.0).collect::<Vec<_>>(), "corners": corners }))
 }
 
 fn sketch_polygon(s: &mut Session, p: &Value) -> CmdResult {
@@ -1327,7 +1336,13 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!("sketch.circle", "Circle", "sketch; center (point id) or cx, cy; r", true, sketch_circle),
     doc_cmd!("sketch.arc", "Arc", "sketch; center or cx, cy; start or x1, y1; end or x2, y2 (counter-clockwise)", true, sketch_arc),
     doc_cmd!("sketch.arc3", "Three-Point Arc", "sketch, x1, y1, x2, y2 (a point on the arc), x3, y3", true, sketch_arc3),
-    doc_cmd!("sketch.rectangle", "Rectangle", "sketch, x1, y1, x2, y2 (opposite corners)", true, sketch_rectangle),
+    doc_cmd!(
+        "sketch.rectangle",
+        "Rectangle",
+        "sketch, x1, y1, x2, y2 (opposite corners); returns lines and corners (the first at x1, y1)",
+        true,
+        sketch_rectangle
+    ),
     doc_cmd!("sketch.polygon", "Polygon", "sketch, cx, cy, x, y (a corner), sides", true, sketch_polygon),
     doc_cmd!("sketch.spline", "Spline", "sketch, points: [[x, y], ...] (control points), degree (default 3)", true, sketch_spline),
     doc_cmd!(

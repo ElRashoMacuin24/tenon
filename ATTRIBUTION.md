@@ -32,8 +32,16 @@ Generated-in-code assets are original and have no file to list:
 | `examples/m1-bracket/bracket.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m1-bracket/bracket-thick-base.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m1-bracket/workbench.png` | Tenon contributors | screenshot of Tenon itself: `tenon examples/m1-bracket/bracket.tenon --screenshot examples/m1-bracket/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m2-enclosure/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
+| `examples/m2-enclosure/enclosure.json` | Tenon contributors | written for this repository (the M2 demo command script) | MIT OR Apache-2.0 | Original |
+| `examples/m2-enclosure/enclosure.tenon` | Tenon contributors | generated: `tenon-cli run examples/m2-enclosure/enclosure.json --out examples/m2-enclosure` | MIT OR Apache-2.0 | Original |
+| `examples/m2-enclosure/enclosure.step` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m2-enclosure/enclosure.stl` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m2-enclosure/enclosure.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m2-enclosure/enclosure-larger.png` | Tenon contributors | generated: same command (software render at L = 100, H = 40) | MIT OR Apache-2.0 | Original |
+| `examples/m2-enclosure/workbench.png` | Tenon contributors | generated: `tenon examples/m2-enclosure/enclosure.tenon --screenshot examples/m2-enclosure/workbench.png` | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
-| `examples/m2-mount/mount.json` | Tenon contributors | written for this repository (the M2 demo command script) | MIT OR Apache-2.0 | Original |
+| `examples/m2-mount/mount.json` | Tenon contributors | written for this repository (a second M2 example script) | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.tenon` | Tenon contributors | generated: `tenon-cli run examples/m2-mount/mount.json --out examples/m2-mount` | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.step` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.stl` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |

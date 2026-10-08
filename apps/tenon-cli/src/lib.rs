@@ -19,7 +19,10 @@ pub use script::Script;
 /// The M1 demo script (also in examples/m1-bracket).
 pub const M1_BRACKET_SCRIPT: &str = include_str!("../../../examples/m1-bracket/bracket.json");
 
-/// The M2 demo script (also in examples/m2-mount).
+/// The M2 demo script, the parametric enclosure (also in examples/m2-enclosure).
+pub const M2_ENCLOSURE_SCRIPT: &str = include_str!("../../../examples/m2-enclosure/enclosure.json");
+
+/// The second M2 example, the parametric L-mount (also in examples/m2-mount).
 pub const M2_MOUNT_SCRIPT: &str = include_str!("../../../examples/m2-mount/mount.json");
 
 /// Output of a command.
@@ -237,8 +240,13 @@ pub fn demo_m1(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String
     run_script(kernel, M1_BRACKET_SCRIPT, out_dir)
 }
 
-/// Builds the M2 demo part (a parametric L-mount) and writes its files into `out_dir`.
+/// Builds the M2 demo part (a parametric enclosure) and writes its files into `out_dir`.
 pub fn demo_m2(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
+    run_script(kernel, M2_ENCLOSURE_SCRIPT, out_dir)
+}
+
+/// Builds the second M2 example (a parametric L-mount) into `out_dir`.
+pub fn demo_m2_mount(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
     run_script(kernel, M2_MOUNT_SCRIPT, out_dir)
 }
 

@@ -13,7 +13,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.circle` | Circle | sketch; center (point id) or cx, cy; r | yes |
 | `sketch.arc` | Arc | sketch; center or cx, cy; start or x1, y1; end or x2, y2 (counter-clockwise) | yes |
 | `sketch.arc3` | Three-Point Arc | sketch, x1, y1, x2, y2 (a point on the arc), x3, y3 | yes |
-| `sketch.rectangle` | Rectangle | sketch, x1, y1, x2, y2 (opposite corners) | yes |
+| `sketch.rectangle` | Rectangle | sketch, x1, y1, x2, y2 (opposite corners); returns lines and corners (the first at x1, y1) | yes |
 | `sketch.polygon` | Polygon | sketch, cx, cy, x, y (a corner), sides | yes |
 | `sketch.spline` | Spline | sketch, points: [[x, y], ...] (control points), degree (default 3) | yes |
 | `sketch.constrain` | Constrain | sketch, constraint: {"type": "horizontal", "line": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. "width / 2") | yes |

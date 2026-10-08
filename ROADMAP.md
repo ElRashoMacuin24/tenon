@@ -99,7 +99,8 @@ Complete 2026-10-08. Model tests: `crates/model/tests/m2.rs` (20, plus one ignor
 | Incremental regeneration (resume from the edited feature) | done | `regeneration_resumes_from_the_feature_being_edited` (same result as from scratch, no leaks); timing `regeneration_speed` (ignored test): editing the last of 42 features 166 ms -> 9.3 ms, release build |
 | UI frame budget | done | `frame_time_stays_within_budget` (16 ms; measured 0.08 ms idle, 0.85 ms with the pointer moving, release, 40 features; CPU side only) |
 | Inventor-familiar UI (layout and workflow; DEC-019 to DEC-021) | partial | ribbon, browser, properties panel, mini toolbar, orientation cube (faces, edges, corners), radial menu, navigation, sketch workflow, all exercised by the UI tests. Gaps: no in-canvas drag handles for fillet radius or hole depth; no hover highlight preview of a feature's result before clicking; work planes not depth-tested |
-| Demo: parametric L-mount | done | `examples/m2-mount`; `the_m2_demo_script_builds_a_verified_parametric_mount` (analytic volume after every feature and after the parameter edit) |
+| Demo: parametric enclosure that regenerates when dimensions change | done | `examples/m2-enclosure` (parameters L, W, H, t drive the box, shell, boss pattern and cable hole); `the_m2_enclosure_script_builds_a_verified_parametric_enclosure` (analytic volume after every feature, after changing L and H, and after reopening and changing W). Second example: `examples/m2-mount`, `the_m2_demo_script_builds_a_verified_parametric_mount` |
+
 ## M3 assemblies, M4 drawings, M5 breadth and polish, M6 native kernel
 
 All missing. Scope per milestone: `docs/plan.md`.

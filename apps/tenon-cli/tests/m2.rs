@@ -22,12 +22,35 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 #[test]
+fn the_m2_enclosure_script_builds_a_verified_parametric_enclosure() {
+    // The script checks the analytic volume at each stage and again after L and H change; here
+    // we check the files and that the saved project still answers to its parameters.
+    let dir = scratch("enclosure");
+    let r = tenon_cli::demo_m2(kernel(), &dir).unwrap();
+    assert_eq!(r.json["ok"], true, "{}", r.text);
+    let expected = 28617.030437;
+    let mut k = OcctKernel::new();
+    let info = tenon_cli::info(&mut k, &dir.join("enclosure.step")).unwrap();
+    let v = info.json["shapes"][0]["volume_mm3"].as_f64().unwrap();
+    assert!((v - expected).abs() < 1e-6 * expected, "STEP volume {v} vs {expected}");
+    let mut e = Engine::new(kernel(), &dir);
+    e.exec("file.open", &json!({ "path": "enclosure.tenon" })).unwrap();
+    e.exec("param.set", &json!({ "name": "W", "equation": "70" })).unwrap();
+    let m = e.exec("model.mass", &json!({})).unwrap();
+    // W 60 -> 70: the box, the cavity and nothing else change.
+    let k4 = 4.0 - PI;
+    let wider =
+        (80.0 * 70.0 - k4 * 36.0) * 30.0 - (76.0 * 66.0 - k4 * 16.0) * 28.0 + 4.0 * PI * 16.0 * 23.0 - 4.0 * PI * 1.5625 * 10.0 - PI * 16.0 * 2.0;
+    assert!((m["bodies"][0]["volume"].as_f64().unwrap() - wider).abs() < 1e-6 * wider, "{m}");
+}
+
+#[test]
 fn the_m2_demo_script_builds_a_verified_parametric_mount() {
     // The script checks the analytic volume after every feature, the End of Part, the measured
     // height, and the whole part again after the thickness parameter changes; here we check the
     // files it writes.
     let dir = scratch("demo");
-    let r = tenon_cli::demo_m2(kernel(), &dir).unwrap();
+    let r = tenon_cli::demo_m2_mount(kernel(), &dir).unwrap();
     assert_eq!(r.json["ok"], true, "{}", r.text);
     let expected = 29328.0 - 453.0 * PI;
 
