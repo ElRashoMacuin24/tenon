@@ -57,10 +57,9 @@ Options:
 1. **Turn Smart App Control off** on the development machine. This is common for machines that
    compile code, but it is a security setting, so decide for yourself. On some Windows versions it
    cannot be turned back on without resetting Windows.
-2. Work around individual blocks. The repository currently does two things: kernel-occt has no
-   unit-test executable (`[lib] test = false`, all its tests are integration tests), and
-   `Cargo.toml` overrides the profile of `zerocopy-derive` so the DLL gets a new hash. These are
-   workarounds, not fixes.
+2. Work around individual blocks, for example by changing a package's profile settings in
+   `Cargo.toml` (a new binary gets a new verdict). This is whack-a-mole; it was used briefly during
+   M0 and removed once Smart App Control was turned off.
 3. Build inside WSL2 (Linux binaries are not subject to Smart App Control).
 
 ## macOS
@@ -93,6 +92,5 @@ Set `OCCT_ROOT` to the install prefix of an OCCT 8.0.x build (the directory cont
 `include/opencascade` and `lib`) and make its shared libraries findable at run time. The build
 script checks the major version and fails with a clear message otherwise.
 
-**Status of other platforms:** Windows is verified locally. The Linux and macOS steps and the
-GitHub Actions workflow (`.github/workflows/ci.yml`) are written but have not run yet; the first
-push to GitHub will verify them.
+**Platforms:** Windows is verified locally; Windows, Linux (ubuntu-24.04) and macOS (macos-14,
+Apple silicon) are verified by GitHub Actions (`.github/workflows/ci.yml`) on every push.

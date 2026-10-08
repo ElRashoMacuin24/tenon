@@ -16,11 +16,11 @@ configured but not yet verified (no CI run yet).
 | Asset attribution check | done | `cargo xtask assets` (`xtask/src/assets.rs`) |
 | wasm check of backend-neutral crates (L0-L6) | done | `cargo xtask wasm` |
 | Local CI gate (fmt, clippy -D warnings, tests, assets, layers, unsafe audit, wasm) | done | `pixi run cargo xtask ci`: 7/7 steps pass on Windows 11 |
-| GitHub Actions on Linux, macOS, Windows | partial | `.github/workflows/ci.yml` written; never run (no remote yet) |
+| GitHub Actions on Linux, macOS, Windows | done | `.github/workflows/ci.yml`; first run [37715695877](https://github.com/ElRashoMacuin24/tenon/actions/runs/37715695877) green on all three |
 | `Kernel` trait (backend-neutral, object safe, `Send`) | done | `crates/kernel/src/lib.rs` tests; `kernel_moves_to_a_worker_thread` |
 | Central tolerances, robust predicates, frames | done | `crates/geom/src/{tol,predicates,space}.rs` tests |
 | OCCT 8 backend builds and links (Windows) | done | `crates/kernel-occt/tests/m0.rs` `reports_occt_8` |
-| OCCT 8 backend builds and links (Linux, macOS) | partial | `build.rs` and pixi config written; unverified |
+| OCCT 8 backend builds and links (Linux, macOS) | done | all kernel tests pass on ubuntu-24.04 and macos-14 in CI |
 | Primitives: box, cylinder, cone, sphere, torus | done | `box_measures_and_topology`, `cylinder_measures_roles_and_geometry`, `other_primitives` |
 | Booleans: union, cut, intersect | done | `union_with_partly_overlapping_cylinder`, `cut_through_hole_with_history`, `intersect`, `inclusion_exclusion_on_random_boxes_and_cylinders` |
 | Operation history (images, generated, primitive roles) | done | `cut_through_hole_with_history`, `box_face_roles_match_geometry` |

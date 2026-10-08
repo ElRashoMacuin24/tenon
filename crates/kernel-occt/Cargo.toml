@@ -6,9 +6,8 @@ edition.workspace = true
 license.workspace = true
 build = "build.rs"
 
-# All tests are integration tests in tests/ (they need the linked library anyway). Not building
-# an empty unit-test executable also avoids one more unsigned binary for Windows Smart App
-# Control to judge (docs/setup.md).
+# All tests are integration tests in tests/ (they need the linked library anyway), so no empty
+# unit-test executable is built.
 [lib]
 test = false
 doctest = false

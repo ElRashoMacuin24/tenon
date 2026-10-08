@@ -81,6 +81,9 @@ On the Windows development machine, Smart App Control (Enforce mode) blocked:
 These are workarounds. The durable fix, turning Smart App Control off on development machines,
 is the owner's decision (docs/setup.md).
 
+Update (2026-10-07): the owner turned Smart App Control off, and the `zerocopy-derive` override was
+removed. `kernel-occt` keeps `[lib] test = false` because it has no unit tests.
+
 ## DEC-011 wasm check scope: L0-L6 (2026-10-07)
 
 `kernel-occt` (C++) cannot target `wasm32-unknown-unknown`. The backend-neutral crates are checked
