@@ -38,6 +38,10 @@ cxx-build = "1.0.202"
 egui = "0.36"
 eframe = { version = "0.36", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
+egui-wgpu = "0.36"
+# Must match the version egui-wgpu uses (they share one device).
+wgpu = "30"
+bytemuck = { version = "1", features = ["derive"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

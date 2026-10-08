@@ -1,6 +1,6 @@
 [package]
 name = "tenon-render"
-description = "wgpu viewport: tessellation display, picking, edge overlay, orientation cube"
+description = "Viewport: camera, picking, software and wgpu rendering (no UI toolkit)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,3 +11,6 @@ workspace = true
 [dependencies]
 tenon-geom = { workspace = true }
 tenon-kernel = { workspace = true }
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+image = { workspace = true }

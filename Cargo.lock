@@ -2962,8 +2962,11 @@ dependencies = [
 name = "tenon-render"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
+ "image",
  "tenon-geom",
  "tenon-kernel",
+ "wgpu",
 ]
 
 [[package]]
