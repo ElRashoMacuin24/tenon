@@ -84,6 +84,8 @@ void tessellate(const Shape& shape, double linear, double angular, MeshOut& out)
 void mass_properties(const Shape& shape, MassOut& out);
 void bounding_box(const Shape& shape, BoxOut& out);
 bool is_valid(const Shape& shape);
+// Solid `index` of a shape (TopExp order), with the images of the shape's faces and edges.
+std::unique_ptr<Shape> solid_at(const Shape& shape, std::uint32_t index, HistoryOut& hist);
 // Minimum distance between sub-shapes: kind 0 the whole shape, 1 a face, 2 an edge, 3 a vertex.
 void min_distance(const Shape& a, std::uint8_t kind_a, std::uint32_t index_a, const Shape& b, std::uint8_t kind_b, std::uint32_t index_b,
                   DistOut& out);

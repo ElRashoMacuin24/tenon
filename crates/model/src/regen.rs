@@ -7,14 +7,14 @@ use serde::{Deserialize, Serialize};
 use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3};
 use tenon_kernel::{
     AngleExtent, BoolOp, ChamferSpec, Curve2, CurveKind, Extent, FaceInfo, Kernel, KernelError, Loop, MassProps, Mesh, MeshTol, Profile, Region,
-    ShapeHandle, SurfaceKind, TaggedCurve2, Transform,
+    ShapeHandle, SubShape, SurfaceKind, TaggedCurve2, Transform,
 };
 use tenon_sketch::{EntityId, Sketch, SketchRegion, default_regions, profile, regions};
 
 use crate::FeatureId;
 use crate::document::{
     AxisRef, AxisSel, ChamferSize, DirectionRef, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent, HoleType, Operation,
-    PlaneRef, RegionSel, Revolve, RevolveAngle, WorkAxis, WorkPlane, WorkPoint,
+    PlaneRef, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, WorkAxis, WorkPlane, WorkPoint,
 };
 use crate::naming::{
     EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
@@ -389,6 +389,7 @@ impl<'a> Ctx<'a> {
                 self.replace_body(f.id, bi, op)
             }
             FeatureKind::Hole(h) => self.hole(f.id, h),
+            FeatureKind::Rib(r) => self.rib(f.id, r),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };
@@ -503,6 +504,138 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// Each line is thickened symmetrically about the sketch plane and grown in the plane on one
+    /// side (a slab). "To next" cuts the slab by the part and keeps the piece at the line, which
+    /// ends where the part begins; it grows on the side where it meets the part (the other side
+    /// when flipped, if it meets the part there too). Then the pieces join the part.
+    fn rib(&mut self, id: FeatureId, r: &Rib) -> Result<(), Stop> {
+        r.check()?;
+        let (sketch, frame) = self.sketch_and_frame(r.sketch)?;
+        let bbox = self.target_bbox().ok_or("there is no part for the rib to meet")?;
+        let centre = frame.to_local(bbox.center());
+        let mut pieces: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)> = Vec::new();
+        let mut made = || -> Result<(), Stop> {
+            for line in &r.lines {
+                let (a, b) = sketch.line(*line).ok_or_else(|| format!("line {} is not a line of {}", line.0, label(self.doc, r.sketch)))?;
+                if (b - a).len() < tenon_geom::tol::MIN_SIZE {
+                    return Err("a rib line has no length".into());
+                }
+                // First choice: toward the middle of the part.
+                let mut n = (b - a).normalized().perp();
+                if (centre.xy() - a.mid(b)).dot(n) < 0.0 {
+                    n = -n;
+                }
+                let reach = bbox.diagonal() * 2.0 + 1.0;
+                let piece = match r.extent {
+                    RibExtent::Distance(d) => {
+                        // Toward the side where the part is (where it would meet the part).
+                        let toward = match self.rib_side(id, r, frame, *line, (a, b), n, reach, true)? {
+                            Some((s, _)) => {
+                                self.k.release(s);
+                                n
+                            }
+                            None => match self.rib_side(id, r, frame, *line, (a, b), -n, reach, true)? {
+                                Some((s, _)) => {
+                                    self.k.release(s);
+                                    -n
+                                }
+                                None => n,
+                            },
+                        };
+                        self.rib_side(id, r, frame, *line, (a, b), if r.flip { -toward } else { toward }, d, false)?
+                    }
+                    RibExtent::ToNext => {
+                        let first = self.rib_side(id, r, frame, *line, (a, b), n, reach, true)?;
+                        let second = self.rib_side(id, r, frame, *line, (a, b), -n, reach, true)?;
+                        let (keep, drop) = match (first, second) {
+                            (Some(x), Some(y)) if r.flip => (Some(y), Some(x)),
+                            (Some(x), y) => (Some(x), y),
+                            (None, y) => (y, None),
+                        };
+                        if let Some((s, _)) = drop {
+                            self.k.release(s);
+                        }
+                        keep
+                    }
+                };
+                pieces.push(piece.ok_or_else(|| format!("the rib from line {} does not meet the part on either side (give it a distance)", line.0))?);
+            }
+            Ok(())
+        };
+        if let Err(e) = made() {
+            for (s, _) in pieces {
+                self.k.release(s);
+            }
+            return Err(e);
+        }
+        self.combine(id, pieces, Operation::Join)
+    }
+
+    /// The rib slab from one line on side `n`, `reach` long. With `to_next`, the piece of it
+    /// outside the part at the line, or `None` if it never meets the part.
+    #[allow(clippy::too_many_arguments)]
+    fn rib_side(
+        &mut self,
+        id: FeatureId,
+        r: &Rib,
+        frame: Frame,
+        line: EntityId,
+        (a, b): (Vec2, Vec2),
+        n: Vec2,
+        reach: f64,
+        to_next: bool,
+    ) -> Result<Option<(ShapeHandle, Vec<Option<FaceOrigin>>)>, Stop> {
+        let quad = [a, b, b + n * reach, a + n * reach];
+        let tag = |k: u64| u64::from(line.0) | (k << 24);
+        let curves = (0..4).map(|i| TaggedCurve2 { tag: tag(i as u64), curve: Curve2::Line { start: quad[i], end: quad[(i + 1) % 4] } }).collect();
+        let profile = Profile { frame, regions: vec![Region { outer: Loop { curves }, holes: vec![] }] };
+        let slab = self.k.extrude(&profile, &Extent::Symmetric(r.thickness), None)?;
+        let names = match self.k.topology(slab.shape) {
+            Ok(t) => names_of_sweep(&slab.history, id, t.faces),
+            Err(e) => {
+                self.k.release(slab.shape);
+                return Err(e.into());
+            }
+        };
+        if !to_next {
+            return Ok(Some((slab.shape, names)));
+        }
+        let (body_shape, body_names) = match self.regen.bodies.last() {
+            Some(bd) => (bd.shape, bd.names.clone()),
+            None => {
+                self.k.release(slab.shape);
+                return Err("there is no part for the rib to meet".into());
+            }
+        };
+        let mut temp = vec![slab.shape];
+        let mut found = || -> Result<Option<(ShapeHandle, Vec<Option<FaceOrigin>>)>, Stop> {
+            let cut = self.k.boolean(BoolOp::Cut, slab.shape, &[body_shape])?;
+            temp.push(cut.shape);
+            let topo = self.k.topology(cut.shape)?;
+            let cut_names = names_of_boolean(&cut.history, &[&names, &body_names], topo.faces);
+            // A tiny ball just inside the slab at the line tells the piece that starts there.
+            let probe = self.k.make_sphere(frame.plane_point(a.mid(b) + n * (r.thickness * 0.01).min(0.01)), r.thickness * 0.001)?.shape;
+            temp.push(probe);
+            let slab_volume = self.k.mass_properties(slab.shape, 1.0)?.volume;
+            for i in 0..topo.solids {
+                let s = self.k.solid(cut.shape, i)?;
+                let at_line = self.k.min_distance(SubShape::Shape(s.shape), SubShape::Shape(probe))?.value < 1e-6;
+                // A piece as big as the slab never met the part.
+                let bounded = self.k.mass_properties(s.shape, 1.0)?.volume < slab_volume * (1.0 - 1e-9);
+                if at_line && bounded {
+                    let faces = self.k.topology(s.shape)?.faces;
+                    return Ok(Some((s.shape, names_of_boolean(&s.history, &[&cut_names], faces))));
+                }
+                self.k.release(s.shape);
+            }
+            Ok(None)
+        };
+        let result = found();
+        for t in temp {
+            self.k.release(t);
+        }
+        result
+    }
     /// A pattern direction as a unit vector.
     fn direction(&self, d: &DirectionRef) -> Result<Vec3, Stop> {
         match d {

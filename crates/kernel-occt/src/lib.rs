@@ -636,6 +636,13 @@ impl Kernel for OcctKernel {
         self.slots.iter().filter(|s| s.shape.is_some()).count()
     }
 
+    fn solid(&mut self, shape: ShapeHandle, index: u32) -> KResult<Op> {
+        self.not_cancelled()?;
+        let mut hist = sys::HistoryOut::default();
+        let s = sys::solid_at(self.get(shape)?, index, &mut hist).map_err(failed("solid"))?;
+        self.finish(s, hist)
+    }
+
     fn min_distance(&self, a: SubShape, b: SubShape) -> KResult<Distance> {
         self.not_cancelled()?;
         let part = |s: SubShape| match s {

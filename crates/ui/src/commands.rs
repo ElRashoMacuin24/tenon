@@ -96,7 +96,7 @@ pub const RIBBON: &[RibbonTab] = &[
                     small("model.sweep", "Sweep", "Sweep a profile along a path", Icon::Sweep, 5),
                     small("model.loft", "Loft", "Blend between two or more profiles", Icon::Loft, 5),
                     small("model.coil", "Coil", "Helical sweep", Icon::Coil, 5),
-                    small("model.rib", "Rib", "A thin wall from an open profile", Icon::Rib, 2),
+                    small("model.rib", "Rib", "A thin wall from an open profile", Icon::Rib, 0),
                     small("model.emboss", "Emboss", "Raise or recess a profile on a face", Icon::Text, 5),
                     small("model.derive", "Derive", "Bring in another part", Icon::Copy, 5),
                 ],

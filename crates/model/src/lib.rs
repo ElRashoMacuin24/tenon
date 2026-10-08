@@ -18,7 +18,7 @@ pub use cmd::{CmdError, CmdResult, CommandSpec, Run, Session};
 pub use document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, DRILL_POINT, DirectionRef, Document, Extrude, ExtrudeExtent, Feature, FeatureId,
     FeatureKind, Fillet, Hole, HoleExtent, HoleType, MAX_COPIES, MAX_FEATURES, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern,
-    RegionSel, Revolve, RevolveAngle, Shell, WorkAxis, WorkPlane, WorkPoint, hole_centres,
+    RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
 };
 pub use naming::{CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace};
 pub use params::{ModelParam, ParamUnit, Parameters, UserParam, ValuePath};

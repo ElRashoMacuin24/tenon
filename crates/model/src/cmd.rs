@@ -12,8 +12,8 @@ use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions
 
 use crate::document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, DRILL_POINT, DirectionRef, Extrude, ExtrudeExtent, FeatureKind, Fillet, Hole, HoleExtent,
-    HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle, Shell, WorkAxis, WorkPlane,
-    WorkPoint, hole_centres,
+    HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, WorkAxis,
+    WorkPlane, WorkPoint, hole_centres, open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
@@ -919,6 +919,22 @@ fn feature_add(s: &mut Session, p: &Value) -> CmdResult {
     Ok(json!({ "feature": id.0, "name": name }))
 }
 
+fn model_rib(s: &mut Session, p: &Value) -> CmdResult {
+    let sketch = sketch_id(p)?;
+    let sk = s.document().sketch(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
+    let lines = if p.get("lines").is_some() { ids(p, "lines")? } else { open_lines(sk) };
+    if let Some(bad) = lines.iter().find(|l| !sk.is_line(**l)) {
+        return Err(format!("{} is not a line of {sketch}", bad.0).into());
+    }
+    let extent = match opt_num(p, "distance")? {
+        Some(d) => RibExtent::Distance(d),
+        None => RibExtent::ToNext,
+    };
+    let rib = Rib { sketch, lines, thickness: num(p, "thickness")?, extent, flip: p.get("flip").and_then(Value::as_bool).unwrap_or(false) };
+    rib.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Rib(rib))
+}
+
 fn feature_update(s: &mut Session, p: &Value) -> CmdResult {
     let id = feature_id(p)?;
     let kind: FeatureKind = parse(p, "kind")?;
@@ -1365,6 +1381,13 @@ static COMMANDS: &[CommandSpec] = &[
         "sketch; points: [point ids] (default: the sketch's centre points, i.e. points on no curve); diameter; depth or through_all: true; type: simple | counterbore (counterbore_diameter, counterbore_depth) | countersink (countersink_diameter, countersink_angle: rad, default 90 deg); tip_angle (rad, default 118 deg) or flat_bottom: true; reverse (drill along the sketch normal)",
         true,
         model_hole
+    ),
+    doc_cmd!(
+        "model.rib",
+        "Rib",
+        "sketch; lines: [line ids] (default: its open lines); thickness (half on each side of the sketch plane); distance (default: until it meets the part); flip",
+        true,
+        model_rib
     ),
     doc_cmd!(
         "model.pattern.rect",

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use tenon_model::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, DRILL_POINT, DirectionRef, Document, EdgeRef, Extrude, ExtrudeExtent, FaceRef, FeatureId,
     FeatureKind, Fillet, Fingerprint, Hole, HoleExtent, HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel,
-    Revolve, RevolveAngle, Shell, hole_centres,
+    Revolve, RevolveAngle, Rib, RibExtent, Shell, hole_centres, open_lines,
 };
 use tenon_sketch::{Constraint, ConstraintId, EntityId};
 
@@ -198,6 +198,30 @@ impl HolePanel {
             tip_degrees: h.tip_angle.unwrap_or(DRILL_POINT).to_degrees(),
             reverse: h.reverse,
         }
+    }
+}
+
+/// Rib: a thin wall from open lines of a sketch.
+#[derive(Clone, Debug)]
+pub(crate) struct RibPanel {
+    pub editing: Option<FeatureId>,
+    pub sketch: FeatureId,
+    pub lines: Vec<EntityId>,
+    pub thickness: f64,
+    pub to_next: bool,
+    pub distance: f64,
+    pub flip: bool,
+}
+
+impl RibPanel {
+    pub(crate) fn kind(&self) -> FeatureKind {
+        FeatureKind::Rib(Rib {
+            sketch: self.sketch,
+            lines: self.lines.clone(),
+            thickness: self.thickness,
+            extent: if self.to_next { RibExtent::ToNext } else { RibExtent::Distance(self.distance) },
+            flip: self.flip,
+        })
     }
 }
 
@@ -403,6 +427,7 @@ pub(crate) enum Panel {
     Pattern(Box<PatternPanel>),
     Work(Box<crate::work::WorkPanel>),
     Measure(Box<MeasurePanel>),
+    Rib(RibPanel),
     Value(ValuePanel),
     EditDimension { sketch: FeatureId, constraint: ConstraintId, value: f64, angular: bool, equation: Option<String> },
     Rename { feature: FeatureId, name: String },
@@ -420,6 +445,7 @@ impl Panel {
             Panel::Hole(p) => p.editing,
             Panel::Pattern(p) => p.editing,
             Panel::Work(w) => w.editing,
+            Panel::Rib(p) => p.editing,
             _ => None,
         }
     }
@@ -469,6 +495,8 @@ impl Panel {
                 CopyKind::Circular => vec![("count", "/count"), ("degrees", "/angle")],
                 CopyKind::Mirror => vec![],
             },
+            Panel::Rib(p) if p.to_next => vec![("thickness", "/thickness")],
+            Panel::Rib(_) => vec![("thickness", "/thickness"), ("distance", "/extent/distance")],
             Panel::Work(w) => match w.method {
                 crate::work::WorkMethod::Offset => vec![("distance", "/distance")],
                 crate::work::WorkMethod::Angle => vec![("degrees", "/angle")],
@@ -574,6 +602,8 @@ impl Workbench {
             Some(Panel::Revolve(p)) => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Hole(p)) if !p.points.is_empty() => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Hole(p)) => rolled(p.editing),
+            Some(Panel::Rib(p)) if !p.lines.is_empty() => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::Rib(p)) => rolled(p.editing),
             Some(Panel::Pattern(p)) => match p.kind() {
                 Some(kind) => with_feature(self.document(), p.editing, kind),
                 None => rolled(p.editing),
@@ -799,6 +829,52 @@ impl Workbench {
         Ok(())
     }
 
+    pub(crate) fn open_rib(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::Rib(r) => RibPanel {
+                    editing,
+                    sketch: r.sketch,
+                    lines: r.lines.clone(),
+                    thickness: r.thickness,
+                    to_next: r.extent == RibExtent::ToNext,
+                    distance: match r.extent {
+                        RibExtent::Distance(d) => d,
+                        RibExtent::ToNext => 10.0,
+                    },
+                    flip: r.flip,
+                },
+                _ => return Err("not a rib".into()),
+            },
+            None => {
+                if !self.document().features().iter().any(|f| f.kind.has_tool()) {
+                    return Err("there is no part for a rib yet: extrude or revolve a sketch first".into());
+                }
+                // The sketch being edited, else the last sketch with open lines.
+                let sketch = match &self.mode {
+                    Mode::Sketch(s) => {
+                        let id = s.feature;
+                        self.finish_sketch();
+                        id
+                    }
+                    Mode::Model => self
+                        .sketches()
+                        .iter()
+                        .rev()
+                        .map(|s| s.0)
+                        .find(|id| self.document().sketch(*id).is_some_and(|sk| !open_lines(sk).is_empty()))
+                        .ok_or("draw an open line in a sketch for the rib first")?,
+                };
+                let lines = self.document().sketch(sketch).map(open_lines).unwrap_or_default();
+                RibPanel { editing: None, sketch, lines, thickness: 2.0, to_next: true, distance: 10.0, flip: false }
+            }
+        };
+        self.panel = Some(Panel::Rib(panel));
+        self.start_equations();
+        self.set_status("Rib: set the thickness; it grows from the sketch lines until it meets the part.");
+        Ok(())
+    }
+
     pub(crate) fn open_hole(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
         let panel = match editing {
             Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
@@ -984,6 +1060,18 @@ impl Workbench {
                         let Some(params) = crate::work::work_params(k) else { return false };
                         params
                     }
+                    FeatureKind::Rib(r) => {
+                        let mut p = json!({
+                            "sketch": r.sketch.0,
+                            "lines": r.lines.iter().map(|e| e.0).collect::<Vec<_>>(),
+                            "thickness": r.thickness,
+                            "flip": r.flip,
+                        });
+                        if let RibExtent::Distance(d) = r.extent {
+                            p["distance"] = json!(d);
+                        }
+                        ("model.rib", p)
+                    }
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
@@ -1066,6 +1154,18 @@ impl Workbench {
                             if !keep && again {
                                 reopen = Some(p.command());
                             }
+                        }
+                    }
+                }
+            }
+            Panel::Rib(p) => {
+                if commit {
+                    if p.lines.is_empty() {
+                        self.set_error("Rib: the sketch has no open lines to make a rib from".to_string());
+                    } else {
+                        keep = !self.commit_panel(&ptrs, p.editing, p.kind());
+                        if !keep && again {
+                            reopen = Some("model.rib");
                         }
                     }
                 }

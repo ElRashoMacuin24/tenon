@@ -713,3 +713,56 @@ fn measure_areas_lengths_distances_and_angles() {
     assert!(approx(value(&m, "Distance").unwrap(), (30.0f64.powi(2) + 10.0f64.powi(2)).sqrt() - 3.0), "{m}");
     assert!(s.exec("model.measure", &json!({ "a": { "body": 0, "face": 999 } }), Some(&mut k)).is_err());
 }
+
+/// An L-bracket in the XZ plane, 40 deep: base 60 x 8, upright 8 wide reaching z = 38.
+fn l_bracket(s: &mut Session, k: &mut OcctKernel) -> u64 {
+    let sk = run(s, k, "sketch.create", json!({ "plane": "xz" }))["feature"].as_u64().unwrap();
+    let pts = [(0.0, 0.0), (60.0, 0.0), (60.0, 8.0), (8.0, 8.0), (8.0, 38.0), (0.0, 38.0)];
+    for i in 0..6 {
+        let (a, b) = (pts[i], pts[(i + 1) % 6]);
+        run(s, k, "sketch.line", json!({ "sketch": sk, "x1": a.0, "y1": a.1, "x2": b.0, "y2": b.1 }));
+    }
+    run(s, k, "model.extrude", json!({ "sketch": sk, "distance": 40 }))["feature"].as_u64().unwrap()
+}
+
+#[test]
+fn a_rib_fills_the_corner_of_an_l_bracket() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    l_bracket(&mut s, &mut k);
+    regenerates(&mut s, &mut k);
+    let bracket = volume(&mut s, &mut k);
+    assert!(approx(bracket, (60.0 * 8.0 + 8.0 * 30.0) * 40.0));
+    // A sketch halfway along the depth with a diagonal line across the inner corner.
+    let wp = run(&mut s, &mut k, "work.plane", json!({ "base": "xz", "distance": 20 }))["feature"].as_u64().unwrap();
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": 30, "y1": 8, "x2": 8, "y2": 30 }));
+    let rib = run(&mut s, &mut k, "model.rib", json!({ "sketch": sk, "thickness": 4 }));
+    assert_eq!(rib["name"], "Rib1");
+    regenerates(&mut s, &mut k);
+    // The triangle between the line and the corner: legs 22, 4 thick.
+    let tri = 22.0 * 22.0 / 2.0 * 4.0;
+    assert!(approx(volume(&mut s, &mut k), bracket + tri), "{} vs {}", volume(&mut s, &mut k), bracket + tri);
+    let topo = run(&mut s, &mut k, "model.topology", json!({}));
+    assert_eq!(topo["bodies"][0]["solids"], 1, "one solid: {topo}");
+
+    // A finite rib grows the given distance instead, toward the corner: a strip 5 wide along
+    // the line, less the bits of it inside the base and the upright.
+    let rib_id = rib["feature"].as_u64().unwrap();
+    let mut kind = serde_json::to_value(&s.document().feature(tenon_model::FeatureId(rib_id as u32)).unwrap().kind).unwrap();
+    kind["extent"] = json!({ "distance": 5.0 });
+    run(&mut s, &mut k, "feature.update", json!({ "feature": rib_id, "kind": kind }));
+    regenerates(&mut s, &mut k);
+    let len = (22.0f64 * 22.0 * 2.0).sqrt();
+    // The strip's end corners poke into the base and the upright by right triangles with legs 5.
+    let inside = 2.0 * (5.0 * 5.0 / 2.0) * 4.0;
+    assert!(approx(volume(&mut s, &mut k), bracket + len * 5.0 * 4.0 - inside), "{}", volume(&mut s, &mut k));
+    // Flipped, it grows away from the corner: the whole strip is new material.
+    kind["flip"] = json!(true);
+    run(&mut s, &mut k, "feature.update", json!({ "feature": rib_id, "kind": kind }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), bracket + len * 5.0 * 4.0), "{}", volume(&mut s, &mut k));
+
+    // Bad ribs are refused.
+    assert!(s.exec("model.rib", &json!({ "sketch": sk, "thickness": 0 }), Some(&mut k)).is_err());
+    assert!(s.exec("model.rib", &json!({ "sketch": sk, "thickness": 2, "lines": [999] }), Some(&mut k)).is_err());
+}

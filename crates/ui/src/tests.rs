@@ -68,7 +68,7 @@ fn every_available_command_has_a_handler() {
             assert!(!e.contains("unknown command"), "{id}: {e}");
         }
     }
-    assert!(Workbench::without_kernel().run_ui("model.rib").unwrap_err().contains("M2"));
+    assert!(Workbench::without_kernel().run_ui("model.sweep").unwrap_err().contains("milestone M5"));
     assert!(Workbench::without_kernel().run_ui("model.fillet").unwrap_err().contains("no solid"));
     assert!(Workbench::without_kernel().run_ui("nonsense.cmd").unwrap_err().contains("unknown"));
 }
@@ -825,6 +825,44 @@ fn measure_faces_and_edges_by_clicking_them() {
     d.tap(&mut wb, egui::Key::Escape);
     d.frame(&mut wb, vec![]);
     assert!(wb.panel.is_none());
+}
+
+#[test]
+fn rib_from_the_sketch_being_drawn() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    // An L-bracket, 40 deep.
+    wb.create_sketch(json!({ "plane": "xz" })).unwrap();
+    let f = sketching(&wb);
+    let pts = [(0.0, 0.0), (60.0, 0.0), (60.0, 8.0), (8.0, 8.0), (8.0, 38.0), (0.0, 38.0)];
+    for i in 0..6 {
+        let (a, b) = (pts[i], pts[(i + 1) % 6]);
+        wb.exec("sketch.line", json!({ "sketch": f.0, "x1": a.0, "y1": a.1, "x2": b.0, "y2": b.1 })).unwrap();
+    }
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 40 })).unwrap();
+    let wp = wb.exec("work.plane", json!({ "base": "xz", "distance": 20 })).unwrap()["feature"].as_u64().unwrap();
+    // The rib line, in a sketch halfway along.
+    wb.create_sketch(json!({ "work_plane": wp })).unwrap();
+    let sk = sketching(&wb);
+    wb.exec("sketch.line", json!({ "sketch": sk.0, "x1": 30, "y1": 8, "x2": 8, "y2": 30 })).unwrap();
+    d.settle(&mut wb);
+    let bracket = (60.0 * 8.0 + 8.0 * 30.0) * 40.0;
+
+    // Rib while sketching: the sketch finishes and the rib previews, 2 thick.
+    wb.run_ui("model.rib").unwrap();
+    assert!(!wb.is_sketching());
+    d.settle(&mut wb);
+    let Some(Panel::Rib(p)) = wb.panel.clone() else { panic!("no rib panel: {}", wb.status()) };
+    assert_eq!((p.sketch, p.lines.len()), (sk, 1));
+    let tri = 22.0 * 22.0 / 2.0;
+    assert!((volume(&wb) - (bracket + tri * 2.0)).abs() < 1e-6, "preview: {}", volume(&wb));
+    type_into(&mut d, &mut wb, "tn_props_rib_thickness", "6");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - (bracket + tri * 6.0)).abs() < 1e-6, "{}", volume(&wb));
+    assert_eq!(wb.document().features().last().unwrap().name, "Rib1");
 }
 
 /// Where a browser row was drawn in the last frame.

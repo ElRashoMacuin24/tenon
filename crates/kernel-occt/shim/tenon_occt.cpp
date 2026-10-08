@@ -1197,4 +1197,29 @@ void min_distance(const Shape& a, std::uint8_t kind_a, std::uint32_t index_a, co
   });
 }
 
+std::unique_ptr<Shape> solid_at(const Shape& shape, std::uint32_t index, HistoryOut& hist) {
+  return guarded("solid_at", [&] {
+    ShapeMap solids;
+    TopExp::MapShapes(shape.shape, TopAbs_SOLID, solids);
+    if (index >= static_cast<std::uint32_t>(solids.Extent())) {
+      throw std::out_of_range("solid index out of range");
+    }
+    auto result = std::make_unique<Shape>(solids(static_cast<int>(index) + 1));
+    // Faces and edges of the input that are in this solid map to themselves; the others are gone.
+    const std::pair<std::uint8_t, const ShapeMap*> kinds[] = {{KIND_FACE, &shape.faces}, {KIND_EDGE, &shape.edges}};
+    for (const auto& kind : kinds) {
+      const ShapeMap& result_map = kind.first == KIND_FACE ? result->faces : result->edges;
+      for (int i = 1; i <= kind.second->Extent(); ++i) {
+        ImageEntry entry;
+        entry.input = 0;
+        entry.kind = kind.first;
+        entry.index = static_cast<std::uint32_t>(i - 1);
+        push_index(entry.images, result_map, (*kind.second)(i));
+        hist.images.push_back(std::move(entry));
+      }
+    }
+    return result;
+  });
+}
+
 } // namespace tenon_occt

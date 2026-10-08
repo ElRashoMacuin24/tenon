@@ -404,6 +404,7 @@ impl Workbench {
                     | Panel::Pattern(_)
                     | Panel::Work(_)
                     | Panel::Measure(_)
+                    | Panel::Rib(_)
             )
         )
     }
@@ -452,6 +453,7 @@ impl Workbench {
             ),
             Panel::Work(w) => (w.title(), w.editing.map(|f| self.feature_name(f))),
             Panel::Measure(_) => ("Measure", Some("Distance, angle, length, area".to_string())),
+            Panel::Rib(p) => ("Rib", p.editing.map(|f| self.feature_name(f))),
             _ => return,
         };
         let mut clear = false;
@@ -1148,6 +1150,63 @@ impl Workbench {
                             }
                         }
                     }
+                    Panel::Rib(p) => {
+                        section(ui, "Input Geometry", true, |ui| {
+                            egui::Grid::new("tn_props_rib_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Profile");
+                                ui.label(if p.lines.is_empty() { "no open lines".to_string() } else { format!("{} lines", p.lines.len()) });
+                                ui.end_row();
+                                ui.label("Sketch");
+                                ui.label(sketches.iter().find(|s| s.0 == p.sketch).map_or("?".into(), |s| s.1.clone()));
+                                ui.end_row();
+                            });
+                        });
+                        section(ui, "Behavior", true, |ui| {
+                            egui::Grid::new("tn_props_rib_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                ui.label("Extents");
+                                egui::ComboBox::from_id_salt("tn_props_rib_extent")
+                                    .selected_text(if p.to_next { "To Next" } else { "Finite" })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut p.to_next, true, "To Next");
+                                        ui.selectable_value(&mut p.to_next, false, "Finite");
+                                    });
+                                ui.end_row();
+                                ui.label("Direction");
+                                flip_button(ui, &mut p.flip, t);
+                                ui.end_row();
+                                ui.label("Thickness");
+                                enter |= eq_value_field(
+                                    ui,
+                                    egui::Id::new("tn_props_rib_thickness"),
+                                    &mut p.thickness,
+                                    &mut eqs,
+                                    "thickness",
+                                    "mm",
+                                    0.001..=100_000.0,
+                                    110.0,
+                                    t,
+                                )
+                                .entered;
+                                ui.end_row();
+                                if !p.to_next {
+                                    ui.label("Distance");
+                                    enter |= eq_value_field(
+                                        ui,
+                                        egui::Id::new("tn_props_rib_distance"),
+                                        &mut p.distance,
+                                        &mut eqs,
+                                        "distance",
+                                        "mm",
+                                        0.001..=100_000.0,
+                                        110.0,
+                                        t,
+                                    )
+                                    .entered;
+                                    ui.end_row();
+                                }
+                            });
+                        });
+                    }
                     Panel::Measure(m) => {
                         let label = |p: &crate::viewport::Pick| match p {
                             crate::viewport::Pick::Face { body, face } => self
@@ -1375,7 +1434,7 @@ impl Workbench {
                 .first()
                 .and_then(|e| Some(self.sketch_frame(p.sketch)?.plane_point(self.document().sketch(p.sketch)?.point(*e)?)))
                 .or_else(|| self.scene.bbox().map(|b| b.center())),
-            Some(Panel::Pattern(_) | Panel::Work(_)) => self.scene.bbox().map(|b| Vec3::new(b.max.x, b.min.y, b.max.z)),
+            Some(Panel::Pattern(_) | Panel::Work(_) | Panel::Rib(_)) => self.scene.bbox().map(|b| Vec3::new(b.max.x, b.min.y, b.max.z)),
             _ => return,
         };
         let is_extrude = matches!(self.panel, Some(Panel::Extrude(_)));
@@ -1502,6 +1561,23 @@ impl Workbench {
                         Some(Panel::Work(w)) if w.method == WorkMethod::Angle => {
                             if eq_value_field(ui, egui::Id::new("tn_mini_work"), &mut w.degrees, &mut eqs, "degrees", "deg", -360.0..=360.0, 80.0, t)
                                 .entered
+                            {
+                                request = Some(PanelRequest::Ok);
+                            }
+                        }
+                        Some(Panel::Rib(p)) => {
+                            if eq_value_field(
+                                ui,
+                                egui::Id::new("tn_mini_rib"),
+                                &mut p.thickness,
+                                &mut eqs,
+                                "thickness",
+                                "mm",
+                                0.001..=100_000.0,
+                                80.0,
+                                t,
+                            )
+                            .entered
                             {
                                 request = Some(PanelRequest::Ok);
                             }

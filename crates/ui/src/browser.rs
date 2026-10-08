@@ -106,6 +106,7 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::WorkPlane(_) => Icon::Plane,
         FeatureKind::WorkAxis(_) => Icon::Axis,
         FeatureKind::WorkPoint(_) => Icon::Point,
+        FeatureKind::Rib(_) => Icon::Rib,
     }
 }
 

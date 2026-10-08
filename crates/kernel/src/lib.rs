@@ -240,6 +240,12 @@ pub trait Kernel: Send {
     fn release(&mut self, shape: ShapeHandle) {
         let _ = shape;
     }
+    /// Solid `index` of a shape made of several (see [`Topology::solids`]); the history maps the
+    /// shape's faces and edges in that solid to the result.
+    fn solid(&mut self, shape: ShapeHandle, index: u32) -> KResult<Op> {
+        let _ = (shape, index);
+        Err(KernelError::Unsupported("solid"))
+    }
     /// The shortest distance between two shapes (or faces, edges, vertices of them), and the
     /// nearest points.
     fn min_distance(&self, a: SubShape, b: SubShape) -> KResult<Distance> {

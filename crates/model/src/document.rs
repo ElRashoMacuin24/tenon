@@ -293,6 +293,52 @@ impl Hole {
     }
 }
 
+/// How far a rib grows from its lines.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RibExtent {
+    /// Until it meets the part.
+    ToNext,
+    Distance(f64),
+}
+
+/// A thin wall from open lines of a sketch: in the sketch plane, `thickness` thick (half on each
+/// side of the plane), growing from each line toward the part.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Rib {
+    pub sketch: FeatureId,
+    pub lines: Vec<EntityId>,
+    pub thickness: f64,
+    pub extent: RibExtent,
+    /// Grow away from the part instead.
+    #[serde(default)]
+    pub flip: bool,
+}
+
+impl Rib {
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.thickness.is_finite() && self.thickness > 0.0) {
+            return Err("the rib thickness must be positive".into());
+        }
+        if let RibExtent::Distance(d) = self.extent
+            && !(d.is_finite() && d > 0.0)
+        {
+            return Err("the rib distance must be positive".into());
+        }
+        if self.lines.is_empty() {
+            return Err("the rib needs at least one sketch line".into());
+        }
+        Ok(())
+    }
+}
+
+/// The lines a rib uses by default: the sketch's lines that are not construction and not part
+/// of a closed profile.
+pub fn open_lines(sk: &Sketch) -> Vec<EntityId> {
+    let closed: std::collections::BTreeSet<EntityId> = tenon_sketch::regions(sk).iter().flat_map(|r| r.key.iter().copied()).collect();
+    sk.entities().filter(|(id, e)| !e.construction && sk.is_line(*id) && !closed.contains(id)).map(|(id, _)| id).collect()
+}
+
 /// A direction for a pattern: an origin axis or a straight edge of the part.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -469,6 +515,7 @@ pub enum FeatureKind {
     WorkPlane(WorkPlane),
     WorkAxis(WorkAxis),
     WorkPoint(WorkPoint),
+    Rib(Rib),
 }
 
 impl FeatureKind {
@@ -488,6 +535,7 @@ impl FeatureKind {
             FeatureKind::Extrude(_)
                 | FeatureKind::Revolve(_)
                 | FeatureKind::Hole(_)
+                | FeatureKind::Rib(_)
                 | FeatureKind::PatternRect(_)
                 | FeatureKind::PatternCircular(_)
                 | FeatureKind::Mirror(_)
@@ -511,6 +559,7 @@ impl FeatureKind {
             FeatureKind::WorkPlane(_) => "Work Plane",
             FeatureKind::WorkAxis(_) => "Work Axis",
             FeatureKind::WorkPoint(_) => "Work Point",
+            FeatureKind::Rib(_) => "Rib",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -529,6 +578,7 @@ impl FeatureKind {
             FeatureKind::WorkPlane(_) => "Work Plane",
             FeatureKind::WorkAxis(_) => "Work Axis",
             FeatureKind::WorkPoint(_) => "Work Point",
+            FeatureKind::Rib(_) => "Rib",
         }
     }
     /// Features this one depends on.
@@ -550,6 +600,7 @@ impl FeatureKind {
             }
             FeatureKind::Shell(s) => s.remove.iter().filter_map(FaceRef::feature).collect(),
             FeatureKind::Hole(h) => vec![h.sketch],
+            FeatureKind::Rib(r) => vec![r.sketch],
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -812,6 +863,8 @@ impl Document {
                 // Sizes are checked here too: a file must not hold a hole that cannot be built
                 // without saying so. (Points that went missing are a regeneration error instead.)
                 FeatureKind::Hole(h) => h.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Rib(r) if self.sketch(r.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, r.sketch)),
+                FeatureKind::Rib(r) => r.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

@@ -176,3 +176,25 @@ fn minimum_distances_between_faces_edges_and_shapes() {
     assert!(close(k.min_distance(SubShape::Face(x1), SubShape::Edge(b.edge(edge))).unwrap().value, 10.0));
     assert!(k.min_distance(SubShape::Face(a.face(99)), SubShape::Shape(b)).is_err());
 }
+
+#[test]
+fn a_cut_in_two_gives_its_solids_with_their_faces() {
+    use tenon_kernel::BoolOp;
+    let mut k = OcctKernel::new();
+    let a = cube(&mut k);
+    // A slab through the middle cuts the cube into two 20 x 8 x 20 halves.
+    let slab = k.make_box(&Frame::new(Vec3::new(0.0, 8.0, -1.0), Vec3::Z, Vec3::X).unwrap(), Vec3::new(30.0, 4.0, 30.0)).unwrap().shape;
+    let cut = k.boolean(BoolOp::Cut, a, &[slab]).unwrap();
+    assert_eq!(k.topology(cut.shape).unwrap().solids, 2);
+    let mut total = 0.0;
+    for i in 0..2 {
+        let s = k.solid(cut.shape, i).unwrap();
+        assert_eq!(k.topology(s.shape).unwrap().solids, 1);
+        total += volume(&k, s.shape);
+        // The faces of the cut that are in this half map to it.
+        let mapped: usize = s.history.images.iter().filter(|im| im.source.id.kind == TopoKind::Face).map(|im| im.result.len()).sum();
+        assert_eq!(mapped, 6, "a half has six faces, all from the cut");
+    }
+    assert!(close(total, 2.0 * 20.0 * 8.0 * 20.0));
+    assert!(k.solid(cut.shape, 2).is_err());
+}
