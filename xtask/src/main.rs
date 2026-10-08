@@ -2,10 +2,12 @@
 //!
 //! Pure Rust (std + serde_json). External tools (`cargo`, `git`) are
 //! invoked through `std::process::Command`.
+#![forbid(unsafe_code)]
 
 mod assets;
 mod layers;
 mod stats;
+mod unsafe_audit;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -16,8 +18,10 @@ usage: cargo xtask <command>
 commands:
   assets          check that every icon/image/font/asset is attributed in ATTRIBUTION.md
   layers          enforce the crate dependency layering (docs/architecture.md)
+  unsafe-audit    `unsafe` only in the FFI backend; #![forbid(unsafe_code)] on every other crate
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
-  ci              fmt --check, clippy -D warnings, test, assets, layers, wasm (stops at first failure)
+  ci              fmt --check, clippy -D warnings, test, assets, layers, unsafe-audit, wasm
+                  (stops at first failure)
   corpus          show where test corpora live
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
 
@@ -30,6 +34,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("assets") => assets::run(&root()),
         Some("layers") => cmd_layers(),
+        Some("unsafe-audit") => metadata().and_then(|m| unsafe_audit::run(&m)),
         Some("wasm") => cmd_wasm(),
         Some("ci") => cmd_ci(),
         Some("corpus") => cmd_corpus(),
@@ -171,6 +176,7 @@ fn cmd_ci() -> Result<(), String> {
         ),
         ("assets", Box::new(|| assets::run(&root()))),
         ("layers", Box::new(cmd_layers)),
+        ("unsafe-audit", Box::new(|| metadata().and_then(|m| unsafe_audit::run(&m)))),
         ("wasm", Box::new(cmd_wasm)),
     ];
     let mut done = Vec::new();
