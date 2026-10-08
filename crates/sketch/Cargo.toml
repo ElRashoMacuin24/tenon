@@ -1,6 +1,6 @@
 [package]
 name = "tenon-sketch"
-description = "2D sketch entities and the constraint solver"
+description = "2D sketch entities, constraint solver, editing tools, profile regions"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,3 +10,9 @@ workspace = true
 
 [dependencies]
 tenon-geom = { workspace = true }
+tenon-kernel = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
