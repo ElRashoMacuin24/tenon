@@ -32,3 +32,7 @@ DYLD_FALLBACK_LIBRARY_PATH = "$CONDA_PREFIX/lib"
 [tasks]
 ci = "cargo xtask ci"
 test = "cargo test --workspace"
+# The desktop app; extra arguments are passed on (e.g. `pixi run app part.tenon`).
+app = "cargo run --release -q -p tenon --"
+# The MCP server on stdio (docs/mcp.md); cargo's messages go to stderr, stdout stays protocol-only.
+mcp = "cargo run --release -q -p tenon-cli -- mcp"

@@ -1,0 +1,68 @@
+{
+  "name": "M1 demo: parametric bracket with holes",
+  "description": "An L-bracket sketched on the XZ plane and extruded 40 mm, with two holes cut from a sketch on the base's top face and one from a sketch on the upright's inner face. The faces are found by persistent name, so changing the base thickness moves the top-face sketch with it. Volumes are checked against the analytic values.",
+  "steps": [
+    { "run": "document.rename", "with": { "name": "Bracket" } },
+
+    { "note": "L profile: base 60 x 8, upright 8 wide and 30 above the base.",
+      "run": "sketch.create", "with": { "plane": "xz" }, "as": "profile" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "x1": 0, "y1": 0, "x2": 60, "y2": 0 }, "as": "bottom" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "start": "$bottom.end", "x2": 60, "y2": 8 }, "as": "toe" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "start": "$toe.end", "x2": 8, "y2": 8 }, "as": "base_top" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "start": "$base_top.end", "x2": 8, "y2": 38 }, "as": "inner" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "start": "$inner.end", "x2": 0, "y2": 38 }, "as": "cap" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "start": "$cap.end", "end": "$bottom.start" }, "as": "back" },
+
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "fix", "point": "$bottom.start" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "horizontal", "line": "$bottom.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "horizontal", "line": "$base_top.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "horizontal", "line": "$cap.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "vertical", "line": "$toe.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "vertical", "line": "$inner.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "vertical", "line": "$back.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "length", "line": "$bottom.line", "value": 60 } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "length", "line": "$toe.line", "value": 8 } }, "as": "thickness" },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "length", "line": "$inner.line", "value": 30 } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "length", "line": "$cap.line", "value": 8 } } },
+    { "note": "Six lines, twelve degrees of freedom, twelve constraints: fully constrained.",
+      "run": "sketch.info", "with": { "sketch": "$profile.feature" }, "expect": { "dof": 0 } },
+
+    { "run": "model.extrude", "with": { "sketch": "$profile.feature", "distance": 40, "reverse": true }, "as": "body" },
+    { "run": "model.mass", "expect": { "bodies.0.volume": 28800 } },
+
+    { "note": "Two 8 mm holes through the base, sketched on its top face (the side face swept from the base_top line).",
+      "run": "model.face_ref", "with": { "origin": { "type": "side", "feature": "$body.feature", "curve": "$base_top.line" } }, "as": "top_face" },
+    { "run": "sketch.create", "with": { "face": "$top_face" }, "as": "base_holes" },
+    { "run": "sketch.circle", "with": { "sketch": "$base_holes.feature", "cx": 36, "cy": 10, "r": 4 }, "as": "h1" },
+    { "run": "sketch.circle", "with": { "sketch": "$base_holes.feature", "cx": 36, "cy": 30, "r": 4 }, "as": "h2" },
+    { "run": "sketch.constrain", "with": { "sketch": "$base_holes.feature", "constraint": { "type": "diameter", "curve": "$h1.circle", "value": 8 } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$base_holes.feature", "constraint": { "type": "equal", "a": "$h1.circle", "b": "$h2.circle" } } },
+    { "run": "model.extrude", "with": { "sketch": "$base_holes.feature", "through_all": true, "reverse": true, "operation": "cut" }, "as": "base_cut" },
+
+    { "note": "One 10 mm hole through the upright, sketched on its inner face.",
+      "run": "model.face_ref", "with": { "origin": { "type": "side", "feature": "$body.feature", "curve": "$inner.line" } }, "as": "inner_face" },
+    { "run": "sketch.create", "with": { "face": "$inner_face" }, "as": "upright_hole" },
+    { "run": "sketch.circle", "with": { "sketch": "$upright_hole.feature", "cx": 20, "cy": 23, "r": 5 }, "as": "h3" },
+    { "run": "sketch.constrain", "with": { "sketch": "$upright_hole.feature", "constraint": { "type": "diameter", "curve": "$h3.circle", "value": 10 } } },
+    { "run": "model.extrude", "with": { "sketch": "$upright_hole.feature", "through_all": true, "reverse": true, "operation": "cut" } },
+
+    { "note": "60*8*40 + 8*30*40 - 2*pi*4^2*8 - pi*5^2*8 = 28800 - 456 pi",
+      "run": "model.regenerate", "expect": { "bodies": 1, "error": null } },
+    { "run": "model.topology", "expect": { "bodies.0.valid": true, "bodies.0.solids": 1 } },
+    { "run": "model.mass", "expect": { "bodies.0.volume": 27367.43374996306 } },
+
+    { "note": "Parametric edit: a 10 mm base. The hole sketch follows the moved top face.",
+      "run": "sketch.set_dimension", "with": { "sketch": "$profile.feature", "constraint": "$thickness.constraint", "value": 10 } },
+    { "note": "60*10*40 + 8*30*40 - 2*pi*4^2*10 - pi*5^2*8 = 33600 - 520 pi",
+      "run": "model.regenerate", "expect": { "bodies": 1, "error": null } },
+    { "run": "model.mass", "expect": { "bodies.0.volume": 31966.37182013331 } },
+    { "run": "render.png", "with": { "path": "bracket-thick-base.png", "view": "iso", "width": 1024, "height": 768 } },
+    { "run": "edit.undo" },
+    { "run": "model.mass", "expect": { "bodies.0.volume": 27367.43374996306 } },
+
+    { "run": "file.save", "with": { "path": "bracket.tenon" } },
+    { "run": "export.step", "with": { "path": "bracket.step" } },
+    { "run": "export.stl", "with": { "path": "bracket.stl" } },
+    { "run": "render.png", "with": { "path": "bracket.png", "view": "iso", "width": 1024, "height": 768 } }
+  ]
+}

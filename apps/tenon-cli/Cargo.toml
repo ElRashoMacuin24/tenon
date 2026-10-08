@@ -1,6 +1,6 @@
 [package]
 name = "tenon-cli"
-description = "Headless Tenon: scripted runs, inspection, conversion (MCP server from M1)"
+description = "Headless Tenon: command scripts, MCP server, rendering, inspection, conversion"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,5 +23,9 @@ test = false
 tenon-geom = { workspace = true }
 tenon-kernel = { workspace = true }
 tenon-kernel-occt = { workspace = true }
+tenon-sketch = { workspace = true }
+tenon-model = { workspace = true }
 tenon-io = { workspace = true }
+tenon-render = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }

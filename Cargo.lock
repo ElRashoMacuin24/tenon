@@ -2919,11 +2919,15 @@ dependencies = [
 name = "tenon-cli"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "tenon-geom",
  "tenon-io",
  "tenon-kernel",
  "tenon-kernel-occt",
+ "tenon-model",
+ "tenon-render",
+ "tenon-sketch",
 ]
 
 [[package]]

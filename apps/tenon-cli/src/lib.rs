@@ -2,12 +2,22 @@
 //! summary and the same data as JSON, so scripts and agents can verify results.
 #![forbid(unsafe_code)]
 
+pub mod engine;
+pub mod mcp;
+pub mod script;
+
 use std::f64::consts::PI;
 use std::path::Path;
 
 use serde_json::{Value, json};
 use tenon_geom::{Axis, Frame, Vec3};
 use tenon_kernel::{BoolOp, KResult, Kernel, Mesh, MeshTol, ShapeHandle};
+
+pub use engine::Engine;
+pub use script::Script;
+
+/// The M1 demo script (also in examples/m1-bracket).
+pub const M1_BRACKET_SCRIPT: &str = include_str!("../../../examples/m1-bracket/bracket.json");
 
 /// Output of a command.
 #[derive(Debug, Clone)]
@@ -163,6 +173,164 @@ pub fn info(k: &mut dyn Kernel, path: &Path) -> Result<Report, String> {
         list.push(d);
     }
     Ok(Report { text, json: json!({ "file": path.display().to_string(), "shapes": list }) })
+}
+
+/// Standard base64 (RFC 4648, with padding).
+pub fn base64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for c in data.chunks(3) {
+        let b = |i: usize| u32::from(c.get(i).copied().unwrap_or(0));
+        let n = (b(0) << 16) | (b(1) << 8) | b(2);
+        for i in 0..4 {
+            out.push(if i <= c.len() { char::from(T[((n >> (18 - 6 * i)) & 63) as usize]) } else { '=' });
+        }
+    }
+    out
+}
+
+/// One line per step for the text report.
+fn step_line(r: &script::StepResult) -> String {
+    let mut s = r.result.to_string();
+    if s.len() > 100 {
+        let cut = (0..=97).rev().find(|i| s.is_char_boundary(*i)).unwrap_or(0);
+        s.truncate(cut);
+        s.push_str("...");
+    }
+    format!("{:>4}  {:<24} {s}", r.index, r.run)
+}
+
+/// Runs a command script on a new document. Relative paths in it resolve against `base`.
+pub fn run_script(kernel: Box<dyn Kernel>, text: &str, base: &Path) -> Result<Report, String> {
+    let s = Script::parse(text)?;
+    std::fs::create_dir_all(base).map_err(|e| format!("cannot create {}: {e}", base.display()))?;
+    let mut engine = Engine::new(kernel, base);
+    let title = s.name.clone().unwrap_or_else(|| "script".into());
+    match script::run(&mut engine, &s) {
+        Ok(done) => {
+            let mut text = format!("{title}: {} step(s) ok", done.len());
+            for r in &done {
+                text.push('\n');
+                text.push_str(&step_line(r));
+            }
+            let steps: Vec<Value> = done.iter().map(|r| json!({ "step": r.index, "run": r.run, "result": r.result })).collect();
+            Ok(Report { text, json: json!({ "name": s.name, "ok": true, "steps": steps }) })
+        }
+        Err((done, e)) => {
+            let mut text = String::new();
+            for r in &done {
+                text.push_str(&step_line(r));
+                text.push('\n');
+            }
+            text.push_str(&e.to_string());
+            Err(text)
+        }
+    }
+}
+
+/// Builds the M1 demo bracket from its command script, writing the project, STEP, STL and PNG
+/// files named in the script into `out_dir`.
+pub fn demo_m1(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
+    run_script(kernel, M1_BRACKET_SCRIPT, out_dir)
+}
+
+/// Opens a project and renders it to PNG.
+pub fn render(kernel: Box<dyn Kernel>, project: &Path, out: &Path, view: &str, size: [u32; 2]) -> Result<Report, String> {
+    let mut engine = Engine::new(kernel, ".");
+    engine.exec("file.open", &json!({ "path": project.to_string_lossy() }))?;
+    let r = engine.exec("render.png", &json!({ "path": out.to_string_lossy(), "view": view, "width": size[0], "height": size[1] }))?;
+    Ok(Report { text: format!("wrote {} ({} x {}, {view} view)", out.display(), size[0], size[1]), json: r })
+}
+
+/// Example of every constraint as `sketch.constrain` takes it.
+fn constraint_examples() -> Vec<tenon_sketch::Constraint> {
+    use tenon_sketch::{Constraint::*, EntityId as E};
+    let (a, b, c) = (E(1), E(2), E(3));
+    let all = vec![
+        Coincident { a, b },
+        PointOnCurve { point: a, curve: b },
+        Horizontal { line: a },
+        Vertical { line: a },
+        Parallel { a, b },
+        Perpendicular { a, b },
+        Collinear { a, b },
+        Tangent { a, b },
+        Concentric { a, b },
+        Equal { a, b },
+        Symmetric { a, b, axis: c },
+        Midpoint { point: a, line: b },
+        Fix { point: a },
+        Distance { a, b, value: 10.0 },
+        HorizontalDistance { a, b, value: 10.0 },
+        VerticalDistance { a, b, value: 10.0 },
+        Length { line: a, value: 10.0 },
+        Angle { a, b, value: 0.5 },
+        Radius { curve: a, value: 5.0 },
+        Diameter { curve: a, value: 10.0 },
+    ];
+    // Fails to compile when a constraint kind is added, so this list stays complete.
+    for x in &all {
+        match x {
+            Coincident { .. }
+            | PointOnCurve { .. }
+            | Horizontal { .. }
+            | Vertical { .. }
+            | Parallel { .. }
+            | Perpendicular { .. }
+            | Collinear { .. }
+            | Tangent { .. }
+            | Concentric { .. }
+            | Equal { .. }
+            | Symmetric { .. }
+            | Midpoint { .. }
+            | Fix { .. }
+            | Distance { .. }
+            | HorizontalDistance { .. }
+            | VerticalDistance { .. }
+            | Length { .. }
+            | Angle { .. }
+            | Radius { .. }
+            | Diameter { .. } => {}
+        }
+    }
+    all
+}
+
+/// docs/commands.md: every command and constraint, generated from the registry.
+pub fn commands_markdown() -> String {
+    let esc = |s: &str| s.replace('|', "\\|");
+    let mut md = String::from(
+        "# Commands\n\n\
+         <!-- Generated by `tenon-cli commands --markdown --out docs/commands.md`; a test fails when it is out of date. -->\n\n\
+         Everything Tenon does to a part is a command with JSON parameters: the ribbon, scripts \
+         (`tenon-cli run`, see [scripts.md](scripts.md)) and agents ([mcp.md](mcp.md)) all go \
+         through the same registry. Units are millimetres and radians. *Undoable* commands \
+         edit the part as one step that `edit.undo` reverts.\n\n\
+         | Command | Name | Parameters | Undoable |\n|---|---|---|---|\n",
+    );
+    for (id, label, help, mutates) in engine::all_commands() {
+        let help = if help.is_empty() { "none".to_owned() } else { esc(help) };
+        md.push_str(&format!("| `{id}` | {label} | {help} | {} |\n", if mutates { "yes" } else { "no" }));
+    }
+    md.push_str(
+        "\n## Constraints\n\n\
+         `sketch.constrain` takes one of these as `constraint` (the numbers are entity ids from the \
+         sketch commands). Dimensions (`distance` to `diameter`) drive the geometry; change them \
+         with `sketch.set_dimension`.\n\n",
+    );
+    for c in constraint_examples() {
+        md.push_str(&format!("- `{}`\n", serde_json::to_string(&c).unwrap_or_default()));
+    }
+    md
+}
+
+/// The command list as a report.
+pub fn commands() -> Report {
+    let all = engine::all_commands();
+    let width = all.iter().map(|c| c.0.len()).max().unwrap_or(0);
+    let text = all.iter().map(|(id, label, _, _)| format!("{id:<width$}  {label}")).collect::<Vec<_>>().join("\n");
+    let json = json!(all.iter().map(|(id, label, help, mutates)| json!({ "id": id, "label": label, "params": help, "undoable": mutates })).collect::<Vec<_>>());
+    Report { text, json }
 }
 
 /// Converts a STEP file to binary STL.
