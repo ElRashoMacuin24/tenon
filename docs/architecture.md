@@ -13,12 +13,12 @@ rules are enforced by `cargo xtask layers` (table in `xtask/src/layers.rs`) and
 | L1 | `kernel` | backend-neutral `Kernel` trait, handles, operation history, query types, validation | M0 |
 | L2 (backend) | `kernel-occt` | OpenCASCADE 8 backend: cxx bridge + C++ shim; the only crate with `unsafe` | M0 |
 | L2 | `sketch` | 2D sketch entities, constraints, solver behind `SketchSolver`, sketch tools, profile regions | M1 |
-| L3 | `model` | feature tree, regeneration, face naming, command registry and undo, regeneration worker | M1 (parameters: M2) |
+| L3 | `model` | feature tree, regeneration (incremental), face and edge naming, parameters and equations, measuring, command registry and undo, regeneration worker | M2 |
 | L4 | `assembly` | components, joints, DOF, BOM | placeholder (M3) |
 | L5 | `drawing` | views, dimensions, title blocks, PDF/SVG/DXF | placeholder (M4) |
 | L6 | `io` | `.tenon` project files, file and export commands, STL; STEP via the kernel | M1 (3MF, DXF: later) |
 | L7 | `render` | camera, picking, software rasteriser, wgpu viewport renderer (no UI toolkit) | M1 |
-| L8 | `ui` | egui part workbench: ribbon, browser, sketcher, feature panels, viewport, dialogs | M1 |
+| L8 | `ui` | egui part workbench: ribbon, browser, sketcher, feature panels, properties panel, viewport, dialogs | M2 |
 | exempt | `apps/tenon` | desktop binary (eframe + wgpu, OCCT, native file dialogs) | M1 |
 | exempt | `apps/tenon-cli` | headless CLI: command scripts, MCP server, PNG render, STEP tools | M1 |
 | exempt | `xtask` | workspace tooling and the CI gate | M0 |
@@ -74,6 +74,27 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
   [scripts.md](scripts.md)) and the MCP server ([mcp.md](mcp.md)) call the registry directly. The
   headless host adds `render.png`.
 
+## Regeneration (M2)
+
+`tenon_model::regen` rebuilds the part feature by feature through `dyn Kernel`:
+
+- **Equations first.** `Session::edit` runs `Document::sync_parameters` after every change, in the
+  same undo step: values are named (`d0`, `d1`, ...), equations evaluated in dependency order and
+  written into the sketch constraints and feature definitions. Regeneration only ever sees plain
+  numbers (DEC-023).
+- **Tool solids.** Features that a pattern or mirror copies keep their solid before it was
+  combined with the part (`Regen::tools`); a pattern transforms copies of it and combines each
+  copy the same way (DEC-022).
+- **Work geometry.** Work planes, axes and points are computed in history order into
+  `Regen::work`; sketches, mirrors, patterns and revolves look them up there.
+- **End of Part.** Features at and below the marker get `RolledBack` and are not computed.
+- **Checkpoints.** `RegenCache` keeps the state just before the first feature the last edit
+  changed: second handles to its shapes (`Kernel::duplicate`, no geometry copied). The next run
+  starts there if the prefix hash of the history before it is unchanged. A prefix hash covers each
+  feature's definition, whether it is rolled back and whether a pattern copies it. Editing the
+  last of 42 features takes 9.3 ms instead of 166 ms (release build, `regeneration_speed`). Rebuild All starts from scratch.
+- **Measuring** needs the exact B-rep, so it runs where the kernel is: the worker answers
+  `Measure` requests on the part it last regenerated (`tenon_model::measure`).
 ## The desktop app's data flow
 
 ```
@@ -89,7 +110,7 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
 The UI thread never calls the kernel in the app. It sends a snapshot whenever the shown document
 changes, including live Extrude/Revolve previews, and keeps drawing the last `Scene` until the
 new one arrives. A newer snapshot cancels the one in progress (`tenon_model::worker`). STEP
-export also runs on the worker. Tests and tools can run the same workbench synchronously with a
+export and measuring also run on the worker. Tests and tools can run the same workbench synchronously with a
 kernel on the calling thread (`Workbench::headless`).
 
 The viewport renders through wgpu into an offscreen MSAA texture that egui shows as an image. It

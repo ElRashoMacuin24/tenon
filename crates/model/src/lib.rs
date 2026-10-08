@@ -1,8 +1,10 @@
-//! Tenon part model: the feature history, regeneration through the kernel, persistent face
-//! references, the command registry with undo/redo, and the regeneration worker thread.
+//! Tenon part model: the feature history, regeneration through the kernel (incremental),
+//! persistent face and edge references, parameters and equations, measuring, the command registry
+//! with undo/redo, and the regeneration worker thread.
 //!
-//! Status: M1 scope. Features are sketches, extrudes and revolves; parameters/expressions,
-//! rollback and the full persistent-naming resolver are M2 (docs/persistent-naming.md).
+//! Status: M2. Features: sketches, extrude, revolve, fillet, chamfer, shell, hole, rib, patterns,
+//! mirror, work planes/axes/points; End of Part and reordering (docs/persistent-naming.md,
+//! docs/architecture.md).
 #![forbid(unsafe_code)]
 
 pub mod cmd;

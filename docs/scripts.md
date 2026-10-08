@@ -55,3 +55,21 @@ rasteriser (no GPU needed).
 The format is a tooling convenience, not a stored document format: it may change between
 milestones, with the change noted in [decisions.md](decisions.md). See
 [examples/m1-bracket/bracket.json](../examples/m1-bracket/bracket.json) for a complete part.
+
+## Parameters and equations
+
+Every dimension and numeric feature value gets a parameter name (`d0`, `d1`, ... in creation
+order); `sketch.constrain` returns the new dimension's name. `param.add` makes a user parameter,
+`param.set` gives any parameter an equation, and `param.list` shows them all. Every feature
+command (`model.*`, `work.*`, `feature.add`, `feature.update`) also takes `equations`, a map from
+a value of the feature to an equation, applied in the same undo step:
+
+```json
+{ "run": "param.add", "with": { "name": "t", "equation": "8 mm" } },
+{ "run": "param.set", "with": { "name": "$thickness.name", "equation": "t" } },
+{ "run": "model.rib", "with": { "sketch": "$rib_line.feature", "thickness": 4, "equations": { "/thickness": "t / 2" } } }
+```
+
+The value names are JSON pointers into the feature's definition (`/radius`, `/extent/distance`,
+`/kind/counterbore/depth`); `param.list` shows which value each parameter drives. Lengths are in
+millimetres and angles in degrees. `examples/m2-mount/mount.json` uses all of this.

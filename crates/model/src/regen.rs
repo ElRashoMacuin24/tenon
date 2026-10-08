@@ -613,15 +613,17 @@ impl<'a> Ctx<'a> {
             temp.push(cut.shape);
             let topo = self.k.topology(cut.shape)?;
             let cut_names = names_of_boolean(&cut.history, &[&names, &body_names], topo.faces);
-            // A tiny ball just inside the slab at the line tells the piece that starts there.
-            let probe = self.k.make_sphere(frame.plane_point(a.mid(b) + n * (r.thickness * 0.01).min(0.01)), r.thickness * 0.001)?.shape;
+            // Tiny balls just inside the slab at the line and at its far end tell the piece that
+            // starts at the line, and whether it runs all the way (never meeting the part).
+            let small = (r.thickness * 0.01).min(0.01);
+            let probe = self.k.make_sphere(frame.plane_point(a.mid(b) + n * small), r.thickness * 0.001)?.shape;
             temp.push(probe);
-            let slab_volume = self.k.mass_properties(slab.shape, 1.0)?.volume;
+            let far = self.k.make_sphere(frame.plane_point(a.mid(b) + n * (reach - small)), r.thickness * 0.001)?.shape;
+            temp.push(far);
             for i in 0..topo.solids {
                 let s = self.k.solid(cut.shape, i)?;
                 let at_line = self.k.min_distance(SubShape::Shape(s.shape), SubShape::Shape(probe))?.value < 1e-6;
-                // A piece as big as the slab never met the part.
-                let bounded = self.k.mass_properties(s.shape, 1.0)?.volume < slab_volume * (1.0 - 1e-9);
+                let bounded = self.k.min_distance(SubShape::Shape(s.shape), SubShape::Shape(far))?.value > 1e-6;
                 if at_line && bounded {
                     let faces = self.k.topology(s.shape)?.faces;
                     return Ok(Some((s.shape, names_of_boolean(&s.history, &[&cut_names], faces))));

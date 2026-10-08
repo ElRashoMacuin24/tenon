@@ -766,3 +766,116 @@ fn a_rib_fills_the_corner_of_an_l_bracket() {
     assert!(s.exec("model.rib", &json!({ "sketch": sk, "thickness": 0 }), Some(&mut k)).is_err());
     assert!(s.exec("model.rib", &json!({ "sketch": sk, "thickness": 2, "lines": [999] }), Some(&mut k)).is_err());
 }
+
+#[test]
+fn edge_references_survive_shortening_and_added_sketch_geometry() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (sk, ex, l, width) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    let edges: Vec<Value> =
+        (0..4).map(|i| run(&mut s, &mut k, "model.edge_ref", json!({ "faces": [side(ex, l[i]), side(ex, l[(i + 1) % 4])] }))).collect();
+    run(&mut s, &mut k, "model.fillet", json!({ "edges": edges, "radius": 3.0 }));
+    let rounded = |w: f64| (w * 20.0 - (4.0 - PI) * 9.0) * 10.0;
+    // Shorter.
+    run(&mut s, &mut k, "sketch.set_dimension", json!({ "sketch": sk, "constraint": width, "value": 25.0 }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), rounded(25.0)), "{}", volume(&mut s, &mut k));
+    // New geometry in the sketch that is not part of the profile changes nothing.
+    run(&mut s, &mut k, "sketch.point", json!({ "sketch": sk, "x": 5, "y": 5 }));
+    run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": 2, "y1": 2, "x2": 8, "y2": 3 }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), rounded(25.0)));
+}
+
+#[test]
+fn a_split_face_keeps_each_piece_by_geometry() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, l, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    // A 4 wide, 5 deep slot across the top splits the top face, and its front edge, in two.
+    let top_ref = run(&mut s, &mut k, "model.face_ref", json!({ "origin": top(ex) }));
+    let slot = run(&mut s, &mut k, "sketch.create", json!({ "face": top_ref }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": slot, "x1": 18, "y1": -1, "x2": 22, "y2": 21 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": slot, "distance": 5, "reverse": true, "operation": "cut" }));
+    // Two edges join the top and the front now; round the left one, picked by index.
+    let edges = run(&mut s, &mut k, "model.edges", json!({}));
+    let front_top: Vec<&Value> = edges["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["faces"].as_array().is_some_and(|f| f.contains(&top(ex)) && f.contains(&side(ex, l[0]))))
+        .collect();
+    assert_eq!(front_top.len(), 2, "{edges}");
+    let left = front_top.iter().find(|e| e["start"][0].as_f64().unwrap() < 20.0 && e["end"][0].as_f64().unwrap() < 20.0).unwrap();
+    let eref = run(&mut s, &mut k, "model.edge_ref", json!({ "body": 0, "edge": left["edge"] }));
+    run(&mut s, &mut k, "model.fillet", json!({ "edges": [eref], "radius": 1.0 }));
+    regenerates(&mut s, &mut k);
+    let slotted = 8000.0 - 4.0 * 20.0 * 5.0;
+    let round = |len: f64| (1.0 - PI / 4.0) * len;
+    assert!(approx(volume(&mut s, &mut k), slotted - round(18.0)), "{}", volume(&mut s, &mut k));
+    // Move the slot 6 to the right: the left piece is now 24 long and keeps its round.
+    let info = run(&mut s, &mut k, "sketch.info", json!({ "sketch": slot }));
+    let corners: Vec<(u64, f64, f64)> = info["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["type"] == "point" && e["construction"] == false)
+        .map(|e| (e["id"].as_u64().unwrap(), e["pos"]["x"].as_f64().unwrap(), e["pos"]["y"].as_f64().unwrap()))
+        .collect();
+    assert_eq!(corners.len(), 4);
+    for (p, x, y) in corners {
+        run(&mut s, &mut k, "sketch.drag", json!({ "sketch": slot, "point": p, "x": x + 6.0, "y": y }));
+    }
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), slotted - round(24.0)), "{}", volume(&mut s, &mut k));
+}
+#[test]
+fn references_survive_reordering_independent_features() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let ex = block_at(&mut s, &mut k, 0.0, 0.0, 60.0, 40.0, 10.0);
+    // A boss, then a hole whose top edge is chamfered.
+    let top_ref = run(&mut s, &mut k, "model.face_ref", json!({ "origin": top(ex) }));
+    let bs = run(&mut s, &mut k, "sketch.create", json!({ "face": top_ref }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": bs, "cx": 45, "cy": 20, "r": 5 }));
+    let boss = run(&mut s, &mut k, "model.extrude", json!({ "sketch": bs, "distance": 5 }))["feature"].as_u64().unwrap();
+    let (sk, pts) = points_on_top(&mut s, &mut k, ex, &[(15.0, 20.0)]);
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "through_all": true }))["feature"].as_u64().unwrap();
+    let wall = json!({ "type": "from", "feature": hole, "source": (pts[0] << 8) | 2, "ordinal": 0 });
+    let rim = run(&mut s, &mut k, "model.edge_ref", json!({ "faces": [top(ex), wall] }));
+    run(&mut s, &mut k, "model.chamfer", json!({ "edges": [rim], "distance": 1.0 }));
+    regenerates(&mut s, &mut k);
+    let before = volume(&mut s, &mut k);
+    // The boss after the hole: the chamfer's edge still resolves, the part is the same.
+    let chamfer = s.document().features().iter().find(|f| f.name == "Chamfer1").unwrap().id.0;
+    run(&mut s, &mut k, "feature.move", json!({ "feature": boss, "before": chamfer }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), before), "{} vs {before}", volume(&mut s, &mut k));
+}
+
+#[test]
+fn every_face_of_m2_features_is_named() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, l, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    let unnamed = |s: &mut Session, k: &mut OcctKernel| {
+        let faces = run(s, k, "model.faces", json!({}));
+        faces["faces"].as_array().unwrap().iter().filter(|f| f["name"].is_null()).count()
+    };
+    let (sk, _) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0)]);
+    let hole = run(
+        &mut s,
+        &mut k,
+        "model.hole",
+        json!({ "sketch": sk, "diameter": 4, "depth": 5, "type": "countersink", "countersink_diameter": 7 }),
+    )["feature"]
+        .as_u64()
+        .unwrap();
+    run(&mut s, &mut k, "model.pattern.rect", json!({ "features": [hole], "direction": "x", "count": 3, "spacing": 10 }));
+    let edges: Vec<Value> =
+        (0..4).map(|i| run(&mut s, &mut k, "model.edge_ref", json!({ "faces": [side(ex, l[i]), side(ex, l[(i + 1) % 4])] }))).collect();
+    run(&mut s, &mut k, "model.fillet", json!({ "edges": edges, "radius": 2.0 }));
+    regenerates(&mut s, &mut k);
+    assert_eq!(unnamed(&mut s, &mut k), 0, "{}", run(&mut s, &mut k, "model.faces", json!({})));
+    // A shell's inner walls are named after the faces they came from.
+    let bottom = run(&mut s, &mut k, "model.face_ref", json!({ "origin": { "type": "cap", "feature": ex, "end": "start" } }));
+    run(&mut s, &mut k, "model.shell", json!({ "remove": [bottom], "thickness": 1.0 }));
+    regenerates(&mut s, &mut k);
+    assert_eq!(unnamed(&mut s, &mut k), 0, "{}", run(&mut s, &mut k, "model.faces", json!({})));
+}

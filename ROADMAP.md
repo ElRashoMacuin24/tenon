@@ -4,8 +4,8 @@ Status values: **done** (a named test proves it), **partial** (the gap is stated
 Nothing is marked done without a test. Milestone scope: `docs/plan.md`. Decisions:
 `docs/decisions.md`.
 
-Current milestone: **M1 sketch to solid, complete** (2026-10-07; CI on Linux, macOS and Windows).
-Next: M2 parametric modelling.
+Current milestone: **M2 parametric modelling, complete** (2026-10-08; CI on Linux, macOS and Windows).
+Next: M3 assemblies.
 
 ## M0 foundations
 
@@ -58,13 +58,13 @@ events, the way the windowing layer does.
 | Extrude/Revolve panels with live preview | done | `sketch_extrude_and_sketch_on_the_top_face_through_the_ui` (preview volume before OK) |
 | Feature tree, regeneration, per-feature status, broken references reported | done | `crates/model/tests/model.rs` (8 tests), `a_lost_face_reference_breaks_the_feature_clearly` |
 | Persistent face names through booleans and upstream edits | done | `sketch_dimension_edit_moves_the_hole`, `bracket_with_holes_regenerates_after_an_upstream_edit`, the demo's thickness edit. Scope: faces of extrusions and revolutions; edges and vertices are M2 (docs/persistent-naming.md) |
-| Model browser driven by the feature tree | partial | rows with status, double-click to edit, context menu (edit, rename, suppress, delete) are exercised by the UI tests' frames, but no test clicks the browser yet |
+| Model browser driven by the feature tree | done | rows with status, double-click to edit, context menu; real drags of the End of Part row and feature rows in `end_of_part_and_features_are_dragged_in_the_browser` |
 | Undo / redo | done | `bad_commands_change_nothing`, the UI test (`edit.undo`), the demo script (undo after the thickness edit) |
 | Regeneration off the UI thread | done | `worker_regenerates_off_thread_and_reports_the_latest`; cancellation stops between kernel operations only (see M0) |
 | 3D viewport (wgpu, MSAA, shaded + edges; software fallback) | done | `gpu_viewport_renders_when_an_adapter_exists` (reads the GPU image back and compares it with the software renderer; skips where no adapter exists), `software_render_draws_the_cube_and_encodes_png`, `the_three_faces_of_an_iso_view_shade_differently` |
 | Orbit, pan, zoom (mouse and nav bar) | done | `viewport_responds_to_real_pointer_input` (left/right drag, middle drag, wheel), `fit_zoom_pan_orbit` |
-| Orientation cube | partial | clicking a face sets the view and does not reach the model (`viewport_responds_to_real_pointer_input`); home button. No edge or corner views, no drag on the cube |
-| Face and edge picking, selection | done | `viewport_responds_to_real_pointer_input` (click selects the top face and names it; background clears), `ray_through_the_centre_hits_the_facing_side`, `edges_are_picked_near_the_pointer_and_not_through_faces`. No box selection yet |
+| Orientation cube | done | faces, edges and corners glide the view there and do not reach the model, the arrows turn and roll it (`viewport_responds_to_real_pointer_input`, `cube::tests::faces_edges_and_corners_from_the_home_view`); drag orbits; home and context menu |
+| Face and edge picking, selection | done | `viewport_responds_to_real_pointer_input` (click selects the top face and names it; background clears), `ray_through_the_centre_hits_the_facing_side`, `edges_are_picked_near_the_pointer_and_not_through_faces`, `every_visible_edge_is_picked_along_its_length_in_perspective`; window and crossing box selection in `viewport_responds_to_real_pointer_input` |
 | Native project files (.tenon) | done | `round_trip_keeps_the_document_and_unknown_fields`, `bad_files_are_rejected_with_reasons`, `reopening_projects_does_not_leak_kernel_shapes`; spec in docs/file-format.md |
 | Export STEP / STL | done | `save_open_and_export_commands`, `the_m1_demo_script_builds_a_verified_bracket_and_writes_its_files` (reads the STEP back). The app's File menu goes through native dialogs (rfd), which no automated test drives |
 | Mass properties (UI window, commands) | done | `model.mass` in the demo script (analytic volumes); the window renders in `sketch_extrude_and_sketch_on_the_top_face_through_the_ui` |
@@ -78,16 +78,28 @@ events, the way the windowing layer does.
 
 ## M2 parametric modelling
 
-| Feature | Status |
-|---|---|
-| Fillet, chamfer, hole (simple/counterbore/countersink), shell, rib | missing |
-| Rectangular/circular patterns, mirror | missing |
-| Work planes, axes, points | missing |
-| Parameters and expressions | missing |
-| Rollback marker, suppress, reorder | missing |
-| Persistent naming resolver with edit-upstream tests | missing (design: docs/persistent-naming.md) |
-| Broken-feature reporting | missing |
+Complete 2026-10-08. Model tests: `crates/model/tests/m2.rs` (20, plus one ignored timing test), `crates/model/tests/params.rs` (3); kernel:
+`crates/kernel-occt/tests/m2.rs` (9); UI (real pointer and key input): `crates/ui/src/tests.rs`; demo:
+`apps/tenon-cli/tests/m2.rs`.
 
+| Feature | Status | Proof / gap |
+|---|---|---|
+| Fillet (constant radius, several edges) | done | `fillets_follow_upstream_edits`, `fillet_one_edge_and_its_history`, `fillet_chamfer_and_shell_pick_edges_and_faces_in_the_viewport` (clicks add and remove edges; editing shows the part rolled back) |
+| Chamfer (equal, two distances, distance and angle) | done | `chamfers_meet_at_the_corners`, `chamfers_equal_and_unequal`, `bad_fillets_chamfers_and_shells_are_errors`, the UI test above |
+| Shell (inside or outside, open faces) | done | `shell_follows_its_open_face`, the UI test above |
+| Hole (simple, counterbore, countersink; blind with drill point or flat, through all) | done | `holes_simple_counterbore_and_countersink`, `a_hole_follows_its_point_and_keeps_its_edges`, `bad_holes_are_refused_or_reported`, `hole_takes_sketch_points_and_toggles_them_in_the_viewport`. Gap: no tapped or clearance holes (M5), no hole placed by clicking a face |
+| Rib (to next or finite, flip) | done | `a_rib_fills_the_corner_of_an_l_bracket`, `rib_from_the_sketch_being_drawn`, `a_cut_in_two_gives_its_solids_with_their_faces`. Gap: lines only, in the sketch plane (no ribs normal to the sketch); the profile lines are taken from the sketch, not picked one by one |
+| Rectangular and circular patterns, mirror (of features, and of patterns) | done | `rectangular_pattern_of_a_hole_follows_the_hole`, `circular_pattern_full_and_partial`, `mirror_a_cut_and_a_boss_across_an_origin_plane`, `patterns_refuse_what_they_cannot_copy`, `pattern_and_mirror_pick_features_in_the_viewport` (DEC-022). Gap: "through all" extents are sized for the original only |
+| Work planes (offset, angle, midplane), axes (edge or cylinder, two planes), points (circle centre, axis through plane) | done | `a_work_plane_offset_from_a_face_carries_a_sketch_and_follows_it`, `angled_and_mid_planes_mirror_like_origin_planes`, `work_axes_and_points`, `work_plane_from_a_face_carries_a_sketch_and_origin_axes_come_from_the_browser`. Gap: drawn over the part rather than depth-tested; no three-point plane |
+| Parameters and expressions (named dimensions and values, user parameters, equations in every value field, Parameters dialog) | done | `expr::tests` (2), `dimensions_and_feature_values_are_named_and_driven_by_equations`, `equations_on_new_dimensions_angles_and_counts`, `files_without_parameters_get_names_when_opened`, `equations_typed_into_fields_and_the_parameters_dialog` (DEC-023). Gap: units are converted, not checked; no parameter export or linking to a spreadsheet |
+| End of Part marker, suppress, reorder | done | `end_of_part_rolls_back_and_new_features_go_above_it`, `features_reorder_with_their_sketches_but_not_before_what_they_use`, `end_of_part_and_features_are_dragged_in_the_browser` (real drags); suppress: `patterns_refuse_what_they_cannot_copy` |
+| Persistent naming resolver with edit-upstream tests (faces and edges, through fillets, holes and patterns) | done | `fillets_follow_upstream_edits`, `edge_references_survive_shortening_and_added_sketch_geometry`, `a_split_face_keeps_each_piece_by_geometry`, `references_survive_reordering_independent_features`, `every_face_of_m2_features_is_named`, `a_hole_follows_its_point_and_keeps_its_edges`, `rectangular_pattern_of_a_hole_follows_the_hole` (a chamfer on a copied hole's edge), `a_work_plane_offset_from_a_face_carries_a_sketch_and_follows_it`. Gaps: vertices are not referenced; splits are told apart by geometry, not ordinals; a sign-flipped dimension is not tested (docs/persistent-naming.md) |
+| Broken-feature reporting | done | `a_lost_edge_breaks_the_fillet_with_a_clear_message`, `bad_holes_are_refused_or_reported`, `patterns_refuse_what_they_cannot_copy` (a suppressed source), `work_axes_and_points` (parallel planes); the browser shows the failing feature in red with the message (drawn in every UI test frame, not asserted) |
+| Measure (area, length, diameter, distance, angle) | done | `minimum_distances_between_faces_edges_and_shapes`, `measure_areas_lengths_distances_and_angles`, `measure_faces_and_edges_by_clicking_them`, the worker test |
+| Incremental regeneration (resume from the edited feature) | done | `regeneration_resumes_from_the_feature_being_edited` (same result as from scratch, no leaks); timing `regeneration_speed` (ignored test): editing the last of 42 features 166 ms -> 9.3 ms, release build |
+| UI frame budget | done | `frame_time_stays_within_budget` (16 ms; measured 0.08 ms idle, 0.85 ms with the pointer moving, release, 40 features; CPU side only) |
+| Inventor-familiar UI (layout and workflow; DEC-019 to DEC-021) | partial | ribbon, browser, properties panel, mini toolbar, orientation cube (faces, edges, corners), radial menu, navigation, sketch workflow, all exercised by the UI tests. Gaps: no in-canvas drag handles for fillet radius or hole depth; no hover highlight preview of a feature's result before clicking; work planes not depth-tested |
+| Demo: parametric L-mount | done | `examples/m2-mount`; `the_m2_demo_script_builds_a_verified_parametric_mount` (analytic volume after every feature and after the parameter edit) |
 ## M3 assemblies, M4 drawings, M5 breadth and polish, M6 native kernel
 
 All missing. Scope per milestone: `docs/plan.md`.

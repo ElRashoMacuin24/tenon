@@ -425,7 +425,7 @@ fn work_plane(s: &mut Session, p: &Value) -> CmdResult {
     };
     let kind = FeatureKind::WorkPlane(def);
     check_work_refs(s, &kind)?;
-    add_feature(s, kind)
+    add_feature(s, kind, p)
 }
 
 fn work_axis(s: &mut Session, p: &Value) -> CmdResult {
@@ -436,7 +436,7 @@ fn work_axis(s: &mut Session, p: &Value) -> CmdResult {
     };
     let kind = FeatureKind::WorkAxis(def);
     check_work_refs(s, &kind)?;
-    add_feature(s, kind)
+    add_feature(s, kind, p)
 }
 
 fn work_point(s: &mut Session, p: &Value) -> CmdResult {
@@ -447,7 +447,7 @@ fn work_point(s: &mut Session, p: &Value) -> CmdResult {
     };
     let kind = FeatureKind::WorkPoint(def);
     check_work_refs(s, &kind)?;
-    add_feature(s, kind)
+    add_feature(s, kind, p)
 }
 
 fn feature_list(p: &Value) -> Result<Vec<FeatureId>, CmdError> {
@@ -462,10 +462,10 @@ fn count(p: &Value, key: &str, default: Option<u32>) -> Result<u32, CmdError> {
 }
 
 /// Adds a pattern or mirror after checking what it copies.
-fn add_copy(s: &mut Session, kind: FeatureKind) -> CmdResult {
+fn add_copy(s: &mut Session, kind: FeatureKind, p: &Value) -> CmdResult {
     s.document().check_copies(&kind).map_err(CmdError)?;
     check_work_refs(s, &kind)?;
-    add_feature(s, kind)
+    add_feature(s, kind, p)
 }
 
 fn model_pattern_rect(s: &mut Session, p: &Value) -> CmdResult {
@@ -483,7 +483,7 @@ fn model_pattern_rect(s: &mut Session, p: &Value) -> CmdResult {
         dir2,
     };
     pat.check().map_err(CmdError)?;
-    add_copy(s, FeatureKind::PatternRect(pat))
+    add_copy(s, FeatureKind::PatternRect(pat), p)
 }
 
 fn model_pattern_circular(s: &mut Session, p: &Value) -> CmdResult {
@@ -495,7 +495,7 @@ fn model_pattern_circular(s: &mut Session, p: &Value) -> CmdResult {
         reverse: p.get("reverse").and_then(Value::as_bool).unwrap_or(false),
     };
     pat.check().map_err(CmdError)?;
-    add_copy(s, FeatureKind::PatternCircular(pat))
+    add_copy(s, FeatureKind::PatternCircular(pat), p)
 }
 
 fn model_mirror(s: &mut Session, p: &Value) -> CmdResult {
@@ -503,7 +503,7 @@ fn model_mirror(s: &mut Session, p: &Value) -> CmdResult {
     if features.is_empty() {
         return Err("choose at least one feature to mirror".into());
     }
-    add_copy(s, FeatureKind::Mirror(Mirror { features, plane: plane_param(p)? }))
+    add_copy(s, FeatureKind::Mirror(Mirror { features, plane: plane_param(p)? }), p)
 }
 
 fn sketch_create(s: &mut Session, p: &Value) -> CmdResult {
@@ -754,8 +754,15 @@ fn region_sel(p: &Value) -> Result<RegionSel, CmdError> {
     }
 }
 
-fn add_feature(s: &mut Session, kind: FeatureKind) -> CmdResult {
-    let id = s.edit(|d| d.add(kind).map_err(CmdError))?;
+/// Adds a feature, with `equations` (value field: equation) from the parameters if given, in one
+/// undo step.
+fn add_feature(s: &mut Session, kind: FeatureKind, p: &Value) -> CmdResult {
+    let equations = equations_param(p)?;
+    let id = s.edit(|d| {
+        let id = d.add(kind).map_err(CmdError)?;
+        apply_feature_equations(d, id, &[], &equations)?;
+        Ok(id)
+    })?;
     let name = s.document().feature(id).map(|f| f.name.clone()).unwrap_or_default();
     Ok(json!({ "feature": id.0, "name": name }))
 }
@@ -772,7 +779,7 @@ fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
         ExtrudeExtent::Distance(num(p, "distance")?)
     };
     let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);
-    add_feature(s, FeatureKind::Extrude(Extrude { sketch, regions: region_sel(p)?, extent, reverse, operation: operation(p)? }))
+    add_feature(s, FeatureKind::Extrude(Extrude { sketch, regions: region_sel(p)?, extent, reverse, operation: operation(p)? }), p)
 }
 
 fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
@@ -796,7 +803,7 @@ fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
         Some(a) if p.get("symmetric").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::Symmetric(a),
         Some(a) => RevolveAngle::Angle(a),
     };
-    add_feature(s, FeatureKind::Revolve(Revolve { sketch, regions: region_sel(p)?, axis, angle, operation: operation(p)? }))
+    add_feature(s, FeatureKind::Revolve(Revolve { sketch, regions: region_sel(p)?, axis, angle, operation: operation(p)? }), p)
 }
 
 fn edge_refs(p: &Value) -> Result<Vec<EdgeRef>, CmdError> {
@@ -808,7 +815,7 @@ fn edge_refs(p: &Value) -> Result<Vec<EdgeRef>, CmdError> {
 }
 
 fn model_fillet(s: &mut Session, p: &Value) -> CmdResult {
-    add_feature(s, FeatureKind::Fillet(Fillet { edges: edge_refs(p)?, radius: num(p, "radius")? }))
+    add_feature(s, FeatureKind::Fillet(Fillet { edges: edge_refs(p)?, radius: num(p, "radius")? }), p)
 }
 
 fn model_chamfer(s: &mut Session, p: &Value) -> CmdResult {
@@ -820,13 +827,13 @@ fn model_chamfer(s: &mut Session, p: &Value) -> CmdResult {
         (None, Some(angle)) => ChamferSize::DistanceAngle { distance: d, angle, reference: parse(p, "reference")? },
         (Some(_), Some(_)) => return Err("give `distance2` or `angle`, not both".into()),
     };
-    add_feature(s, FeatureKind::Chamfer(Chamfer { edges, size }))
+    add_feature(s, FeatureKind::Chamfer(Chamfer { edges, size }), p)
 }
 
 fn model_shell(s: &mut Session, p: &Value) -> CmdResult {
     let remove: Vec<FaceRef> = if p.get("remove").is_some() { parse(p, "remove")? } else { Vec::new() };
     let outside = p.get("outside").and_then(Value::as_bool).unwrap_or(false);
-    add_feature(s, FeatureKind::Shell(Shell { remove, thickness: num(p, "thickness")?, outside }))
+    add_feature(s, FeatureKind::Shell(Shell { remove, thickness: num(p, "thickness")?, outside }), p)
 }
 
 fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
@@ -853,7 +860,7 @@ fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
     let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);
     let hole = Hole { sketch, points, diameter, kind, extent, tip_angle, reverse };
     hole.check().map_err(CmdError)?;
-    add_feature(s, FeatureKind::Hole(hole))
+    add_feature(s, FeatureKind::Hole(hole), p)
 }
 
 /// `equations: {field pointer: equation}` for a feature's values.
@@ -932,7 +939,7 @@ fn model_rib(s: &mut Session, p: &Value) -> CmdResult {
     };
     let rib = Rib { sketch, lines, thickness: num(p, "thickness")?, extent, flip: p.get("flip").and_then(Value::as_bool).unwrap_or(false) };
     rib.check().map_err(CmdError)?;
-    add_feature(s, FeatureKind::Rib(rib))
+    add_feature(s, FeatureKind::Rib(rib), p)
 }
 
 fn feature_update(s: &mut Session, p: &Value) -> CmdResult {

@@ -7,44 +7,47 @@ Kernel indices (`FaceId { shape, index }`) do not survive any of that and are ne
 **Status:**
 
 - **M0:** the kernel half (operation history, below) and its tests.
-- **M1:** faces of extrusions and revolutions are named and resolved (next section).
-- **M2:** edges, vertices, splits, adjacency, and the full test list at the end.
+- **M1:** faces of extrusions and revolutions are named and resolved.
+- **M2:** edges; faces made by fillets, chamfers, shells, holes, ribs and pattern or mirror
+  copies; splits by geometry; the required tests (end of this page). Vertices are not referenced.
 
-This document is the design all three implement.
+The sections below say what is implemented; "Reference format" onwards is the original design,
+kept for the parts not built (neighbour origins, split ordinals, vertex references).
 
-## What M1 implements
+## What is implemented
 
 `crates/model/src/naming.rs`. Every body keeps, for each face, a `FaceOrigin`:
 
 - `Cap { feature, end: start | end }`: the start or end cap of an extrusion or partial
-  revolution, from the kernel's `StartCap` / `EndCap` roles;
+  revolution, from the kernel's `StartCap` / `EndCap` roles.
 - `Side { feature, curve }`: the face swept from sketch curve `curve`, from the profile tags.
+- `From { feature, source, ordinal }`: a face made by `feature` from a named sub-shape whose key
+  is `source` (a stable FNV-1a hash):
+  - fillets and chamfers: from the edge (key of its two face names) or the corner vertex (key of
+    the faces around it); a shell's inner walls from the face they offset (`names_of_modify`);
+  - holes: from the centre point and the segment of the hole's cross-section (`HoleFace`:
+    wall, bottom, drill point, counterbore wall and floor, countersink);
+  - ribs: from the rib line;
+  - pattern and mirror copies: from the copied face's name, `ordinal` = copy number.
 
-Booleans pass names on through `images` (`names_of_boolean`). A `FaceRef` is an origin plus a
-`Fingerprint` (surface kind, normal or axis, centroid, area). It is stored by sketches on faces
-(`PlaneRef::Face`) and in project files.
+Booleans pass names on through `images` (`names_of_boolean`); modify operations through images
+and `generated` (`names_of_modify`).
 
-Resolving takes the faces with the same origin and, if there are several, the nearest
-fingerprint. If no face has the origin, the feature fails with a message naming the reference
-("the referenced face no longer exists (end face of Extrusion1)"). The rest of the tree is not
-computed, and the document is unchanged.
+A `FaceRef` is an origin plus a `Fingerprint` (surface kind, normal or axis, centroid, area).
+An `EdgeRef` is the names of the two faces the edge joins (sorted) plus an `EdgeFingerprint`
+(midpoint, length). Sketches on faces, fillets, chamfers, shells, patterns, mirrors and work
+features store them.
 
-Tests:
+Resolving takes the faces with the same origin (for edges: the edges between the same two named
+faces) and, if there are several, the nearest fingerprint. A face split in two has its origin
+twice, and the fingerprint picks the piece. If nothing has the origin, the feature fails with a
+message naming the reference ("the referenced edge no longer exists (the edge between the side
+face of Extrusion1 from sketch curve e6 and ...)"); the features after it are not computed, the
+part is shown as it stood before the failing feature, and the document is unchanged.
 
-- `bracket_with_holes_regenerates_after_an_upstream_edit` and `sketch_dimension_edit_moves_the_hole`:
-  an upstream dimension change moves a face, and the sketch on it follows.
-- `a_lost_face_reference_breaks_the_feature_clearly`.
-- `extrude_then_cut_keeps_tags_through_the_boolean`.
-- The M1 demo script, which edits the base thickness under a sketch on the base's top face.
-
-Gaps until M2:
-
-- edges and vertices;
-- `Split` ordinals (a face cut in two gets the same origin twice, and the fingerprint picks);
-- neighbour origins, and the "clear margin" check on fingerprints;
-- `FromSubShape` origins for fillets and chamfers;
-- logging of history gaps.
-
+Not built: neighbour origins and the "clear margin" check; `Split` ordinals (fingerprints pick
+instead); vertex references; logging of history gaps (a test checks that there are none for the
+M2 features instead).
 ## What the kernel provides (M0, done)
 
 Every modelling operation returns `Op { shape, history }` (`crates/kernel/src/history.rs`):
@@ -121,15 +124,19 @@ Origin match is preferred over geometry, so moving a face (a changed dimension) 
 Geometry only breaks ties, so a face that changes type, such as a plane becoming a cylinder, is
 reported as broken rather than silently mismatched.
 
-## Tests required before M2 is "done"
+## Required tests and their proof
 
-- Edit an early sketch dimension and check that downstream fillets and chamfers still resolve to
-  the same logical edges. Cases: lengthen, shorten, flip a dimension sign.
-- Add a sketch entity upstream and check that existing references are unaffected.
-- Delete the entity a reference depends on and check that the feature reports broken, with a
-  clear message, and that the previous result stays.
-- Split cases: a cut that divides a face into two keeps references to each piece stable across
-  regenerations.
-- Reorder two independent features and check that references still resolve.
-- A coverage check: for every operation in randomised models, every result face and edge gets an
-  origin from history (no gaps).
+Model tests in `crates/model/tests/m2.rs` unless named otherwise.
+
+| Required | Test |
+|---|---|
+| An early sketch dimension changes; downstream fillets and chamfers still resolve: lengthen | `fillets_follow_upstream_edits` |
+| ... shorten | `edge_references_survive_shortening_and_added_sketch_geometry` |
+| ... flip a dimension sign | not tested |
+| A sketch entity added upstream leaves references alone | `edge_references_survive_shortening_and_added_sketch_geometry` |
+| The entity a reference depends on is deleted: broken, with a clear message | `a_lost_edge_breaks_the_fillet_with_a_clear_message` |
+| A face cut in two keeps references to each piece | `a_split_face_keeps_each_piece_by_geometry` (by fingerprint) |
+| Two independent features reordered; references still resolve | `references_survive_reordering_independent_features` |
+| Every result face of every operation gets an origin (no history gaps) | `every_face_of_m2_features_is_named` (fillets, countersunk holes, a pattern, a shell; a fixed set of models, not randomised) |
+| Faces of the M1 features | `bracket_with_holes_regenerates_after_an_upstream_edit`, `sketch_dimension_edit_moves_the_hole`, `a_lost_face_reference_breaks_the_feature_clearly`, `extrude_then_cut_keeps_tags_through_the_boolean` |
+| Edges of holes and of pattern copies | `a_hole_follows_its_point_and_keeps_its_edges`, `rectangular_pattern_of_a_hole_follows_the_hole` |

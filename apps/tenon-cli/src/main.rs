@@ -20,7 +20,7 @@ usage:
   tenon-cli render PROJECT.tenon OUT.png [--view iso|front|top|...] [--size WIDTHxHEIGHT]
                                               render a project to PNG without a GPU
   tenon-cli mcp [PROJECT.tenon]               Model Context Protocol server on stdin/stdout
-  tenon-cli demo m0|m1 [--out DIR] [--json]   build a milestone demo part into DIR (default: out)
+  tenon-cli demo m0|m1|m2 [--out DIR] [--json]   build a milestone demo part into DIR (default: out)
   tenon-cli info FILE.step [--json]           import STEP; report volume, area, bounding box, topology
   tenon-cli convert IN.step OUT.stl [--json]  tessellate STEP to binary STL (mm)
 ";
@@ -91,6 +91,7 @@ fn main() -> ExitCode {
         ["mcp"] | ["mcp", _] => return mcp(pos.get(1).copied()),
         ["demo", "m0"] => tenon_cli::demo_m0(&mut OcctKernel::new(), &demo_dir()),
         ["demo", "m1"] => tenon_cli::demo_m1(kernel(), &demo_dir()),
+        ["demo", "m2"] => tenon_cli::demo_m2(kernel(), &demo_dir()),
         ["info", file] => tenon_cli::info(&mut OcctKernel::new(), Path::new(file)),
         ["convert", input, output] => tenon_cli::convert(&mut OcctKernel::new(), Path::new(input), Path::new(output)),
         _ => return fail(&format!("unrecognised command\n\n{USAGE}")),

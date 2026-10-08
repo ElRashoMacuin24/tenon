@@ -4,22 +4,28 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestone M1 (sketch to solid) is done.** CI runs on Linux, macOS and Windows.
+**Status: milestone M2 (parametric modelling) is done.** CI runs on Linux, macOS and Windows.
 
 You can:
 
-- sketch on a plane or on a face of the part (lines, arcs, circles, rectangles, polygons,
-  splines);
-- constrain and dimension the sketch, with live solving and a degrees-of-freedom readout;
+- sketch on a plane, a face of the part or a work plane (lines, arcs, circles, rectangles,
+  polygons, splines), with typed values, inference, live solving and a degrees-of-freedom readout;
 - extrude and revolve to add, cut or intersect, with a live preview;
-- edit any feature later; faces you sketched on are found again after upstream edits;
+- fillet, chamfer and shell; drill simple, counterbored and countersunk holes; add ribs;
+- copy features in rectangular and circular patterns, and mirror them;
+- place work planes, axes and points;
+- drive any dimension or feature value by an equation of named parameters (fx);
+- roll the part back with the End of Part marker, reorder and suppress features;
+- measure areas, lengths, distances and angles;
+- edit any feature later: faces and edges you referred to are found again after upstream edits;
 - save `.tenon` projects and export STEP and STL.
 
-The same commands drive scripts and an MCP server for AI agents. Fillets, holes, patterns,
-parameters, assemblies and drawings are later milestones. What works, with the test that proves
-each item, is in [ROADMAP.md](ROADMAP.md).
+The workbench follows the familiar mechanical-CAD layout and workflow (ribbon, model browser,
+properties panel, orientation cube, radial menu). The same commands drive scripts and an MCP
+server for AI agents. Assemblies and drawings are the next milestones. What works, with the test
+that proves each item, is in [ROADMAP.md](ROADMAP.md).
 
-![The M1 demo bracket in the Tenon workbench](examples/m1-bracket/workbench.png)
+![The M2 demo mount in the Tenon workbench](examples/m2-mount/workbench.png)
 
 ## Design
 
@@ -50,11 +56,11 @@ Step-by-step instructions per platform are in [docs/setup.md](docs/setup.md).
 ```sh
 pixi install                       # once: OpenCASCADE 8 into .pixi/
 pixi run app                       # the desktop app (release build)
-pixi run app examples/m1-bracket/bracket.tenon
+pixi run app examples/m2-mount/mount.tenon
 pixi run cargo test --workspace    # build and test
 pixi run ci                        # the full gate CI runs
-pixi run cargo run -p tenon-cli -- run examples/m1-bracket/bracket.json --out out
-pixi run cargo run -p tenon-cli -- render out/bracket.tenon out/bracket.png --view front
+pixi run cargo run -p tenon-cli -- run examples/m2-mount/mount.json --out out
+pixi run cargo run -p tenon-cli -- render out/mount.tenon out/mount.png --view front
 pixi run mcp                       # MCP server on stdio (docs/mcp.md)
 ```
 

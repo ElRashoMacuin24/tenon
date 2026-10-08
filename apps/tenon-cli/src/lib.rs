@@ -19,6 +19,9 @@ pub use script::Script;
 /// The M1 demo script (also in examples/m1-bracket).
 pub const M1_BRACKET_SCRIPT: &str = include_str!("../../../examples/m1-bracket/bracket.json");
 
+/// The M2 demo script (also in examples/m2-mount).
+pub const M2_MOUNT_SCRIPT: &str = include_str!("../../../examples/m2-mount/mount.json");
+
 /// Output of a command.
 #[derive(Debug, Clone)]
 pub struct Report {
@@ -232,6 +235,11 @@ pub fn run_script(kernel: Box<dyn Kernel>, text: &str, base: &Path) -> Result<Re
 /// files named in the script into `out_dir`.
 pub fn demo_m1(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
     run_script(kernel, M1_BRACKET_SCRIPT, out_dir)
+}
+
+/// Builds the M2 demo part (a parametric L-mount) and writes its files into `out_dir`.
+pub fn demo_m2(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
+    run_script(kernel, M2_MOUNT_SCRIPT, out_dir)
 }
 
 /// Opens a project and renders it to PNG.

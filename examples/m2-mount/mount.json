@@ -1,0 +1,90 @@
+{
+  "name": "M2 demo: parametric L-mount",
+  "description": "An L-bracket whose thickness is a user parameter, with two counterbored holes patterned into four, a rib in the inner corner (half the thickness, by equation) on a work plane, a fillet and a chamfer referenced by edge, a measurement, the End of Part marker, and a parameter edit that regenerates everything. Every volume is checked against its analytic value.",
+  "steps": [
+    { "run": "document.rename", "with": { "name": "Mount" } },
+
+    { "note": "L profile on XZ: base 60 x t, upright 8 wide and 30 above the base.",
+      "run": "sketch.create", "with": { "plane": "xz" }, "as": "profile" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "x1": 0, "y1": 0, "x2": 60, "y2": 0 }, "as": "bottom" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "start": "$bottom.end", "x2": 60, "y2": 8 }, "as": "toe" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "start": "$toe.end", "x2": 8, "y2": 8 }, "as": "base_top" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "start": "$base_top.end", "x2": 8, "y2": 38 }, "as": "inner" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "start": "$inner.end", "x2": 0, "y2": 38 }, "as": "cap" },
+    { "run": "sketch.line", "with": { "sketch": "$profile.feature", "start": "$cap.end", "end": "$bottom.start" }, "as": "back" },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "fix", "point": "$bottom.start" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "horizontal", "line": "$bottom.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "horizontal", "line": "$base_top.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "horizontal", "line": "$cap.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "vertical", "line": "$toe.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "vertical", "line": "$inner.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "vertical", "line": "$back.line" } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "length", "line": "$bottom.line", "value": 60 } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "length", "line": "$toe.line", "value": 8 } }, "as": "thickness" },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "length", "line": "$inner.line", "value": 30 } } },
+    { "run": "sketch.constrain", "with": { "sketch": "$profile.feature", "constraint": { "type": "length", "line": "$cap.line", "value": 8 } } },
+    { "run": "sketch.info", "with": { "sketch": "$profile.feature" }, "expect": { "dof": 0 } },
+
+    { "note": "A user parameter drives the thickness dimension.",
+      "run": "param.add", "with": { "name": "t", "equation": "8 mm", "comment": "base thickness" } },
+    { "run": "param.set", "with": { "name": "$thickness.name", "equation": "t" } },
+
+    { "run": "model.extrude", "with": { "sketch": "$profile.feature", "distance": 40, "reverse": true }, "as": "body" },
+    { "run": "model.mass", "expect": { "bodies.0.volume": 28800 } },
+
+    { "note": "Two counterbored holes through the base, sketched on its top face, then patterned along X: four holes.",
+      "run": "model.face_ref", "with": { "origin": { "type": "side", "feature": "$body.feature", "curve": "$base_top.line" } }, "as": "top_face" },
+    { "run": "sketch.create", "with": { "face": "$top_face" }, "as": "hole_points" },
+    { "run": "sketch.point", "with": { "sketch": "$hole_points.feature", "x": 36, "y": 10 } },
+    { "run": "sketch.point", "with": { "sketch": "$hole_points.feature", "x": 36, "y": 30 } },
+    { "run": "model.hole", "with": { "sketch": "$hole_points.feature", "diameter": 6, "through_all": true, "type": "counterbore", "counterbore_diameter": 11, "counterbore_depth": 3 }, "as": "holes" },
+    { "run": "model.pattern.rect", "with": { "features": ["$holes.feature"], "direction": "x", "count": 2, "spacing": 15 } },
+    { "note": "28800 - 4 (pi 5.5^2 3 + pi 3^2 5) = 28800 - 543 pi",
+      "run": "model.mass", "expect": { "bodies.0.volume": 27094.11504 } },
+
+    { "note": "A rib in the inner corner, on a work plane halfway along, half the thickness by equation.",
+      "run": "work.plane", "with": { "base": "xz", "distance": -20 }, "as": "mid" },
+    { "run": "sketch.create", "with": { "work_plane": "$mid.feature" }, "as": "rib_line" },
+    { "run": "sketch.line", "with": { "sketch": "$rib_line.feature", "x1": 30, "y1": 8, "x2": 8, "y2": 30 } },
+    { "run": "model.rib", "with": { "sketch": "$rib_line.feature", "thickness": 4, "equations": { "/thickness": "t / 2" } }, "as": "rib" },
+    { "note": "+ the triangle between the line and the corner: 22 x 22 / 2 x 4",
+      "run": "model.mass", "expect": { "bodies.0.volume": 28062.11504 } },
+
+    { "note": "Round the upright's top back edge (r 3) and bevel the toe's top edge (2): both found by the faces they join.",
+      "run": "model.edge_ref", "with": { "faces": [
+        { "type": "side", "feature": "$body.feature", "curve": "$cap.line" },
+        { "type": "side", "feature": "$body.feature", "curve": "$back.line" } ] }, "as": "top_edge" },
+    { "run": "model.fillet", "with": { "edges": ["$top_edge"], "radius": 3 }, "as": "round" },
+    { "run": "model.edge_ref", "with": { "faces": [
+        { "type": "side", "feature": "$body.feature", "curve": "$base_top.line" },
+        { "type": "side", "feature": "$body.feature", "curve": "$toe.line" } ] }, "as": "toe_edge" },
+    { "run": "model.chamfer", "with": { "edges": ["$toe_edge"], "distance": 2 } },
+    { "note": "- (9 - 9 pi / 4) 40 - 2 x 2 / 2 x 40: 29328 - 453 pi",
+      "run": "model.mass", "expect": { "bodies.0.volume": 27904.85853 } },
+    { "run": "model.topology", "expect": { "bodies.0.valid": true, "bodies.0.solids": 1 } },
+
+    { "note": "Measure from the bottom face to the top of the upright.",
+      "run": "model.face_ref", "with": { "origin": { "type": "side", "feature": "$body.feature", "curve": "$bottom.line" } }, "as": "bottom_face" },
+    { "run": "model.face_ref", "with": { "origin": { "type": "side", "feature": "$body.feature", "curve": "$cap.line" } }, "as": "cap_face" },
+    { "run": "model.measure", "with": { "a": { "face": "$bottom_face" }, "b": { "face": "$cap_face" } }, "expect": { "values.0.label": "Distance", "values.0.value": 38 } },
+
+    { "note": "End of Part above the fillet: the fillet and chamfer are rolled back.",
+      "run": "feature.end_of_part", "with": { "before": "$round.feature" } },
+    { "run": "model.mass", "expect": { "bodies.0.volume": 28062.11504 } },
+    { "run": "feature.end_of_part" },
+
+    { "note": "Parametric edit: t = 10. The base thickens, the holes go deeper, the rib (now 5 thick) meets the higher base, the upright rises: 34160 - 525 pi.",
+      "run": "param.set", "with": { "name": "t", "equation": "10" } },
+    { "run": "model.regenerate", "expect": { "bodies": 1, "error": null } },
+    { "run": "model.mass", "expect": { "bodies.0.volume": 32510.66386 } },
+    { "run": "model.measure", "with": { "a": { "face": "$bottom_face" }, "b": { "face": "$cap_face" } }, "expect": { "values.0.value": 40 } },
+    { "run": "render.png", "with": { "path": "mount-thick.png", "view": "iso", "width": 1024, "height": 768 } },
+    { "run": "edit.undo" },
+    { "run": "model.mass", "expect": { "bodies.0.volume": 27904.85853 } },
+
+    { "run": "file.save", "with": { "path": "mount.tenon" } },
+    { "run": "export.step", "with": { "path": "mount.step" } },
+    { "run": "export.stl", "with": { "path": "mount.stl" } },
+    { "run": "render.png", "with": { "path": "mount.png", "view": "iso", "width": 1024, "height": 768 } }
+  ]
+}
