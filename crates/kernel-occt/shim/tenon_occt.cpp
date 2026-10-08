@@ -14,6 +14,10 @@
 #include <utility>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepFilletAPI_MakeChamfer.hxx>
+#include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
@@ -197,31 +201,35 @@ bool locate(const Shape& result, const TopoDS_Shape& s, std::uint8_t& kind, std:
   return false;
 }
 
-// Records, for every face and edge of one input, where it went in `result`.
+// Records, for every face and edge of one input, where it went in `result`, and what every face,
+// edge and vertex generated (a fillet's corner blends come from vertices).
 void record_history(BRepBuilderAPI_MakeShape& algo, std::uint32_t input, const TopoDS_Shape& input_shape,
                     const Shape& result, HistoryOut& hist) {
-  const std::pair<std::uint8_t, TopAbs_ShapeEnum> kinds[] = {{KIND_FACE, TopAbs_FACE}, {KIND_EDGE, TopAbs_EDGE}};
+  const std::pair<std::uint8_t, TopAbs_ShapeEnum> kinds[] = {
+      {KIND_FACE, TopAbs_FACE}, {KIND_EDGE, TopAbs_EDGE}, {KIND_VERTEX, TopAbs_VERTEX}};
   for (const auto& kind : kinds) {
     ShapeMap map;
     TopExp::MapShapes(input_shape, kind.second, map);
     const ShapeMap& result_map = kind.first == KIND_FACE ? result.faces : result.edges;
     for (int i = 1; i <= map.Extent(); ++i) {
       const TopoDS_Shape& s = map(i);
-      ImageEntry entry;
-      entry.input = input;
-      entry.kind = kind.first;
-      entry.index = static_cast<std::uint32_t>(i - 1);
-      if (!algo.IsDeleted(s)) {
-        const NCollection_List<TopoDS_Shape>& modified = algo.Modified(s);
-        if (modified.IsEmpty()) {
-          push_index(entry.images, result_map, s);
-        } else {
-          for (const TopoDS_Shape& m : modified) {
-            push_index(entry.images, result_map, m);
+      if (kind.first != KIND_VERTEX) {
+        ImageEntry entry;
+        entry.input = input;
+        entry.kind = kind.first;
+        entry.index = static_cast<std::uint32_t>(i - 1);
+        if (!algo.IsDeleted(s)) {
+          const NCollection_List<TopoDS_Shape>& modified = algo.Modified(s);
+          if (modified.IsEmpty()) {
+            push_index(entry.images, result_map, s);
+          } else {
+            for (const TopoDS_Shape& m : modified) {
+              push_index(entry.images, result_map, m);
+            }
           }
         }
+        hist.images.push_back(std::move(entry));
       }
-      hist.images.push_back(std::move(entry));
       for (const TopoDS_Shape& g : algo.Generated(s)) {
         GenEntry gen{input, kind.first, static_cast<std::uint32_t>(i - 1), 0, 0};
         if (locate(result, g, gen.gen_kind, gen.gen_index)) {
@@ -701,6 +709,98 @@ std::unique_ptr<Shape> transform(const Shape& shape, std::uint8_t kind, const V3
     }
     auto out = wrap(mk.Shape());
     record_history(mk, 0, shape.shape, *out, hist);
+    return out;
+  });
+}
+
+namespace {
+
+const TopoDS_Edge& edge_at(const Shape& body, std::uint32_t index) {
+  if (index >= static_cast<std::uint32_t>(body.edges.Extent())) {
+    throw std::invalid_argument("edge index out of range");
+  }
+  return TopoDS::Edge(body.edges(static_cast<int>(index) + 1));
+}
+
+const TopoDS_Face& face_at(const Shape& body, std::uint32_t index) {
+  if (index >= static_cast<std::uint32_t>(body.faces.Extent())) {
+    throw std::invalid_argument("face index out of range");
+  }
+  return TopoDS::Face(body.faces(static_cast<int>(index) + 1));
+}
+
+// Fillets, chamfers and shells can "succeed" with a broken solid; refuse those.
+void require_valid(const TopoDS_Shape& s, const char* message) {
+  BRepCheck_Analyzer check(s);
+  if (!check.IsValid()) {
+    throw std::runtime_error(message);
+  }
+}
+
+} // namespace
+
+std::unique_ptr<Shape> fillet(const Shape& body, rust::Slice<const std::uint32_t> edges, double radius, HistoryOut& hist) {
+  return guarded("fillet", [&] {
+    BRepFilletAPI_MakeFillet mk(body.shape);
+    for (std::uint32_t e : edges) {
+      mk.Add(radius, edge_at(body, e));
+    }
+    mk.Build();
+    if (!mk.IsDone()) {
+      throw std::runtime_error("the fillet could not be built (is the radius too large for the edges?)");
+    }
+    require_valid(mk.Shape(), "the fillet gave an invalid solid (is the radius too large for the edges?)");
+    auto out = wrap(single_solid(mk.Shape()));
+    record_history(mk, 0, body.shape, *out, hist);
+    return out;
+  });
+}
+
+std::unique_ptr<Shape> chamfer(const Shape& body, rust::Slice<const std::uint32_t> edges, std::uint8_t kind, double a, double b,
+                               std::uint32_t reference, HistoryOut& hist) {
+  return guarded("chamfer", [&] {
+    BRepFilletAPI_MakeChamfer mk(body.shape);
+    for (std::uint32_t e : edges) {
+      switch (kind) {
+      case 0:
+        mk.Add(a, edge_at(body, e));
+        break;
+      case 1:
+        mk.Add(a, b, edge_at(body, e), face_at(body, reference));
+        break;
+      case 2:
+        mk.AddDA(a, b, edge_at(body, e), face_at(body, reference));
+        break;
+      default:
+        throw std::invalid_argument("unknown chamfer kind");
+      }
+    }
+    mk.Build();
+    if (!mk.IsDone()) {
+      throw std::runtime_error("the chamfer could not be built (is the distance too large for the edges?)");
+    }
+    require_valid(mk.Shape(), "the chamfer gave an invalid solid (is the distance too large for the edges?)");
+    auto out = wrap(single_solid(mk.Shape()));
+    record_history(mk, 0, body.shape, *out, hist);
+    return out;
+  });
+}
+
+std::unique_ptr<Shape> shell(const Shape& body, rust::Slice<const std::uint32_t> faces, double offset, HistoryOut& hist) {
+  return guarded("shell", [&] {
+    TopTools_ListOfShape open;
+    for (std::uint32_t f : faces) {
+      open.Append(face_at(body, f));
+    }
+    BRepOffsetAPI_MakeThickSolid mk;
+    mk.MakeThickSolidByJoin(body.shape, open, offset, 1.0e-6);
+    mk.Build();
+    if (!mk.IsDone()) {
+      throw std::runtime_error("the shell could not be built (is the wall thicker than the part allows?)");
+    }
+    require_valid(mk.Shape(), "the shell gave an invalid solid (is the wall thicker than the part allows?)");
+    auto out = wrap(single_solid(mk.Shape()));
+    record_history(mk, 0, body.shape, *out, hist);
     return out;
   });
 }

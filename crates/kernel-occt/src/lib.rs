@@ -15,9 +15,9 @@ use cxx::UniquePtr;
 use ffi::bridge as sys;
 use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3, tol};
 use tenon_kernel::{
-    AngleExtent, BoolOp, CancelToken, Curve2, CurveKind, EdgeId, EdgeInfo, EdgePolyline, Extent, FaceId, FaceInfo, FaceRange, Generated, History,
-    Image, InputRef, KResult, Kernel, KernelError, MassProps, Mesh, MeshTol, Op, Origin, PrimitiveRole, Profile, ShapeHandle, ShapeKind, SurfaceKind,
-    TopoId, TopoKind, Topology, Transform, check,
+    AngleExtent, BoolOp, CancelToken, ChamferSpec, Curve2, CurveKind, EdgeId, EdgeInfo, EdgePolyline, Extent, FaceId, FaceInfo, FaceRange, Generated,
+    History, Image, InputRef, KResult, Kernel, KernelError, MassProps, Mesh, MeshTol, Op, Origin, PrimitiveRole, Profile, ShapeHandle, ShapeKind,
+    SurfaceKind, TopoId, TopoKind, Topology, Transform, check,
 };
 
 /// OCCT's STEP translator keeps global state; exchange calls are serialised process-wide.
@@ -208,6 +208,17 @@ fn shape_kind(code: u8) -> ShapeKind {
         6 => ShapeKind::Edge,
         _ => ShapeKind::Vertex,
     }
+}
+
+/// Edge indices, checking that every edge belongs to `body`.
+fn own_edges(body: ShapeHandle, edges: &[EdgeId]) -> KResult<Vec<u32>> {
+    if edges.is_empty() {
+        return Err(bad("select at least one edge"));
+    }
+    if edges.len() > 10_000 {
+        return Err(bad("too many edges"));
+    }
+    edges.iter().map(|e| if e.shape == body { Ok(e.index) } else { Err(bad("an edge is not on the body")) }).collect()
 }
 
 fn axis_or_z(origin: &sys::V3, dir: &sys::V3) -> Axis {
@@ -426,6 +437,50 @@ impl Kernel for OcctKernel {
         let mut hist = sys::HistoryOut::default();
         let out = sys::transform(self.get(shape)?, kind, &a, &b, value, &mut hist).map_err(failed("transform"))?;
         self.finish(out, hist)
+    }
+
+    fn fillet(&mut self, body: ShapeHandle, edges: &[EdgeId], radius: f64) -> KResult<Op> {
+        self.not_cancelled()?;
+        let r = check::size("fillet radius", radius)?;
+        let idx = own_edges(body, edges)?;
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::fillet(self.get(body)?, &idx, r, &mut hist).map_err(failed("fillet"))?;
+        self.finish(shape, hist)
+    }
+
+    fn chamfer(&mut self, body: ShapeHandle, edges: &[EdgeId], spec: &ChamferSpec) -> KResult<Op> {
+        self.not_cancelled()?;
+        let idx = own_edges(body, edges)?;
+        let own_face = |f: &FaceId| if f.shape == body { Ok(f.index) } else { Err(bad("the chamfer reference face is not on the body")) };
+        let (kind, a, b, reference) = match spec {
+            ChamferSpec::Equal(d) => (0, check::size("chamfer distance", *d)?, 0.0, 0),
+            ChamferSpec::TwoDistances { d1, d2, reference } => {
+                (1, check::size("chamfer distance", *d1)?, check::size("chamfer distance", *d2)?, own_face(reference)?)
+            }
+            ChamferSpec::DistanceAngle { distance, angle, reference } => {
+                if !(angle.is_finite() && *angle > 1e-3 && *angle < std::f64::consts::FRAC_PI_2 - 1e-3) {
+                    return Err(bad("chamfer angle must be between 0 and 90 degrees"));
+                }
+                (2, check::size("chamfer distance", *distance)?, *angle, own_face(reference)?)
+            }
+        };
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::chamfer(self.get(body)?, &idx, kind, a, b, reference, &mut hist).map_err(failed("chamfer"))?;
+        self.finish(shape, hist)
+    }
+
+    fn shell(&mut self, body: ShapeHandle, open_faces: &[FaceId], thickness: f64) -> KResult<Op> {
+        self.not_cancelled()?;
+        let t = check::size("shell thickness", thickness.abs())?;
+        if open_faces.iter().any(|f| f.shape != body) {
+            return Err(bad("a face to remove is not on the body"));
+        }
+        let idx: Vec<u32> = open_faces.iter().map(|f| f.index).collect();
+        let mut hist = sys::HistoryOut::default();
+        // Positive thickness keeps the outer skin: the wall grows inwards.
+        let offset = if thickness >= 0.0 { -t } else { t };
+        let shape = sys::shell(self.get(body)?, &idx, offset, &mut hist).map_err(failed("shell"))?;
+        self.finish(shape, hist)
     }
 
     fn topology(&self, shape: ShapeHandle) -> KResult<Topology> {

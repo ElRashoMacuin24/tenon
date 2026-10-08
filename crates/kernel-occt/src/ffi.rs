@@ -206,6 +206,13 @@ pub(crate) mod bridge {
         /// `kind`: 0 translate by `a`; 1 rotate `value` rad about axis (`a` origin, `b` direction);
         /// 2 mirror across the plane through `a` with normal `b`; 3 scale by `value` about `a`.
         fn transform(shape: &Shape, kind: u8, a: &V3, b: &V3, value: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// Constant-radius fillet on edges of `body` (0-based edge indices).
+        fn fillet(body: &Shape, edges: &[u32], radius: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// `kind`: 0 equal distance `a`; 1 distances `a` (on face `reference`) and `b`; 2 distance
+        /// `a` on `reference` and angle `b` (radians).
+        fn chamfer(body: &Shape, edges: &[u32], kind: u8, a: f64, b: f64, reference: u32, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// Thick solid from `body` with `faces` removed; `offset` < 0 thickens inwards.
+        fn shell(body: &Shape, faces: &[u32], offset: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
 
         fn topology(shape: &Shape, out: &mut TopoOut) -> Result<()>;
         fn face_info(shape: &Shape, index: u32, out: &mut FaceOut) -> Result<()>;

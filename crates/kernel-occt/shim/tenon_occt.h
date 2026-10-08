@@ -71,6 +71,10 @@ std::unique_ptr<Shape> extrude(const ProfileIn& profile, double start, double le
 std::unique_ptr<Shape> revolve(const ProfileIn& profile, const V3& origin, const V3& dir, double start, double sweep, bool full,
                                HistoryOut& hist);
 std::unique_ptr<Shape> transform(const Shape& shape, std::uint8_t kind, const V3& a, const V3& b, double value, HistoryOut& hist);
+std::unique_ptr<Shape> fillet(const Shape& body, rust::Slice<const std::uint32_t> edges, double radius, HistoryOut& hist);
+std::unique_ptr<Shape> chamfer(const Shape& body, rust::Slice<const std::uint32_t> edges, std::uint8_t kind, double a, double b,
+                               std::uint32_t reference, HistoryOut& hist);
+std::unique_ptr<Shape> shell(const Shape& body, rust::Slice<const std::uint32_t> faces, double offset, HistoryOut& hist);
 
 void topology(const Shape& shape, TopoOut& out);
 void face_info(const Shape& shape, std::uint32_t index, FaceOut& out);
