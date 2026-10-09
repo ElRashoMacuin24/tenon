@@ -372,3 +372,14 @@ Consequences:
 - M6's "iProperties-style panel" is called Properties in the product (DEC-019 keeps trademarked
   names out).
 - DEC-011's "revisit the wasm scope at M6" now waits on the experimental native kernel.
+## DEC-029 Centre marks and centrelines placed by hand join drawing format v1 (2026-10-09, chosen by the owner)
+
+Automatic centre marks and centrelines cover holes and cylinders only. To place them by hand, and
+on other symmetric features, the drawing format gained three annotation kinds: `center_mark` (on
+a circle or arc), `centerline` (through two picked points) and `centerline_bisector` (midway
+between two lines: parallel, along both; meeting, the bisector of their angle). Like dimensions,
+they keep persistent edge picks, never coordinates, so they follow the model.
+
+The owner chose to add them to format version 1 rather than start version 2: an older build of
+Tenon cannot open a drawing that uses them, and no build had been released, so nothing breaks.
+Drawings without them are unchanged.

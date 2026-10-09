@@ -609,7 +609,7 @@ fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &Mode
     }
     for (c, r) in marks {
         let c = to_sheet(v, g, c);
-        let arm = r * v.scale + 2.0;
+        let arm = r * v.scale + CENTER_OVER;
         gr.line(o, Pen::Center, c - Vec2::new(arm, 0.0), c + Vec2::new(arm, 0.0));
         gr.line(o, Pen::Center, c - Vec2::new(0.0, arm), c + Vec2::new(0.0, arm));
     }
@@ -741,6 +741,89 @@ fn draw_annotation(gr: &mut Graphics, d: &Drawing, ev: &Evaluation, a: &Annotati
             }
             Ok(())
         }
+        AnnotKind::CenterMark { .. } | AnnotKind::Centerline { .. } | AnnotKind::CenterlineBisector { .. } => {
+            for [p, q] in center_segments(d, ev, a)? {
+                gr.line(o, Pen::Center, p, q);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// How far centre marks and centre lines run past what they mark (sheet mm).
+pub const CENTER_OVER: f64 = 2.0;
+
+/// A point a pick stands for in a view: a circle's centre, a line's middle, or the point.
+fn pick_point(f: &Frame, r: &Resolved) -> Vec2 {
+    match r {
+        Resolved::Point(p) | Resolved::Circle { center: p, .. } => project(f, *p),
+        Resolved::Line(s, e) => (project(f, *s) + project(f, *e)) * 0.5,
+    }
+}
+
+/// The segments (sheet) of a centre mark or centre line placed by hand, from the model as it
+/// is now.
+pub fn center_segments(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<Vec<[Vec2; 2]>, String> {
+    let (view, pa, pb) = match &a.kind {
+        AnnotKind::CenterMark { view, a } => (*view, a, None),
+        AnnotKind::Centerline { view, a, b } | AnnotKind::CenterlineBisector { view, a, b } => (*view, a, Some(b)),
+        _ => return Err("not a centre mark or line".into()),
+    };
+    let v = d.view(view).ok_or("the view is gone")?;
+    let g = ev.view(view).ok_or("the view is not computed")?;
+    let m = ev.models.get(&v.model).ok_or("the model is not loaded")?;
+    let f = &g.frame;
+    let s = |p: Vec2| to_sheet(v, g, p);
+    let ra = resolve_pick(m, pa)?;
+    let rb = pb.map(|p| resolve_pick(m, p)).transpose()?;
+    // A segment from p to q, run CENTER_OVER past both ends.
+    let long = |p: Vec2, q: Vec2| -> Result<[Vec2; 2], String> {
+        let u = (q - p).normalized();
+        if !(u.is_finite() && u.len() > 0.5) {
+            return Err("the two places are the same".into());
+        }
+        Ok([p - u * CENTER_OVER, q + u * CENTER_OVER])
+    };
+    match (&a.kind, ra, rb) {
+        (AnnotKind::CenterMark { .. }, Resolved::Circle { center, radius, .. }, _) => {
+            let c = s(project(f, center));
+            let arm = radius * v.scale + CENTER_OVER;
+            Ok(vec![[c - Vec2::new(arm, 0.0), c + Vec2::new(arm, 0.0)], [c - Vec2::new(0.0, arm), c + Vec2::new(0.0, arm)]])
+        }
+        (AnnotKind::CenterMark { .. }, _, _) => Err("a centre mark needs a circle or an arc".into()),
+        (AnnotKind::Centerline { .. }, ra, Some(rb)) => Ok(vec![long(s(pick_point(f, &ra)), s(pick_point(f, &rb)))?]),
+        (AnnotKind::CenterlineBisector { .. }, Resolved::Line(a1, a2), Some(Resolved::Line(b1, b2))) => {
+            let (a1, a2, b1, b2) = (s(project(f, a1)), s(project(f, a2)), s(project(f, b1)), s(project(f, b2)));
+            let (u, w) = ((a2 - a1).normalized(), (b2 - b1).normalized());
+            if !(u.is_finite() && w.is_finite()) {
+                return Err("a line of no length".into());
+            }
+            let cross = u.x * w.y - u.y * w.x;
+            if cross.abs() < 1e-9 {
+                // Parallel: midway between them, along all of both.
+                let n = Vec2::new(-u.y, u.x);
+                if (b1 - a1).dot(n).abs() < 1e-9 {
+                    return Err("the two lines are one line".into());
+                }
+                let mid = a1 + n * ((b1 - a1).dot(n) / 2.0);
+                let ts = [a1, a2, b1, b2].map(|p| (p - a1).dot(u));
+                let (lo, hi) = (ts.iter().copied().fold(f64::MAX, f64::min), ts.iter().copied().fold(f64::MIN, f64::max));
+                Ok(vec![long(mid + u * lo, mid + u * hi)?])
+            } else {
+                // Meeting: the bisector of the angle the two lines span, over their length.
+                let vertex = meeting(a1, a2, b1, b2);
+                let away = |p: Vec2, q: Vec2| if p.dist(vertex) > q.dist(vertex) { (p - vertex).normalized() } else { (q - vertex).normalized() };
+                let dir = (away(a1, a2) + away(b1, b2)).normalized();
+                if !(dir.is_finite() && dir.len() > 0.5) {
+                    return Err("the two lines run in opposite directions from where they meet".into());
+                }
+                let ts = [a1, a2, b1, b2].map(|p| (p - vertex).dot(dir));
+                let (lo, hi) = (ts.iter().copied().fold(f64::MAX, f64::min).max(0.0), ts.iter().copied().fold(f64::MIN, f64::max));
+                Ok(vec![long(vertex + dir * lo, vertex + dir * hi)?])
+            }
+        }
+        (AnnotKind::CenterlineBisector { .. }, _, _) => Err("a centre line between lines needs two straight edges".into()),
+        _ => Err("a centre line needs two places".into()),
     }
 }
 

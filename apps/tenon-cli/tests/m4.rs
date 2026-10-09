@@ -219,6 +219,86 @@ fn aligned_radius_and_angle_dimensions_measure_the_model_and_follow_it() {
 }
 
 #[test]
+fn centre_marks_and_centrelines_placed_by_hand_follow_the_model() {
+    let dir = scratch("centres");
+    let mut e = Engine::new(kernel(), &dir);
+    filleted_chamfered_block(&mut e);
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    run(&mut e, "drw.new", json!({ "name": "Centres" }));
+    // The top view at 1:1, its middle (30, 20) at (100, 150) on the sheet.
+    let top = run(&mut e, "drw.view.base", json!({ "model": "block.tenon", "orientation": "top", "scale": 1, "at": [100, 150] }))["view"].clone();
+    let right = run(&mut e, "drw.view.base", json!({ "model": "block.tenon", "orientation": "right", "scale": 2, "at": [280, 150] }))["view"].clone();
+    let sheet = |x: f64, y: f64| (100.0 + x - 30.0, 150.0 + y - 20.0);
+    let seg = |v: &Value, i: usize| -> [(f64, f64); 2] {
+        let p = |k: usize| (v[i][k][0].as_f64().unwrap(), v[i][k][1].as_f64().unwrap());
+        [p(0), p(1)]
+    };
+    let close = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6;
+
+    // A centre mark on the rounded corner: a cross at the arc's centre (50, 30), arms 10 + 2.
+    let arc = run(&mut e, "drw.pick", json!({ "view": top, "view_at": [50.0 + 10.0 * 0.5f64.sqrt(), 30.0 + 10.0 * 0.5f64.sqrt()] }));
+    let mark = run(&mut e, "drw.center_mark", json!({ "view": top, "a": arc.clone() }));
+    let c = sheet(50.0, 30.0);
+    let s = seg(&mark["segments"], 0);
+    assert!(close(s[0], (c.0 - 12.0, c.1)) && close(s[1], (c.0 + 12.0, c.1)), "{mark}");
+    // The block's centre line between its parallel left and right sides: x = 30, along both (from
+    // y = 5, where the chamfer starts, to 40).
+    let (left, right_side) =
+        (run(&mut e, "drw.pick", json!({ "view": top, "view_at": [0, 20] })), run(&mut e, "drw.pick", json!({ "view": top, "view_at": [60, 15] })));
+    let mid = run(&mut e, "drw.centerline.bisector", json!({ "view": top, "a": left.clone(), "b": right_side }));
+    let s = seg(&mid["segments"], 0);
+    let (lo, hi) = (sheet(30.0, 5.0), sheet(30.0, 40.0));
+    let ends = |s: [(f64, f64); 2]| {
+        (close(s[0], (lo.0, lo.1 - 2.0)) && close(s[1], (hi.0, hi.1 + 2.0))) || (close(s[1], (lo.0, lo.1 - 2.0)) && close(s[0], (hi.0, hi.1 + 2.0)))
+    };
+    assert!(ends(s), "{mid}");
+    // A centre line from the arc's centre to the middle of the left side (y 5 to 40), a little
+    // past both.
+    let mut centre = arc.clone();
+    centre["point"] = json!("center");
+    let line = run(&mut e, "drw.centerline", json!({ "view": top, "a": centre, "b": left }));
+    let s = seg(&line["segments"], 0);
+    let (p, q) = (sheet(50.0, 30.0), sheet(0.0, 22.5));
+    let len = ((p.0 - q.0).powi(2) + (p.1 - q.1).powi(2)).sqrt();
+    let s_len = ((s[0].0 - s[1].0).powi(2) + (s[0].1 - s[1].1).powi(2)).sqrt();
+    assert!((s_len - len - 4.0).abs() < 1e-6, "{line}");
+    // Between the chamfer and the top edge, which meet: the bisector of the 135-degree corner.
+    let (chamfer, top_edge) = (
+        run(&mut e, "drw.pick", json!({ "view": right, "view_at": [2.5, 17.5] })),
+        run(&mut e, "drw.pick", json!({ "view": right, "view_at": [15.0, 20.0] })),
+    );
+    let corner = run(&mut e, "drw.centerline.bisector", json!({ "view": right, "a": chamfer.clone(), "b": top_edge }));
+    let s = seg(&corner["segments"], 0);
+    let angle = (s[1].1 - s[0].1).atan2(s[1].0 - s[0].0).to_degrees();
+    assert!((angle + 67.5).abs() < 1e-6, "{angle}");
+
+    // Refused: a centre mark on a line, a centre line between two places that are one, moving one.
+    assert!(e.exec("drw.center_mark", &json!({ "view": right, "a": chamfer.clone() })).unwrap_err().contains("circle"));
+    assert!(e.exec("drw.centerline", &json!({ "view": right, "a": chamfer.clone(), "b": chamfer })).unwrap_err().contains("same"));
+    let id = mark["annotation"].clone();
+    assert!(e.exec("drw.annotation.edit", &json!({ "annotation": id, "by": [5, 0] })).unwrap_err().contains("geometry"));
+
+    // Saved and reopened, then the round made 14: the mark follows the arc's centre to (46, 26);
+    // the sides' centre line stays at x = 30.
+    run(&mut e, "drw.save", json!({ "path": "centres.tenondrw" }));
+    run(&mut e, "file.open", json!({ "path": "block.tenon" }));
+    run(&mut e, "param.set", json!({ "name": "r", "equation": "14" }));
+    run(&mut e, "file.save", json!({ "path": "block.tenon" }));
+    run(&mut e, "drw.open", json!({ "path": "centres.tenondrw" }));
+    let info = run(&mut e, "drw.info", json!({}));
+    let kinds: Vec<&str> = info["annotations"].as_array().unwrap().iter().map(|a| a["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["center_mark", "centerline_bisector", "centerline", "centerline_bisector"]);
+    let c = sheet(46.0, 26.0);
+    let s = seg(&info["annotations"][0]["segments"], 0);
+    assert!(close(s[0], (c.0 - 16.0, c.1)) && close(s[1], (c.0 + 16.0, c.1)), "{}", info["annotations"][0]);
+    assert!(ends(seg(&info["annotations"][1]["segments"], 0)), "{}", info["annotations"][1]);
+    // In the DXF, on the CENTER layer.
+    run(&mut e, "drw.export.dxf", json!({ "path": "centres.dxf" }));
+    let dxf = std::fs::read_to_string(dir.join("centres.dxf")).unwrap();
+    assert!(tenon_drawing::export::check_dxf(&dxf).is_ok());
+}
+
+#[test]
 fn suggested_dimensions_cover_the_part_once_and_follow_it() {
     let dir = scratch("suggest");
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m4-plate");

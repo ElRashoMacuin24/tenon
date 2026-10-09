@@ -267,7 +267,10 @@ Implemented in `crates/io/src/drw.rs` and `crates/drawing/src/model.rs`; tested 
 - **Annotation kinds:** `dimension` (`dim`: `horizontal`, `vertical`, `aligned`, `diameter`,
   `radius`, `angle`; `a`, optional `b`; `offset` from the view's centre; optional `text`, where
   `<>` stands for the value; `precision`), `hole_table`, `parts_list`, `balloon` (`attach` in
-  the component's part coordinates, `offset` from the view's centre), `note`.
+  the component's part coordinates, `offset` from the view's centre), `note`, and centre marks
+  and lines placed by hand (DEC-029), which keep picks only and are drawn from the model each
+  time: `center_mark` (`a`: a circle or arc), `centerline` (through the points of `a` and `b`)
+  and `centerline_bisector` (midway between the lines `a` and `b`).
 - **Validation:** ids are positive, unique and below their counter; views sit on existing
   sheets and refer to earlier views; annotations refer to existing views or sheets; scales are
   between 1e-4 and 1e4; sizes, positions and text lengths are bounded. Limits: 500 sheets,

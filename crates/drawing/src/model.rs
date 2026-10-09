@@ -375,6 +375,14 @@ pub enum AnnotKind {
     Balloon { view: ViewId, component: ComponentId, attach: Vec3, offset: Vec2 },
     /// The assembly's parts list (from its bill of materials); `at` is its bottom-right corner.
     PartsList { view: ViewId, at: Vec2 },
+    /// A centre mark placed by hand: a cross at the centre of a circle or arc of a view (`a`).
+    CenterMark { view: ViewId, a: GeomPick },
+    /// A centre line placed by hand, through two points of a view: each pick's point (a circle's
+    /// centre, a line's middle, or the point picked), drawn a little past both.
+    Centerline { view: ViewId, a: GeomPick, b: GeomPick },
+    /// The centre line of a symmetric feature: midway between two lines of a view (parallel: along
+    /// their common length; meeting: their angle's bisector), drawn a little past both.
+    CenterlineBisector { view: ViewId, a: GeomPick, b: GeomPick },
     /// Text on a sheet.
     Note {
         sheet: SheetId,
@@ -400,7 +408,10 @@ impl AnnotKind {
             AnnotKind::Dimension { view, .. }
             | AnnotKind::HoleTable { view, .. }
             | AnnotKind::Balloon { view, .. }
-            | AnnotKind::PartsList { view, .. } => Some(*view),
+            | AnnotKind::PartsList { view, .. }
+            | AnnotKind::CenterMark { view, .. }
+            | AnnotKind::Centerline { view, .. }
+            | AnnotKind::CenterlineBisector { view, .. } => Some(*view),
             AnnotKind::Note { .. } => None,
         }
     }
@@ -632,6 +643,7 @@ impl Drawing {
                 AnnotKind::Dimension { offset, text, .. } => finite2(*offset) && text.as_ref().is_none_or(|t| t.len() <= 1000),
                 AnnotKind::HoleTable { at, .. } | AnnotKind::PartsList { at, .. } => finite2(*at),
                 AnnotKind::Balloon { attach, offset, .. } => finite2(*offset) && attach.is_finite(),
+                AnnotKind::CenterMark { .. } | AnnotKind::Centerline { .. } | AnnotKind::CenterlineBisector { .. } => true,
                 AnnotKind::Note { sheet, at, text, height } => {
                     sheets.contains(sheet) && finite2(*at) && text.len() <= 10_000 && height.is_finite() && *height > 0.0 && *height < 100.0
                 }

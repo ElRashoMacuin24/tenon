@@ -190,6 +190,17 @@ fn drw_info(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
                             o.insert("rows".into(), json!(rows));
                         }
                     }
+                    (AnnotKind::CenterMark { .. } | AnnotKind::Centerline { .. } | AnnotKind::CenterlineBisector { .. }, Some(e)) => {
+                        match annotate::center_segments(d, e, a) {
+                            Ok(segs) => {
+                                let segs: Vec<Value> = segs.iter().map(|[p, q]| json!([v2(*p), v2(*q)])).collect();
+                                o.insert("segments".into(), json!(segs));
+                            }
+                            Err(err) => {
+                                o.insert("problem".into(), json!(err));
+                            }
+                        }
+                    }
                     (AnnotKind::Balloon { view, component, .. }, Some(e)) => {
                         if let Some(m) = d.view(*view).and_then(|v| e.models.get(&v.model)) {
                             o.insert("item".into(), json!(annotate::item_of(m, *component)));
@@ -622,6 +633,33 @@ fn drw_dimension_auto(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value
     Ok(json!({ "added": ids.len(), "annotations": ids, "dimensions": added }))
 }
 
+/// Adds a centre mark or line after checking it can be drawn; returns it and its segments.
+fn add_center(s: &mut DrwSession, kind: AnnotKind) -> CmdResult {
+    let probe = Annotation { id: AnnotId(u32::MAX), kind: kind.clone() };
+    let segments = annotate::center_segments(s.drawing(), s.current()?, &probe).map_err(CmdError)?;
+    let aid = add_annotation(s, kind)?;
+    let segments: Vec<Value> = segments.iter().map(|[a, b]| json!([v2(*a), v2(*b)])).collect();
+    Ok(json!({ "annotation": aid.0, "segments": segments }))
+}
+
+fn drw_center_mark(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    view(s.drawing(), vid)?;
+    add_center(s, AnnotKind::CenterMark { view: vid, a: pick(p, "a")? })
+}
+
+fn drw_centerline(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    view(s.drawing(), vid)?;
+    add_center(s, AnnotKind::Centerline { view: vid, a: pick(p, "a")?, b: pick(p, "b")? })
+}
+
+fn drw_centerline_bisector(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    view(s.drawing(), vid)?;
+    add_center(s, AnnotKind::CenterlineBisector { view: vid, a: pick(p, "a")?, b: pick(p, "b")? })
+}
+
 fn drw_hole_table(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
     let origin = opt_pick(p, "origin")?;
@@ -785,6 +823,11 @@ fn drw_annotation_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Valu
                 }
             }
             AnnotKind::Balloon { offset, .. } => *offset += by,
+            AnnotKind::CenterMark { .. } | AnnotKind::Centerline { .. } | AnnotKind::CenterlineBisector { .. } => {
+                if by.len() > 0.0 {
+                    return Err("a centre mark or line sits on its geometry and moves with it, not by itself".into());
+                }
+            }
             AnnotKind::HoleTable { at, .. } | AnnotKind::PartsList { at, .. } => *at += by,
             AnnotKind::Note { at, text: t, .. } => {
                 *at += by;
@@ -959,6 +1002,30 @@ static COMMANDS: &[DrwCommand] = &[
         mutates: true,
         views: true,
         run: drw_dimension,
+    },
+    DrwCommand {
+        id: "drw.center_mark",
+        label: "Center Mark",
+        help: "view; a: a pick of a circle or arc (drw.pick). A cross at its centre, kept on it as the model changes",
+        mutates: true,
+        views: true,
+        run: drw_center_mark,
+    },
+    DrwCommand {
+        id: "drw.centerline",
+        label: "Centerline",
+        help: "view; a, b: picks; the line through their points (a circle's centre, a line's middle, or the point picked), a little past both, kept on them as the model changes",
+        mutates: true,
+        views: true,
+        run: drw_centerline,
+    },
+    DrwCommand {
+        id: "drw.centerline.bisector",
+        label: "Centerline Bisector",
+        help: "view; a, b: picks of two straight edges; the centre line of the feature between them (parallel: midway, along both; meeting: the bisector of their angle), kept on them as the model changes",
+        mutates: true,
+        views: true,
+        run: drw_centerline_bisector,
     },
     DrwCommand {
         id: "drw.dimension.suggest",
