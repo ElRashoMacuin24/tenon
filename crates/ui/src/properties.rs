@@ -517,8 +517,8 @@ impl Workbench {
                                         {
                                             p.direction = Direction::Default;
                                         }
-                                        ui.add_enabled(false, egui::Button::selectable(false, "To (M5)"));
-                                        ui.add_enabled(false, egui::Button::selectable(false, "Between (M5)"));
+                                        ui.add_enabled(false, egui::Button::selectable(false, "To (later)"));
+                                        ui.add_enabled(false, egui::Button::selectable(false, "Between (later)"));
                                     });
                                 ui.end_row();
                                 if p.extent == ExtentChoice::Distance {
@@ -567,7 +567,7 @@ impl Workbench {
                             });
                         });
                         section(ui, "Advanced Properties", false, |ui| {
-                            ui.add_enabled(false, egui::Label::new("Taper (milestone M5)"));
+                            ui.add_enabled(false, egui::Label::new("Taper (milestone M6)"));
                         });
                     }
                     Panel::Revolve(p) => {
@@ -815,8 +815,8 @@ impl Workbench {
                                 ui.label("Hole");
                                 egui::ComboBox::from_id_salt("tn_props_hole_kind").selected_text("Simple").show_ui(ui, |ui| {
                                     let _ = ui.selectable_label(true, "Simple");
-                                    ui.add_enabled(false, egui::Button::selectable(false, "Clearance (M5)"));
-                                    ui.add_enabled(false, egui::Button::selectable(false, "Tapped (M5)"));
+                                    ui.add_enabled(false, egui::Button::selectable(false, "Clearance (M7)"));
+                                    ui.add_enabled(false, egui::Button::selectable(false, "Tapped (M6)"));
                                 });
                                 ui.end_row();
                                 ui.label("Seat");

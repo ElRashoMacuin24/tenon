@@ -68,7 +68,8 @@ fn every_available_command_has_a_handler() {
             assert!(!e.contains("unknown command"), "{id}: {e}");
         }
     }
-    assert!(Workbench::without_kernel().run_ui("model.sweep").unwrap_err().contains("milestone M5"));
+    assert!(Workbench::without_kernel().run_ui("model.sweep").unwrap_err().contains("milestone M6"));
+    assert!(Workbench::without_kernel().run_ui("sketch.stretch").unwrap_err().contains("not in the current plan"));
     assert!(Workbench::without_kernel().run_ui("model.fillet").unwrap_err().contains("no solid"));
     assert!(Workbench::without_kernel().run_ui("nonsense.cmd").unwrap_err().contains("unknown"));
 }

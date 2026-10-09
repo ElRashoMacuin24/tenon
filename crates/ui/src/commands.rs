@@ -32,9 +32,20 @@ pub struct UiCommand {
     pub more: &'static [&'static str],
 }
 
+/// The `milestone` of a command no milestone of the current plan brings (docs/plan.md section 10).
+pub const LATER: u8 = 99;
+
 impl UiCommand {
     pub fn available(&self) -> bool {
         self.milestone == 0
+    }
+    /// When it arrives, for tooltips: "milestone M6", or "a later milestone".
+    pub fn arrives(&self) -> String {
+        if self.milestone == LATER { "a later milestone (not in the current plan)".into() } else { format!("milestone M{}", self.milestone) }
+    }
+    /// The message for using it before it works.
+    pub fn not_yet(&self) -> String {
+        format!("{} is not available yet: it arrives in {}.", self.name(), self.arrives())
     }
     /// The label on one line (for menus, search and tooltips).
     pub fn name(&self) -> String {
@@ -93,12 +104,12 @@ pub const RIBBON: &[RibbonTab] = &[
                 commands: &[
                     large("model.extrude", "Extrude", "Add or cut material by sweeping a profile straight", Icon::Extrude, 0).key("E"),
                     large("model.revolve", "Revolve", "Add or cut material by rotating a profile about an axis", Icon::Revolve, 0).key("R"),
-                    small("model.sweep", "Sweep", "Sweep a profile along a path", Icon::Sweep, 5),
-                    small("model.loft", "Loft", "Blend between two or more profiles", Icon::Loft, 5),
-                    small("model.coil", "Coil", "Helical sweep", Icon::Coil, 5),
+                    small("model.sweep", "Sweep", "Sweep a profile along a path", Icon::Sweep, 6),
+                    small("model.loft", "Loft", "Blend between two or more profiles", Icon::Loft, 6),
+                    small("model.coil", "Coil", "Helical sweep", Icon::Coil, 6),
                     small("model.rib", "Rib", "A thin wall from an open profile", Icon::Rib, 0),
-                    small("model.emboss", "Emboss", "Raise or recess a profile on a face", Icon::Text, 5),
-                    small("model.derive", "Derive", "Bring in another part", Icon::Copy, 5),
+                    small("model.emboss", "Emboss", "Raise or recess a profile on a face", Icon::Text, LATER),
+                    small("model.derive", "Derive", "Bring in another part", Icon::Copy, LATER),
                 ],
             },
             RibbonPanel {
@@ -108,10 +119,10 @@ pub const RIBBON: &[RibbonTab] = &[
                     large("model.fillet", "Fillet", "Round edges", Icon::Fillet, 0).key("F"),
                     small("model.chamfer", "Chamfer", "Bevel edges", Icon::Chamfer, 0),
                     small("model.shell", "Shell", "Hollow a solid, removing faces", Icon::Shell, 0),
-                    small("model.draft", "Draft", "Taper faces for moulding", Icon::Draft, 5),
-                    small("model.thread", "Thread", "Cosmetic thread on a cylinder", Icon::Thread, 5),
-                    small("model.combine", "Combine", "Join, cut or intersect bodies", Icon::Combine, 5),
-                    small("model.split", "Split", "Split faces or bodies", Icon::Split, 5),
+                    small("model.draft", "Draft", "Taper faces for moulding", Icon::Draft, 6),
+                    small("model.thread", "Thread", "Cosmetic thread on a cylinder", Icon::Thread, 6),
+                    small("model.combine", "Combine", "Join, cut or intersect bodies", Icon::Combine, 6),
+                    small("model.split", "Split", "Split faces or bodies", Icon::Split, 6),
                 ],
             },
             RibbonPanel {
@@ -120,7 +131,7 @@ pub const RIBBON: &[RibbonTab] = &[
                     large("work.plane", "Plane", "Construction plane: offset, angled or mid-plane", Icon::Plane, 0),
                     small("work.axis", "Axis", "Construction axis: on an edge or cylinder, or where two planes meet", Icon::Axis, 0),
                     small("work.point", "Point", "Construction point: a circle centre, or where an axis meets a plane", Icon::Point, 0),
-                    small("work.ucs", "UCS", "User coordinate system", Icon::Ucs, 5),
+                    small("work.ucs", "UCS", "User coordinate system", Icon::Ucs, LATER),
                 ],
             },
             RibbonPanel {
@@ -147,29 +158,29 @@ pub const RIBBON: &[RibbonTab] = &[
                     small("sketch.rectangle", "Rectangle", "Click two opposite corners", Icon::Rectangle, 0)
                         .more(&["sketch.rectangle", "sketch.polygon"]),
                     small("sketch.fillet", "Fillet", "Click a corner where two lines meet", Icon::Fillet, 0),
-                    small("sketch.text", "Text", "Text in a sketch", Icon::Text, 5),
+                    small("sketch.text", "Text", "Text in a sketch", Icon::Text, LATER),
                     small("sketch.point", "Point", "Click to place a point (e.g. a hole centre)", Icon::Point, 0),
                 ],
             },
             RibbonPanel {
                 title: "Modify",
                 commands: &[
-                    small("sketch.move", "Move", "Move sketch geometry", Icon::Move, 5),
-                    small("sketch.copy", "Copy", "Copy sketch geometry", Icon::Copy, 5),
-                    small("sketch.rotate", "Rotate", "Rotate sketch geometry", Icon::Rotate, 5),
+                    small("sketch.move", "Move", "Move sketch geometry", Icon::Move, LATER),
+                    small("sketch.copy", "Copy", "Copy sketch geometry", Icon::Copy, LATER),
+                    small("sketch.rotate", "Rotate", "Rotate sketch geometry", Icon::Rotate, LATER),
                     small("sketch.trim", "Trim", "Click the piece of a curve to remove", Icon::Trim, 0).key("X"),
-                    small("sketch.extend", "Extend", "Extend a curve to the next one", Icon::Extend, 5),
-                    small("sketch.split", "Split", "Split a curve where it meets another", Icon::Split, 5),
-                    small("sketch.scale", "Scale", "Scale sketch geometry", Icon::Scale, 5),
-                    small("sketch.stretch", "Stretch", "Stretch sketch geometry", Icon::Stretch, 5),
+                    small("sketch.extend", "Extend", "Extend a curve to the next one", Icon::Extend, LATER),
+                    small("sketch.split", "Split", "Split a curve where it meets another", Icon::Split, LATER),
+                    small("sketch.scale", "Scale", "Scale sketch geometry", Icon::Scale, LATER),
+                    small("sketch.stretch", "Stretch", "Stretch sketch geometry", Icon::Stretch, LATER),
                     small("sketch.offset", "Offset", "Select curves, then choose a distance", Icon::Offset, 0).key("O"),
                 ],
             },
             RibbonPanel {
                 title: "Pattern",
                 commands: &[
-                    small("sketch.pattern.rect", "Rectangular", "Repeat sketch geometry in rows and columns", Icon::PatternRect, 5),
-                    small("sketch.pattern.circular", "Circular", "Repeat sketch geometry around a point", Icon::PatternCircular, 5),
+                    small("sketch.pattern.rect", "Rectangular", "Repeat sketch geometry in rows and columns", Icon::PatternRect, LATER),
+                    small("sketch.pattern.circular", "Circular", "Repeat sketch geometry around a point", Icon::PatternCircular, LATER),
                     small("sketch.mirror", "Mirror", "Select geometry, then click the mirror line", Icon::Mirror, 0),
                 ],
             },
@@ -185,7 +196,7 @@ pub const RIBBON: &[RibbonTab] = &[
                     glyph("sketch.tangent", "Tangent", "A line and a circle/arc, or two circles/arcs", Icon::Tangent, 0),
                     glyph("sketch.collinear", "Collinear", "Two lines on one line", Icon::Collinear, 0),
                     glyph("sketch.perpendicular", "Perpendicular", "Two lines", Icon::Perpendicular, 0),
-                    glyph("sketch.smooth", "Smooth", "Curvature-continuous join", Icon::Spline, 5),
+                    glyph("sketch.smooth", "Smooth", "Curvature-continuous join", Icon::Spline, LATER),
                     glyph("sketch.concentric", "Concentric", "Two circles/arcs", Icon::Concentric, 0),
                     glyph("sketch.horizontal", "Horizontal", "A line", Icon::Horizontal, 0),
                     glyph("sketch.symmetric", "Symmetric", "Two points, then the line of symmetry", Icon::Symmetric, 0),
@@ -322,9 +333,9 @@ pub const ASM_RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Pattern",
                 commands: &[
-                    small("asm.pattern", "Pattern", "Repeat components", Icon::PatternRect, 5),
-                    small("asm.mirror", "Mirror", "Mirror components", Icon::Mirror, 5),
-                    small("asm.copy", "Copy", "Copy components", Icon::Copy, 5),
+                    small("asm.pattern", "Pattern", "Repeat components", Icon::PatternRect, LATER),
+                    small("asm.mirror", "Mirror", "Mirror components", Icon::Mirror, LATER),
+                    small("asm.copy", "Copy", "Copy components", Icon::Copy, LATER),
                 ],
             },
         ],
@@ -426,16 +437,16 @@ pub const DRW_RIBBON: &[RibbonTab] = &[
                         Icon::DetailView,
                         0,
                     ),
-                    small("drw.auxiliary", "Auxiliary", "A view square to an inclined edge", Icon::ProjectedView, 5),
-                    small("drw.overlay", "Overlay", "Positions of an assembly drawn over a view", Icon::Explode, 5),
+                    small("drw.auxiliary", "Auxiliary", "A view square to an inclined edge", Icon::ProjectedView, LATER),
+                    small("drw.overlay", "Overlay", "Positions of an assembly drawn over a view", Icon::Explode, LATER),
                 ],
             },
             RibbonPanel {
                 title: "Modify",
                 commands: &[
-                    small("drw.break", "Break", "Shorten a long view", Icon::Split, 5),
-                    small("drw.break_out", "Break Out", "Cut away part of a view to show what is inside", Icon::Trim, 5),
-                    small("drw.crop", "Crop", "Show only part of a view", Icon::Rectangle, 5),
+                    small("drw.break", "Break", "Shorten a long view", Icon::Split, LATER),
+                    small("drw.break_out", "Break Out", "Cut away part of a view to show what is inside", Icon::Trim, LATER),
+                    small("drw.crop", "Crop", "Show only part of a view", Icon::Rectangle, LATER),
                 ],
             },
             RibbonPanel { title: "Sheets", commands: &[large("drw.sheet.new", "New\nSheet", "Add a sheet to the drawing", Icon::NewSheet, 0)] },
@@ -448,8 +459,8 @@ pub const DRW_RIBBON: &[RibbonTab] = &[
                 title: "Dimension",
                 commands: &[
                     large("drw.dimension", "Dimension", "Click an edge or two, then where the dimension goes", Icon::Dimension, 0).key("D"),
-                    small("drw.baseline", "Baseline", "Dimensions from one datum", Icon::Dimension, 5),
-                    small("drw.ordinate", "Ordinate", "Ordinate dimensions", Icon::Dimension, 5),
+                    small("drw.baseline", "Baseline", "Dimensions from one datum", Icon::Dimension, LATER),
+                    small("drw.ordinate", "Ordinate", "Ordinate dimensions", Icon::Dimension, LATER),
                 ],
             },
             RibbonPanel { title: "Text", commands: &[large("drw.text", "Text", "Click where the text goes, then type it", Icon::Text, 0).key("T")] },
@@ -510,7 +521,7 @@ pub const DRW_RETURN: UiCommand = large("drw.return", "Return", "Finish editing 
 pub const EXTRA: &[UiCommand] = &[
     small("sketch.spline", "Spline", "Click control points; Enter finishes", Icon::Spline, 0),
     small("sketch.polygon", "Polygon", "Click the centre, then a corner (6 sides)", Icon::Polygon, 0),
-    small("sketch.new_3d", "Start 3D Sketch", "A sketch of 3D curves", Icon::NewSketch, 5),
+    small("sketch.new_3d", "Start 3D Sketch", "A sketch of 3D curves", Icon::NewSketch, LATER),
     small("view.style.shaded_edges", "Shaded with Edges", "Shaded faces with their edges", Icon::VisualStyle, 0),
     small("view.style.shaded", "Shaded", "Shaded faces only", Icon::VisualStyle, 0),
     small("view.style.wireframe", "Wireframe", "Edges only", Icon::VisualStyle, 0),
@@ -671,7 +682,7 @@ mod tests {
                 c.id
             );
             assert!(!c.label.is_empty() && !c.tip.is_empty(), "{}", c.id);
-            assert!(c.milestone <= 6, "{}", c.id);
+            assert!(c.milestone <= 11 || c.milestone == LATER, "{}", c.id);
             let first = find(c.id).unwrap();
             assert_eq!((first.name(), first.milestone), (c.name(), c.milestone), "{}", c.id);
             for m in c.more {

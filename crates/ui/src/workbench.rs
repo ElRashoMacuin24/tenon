@@ -242,6 +242,10 @@ impl Workbench {
 
     /// Ribbon, menu and toolbar commands.
     pub fn run_ui(&mut self, id: &str) -> Result<(), String> {
+        // A button whose milestone has not come says so, whatever environment it is pressed in.
+        if let Some(c) = commands::find(id).filter(|c| !c.available()) {
+            return Err(c.not_yet());
+        }
         let export_2d = matches!(id, "export.pdf" | "export.svg" | "export.dxf");
         if id.starts_with("drw.") || id == "file.new_drawing" || export_2d {
             return self.run_drw_ui(id);
@@ -436,7 +440,7 @@ impl Workbench {
             _ if id.starts_with("sketch.") => self.sketch_tool(id)?,
             _ => {
                 return Err(match commands::find(id) {
-                    Some(c) if !c.available() => format!("{} is not available yet: it arrives in milestone M{}.", c.label, c.milestone),
+                    Some(c) if !c.available() => c.not_yet(),
                     _ => format!("unknown command `{id}`"),
                 });
             }

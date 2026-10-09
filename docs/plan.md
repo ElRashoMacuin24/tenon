@@ -2,7 +2,9 @@
 
 Status: **approved 2026-10-07** ("go with your recommendations"). Written under the working name
 Forgeline; renamed to **Tenon** at approval (D6). Outcomes of D1–D6 are logged in
-`docs/decisions.md`. This file is kept as the original plan; `ROADMAP.md` tracks progress.
+`docs/decisions.md`. Sections 1 to 9 are kept as the original plan. Section 10 is the owner's
+amendment of 2026-10-09 (DEC-028), which replaces the milestones after M4. `ROADMAP.md` tracks
+progress.
 
 ## 1. Decisions (resolved)
 
@@ -240,3 +242,97 @@ Kept different on purpose (rule 1):
    - a hostile-input test (zero or negative sizes return `Err`, never panic).
 8. Write `docs/architecture.md`, `docs/decisions.md`, `docs/setup.md` and the GitHub Actions workflow.
 9. Demo: `examples/m0-box-minus-cylinder/`, run via `forgeline-cli run`, writes a STEP file and prints volume. `app` opens an empty layout shell (ribbon, browser, status bar). The 3D viewport is M1.
+
+## 10. Plan amendment (2026-10-09, owner)
+
+Everything above still applies (hard rules, clean-room and licence rules, layering, the `Kernel`
+trait with shape history, persistent naming, the `unsafe` policy, honesty in `ROADMAP.md`) unless
+this section says otherwise.
+
+### Positioning
+
+Tenon targets makers, students and small shops who cannot afford the commercial tools and find
+the free ones rough. It wins on reliability, coherence and speed, not on feature count. When two
+tasks compete, the one that makes existing features more dependable and pleasant goes before a
+new feature.
+
+### Milestones
+
+Done in order; stop and report after each, and start the next only when the owner confirms.
+
+- **M0 to M3:** done (foundations, sketch to solid, parametric modelling, assemblies).
+- **M4 drawings** continues with a higher bar:
+  - auto-dimensioning suggestions;
+  - balloons, and a parts list from the assembly's bill of materials;
+  - sheet and title-block templates;
+  - clean PDF, SVG and DXF output;
+  - views that update when the model changes, with tests.
+- **M5 reliability and project format:**
+  - broken-reference repair: show which reference broke, highlight candidates, re-pick in one
+    step, never fail silently;
+  - per-feature error messages in plain language (kernel errors mapped), in the browser;
+  - autosave, crash recovery, and an undo/redo that survives regeneration failures, verified;
+  - a text-based, diffable, versioned `.tenon` (stable key order, no volatile ids or timestamps,
+    schema version and migrations), `tenon diff a.tenon b.tenon` at feature and parameter level,
+    and a merge-friendly layout, documented in `docs/file-format.md`. This changes DEC-004, so
+    the design goes to the owner before any code;
+  - tests: round-trip stability, migrations from every older format version, and a corpus of
+    edit-then-regenerate persistent-naming cases.
+- **M6 part feature breadth:**
+  - sweep, loft, helix/coil, threads (cosmetic and modelled), draft, split, combine;
+  - mass properties (volume, mass, centroid, inertia), materials and appearance in a properties
+    panel. The panel is called Properties: the commercial product's name for it is a trademark
+    (DEC-019);
+  - design tables: one part file driving several sizes from a table of parameters;
+  - every feature with unit tests, an example, a persistent-naming test and a failure-mode test.
+- **M7 standard parts and maker workflow:**
+  - a standard parts library (fasteners, bearings, common extrusion profiles), generated
+    parametrically or from open-licensed data only, each dataset's source and licence in
+    `ATTRIBUTION.md`; no scraped proprietary catalogues;
+  - 3D-print checks (minimum wall thickness, overhang angles, watertightness), strong 3MF and STL
+    export.
+- **M8 sheet metal basics:** base flange, edge flange, bends with K-factor, corner relief,
+  unfolding to a flat pattern with DXF export; tests against hand-computed bend allowances.
+- **M9 performance:**
+  - benchmarks in CI (regeneration, tessellation, assembly load, memory) on the example models,
+    with budgets that fail CI on regression;
+  - per-feature regeneration caching, per-face tessellation caching, parallel tessellation,
+    level of detail for large assemblies;
+  - the numbers published in `docs/performance.md`, honestly, including where OCCT is the
+    limit.
+- **M10 agent-native workflow:**
+  - versioned JSON schemas for every command; MCP tools for build, inspect, repair-reference and
+    render;
+  - natural-language-to-feature helpers and AI-assisted reference repair on the command
+    registry, started only after M5's reliability gates pass. Every AI-made edit is a normal,
+    undoable command the user can inspect.
+- **M11 quick stress checks (linear static):**
+  - material selection, fixed supports, force and pressure loads, meshing, solving, and results
+    (displacement, von Mises stress, safety factor) on the model;
+  - meshing (Gmsh or Netgen) and solving (CalculiX) run as external processes, so GPL code is not
+    linked into Tenon. The licence analysis goes into `docs/decisions.md` and to the owner before
+    any of them is bundled or recommended;
+  - checked against textbook cases with known answers (cantilever deflection, a plate with a
+    hole) in CI;
+  - results labelled as an engineering aid, not certified analysis.
+
+### Experimental: native kernel (formerly M6)
+
+- Behind the `Kernel` trait, with capability flags. Analytic extrude and revolve first;
+  evaluating the `truck` crate is allowed after checking its licence and maturity.
+- The OCCT differential corpus runs on every change. An operation's default moves to the native
+  kernel only after it matches OCCT's pass rate on thousands of corpus cases, with zero invalid
+  shapes and acceptable speed.
+- If analytic booleans have not reached that gate within a set time budget, the track stops and
+  OCCT stays.
+- Not started before M5 and M6 are done, unless the owner says so.
+
+### Not now
+
+CAM, generative design, cable and harness, tube and pipe, dynamic simulation.
+
+### Asking first
+
+Decisions that are expensive to reverse go to the owner first: file format changes, third-party
+solvers or data, dropping a platform. Everything else is decided, recorded in
+`docs/decisions.md`, and the work continues.

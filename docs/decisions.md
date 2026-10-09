@@ -343,3 +343,32 @@ The owner chose this over storing sheets inside the model file.
 - Dimensions stay in millimetres.
 - ISO (first-angle projection, A4 to A2 sheets) is a per-drawing setting, so either standard can
   be used in any drawing.
+
+## DEC-028 Plan amendment: reliability first, new milestones, native kernel experimental (2026-10-09, owner)
+
+The owner amended the plan (docs/plan.md section 10):
+
+- **Positioning:** makers, students and small shops; Tenon wins on reliability, coherence and
+  speed, not feature count. When tasks compete, dependability of existing features goes first.
+- **M4 continues** with a higher bar: auto-dimension suggestions, balloons and a parts list from
+  the assembly's bill of materials, sheet and title-block templates, clean PDF/SVG/DXF, and views
+  that follow model changes, with tests. The first M4 report (2026-10-08) does not meet it, so
+  M4 is open again in `ROADMAP.md`.
+- **New milestones** replace the old M5 (breadth) and M6 (native kernel): M5 reliability and
+  project format, M6 part feature breadth, M7 standard parts and maker workflow, M8 sheet metal
+  basics, M9 performance, M10 agent-native workflow, M11 linear static stress checks.
+- **Native kernel:** demoted to an experimental track behind the `Kernel` trait. OCCT stays the
+  default and the product does not wait for it. It does not start before M5 and M6 are done.
+- **Not now:** CAM, generative design, cable and harness, tube and pipe, dynamic simulation.
+
+Consequences:
+
+- The ROADMAP was re-rated against the new bar. Rows whose named tests did not prove the claim
+  went from done to partial, with the gap stated: M1 performance budget; M2 broken-feature
+  reporting; in M4, views with hidden-line removal, detail views, associative dimensions, the
+  parts list, export, views that follow the model, and the drawing environment.
+- M5's text-based `.tenon` changes DEC-004 (zip container), so its design goes to the owner
+  before any code.
+- M6's "iProperties-style panel" is called Properties in the product (DEC-019 keeps trademarked
+  names out).
+- DEC-011's "revisit the wasm scope at M6" now waits on the experimental native kernel.

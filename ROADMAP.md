@@ -1,11 +1,17 @@
 # Roadmap and feature parity
 
 Status values: **done** (a named test proves it), **partial** (the gap is stated), **missing**.
-Nothing is marked done without a test. Milestone scope: `docs/plan.md`. Decisions:
-`docs/decisions.md`.
+Nothing is marked done without a test. Milestone scope: `docs/plan.md` (amended 2026-10-09,
+DEC-028). Decisions: `docs/decisions.md`.
 
-Current milestone: **M4 drawings, complete** (2026-10-08).
-Next: M5 breadth and polish.
+**Positioning.** Tenon is for makers, students and small shops who cannot afford the commercial
+tools and find the free ones rough. It wins on reliability, coherence and speed, not on feature
+count: when two tasks compete, the one that makes existing features more dependable and pleasant
+goes first.
+
+Current milestone: **M4 drawings, in progress**: the quality bar added on 2026-10-09
+(auto-dimension suggestions, sheet templates, clean output, views that follow model changes
+with tests). Next: M5 reliability and project format, after the owner confirms M4.
 
 ## M0 foundations
 
@@ -61,7 +67,7 @@ events, the way the windowing layer does.
 | Model browser driven by the feature tree | done | rows with status, double-click to edit, context menu; real drags of the End of Part row and feature rows in `end_of_part_and_features_are_dragged_in_the_browser` |
 | Undo / redo | done | `bad_commands_change_nothing`, the UI test (`edit.undo`), the demo script (undo after the thickness edit) |
 | Regeneration off the UI thread | done | `worker_regenerates_off_thread_and_reports_the_latest`; cancellation stops between kernel operations only (see M0) |
-| 3D viewport (wgpu, MSAA, shaded + edges; software fallback) | done | `gpu_viewport_renders_when_an_adapter_exists` (reads the GPU image back and compares it with the software renderer; skips where no adapter exists), `software_render_draws_the_cube_and_encodes_png`, `the_three_faces_of_an_iso_view_shade_differently` |
+| 3D viewport (wgpu, MSAA, shaded + edges; software fallback) | done | `gpu_viewport_renders_when_an_adapter_exists` (reads the GPU image back and compares it with the software renderer; skips where no adapter exists, which includes the CI runners, so the GPU path is checked on development machines only), `software_render_draws_the_cube_and_encodes_png`, `the_three_faces_of_an_iso_view_shade_differently` |
 | Orbit, pan, zoom (mouse and nav bar) | done | `viewport_responds_to_real_pointer_input` (left/right drag, middle drag, wheel), `fit_zoom_pan_orbit` |
 | Orientation cube | done | faces, edges and corners glide the view there and do not reach the model, the arrows turn and roll it (`viewport_responds_to_real_pointer_input`, `cube::tests::faces_edges_and_corners_from_the_home_view`); drag orbits; home and context menu |
 | Face and edge picking, selection | done | `viewport_responds_to_real_pointer_input` (click selects the top face and names it; background clears), `ray_through_the_centre_hits_the_facing_side`, `edges_are_picked_near_the_pointer_and_not_through_faces`, `every_visible_edge_is_picked_along_its_length_in_perspective`; window and crossing box selection in `viewport_responds_to_real_pointer_input` |
@@ -73,7 +79,7 @@ events, the way the windowing layer does.
 | MCP server (stdio): run command, tree, topology, measure, render PNG, export | done | `mcp_server_builds_measures_and_renders_a_part`, `mcp_transport_survives_garbage`; docs/mcp.md |
 | MCP control of a running desktop app | missing | the server drives its own headless session (DEC-014) |
 | PNG rendering without a GPU (CLI, MCP) | done | `tenon-cli render`; `mcp_server_builds_measures_and_renders_a_part` |
-| Performance budget in CI | done | `m1_demo_part_regenerates_and_tessellates_within_budget` (500 ms each; measured 6 ms); docs/performance.md |
+| Performance budget in CI | partial | `m1_demo_part_regenerates_and_tessellates_within_budget` (500 ms each; measured 6 ms); docs/performance.md. Gap: the budget is 80 times the measured time, so it catches only gross regressions (real benchmarks with tight budgets are M9) |
 | Demo: bracket with holes | done | `examples/m1-bracket`; `the_m1_demo_script_builds_a_verified_bracket_and_writes_its_files` |
 
 ## M2 parametric modelling
@@ -87,17 +93,17 @@ Complete 2026-10-08. Model tests: `crates/model/tests/m2.rs` (20, plus one ignor
 | Fillet (constant radius, several edges) | done | `fillets_follow_upstream_edits`, `fillet_one_edge_and_its_history`, `fillet_chamfer_and_shell_pick_edges_and_faces_in_the_viewport` (clicks add and remove edges; editing shows the part rolled back) |
 | Chamfer (equal, two distances, distance and angle) | done | `chamfers_meet_at_the_corners`, `chamfers_equal_and_unequal`, `bad_fillets_chamfers_and_shells_are_errors`, the UI test above |
 | Shell (inside or outside, open faces) | done | `shell_follows_its_open_face`, the UI test above |
-| Hole (simple, counterbore, countersink; blind with drill point or flat, through all) | done | `holes_simple_counterbore_and_countersink`, `a_hole_follows_its_point_and_keeps_its_edges`, `bad_holes_are_refused_or_reported`, `hole_takes_sketch_points_and_toggles_them_in_the_viewport`. Gap: no tapped or clearance holes (M5), no hole placed by clicking a face |
+| Hole (simple, counterbore, countersink; blind with drill point or flat, through all) | done | `holes_simple_counterbore_and_countersink`, `a_hole_follows_its_point_and_keeps_its_edges`, `bad_holes_are_refused_or_reported`, `hole_takes_sketch_points_and_toggles_them_in_the_viewport`. Gap: no tapped holes (M6) or clearance holes (M7), no hole placed by clicking a face |
 | Rib (to next or finite, flip) | done | `a_rib_fills_the_corner_of_an_l_bracket`, `rib_from_the_sketch_being_drawn`, `a_cut_in_two_gives_its_solids_with_their_faces`. Gap: lines only, in the sketch plane (no ribs normal to the sketch); the profile lines are taken from the sketch, not picked one by one |
 | Rectangular and circular patterns, mirror (of features, and of patterns) | done | `rectangular_pattern_of_a_hole_follows_the_hole`, `circular_pattern_full_and_partial`, `mirror_a_cut_and_a_boss_across_an_origin_plane`, `patterns_refuse_what_they_cannot_copy`, `pattern_and_mirror_pick_features_in_the_viewport` (DEC-022). Gap: "through all" extents are sized for the original only |
 | Work planes (offset, angle, midplane), axes (edge or cylinder, two planes), points (circle centre, axis through plane) | done | `a_work_plane_offset_from_a_face_carries_a_sketch_and_follows_it`, `angled_and_mid_planes_mirror_like_origin_planes`, `work_axes_and_points`, `work_plane_from_a_face_carries_a_sketch_and_origin_axes_come_from_the_browser`. Gap: drawn over the part rather than depth-tested; no three-point plane |
 | Parameters and expressions (named dimensions and values, user parameters, equations in every value field, Parameters dialog) | done | `expr::tests` (2), `dimensions_and_feature_values_are_named_and_driven_by_equations`, `equations_on_new_dimensions_angles_and_counts`, `files_without_parameters_get_names_when_opened`, `equations_typed_into_fields_and_the_parameters_dialog` (DEC-023). Gap: units are converted, not checked; no parameter export or linking to a spreadsheet |
 | End of Part marker, suppress, reorder | done | `end_of_part_rolls_back_and_new_features_go_above_it`, `features_reorder_with_their_sketches_but_not_before_what_they_use`, `end_of_part_and_features_are_dragged_in_the_browser` (real drags); suppress: `patterns_refuse_what_they_cannot_copy` |
 | Persistent naming resolver with edit-upstream tests (faces and edges, through fillets, holes and patterns) | done | `fillets_follow_upstream_edits`, `edge_references_survive_shortening_and_added_sketch_geometry`, `a_split_face_keeps_each_piece_by_geometry`, `references_survive_reordering_independent_features`, `every_face_of_m2_features_is_named`, `a_hole_follows_its_point_and_keeps_its_edges`, `rectangular_pattern_of_a_hole_follows_the_hole` (a chamfer on a copied hole's edge), `a_work_plane_offset_from_a_face_carries_a_sketch_and_follows_it`. Gaps: vertices are not referenced; splits are told apart by geometry, not ordinals; a sign-flipped dimension is not tested (docs/persistent-naming.md) |
-| Broken-feature reporting | done | `a_lost_edge_breaks_the_fillet_with_a_clear_message`, `bad_holes_are_refused_or_reported`, `patterns_refuse_what_they_cannot_copy` (a suppressed source), `work_axes_and_points` (parallel planes); the browser shows the failing feature in red with the message (drawn in every UI test frame, not asserted) |
+| Broken-feature reporting | partial | the model side: `a_lost_edge_breaks_the_fillet_with_a_clear_message`, `bad_holes_are_refused_or_reported`, `patterns_refuse_what_they_cannot_copy` (a suppressed source), `work_axes_and_points` (parallel planes). Gaps: the browser's red row and message are drawn but no test asserts them; kernel errors reach the user in OCCT's words; no repair (all three are M5) |
 | Measure (area, length, diameter, distance, angle) | done | `minimum_distances_between_faces_edges_and_shapes`, `measure_areas_lengths_distances_and_angles`, `measure_faces_and_edges_by_clicking_them`, the worker test |
 | Incremental regeneration (resume from the edited feature) | done | `regeneration_resumes_from_the_feature_being_edited` (same result as from scratch, no leaks); timing `regeneration_speed` (ignored test): editing the last of 42 features 166 ms -> 9.3 ms, release build |
-| UI frame budget | done | `frame_time_stays_within_budget` (16 ms; measured 0.08 ms idle, 0.85 ms with the pointer moving, release, 40 features; CPU side only) |
+| UI frame budget | done | `frame_time_stays_within_budget` (16 ms mean frame; measured 0.08 ms idle, 0.85 ms with the pointer moving, release, 40 features). Limits: CPU side only (no GPU time); the budget is far above the measurement, so only gross regressions fail it |
 | Inventor-familiar UI (layout and workflow; DEC-019 to DEC-021) | partial | ribbon, browser, properties panel, mini toolbar, orientation cube (faces, edges, corners), radial menu, navigation, sketch workflow, all exercised by the UI tests. Gaps: no in-canvas drag handles for fillet radius or hole depth; no hover highlight preview of a feature's result before clicking; work planes not depth-tested |
 | Demo: parametric enclosure that regenerates when dimensions change | done | `examples/m2-enclosure` (parameters L, W, H, t drive the box, shell, boss pattern and cable hole); `the_m2_enclosure_script_builds_a_verified_parametric_enclosure` (analytic volume after every feature, after changing L and H, and after reopening and changing W). Second example: `examples/m2-mount`, `the_m2_demo_script_builds_a_verified_parametric_mount` |
 
@@ -118,10 +124,10 @@ and key input): `crates/ui/src/asm_tests.rs` (5). Worker slots: `worker_regenera
 | Constraints: mate, flush, angle, insert (DEC-025) | done | `mates_and_flushes_place_a_block_on_a_block_and_count_what_is_left`, `angle_and_insert`, the demo script (angle and inserts, analytic placements), `constrain_and_joint_by_clicking_faces_in_the_view` (flush by clicking two faces, with its preview). Gap: no tangent constraint; no limits |
 | Joints: rigid, rotational (revolute), slider, plus cylindrical, planar, ball | done | `joints_leave_their_motions` (each joint's free motions and the total), the demo script (rotational and slider), `constrain_and_joint_by_clicking_faces_in_the_view` (rotational by clicking). Gap: joint origins come from faces, circular edges and axes; no vertex or mid-edge snap points; no joint limits or motion studies |
 | Conflicts refused with the relationships they conflict with | done | `a_conflict_does_not_converge`, `assembly_edits_undo_and_conflicts_are_refused`, the refused flush in `constrain_and_joint_by_clicking_faces_in_the_view` |
-| Dragging components under their relationships; Free Rotate | done | `dragging_keeps_the_dragged_body_near_the_pointer`, `an_assembly_opens_and_components_drag_along_their_joints` (slider drag, undo, Free Rotate about an insert), `assembly_drag_frame_time_stays_within_budget` (2.8 ms per frame, release) |
+| Dragging components under their relationships; Free Rotate | done | `dragging_keeps_the_dragged_body_near_the_pointer`, `an_assembly_opens_and_components_drag_along_their_joints` (slider drag, undo, Free Rotate about an insert), `assembly_drag_frame_time_stays_within_budget` (median frame under 16 ms; 2.8 ms release, 5.5 ms in the test profile) |
 | Degrees-of-freedom display | done | `joints_leave_their_motions`, `dof_interference_parts_list_and_explode_from_the_ribbon` (per component and total); the symbols are drawn by `asm_overlays` (not asserted pixel by pixel) |
 | Interference check | done | `dof_interference_parts_list_and_explode_from_the_ribbon` (108π mm³ between a pin head and the block), the demo script |
-| Bill of materials (with CSV export) | done | the demo script (`asm.bom`, `asm.export_bom`), `the_m3_demo_script_builds_a_verified_pivot_assembly` (the CSV), `dof_interference_parts_list_and_explode_from_the_ribbon`. Gap: no part numbers, descriptions or materials (M5) |
+| Bill of materials (with CSV export) | done | the demo script (`asm.bom`, `asm.export_bom`), `the_m3_demo_script_builds_a_verified_pivot_assembly` (the CSV), `dof_interference_parts_list_and_explode_from_the_ribbon`. Gap: no part numbers, descriptions or materials (materials: M6) |
 | Exploded view (steps, auto explode, trails) | done | the demo script (`asm.explode.positions`), `dof_interference_parts_list_and_explode_from_the_ribbon`. Gap: no animation; no rotation steps |
 | In-context editing of parts (with the rest of the assembly shown) | done | `editing_a_part_in_place_and_returning_updates_the_assembly` (double-click, edit, Return, the assembly follows, Save saves the part), the demo's `asm.edit_part`. Gap: no references from one part to another's geometry (adaptive parts) |
 | Assembly STEP export | partial | `the_m3_demo_script_builds_a_verified_pivot_assembly` (volume read back). Gap: placed solids only, no product structure |
@@ -131,29 +137,102 @@ and key input): `crates/ui/src/asm_tests.rs` (5). Worker slots: `worker_regenera
 Demo: [examples/m4-plate](examples/m4-plate) (a plate, a pin, their assembly and a two-sheet drawing,
 built and checked by a command script).
 
-Complete 2026-10-08. Hidden-line removal: `crates/kernel-occt/tests/m4.rs` (2). Drawing crate:
-`crates/drawing/src` (6). Sheet raster: `lines_dashes_and_text_land_on_white_paper`. Files:
-`crates/io/tests/drw.rs` (3). Commands and demo: `apps/tenon-cli/tests/m4.rs` (2). UI (real pointer
-and key input): `crates/ui/src/drw_tests.rs` (4).
+In progress. The first pass was reported 2026-10-08; the plan amendment of 2026-10-09 raised the
+bar (auto-dimension suggestions, sheet and title-block templates, clean PDF/SVG/DXF, views that
+follow model changes, all with tests), and the rows below are rated against it. Hidden-line
+removal: `crates/kernel-occt/tests/m4.rs` (2). Drawing crate: `crates/drawing/src` (6). Sheet
+raster: `lines_dashes_and_text_land_on_white_paper`. Files: `crates/io/tests/drw.rs` (3). Commands
+and demo: `apps/tenon-cli/tests/m4.rs` (2). UI (real pointer and key input):
+`crates/ui/src/drw_tests.rs` (4).
 
 | Feature | Status | Proof / gap |
 |---|---|---|
 | Drawing documents: `.tenondrw` linking part and assembly files by relative path (DEC-026) | done | `drawings_round_trip_with_model_paths_relative_to_the_file`, `damaged_and_mistaken_drawing_files_are_refused`; a moved folder and missing model files: `the_m4_demo_script_draws_a_plate_and_its_assembly` |
 | Sheets: ANSI A to D, ISO A4 to A1, several per drawing | done | the demo script (two B sheets), `drawing_edits_undo_and_bad_input_is_refused` (a sheet resized to A refits the scale), `views_and_dimensions_are_placed_by_clicking_on_the_sheet`, `models_edited_from_the_drawing_update_it` (the browser switches sheets) |
 | Standards: ANSI third-angle by default, ISO first-angle per drawing (DEC-027) | done | `frames_follow_the_projection_angle` (both angles, section frames unfolded from their parent). Gap: no per-company drafting standard settings (text heights, arrow styles) |
-| Base, projected and isometric views with hidden-line removal | done | `a_box_seen_from_the_front_is_its_front_rectangle`, `a_cylinder_shows_its_silhouettes_and_a_hole_its_hidden_lines`, `hatching_clipping_and_covered_hidden_lines`, the demo script (every view's direction and size), `views_and_dimensions_are_placed_by_clicking_on_the_sheet` (placed by clicking, lined up with their parent). Gap: no shaded views; tangent edges off by default with no per-view style beyond hidden lines |
-| Section views (full, hatched) | done | `hatching_clipping_and_covered_hidden_lines`, the demo script, `views_and_dimensions_are_placed_by_clicking_on_the_sheet` (line clicked, seen from the side it is placed). Gap: straight cutting lines only (no offset, aligned or half sections); one hatch pattern |
-| Detail views | done | `hatching_clipping_and_covered_hidden_lines` (clipped to the circle), the demo script (2:1). Gap: circular boundary only |
-| Associative dimensions: horizontal, vertical, aligned, diameter, radius, angle | done | the demo script (values picked from the views; the plate made thicker and the drawing updated: 12 becomes 16), `models_edited_from_the_drawing_update_it` (16 becomes 20 after editing from the drawing), `views_and_dimensions_are_placed_by_clicking_on_the_sheet` (the type chosen from what is clicked). Gap: no ordinate, baseline or chain dimensions; no tolerances; model dimensions cannot be retrieved into the drawing |
+| Base, projected and isometric views with hidden-line removal | partial | `a_box_seen_from_the_front_is_its_front_rectangle`, `a_cylinder_shows_its_silhouettes_and_a_hole_its_hidden_lines`, `hatching_clipping_and_covered_hidden_lines`, the demo script (every view's direction and size), `views_and_dimensions_are_placed_by_clicking_on_the_sheet` (placed by clicking, lined up with their parent). Gaps: one part hiding another in an assembly view is not tested; no shaded views; tangent edges off by default with no per-view style beyond hidden lines |
+| Section views (full, hatched) | done | `hatching_clipping_and_covered_hidden_lines`, the demo script, `views_and_dimensions_are_placed_by_clicking_on_the_sheet` (line clicked, seen from the side it is placed). Gap: straight cutting lines only (no offset, aligned or half sections); one hatch pattern; sections of assemblies not tested |
+| Detail views | partial | `hatching_clipping_and_covered_hidden_lines` (clipped to the circle), the demo script (2:1). Gaps: the Detail tool has no click-level test; circular boundary only |
+| Associative dimensions: horizontal, vertical, aligned, diameter, radius, angle | partial | the demo script (values picked from the views; the plate made thicker and the drawing updated: 12 becomes 16), `models_edited_from_the_drawing_update_it` (16 becomes 20 after editing from the drawing), `views_and_dimensions_are_placed_by_clicking_on_the_sheet` (the type chosen from what is clicked). Gaps: only horizontal, vertical and diameter are tested on a real model; aligned, radius and angle are not. No ordinate, baseline or chain dimensions; no tolerances; model dimensions cannot be retrieved into the drawing |
+| Auto-dimension suggestions | missing | quality bar of 2026-10-09 |
 | Centre marks and centrelines | partial | drawn automatically for holes and cylinders seen end-on or side-on (the CENTER layer of `the_m4_demo_script_draws_a_plate_and_its_assembly`). Gap: no centrelines for other symmetric features; none placed by hand |
 | Hole tables | done | the demo script (positions and descriptions from the hole features), `tables_balloons_and_text_through_the_tools`. Gap: holes made by Hole features only, not by patterns of them or by cut extrusions |
-| Balloons (placed and automatic) and parts lists from the bill of materials | done | the demo script, `tables_balloons_and_text_through_the_tools` (a balloon attached where the pin's edge was clicked; auto balloon; a parts list placed with the tool), `models_edited_from_the_drawing_update_it` (the list follows the assembly). Gap: no custom columns or part numbers beyond the file name |
+| Balloons (placed and automatic) and parts lists from the bill of materials | partial | the demo script, `tables_balloons_and_text_through_the_tools` (a balloon attached where the pin's edge was clicked; auto balloon; a parts list placed with the tool), `models_edited_from_the_drawing_update_it` (the list follows the assembly). Gaps: the drawing numbers its parts list with its own copy of the bill-of-materials rules, so it could drift from the assembly's list (no test compares them); no custom columns or part numbers beyond the file name |
 | Title block templates | done | a Tenon title block per standard with fields from `drw.props` and the projection symbol (`svg_pdf_and_dxf_hold_the_sheet`, the demo's PDF); templates saved, edited and applied as JSON files: `title_block_templates_round_trip_and_bad_ones_are_refused`, `drawing_edits_undo_and_bad_input_is_refused`, `models_edited_from_the_drawing_update_it` (from the Manage tab). Gap: templates are edited as text, not drawn in the app; the border is fixed |
-| Export to PDF, SVG and DXF | done | `svg_pdf_and_dxf_hold_the_sheet`, `the_m4_demo_script_draws_a_plate_and_its_assembly` (two PDF pages, DXF read back: a layer per line type, the views' lines where they belong), `models_edited_from_the_drawing_update_it` (from the File menu). Gap: PDF text in Helvetica, not the drafting font of the other outputs |
-| Views update when the model changes | done | the demo script (`drw.update` after the model file changed), `models_edited_from_the_drawing_update_it` (Open Model, edit, Return; saving the drawing saves the model), `views_are_computed_on_the_geometry_thread`. Gap: changes made to a model file by another program are read on Update, not noticed by themselves |
-| Drawing environment in the UI (Place Views and Annotate ribbons, sheet that pans and zooms, browser, dragging and deleting, dialogs) | done | `crates/ui/src/drw_tests.rs` (4 tests with real pointer and key input) |
+| Sheet (drawing) templates: a new drawing starting from saved sheets, standard and properties | missing | quality bar of 2026-10-09 |
+| Export to PDF, SVG and DXF | partial | `svg_pdf_and_dxf_hold_the_sheet`, `the_m4_demo_script_draws_a_plate_and_its_assembly` (two PDF pages, DXF read back: a layer per line type, the views' lines where they belong), `models_edited_from_the_drawing_update_it` (from the File menu). Gaps against "clean output": curves are written as many short straight segments (no arcs, circles or joined polylines); PDF text is Helvetica, unlike the drafting font of the other outputs; the PDF's structure and the SVG's XML are checked by searching for strings, not by a parser; the DXF is read back only by Tenon's own reader |
+| Views update when the model changes | partial | the demo script (`drw.update` after the model file changed), `models_edited_from_the_drawing_update_it` (Open Model, edit, Return; saving the drawing saves the model), `views_are_computed_on_the_geometry_thread`. Gap: a model file saved by another program or another Tenon window is read only when the user presses Update |
+| Drawing environment in the UI (Place Views and Annotate ribbons, sheet that pans and zooms, browser, dragging and deleting, dialogs) | partial | `crates/ui/src/drw_tests.rs` (4 tests with real pointer and key input). Gaps: the dialogs' buttons (Drawing View, Edit View, Text) and the canvas context menu are not pressed by any test; panning and zooming the sheet are not tested |
 | Demo: a drawing of a part and its assembly that follows a model change | done | `examples/m4-plate`, `the_m4_demo_script_draws_a_plate_and_its_assembly`, `drawing_edits_undo_and_bad_input_is_refused` |
 
-## M5 breadth and polish, M6 native kernel
+## M5 reliability and project format
 
-All missing. Scope per milestone: `docs/plan.md`.
+Scope: `docs/plan.md` section 10. Starts after the owner confirms M4. The text-based `.tenon`
+format changes DEC-004, so its design goes to the owner before any code.
+
+| Feature | Status | Proof / gap |
+|---|---|---|
+| Broken-reference repair: show what broke, highlight candidates, re-pick in one step | missing | |
+| Per-feature errors in plain language, in the browser | partial | messages exist (`a_lost_edge_breaks_the_fillet_with_a_clear_message`); kernel errors are passed through in OCCT's words; the browser display is not asserted |
+| Autosave and crash recovery | missing | |
+| Undo/redo verified across regeneration failures | missing | |
+| Text-based, diffable, versioned `.tenon` with migrations | missing | needs the owner's approval (changes DEC-004) |
+| `tenon diff` at feature and parameter level | missing | |
+| Round-trip stability, migrations from every older version, persistent-naming corpus | missing | |
+
+## M6 part feature breadth
+
+| Feature | Status | Proof / gap |
+|---|---|---|
+| Sweep, loft, coil (helix), threads (cosmetic and modelled), draft, split, combine | missing | the ribbon buttons exist and say which milestone brings them |
+| Mass properties with materials and appearance, in a Properties panel | partial | volume, area, centre of mass and inertia at unit density (`box_inertia_about_centre_of_mass`, the Mass Properties window); no materials, density or appearance |
+| Design tables (configurations from a table of parameters) | missing | |
+
+## M7 standard parts and maker workflow
+
+| Feature | Status | Proof / gap |
+|---|---|---|
+| Standard parts library (fasteners, bearings, extrusion profiles), parametric or open-licensed data | missing | |
+| 3D-print checks (wall thickness, overhangs, watertightness) | missing | |
+| 3MF export; STL export hardened | partial | STL binary and ASCII (`crates/io/src/stl.rs` tests); no 3MF |
+
+## M8 sheet metal basics
+
+| Feature | Status | Proof / gap |
+|---|---|---|
+| Base and edge flanges, bends with K-factor, corner relief | missing | |
+| Flat pattern with DXF export, checked against hand-computed bend allowances | missing | |
+
+## M9 performance
+
+| Feature | Status | Proof / gap |
+|---|---|---|
+| Benchmarks in CI with budgets that fail on regression (regeneration, tessellation, assembly load, memory) | partial | loose budgets only (see M1, M2 and M3 rows) |
+| Per-feature regeneration caching | done | `regeneration_resumes_from_the_feature_being_edited` (M2) |
+| Per-face tessellation caching, parallel tessellation, level of detail for large assemblies | missing | |
+| Published numbers in docs/performance.md, including where OCCT is the limit | partial | M1 and M2 numbers only |
+
+## M10 agent-native workflow
+
+| Feature | Status | Proof / gap |
+|---|---|---|
+| Versioned JSON schemas for every command | missing | commands document their parameters in prose (docs/commands.md) |
+| MCP tools for build, inspect, render | partial | `mcp_server_builds_measures_and_renders_a_part`; no repair-reference tool |
+| Natural-language-to-feature helpers and AI-assisted reference repair (as normal undoable commands) | missing | waits for M5's reliability gates |
+
+## M11 quick stress checks (linear static)
+
+| Feature | Status | Proof / gap |
+|---|---|---|
+| Materials, supports, loads; meshing and solving as external processes; results on the model | missing | the licence analysis of the external mesher and solver goes to the owner first |
+| Verified against textbook benchmarks in CI | missing | |
+
+## Experimental: native kernel
+
+Not started (plan section 10): only after M5 and M6, unless the owner says otherwise. An
+operation's default moves to the native kernel only after it matches OCCT on the differential
+corpus.
+
+## Not planned now
+
+CAM, generative design, cable and harness, tube and pipe, dynamic simulation.

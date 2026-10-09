@@ -4,7 +4,11 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestone M4 (drawings) is done.** CI runs on Linux, macOS and Windows.
+**Status: milestones M0 to M3 are done; M4 (drawings) works and is being finished to a higher
+quality bar.** CI runs on Linux, macOS and Windows.
+
+Tenon is for makers, students and small shops. It aims to win on reliability, coherence and speed
+rather than feature count.
 
 In parts, you can:
 
@@ -52,7 +56,8 @@ server for AI agents. What works, with the test that proves each item, is in
 - **Kernel behind a trait.** All geometry goes through the backend-neutral `Kernel` trait
   (`crates/kernel`). The first backend binds [OpenCASCADE Technology](https://dev.opencascade.org)
   8 through a small C++ shim (`crates/kernel-occt`), the only crate allowed to use `unsafe`. A
-  Rust-native kernel can replace it later, operation by operation (milestone M6).
+  Rust-native kernel may replace it later, operation by operation, as an experimental track that
+  the product does not wait for.
 - **Persistent naming from day one.** Every kernel operation reports where faces and edges came
   from, so features can refer to geometry in a way that survives upstream edits
   ([docs/persistent-naming.md](docs/persistent-naming.md)).

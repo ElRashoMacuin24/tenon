@@ -904,7 +904,7 @@ impl Workbench {
             "asm.interference" => self.analyze_interference()?,
             other => {
                 return Err(match crate::commands::find(other) {
-                    Some(c) if !c.available() => format!("{} is not available yet: it arrives in milestone M{}.", c.label, c.milestone),
+                    Some(c) if !c.available() => c.not_yet(),
                     _ => format!("unknown command `{other}`"),
                 });
             }

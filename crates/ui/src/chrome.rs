@@ -85,7 +85,7 @@ pub(crate) fn tooltip(cmd: &UiCommand) -> String {
     let key = cmd.key.map(|k| format!(" ({k})")).unwrap_or_default();
     let mut s = format!("{}{key}\n{}", cmd.name(), cmd.tip);
     if !cmd.available() {
-        s.push_str(&format!("\nArrives in milestone M{}", cmd.milestone));
+        s.push_str(&format!("\nArrives in {}", cmd.arrives()));
     }
     s
 }
@@ -354,7 +354,7 @@ impl Workbench {
                                 if enabled { t.text } else { t.text_disabled },
                             );
                             let place = commands::location(c.id).unwrap_or_else(|| "Menus and toolbars".into());
-                            let place = if enabled { place } else { format!("{place} (milestone M{})", c.milestone) };
+                            let place = if enabled { place } else { format!("{place} ({})", c.arrives()) };
                             ui.painter().text(row.left_top() + vec2(28.0, 18.0), Align2::LEFT_TOP, place, theme::small(), t.text_dim);
                             if rresp.clicked() {
                                 run = Some(c.id);
@@ -664,7 +664,7 @@ impl Workbench {
                 });
                 ui.add_space(4.0);
             }
-            ui.small("Mass equals volume at unit density; materials arrive in M5.");
+            ui.small("Mass equals volume at unit density; materials arrive in M6.");
         });
         self.chrome.mass = mass;
         let t = crate::theme::Tokens::of(self.chrome.theme);

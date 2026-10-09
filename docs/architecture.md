@@ -27,7 +27,7 @@ Rules:
 
 - A crate may depend only on strictly lower layers (dev-dependencies included).
 - Kernel backends (`kernel-occt`) may be used by library crates only as **dev-dependencies**;
-  library code talks to `dyn Kernel`. Apps choose the backend. A Rust-native kernel (M6) slots in
+  library code talks to `dyn Kernel`. Apps choose the backend. A Rust-native kernel (an experimental track, DEC-028) slots in
   as another backend.
 - Native-binding crates (`cxx`, `cxx-build`, `cc`, `bindgen`, `opencascade*`, `occt*`) only in a
   backend.
@@ -184,7 +184,7 @@ still has local literal epsilons; they move to `tol` as that code is touched.
 - Kernel tests compare against analytic values (volumes, areas, inertia), check invariants
   (inclusion-exclusion on random booleans, closed outward meshes, STEP round trip) and feed
   hostile input (NaN, infinities, zero sizes, stale handles, garbage files).
-- From M6, a differential harness runs randomised operations through two backends and compares
+- With the experimental native kernel (DEC-028), a differential harness runs randomised operations through two backends and compares
   volume, area, topology counts and validity.
 - `cargo xtask ci` is the gate locally and in GitHub Actions.
 

@@ -594,7 +594,7 @@ impl Workbench {
         }
         if !self.in_drawing() {
             return Err(match crate::commands::find(id) {
-                Some(c) if !c.available() => format!("{} is not available yet: it arrives in milestone M{}.", c.label, c.milestone),
+                Some(c) if !c.available() => c.not_yet(),
                 _ => "open or start a drawing first (File > New Drawing)".into(),
             });
         }
@@ -673,7 +673,7 @@ impl Workbench {
             "export.pdf" | "export.svg" | "export.dxf" => self.export_drawing(&id["export.".len()..])?,
             _ => {
                 return Err(match crate::commands::find(id) {
-                    Some(c) if !c.available() => format!("{} is not available yet: it arrives in milestone M{}.", c.label, c.milestone),
+                    Some(c) if !c.available() => c.not_yet(),
                     _ => format!("unknown command `{id}`"),
                 });
             }
