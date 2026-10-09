@@ -112,7 +112,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `drw.view.projected` | Projected View | parent (view); side: right \| left \| above \| below \| above_right \| above_left \| below_right \| below_left (diagonals: isometric); at: [x, y] (sheet mm); scale | yes |
 | `drw.view.section` | Section View | parent; a, b: the section line in the parent view (model mm, see drw.to_view); flip: look the other way; at; scale | yes |
 | `drw.view.detail` | Detail View | parent; center: [x, y] in the parent view (model mm); radius (model mm); scale (default twice the parent's); at | yes |
-| `drw.view.edit` | Edit View | view; at: [x, y] or by: [dx, dy] (projected views move along); scale; hidden, tangent, centerlines, label: true or false | yes |
+| `drw.view.edit` | Edit View | view; at: [x, y] or by: [dx, dy] (the views projected from it move along; a view projected beside, above or below its parent only slides in line with it); scale; hidden, tangent, centerlines, label: true or false | yes |
 | `drw.view.delete` | Delete View | view (and the views made from it, and their annotations) | yes |
 | `drw.dimension` | Dimension | view; type: horizontal \| vertical \| aligned \| diameter \| radius \| angle; a, b: picks from drw.pick (a line alone for its length, a circle for its size); at: [x, y] where the dimension line or text goes (sheet mm), or by: [dx, dy] from the middle of what is measured; text ("<>" is the value); precision (decimals, default 2) | yes |
 | `drw.hole_table` | Hole Table | view (a part view); origin: a pick for the datum (default the view's bottom-left); at: the table's top-left (default top right of the sheet) | yes |

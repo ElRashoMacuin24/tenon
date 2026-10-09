@@ -141,6 +141,15 @@ fn drawing_edits_undo_and_bad_input_is_refused() {
     e.exec("drw.redo", &json!({})).unwrap();
     assert_eq!(center(&info(&mut e), 1), center(&moved, 1));
     e.exec("drw.undo", &json!({})).unwrap();
+    // The top view, projected above the front view, only slides up and down in line with it;
+    // the right view only sideways.
+    e.exec("drw.view.edit", &json!({ "view": 2, "by": [10, 5] })).unwrap();
+    e.exec("drw.view.edit", &json!({ "view": 3, "by": [10, 5] })).unwrap();
+    let slid = info(&mut e);
+    assert_eq!(center(&slid, 1), [center(&before, 1)[0], center(&before, 1)[1] + 5.0]);
+    assert_eq!(center(&slid, 2), [center(&before, 2)[0] + 10.0, center(&before, 2)[1]]);
+    e.exec("drw.undo", &json!({})).unwrap();
+    e.exec("drw.undo", &json!({})).unwrap();
 
     // Deleting the top view takes its section and the annotations on it.
     e.exec("drw.view.delete", &json!({ "view": 2 })).unwrap();

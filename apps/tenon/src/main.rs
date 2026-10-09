@@ -1,8 +1,9 @@
 //! Tenon desktop application.
 //!
-//! Usage: `tenon [PROJECT.tenon] [--theme light|dark] [--run COMMAND]... [--screenshot OUT.png] [--size WIDTHxHEIGHT] [--version]`
+//! Usage: `tenon [FILE] [--theme light|dark] [--run COMMAND]... [--screenshot OUT.png] [--size WIDTHxHEIGHT] [--version]`
 //!
-//! `--run` runs a ribbon command (e.g. `model.extrude`) after the project opens.
+//! FILE is a part (`.tenon`), an assembly (`.tenonasm`) or a drawing (`.tenondrw`). `--run` runs a
+//! ribbon command (e.g. `model.extrude`) after it opens.
 //!
 //! `--screenshot` renders the window (after the model has regenerated), saves it as PNG and exits,
 //! so agents and CI can check the UI without screen capture.
@@ -95,14 +96,28 @@ fn parse_size(s: &str) -> Option<[f32; 2]> {
 fn services() -> Services {
     fn label(ext: &str) -> &str {
         match ext {
-            "tenon" => "Tenon project",
+            "tenon" => "Tenon part",
+            "tenonasm" => "Tenon assembly",
+            "tenondrw" => "Tenon drawing",
             "step" => "STEP",
             "stl" => "STL",
+            "pdf" => "PDF",
+            "svg" => "SVG",
+            "dxf" => "DXF",
+            "csv" => "CSV",
             other => other,
         }
     }
     Services {
-        pick_open: Some(Box::new(|| rfd::FileDialog::new().add_filter(label("tenon"), &["tenon"]).pick_file())),
+        // Parts, assemblies and drawings all open from File > Open.
+        pick_open: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .add_filter("Tenon files", &["tenon", "tenonasm", "tenondrw"])
+                .add_filter(label("tenon"), &["tenon"])
+                .add_filter(label("tenonasm"), &["tenonasm"])
+                .add_filter(label("tenondrw"), &["tenondrw"])
+                .pick_file()
+        })),
         pick_save: Some(Box::new(|name: &str, ext: &str| {
             let path = rfd::FileDialog::new().set_file_name(name).add_filter(label(ext), &[ext]).save_file()?;
             // Some platforms return the name without the chosen filter's extension.

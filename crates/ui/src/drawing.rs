@@ -879,7 +879,7 @@ impl Workbench {
         let paper = Rect::from_two_pos(cam.screen(rect, Vec2::new(0.0, 0.0)), cam.screen(rect, Vec2::new(w, h)));
         p.rect_filled(paper.translate(vec2(4.0, 4.0)), 0.0, Color32::from_black_alpha(70));
         p.rect_filled(paper, 0.0, Color32::WHITE);
-        let moving = d.drag.map(|(o, by)| (moving_owners(&d.session, o), by));
+        let moving = d.drag.map(|(o, by)| (moving_owners(&d.session, o), in_line(&d.session, o, by)));
         let color_of = |o: Owner| {
             if d.selected == Some(o) {
                 SELECTED
@@ -1457,6 +1457,17 @@ fn moving_owners(s: &DrwSession, o: Owner) -> Vec<Owner> {
         }
     }
     out
+}
+
+/// How far a dragged view moves: a view projected beside, above or below its parent only slides
+/// in line with it (as `drw.view.edit` moves it).
+fn in_line(s: &DrwSession, o: Owner, by: Vec2) -> Vec2 {
+    let Owner::View(v) = o else { return by };
+    match s.drawing().view(v).map(|x| &x.kind) {
+        Some(ViewKind::Projected { side: Side::Right | Side::Left, .. }) => Vec2::new(by.x, 0.0),
+        Some(ViewKind::Projected { side: Side::Above | Side::Below, .. }) => Vec2::new(0.0, by.y),
+        _ => by,
+    }
 }
 
 /// A picked line's two ends on the sheet.

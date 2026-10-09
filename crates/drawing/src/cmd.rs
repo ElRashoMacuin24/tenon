@@ -493,13 +493,20 @@ fn drw_view_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
     let (scale, at, by) = (scale_param(p)?, opt_vec2(p, "at")?, opt_vec2(p, "by")?);
     let (hidden, tangent, centerlines, label) = (opt_bool(p, "hidden")?, opt_bool(p, "tangent")?, opt_bool(p, "centerlines")?, opt_bool(p, "label")?);
     s.edit(|d| {
-        let old = d.view(vid).ok_or_else(|| CmdError(format!("{vid} does not exist")))?.center;
+        let v = d.view(vid).ok_or_else(|| CmdError(format!("{vid} does not exist")))?;
+        let old = v.center;
         let target = match (at, by) {
             (Some(a), _) => a,
             (None, Some(b)) => old + b,
             (None, None) => old,
         };
-        let shift = target - old;
+        let mut shift = target - old;
+        // A view projected beside its parent stays lined up with it: it only slides along.
+        match &v.kind {
+            ViewKind::Projected { side: Side::Right | Side::Left, .. } => shift.y = 0.0,
+            ViewKind::Projected { side: Side::Above | Side::Below, .. } => shift.x = 0.0,
+            _ => {}
+        }
         // Projected views move with their parent (they stay lined up with it).
         let family: Vec<ViewId> =
             d.family(vid).into_iter().filter(|f| *f == vid || matches!(d.view(*f).map(|v| &v.kind), Some(ViewKind::Projected { .. }))).collect();
@@ -885,7 +892,7 @@ static COMMANDS: &[DrwCommand] = &[
     DrwCommand {
         id: "drw.view.edit",
         label: "Edit View",
-        help: "view; at: [x, y] or by: [dx, dy] (projected views move along); scale; hidden, tangent, centerlines, label: true or false",
+        help: "view; at: [x, y] or by: [dx, dy] (the views projected from it move along; a view projected beside, above or below its parent only slides in line with it); scale; hidden, tangent, centerlines, label: true or false",
         mutates: true,
         views: false,
         run: drw_view_edit,

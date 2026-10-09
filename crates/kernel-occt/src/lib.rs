@@ -655,7 +655,8 @@ impl Kernel for OcctKernel {
         let mut curves = Vec::with_capacity(out.kinds.len());
         for (i, (kind, visible)) in out.kinds.iter().zip(&out.visible).enumerate() {
             let (from, to) = (out.offsets.get(i).copied().unwrap_or(0) as usize, out.offsets.get(i + 1).copied().unwrap_or(0) as usize);
-            let points: Vec<Vec2> = out.points.get(2 * from..2 * to).unwrap_or(&[]).as_chunks::<2>().0.iter().map(|&[x, y]| Vec2::new(x, y)).collect();
+            let points: Vec<Vec2> =
+                out.points.get(2 * from..2 * to).unwrap_or(&[]).as_chunks::<2>().0.iter().map(|&[x, y]| Vec2::new(x, y)).collect();
             let kind = match kind {
                 1 => HlrKind::Smooth,
                 2 => HlrKind::Outline,
