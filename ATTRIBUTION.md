@@ -52,6 +52,18 @@ Generated-in-code assets are original and have no file to list:
 | `examples/m3-pivot/pivot.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m3-pivot/pivot-exploded.png` | Tenon contributors | generated: same command (software render, exploded) | MIT OR Apache-2.0 | Original |
 | `examples/m3-pivot/workbench.png` | Tenon contributors | generated: `tenon examples/m3-pivot/pivot.tenonasm --run asm.dof --screenshot examples/m3-pivot/workbench.png` | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/plate.json` | Tenon contributors | written for this repository (the M4 demo command script) | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/plate.tenon` | Tenon contributors | generated: `tenon-cli run examples/m4-plate/plate.json --out examples/m4-plate` | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/pin.tenon` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/plate-pins.tenonasm` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/plate.tenondrw` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/plate.pdf` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/plate.svg` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/plate.dxf` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/plate-sheet1.png` | Tenon contributors | generated: same command (software render of sheet 1) | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/plate-sheet2.png` | Tenon contributors | generated: same command (software render of sheet 2) | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/workbench.png` | Tenon contributors | generated: `tenon examples/m4-plate/plate.tenondrw --screenshot examples/m4-plate/workbench.png` | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.json` | Tenon contributors | written for this repository (a second M2 example script) | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.tenon` | Tenon contributors | generated: `tenon-cli run examples/m2-mount/mount.json --out examples/m2-mount` | MIT OR Apache-2.0 | Original |

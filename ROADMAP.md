@@ -4,8 +4,8 @@ Status values: **done** (a named test proves it), **partial** (the gap is stated
 Nothing is marked done without a test. Milestone scope: `docs/plan.md`. Decisions:
 `docs/decisions.md`.
 
-Current milestone: **M3 assemblies, complete** (2026-10-08; CI on Linux, macOS and Windows).
-Next: M4 drawings.
+Current milestone: **M4 drawings, complete** (2026-10-08).
+Next: M5 breadth and polish.
 
 ## M0 foundations
 
@@ -126,6 +126,34 @@ and key input): `crates/ui/src/asm_tests.rs` (5). Worker slots: `worker_regenera
 | In-context editing of parts (with the rest of the assembly shown) | done | `editing_a_part_in_place_and_returning_updates_the_assembly` (double-click, edit, Return, the assembly follows, Save saves the part), the demo's `asm.edit_part`. Gap: no references from one part to another's geometry (adaptive parts) |
 | Assembly STEP export | partial | `the_m3_demo_script_builds_a_verified_pivot_assembly` (volume read back). Gap: placed solids only, no product structure |
 
-## M4 drawings, M5 breadth and polish, M6 native kernel
+## M4 drawings
+
+Demo: [examples/m4-plate](examples/m4-plate) (a plate, a pin, their assembly and a two-sheet drawing,
+built and checked by a command script).
+
+Complete 2026-10-08. Hidden-line removal: `crates/kernel-occt/tests/m4.rs` (2). Drawing crate:
+`crates/drawing/src` (6). Sheet raster: `lines_dashes_and_text_land_on_white_paper`. Files:
+`crates/io/tests/drw.rs` (2). Commands and demo: `apps/tenon-cli/tests/m4.rs` (2). UI (real pointer
+and key input): `crates/ui/src/drw_tests.rs` (4).
+
+| Feature | Status | Proof / gap |
+|---|---|---|
+| Drawing documents: `.tenondrw` linking part and assembly files by relative path (DEC-026) | done | `drawings_round_trip_with_model_paths_relative_to_the_file`, `damaged_and_mistaken_drawing_files_are_refused`; a moved folder and missing model files: `the_m4_demo_script_draws_a_plate_and_its_assembly` |
+| Sheets: ANSI A to D, ISO A4 to A1, several per drawing | done | the demo script (two B sheets), `drawing_edits_undo_and_bad_input_is_refused` (a sheet resized to A refits the scale), `views_and_dimensions_are_placed_by_clicking_on_the_sheet`, `models_edited_from_the_drawing_update_it` (the browser switches sheets) |
+| Standards: ANSI third-angle by default, ISO first-angle per drawing (DEC-027) | done | `frames_follow_the_projection_angle` (both angles, section frames unfolded from their parent). Gap: no per-company drafting standard settings (text heights, arrow styles) |
+| Base, projected and isometric views with hidden-line removal | done | `a_box_seen_from_the_front_is_its_front_rectangle`, `a_cylinder_shows_its_silhouettes_and_a_hole_its_hidden_lines`, `hatching_clipping_and_covered_hidden_lines`, the demo script (every view's direction and size), `views_and_dimensions_are_placed_by_clicking_on_the_sheet` (placed by clicking, lined up with their parent). Gap: no shaded views; tangent edges off by default with no per-view style beyond hidden lines |
+| Section views (full, hatched) | done | `hatching_clipping_and_covered_hidden_lines`, the demo script, `views_and_dimensions_are_placed_by_clicking_on_the_sheet` (line clicked, seen from the side it is placed). Gap: straight cutting lines only (no offset, aligned or half sections); one hatch pattern |
+| Detail views | done | `hatching_clipping_and_covered_hidden_lines` (clipped to the circle), the demo script (2:1). Gap: circular boundary only |
+| Associative dimensions: horizontal, vertical, aligned, diameter, radius, angle | done | the demo script (values picked from the views; the plate made thicker and the drawing updated: 12 becomes 16), `models_edited_from_the_drawing_update_it` (16 becomes 20 after editing from the drawing), `views_and_dimensions_are_placed_by_clicking_on_the_sheet` (the type chosen from what is clicked). Gap: no ordinate, baseline or chain dimensions; no tolerances; model dimensions cannot be retrieved into the drawing |
+| Centre marks and centrelines | partial | drawn automatically for holes and cylinders seen end-on or side-on (the CENTER layer of `the_m4_demo_script_draws_a_plate_and_its_assembly`). Gap: no centrelines for other symmetric features; none placed by hand |
+| Hole tables | done | the demo script (positions and descriptions from the hole features), `tables_balloons_and_text_through_the_tools`. Gap: holes made by Hole features only, not by patterns of them or by cut extrusions |
+| Balloons (placed and automatic) and parts lists from the bill of materials | done | the demo script, `tables_balloons_and_text_through_the_tools` (a balloon attached where the pin's edge was clicked; auto balloon; a parts list placed with the tool), `models_edited_from_the_drawing_update_it` (the list follows the assembly). Gap: no custom columns or part numbers beyond the file name |
+| Title block | partial | one Tenon title block per standard with fields from `drw.props` and the projection symbol (`svg_pdf_and_dxf_hold_the_sheet`, the demo's PDF). Gap: no user-defined title block templates or borders |
+| Export to PDF, SVG and DXF | done | `svg_pdf_and_dxf_hold_the_sheet`, `the_m4_demo_script_draws_a_plate_and_its_assembly` (two PDF pages, DXF read back: a layer per line type, the views' lines where they belong), `models_edited_from_the_drawing_update_it` (from the File menu). Gap: PDF text in Helvetica, not the drafting font of the other outputs |
+| Views update when the model changes | done | the demo script (`drw.update` after the model file changed), `models_edited_from_the_drawing_update_it` (Open Model, edit, Return; saving the drawing saves the model), `views_are_computed_on_the_geometry_thread`. Gap: changes made to a model file by another program are read on Update, not noticed by themselves |
+| Drawing environment in the UI (Place Views and Annotate ribbons, sheet that pans and zooms, browser, dragging and deleting, dialogs) | done | `crates/ui/src/drw_tests.rs` (4 tests with real pointer and key input) |
+| Demo: a drawing of a part and its assembly that follows a model change | done | `examples/m4-plate`, `the_m4_demo_script_draws_a_plate_and_its_assembly`, `drawing_edits_undo_and_bad_input_is_refused` |
+
+## M5 breadth and polish, M6 native kernel
 
 All missing. Scope per milestone: `docs/plan.md`.

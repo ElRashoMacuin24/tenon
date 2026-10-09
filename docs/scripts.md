@@ -76,7 +76,7 @@ millimetres and angles in degrees. `examples/m2-mount/mount.json` uses all of th
 
 ## Assemblies
 
-A script has one part document and one assembly. `file.new` starts a new part (scripts build
+A script has one part document, one assembly and one drawing. `file.new` starts a new part (scripts build
 several parts and save each). `asm.*` commands work on the assembly. `render.png` shows whichever
 was worked on last, and takes `exploded: true` for an assembly.
 
@@ -94,3 +94,26 @@ was worked on last, and takes `exploded: true` for an assembly.
 a target for `asm.constrain` and `asm.joint`. Every command that moves components returns the
 assembly's remaining degrees of freedom (`dof`). `asm.edit_part` runs a part command on a
 component's part, as editing in place does. `examples/m3-pivot/pivot.json` uses all of this.
+
+## Drawings
+
+A script also has one drawing; `drw.*` commands work on it. `drw.view.base` takes a part or
+assembly file (`model`), read relative to the output folder. Sheet positions (`at`) are millimetres
+of paper from the sheet's bottom-left corner. `render.png` after a drawing command draws a sheet
+(`sheet`, `width`).
+
+```json
+{ "run": "drw.new", "with": { "name": "Plate", "standard": "ansi", "size": "B" } },
+{ "run": "drw.view.base", "with": { "model": "plate.tenon", "orientation": "front", "scale": 1, "at": [100, 70] }, "as": "front" },
+{ "run": "drw.view.projected", "with": { "parent": "$front.view", "side": "above" }, "as": "top" },
+{ "run": "drw.pick", "with": { "view": "$top.view", "view_at": [60, 80] }, "as": "edge", "expect": { "kind": "line", "length": 120 } },
+{ "run": "drw.dimension", "with": { "view": "$top.view", "type": "horizontal", "a": "$edge", "by": [0, 12] }, "expect": { "value": 120 } },
+{ "run": "drw.export.pdf", "with": { "path": "plate.pdf" } }
+```
+
+`drw.pick` finds the edge drawn nearest a point, as a click does: `at` on the sheet, or
+`view_at` in the view's own coordinates (model millimetres; `drw.to_sheet` and `drw.to_view`
+convert). `drw.dimension` places the dimension at `at`, or `by` an offset from the middle of what
+it measures. `drw.info` reports every view and every dimension's value and hole table's rows as
+they are now; after a model file changes, `drw.update` reads it again and the values follow.
+`examples/m4-plate/plate.json` uses all of this.

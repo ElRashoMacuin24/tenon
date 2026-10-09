@@ -4,7 +4,7 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestone M3 (assemblies) is done.** CI runs on Linux, macOS and Windows.
+**Status: milestone M4 (drawings) is done.** CI runs on Linux, macOS and Windows.
 
 In parts, you can:
 
@@ -28,12 +28,23 @@ In assemblies (`.tenonasm` files that use your part files), you can:
 - check interference, list the parts (and export the list as CSV), explode the assembly;
 - double-click a component to edit its part in place, with the rest of the assembly in view.
 
+In drawings (`.tenondrw` files that show your parts and assemblies), you can:
+
+- place base, projected, isometric, section and detail views on ANSI or ISO sheets, with hidden
+  lines removed and centrelines drawn;
+- dimension by clicking edges; the dimensions follow the model when it changes;
+- add hole tables, parts lists from the bill of materials, balloons and text;
+- open a view's model from the drawing, change it, and come back to an updated drawing;
+- export PDF, SVG and DXF.
+
 The workbench follows the familiar mechanical-CAD layout and workflow (ribbon, model browser,
 properties panel, orientation cube, radial menu). The same commands drive scripts and an MCP
-server for AI agents. Drawings are the next milestone. What works, with the test that proves each
-item, is in [ROADMAP.md](ROADMAP.md).
+server for AI agents. What works, with the test that proves each item, is in
+[ROADMAP.md](ROADMAP.md).
 
 ![The M3 demo assembly in the Tenon workbench](examples/m3-pivot/workbench.png)
+
+![The M4 demo drawing in the Tenon workbench](examples/m4-plate/workbench.png)
 
 ## Design
 
@@ -66,6 +77,7 @@ pixi install                       # once: OpenCASCADE 8 into .pixi/
 pixi run app                       # the desktop app (release build)
 pixi run app examples/m2-enclosure/enclosure.tenon
 pixi run app examples/m3-pivot/pivot.tenonasm
+pixi run app examples/m4-plate/plate.tenondrw
 pixi run cargo test --workspace    # build and test
 pixi run ci                        # the full gate CI runs
 pixi run cargo run -p tenon-cli -- run examples/m2-enclosure/enclosure.json --out out

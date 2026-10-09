@@ -193,6 +193,86 @@ Implemented in `crates/io/src/asm.rs` and `crates/assembly/src/model.rs`; tested
   itself. Exploded-view steps need a unit `direction`. Limits: 5 000 components and 20 000
   relationships.
 
+## Drawings (`.tenondrw`, version 1)
+
+A drawing is its own file (DEC-026), in the same zip container. It holds the sheets, the views
+and the annotations, never geometry: views are computed again from the model files each time the
+drawing is opened or updated, so they always show the models as they are.
+
+```json
+{
+  "format": "tenon-drawing",
+  "version": 1,
+  "generator": "tenon 0.1.0",
+  "drawing": {
+    "name": "Plate",
+    "standard": "ansi",
+    "props": { "title": "MOUNTING PLATE", "number": "TN-0004", "revision": "A",
+               "company": "", "drawn_by": "TENON", "date": "2026-10-08" },
+    "sheets": [
+      { "id": 1, "name": "Sheet:1",
+        "size": { "name": "B", "width": 431.8, "height": 279.4 },
+        "title_block": { "name": "ANSI", "lines": [ { "a": {...}, "b": {...} } ],
+                         "fields": [ { "key": "title", "label": "TITLE", "at": {...}, "height": 5.0 } ],
+                         "projection_symbol": { "x": -32.5, "y": 18.0 } },
+        "border": true }
+    ],
+    "views": [
+      { "id": 1, "sheet": 1, "name": "VIEW1", "model": "plate.tenon",
+        "kind": { "type": "base", "orientation": "front" },
+        "scale": 1.0, "center": { "x": 100.0, "y": 70.0 },
+        "hidden": true, "tangent": false, "centerlines": true, "label": false },
+      { "id": 2, ..., "kind": { "type": "projected", "parent": 1, "side": "above" } },
+      { "id": 5, ..., "kind": { "type": "section", "parent": 2, "a": {...}, "b": {...}, "flip": true } },
+      { "id": 6, ..., "kind": { "type": "detail", "parent": 1, "center": {...}, "radius": 10.0 } }
+    ],
+    "annotations": [
+      { "id": 1, "kind": { "type": "dimension", "view": 2, "dim": "horizontal",
+                           "a": GeomPick, "offset": { "x": 0.0, "y": 52.0 }, "precision": 2 } },
+      { "id": 5, "kind": { "type": "hole_table", "view": 2, "at": {...} } },
+      { "id": 6, "kind": { "type": "note", "sheet": 1, "at": {...}, "text": "...", "height": 3.0 } },
+      { "id": 7, "kind": { "type": "parts_list", "view": 7, "at": {...} } },
+      { "id": 8, "kind": { "type": "balloon", "view": 7, "component": 1,
+                           "attach": {...}, "offset": {...} } }
+    ],
+    "next_sheet": 3, "next_view": 8, "next_annotation": 10
+  }
+}
+```
+
+Implemented in `crates/io/src/drw.rs` and `crates/drawing/src/model.rs`; tested in
+`crates/io/tests/drw.rs`.
+
+- **Units.** Sheet positions are millimetres of paper from the sheet's bottom-left corner.
+  Title block geometry is measured from the bottom-right corner (negative `x`). Section lines and
+  detail circles are in their parent view's own coordinates, in model millimetres.
+- **`model`** is the part or assembly file's path relative to the drawing's folder, with `/`
+  separators, as in assemblies. A model that cannot be read is reported, and its views are empty
+  with the reason.
+- **`standard`**: `ansi` (third-angle projection) or `iso` (first-angle) (DEC-027). It decides
+  where projected views look from and which projection symbol the title block shows.
+- **View kinds:**
+  - `base`, with `orientation` one of `front`, `back`, `top`, `bottom`, `left`, `right`, `iso`;
+  - `projected`, with `parent` and `side` (`right`, `left`, `above`, `below`, or a corner such
+    as `above_right` for an isometric view);
+  - `section`, with `parent`, the cutting line `a`-`b`, and `flip` (seen towards the left of
+    `a`-`b` instead of the right);
+  - `detail`, with `parent`, `center` and `radius`.
+  Parents come before their children, so there are no cycles; a view shows the same model as its
+  parent.
+- **A `GeomPick`** is `{ "edge": EdgeRef, "point": "whole" | "start" | "end" | "mid" |
+  "center", "component": id }`: a persistent edge reference into the part (as in part files),
+  the component for assembly views, and which point of the edge is meant. Dimensions keep picks,
+  never values: a value is measured again from the model whenever the drawing is shown.
+- **Annotation kinds:** `dimension` (`dim`: `horizontal`, `vertical`, `aligned`, `diameter`,
+  `radius`, `angle`; `a`, optional `b`; `offset` from the view's centre; optional `text`, where
+  `<>` stands for the value; `precision`), `hole_table`, `parts_list`, `balloon` (`attach` in
+  the component's part coordinates, `offset` from the view's centre), `note`.
+- **Validation:** ids are positive, unique and below their counter; views sit on existing
+  sheets and refer to earlier views; annotations refer to existing views or sheets; scales are
+  between 1e-4 and 1e4; sizes, positions and text lengths are bounded. Limits: 500 sheets,
+  5 000 views and 50 000 annotations.
+
 ## Changing the format
 
 Every schema change bumps `version`, adds a migration from the previous version, and adds a

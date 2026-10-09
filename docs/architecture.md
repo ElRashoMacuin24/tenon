@@ -15,10 +15,10 @@ rules are enforced by `cargo xtask layers` (table in `xtask/src/layers.rs`) and
 | L2 | `sketch` | 2D sketch entities, constraints, solver behind `SketchSolver`, sketch tools, profile regions | M1 |
 | L3 | `model` | feature tree, regeneration (incremental), face and edge naming, parameters and equations, measuring, command registry and undo, regeneration worker | M2 |
 | L4 | `assembly` | assemblies: components, constraints and joints, the rigid-body solver, degrees of freedom, parts list, interference, exploded view, `asm.*` commands | M3 |
-| L5 | `drawing` | views, dimensions, title blocks, PDF/SVG/DXF | placeholder (M4) |
-| L6 | `io` | `.tenon` part and `.tenonasm` assembly files, file and export commands, STL; STEP via the kernel | M3 (3MF, DXF: later) |
-| L7 | `render` | camera, picking, software rasteriser, wgpu viewport renderer (no UI toolkit) | M1 |
-| L8 | `ui` | egui workbench: ribbon, browser, sketcher, feature panels, properties panel, viewport, dialogs; the assembly environment and editing parts in place | M3 |
+| L5 | `drawing` | drawings: sheets, views through hidden-line removal (projected, section, detail, isometric), associative dimensions, centrelines, hole tables, balloons, parts lists, title blocks, PDF/SVG/DXF, `drw.*` commands | M4 |
+| L6 | `io` | `.tenon` part, `.tenonasm` assembly and `.tenondrw` drawing files, file and export commands, STL; STEP via the kernel | M4 (3MF: later) |
+| L7 | `render` | camera, picking, software rasteriser, wgpu viewport renderer, drawing sheets to images (no UI toolkit) | M4 |
+| L8 | `ui` | egui workbench: ribbon, browser, sketcher, feature panels, properties panel, viewport, dialogs; the assembly environment and editing parts in place; the drawing environment | M4 |
 | exempt | `apps/tenon` | desktop binary (eframe + wgpu, OCCT, native file dialogs) | M1 |
 | exempt | `apps/tenon-cli` | headless CLI: command scripts, MCP server, PNG render, STEP tools | M1 |
 | exempt | `xtask` | workspace tooling and the CI gate | M0 |
@@ -110,6 +110,29 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
 - **Kernel work.** Interference and assembly STEP use the kernel: placed copies of each
   component's solids are intersected or exported.
 
+## Drawings (M4)
+
+`tenon_drawing` works on drawings in memory; `tenon_io::drw` reads and writes the files (DEC-026).
+
+- **Models.** A `DrwSession` holds the drawing (with undo) and one part `Session` or assembly
+  `AsmSession` per model file its views show, so a model can be edited from the drawing and saved
+  with it.
+- **Views.** `views::evaluate` builds every model through the kernel and projects it into each
+  view's frame with hidden-line removal (`Kernel::project_edges`, OCCT's `HLRBRep_Algo`).
+  Projected views take their frame from their parent (third-angle for ANSI, first-angle for ISO,
+  DEC-027). A section cuts the model with a half-space box first and hatches the cut faces; a
+  detail clips its parent's curves to a circle. The result (`Evaluation`) is keyed by everything
+  the views depend on (`DrwSession::eval_key`): moving a view or adding a dimension does not
+  recompute anything.
+- **Sheets.** `annotate::build` turns a sheet into `Graphics`: polylines with a pen (visible,
+  hidden, thin, centre, cutting, border, hatch), filled arrowheads and text, in millimetres of
+  paper. Dimensions keep persistent edge references and are measured again every time, which is
+  what makes them follow model changes. The same `Graphics` feeds the screen, SVG, PDF, DXF (a
+  layer per pen) and PNG (`tenon_render::sheet`).
+- **Picking.** A click on the sheet finds the model edge drawn nearest it (`annotate::edge_at`,
+  the edge nearest the eye where several are drawn on top of each other), so dimensions and
+  balloons are placed by clicking, in the UI and in scripts (`drw.pick` with `at`).
+
 ## The desktop app's data flow
 
 ```
@@ -127,14 +150,19 @@ changes, including live Extrude/Revolve previews, and keeps drawing the last `Sc
 new one arrives.
 
 The worker keeps one slot per document: slot 0 is the part being edited, and each part of an open
-assembly has its own slot. A new request cancels only its own slot's regeneration. Jobs (interference,
-assembly STEP) run on the worker against the slots' latest solids.
+assembly has its own slot. An edit cancels only its own slot's regeneration. A preview (a value
+being dragged or typed into a feature panel) never cancels: it waits, and only the latest waiting
+one runs, so a drag shows results all along instead of none until it stops
+(`a_stream_of_previews_shows_results_while_it_lasts`). Jobs (interference, assembly STEP, a
+drawing's views) run on the worker against the slots' latest solids.
 
 In an assembly, the viewport shows one `Scene` holding every visible component's bodies moved to
 where the component is, so picking and highlighting work unchanged. The GPU uploads bodies by key,
-so dragging one component re-sends only its triangles. A newer snapshot cancels the one in progress (`tenon_model::worker`). STEP
-export and measuring also run on the worker. Tests and tools can run the same workbench synchronously with a
-kernel on the calling thread (`Workbench::headless`).
+so dragging one component re-sends only its triangles (`tenon_model::worker`). STEP export and
+measuring also run on the worker. In a drawing, the central panel is the sheet; its views are
+computed by one worker job at a time, and the sheet keeps showing the last ones meanwhile. Tests
+and tools can run the same workbench synchronously with a kernel on the calling thread
+(`Workbench::headless`).
 
 The viewport renders through wgpu into an offscreen MSAA texture that egui shows as an image. It
 falls back to the software rasteriser when the app has no wgpu render state. Picking casts rays
@@ -168,5 +196,8 @@ wasm, stats).
 - **Ported in M1:** the Gauss-Newton constraint solver (`sketch/src/lm.rs`, attributed in
   NOTICE).
 - **Written for Tenon instead of ported (DEC-014):** the command registry and the MCP server.
-- **Still to come:** the drafting stack (fonts, dimensions, PDF plot) for drawings (M4).
-- **Not taken:** DWG, the AutoCAD command set, hatch/blocks/layers.
+- **Taken in M4:** the single-stroke drafting font (`drawing/src/stroke.rs`, attributed in
+  NOTICE). The rest of the drawing stack (views, dimensions, PDF, SVG and DXF output) was written
+  for Tenon; the DXF output uses the inherited `dxf` writer.
+- **Not taken:** DWG, the AutoCAD command set, CADCraft's drafting entities (blocks, hatch
+  objects).
