@@ -383,3 +383,27 @@ they keep persistent edge picks, never coordinates, so they follow the model.
 The owner chose to add them to format version 1 rather than start version 2: an older build of
 Tenon cannot open a drawing that uses them, and no build had been released, so nothing breaks.
 Drawings without them are unchanged.
+
+## DEC-030 "Save changes?" before New, Open and Exit (2026-10-09)
+
+No document type asked before discarding unsaved work (found in the M4 review). Now File > New
+Part, New Assembly, New Drawing, New Drawing from Template, Open and Exit, and the window's close
+button, show one modal prompt, "Save changes to <file>?", with Save, Don't Save and Cancel, when
+anything open has unsaved changes.
+
+- **One prompt for everything that would be lost.** A drawing is asked about with the models
+  changed from it, an assembly with its changed parts, including a model being edited from the
+  drawing and a part edited in place (both are on the workbench at the time). The prompt lists
+  those files under the top document's name.
+- **Save works from the top document**, as its File > Save does: saving a drawing saves the
+  models changed from it, saving an assembly its parts. There is no per-file choice; saving the
+  top document without the files it uses changed would leave it inconsistent with them.
+- **A document never saved asks where.** If that dialog is closed, or saving fails, nothing else
+  happens: the pending command does not run and nothing is lost.
+- **Asked first, then the file dialog** for Open and New from Template, as single-document
+  programs do. Cancelling the file dialog after Don't Save keeps the document, still changed.
+- **Keys:** Save is the default button (Enter) and Esc cancels. While the prompt is open no key
+  reaches the document behind it.
+- **Not asked:** a new document never edited; a file opened from the command line (nothing is
+  open yet); scripts, the CLI and MCP (their `file.new` and `file.open` are explicit); and
+  `--screenshot` runs, which always close.
