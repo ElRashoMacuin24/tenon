@@ -19,3 +19,4 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 tenon-kernel-occt = { workspace = true }
+quick-xml = { workspace = true }

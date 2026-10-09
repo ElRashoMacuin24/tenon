@@ -107,7 +107,7 @@ pub fn rasterize(g: &Graphics, px_per_mm: f64) -> Image {
         c.fill(pts);
     }
     for (_, t) in &g.texts {
-        let width = (t.height * 0.09 * px).max(1.0);
+        let width = (t.height * stroke::PEN * px).max(1.0);
         for s in stroke::text_strokes(&t.text, t.left(), t.height) {
             for w2 in s.windows(2) {
                 c.segment(w2[0], w2[1], width);

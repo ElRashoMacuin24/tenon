@@ -133,6 +133,10 @@ pub(crate) fn strokes(spec: &str) -> Vec<Vec<(f64, f64)>> {
         .collect()
 }
 
+/// The pen width text is drawn with, as a share of its cap height (the screen, PNG, PDF and SVG
+/// all use it).
+pub const PEN: f64 = 0.09;
+
 /// Width of `text` at cap height `height` (mm).
 pub fn text_width(text: &str, height: f64) -> f64 {
     let k = height / CAP;

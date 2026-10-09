@@ -45,32 +45,51 @@ fn the_m4_demo_script_draws_a_plate_and_its_assembly() {
     // thicker; here we check the files it writes and that the drawing reopens elsewhere.
     let dir = demo("plate");
 
-    // PDF: two pages, the title block's text in it.
+    // PDF: read back as a reader does (cross-references, stream lengths, page tree): two pages,
+    // with the title block's words in them (drawn in the drafting font, kept as invisible text).
     let pdf = std::fs::read(dir.join("plate.pdf")).unwrap();
-    assert!(pdf.starts_with(b"%PDF-"));
+    assert_eq!(tenon_drawing::export::check_pdf(&pdf), Ok(2));
     let text = String::from_utf8_lossy(&pdf);
-    assert_eq!(text.matches("/Type /Page").count() - text.matches("/Type /Pages").count(), 2);
-    assert!(text.contains("(MOUNTING PLATE)"));
+    assert!(text.contains("(MOUNTING PLATE)") && text.contains("BT 3 Tr"));
 
-    // SVG of sheet 1 (written while the plate was 12 thick).
+    // SVG of sheet 1 (written while the plate was 12 thick), read by an XML parser: the holes
+    // are circles.
     let svg = std::fs::read_to_string(dir.join("plate.svg")).unwrap();
-    assert!(svg.contains("<svg") && svg.trim_end().ends_with("</svg>"));
+    let mut circles = 0;
+    let mut reader = quick_xml::Reader::from_str(&svg);
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Empty(e)) if e.name().as_ref() == b"circle" => circles += 1,
+            Ok(quick_xml::events::Event::Eof) => break,
+            Err(e) => panic!("plate.svg is not well-formed XML: {e}"),
+            _ => {}
+        }
+    }
+    assert!(circles >= 8, "{circles} circles");
     for t in ["SECTION A-A", "DETAIL B", "SCALE 2:1", "Ø18", "CBORE"] {
         assert!(svg.contains(t), "{t} not in the SVG");
     }
 
-    // DXF read back: a layer per pen, the views' lines on them, the title as text.
+    // DXF read back: valid structure, a layer per pen, the holes as circles, curves joined, so
+    // a few hundred entities where there were over a thousand segments; the title as text.
     let dxf = std::fs::read(dir.join("plate.dxf")).unwrap();
+    let stats = tenon_drawing::export::check_dxf(&String::from_utf8_lossy(&dxf)).unwrap();
+    assert!(stats.circles >= 8 && stats.lines + stats.polylines + stats.arcs + stats.circles < 600, "{stats:?}");
     let tags = tenon_dxf::parse(&dxf).unwrap();
     let entities = tenon_dxf::sections(&tags).into_iter().find(|s| s.name == "ENTITIES").unwrap();
     let records = tenon_dxf::records(&entities.tags);
     let layer = |r: &[tenon_dxf::Tag]| r.iter().find(|t| t.code == 8).map(tenon_dxf::Tag::str).unwrap_or_default();
     let coord = |r: &[tenon_dxf::Tag], code: i32| r.iter().find(|t| t.code == code).map_or(f64::NAN, tenon_dxf::Tag::f64);
-    let lines: Vec<&(String, Vec<tenon_dxf::Tag>)> = records.iter().filter(|(k, _)| k == "LINE").collect();
-    assert!(lines.len() > 500, "{} lines", lines.len());
     for pen in ["VISIBLE", "HIDDEN", "CENTER", "CUTTING", "HATCH", "THIN", "BORDER"] {
-        assert!(lines.iter().any(|(_, r)| layer(r) == pen), "nothing on layer {pen}");
+        assert!(records.iter().any(|(k, r)| k != "TEXT" && layer(r) == pen), "nothing on layer {pen}");
     }
+    let lines: Vec<&(String, Vec<tenon_dxf::Tag>)> = records.iter().filter(|(k, _)| k == "LINE").collect();
+    // The counterbore seen from above: a circle 18 across on the top view, at (100, 136).
+    assert!(records.iter().any(|(k, r)| k == "CIRCLE"
+        && layer(r) == "VISIBLE"
+        && (coord(r, 40) - 9.0).abs() < 1e-6
+        && (coord(r, 10) - 100.0).abs() < 1e-6
+        && (coord(r, 20) - 136.0).abs() < 1e-6));
     // The top view's back edge: a visible line 120 long at y = 176, from x = 40.
     let back: Vec<[f64; 2]> = lines
         .iter()

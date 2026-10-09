@@ -2966,6 +2966,7 @@ dependencies = [
 name = "tenon-cli"
 version = "0.1.0"
 dependencies = [
+ "quick-xml",
  "serde",
  "serde_json",
  "tenon-assembly",
@@ -2984,6 +2985,7 @@ dependencies = [
 name = "tenon-drawing"
 version = "0.1.0"
 dependencies = [
+ "quick-xml",
  "serde",
  "serde_json",
  "tenon-assembly",

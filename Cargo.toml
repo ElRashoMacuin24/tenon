@@ -29,6 +29,8 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
 robust = "1.2"
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# tests only: SVG output is read back as XML
+quick-xml = "0.41"
 
 # native bindings (kernel-occt only; enforced by `cargo xtask layers`)
 cxx = "1.0.202"

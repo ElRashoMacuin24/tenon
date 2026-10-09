@@ -947,7 +947,7 @@ impl Workbench {
         }
         for (o, text) in &g.texts {
             let (color, shift) = (color_of(*o), shift_of(*o));
-            let width = ((text.height * 0.09 * cam.px) as f32).max(1.0);
+            let width = ((text.height * tenon_drawing::stroke::PEN * cam.px) as f32).max(1.0);
             for s in tenon_drawing::stroke::text_strokes(&text.text, text.left() + shift, text.height) {
                 let line: Vec<Pos2> = s.iter().map(|q| cam.screen(rect, *q)).collect();
                 if line.len() >= 2 {

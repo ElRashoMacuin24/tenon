@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod annotate;
+pub mod clean;
 pub mod cmd;
 pub mod export;
 pub mod graphics;

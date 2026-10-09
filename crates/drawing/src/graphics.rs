@@ -122,7 +122,9 @@ impl Graphics {
         }
     }
     pub fn circle(&mut self, owner: Owner, pen: Pen, c: Vec2, r: f64) {
-        let n = 72;
+        // Chords within 0.01 mm of the circle on paper (so outputs can write it as a circle).
+        let step = if r > 0.01 { 2.0 * (1.0 - 0.01 / r).acos() } else { 1.0 };
+        let n = ((std::f64::consts::TAU / step).ceil() as u32).clamp(24, 2000);
         let pts = (0..=n).map(|i| {
             let a = f64::from(i) / f64::from(n) * std::f64::consts::TAU;
             Vec2::new(c.x + r * a.cos(), c.y + r * a.sin())
