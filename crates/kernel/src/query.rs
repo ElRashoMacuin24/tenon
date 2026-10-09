@@ -1,7 +1,7 @@
 //! Query results: topology, face and edge geometry, meshes, mass properties.
 
 use serde::{Deserialize, Serialize};
-use tenon_geom::{Axis, Vec3, tol};
+use tenon_geom::{Axis, Vec2, Vec3, tol};
 
 /// Top-level type of a shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,4 +250,23 @@ pub struct Distance {
     pub value: f64,
     pub on_a: Vec3,
     pub on_b: Vec3,
+}
+
+/// What a projected edge is (hidden-line removal).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HlrKind {
+    /// An edge where faces meet at an angle.
+    Sharp,
+    /// An edge between tangent faces (a fillet's boundary).
+    Smooth,
+    /// The silhouette of a curved face.
+    Outline,
+}
+
+/// One edge seen in a view: a polyline in the view plane's coordinates (millimetres).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HlrCurve {
+    pub kind: HlrKind,
+    pub visible: bool,
+    pub points: Vec<Vec2>,
 }

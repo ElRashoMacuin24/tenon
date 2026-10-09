@@ -168,6 +168,16 @@ pub(crate) mod bridge {
         max: V3,
     }
 
+    /// Projected edges: curve i has kind kinds[i] (0 sharp, 1 smooth, 2 outline), is visible
+    /// when isible[i], and its points are x, y pairs points[2 * offsets[i]..2 * offsets[i + 1]].
+    #[derive(Debug, Default)]
+    struct HlrOut {
+        kinds: Vec<u8>,
+        visible: Vec<bool>,
+        offsets: Vec<u32>,
+        points: Vec<f64>,
+    }
+
     #[derive(Debug, Default)]
     struct DistOut {
         distance: f64,
@@ -232,6 +242,9 @@ pub(crate) mod bridge {
         fn solid_at(shape: &Shape, index: u32, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// Minimum distance between sub-shapes: kind 0 the whole shape, 1 a face, 2 an edge, 3 a vertex.
         fn min_distance(a: &Shape, kind_a: u8, index_a: u32, b: &Shape, kind_b: u8, index_b: u32, out: &mut DistOut) -> Result<()>;
+
+        /// Hidden-line removal along -Z of iew; with hidden, hidden edges too.
+        fn hlr(shapes: &ShapeList, view: &Frame3, deflection: f64, hidden: bool, out: &mut HlrOut) -> Result<()>;
 
         fn export_step(shapes: &ShapeList) -> Result<Vec<u8>>;
         fn import_step(data: &[u8]) -> Result<UniquePtr<ShapeList>>;

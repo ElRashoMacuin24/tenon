@@ -27,7 +27,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub use handle::{EdgeId, FaceId, ShapeHandle, TopoId, TopoKind, VertexId};
 pub use history::{Generated, History, Image, InputRef, Op, Origin, PrimitiveRole};
 pub use query::{
-    CurveKind, Distance, EdgeInfo, EdgePolyline, FaceInfo, FaceRange, MassProps, Mesh, MeshTol, ShapeKind, SubShape, SurfaceKind, Topology,
+    CurveKind, Distance, EdgeInfo, EdgePolyline, FaceInfo, FaceRange, HlrCurve, HlrKind, MassProps, Mesh, MeshTol, ShapeKind, SubShape, SurfaceKind,
+    Topology,
 };
 use tenon_geom::{Aabb3, Axis, Frame, Vec3};
 pub use types::{
@@ -257,6 +258,13 @@ pub trait Kernel: Send {
     fn duplicate(&mut self, shape: ShapeHandle) -> KResult<ShapeHandle> {
         let _ = shape;
         Err(KernelError::Unsupported("duplicate"))
+    }
+    /// Hidden-line removal: the edges of shapes seen from iew's +Z side, looking along -Z
+    /// (orthographic), as polylines in iew's X/Y coordinates within deflection (mm). With
+    /// hidden, the hidden edges come too.
+    fn project_edges(&mut self, shapes: &[ShapeHandle], view: &Frame, deflection: f64, hidden: bool) -> KResult<Vec<HlrCurve>> {
+        let _ = (shapes, view, deflection, hidden);
+        Err(KernelError::Unsupported("project_edges"))
     }
     /// Number of live shapes (leak checks in tests).
     fn live_shapes(&self) -> usize {

@@ -15,6 +15,10 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepLib.hxx>
+#include <HLRAlgo_Projector.hxx>
+#include <HLRBRep_Algo.hxx>
+#include <HLRBRep_HLRToShape.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
@@ -1113,6 +1117,58 @@ bool is_valid(const Shape& s) {
   return guarded("is_valid", [&] {
     BRepCheck_Analyzer analyzer(s.shape);
     return analyzer.IsValid();
+  });
+}
+
+namespace {
+// Appends every edge of `compound` (an HLR result, in the view's XY plane) as a polyline.
+void hlr_edges(const TopoDS_Shape& compound, std::uint8_t kind, bool visible, double deflection, HlrOut& out) {
+  if (compound.IsNull()) {
+    return;
+  }
+  for (TopExp_Explorer ex(compound, TopAbs_EDGE); ex.More(); ex.Next()) {
+    const TopoDS_Edge& edge = TopoDS::Edge(ex.Current());
+    if (BRep_Tool::Degenerated(edge)) {
+      continue;
+    }
+    // HLR results may carry only 2D curves.
+    BRepLib::BuildCurves3d(edge);
+    BRepAdaptor_Curve curve(edge);
+    GCPnts_TangentialDeflection points(curve, 0.1, deflection);
+    if (points.NbPoints() < 2) {
+      continue;
+    }
+    out.kinds.push_back(kind);
+    out.visible.push_back(visible);
+    out.offsets.push_back(static_cast<std::uint32_t>(out.points.size() / 2));
+    for (int i = 1; i <= points.NbPoints(); ++i) {
+      const gp_Pnt p = points.Value(i);
+      out.points.push_back(p.X());
+      out.points.push_back(p.Y());
+    }
+  }
+}
+} // namespace
+
+void hlr(const ShapeList& shapes, const Frame3& view, double deflection, bool hidden, HlrOut& out) {
+  guarded("hlr", [&] {
+    occ::handle<HLRBRep_Algo> algo = new HLRBRep_Algo();
+    for (const TopoDS_Shape& s : shapes.items) {
+      algo->Add(s);
+    }
+    algo->Projector(HLRAlgo_Projector(ax2(view)));
+    algo->Update();
+    algo->Hide();
+    HLRBRep_HLRToShape result(algo);
+    hlr_edges(result.VCompound(), 0, true, deflection, out);
+    hlr_edges(result.Rg1LineVCompound(), 1, true, deflection, out);
+    hlr_edges(result.OutLineVCompound(), 2, true, deflection, out);
+    if (hidden) {
+      hlr_edges(result.HCompound(), 0, false, deflection, out);
+      hlr_edges(result.Rg1LineHCompound(), 1, false, deflection, out);
+      hlr_edges(result.OutLineHCompound(), 2, false, deflection, out);
+    }
+    out.offsets.push_back(static_cast<std::uint32_t>(out.points.size() / 2));
   });
 }
 

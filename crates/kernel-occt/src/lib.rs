@@ -16,8 +16,8 @@ use ffi::bridge as sys;
 use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3, tol};
 use tenon_kernel::{
     AngleExtent, BoolOp, CancelToken, ChamferSpec, Curve2, CurveKind, Distance, EdgeId, EdgeInfo, EdgePolyline, Extent, FaceId, FaceInfo, FaceRange,
-    Generated, History, Image, InputRef, KResult, Kernel, KernelError, MassProps, Mesh, MeshTol, Op, Origin, PrimitiveRole, Profile, ShapeHandle,
-    ShapeKind, SubShape, SurfaceKind, TopoId, TopoKind, Topology, Transform, check,
+    Generated, History, HlrCurve, HlrKind, Image, InputRef, KResult, Kernel, KernelError, MassProps, Mesh, MeshTol, Op, Origin, PrimitiveRole,
+    Profile, ShapeHandle, ShapeKind, SubShape, SurfaceKind, TopoId, TopoKind, Topology, Transform, check,
 };
 
 /// OCCT's STEP translator keeps global state; exchange calls are serialised process-wide.
@@ -641,6 +641,29 @@ impl Kernel for OcctKernel {
         let mut hist = sys::HistoryOut::default();
         let s = sys::solid_at(self.get(shape)?, index, &mut hist).map_err(failed("solid"))?;
         self.finish(s, hist)
+    }
+
+    fn project_edges(&mut self, shapes: &[ShapeHandle], view: &Frame, deflection: f64, hidden: bool) -> KResult<Vec<HlrCurve>> {
+        self.not_cancelled()?;
+        if !(deflection.is_finite() && deflection > 0.0) {
+            return Err(bad("deflection must be positive"));
+        }
+        check::point("view origin", view.origin())?;
+        let list = self.shape_list(shapes)?;
+        let mut out = sys::HlrOut::default();
+        sys::hlr(&list, &frame3(view), deflection, hidden, &mut out).map_err(failed("hidden-line removal"))?;
+        let mut curves = Vec::with_capacity(out.kinds.len());
+        for (i, (kind, visible)) in out.kinds.iter().zip(&out.visible).enumerate() {
+            let (from, to) = (out.offsets.get(i).copied().unwrap_or(0) as usize, out.offsets.get(i + 1).copied().unwrap_or(0) as usize);
+            let points: Vec<Vec2> = out.points.get(2 * from..2 * to).unwrap_or(&[]).as_chunks::<2>().0.iter().map(|&[x, y]| Vec2::new(x, y)).collect();
+            let kind = match kind {
+                1 => HlrKind::Smooth,
+                2 => HlrKind::Outline,
+                _ => HlrKind::Sharp,
+            };
+            curves.push(HlrCurve { kind, visible: *visible, points });
+        }
+        Ok(curves)
     }
 
     fn min_distance(&self, a: SubShape, b: SubShape) -> KResult<Distance> {

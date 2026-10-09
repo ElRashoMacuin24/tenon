@@ -27,6 +27,7 @@ const OCCT_LIBS: &[&str] = &[
     "TKOffset",
     "TKFeat",
     "TKMesh",
+    "TKHLR",
     "TKShHealing",
     "TKXSBase",
     "TKDE",

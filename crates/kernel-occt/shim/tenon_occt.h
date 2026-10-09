@@ -30,6 +30,7 @@ struct MassOut;
 struct BoxOut;
 struct ProfileIn;
 struct DistOut;
+struct HlrOut;
 
 using ShapeMap = NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>;
 
@@ -89,6 +90,10 @@ std::unique_ptr<Shape> solid_at(const Shape& shape, std::uint32_t index, History
 // Minimum distance between sub-shapes: kind 0 the whole shape, 1 a face, 2 an edge, 3 a vertex.
 void min_distance(const Shape& a, std::uint8_t kind_a, std::uint32_t index_a, const Shape& b, std::uint8_t kind_b, std::uint32_t index_b,
                   DistOut& out);
+
+// Hidden-line removal: the edges of shapes seen along -Z of iew (orthographic), as polylines
+// in the view's XY coordinates, each marked sharp / smooth / outline and visible or hidden.
+void hlr(const ShapeList& shapes, const Frame3& view, double deflection, bool hidden, HlrOut& out);
 
 rust::Vec<std::uint8_t> export_step(const ShapeList& shapes);
 std::unique_ptr<ShapeList> import_step(rust::Slice<const std::uint8_t> data);
