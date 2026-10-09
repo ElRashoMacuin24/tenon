@@ -45,6 +45,11 @@ impl eframe::App for App {
         }
     }
 
+    // Closing properly: the copies kept against a crash are not needed (DEC-033).
+    fn on_exit(&mut self) {
+        self.wb.shutdown();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         // The window's close button asks before unsaved changes are lost; screenshot runs never ask.
@@ -179,6 +184,14 @@ fn main() -> eframe::Result {
             let saved = cc.storage.and_then(|s| s.get_string(THEME_KEY)).and_then(|s| parse_theme(&s));
             if let Some(t) = theme.or(saved) {
                 wb.set_theme(t);
+            }
+            // Unsaved work is kept against a crash beside the app's settings, and work a Tenon
+            // that crashed left there is offered back. Screenshot runs neither keep nor offer.
+            if screenshot.is_none()
+                && let Some(base) = eframe::storage_dir("Tenon").map(|d| d.join("recovery"))
+                && let Err(e) = wb.enable_recovery(&base)
+            {
+                eprintln!("warning: {e}");
             }
             if let Some(p) = project
                 && let Err(e) = wb.open(&p)

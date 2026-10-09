@@ -23,6 +23,7 @@ mod panels;
 mod params_dialog;
 mod properties;
 mod radial;
+mod recovery;
 mod sketcher;
 pub mod theme;
 mod viewport;
@@ -36,6 +37,8 @@ pub use workbench::{Services, Workbench};
 mod asm_tests;
 #[cfg(test)]
 mod drw_tests;
+#[cfg(test)]
+mod recovery_tests;
 #[cfg(test)]
 mod save_tests;
 #[cfg(test)]

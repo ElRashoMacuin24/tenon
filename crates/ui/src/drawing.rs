@@ -510,7 +510,7 @@ impl Workbench {
     }
 
     /// Runs `f` with the model edited from the drawing back in it (for saving).
-    fn with_model_home<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+    pub(crate) fn with_model_home<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         let swap = |wb: &mut Self| {
             let Some(d) = wb.drw.as_mut() else { return };
             let Some(key) = d.editing.clone() else { return };

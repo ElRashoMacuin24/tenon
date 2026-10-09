@@ -102,6 +102,12 @@ pub struct Workbench {
     sync_cache: tenon_model::RegenCache,
     /// The part last regenerated on this thread (headless use), for measuring.
     sync_regen: tenon_model::Regen,
+    /// Where unsaved work is kept against a crash (DEC-033), once the app gives a place.
+    pub(crate) recovery: Option<crate::recovery::Recovery>,
+    /// Work a Tenon that did not close properly left, offered back.
+    pub(crate) recover_offer: Option<crate::recovery::Offer>,
+    /// Seconds between autosaves.
+    pub(crate) autosave_seconds: f64,
 }
 
 impl Workbench {
@@ -141,6 +147,9 @@ impl Workbench {
             params_list: (0, serde_json::Value::Null),
             sync_cache: Default::default(),
             sync_regen: Default::default(),
+            recovery: None,
+            recover_offer: None,
+            autosave_seconds: crate::recovery::AUTOSAVE_SECONDS,
         }
     }
 
@@ -743,9 +752,10 @@ impl Workbench {
 
     /// Draws the whole window. `render` is the wgpu state when the app renders with wgpu.
     pub fn ui(&mut self, ui: &mut Ui, render: Option<&egui_wgpu::RenderState>) {
-        // While "Save changes?" is open, keys are for it alone (Delete must not delete what it
-        // asks about); they are handed back just before it is drawn.
-        let held: Vec<egui::Event> = if self.chrome.save_prompt.is_some() {
+        // While "Save changes?" or "Recover unsaved work?" is open, keys are for it alone (Delete
+        // must not delete what it asks about); they are handed back just before the prompts are
+        // drawn.
+        let held: Vec<egui::Event> = if self.chrome.save_prompt.is_some() || self.recover_offer.is_some() {
             ui.input_mut(|i| {
                 let (keys, rest) =
                     std::mem::take(&mut i.events).into_iter().partition(|e| matches!(e, egui::Event::Key { .. } | egui::Event::Text(_)));
@@ -822,6 +832,8 @@ impl Workbench {
         self.radial_ui(ui, &t);
         ui.input_mut(|i| i.events.extend(held));
         self.save_prompt(ui);
+        self.recover_prompt(ui);
+        self.autosave();
         if self.waiting || self.is_busy() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }

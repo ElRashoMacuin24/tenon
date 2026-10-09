@@ -459,3 +459,30 @@ smaller radius, or fewer edges. (Kernel: fillet failed: ...)").
 - **A result that cannot be right is a failure even when the kernel reports success.** A shell
   that leaves the volume unchanged hollowed nothing (OCCT does this when the walls are thicker
   than the part allows). Such checks belong in the model, so every kernel backend gets them.
+
+## DEC-033 Autosave and crash recovery (2026-10-09)
+
+While anything has unsaved changes, Tenon keeps copies of it in a folder of its own, never beside
+the user's files. After a crash, the next start offers them back.
+
+- **Where:** `<the app's settings folder>/recovery/<one folder per running Tenon>`, beside
+  eframe's settings (`eframe::storage_dir("Tenon")`). The user's folders and Git repositories
+  never get stray files.
+- **When:** every 30 seconds, if something changed since the last copy. Copies are written whole
+  and renamed into place; the manifest naming them is written last.
+- **What:**
+  - the open part, assembly or drawing;
+  - the parts and models it uses that were changed with it (parts edited in place, a model edited
+    from the drawing, a part inside an assembly the drawing shows, each kept where it was
+    changed).
+
+  The copies are in the current file format.
+- **Running or crashed:** each running Tenon holds an exclusive lock on its folder
+  (`File::try_lock`). A folder whose lock is free belongs to a Tenon that did not close properly.
+  A second window never sees another's work as lost.
+- **Recover, Discard or Not Now** (Esc). Recover opens the document from its file (or as new, if
+  it was never saved) and applies each kept copy as one edit. So the work shows as unsaved, Save
+  writes it where it came from, and Undo goes back to the saved file. Not Now keeps the copies for
+  the next start.
+- **Closing properly** (after Save or Don't Save) removes the folder. Screenshot runs neither
+  keep nor offer anything.
