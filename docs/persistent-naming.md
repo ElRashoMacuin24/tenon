@@ -126,13 +126,22 @@ reported as broken rather than silently mismatched.
 
 ## Required tests and their proof
 
-Model tests in `crates/model/tests/m2.rs` unless named otherwise.
+Model tests in `crates/model/tests/m2.rs` unless named otherwise. The corpus in
+`crates/model/tests/naming_corpus.rs` (M5) runs eleven upstream edits on one part holding an edge
+reference (a fillet) and a face reference (a sketch on a face). For each edit it says where both
+must land, or that the part must break with a message naming what is gone:
+- a dimension made larger or smaller, a taller extrusion, an extrusion turned the other way;
+- a hole added to the first sketch, an independent cut added before the fillet;
+- the referenced face cut in two;
+- two features reordered, an unrelated feature suppressed;
+- the line a referenced face came from deleted and drawn again;
+- the feature the references come from deleted (refused, naming its users).
 
 | Required | Test |
 |---|---|
 | An early sketch dimension changes; downstream fillets and chamfers still resolve: lengthen | `fillets_follow_upstream_edits` |
 | ... shorten | `edge_references_survive_shortening_and_added_sketch_geometry` |
-| ... flip a dimension sign | not tested |
+| ... flip a dimension sign | the corpus (`crates/model/tests/naming_corpus.rs`): an extrusion turned the other way; the references follow the face they name to the other side |
 | A sketch entity added upstream leaves references alone | `edge_references_survive_shortening_and_added_sketch_geometry` |
 | The entity a reference depends on is deleted: broken, with a clear message | `a_lost_edge_breaks_the_fillet_with_a_clear_message` |
 | A face cut in two keeps references to each piece | `a_split_face_keeps_each_piece_by_geometry` (by fingerprint) |
