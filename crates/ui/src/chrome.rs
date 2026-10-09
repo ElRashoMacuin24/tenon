@@ -7,7 +7,7 @@ use egui::{Align2, Color32, Frame, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use tenon_model::FeatureId;
 
 use crate::Workbench;
-use crate::commands::{self, FILE_MENU, QUICK_ACCESS, RIBBON, Size, UiCommand};
+use crate::commands::{self, ASM_RIBBON, FILE_MENU, QUICK_ACCESS, RIBBON, RibbonTab, Size, UiCommand};
 use crate::icons::{self, Icon};
 use crate::theme::{self, ThemeName, Tokens};
 
@@ -182,6 +182,34 @@ pub(crate) fn icon_button(ui: &Ui, rect: Rect, cmd: &UiCommand, active: bool, t:
 }
 
 impl Workbench {
+    /// The ribbon of the environment: assembly, or part (also while a part is edited in place).
+    pub(crate) fn ribbon_def(&self) -> &'static [RibbonTab] {
+        if self.in_assembly() { ASM_RIBBON } else { RIBBON }
+    }
+
+    /// The open document's file name and whether it has unsaved changes.
+    fn document_label(&self) -> (String, bool) {
+        if let Some(a) = &self.asm {
+            let file = a
+                .path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map_or_else(|| format!("{}.tenonasm", a.session.assembly().name), |n| n.to_string_lossy().into_owned());
+            let file = match &a.editing {
+                Some(e) => format!("{file} > {}", a.name(e.component)),
+                None => file,
+            };
+            return (file, a.session.is_dirty() || self.session.is_dirty());
+        }
+        let file = self
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("{}.tenon", self.session.document().name));
+        (file, self.session.is_dirty())
+    }
+
     pub(crate) fn title_bar(&mut self, ui: &mut Ui, t: &Tokens) {
         let r = ui.max_rect();
         // Tenon's mark: a tenon in its mortise.
@@ -203,13 +231,8 @@ impl Workbench {
                 x += 26.0;
             }
         }
-        let dirty = if self.session.is_dirty() { " *" } else { "" };
-        let file = self
-            .path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.session.document().name.clone());
+        let (file, dirty) = self.document_label();
+        let dirty = if dirty { " *" } else { "" };
         ui.painter().text(r.center(), Align2::CENTER_CENTER, format!("Tenon     {file}{dirty}"), theme::body(), t.text_dim);
 
         // Help, then command search to its left.
@@ -332,7 +355,7 @@ impl Workbench {
         }
         let mut x = file.right() + 6.0;
         let sketching = self.is_sketching();
-        for (i, tab) in RIBBON.iter().enumerate() {
+        for (i, tab) in self.ribbon_def().iter().enumerate() {
             let w = text_width(ui, tab.name, theme::body()) + 22.0;
             let tr = Rect::from_min_size(pos2(x, r.top() + 3.0), vec2(w, r.height() - 3.0));
             let resp = ui.interact(tr, ui.id().with(("tab", i)), Sense::CLICK);
@@ -347,7 +370,7 @@ impl Workbench {
                 ui.painter().rect_filled(tr, 3.0, t.hover);
             }
             // While sketching, the Sketch tab is the contextual one.
-            let color = if active || (sketching && i == commands::SKETCH_TAB) { t.text } else { t.text_dim };
+            let color = if active || (sketching && i == commands::SKETCH_TAB && !self.in_assembly()) { t.text } else { t.text_dim };
             ui.painter().text(tr.center(), Align2::CENTER_CENTER, tab.name, theme::body(), color);
             if resp.clicked() {
                 self.chrome.tab = i;
@@ -359,16 +382,19 @@ impl Workbench {
 
     pub(crate) fn ribbon(&mut self, ui: &mut Ui, t: &Tokens) {
         let r = ui.max_rect();
-        let Some(tab) = RIBBON.get(self.chrome.tab) else {
+        let Some(tab) = self.ribbon_def().get(self.chrome.tab).or_else(|| self.ribbon_def().first()) else {
             return;
         };
+        let return_panel = [commands::RibbonPanel { title: "Return", commands: std::slice::from_ref(&commands::RETURN) }];
+        let editing = self.editing_in_place();
         let title_h = 17.0;
         let top = r.top() + 4.0;
         let content_h = r.height() - title_h - 8.0;
         let mut x = r.left() + 6.0;
         let mut clicked = None;
         let active_tool = self.active_tool_id();
-        for panel in tab.panels {
+        let panels: Vec<&commands::RibbonPanel> = tab.panels.iter().chain(if editing { &return_panel[..] } else { &[] }).collect();
+        for panel in panels {
             let start = x;
             let mut hit = |h: Hit, id: &'static str| match h {
                 Hit::Main => clicked = Some((id, None)),
@@ -468,12 +494,7 @@ impl Workbench {
     pub(crate) fn doc_tabs(&mut self, ui: &mut Ui, t: &Tokens) {
         let r = ui.max_rect();
         icons::paint(ui.painter(), Rect::from_min_size(pos2(r.left() + 8.0, r.top() + 5.0), vec2(16.0, 16.0)), Icon::Home, t.icon_disabled);
-        let label = self
-            .path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| format!("{}.tenon", self.session.document().name));
+        let (label, _) = self.document_label();
         let w = text_width(ui, &label, theme::small()) + 34.0;
         let tab = Rect::from_min_size(pos2(r.left() + 32.0, r.top()), vec2(w, r.height()));
         ui.painter().rect_filled(tab, 0.0, t.panel);
@@ -481,7 +502,7 @@ impl Workbench {
         icons::paint_colored(
             ui.painter(),
             Rect::from_min_size(pos2(tab.left() + 6.0, tab.center().y - 7.0), vec2(14.0, 14.0)),
-            Icon::Part,
+            if self.asm.is_some() { Icon::Assembly } else { Icon::Part },
             t.icon,
             t,
             true,
@@ -497,12 +518,15 @@ impl Workbench {
         let status = if self.status.is_empty() { "Ready" } else { &self.status };
         ui.painter().text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, status, theme::small(), color);
         let mut right = Vec::new();
+        if let Some(a) = self.asm_status() {
+            right.push(a);
+        }
         if let Some(d) = self.sketch_dof_text() {
             right.push(d);
         }
         if self.waiting {
             right.push("Updating...".into());
-        } else if self.scene_seq > 0 {
+        } else if self.scene_seq > 0 && !self.in_assembly() {
             right.push(format!("{:.0} ms", self.scene.regen_ms + self.scene.mesh_ms));
         }
         right.push("mm".to_owned());

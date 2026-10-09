@@ -97,6 +97,18 @@ pub enum Icon {
     PreviousView,
     Projection,
     Delete,
+    // assemblies
+    Assembly,
+    Place,
+    CreateComponent,
+    Ground,
+    Joint,
+    Constrain,
+    Explode,
+    Interference,
+    Bom,
+    Dof,
+    Return,
 }
 
 /// What an icon depicts, for its fill colour.
@@ -104,7 +116,7 @@ fn category(icon: Icon) -> Option<Category> {
     use Icon::*;
     Some(match icon {
         Extrude | Revolve | Sweep | Loft | Coil | Fillet | Chamfer | Shell | Hole | Rib | Draft | Thread | Combine | Split | Part | Body | Cube
-        | MassProps | PatternRect | PatternCircular | Mirror => Category::Solid,
+        | MassProps | PatternRect | PatternCircular | Mirror | Assembly | Place | CreateComponent | Explode => Category::Solid,
         Plane | Axis | Point | Ucs | LookAt => Category::Work,
         NewSketch | FinishSketch => Category::Sketch,
         _ => return None,
@@ -620,6 +632,83 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.closed(&[(0.25, 0.3), (0.75, 0.3), (0.7, 0.9), (0.3, 0.9)]);
             pen.line(&[(0.15, 0.3), (0.85, 0.3)]);
             pen.line(&[(0.4, 0.3), (0.42, 0.15), (0.58, 0.15), (0.6, 0.3)]);
+        }
+        Icon::Assembly => {
+            // Two blocks, one standing on the other.
+            pen.fill(&[(0.08, 0.6), (0.62, 0.6), (0.62, 0.9), (0.08, 0.9)], soft);
+            pen.closed(&[(0.08, 0.6), (0.62, 0.6), (0.62, 0.9), (0.08, 0.9)]);
+            pen.closed(&[(0.42, 0.18), (0.92, 0.18), (0.92, 0.6), (0.42, 0.6)]);
+        }
+        Icon::Place => {
+            pen.fill(&[(0.1, 0.5), (0.55, 0.5), (0.55, 0.9), (0.1, 0.9)], soft);
+            pen.closed(&[(0.1, 0.5), (0.55, 0.5), (0.55, 0.9), (0.1, 0.9)]);
+            pen.line(&[(0.75, 0.1), (0.75, 0.45)]);
+            pen.arrow_head((0.75, 0.48), (0.75, 0.1));
+            pen.line(&[(0.62, 0.55), (0.9, 0.55)]);
+        }
+        Icon::CreateComponent => {
+            pen.fill(&[(0.1, 0.4), (0.6, 0.4), (0.6, 0.9), (0.1, 0.9)], soft);
+            pen.closed(&[(0.1, 0.4), (0.6, 0.4), (0.6, 0.9), (0.1, 0.9)]);
+            pen.line(&[(0.78, 0.08), (0.78, 0.4)]);
+            pen.line(&[(0.62, 0.24), (0.94, 0.24)]);
+        }
+        Icon::Ground => {
+            // A pin pushed into a base line.
+            pen.circle((0.5, 0.25), 0.15);
+            pen.line(&[(0.5, 0.4), (0.5, 0.75)]);
+            pen.line(&[(0.15, 0.8), (0.85, 0.8)]);
+            for i in 0..4 {
+                let x = 0.2 + i as f32 * 0.18;
+                pen.line(&[(x, 0.8), (x - 0.08, 0.94)]);
+            }
+        }
+        Icon::Joint => {
+            // Two links turning about a shared pin.
+            pen.closed(&[(0.08, 0.62), (0.5, 0.62), (0.5, 0.86), (0.08, 0.86)]);
+            pen.closed(&[(0.42, 0.66), (0.86, 0.14), (0.96, 0.26), (0.54, 0.8)]);
+            pen.circle((0.48, 0.73), 0.07);
+        }
+        Icon::Constrain => {
+            // Two faces brought together, arrows meeting.
+            pen.fill(&[(0.08, 0.1), (0.36, 0.1), (0.36, 0.9), (0.08, 0.9)], soft);
+            pen.closed(&[(0.08, 0.1), (0.36, 0.1), (0.36, 0.9), (0.08, 0.9)]);
+            pen.closed(&[(0.64, 0.1), (0.92, 0.1), (0.92, 0.9), (0.64, 0.9)]);
+            pen.line(&[(0.4, 0.5), (0.6, 0.5)]);
+            pen.arrow_head((0.4, 0.5), (0.6, 0.5));
+            pen.arrow_head((0.6, 0.5), (0.4, 0.5));
+        }
+        Icon::Explode => {
+            pen.fill(&[(0.32, 0.38), (0.68, 0.38), (0.68, 0.62), (0.32, 0.62)], soft);
+            pen.closed(&[(0.32, 0.38), (0.68, 0.38), (0.68, 0.62), (0.32, 0.62)]);
+            for (a, b) in [((0.3, 0.32), (0.08, 0.1)), ((0.7, 0.32), (0.92, 0.1)), ((0.3, 0.68), (0.08, 0.9)), ((0.7, 0.68), (0.92, 0.9))] {
+                pen.line(&[a, b]);
+                pen.arrow_head(b, a);
+            }
+        }
+        Icon::Interference => {
+            let red = Color32::from_rgb(0xd8, 0x44, 0x38);
+            pen.closed(&[(0.08, 0.3), (0.6, 0.3), (0.6, 0.85), (0.08, 0.85)]);
+            pen.closed(&[(0.4, 0.12), (0.92, 0.12), (0.92, 0.66), (0.4, 0.66)]);
+            pen.fill(&[(0.4, 0.3), (0.6, 0.3), (0.6, 0.66), (0.4, 0.66)], red);
+        }
+        Icon::Bom => {
+            pen.closed(&[(0.12, 0.08), (0.88, 0.08), (0.88, 0.92), (0.12, 0.92)]);
+            for y in [0.3, 0.5, 0.7] {
+                pen.line(&[(0.12, y), (0.88, y)]);
+            }
+            pen.line(&[(0.32, 0.08), (0.32, 0.92)]);
+        }
+        Icon::Dof => {
+            // A sliding arrow and a turning arrow.
+            pen.line(&[(0.1, 0.3), (0.9, 0.3)]);
+            pen.arrow_head((0.1, 0.3), (0.5, 0.3));
+            pen.arrow_head((0.9, 0.3), (0.5, 0.3));
+            pen.arc((0.5, 0.7), 0.32, 0.14, PI * 0.1, PI * 1.6);
+            pen.arrow_head((0.5 + 0.32 * (PI * 1.6).cos(), 0.7 + 0.14 * (PI * 1.6).sin()), (0.4, 0.55));
+        }
+        Icon::Return => {
+            pen.line(&[(0.85, 0.2), (0.85, 0.6), (0.2, 0.6)]);
+            pen.arrow_head((0.15, 0.6), (0.6, 0.6));
         }
     }
 }

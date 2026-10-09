@@ -113,6 +113,9 @@ pub struct Viewport {
     bind: wgpu::BindGroup,
     /// The meshes in their base colours, uploaded once per scene.
     bodies: Vec<GpuBody>,
+    /// What each body was uploaded from (`set_bodies_keyed`): a body whose key is unchanged is
+    /// kept rather than sent again.
+    body_keys: Vec<u64>,
     /// Highlighted faces and edges (selection, hover), drawn over the base at the same depth;
     /// small, rebuilt whenever the highlight changes.
     highlights: Vec<GpuBody>,
@@ -249,6 +252,7 @@ impl Viewport {
             uniforms,
             bind,
             bodies: Vec::new(),
+            body_keys: Vec::new(),
             highlights: Vec::new(),
             targets: None,
             show_faces: true,
@@ -267,7 +271,29 @@ impl Viewport {
     /// is far cheaper.
     pub fn set_bodies(&mut self, device: &wgpu::Device, meshes: &[(&Mesh, &BodyColors)]) {
         self.bodies = meshes.iter().map(|(m, c)| upload(device, m, c.face, c.edge, None)).collect();
+        self.body_keys.clear();
         self.set_highlights(device, meshes);
+    }
+
+    /// Like [`Viewport::set_bodies`], but each body comes with a key saying what it is (its mesh,
+    /// placement and base colours): bodies whose key was uploaded before are kept, so moving one
+    /// component of an assembly sends only its triangles. Returns how many bodies were uploaded.
+    pub fn set_bodies_keyed(&mut self, device: &wgpu::Device, meshes: &[(u64, &Mesh, &BodyColors)]) -> usize {
+        let mut old: std::collections::HashMap<u64, GpuBody> = self.body_keys.drain(..).zip(self.bodies.drain(..)).collect();
+        let mut uploaded = 0;
+        self.bodies = meshes
+            .iter()
+            .map(|(k, m, c)| {
+                old.remove(k).unwrap_or_else(|| {
+                    uploaded += 1;
+                    upload(device, m, c.face, c.edge, None)
+                })
+            })
+            .collect();
+        self.body_keys = meshes.iter().map(|(k, _, _)| *k).collect();
+        let pairs: Vec<(&Mesh, &BodyColors)> = meshes.iter().map(|(_, m, c)| (*m, *c)).collect();
+        self.set_highlights(device, &pairs);
+        uploaded
     }
 
     /// Uploads only the highlighted faces and edges (the per-face and per-edge colours).

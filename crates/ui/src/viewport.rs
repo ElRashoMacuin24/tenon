@@ -180,8 +180,10 @@ fn srgb(c: Color32) -> [f32; 3] {
 const BODY: Color32 = Color32::from_rgb(0xb8, 0xc0, 0xc8);
 const BODY_DIM: Color32 = Color32::from_rgb(0x8a, 0x92, 0x9a);
 const EDGE: Color32 = Color32::from_rgb(0x18, 0x1c, 0x22);
-const HOVER: Color32 = Color32::from_rgb(0x8f, 0xdc, 0xd6);
-const SELECTED: Color32 = Color32::from_rgb(0xf0, 0xa0, 0x3c);
+pub(crate) const HOVER: Color32 = Color32::from_rgb(0x8f, 0xdc, 0xd6);
+pub(crate) const SELECTED: Color32 = Color32::from_rgb(0xf0, 0xa0, 0x3c);
+/// Other components while a part is edited in place.
+const CONTEXT: Color32 = Color32::from_rgb(0x6c, 0x76, 0x82);
 
 impl Workbench {
     /// Glides the camera to `to`, remembering the current view for "Previous View".
@@ -373,11 +375,16 @@ impl Workbench {
         }
         self.navigate(ui, &resp, rect);
         let sketching = matches!(self.mode, Mode::Sketch(_));
-        if !sketching {
+        if self.in_assembly() {
+            self.asm_pointer(ui, &resp, rect);
+        } else if !sketching {
             self.model_pointer(ui, &resp, rect);
         }
         self.draw_scene(ui, rect, render);
-        self.draw_work(ui, rect, t);
+        self.asm_overlays(ui, rect, t);
+        if !self.in_assembly() {
+            self.draw_work(ui, rect, t);
+        }
         if self.pick_plane {
             self.draw_origin_planes(ui, rect, self.view.plane_hover, t);
         }
@@ -689,6 +696,14 @@ impl Workbench {
 
     /// Highlighted picks and their colours: the selection, an open panel's references, the hover.
     fn highlights(&self) -> Vec<(Pick, Color32)> {
+        if self.in_assembly() {
+            if matches!(self.panel, Some(crate::panels::Panel::Asm(_))) {
+                let mut v: Vec<(Pick, Color32)> = self.asm_panel_picks().into_iter().map(|p| (p, SELECTED)).collect();
+                v.extend(self.view.hover.map(|p| (p, HOVER)));
+                return v;
+            }
+            return self.asm_highlights();
+        }
         let mut v: Vec<(Pick, Color32)> = self.view.selection.iter().map(|p| (*p, SELECTED)).collect();
         v.extend(self.panel_picks().into_iter().map(|p| (p, SELECTED)));
         v.extend(self.view.hover.map(|p| (p, HOVER)));
@@ -715,13 +730,41 @@ impl Workbench {
             .collect()
     }
 
+    /// What each body is, for the GPU upload: in an assembly, the component's part and placement
+    /// (so moving one component re-sends only its bodies); otherwise the scene.
+    fn body_keys(&self, colors: &[BodyColors]) -> Vec<u64> {
+        let asm_keys = self.asm.as_ref().filter(|_| self.in_assembly()).map(|a| a.keys.clone());
+        let context = self.context_meshes();
+        let n = self.scene.bodies.len();
+        (0..n + context.len())
+            .map(|i| {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                match (asm_keys.as_ref().and_then(|k| k.get(i)), i.checked_sub(n).and_then(|j| context.get(j))) {
+                    (Some(k), _) => k.hash(&mut h),
+                    (None, Some((k, _))) => k.hash(&mut h),
+                    _ => (self.scene_seq, i).hash(&mut h),
+                }
+                if let Some(c) = colors.get(i) {
+                    format!("{:?}{:?}", c.face, c.edge).hash(&mut h);
+                }
+                h.finish()
+            })
+            .collect()
+    }
+
     fn draw_scene(&mut self, ui: &Ui, rect: Rect, render: Option<&egui_wgpu::RenderState>) {
-        let colors = self.colors();
+        let mut colors = self.colors();
+        // While a part is edited in place, the rest of the assembly is drawn after it, dimmed.
+        let dim = BodyColors { face: srgb(CONTEXT), edge: srgb(BODY_DIM), ..Default::default() };
+        colors.extend(self.context_meshes().iter().map(|_| dim.clone()));
+        let keys = self.body_keys(&colors);
+        // (Borrowed field by field, so the view can be updated while it is in use.)
+        let context: Vec<(u64, &tenon_kernel::Mesh)> =
+            self.asm.as_ref().and_then(|a| a.editing.as_ref()).map(|e| e.context.iter().map(|(k, m)| (*k, m)).collect()).unwrap_or_default();
         // Geometry (with base colours) and highlights are uploaded separately: hovering only
         // re-sends the few triangles of what is highlighted.
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        self.scene_seq.hash(&mut h);
-        format!("{:?}", colors.iter().map(|c| (c.face, c.edge)).collect::<Vec<_>>()).hash(&mut h);
+        keys.hash(&mut h);
         let base_key = h.finish();
         format!("{colors:?}").hash(&mut h);
         let key = h.finish();
@@ -733,11 +776,14 @@ impl Workbench {
             Some(rs) => {
                 let gpu = self.view.gpu.get_or_insert_with(|| Gpu { viewport: Viewport::new(&rs.device), texture: None });
                 if self.view.uploaded != Some((base_key, key)) {
-                    let pairs: Vec<(&tenon_kernel::Mesh, &BodyColors)> = self.scene.bodies.iter().map(|b| &b.mesh).zip(colors.iter()).collect();
+                    let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).chain(context.iter().map(|(_, m)| *m)).collect();
                     if self.view.uploaded.is_some_and(|u| u.0 == base_key) {
+                        let pairs: Vec<(&tenon_kernel::Mesh, &BodyColors)> = meshes.iter().copied().zip(colors.iter()).collect();
                         gpu.viewport.set_highlights(&rs.device, &pairs);
                     } else {
-                        gpu.viewport.set_bodies(&rs.device, &pairs);
+                        let keyed: Vec<(u64, &tenon_kernel::Mesh, &BodyColors)> =
+                            keys.iter().copied().zip(meshes.iter().copied()).zip(colors.iter()).map(|((k, m), c)| (k, m, c)).collect();
+                        gpu.viewport.set_bodies_keyed(&rs.device, &keyed);
                     }
                     self.view.uploaded = Some((base_key, key));
                 }
@@ -764,7 +810,7 @@ impl Workbench {
                 format!("{:?}", self.view.camera).hash(&mut kh);
                 let skey = kh.finish();
                 if self.view.soft.as_ref().is_none_or(|(_, k)| *k != skey) {
-                    let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+                    let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).chain(context.iter().map(|(_, m)| *m)).collect();
                     let to8 = |c: Color32| [c.r(), c.g(), c.b(), 255];
                     let face_colors: Vec<_> = self
                         .highlights()
@@ -797,7 +843,24 @@ impl Workbench {
 
     fn messages(&self, ui: &Ui, rect: Rect, t: &Tokens) {
         let p = ui.painter();
-        if self.document().features().is_empty() && !matches!(self.mode, Mode::Sketch(_)) {
+        if self.in_assembly() {
+            if self.asm.as_ref().is_some_and(|a| a.session.assembly().components.is_empty()) {
+                p.text(
+                    rect.center() - vec2(0.0, 12.0),
+                    Align2::CENTER_CENTER,
+                    "Place a part file to start (Assemble > Place).",
+                    theme::heading(),
+                    t.viewport_text,
+                );
+                p.text(
+                    rect.center() + vec2(0.0, 12.0),
+                    Align2::CENTER_CENTER,
+                    "The first component is grounded at the origin; constrain the others to it.",
+                    theme::small(),
+                    t.text_dim,
+                );
+            }
+        } else if self.document().features().is_empty() && !matches!(self.mode, Mode::Sketch(_)) {
             p.text(rect.center() - vec2(0.0, 12.0), Align2::CENTER_CENTER, "Start with New Sketch (Model tab).", theme::heading(), t.viewport_text);
             p.text(
                 rect.center() + vec2(0.0, 12.0),

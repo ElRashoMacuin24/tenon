@@ -3079,6 +3079,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "serde_json",
+ "tenon-assembly",
  "tenon-geom",
  "tenon-io",
  "tenon-kernel",

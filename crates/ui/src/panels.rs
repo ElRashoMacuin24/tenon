@@ -429,8 +429,19 @@ pub(crate) enum Panel {
     Measure(Box<MeasurePanel>),
     Rib(RibPanel),
     Value(ValuePanel),
-    EditDimension { sketch: FeatureId, constraint: ConstraintId, value: f64, angular: bool, equation: Option<String> },
-    Rename { feature: FeatureId, name: String },
+    EditDimension {
+        sketch: FeatureId,
+        constraint: ConstraintId,
+        value: f64,
+        angular: bool,
+        equation: Option<String>,
+    },
+    Rename {
+        feature: FeatureId,
+        name: String,
+    },
+    /// Constrain, Joint or Tweak in an assembly.
+    Asm(Box<crate::asm_panel::AsmPanel>),
 }
 
 impl Panel {
@@ -1167,6 +1178,19 @@ impl Workbench {
                         if !keep && again {
                             reopen = Some("model.rib");
                         }
+                    }
+                }
+            }
+            Panel::Asm(p) => {
+                if commit {
+                    let done = self.commit_asm_panel(p);
+                    keep = !done;
+                    if done && again {
+                        reopen = Some(match p.tool {
+                            crate::asm_panel::AsmTool::Constrain => "asm.constrain",
+                            crate::asm_panel::AsmTool::Joint => "asm.joint",
+                            crate::asm_panel::AsmTool::Tweak => "asm.explode.tweak",
+                        });
                     }
                 }
             }

@@ -144,7 +144,7 @@ fn worker_regenerates_off_thread_and_reports_the_latest() {
     let mut last = None;
     while let Some(r) = w.recv_timeout(Duration::from_secs(30)) {
         match r {
-            Response::Scene { revision, scene } => {
+            Response::Scene { revision, scene, .. } => {
                 last = Some((revision, scene));
                 if revision == 2 {
                     break;
@@ -176,6 +176,40 @@ fn worker_regenerates_off_thread_and_reports_the_latest() {
         Some(Response::Measure { request: 8, result: Ok(m) }) => assert!(approx(m.get("Area").unwrap(), area)),
         other => panic!("{other:?}"),
     }
+
+    // Slots: two parts at once, each answered under its own slot; neither cancels the other.
+    let mut thick = Session::default();
+    bracket(&mut thick, &mut k, 12.0);
+    w.regenerate_slot(5, 1, s.document().clone(), false);
+    w.regenerate_slot(6, 1, thick.document().clone(), false);
+    let mut volumes = std::collections::BTreeMap::new();
+    while volumes.len() < 2 {
+        match w.recv_timeout(Duration::from_secs(30)) {
+            Some(Response::Scene { slot, scene, .. }) => {
+                volumes.insert(slot, scene.bodies[0].volume);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert!(approx(volumes[&5], 60.0 * 40.0 * 8.0 - 2.0 * PI * 16.0 * 8.0));
+    assert!(approx(volumes[&6], 60.0 * 40.0 * 12.0 - 2.0 * PI * 16.0 * 12.0));
+    // A job sees every slot's solids.
+    w.job(
+        9,
+        Box::new(|k, slots| {
+            let v: f64 = slots.values().flat_map(|r| r.bodies.iter()).map(|b| k.mass_properties(b.shape, 1.0).map_or(0.0, |m| m.volume)).sum();
+            Box::new(v)
+        }),
+    );
+    match w.recv_timeout(Duration::from_secs(30)) {
+        Some(Response::Job { request: 9, result }) => {
+            let v = *result.downcast::<f64>().unwrap();
+            // Slot 0 (the bracket) and slots 5 and 6.
+            assert!(approx(v, volumes[&5] * 2.0 + volumes[&6]), "{v}");
+        }
+        other => panic!("{other:?}"),
+    }
+    w.drop_slot(6);
 }
 
 #[test]

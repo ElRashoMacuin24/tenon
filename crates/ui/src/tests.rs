@@ -146,28 +146,28 @@ fn sketch_extrude_and_sketch_on_the_top_face_through_the_ui() {
 }
 
 /// Feeds raw pointer events through egui, frame by frame, as the windowing layer would.
-struct Driver {
-    ctx: egui::Context,
+pub(crate) struct Driver {
+    pub(crate) ctx: egui::Context,
     time: f64,
     size: egui::Vec2,
 }
 
 impl Driver {
-    fn new(size: egui::Vec2) -> Driver {
+    pub(crate) fn new(size: egui::Vec2) -> Driver {
         Driver { ctx: egui::Context::default(), time: 0.0, size }
     }
-    fn frame(&mut self, wb: &mut Workbench, events: Vec<egui::Event>) {
+    pub(crate) fn frame(&mut self, wb: &mut Workbench, events: Vec<egui::Event>) {
         self.time += 1.0 / 60.0;
         let input =
             egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)), time: Some(self.time), events, ..Default::default() };
         self.ctx.run_ui(input, |ui| wb.ui(ui, None)).drop_without_applying_deltas();
     }
     /// Holds (or releases) modifier keys from the next frame on.
-    fn modifiers(&mut self, wb: &mut Workbench, m: egui::Modifiers) {
+    pub(crate) fn modifiers(&mut self, wb: &mut Workbench, m: egui::Modifiers) {
         self.frame(wb, vec![egui::Event::ModifiersChanged(m)]);
     }
     /// Runs frames until view transitions have finished.
-    fn settle(&mut self, wb: &mut Workbench) {
+    pub(crate) fn settle(&mut self, wb: &mut Workbench) {
         for _ in 0..120 {
             self.frame(wb, vec![]);
             if wb.view.anim.is_none() {
@@ -177,23 +177,23 @@ impl Driver {
         panic!("the view never settled");
     }
     /// Holds a key down (`true`) or lets it go.
-    fn key(&mut self, wb: &mut Workbench, key: egui::Key, pressed: bool) {
+    pub(crate) fn key(&mut self, wb: &mut Workbench, key: egui::Key, pressed: bool) {
         self.frame(wb, vec![egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::default() }]);
     }
     /// Presses and releases a key (a second press without a release counts as a repeat).
-    fn tap(&mut self, wb: &mut Workbench, key: egui::Key) {
+    pub(crate) fn tap(&mut self, wb: &mut Workbench, key: egui::Key) {
         let ev = |pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::default() };
         self.frame(wb, vec![ev(true), ev(false)]);
     }
-    fn button(pos: Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
+    pub(crate) fn button(pos: Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
         egui::Event::PointerButton { pos, button, pressed, modifiers: egui::Modifiers::default() }
     }
-    fn click(&mut self, wb: &mut Workbench, pos: Pos2) {
+    pub(crate) fn click(&mut self, wb: &mut Workbench, pos: Pos2) {
         self.frame(wb, vec![egui::Event::PointerMoved(pos)]);
         self.frame(wb, vec![Self::button(pos, egui::PointerButton::Primary, true)]);
         self.frame(wb, vec![Self::button(pos, egui::PointerButton::Primary, false)]);
     }
-    fn drag(&mut self, wb: &mut Workbench, from: Pos2, to: Pos2, button: egui::PointerButton) {
+    pub(crate) fn drag(&mut self, wb: &mut Workbench, from: Pos2, to: Pos2, button: egui::PointerButton) {
         self.frame(wb, vec![egui::Event::PointerMoved(from)]);
         self.frame(wb, vec![Self::button(from, button, true)]);
         for k in 1..=10 {
@@ -204,7 +204,7 @@ impl Driver {
 }
 
 /// Screen position of a model point in the last viewport.
-fn on_screen(wb: &Workbench, p: tenon_geom::Vec3) -> Pos2 {
+pub(crate) fn on_screen(wb: &Workbench, p: tenon_geom::Vec3) -> Pos2 {
     let r = wb.view.rect;
     let (x, y, _) = wb.view.camera.project(p, f64::from(r.width()), f64::from(r.height())).unwrap();
     r.min + vec2(x as f32, y as f32)
@@ -895,7 +895,7 @@ fn editing_a_used_sketch_waits_for_finish_to_update_the_part() {
 }
 
 /// Where a browser row was drawn in the last frame.
-fn browser_row(d: &Driver, label: &str) -> Rect {
+pub(crate) fn browser_row(d: &Driver, label: &str) -> Rect {
     d.ctx
         .data(|x| x.get_temp::<Vec<(String, Rect)>>(egui::Id::new("tn_browser_rows")))
         .unwrap_or_default()

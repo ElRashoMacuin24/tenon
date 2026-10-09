@@ -405,6 +405,7 @@ impl Workbench {
                     | Panel::Work(_)
                     | Panel::Measure(_)
                     | Panel::Rib(_)
+                    | Panel::Asm(_)
             )
         )
     }
@@ -454,6 +455,9 @@ impl Workbench {
             Panel::Work(w) => (w.title(), w.editing.map(|f| self.feature_name(f))),
             Panel::Measure(_) => ("Measure", Some("Distance, angle, length, area".to_string())),
             Panel::Rib(p) => ("Rib", p.editing.map(|f| self.feature_name(f))),
+            Panel::Asm(p) => {
+                (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
+            }
             _ => return,
         };
         let mut clear = false;
@@ -1335,6 +1339,7 @@ impl Workbench {
                             });
                         });
                     }
+                    Panel::Asm(p) => self.asm_panel_ui(ui, p, t),
                     _ => {}
                 }
             },

@@ -276,6 +276,135 @@ pub const RIBBON: &[RibbonTab] = &[
     },
 ];
 
+/// The ribbon of the assembly environment.
+pub const ASM_RIBBON: &[RibbonTab] = &[
+    RibbonTab {
+        name: "Assemble",
+        panels: &[
+            RibbonPanel {
+                title: "Component",
+                commands: &[
+                    large("asm.place", "Place", "Place a part file in the assembly", Icon::Place, 0).key("P"),
+                    large("asm.create", "Create", "A new part file, placed and edited in place", Icon::CreateComponent, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Position",
+                commands: &[
+                    small(
+                        "asm.free_rotate",
+                        "Free Rotate",
+                        "Dragging a component turns it instead of moving it; its relationships still hold",
+                        Icon::Rotate,
+                        0,
+                    ),
+                    small("asm.ground", "Grounded", "Fix the selected components where they are, or free them", Icon::Ground, 0),
+                    small("asm.update", "Update", "Solve every relationship again", Icon::Update, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Relationships",
+                commands: &[
+                    large("asm.joint", "Joint", "Rigid, rotational, slider, cylindrical, planar or ball joint between two origins", Icon::Joint, 0)
+                        .key("J"),
+                    large("asm.constrain", "Constrain", "Mate, flush, angle or insert", Icon::Constrain, 0).key("C"),
+                ],
+            },
+            RibbonPanel {
+                title: "Explode",
+                commands: &[
+                    large("asm.explode.toggle", "Exploded\nView", "Show the assembly exploded, or assembled again", Icon::Explode, 0),
+                    small("asm.explode.auto", "Auto Explode", "An exploded view made from the relationships", Icon::Explode, 0),
+                    small("asm.explode.tweak", "Tweak", "Move components along a direction in the exploded view", Icon::Move, 0),
+                    small("asm.explode.clear", "Clear Explode", "Remove every exploded-view step", Icon::Delete, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Pattern",
+                commands: &[
+                    small("asm.pattern", "Pattern", "Repeat components", Icon::PatternRect, 5),
+                    small("asm.mirror", "Mirror", "Mirror components", Icon::Mirror, 5),
+                    small("asm.copy", "Copy", "Copy components", Icon::Copy, 5),
+                ],
+            },
+        ],
+    },
+    RibbonTab {
+        name: "Inspect",
+        panels: &[
+            RibbonPanel {
+                title: "Interference",
+                commands: &[large("asm.interference", "Analyze\nInterference", "Find the components whose solids overlap", Icon::Interference, 0)],
+            },
+            RibbonPanel {
+                title: "Measure",
+                commands: &[large("inspect.mass", "Mass\nProperties", "Volume, area, centre of mass, inertia", Icon::MassProps, 0)],
+            },
+        ],
+    },
+    RibbonTab {
+        name: "Tools",
+        panels: &[RibbonPanel {
+            title: "Options",
+            commands: &[
+                large("tools.options", "Application\nOptions", "Colour scheme and other settings", Icon::Settings, 0),
+                large("app.about", "About", "Version, licences and kernel information", Icon::Info, 0),
+            ],
+        }],
+    },
+    RibbonTab {
+        name: "Manage",
+        panels: &[
+            RibbonPanel {
+                title: "Bill of Materials",
+                commands: &[large("asm.bom", "Bill of\nMaterials", "The parts list with quantities and volumes; export it as CSV", Icon::Bom, 0)],
+            },
+            RibbonPanel { title: "Update", commands: &[large("asm.update", "Update", "Solve every relationship again", Icon::Update, 0)] },
+        ],
+    },
+    RibbonTab {
+        name: "View",
+        panels: &[
+            RibbonPanel {
+                title: "Appearance",
+                commands: &[
+                    large("view.style", "Visual\nStyle", "Shaded with edges, shaded, or wireframe", Icon::VisualStyle, 0).more(&[
+                        "view.style.shaded_edges",
+                        "view.style.shaded",
+                        "view.style.wireframe",
+                    ]),
+                    small("view.orthographic", "Orthographic", "Parallel projection", Icon::Projection, 0),
+                    small("view.perspective", "Perspective", "Perspective projection", Icon::Projection, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Visibility",
+                commands: &[small("asm.dof", "Degrees of Freedom", "Show the motions each component has left", Icon::Dof, 0)],
+            },
+            RibbonPanel {
+                title: "Windows",
+                commands: &[
+                    small("view.browser", "Browser", "Show or hide the model browser", Icon::Browser, 0),
+                    small("view.cube", "Orientation Cube", "Show or hide the orientation cube", Icon::Cube, 0),
+                    small("view.navbar", "Navigation Bar", "Show or hide the navigation bar", Icon::Window, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Navigate",
+                commands: &[
+                    small("view.home", "Home View", "Three-quarter view of the whole part (F6)", Icon::Home, 0),
+                    small("view.fit", "Zoom All", "Fit the model in the window", Icon::ZoomFit, 0),
+                    small("view.look_at", "Look At", "Look straight at the selected planar face or the active sketch", Icon::LookAt, 0),
+                    small("view.previous", "Previous View", "Go back to the last view (F5)", Icon::PreviousView, 0),
+                ],
+            },
+        ],
+    },
+];
+
+/// The panel shown at the end of the ribbon while a part is edited in place.
+pub const RETURN: UiCommand = large("asm.return", "Return", "Finish editing the part and go back to the assembly", Icon::Return, 0);
+
 /// Commands reachable from drop-down arrows, menus and keys but not shown on the ribbon itself.
 pub const EXTRA: &[UiCommand] = &[
     small("sketch.spline", "Spline", "Click control points; Enter finishes", Icon::Spline, 0),
@@ -284,6 +413,9 @@ pub const EXTRA: &[UiCommand] = &[
     small("view.style.shaded_edges", "Shaded with Edges", "Shaded faces with their edges", Icon::VisualStyle, 0),
     small("view.style.shaded", "Shaded", "Shaded faces only", Icon::VisualStyle, 0),
     small("view.style.wireframe", "Wireframe", "Edges only", Icon::VisualStyle, 0),
+    small("file.new_assembly", "New Assembly", "A new assembly of part files", Icon::Assembly, 0),
+    small("asm.edit", "Edit", "Edit the selected component's part in place", Icon::Part, 0),
+    RETURN,
 ];
 
 /// Navigation bar (right edge of the viewport). Pan/Zoom/Orbit make the left button do that.
@@ -315,6 +447,7 @@ pub const QUICK_ACCESS: &[&[UiCommand]] = &[
 /// File menu entries (label, command id).
 pub const FILE_MENU: &[(&str, &str)] = &[
     ("New Part", "file.new"),
+    ("New Assembly", "file.new_assembly"),
     ("Open...", "file.open"),
     ("Save", "file.save"),
     ("Save As...", "file.save_as"),
@@ -326,6 +459,7 @@ pub const FILE_MENU: &[(&str, &str)] = &[
 pub fn all() -> impl Iterator<Item = &'static UiCommand> {
     RIBBON
         .iter()
+        .chain(ASM_RIBBON)
         .flat_map(|t| t.panels.iter())
         .flat_map(|p| p.commands.iter())
         .chain(EXTRA)
@@ -340,7 +474,10 @@ pub fn find(id: &str) -> Option<&'static UiCommand> {
 
 /// Where a command lives, e.g. "3D Model > Create" (for search results).
 pub fn location(id: &str) -> Option<String> {
-    RIBBON.iter().find_map(|t| t.panels.iter().find(|p| p.commands.iter().any(|c| c.id == id)).map(|p| format!("{} > {}", t.name, p.title)))
+    RIBBON
+        .iter()
+        .chain(ASM_RIBBON)
+        .find_map(|t| t.panels.iter().find(|p| p.commands.iter().any(|c| c.id == id)).map(|p| format!("{} > {}", t.name, p.title)))
 }
 
 /// Commands matching a search, best first: label prefix, then word prefix, then substring.
@@ -371,11 +508,13 @@ pub fn search(query: &str) -> Vec<&'static UiCommand> {
 }
 
 /// The command for a single-key shortcut. While sketching, sketch keys come first and the rest
-/// still work (E extrudes, finishing the sketch).
-pub fn for_key(key: &str, sketching: bool) -> Option<&'static UiCommand> {
+/// still work (E extrudes, finishing the sketch). In an assembly, the Assemble tab's keys.
+pub fn for_key(key: &str, sketching: bool, assembly: bool) -> Option<&'static UiCommand> {
     let tabs: &[usize] = if sketching { &[SKETCH_TAB, MODEL_TAB] } else { &[MODEL_TAB] };
+    let ribbon = if assembly { ASM_RIBBON } else { RIBBON };
+    let tabs: &[usize] = if assembly { &[0] } else { tabs };
     tabs.iter()
-        .filter_map(|t| RIBBON.get(*t))
+        .filter_map(|t| ribbon.get(*t))
         .flat_map(|t| t.panels.iter())
         .flat_map(|p| p.commands.iter())
         .find(|c| c.key == Some(key) && c.available())
@@ -418,9 +557,12 @@ mod tests {
         assert_eq!(search("start").first().map(|c| c.id), Some("sketch.new"), "working commands before later milestones");
         assert!(search("sketch").iter().take(2).any(|c| c.id == "sketch.finish"), "a word prefix ranks above a substring");
         assert!(search("zzzz").is_empty());
-        assert_eq!(for_key("E", false).map(|c| c.id), Some("model.extrude"));
-        assert_eq!(for_key("L", true).map(|c| c.id), Some("sketch.line"));
-        assert!(for_key("L", false).is_none(), "sketch keys only while sketching");
+        assert_eq!(for_key("E", false, false).map(|c| c.id), Some("model.extrude"));
+        assert_eq!(for_key("L", true, false).map(|c| c.id), Some("sketch.line"));
+        assert!(for_key("L", false, false).is_none(), "sketch keys only while sketching");
+        assert_eq!(for_key("C", false, true).map(|c| c.id), Some("asm.constrain"));
+        assert!(for_key("E", false, true).is_none(), "no part keys in an assembly");
+        assert_eq!(location("asm.joint").as_deref(), Some("Assemble > Relationships"));
         assert_eq!(location("model.extrude").as_deref(), Some("3D Model > Create"));
     }
 }

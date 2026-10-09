@@ -190,6 +190,14 @@ fn gpu_viewport_renders_when_an_adapter_exists() {
     vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
     let (_, _, back) = vp.read_pixels(&device, &queue).unwrap();
     assert_eq!(pixel(&back, w, x, y), g, "the base colour again");
+
+    // Keyed bodies: only new keys are uploaded; the picture is the same.
+    assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &colors), (2, &m, &colors)]), 2);
+    assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &colors), (3, &m, &colors)]), 1, "body 1 is kept");
+    assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &colors)]), 0);
+    vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
+    let (_, _, keyed) = vp.read_pixels(&device, &queue).unwrap();
+    assert_eq!(pixel(&keyed, w, x, y), g);
 }
 
 /// Minimal executor for wgpu's futures (they complete immediately on native backends).

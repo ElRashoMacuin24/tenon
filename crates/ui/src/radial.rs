@@ -63,6 +63,20 @@ impl Workbench {
                 [entry("ui.ok"), None, entry("view.fit"), None, entry("ui.cancel"), None, entry("view.previous"), None],
                 vec!["view.home", "view.look_at"],
             )
+        } else if self.in_assembly() {
+            (
+                [
+                    repeat,
+                    entry("asm.joint"),
+                    entry("asm.constrain"),
+                    entry("asm.place"),
+                    entry("view.previous"),
+                    entry("view.home"),
+                    entry("asm.edit"),
+                    entry("view.fit"),
+                ],
+                vec!["asm.ground", "asm.dof", "asm.bom", "edit.undo", "edit.redo"],
+            )
         } else if matches!(self.mode, Mode::Sketch(_)) {
             (
                 [
@@ -92,6 +106,10 @@ impl Workbench {
                 vec!["inspect.mass", "edit.undo", "edit.redo"],
             )
         };
+        let mut more = more;
+        if self.editing_in_place() {
+            more.insert(0, "asm.return");
+        }
         Radial { center, slots, more: more.into_iter().filter_map(entry).collect() }
     }
 

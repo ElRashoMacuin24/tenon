@@ -1,7 +1,7 @@
 //! Work on placed components' solids through the kernel: interference, STEP export of the whole
 //! assembly.
 
-use tenon_geom::{Axis, Frame, Vec3, tol};
+use tenon_geom::{Aabb3, Axis, Frame, Vec3, tol};
 use tenon_kernel::{BoolOp, Kernel, KernelError, Mesh, MeshTol, ShapeHandle, Transform};
 
 use crate::math::M3;
@@ -25,34 +25,53 @@ pub fn place(k: &mut dyn Kernel, shape: ShapeHandle, f: &Frame) -> Result<ShapeH
     Ok(moved?.shape)
 }
 
-/// The solids of every visible component, placed (at `frames`, or their placements). The caller
-/// releases them.
-pub fn placed_solids(
+/// One component's solids, as the kernel holds them in part coordinates, with where they go.
+#[derive(Clone, Debug)]
+pub struct Placed {
+    pub component: ComponentId,
+    pub shapes: Vec<ShapeHandle>,
+    pub frame: Frame,
+    /// The part's bounding box, in part coordinates (skips pairs that cannot touch).
+    pub bbox: Option<Aabb3>,
+}
+
+/// The solids of every visible component, as the parts' sessions regenerate them (they keep the
+/// shapes; nothing here is to be released).
+pub fn placed_parts(
     k: &mut dyn Kernel,
     asm: &Assembly,
     parts: &mut Parts,
     frames: Option<&std::collections::BTreeMap<ComponentId, Frame>>,
-) -> Result<Vec<(ComponentId, ShapeHandle)>, String> {
+) -> Result<Vec<Placed>, String> {
     let mut out = Vec::new();
-    let result = (|| {
-        for c in asm.components.iter().filter(|c| c.visible) {
-            let part = parts.get_mut(&c.part).ok_or_else(|| format!("{}: the part is not loaded", c.name))?;
-            if let Some(why) = &part.missing {
-                return Err(format!("{} is missing: {why}", c.name));
-            }
-            let f = frames.and_then(|m| m.get(&c.id)).copied().unwrap_or(c.placement);
-            let bodies: Vec<ShapeHandle> = part.session.regen(k).bodies.iter().map(|b| b.shape).collect();
-            for b in bodies {
-                out.push((c.id, place(k, b, &f).map_err(|e| e.to_string())?));
+    for c in asm.components.iter().filter(|c| c.visible) {
+        let bbox = local_bbox(parts, c);
+        let part = parts.get_mut(&c.part).ok_or_else(|| format!("{}: the part is not loaded", c.name))?;
+        if let Some(why) = &part.missing {
+            return Err(format!("{} is missing: {why}", c.name));
+        }
+        let frame = frames.and_then(|m| m.get(&c.id)).copied().unwrap_or(c.placement);
+        let shapes = part.session.regen(k).bodies.iter().map(|b| b.shape).collect();
+        out.push(Placed { component: c.id, shapes, frame, bbox });
+    }
+    Ok(out)
+}
+
+/// Placed copies of every solid; the caller releases them.
+fn copies(k: &mut dyn Kernel, items: &[Placed]) -> Result<Vec<(ComponentId, ShapeHandle, Option<Aabb3>)>, String> {
+    let mut out = Vec::new();
+    for it in items {
+        for s in &it.shapes {
+            match place(k, *s, &it.frame) {
+                Ok(c) => out.push((it.component, c, it.bbox.map(|b| placed_bbox(&b, &it.frame)))),
+                Err(e) => {
+                    for (_, c, _) in out {
+                        k.release(c);
+                    }
+                    return Err(e.to_string());
+                }
             }
         }
-        Ok(())
-    })();
-    if let Err(e) = result {
-        for (_, s) in out {
-            k.release(s);
-        }
-        return Err(e);
     }
     Ok(out)
 }
@@ -68,20 +87,18 @@ pub struct Clash {
     pub mesh: Mesh,
 }
 
-/// Every pair of visible components (among `only`, when given) whose solids overlap.
-pub fn interference(k: &mut dyn Kernel, asm: &Assembly, parts: &mut Parts, only: Option<&[ComponentId]>) -> Result<Vec<Clash>, String> {
-    let solids = placed_solids(k, asm, parts, None)?;
-    let boxes: Vec<Option<tenon_geom::Aabb3>> =
-        solids.iter().map(|(id, _)| asm.component(*id).and_then(|c| local_bbox(parts, c).map(|b| placed_bbox(&b, &c.placement)))).collect();
-    let mut clashes: Vec<Clash> = Vec::new();
+/// Every pair of components (one of them among `only`, when given) whose solids overlap.
+pub fn clashes(k: &mut dyn Kernel, items: &[Placed], only: Option<&[ComponentId]>) -> Result<Vec<Clash>, String> {
+    let solids = copies(k, items)?;
+    let mut found: Vec<Clash> = Vec::new();
     let mut err = None;
     'pairs: for i in 0..solids.len() {
         for j in i + 1..solids.len() {
-            let ((ca, sa), (cb, sb)) = (solids[i], solids[j]);
+            let ((ca, sa, ba), (cb, sb, bb)) = (solids[i], solids[j]);
             if ca == cb || only.is_some_and(|o| !o.contains(&ca) && !o.contains(&cb)) {
                 continue;
             }
-            if let (Some(Some(a)), Some(Some(b))) = (boxes.get(i), boxes.get(j)) {
+            if let (Some(a), Some(b)) = (ba, bb) {
                 let apart =
                     a.max.x < b.min.x || b.max.x < a.min.x || a.max.y < b.min.y || b.max.y < a.min.y || a.max.z < b.min.z || b.max.z < a.min.z;
                 if apart {
@@ -98,7 +115,7 @@ pub fn interference(k: &mut dyn Kernel, asm: &Assembly, parts: &mut Parts, only:
             let volume = k.mass_properties(common, 1.0).map(|m| m.volume).unwrap_or(0.0);
             if volume > tol::CLASH_VOLUME {
                 let mesh = k.tessellate(common, &MeshTol::default()).unwrap_or_default();
-                match clashes.iter_mut().find(|c| c.a == ca && c.b == cb) {
+                match found.iter_mut().find(|c| c.a == ca && c.b == cb) {
                     // Parts with several bodies: one clash per pair of components.
                     Some(c) => {
                         c.volume += volume;
@@ -107,19 +124,39 @@ pub fn interference(k: &mut dyn Kernel, asm: &Assembly, parts: &mut Parts, only:
                         c.mesh.normals.extend(mesh.normals);
                         c.mesh.indices.extend(mesh.indices.iter().map(|i| i.saturating_add(base)));
                     }
-                    None => clashes.push(Clash { a: ca, b: cb, volume, mesh }),
+                    None => found.push(Clash { a: ca, b: cb, volume, mesh }),
                 }
             }
             k.release(common);
         }
     }
-    for (_, s) in solids {
+    for (_, s, _) in solids {
         k.release(s);
     }
     match err {
         Some(e) => Err(e),
-        None => Ok(clashes),
+        None => Ok(found),
     }
+}
+
+/// Every pair of visible components (among `only`, when given) whose solids overlap.
+pub fn interference(k: &mut dyn Kernel, asm: &Assembly, parts: &mut Parts, only: Option<&[ComponentId]>) -> Result<Vec<Clash>, String> {
+    let items = placed_parts(k, asm, parts, None)?;
+    clashes(k, &items, only)
+}
+
+/// STEP data of solids where they are placed.
+pub fn step_of(k: &mut dyn Kernel, items: &[Placed]) -> Result<Vec<u8>, String> {
+    let solids = copies(k, items)?;
+    if solids.is_empty() {
+        return Err("there is no solid to export".into());
+    }
+    let shapes: Vec<ShapeHandle> = solids.iter().map(|(_, s, _)| *s).collect();
+    let data = k.export_step(&shapes).map_err(|e| e.to_string());
+    for s in shapes {
+        k.release(s);
+    }
+    data
 }
 
 /// STEP data of every visible component's solids where they are placed (at `frames`, e.g. the
@@ -130,14 +167,6 @@ pub fn export_step(
     parts: &mut Parts,
     frames: Option<&std::collections::BTreeMap<ComponentId, Frame>>,
 ) -> Result<Vec<u8>, String> {
-    let solids = placed_solids(k, asm, parts, frames)?;
-    if solids.is_empty() {
-        return Err("there is no solid to export".into());
-    }
-    let shapes: Vec<ShapeHandle> = solids.iter().map(|(_, s)| *s).collect();
-    let data = k.export_step(&shapes).map_err(|e| e.to_string());
-    for s in shapes {
-        k.release(s);
-    }
-    data
+    let items = placed_parts(k, asm, parts, frames)?;
+    step_of(k, &items)
 }

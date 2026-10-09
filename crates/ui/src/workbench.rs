@@ -46,14 +46,17 @@ pub(crate) enum Mode {
 /// The part workbench.
 pub struct Workbench {
     pub(crate) chrome: Chrome,
+    /// The part being modelled (in an assembly: the part edited in place, or an empty one).
     pub(crate) session: Session,
-    geo: Geo,
+    pub(crate) geo: Geo,
     pub(crate) scene: Scene,
     pub(crate) scene_seq: u64,
-    shown: Option<Document>,
+    pub(crate) shown: Option<Document>,
     /// Document revision and open panel the shown document was made from: when neither
     /// changed, nothing needs comparing.
-    shown_key: Option<u64>,
+    pub(crate) shown_key: Option<u64>,
+    /// The open assembly, if the workbench is in the assembly environment.
+    pub(crate) asm: Option<Box<crate::assembly::AsmDoc>>,
     /// Rebuild All: the next regeneration starts from scratch.
     rebuild_all: bool,
     seq: u64,
@@ -65,9 +68,9 @@ pub struct Workbench {
     pub(crate) status: String,
     pub(crate) status_error: bool,
     pub(crate) path: Option<PathBuf>,
-    services: Services,
+    pub(crate) services: Services,
     exit: bool,
-    step_seq: u64,
+    pub(crate) step_seq: u64,
     step_export: Option<(u64, PathBuf)>,
     /// The last modelling or sketch command (for "Repeat").
     pub(crate) last_command: Option<&'static str>,
@@ -99,6 +102,7 @@ impl Workbench {
             scene_seq: 0,
             shown: None,
             shown_key: None,
+            asm: None,
             rebuild_all: false,
             seq: 0,
             waiting: false,
@@ -173,7 +177,7 @@ impl Workbench {
     }
     /// True while regeneration or an export is running on the worker.
     pub fn is_busy(&self) -> bool {
-        self.waiting || self.step_export.is_some()
+        self.waiting || self.step_export.is_some() || self.asm.as_ref().is_some_and(|a| !a.jobs.is_empty())
     }
     pub fn is_sketching(&self) -> bool {
         matches!(self.mode, Mode::Sketch(_))
@@ -212,6 +216,7 @@ impl Workbench {
     pub(crate) fn command(&mut self, id: &str) {
         let repeatable = commands::find(id)
             .filter(|c| ["sketch.", "model.", "work.", "inspect."].iter().any(|p| c.id.starts_with(p)) && c.id != "sketch.finish")
+            .or_else(|| commands::find(id).filter(|c| ["asm.constrain", "asm.joint", "asm.place"].contains(&c.id)))
             .map(|c| c.id);
         match self.run_ui(id) {
             Ok(()) => {
@@ -225,6 +230,34 @@ impl Workbench {
 
     /// Ribbon, menu and toolbar commands.
     pub fn run_ui(&mut self, id: &str) -> Result<(), String> {
+        if id.starts_with("asm.") || id == "file.new_assembly" {
+            return self.run_asm_ui(id);
+        }
+        // In an assembly (no part edited in place), part commands have nothing to work on.
+        if self.in_assembly() {
+            match id {
+                "edit.undo" | "edit.redo" => {
+                    let undo = id == "edit.undo";
+                    let a = self.asm.as_mut().ok_or("no assembly")?;
+                    if !(if undo { a.session.undo() } else { a.session.redo() }) {
+                        return Err(format!("nothing to {}", if undo { "undo" } else { "redo" }));
+                    }
+                    a.selected.retain(|c| a.session.assembly().component(*c).is_some());
+                    self.panel = None;
+                    return Ok(());
+                }
+                "export.step" => {
+                    let name = format!("{}.step", self.asm.as_ref().map_or("Assembly1".into(), |a| a.session.assembly().name.clone()));
+                    let path = self.services.pick_save.as_ref().and_then(|f| f(&name, "step")).ok_or("no file chosen")?;
+                    return self.export_assembly_step(&path);
+                }
+                "model.rebuild" => return self.run_asm_ui("asm.update"),
+                _ if ["sketch.", "model.", "work."].iter().any(|p| id.starts_with(p)) || id == "inspect.measure" || id == "tools.parameters" => {
+                    return Err("that works on a part: double-click a component to edit its part in place".into());
+                }
+                _ => {}
+            }
+        }
         match id {
             "view.browser" => self.chrome.show_browser = !self.chrome.show_browser,
             "view.cube" => self.chrome.show_cube = !self.chrome.show_cube,
@@ -253,6 +286,7 @@ impl Workbench {
             "app.exit" => self.exit = true,
             "inspect.mass" => self.chrome.mass = true,
             "file.new" => {
+                self.leave_assembly();
                 self.session.replace_document(Document::default(), None);
                 self.path = None;
                 self.mode = Mode::Model;
@@ -263,6 +297,17 @@ impl Workbench {
             "file.open" => {
                 let p = self.services.pick_open.as_ref().and_then(|f| f()).ok_or("no file chosen")?;
                 self.open(&p)?;
+            }
+            "file.save" | "file.save_as" if self.asm.is_some() => {
+                let (saved, name) = self.asm.as_ref().map(|a| (a.path.clone(), a.session.assembly().name.clone())).unwrap_or_default();
+                let path = match (saved, id) {
+                    (Some(p), "file.save") => p,
+                    _ => {
+                        let file = format!("{name}.{}", tenon_io::asm::EXTENSION);
+                        self.services.pick_save.as_ref().and_then(|f| f(&file, tenon_io::asm::EXTENSION)).ok_or("no file chosen")?
+                    }
+                };
+                self.save_assembly(&path)?;
             }
             "file.save" | "file.save_as" => {
                 let path = match (&self.path, id) {
@@ -358,8 +403,14 @@ impl Workbench {
         self.panel = None;
     }
 
-    /// Opens a project file.
+    /// Opens a part (`.tenon`) or an assembly (`.tenonasm`).
     pub fn open(&mut self, path: &Path) -> Result<(), String> {
+        if path.extension().is_some_and(|e| e == tenon_io::asm::EXTENSION) {
+            return self.open_assembly(path);
+        }
+        // Read first: a file that cannot be opened leaves the assembly as it was.
+        tenon_io::project::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        self.leave_assembly();
         self.exec("file.open", json!({ "path": path.to_string_lossy() })).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
         self.path = Some(path.to_path_buf());
         self.mode = Mode::Model;
@@ -436,8 +487,68 @@ impl Workbench {
         Ok(())
     }
 
-    /// Sends the shown document for regeneration when it changed; takes finished results.
+    /// Sends the shown document (or the assembly's parts) for regeneration when it changed;
+    /// takes finished results.
     fn sync_geometry(&mut self) {
+        if !self.in_assembly() {
+            self.sync_part();
+        }
+        let mut responses = Vec::new();
+        if let Geo::Worker(w) = &self.geo {
+            while let Some(r) = w.try_recv() {
+                responses.push(r);
+            }
+        }
+        let assembly = self.in_assembly();
+        for r in responses {
+            match r {
+                Response::Scene { slot, revision, scene } if slot != 0 => {
+                    self.asm_scene(slot, revision, *scene);
+                }
+                Response::Scene { revision, scene, .. } if revision == self.seq && !assembly => {
+                    self.waiting = false;
+                    self.set_scene(*scene);
+                }
+                Response::Failed { slot, revision, message } if slot == 0 && revision == self.seq && !assembly => {
+                    self.waiting = false;
+                    self.regen_note = Some(message);
+                }
+                Response::Failed { slot, message, .. } if slot != 0 => {
+                    self.regen_note = Some(message);
+                }
+                Response::Step { request, result } => {
+                    if let Some((id, path)) = self.step_export.take() {
+                        if id != request {
+                            self.step_export = Some((id, path));
+                            continue;
+                        }
+                        match result.and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
+                            Ok(()) => self.set_status(format!("Exported {}", path.display())),
+                            Err(e) => self.set_error(format!("STEP export failed: {e}")),
+                        }
+                    }
+                }
+                Response::Measure { request, result } => {
+                    if let Some(Panel::Measure(m)) = &mut self.panel
+                        && m.pending == Some(request)
+                    {
+                        m.pending = None;
+                        m.result = Some(result);
+                    }
+                }
+                Response::Job { request, result } => {
+                    self.asm_job(request, result);
+                }
+                _ => {}
+            }
+        }
+        if self.asm.is_some() {
+            self.sync_assembly();
+        }
+    }
+
+    /// Sends the part document for regeneration when it changed.
+    fn sync_part(&mut self) {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.session.revision().hash(&mut h);
@@ -488,45 +599,6 @@ impl Workbench {
             }
             self.shown = Some(doc);
         }
-        let mut responses = Vec::new();
-        if let Geo::Worker(w) = &self.geo {
-            while let Some(r) = w.try_recv() {
-                responses.push(r);
-            }
-        }
-        for r in responses {
-            match r {
-                Response::Scene { revision, scene } if revision == self.seq => {
-                    self.waiting = false;
-                    self.set_scene(*scene);
-                }
-                Response::Failed { revision, message } if revision == self.seq => {
-                    self.waiting = false;
-                    self.regen_note = Some(message);
-                }
-                Response::Step { request, result } => {
-                    if let Some((id, path)) = self.step_export.take() {
-                        if id != request {
-                            self.step_export = Some((id, path));
-                            continue;
-                        }
-                        match result.and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
-                            Ok(()) => self.set_status(format!("Exported {}", path.display())),
-                            Err(e) => self.set_error(format!("STEP export failed: {e}")),
-                        }
-                    }
-                }
-                Response::Measure { request, result } => {
-                    if let Some(Panel::Measure(m)) = &mut self.panel
-                        && m.pending == Some(request)
-                    {
-                        m.pending = None;
-                        m.result = Some(result);
-                    }
-                }
-                _ => {}
-            }
-        }
     }
 
     fn set_scene(&mut self, s: Scene) {
@@ -561,6 +633,9 @@ impl Workbench {
     pub fn ui(&mut self, ui: &mut Ui, render: Option<&egui_wgpu::RenderState>) {
         self.view.now = ui.input(|i| i.time);
         self.sync_geometry();
+        if self.in_assembly() {
+            self.refresh_dof();
+        }
         // Parameter values, for value fields that take equations.
         if self.param_env.0 != self.session.revision() {
             self.param_env = (self.session.revision(), std::sync::Arc::new(self.document().parameter_values()));
@@ -601,7 +676,11 @@ impl Workbench {
                         let r = egui::Rect::from_min_max(egui::pos2(full.left(), split), full.max);
                         ui.scope_builder(egui::UiBuilder::new().max_rect(r), |ui| {
                             ui.set_clip_rect(r);
-                            self.browser(ui, &t);
+                            if self.in_assembly() {
+                                self.asm_browser(ui, &t);
+                            } else {
+                                self.browser(ui, &t);
+                            }
                         });
                     }
                 },
@@ -612,8 +691,9 @@ impl Workbench {
         self.dropdown(ui, &t);
         self.panels(ui);
         self.windows(ui);
+        self.asm_windows(ui);
         self.radial_ui(ui, &t);
-        if self.waiting {
+        if self.waiting || self.is_busy() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }
     }
@@ -650,7 +730,7 @@ impl Workbench {
                 })
             });
             if let Some(k) = letter
-                && let Some(c) = commands::for_key(k.name(), self.is_sketching())
+                && let Some(c) = commands::for_key(k.name(), self.is_sketching(), self.in_assembly())
             {
                 self.command(c.id);
             }
