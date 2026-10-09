@@ -132,6 +132,14 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
 - **Picking.** A click on the sheet finds the model edge drawn nearest it (`annotate::edge_at`,
   the edge nearest the eye where several are drawn on top of each other), so dimensions and
   balloons are placed by clicking, in the UI and in scripts (`drw.pick` with `at`).
+- **Suggestions.** `suggest` reads a view's model edges (lines spanning the view, circles and
+  arcs seen end-on) and proposes ordinary dimensions, minus those the view has; the user keeps
+  the ones wanted.
+- **Output.** `clean` turns strokes into true arcs and circles and drops repeats before PDF, SVG
+  and DXF are written; `export::check_pdf` and `check_dxf` read the files back for the tests.
+- **Models changing on disk.** Each model's files are fingerprinted when read or saved;
+  `tenon_io::drw::reload_changed` reads again those saved elsewhere (the app checks about once a
+  second), keeping models with unsaved changes made from the drawing.
 
 ## The desktop app's data flow
 

@@ -84,6 +84,20 @@ fn the_m4_demo_script_draws_a_plate_and_its_assembly() {
         assert!(records.iter().any(|(k, r)| k != "TEXT" && layer(r) == pen), "nothing on layer {pen}");
     }
     let lines: Vec<&(String, Vec<tenon_dxf::Tag>)> = records.iter().filter(|(k, _)| k == "LINE").collect();
+    // Centre marks: each hole of the top view (centred at (100, 136), 1:1) has a horizontal and a
+    // vertical centre line crossing at its centre.
+    let centre_lines: Vec<(f64, f64, f64, f64)> =
+        lines.iter().filter(|(_, r)| layer(r) == "CENTER").map(|(_, r)| (coord(r, 10), coord(r, 20), coord(r, 11), coord(r, 21))).collect();
+    for (x, y) in [(15.0, 15.0), (105.0, 15.0), (105.0, 65.0), (15.0, 65.0), (60.0, 40.0)] {
+        let c = (100.0 + x - 60.0, 136.0 + y - 40.0);
+        let through = |horizontal: bool| {
+            centre_lines.iter().any(|(x0, y0, x1, y1)| {
+                let mid = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+                (mid.0 - c.0).abs() < 1e-6 && (mid.1 - c.1).abs() < 1e-6 && if horizontal { (y0 - y1).abs() < 1e-9 } else { (x0 - x1).abs() < 1e-9 }
+            })
+        };
+        assert!(through(true) && through(false), "no centre mark at {c:?}");
+    }
     // The counterbore seen from above: a circle 18 across on the top view, at (100, 136).
     assert!(records.iter().any(|(k, r)| k == "CIRCLE"
         && layer(r) == "VISIBLE"
@@ -202,6 +216,57 @@ fn aligned_radius_and_angle_dimensions_measure_the_model_and_follow_it() {
     assert!((value(0) - 14.0).abs() < 1e-9, "{}", info["annotations"][0]);
     assert!((value(1) - 3.0 * 2f64.sqrt()).abs() < 1e-9, "{}", info["annotations"][1]);
     assert!((value(2) - 45.0).abs() < 1e-9 && (value(3) - 135.0).abs() < 1e-9);
+}
+
+#[test]
+fn suggested_dimensions_cover_the_part_once_and_follow_it() {
+    let dir = scratch("suggest");
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m4-plate");
+    std::fs::copy(src.join("plate.tenon"), dir.join("plate.tenon")).unwrap();
+    let mut e = Engine::new(kernel(), &dir);
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    run(&mut e, "drw.new", json!({ "name": "Plate" }));
+    let front = run(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "scale": 1, "at": [110, 70] }))["view"].clone();
+    let top = run(&mut e, "drw.view.projected", json!({ "parent": front, "side": "above" }))["view"].clone();
+    let iso = run(&mut e, "drw.view.projected", json!({ "parent": front, "side": "above_right", "scale": 0.5 }))["view"].clone();
+    let shown = |r: &Value| -> Vec<String> {
+        r["suggestions"].as_array().unwrap().iter().map(|s| format!("{} {}", s["type"].as_str().unwrap(), s["shown"].as_str().unwrap())).collect()
+    };
+
+    // The top view: 120 x 80 overall, four 8 mm holes as one, the counterbore and its hole.
+    let r = run(&mut e, "drw.dimension.suggest", json!({ "view": top }));
+    assert_eq!(shown(&r), ["horizontal 120", "vertical 80", "diameter Ø18", "diameter Ø10", "diameter 4X Ø8"], "{r}");
+    // Each outside the view or beside its circle, not on top of the part.
+    let at = |s: &Value| (s["at"][0].as_f64().unwrap(), s["at"][1].as_f64().unwrap());
+    let sg = r["suggestions"].as_array().unwrap();
+    assert!(at(&sg[0]).1 < 136.0 - 40.0 && at(&sg[1]).0 > 110.0 + 60.0, "{r}");
+    // The front view: the plate's width and its thickness (t = 16).
+    let r = run(&mut e, "drw.dimension.suggest", json!({ "view": front }));
+    assert_eq!(shown(&r), ["horizontal 120", "vertical 16"], "{r}");
+    // An isometric view is not dimensioned.
+    assert!(e.exec("drw.dimension.suggest", &json!({ "view": iso })).unwrap_err().contains("isometric"));
+
+    // Add all of the top view's but the 4X Ø8, all of the front view's; each is one undo step.
+    let added = run(&mut e, "drw.dimension.auto", json!({ "view": top, "accept": [0, 1, 2, 3] }));
+    assert_eq!(added["added"], 4);
+    run(&mut e, "drw.dimension.auto", json!({ "view": front }));
+    run(&mut e, "drw.undo", json!({}));
+    run(&mut e, "drw.dimension.auto", json!({ "view": front }));
+    let info = run(&mut e, "drw.info", json!({}));
+    assert_eq!(info["annotations"].as_array().unwrap().len(), 6);
+    assert_eq!(info["annotations"][3]["shown"], "Ø10");
+    // What is there is not suggested again; the 4X Ø8 left out still is.
+    assert_eq!(shown(&run(&mut e, "drw.dimension.suggest", json!({ "view": top }))), ["diameter 4X Ø8"]);
+    assert!(shown(&run(&mut e, "drw.dimension.suggest", json!({ "view": front }))).is_empty());
+    assert!(e.exec("drw.dimension.auto", &json!({ "view": top, "accept": [3] })).unwrap_err().contains("accept"));
+
+    // They are ordinary dimensions: the plate made 20 thick, the thickness reads 20.
+    run(&mut e, "file.open", json!({ "path": "plate.tenon" }));
+    run(&mut e, "param.set", json!({ "name": "t", "equation": "20" }));
+    run(&mut e, "file.save", json!({ "path": "plate.tenon" }));
+    run(&mut e, "drw.update", json!({}));
+    let info = run(&mut e, "drw.info", json!({}));
+    assert_eq!(info["annotations"][5]["shown"], "20", "{}", info["annotations"][5]);
 }
 
 #[test]

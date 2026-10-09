@@ -118,6 +118,8 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `drw.view.edit` | Edit View | view; at: [x, y] or by: [dx, dy] (the views projected from it move along; a view projected beside, above or below its parent only slides in line with it); scale; hidden, tangent, centerlines, label: true or false | yes |
 | `drw.view.delete` | Delete View | view (and the views made from it, and their annotations) | yes |
 | `drw.dimension` | Dimension | view; type: horizontal \| vertical \| aligned \| diameter \| radius \| angle; a, b: picks from drw.pick (a line alone for its length, a circle for its size); at: [x, y] where the dimension line or text goes (sheet mm), or by: [dx, dy] from the middle of what is measured; text ("<>" is the value); precision (decimals, default 2) | yes |
+| `drw.dimension.suggest` | Suggest Dimensions | view (base, projected or section): the dimensions a drafter would put on it first (overall width and height, each size of hole and round with its count), without what its dimensions already give; nothing is added | no |
+| `drw.dimension.auto` | Auto Dimension | view; accept: [numbers from drw.dimension.suggest] (default all): adds them as dimensions, in one undo step | yes |
 | `drw.hole_table` | Hole Table | view (a part view); origin: a pick for the datum (default the view's bottom-left); at: the table's top-left (default top right of the sheet) | yes |
 | `drw.parts_list` | Parts List | view (an assembly view); at: the table's top-left (default above the title block) | yes |
 | `drw.balloon` | Balloon | view; component, or attach_at: a sheet point on an edge of it (the balloon's leader ends there); at: where the balloon goes (default out from the view) | yes |

@@ -18,6 +18,7 @@ mod model;
 pub mod session;
 pub mod sheets;
 pub mod stroke;
+pub mod suggest;
 pub mod views;
 
 pub use graphics::{Align, Graphics, Owner, Pen, Text};

@@ -97,6 +97,8 @@ pub(crate) enum DrwTool {
         view: Option<ViewId>,
         picks: Vec<Value>,
     },
+    /// A view, for its suggested dimensions.
+    AutoDimension,
     /// An edge of a part in an assembly view, then where the balloon goes.
     Balloon {
         view: Option<ViewId>,
@@ -119,6 +121,7 @@ impl DrwTool {
             DrwTool::Section { .. } => "drw.section",
             DrwTool::Detail { .. } => "drw.detail",
             DrwTool::Dimension { .. } => "drw.dimension",
+            DrwTool::AutoDimension => "drw.dimension.auto",
             DrwTool::Balloon { .. } => "drw.balloon",
             DrwTool::AutoBalloon => "drw.balloon.auto",
             DrwTool::HoleTable { .. } => "drw.hole_table",
@@ -145,6 +148,7 @@ impl DrwTool {
             DrwTool::Dimension { picks, .. } if picks.is_empty() => "Dimension: click an edge, or two (Esc ends).",
             DrwTool::Dimension { picks, .. } if picks.len() == 1 => "Click a second edge, or where the dimension goes.",
             DrwTool::Dimension { .. } => "Click where the dimension goes.",
+            DrwTool::AutoDimension => "Auto dimension: click a view.",
             DrwTool::Balloon { attach: None, .. } => "Balloon: click an edge of a part in an assembly view.",
             DrwTool::Balloon { .. } => "Click where the balloon goes.",
             DrwTool::AutoBalloon => "Auto balloon: click an assembly view.",
@@ -184,6 +188,18 @@ pub(crate) struct TextDialog {
     pub note: Option<tenon_drawing::AnnotId>,
 }
 
+/// The Suggested Dimensions dialog: a view's suggestions, each kept or not, with what each would
+/// draw (for the preview on the sheet).
+#[derive(Clone, Debug)]
+pub(crate) struct SuggestDialog {
+    pub view: ViewId,
+    /// Label and whether it is kept.
+    pub items: Vec<(String, bool)>,
+    pub preview: Vec<Arc<Graphics>>,
+    /// The drawing's revision they were made for.
+    pub revision: u64,
+}
+
 /// What a job sent to the worker is for.
 pub(crate) enum DrwJob {
     /// The views, for the drawing as it was (its evaluation key).
@@ -208,6 +224,7 @@ pub(crate) struct DrwDoc {
     pub base_dialog: Option<BaseDialog>,
     pub view_dialog: Option<ViewDialog>,
     pub text_dialog: Option<TextDialog>,
+    pub suggest_dialog: Option<SuggestDialog>,
     pub jobs: BTreeMap<u64, DrwJob>,
     /// The model being edited from the drawing (its key), while it is.
     pub editing: Option<String>,
@@ -237,6 +254,7 @@ impl DrwDoc {
             base_dialog: None,
             view_dialog: None,
             text_dialog: None,
+            suggest_dialog: None,
             jobs: BTreeMap::new(),
             editing: None,
             pointer: None,
@@ -651,6 +669,10 @@ impl Workbench {
             "drw.section" => self.start_tool(DrwTool::Section { parent: selected, line: Vec::new() }),
             "drw.detail" => self.start_tool(DrwTool::Detail { parent: selected, center: None, radius: None }),
             "drw.dimension" => self.start_tool(DrwTool::Dimension { view: None, picks: Vec::new() }),
+            "drw.dimension.auto" => match selected {
+                Some(v) => self.open_suggestions(v)?,
+                None => self.start_tool(DrwTool::AutoDimension),
+            },
             "drw.balloon" => self.start_tool(DrwTool::Balloon { view: None, attach: None }),
             "drw.balloon.auto" => match selected {
                 Some(v) => {
@@ -724,6 +746,46 @@ impl Workbench {
                 });
             }
         }
+        Ok(())
+    }
+
+    /// Opens the Suggested Dimensions dialog for a view, with what each suggestion would draw.
+    pub(crate) fn open_suggestions(&mut self, view: ViewId) -> Result<(), String> {
+        let d = self.drw.as_mut().ok_or("no drawing is open")?;
+        let ev = d.session.evaluation().ok_or("the views are still being computed; try again in a moment")?;
+        let dr = d.session.drawing();
+        let list = tenon_drawing::suggest::suggest(dr, ev, view)?;
+        if list.is_empty() {
+            self.set_status("This view already has the dimensions Tenon would suggest.");
+            return Ok(());
+        }
+        // What they would draw: the drawing with all of them added, each one's own lines.
+        let v = dr.view(view).ok_or("the view is gone")?.clone();
+        let mut copy = dr.clone();
+        let ids: Vec<tenon_drawing::AnnotId> = list
+            .iter()
+            .map(|s| {
+                let id = copy.take_annotation_id();
+                copy.annotations.push(tenon_drawing::Annotation { id, kind: s.kind(view, &v) });
+                id
+            })
+            .collect();
+        let (g, _) = tenon_drawing::annotate::build(&copy, v.sheet, ev);
+        let only = |o: Owner| Graphics {
+            sheet: g.sheet,
+            width: g.width,
+            height: g.height,
+            strokes: g.strokes.iter().filter(|x| x.0 == o).cloned().collect(),
+            fills: g.fills.iter().filter(|x| x.0 == o).cloned().collect(),
+            texts: g.texts.iter().filter(|x| x.0 == o).cloned().collect(),
+        };
+        let preview = ids.iter().map(|id| Arc::new(only(Owner::Annotation(*id)))).collect();
+        let items = list.iter().map(|s| (format!("{}   {}", s.shown, s.why), true)).collect();
+        let n = list.len();
+        if let Some(d) = self.drw.as_mut() {
+            d.suggest_dialog = Some(SuggestDialog { view, items, preview, revision: d.session.revision() });
+        }
+        self.set_status(format!("{n} dimension(s) suggested: untick any not wanted, then Add."));
         Ok(())
     }
 
@@ -982,6 +1044,12 @@ impl Workbench {
         if let (Some(tool), Some(at)) = (&tool, pointer) {
             draw_tool(&p, rect, &cam, d, tool, at, ghost);
         }
+        // Suggested dimensions still ticked, as they would be drawn.
+        if let Some(sd) = &d.suggest_dialog {
+            for (g, _) in sd.preview.iter().zip(&sd.items).filter(|(_, (_, on))| *on) {
+                paint_plain(&p, rect, &cam, g, GHOST);
+            }
+        }
         // What a tool asks for, and what does not draw.
         let mut note_y = rect.top() + 10.0;
         if let Some(tool) = &tool {
@@ -1196,6 +1264,11 @@ impl Workbench {
                 next(self, Some(DrwTool::Dimension { view: None, picks: Vec::new() }));
                 self.set_status(format!("Dimension {} placed. Click the next edge, or Esc to end.", r["shown"].as_str().unwrap_or("")));
             }
+            DrwTool::AutoDimension => {
+                let v = need_view()?;
+                next(self, None);
+                self.open_suggestions(v)?;
+            }
             DrwTool::Balloon { attach: None, .. } => {
                 let v = need_view()?;
                 let pick = self.drw_exec("drw.pick", json!({ "view": v.0, "at": v2(at) })).map_err(|_| "click an edge of a part".to_string())?;
@@ -1398,6 +1471,43 @@ impl Workbench {
                 });
             }
         }
+        let Some(d) = self.drw.as_mut() else { return };
+        if let Some(mut dlg) = d.suggest_dialog.clone() {
+            let mut open = true;
+            let (mut add, mut cancel) = (false, false);
+            egui::Window::new("Suggested Dimensions")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(320.0)
+                .default_pos([320.0, 170.0])
+                .show(&ctx, |ui| {
+                    ui.label("Ticked dimensions are added; their outlines show on the sheet.");
+                    ui.add_space(4.0);
+                    for (i, (label, on)) in dlg.items.iter_mut().enumerate() {
+                        check(ui, on, label, &format!("tn_suggest_{i}"));
+                    }
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        let n = dlg.items.iter().filter(|x| x.1).count();
+                        if button(ui, &format!("Add {n}"), "tn_suggest_add").clicked() {
+                            add = true;
+                        }
+                        if button(ui, "Cancel", "tn_suggest_cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            let stale = dlg.revision != d.session.revision();
+            d.suggest_dialog = (open && !add && !cancel && !stale).then_some(dlg.clone());
+            if stale {
+                action = Some(Err("the drawing changed: suggest again".into()));
+            } else if add {
+                let accept: Vec<usize> = dlg.items.iter().enumerate().filter(|(_, x)| x.1).map(|(i, _)| i).collect();
+                let r = self.drw_exec("drw.dimension.auto", json!({ "view": dlg.view.0, "accept": accept }));
+                action = Some(r.map(|r| self.set_status(format!("{} dimension(s) added.", r["added"]))));
+            }
+        }
         if let Some(Err(e)) = action {
             self.set_error(e);
         }
@@ -1581,6 +1691,18 @@ fn button(ui: &mut Ui, label: &str, key: &str) -> egui::Response {
     r
 }
 
+/// A checkbox; in tests its rectangle is kept under `key`, as for [`button`].
+fn check(ui: &mut Ui, on: &mut bool, label: &str, key: &str) -> egui::Response {
+    let r = ui.checkbox(on, label);
+    #[cfg(test)]
+    ui.data_mut(|d| {
+        d.get_temp_mut_or_default::<BTreeMap<String, Rect>>(egui::Id::new("tn_buttons")).insert(key.to_owned(), r.rect);
+    });
+    #[cfg(not(test))]
+    let _ = key;
+    r
+}
+
 /// One row of the drawing browser.
 fn browser_row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, selected: bool, error: bool) -> egui::Response {
     let (rr, resp) = ui.allocate_exact_size(vec2(ui.available_width(), crate::browser::ROW_H), Sense::CLICK);
@@ -1601,6 +1723,25 @@ fn browser_row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, sele
     #[cfg(test)]
     ui.data_mut(|d| d.get_temp_mut_or_default::<Vec<(String, Rect)>>(egui::Id::new("tn_browser_rows")).push((label.to_owned(), rr)));
     resp
+}
+
+/// Graphics in one colour (previews).
+fn paint_plain(p: &egui::Painter, rect: Rect, cam: &SheetCam, g: &Graphics, color: Color32) {
+    for (_, pen, pts) in &g.strokes {
+        let width = ((pen.width() * cam.px) as f32).max(1.0);
+        for run in dashed(pts, pen.dashes()) {
+            p.add(Shape::line(run.iter().map(|q| cam.screen(rect, *q)).collect(), Stroke::new(width, color)));
+        }
+    }
+    for (_, pts) in &g.fills {
+        p.add(Shape::convex_polygon(pts.iter().map(|q| cam.screen(rect, *q)).collect(), color, Stroke::NONE));
+    }
+    for (_, t) in &g.texts {
+        let width = ((t.height * tenon_drawing::stroke::PEN * cam.px) as f32).max(1.0);
+        for s in tenon_drawing::stroke::text_strokes(&t.text, t.left(), t.height) {
+            p.add(Shape::line(s.iter().map(|q| cam.screen(rect, *q)).collect(), Stroke::new(width, color)));
+        }
+    }
 }
 
 /// What a tool would place, where the pointer is.

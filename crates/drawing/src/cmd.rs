@@ -575,6 +575,53 @@ fn drw_dimension(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
     Ok(json!({ "annotation": aid.0, "value": value, "shown": shown }))
 }
 
+fn suggestion_json(s: &crate::suggest::Suggestion) -> Value {
+    json!({
+        "type": s.dim, "a": s.a, "b": s.b, "at": v2(s.at), "text": s.text,
+        "value": s.value, "shown": s.shown, "why": s.why,
+    })
+}
+
+/// The dimensions suggested for a view (nothing is added).
+fn drw_dimension_suggest(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    let list = crate::suggest::suggest(s.drawing(), s.current()?, vid).map_err(CmdError)?;
+    Ok(json!({ "view": vid.0, "suggestions": list.iter().map(suggestion_json).collect::<Vec<_>>() }))
+}
+
+/// Adds suggested dimensions to a view (all, or those listed in `accept`), as one undo step.
+fn drw_dimension_auto(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    let v = view(s.drawing(), vid)?.clone();
+    let list = crate::suggest::suggest(s.drawing(), s.current()?, vid).map_err(CmdError)?;
+    let chosen: Vec<usize> = match p.get("accept") {
+        None | Some(Value::Null) => (0..list.len()).collect(),
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|x| {
+                x.as_u64()
+                    .map(|i| i as usize)
+                    .filter(|i| *i < list.len())
+                    .ok_or_else(|| CmdError(format!("`accept` holds {x}, not one of the {} suggestions", list.len())))
+            })
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err("`accept` must be a list of suggestion numbers".into()),
+    };
+    let kinds: Vec<AnnotKind> = chosen.iter().filter_map(|i| list.get(*i)).map(|sg| sg.kind(vid, &v)).collect();
+    let ids = s.edit(|d| {
+        Ok(kinds
+            .into_iter()
+            .map(|kind| {
+                let id = d.take_annotation_id();
+                d.annotations.push(Annotation { id, kind });
+                id.0
+            })
+            .collect::<Vec<_>>())
+    })?;
+    let added: Vec<Value> = chosen.iter().filter_map(|i| list.get(*i)).map(suggestion_json).collect();
+    Ok(json!({ "added": ids.len(), "annotations": ids, "dimensions": added }))
+}
+
 fn drw_hole_table(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
     let origin = opt_pick(p, "origin")?;
@@ -912,6 +959,22 @@ static COMMANDS: &[DrwCommand] = &[
         mutates: true,
         views: true,
         run: drw_dimension,
+    },
+    DrwCommand {
+        id: "drw.dimension.suggest",
+        label: "Suggest Dimensions",
+        help: "view (base, projected or section): the dimensions a drafter would put on it first (overall width and height, each size of hole and round with its count), without what its dimensions already give; nothing is added",
+        mutates: false,
+        views: true,
+        run: drw_dimension_suggest,
+    },
+    DrwCommand {
+        id: "drw.dimension.auto",
+        label: "Auto Dimension",
+        help: "view; accept: [numbers from drw.dimension.suggest] (default all): adds them as dimensions, in one undo step",
+        mutates: true,
+        views: true,
+        run: drw_dimension_auto,
     },
     DrwCommand {
         id: "drw.hole_table",

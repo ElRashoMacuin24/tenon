@@ -459,6 +459,13 @@ pub const DRW_RIBBON: &[RibbonTab] = &[
                 title: "Dimension",
                 commands: &[
                     large("drw.dimension", "Dimension", "Click an edge or two, then where the dimension goes", Icon::Dimension, 0).key("D"),
+                    small(
+                        "drw.dimension.auto",
+                        "Auto Dimension",
+                        "Click a view: the dimensions it needs first, to review and add",
+                        Icon::Dimension,
+                        0,
+                    ),
                     small("drw.baseline", "Baseline", "Dimensions from one datum", Icon::Dimension, LATER),
                     small("drw.ordinate", "Ordinate", "Ordinate dimensions", Icon::Dimension, LATER),
                 ],

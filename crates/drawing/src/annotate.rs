@@ -69,7 +69,7 @@ pub fn resolve_pick(m: &ModelGeometry, pick: &GeomPick) -> Result<Resolved, Stri
 
 /// A section view's plane: a point on it and the direction it is seen in (model coordinates).
 /// What lies on the eye's side of it is cut away.
-fn section_cut(v: &View, ev: &Evaluation) -> Option<(Vec3, Vec3)> {
+pub(crate) fn section_cut(v: &View, ev: &Evaluation) -> Option<(Vec3, Vec3)> {
     let ViewKind::Section { parent, a, b, flip } = &v.kind else { return None };
     let p = ev.view(*parent)?;
     let (_, point, look) = section_frame(&p.frame, *a, *b, *flip);

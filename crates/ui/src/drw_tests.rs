@@ -448,6 +448,44 @@ fn an_arc_dimensions_as_a_radius_and_meeting_lines_as_an_angle() {
 }
 
 #[test]
+fn auto_dimension_suggests_reviews_and_adds_in_one_step() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = m4("auto");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("file.new_drawing").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.place_base_view(&dir.join("plate.tenon"), Orientation::Top, Some(1.0), true).unwrap();
+    d.tap(&mut wb, egui::Key::Escape);
+    wb.drw.as_mut().unwrap().selected = None;
+
+    // Annotate > Auto Dimension, then the view: the suggestions, all ticked and shown on the sheet.
+    wb.run_ui("drw.dimension.auto").unwrap();
+    let inside = in_view(&mut wb, 1, 30.0, 30.0);
+    d.click(&mut wb, inside);
+    settle_frames(&mut d, &mut wb, 3);
+    let dlg = wb.drw.as_ref().unwrap().suggest_dialog.clone().expect("the dialog is open");
+    let labels: Vec<&str> = dlg.items.iter().map(|(l, _)| l.as_str()).collect();
+    assert_eq!(labels.len(), 5, "{labels:?}");
+    assert!(labels[4].starts_with("4X Ø8"), "{labels:?}");
+    assert!(dlg.preview.iter().all(|g| !g.strokes.is_empty()), "each draws something");
+    // Untick the 4X Ø8, then Add 4.
+    let tick = pressable(&d, "tn_suggest_4");
+    d.click(&mut wb, tick);
+    d.frame(&mut wb, vec![]);
+    let add = pressable(&d, "tn_suggest_add");
+    d.click(&mut wb, add);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.drw.as_ref().unwrap().suggest_dialog.is_none());
+    let i = info(&mut wb);
+    let shown: Vec<&str> = i["annotations"].as_array().unwrap().iter().map(|a| a["shown"].as_str().unwrap()).collect();
+    assert_eq!(shown, ["120", "80", "Ø18", "Ø10"], "{}", wb.status());
+    // One undo takes all four away.
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    assert_eq!(info(&mut wb)["annotations"].as_array().unwrap().len(), 0);
+}
+
+#[test]
 fn new_drawings_start_from_templates_and_save_as_templates() {
     let _quiet = crate::tests::timing_lock();
     let dir = m4("templates");
