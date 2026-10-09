@@ -266,3 +266,26 @@ fn editing_a_part_in_place_and_returning_updates_the_assembly() {
     assert_eq!(doc.parameter_values()["t"], 5.0);
     assert!(wb.status().contains("1 part file"), "{}", wb.status());
 }
+
+/// Dragging a component (solving its relationships, moving its bodies, picking) stays well inside
+/// a 60 Hz frame. Numbers: `cargo test --release -p tenon-ui assembly_drag -- --nocapture`.
+#[test]
+fn assembly_drag_frame_time_stays_within_budget() {
+    use std::time::Instant;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1440.0, 900.0));
+    wb.open(&pivot("timing")).unwrap();
+    d.settle(&mut wb);
+    let from = on_screen(&wb, Vec3::new(40.0, 20.0, 20.0));
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(from)]);
+    d.frame(&mut wb, vec![Driver::button(from, egui::PointerButton::Primary, true)]);
+    let t = Instant::now();
+    for i in 0..60 {
+        d.frame(&mut wb, vec![egui::Event::PointerMoved(from + vec2(i as f32 * 2.0, i as f32))]);
+    }
+    let ms = t.elapsed().as_secs_f64() * 1000.0 / 60.0;
+    d.frame(&mut wb, vec![Driver::button(from + vec2(120.0, 60.0), egui::PointerButton::Primary, false)]);
+    println!("dragging a component of a 5-component assembly: {ms:.2} ms per frame");
+    assert!(placement(&wb, 5).origin().x > 31.0, "the block moved");
+    assert!(ms < 16.0, "over the 16 ms frame budget: {ms:.2} ms");
+}

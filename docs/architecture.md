@@ -14,11 +14,11 @@ rules are enforced by `cargo xtask layers` (table in `xtask/src/layers.rs`) and
 | L2 (backend) | `kernel-occt` | OpenCASCADE 8 backend: cxx bridge + C++ shim; the only crate with `unsafe` | M0 |
 | L2 | `sketch` | 2D sketch entities, constraints, solver behind `SketchSolver`, sketch tools, profile regions | M1 |
 | L3 | `model` | feature tree, regeneration (incremental), face and edge naming, parameters and equations, measuring, command registry and undo, regeneration worker | M2 |
-| L4 | `assembly` | components, joints, DOF, BOM | placeholder (M3) |
+| L4 | `assembly` | assemblies: components, constraints and joints, the rigid-body solver, degrees of freedom, parts list, interference, exploded view, `asm.*` commands | M3 |
 | L5 | `drawing` | views, dimensions, title blocks, PDF/SVG/DXF | placeholder (M4) |
-| L6 | `io` | `.tenon` project files, file and export commands, STL; STEP via the kernel | M1 (3MF, DXF: later) |
+| L6 | `io` | `.tenon` part and `.tenonasm` assembly files, file and export commands, STL; STEP via the kernel | M3 (3MF, DXF: later) |
 | L7 | `render` | camera, picking, software rasteriser, wgpu viewport renderer (no UI toolkit) | M1 |
-| L8 | `ui` | egui part workbench: ribbon, browser, sketcher, feature panels, properties panel, viewport, dialogs | M2 |
+| L8 | `ui` | egui workbench: ribbon, browser, sketcher, feature panels, properties panel, viewport, dialogs; the assembly environment and editing parts in place | M3 |
 | exempt | `apps/tenon` | desktop binary (eframe + wgpu, OCCT, native file dialogs) | M1 |
 | exempt | `apps/tenon-cli` | headless CLI: command scripts, MCP server, PNG render, STEP tools | M1 |
 | exempt | `xtask` | workspace tooling and the CI gate | M0 |
@@ -95,6 +95,21 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
   last of 42 features takes 9.3 ms instead of 166 ms (release build, `regeneration_speed`). Rebuild All starts from scratch.
 - **Measuring** needs the exact B-rep, so it runs where the kernel is: the worker answers
   `Measure` requests on the part it last regenerated (`tenon_model::measure`).
+
+## Assemblies (M3)
+
+`tenon_assembly` works on documents in memory; `tenon_io::asm` reads and writes the files (DEC-024).
+
+- **Parts.** An `AsmSession` holds the assembly (with undo) and one part `Session` per part file.
+  Each part session has its own undo, so a part edited in place keeps its history.
+- **Geometry.** Each part comes with its regenerated `Scene`. Relationships find their faces and
+  edges in it by persistent name (`tenon_assembly::geometry`), so solving and counting degrees
+  of freedom need no kernel and run on the UI thread.
+- **Solver.** `tenon_assembly::solve` (DEC-025) gives six unknowns per free component and uses
+  the sketch solver's damped minimum-norm Gauss-Newton.
+- **Kernel work.** Interference and assembly STEP use the kernel: placed copies of each
+  component's solids are intersected or exported.
+
 ## The desktop app's data flow
 
 ```
@@ -109,7 +124,15 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
 
 The UI thread never calls the kernel in the app. It sends a snapshot whenever the shown document
 changes, including live Extrude/Revolve previews, and keeps drawing the last `Scene` until the
-new one arrives. A newer snapshot cancels the one in progress (`tenon_model::worker`). STEP
+new one arrives.
+
+The worker keeps one slot per document: slot 0 is the part being edited, and each part of an open
+assembly has its own slot. A new request cancels only its own slot's regeneration. Jobs (interference,
+assembly STEP) run on the worker against the slots' latest solids.
+
+In an assembly, the viewport shows one `Scene` holding every visible component's bodies moved to
+where the component is, so picking and highlighting work unchanged. The GPU uploads bodies by key,
+so dragging one component re-sends only its triangles. A newer snapshot cancels the one in progress (`tenon_model::worker`). STEP
 export and measuring also run on the worker. Tests and tools can run the same workbench synchronously with a
 kernel on the calling thread (`Workbench::headless`).
 

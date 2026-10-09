@@ -4,9 +4,9 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestone M2 (parametric modelling) is done.** CI runs on Linux, macOS and Windows.
+**Status: milestone M3 (assemblies) is done.** CI runs on Linux, macOS and Windows.
 
-You can:
+In parts, you can:
 
 - sketch on a plane, a face of the part or a work plane (lines, arcs, circles, rectangles,
   polygons, splines), with typed values, inference, live solving and a degrees-of-freedom readout;
@@ -20,12 +20,20 @@ You can:
 - edit any feature later: faces and edges you referred to are found again after upstream edits;
 - save `.tenon` projects and export STEP and STL.
 
+In assemblies (`.tenonasm` files that use your part files), you can:
+
+- place components, ground them, and hold them together with mate, flush, angle and insert
+  constraints or rigid, rotational, slider, cylindrical, planar and ball joints;
+- drag components (their relationships hold) and see the degrees of freedom each has left;
+- check interference, list the parts (and export the list as CSV), explode the assembly;
+- double-click a component to edit its part in place, with the rest of the assembly in view.
+
 The workbench follows the familiar mechanical-CAD layout and workflow (ribbon, model browser,
 properties panel, orientation cube, radial menu). The same commands drive scripts and an MCP
-server for AI agents. Assemblies and drawings are the next milestones. What works, with the test
-that proves each item, is in [ROADMAP.md](ROADMAP.md).
+server for AI agents. Drawings are the next milestone. What works, with the test that proves each
+item, is in [ROADMAP.md](ROADMAP.md).
 
-![The M2 demo enclosure in the Tenon workbench](examples/m2-enclosure/workbench.png)
+![The M3 demo assembly in the Tenon workbench](examples/m3-pivot/workbench.png)
 
 ## Design
 
@@ -57,6 +65,7 @@ Step-by-step instructions per platform are in [docs/setup.md](docs/setup.md).
 pixi install                       # once: OpenCASCADE 8 into .pixi/
 pixi run app                       # the desktop app (release build)
 pixi run app examples/m2-enclosure/enclosure.tenon
+pixi run app examples/m3-pivot/pivot.tenonasm
 pixi run cargo test --workspace    # build and test
 pixi run ci                        # the full gate CI runs
 pixi run cargo run -p tenon-cli -- run examples/m2-enclosure/enclosure.json --out out

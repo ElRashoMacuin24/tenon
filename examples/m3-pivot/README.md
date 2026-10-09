@@ -1,6 +1,6 @@
 # M3 demo: pivot assembly
 
-![The pivot assembly](pivot.png)
+![The pivot assembly in the Tenon workbench, degrees of freedom shown](workbench.png)
 
 Four part files and an assembly that places them, all built by the command script
 [`pivot.json`](pivot.json). The script checks every placement, the degrees of freedom, the
@@ -33,13 +33,18 @@ parts list, the volume and interference along the way.
 8. **The arm edited in place:** `t` = 8. The pin on it rises 3 mm, and saving the assembly
    saves `arm.tenon` too. The reopened assembly reads the new arm: 47 680 + 344π mm³.
 
-![Exploded](pivot-exploded.png)
+![Assembled](pivot.png) ![Exploded](pivot-exploded.png)
 
-Regenerate (from the repository root):
+Regenerate (from the repository root), and open it:
 
 ```sh
 pixi run cargo run -p tenon-cli -- run examples/m3-pivot/pivot.json --out examples/m3-pivot
+pixi run cargo run -p tenon -- examples/m3-pivot/pivot.tenonasm
 ```
+
+In the workbench, drag the block or a pin (their relationships hold), turn on View > Degrees of
+Freedom, run Inspect > Analyze Interference or Manage > Bill of Materials, and double-click the
+arm to edit it in place.
 
 `tenon-cli demo m3 --out DIR` runs the same script. `apps/tenon-cli/tests/m3.rs` runs it in CI.
 It also checks:
@@ -57,3 +62,4 @@ It also checks:
 | `pivot.step` | Every component's solid where it is placed (STEP AP214, mm; the header holds a timestamp) |
 | `pivot-bom.csv` | The parts list |
 | `pivot.png`, `pivot-exploded.png` | Software renders, assembled and exploded |
+| `workbench.png` | `tenon examples/m3-pivot/pivot.tenonasm --run asm.dof --screenshot examples/m3-pivot/workbench.png` |

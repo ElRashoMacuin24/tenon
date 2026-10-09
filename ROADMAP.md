@@ -4,8 +4,8 @@ Status values: **done** (a named test proves it), **partial** (the gap is stated
 Nothing is marked done without a test. Milestone scope: `docs/plan.md`. Decisions:
 `docs/decisions.md`.
 
-Current milestone: **M2 parametric modelling, complete** (2026-10-08; CI on Linux, macOS and Windows).
-Next: M3 assemblies.
+Current milestone: **M3 assemblies, complete** (2026-10-08; CI on Linux, macOS and Windows).
+Next: M4 drawings.
 
 ## M0 foundations
 
@@ -101,6 +101,31 @@ Complete 2026-10-08. Model tests: `crates/model/tests/m2.rs` (20, plus one ignor
 | Inventor-familiar UI (layout and workflow; DEC-019 to DEC-021) | partial | ribbon, browser, properties panel, mini toolbar, orientation cube (faces, edges, corners), radial menu, navigation, sketch workflow, all exercised by the UI tests. Gaps: no in-canvas drag handles for fillet radius or hole depth; no hover highlight preview of a feature's result before clicking; work planes not depth-tested |
 | Demo: parametric enclosure that regenerates when dimensions change | done | `examples/m2-enclosure` (parameters L, W, H, t drive the box, shell, boss pattern and cable hole); `the_m2_enclosure_script_builds_a_verified_parametric_enclosure` (analytic volume after every feature, after changing L and H, and after reopening and changing W). Second example: `examples/m2-mount`, `the_m2_demo_script_builds_a_verified_parametric_mount` |
 
-## M3 assemblies, M4 drawings, M5 breadth and polish, M6 native kernel
+## M3 assemblies
+
+Demo: [examples/m3-pivot](examples/m3-pivot) (four part files and an assembly, built and checked by
+a command script).
+
+Complete 2026-10-08. Solver tests: `crates/assembly/src/solve.rs` (6) and `math.rs` (2). Files:
+`crates/io/tests/asm.rs` (2). Commands and demo: `apps/tenon-cli/tests/m3.rs` (2). UI (real pointer
+and key input): `crates/ui/src/asm_tests.rs` (5). Worker slots: `worker_regenerates_off_thread_and_reports_the_latest`.
+
+| Feature | Status | Proof / gap |
+|---|---|---|
+| Assembly documents: `.tenonasm` linking `.tenon` part files by relative path (DEC-024) | done | `assemblies_round_trip_with_part_paths_relative_to_the_file`, `damaged_and_mistaken_assembly_files_are_refused`; a moved folder and a missing part file: `the_m3_demo_script_builds_a_verified_pivot_assembly`. Gap: no sub-assemblies; parts cannot be embedded in the assembly file |
+| Insert (place) components; the first is grounded at the origin | done | the demo script (`asm.insert`), `constrain_and_joint_by_clicking_faces_in_the_view` (placing through the workbench) |
+| Grounded components | done | `an_assembly_opens_and_components_drag_along_their_joints` (a grounded component does not move), `assembly_edits_undo_and_conflicts_are_refused` |
+| Constraints: mate, flush, angle, insert (DEC-025) | done | `mates_and_flushes_place_a_block_on_a_block_and_count_what_is_left`, `angle_and_insert`, the demo script (angle and inserts, analytic placements), `constrain_and_joint_by_clicking_faces_in_the_view` (flush by clicking two faces, with its preview). Gap: no tangent constraint; no limits |
+| Joints: rigid, rotational (revolute), slider, plus cylindrical, planar, ball | done | `joints_leave_their_motions` (each joint's free motions and the total), the demo script (rotational and slider), `constrain_and_joint_by_clicking_faces_in_the_view` (rotational by clicking). Gap: joint origins come from faces, circular edges and axes; no vertex or mid-edge snap points; no joint limits or motion studies |
+| Conflicts refused with the relationships they conflict with | done | `a_conflict_does_not_converge`, `assembly_edits_undo_and_conflicts_are_refused`, the refused flush in `constrain_and_joint_by_clicking_faces_in_the_view` |
+| Dragging components under their relationships; Free Rotate | done | `dragging_keeps_the_dragged_body_near_the_pointer`, `an_assembly_opens_and_components_drag_along_their_joints` (slider drag, undo, Free Rotate about an insert), `assembly_drag_frame_time_stays_within_budget` (2.8 ms per frame, release) |
+| Degrees-of-freedom display | done | `joints_leave_their_motions`, `dof_interference_parts_list_and_explode_from_the_ribbon` (per component and total); the symbols are drawn by `asm_overlays` (not asserted pixel by pixel) |
+| Interference check | done | `dof_interference_parts_list_and_explode_from_the_ribbon` (108π mm³ between a pin head and the block), the demo script |
+| Bill of materials (with CSV export) | done | the demo script (`asm.bom`, `asm.export_bom`), `the_m3_demo_script_builds_a_verified_pivot_assembly` (the CSV), `dof_interference_parts_list_and_explode_from_the_ribbon`. Gap: no part numbers, descriptions or materials (M5) |
+| Exploded view (steps, auto explode, trails) | done | the demo script (`asm.explode.positions`), `dof_interference_parts_list_and_explode_from_the_ribbon`. Gap: no animation; no rotation steps |
+| In-context editing of parts (with the rest of the assembly shown) | done | `editing_a_part_in_place_and_returning_updates_the_assembly` (double-click, edit, Return, the assembly follows, Save saves the part), the demo's `asm.edit_part`. Gap: no references from one part to another's geometry (adaptive parts) |
+| Assembly STEP export | partial | `the_m3_demo_script_builds_a_verified_pivot_assembly` (volume read back). Gap: placed solids only, no product structure |
+
+## M4 drawings, M5 breadth and polish, M6 native kernel
 
 All missing. Scope per milestone: `docs/plan.md`.

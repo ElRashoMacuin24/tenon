@@ -73,3 +73,24 @@ a value of the feature to an equation, applied in the same undo step:
 The value names are JSON pointers into the feature's definition (`/radius`, `/extent/distance`,
 `/kind/counterbore/depth`); `param.list` shows which value each parameter drives. Lengths are in
 millimetres and angles in degrees. `examples/m2-mount/mount.json` uses all of this.
+
+## Assemblies
+
+A script has one part document and one assembly. `file.new` starts a new part (scripts build
+several parts and save each). `asm.*` commands work on the assembly. `render.png` shows whichever
+was worked on last, and takes `exploded: true` for an assembly.
+
+```json
+{ "run": "asm.new", "with": { "name": "Pivot" } },
+{ "run": "asm.insert", "with": { "path": "base.tenon" }, "as": "base" },
+{ "run": "asm.insert", "with": { "path": "arm.tenon" }, "as": "arm" },
+{ "run": "asm.geom", "with": { "component": "$base.component", "edge": [{ "type": "cap", "feature": 2, "end": "end" }, { "type": "side", "feature": 2, "curve": 11 }] }, "as": "hole" },
+{ "run": "asm.geom", "with": { "component": "$arm.component", "edge": [{ "type": "cap", "feature": 2, "end": "start" }, { "type": "side", "feature": 2, "curve": 11 }] }, "as": "arm_hole" },
+{ "run": "asm.joint", "with": { "type": "revolute", "a": "$hole", "b": "$arm_hole" }, "expect": { "dof": 1 } },
+{ "run": "asm.save", "with": { "path": "pivot.tenonasm" } }
+```
+
+`asm.geom` names a component's geometry (faces by origin, edges by their two faces) and returns
+a target for `asm.constrain` and `asm.joint`. Every command that moves components returns the
+assembly's remaining degrees of freedom (`dof`). `asm.edit_part` runs a part command on a
+component's part, as editing in place does. `examples/m3-pivot/pivot.json` uses all of this.

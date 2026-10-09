@@ -72,8 +72,10 @@ pub(crate) struct AsmDoc {
     pub map: Vec<(ComponentId, usize)>,
     /// Per body of the shown scene: what it was made from (for the GPU upload).
     pub keys: Vec<u64>,
-    /// Moved bodies per component, and the key they were made from.
-    cache: BTreeMap<ComponentId, (u64, Vec<BodyView>)>,
+    /// Where each component's bodies are in the shown scene, and the key they were made from.
+    cache: BTreeMap<ComponentId, (u64, std::ops::Range<usize>)>,
+    /// The scene sequence number of the last scene built here (its bodies can be reused).
+    flat_seq: Option<u64>,
     /// What the shown scene was made from.
     pub shown: Option<u64>,
     /// Worker slot of each part, and the document revision last sent to it.
@@ -108,6 +110,7 @@ impl AsmDoc {
             map: Vec::new(),
             keys: Vec::new(),
             cache: BTreeMap::new(),
+            flat_seq: None,
             shown: None,
             slots: BTreeMap::new(),
             next_slot: 0,
@@ -493,34 +496,40 @@ impl Workbench {
             return;
         }
         a.shown = Some(key);
+        // Bodies of components that did not move are moved over from the scene shown now (not
+        // copied); only the others are placed again.
+        let reuse = a.flat_seq == Some(self.scene_seq);
+        let mut old: Vec<Option<BodyView>> = if reuse { std::mem::take(&mut self.scene.bodies).into_iter().map(Some).collect() } else { Vec::new() };
+        let cache = std::mem::take(&mut a.cache);
         let mut bodies = Vec::new();
         let (mut map, mut body_keys) = (Vec::new(), Vec::new());
-        let mut cache = std::mem::take(&mut a.cache);
         let mut next_cache = BTreeMap::new();
         for (id, k) in keys {
             let Some(c) = asm.component(id) else { continue };
-            let placed = match cache.remove(&id) {
-                Some((ck, b)) if ck == k => b,
-                _ => match (asm_session::scene_of(&a.session.parts, c), frames.get(&id)) {
-                    (Some(s), Some(f)) => {
-                        let x = Rigid::of(f);
-                        s.bodies.iter().map(|b| placed_body(b, &x)).collect()
-                    }
-                    _ => Vec::new(),
-                },
+            let kept: Option<Vec<BodyView>> = match cache.get(&id) {
+                Some((ck, range)) if *ck == k && reuse => range.clone().map(|i| old.get_mut(i).and_then(Option::take)).collect(),
+                _ => None,
             };
-            for (i, b) in placed.iter().enumerate() {
+            let placed = kept.unwrap_or_else(|| match (asm_session::scene_of(&a.session.parts, c), frames.get(&id)) {
+                (Some(s), Some(f)) => {
+                    let x = Rigid::of(f);
+                    s.bodies.iter().map(|b| placed_body(b, &x)).collect()
+                }
+                _ => Vec::new(),
+            });
+            next_cache.insert(id, (k, bodies.len()..bodies.len() + placed.len()));
+            for (i, b) in placed.into_iter().enumerate() {
                 map.push((id, i));
                 body_keys.push(k ^ (i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15));
-                bodies.push(b.clone());
+                bodies.push(b);
             }
-            next_cache.insert(id, (k, placed));
         }
         a.cache = next_cache;
         a.map = map;
         a.keys = body_keys;
         self.scene = Scene { bodies, ..Scene::default() };
         self.scene_seq += 1;
+        a.flat_seq = Some(self.scene_seq);
         self.view.selection.clear();
         if !self.view.fitted && !self.scene.bodies.is_empty() {
             self.fit_view();
@@ -1148,34 +1157,45 @@ impl Workbench {
         let mut export = false;
         if open {
             let rows = asm_session::bom(a.session.assembly(), &a.session.parts);
-            egui::Window::new("Bill of Materials").open(&mut open).collapsible(false).resizable(true).default_width(520.0).show(ui.ctx(), |ui| {
-                egui::Grid::new("tn_bom").num_columns(5).striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
-                    for h in ["Item", "Part", "Name", "Qty", "Volume (mm^3)"] {
-                        ui.strong(h);
-                    }
-                    ui.end_row();
-                    for r in &rows {
-                        ui.label(r.item.to_string());
-                        ui.label(&r.part);
-                        ui.label(&r.name);
-                        ui.label(r.quantity.to_string());
-                        ui.label(r.volume.map_or_else(|| "-".into(), |v| format!("{v:.2}")));
+            egui::Window::new("Bill of Materials")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .default_width(520.0)
+                .default_pos([300.0, 170.0])
+                .show(ui.ctx(), |ui| {
+                    egui::Grid::new("tn_bom").num_columns(5).striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
+                        for h in ["Item", "Part", "Name", "Qty", "Volume (mm^3)"] {
+                            ui.strong(h);
+                        }
                         ui.end_row();
+                        for r in &rows {
+                            ui.label(r.item.to_string());
+                            ui.label(&r.part);
+                            ui.label(&r.name);
+                            ui.label(r.quantity.to_string());
+                            ui.label(r.volume.map_or_else(|| "-".into(), |v| format!("{v:.2}")));
+                            ui.end_row();
+                        }
+                    });
+                    ui.add_space(6.0);
+                    if ui.button("Export CSV...").clicked() {
+                        export = true;
                     }
                 });
-                ui.add_space(6.0);
-                if ui.button("Export CSV...").clicked() {
-                    export = true;
-                }
-            });
         }
         a.bom = open;
         let mut close_clashes = false;
         if let Some(result) = &a.clashes {
             let names = |c: ComponentId| a.session.assembly().component(c).map_or_else(|| c.to_string(), |x| x.name.clone());
             let mut keep = true;
-            egui::Window::new("Interference").open(&mut keep).collapsible(false).resizable(false).default_width(360.0).show(ui.ctx(), |ui| {
-                match result {
+            egui::Window::new("Interference")
+                .open(&mut keep)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(360.0)
+                .default_pos([300.0, 170.0])
+                .show(ui.ctx(), |ui| match result {
                     Ok(c) if c.is_empty() => {
                         ui.label("No interference.");
                     }
@@ -1196,8 +1216,7 @@ impl Workbench {
                     Err(e) => {
                         ui.label(egui::RichText::new(e).color(Color32::from_rgb(0xd8, 0x44, 0x38)));
                     }
-                }
-            });
+                });
             close_clashes = !keep;
         }
         if close_clashes {
