@@ -179,6 +179,14 @@ fn drawing_edits_undo_and_bad_input_is_refused() {
     assert!(e.exec("drw.view.edit", &json!({ "view": 1, "scale": "1:0" })).is_err());
     assert_eq!(n(&mut e), count);
     assert_eq!(info(&mut e)["views"], before["views"]);
+    // A title block template saved from the drawing, changed, and used on its sheets.
+    e.exec("drw.template.save", &json!({ "path": "block.json" })).unwrap();
+    let text = std::fs::read_to_string(dir.join("block.json")).unwrap().replace("\"COMPANY\"", "\"ORGANISATION\"");
+    std::fs::write(dir.join("block.json"), text).unwrap();
+    assert_eq!(e.exec("drw.template.apply", &json!({ "path": "block.json" })).unwrap()["sheets"], 2);
+    e.exec("drw.export.svg", &json!({ "path": "block.svg" })).unwrap();
+    assert!(std::fs::read_to_string(dir.join("block.svg")).unwrap().contains("ORGANISATION"));
+    e.exec("drw.undo", &json!({})).unwrap();
     let err = e.exec("drw.open", &json!({ "path": "plate.tenon" })).unwrap_err();
     assert!(err.contains("part"), "{err}");
     assert!(e.exec("drw.export.pdf", &json!({ "path": "no/such/folder/plate.pdf" })).is_err());

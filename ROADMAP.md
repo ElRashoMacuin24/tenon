@@ -133,7 +133,7 @@ built and checked by a command script).
 
 Complete 2026-10-08. Hidden-line removal: `crates/kernel-occt/tests/m4.rs` (2). Drawing crate:
 `crates/drawing/src` (6). Sheet raster: `lines_dashes_and_text_land_on_white_paper`. Files:
-`crates/io/tests/drw.rs` (2). Commands and demo: `apps/tenon-cli/tests/m4.rs` (2). UI (real pointer
+`crates/io/tests/drw.rs` (3). Commands and demo: `apps/tenon-cli/tests/m4.rs` (2). UI (real pointer
 and key input): `crates/ui/src/drw_tests.rs` (4).
 
 | Feature | Status | Proof / gap |
@@ -148,7 +148,7 @@ and key input): `crates/ui/src/drw_tests.rs` (4).
 | Centre marks and centrelines | partial | drawn automatically for holes and cylinders seen end-on or side-on (the CENTER layer of `the_m4_demo_script_draws_a_plate_and_its_assembly`). Gap: no centrelines for other symmetric features; none placed by hand |
 | Hole tables | done | the demo script (positions and descriptions from the hole features), `tables_balloons_and_text_through_the_tools`. Gap: holes made by Hole features only, not by patterns of them or by cut extrusions |
 | Balloons (placed and automatic) and parts lists from the bill of materials | done | the demo script, `tables_balloons_and_text_through_the_tools` (a balloon attached where the pin's edge was clicked; auto balloon; a parts list placed with the tool), `models_edited_from_the_drawing_update_it` (the list follows the assembly). Gap: no custom columns or part numbers beyond the file name |
-| Title block | partial | one Tenon title block per standard with fields from `drw.props` and the projection symbol (`svg_pdf_and_dxf_hold_the_sheet`, the demo's PDF). Gap: no user-defined title block templates or borders |
+| Title block templates | done | a Tenon title block per standard with fields from `drw.props` and the projection symbol (`svg_pdf_and_dxf_hold_the_sheet`, the demo's PDF); templates saved, edited and applied as JSON files: `title_block_templates_round_trip_and_bad_ones_are_refused`, `drawing_edits_undo_and_bad_input_is_refused`, `models_edited_from_the_drawing_update_it` (from the Manage tab). Gap: templates are edited as text, not drawn in the app; the border is fixed |
 | Export to PDF, SVG and DXF | done | `svg_pdf_and_dxf_hold_the_sheet`, `the_m4_demo_script_draws_a_plate_and_its_assembly` (two PDF pages, DXF read back: a layer per line type, the views' lines where they belong), `models_edited_from_the_drawing_update_it` (from the File menu). Gap: PDF text in Helvetica, not the drafting font of the other outputs |
 | Views update when the model changes | done | the demo script (`drw.update` after the model file changed), `models_edited_from_the_drawing_update_it` (Open Model, edit, Return; saving the drawing saves the model), `views_are_computed_on_the_geometry_thread`. Gap: changes made to a model file by another program are read on Update, not noticed by themselves |
 | Drawing environment in the UI (Place Views and Annotate ribbons, sheet that pans and zooms, browser, dragging and deleting, dialogs) | done | `crates/ui/src/drw_tests.rs` (4 tests with real pointer and key input) |

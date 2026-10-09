@@ -477,10 +477,19 @@ pub const DRW_RIBBON: &[RibbonTab] = &[
     },
     RibbonTab {
         name: "Manage",
-        panels: &[RibbonPanel {
-            title: "Update",
-            commands: &[large("drw.update", "Update", "Read the model files again; the views and dimensions follow", Icon::Update, 0)],
-        }],
+        panels: &[
+            RibbonPanel {
+                title: "Update",
+                commands: &[large("drw.update", "Update", "Read the model files again; the views and dimensions follow", Icon::Update, 0)],
+            },
+            RibbonPanel {
+                title: "Title Block",
+                commands: &[
+                    large("drw.template.apply", "Apply\nTemplate", "Use a title block template file (.json) on every sheet", Icon::Open, 0),
+                    small("drw.template.save", "Save Template", "Save this sheet's title block as a template file (.json)", Icon::Save, 0),
+                ],
+            },
+        ],
     },
     RibbonTab {
         name: "View",

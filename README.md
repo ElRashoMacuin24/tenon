@@ -35,6 +35,7 @@ In drawings (`.tenondrw` files that show your parts and assemblies), you can:
 - dimension by clicking edges; the dimensions follow the model when it changes;
 - add hole tables, parts lists from the bill of materials, balloons and text;
 - open a view's model from the drawing, change it, and come back to an updated drawing;
+- use your own title block templates;
 - export PDF, SVG and DXF.
 
 The workbench follows the familiar mechanical-CAD layout and workflow (ribbon, model browser,

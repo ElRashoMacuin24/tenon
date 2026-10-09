@@ -59,7 +59,8 @@ pub struct TitleLine {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TitleField {
     /// What fills it: a drawing property (`title`, `number`, `revision`, `company`, `drawn_by`,
-    /// `date`) or a computed value (`scale`, `sheet`, `size`, `units`).
+    /// `date`), a computed value (`scale`, `sheet`, `size`, `units`), or `text`: nothing, the
+    /// label alone (fixed text of a template).
     pub key: String,
     pub label: String,
     pub at: Vec2,
@@ -76,6 +77,29 @@ pub struct TitleBlock {
     /// Where the projection symbol goes (its centre, from the bottom-right corner), if shown.
     #[serde(default)]
     pub projection_symbol: Option<Vec2>,
+}
+
+impl TitleBlock {
+    /// The keys a field may have.
+    pub const KEYS: [&'static str; 11] = ["title", "number", "revision", "company", "drawn_by", "date", "scale", "sheet", "size", "units", "text"];
+
+    /// Checks a title block read from a file: sizes, numbers, keys.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.name.len() > 256 || self.lines.len() > 1000 || self.fields.len() > 200 {
+            return Err("the title block is too big".into());
+        }
+        let in_reach = |p: Vec2| finite2(p) && p.x.abs() <= 10_000.0 && p.y.abs() <= 10_000.0;
+        let lines_ok = self.lines.iter().all(|l| in_reach(l.a) && in_reach(l.b));
+        let fields_ok =
+            self.fields.iter().all(|f| in_reach(f.at) && f.height.is_finite() && f.height > 0.0 && f.height < 100.0 && f.label.len() <= 1000);
+        if !lines_ok || !fields_ok || !self.projection_symbol.is_none_or(in_reach) {
+            return Err("the title block has a value out of range".into());
+        }
+        if let Some(f) = self.fields.iter().find(|f| !Self::KEYS.contains(&f.key.as_str())) {
+            return Err(format!("the title block field `{}` is not one of {}", f.key, Self::KEYS.join(", ")));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -553,14 +577,7 @@ impl Drawing {
             if !size_ok(s.size.width) || !size_ok(s.size.height) {
                 return Err(format!("{} has a bad size", s.name));
             }
-            if s.title_block.lines.len() > 1000 || s.title_block.fields.len() > 200 {
-                return Err(format!("{}: the title block is too big", s.name));
-            }
-            let lines_ok = s.title_block.lines.iter().all(|l| finite2(l.a) && finite2(l.b));
-            let fields_ok = s.title_block.fields.iter().all(|f| finite2(f.at) && f.height.is_finite() && f.height > 0.0 && f.height < 100.0);
-            if !lines_ok || !fields_ok {
-                return Err(format!("{}: the title block has a value out of range", s.name));
-            }
+            s.title_block.validate().map_err(|e| format!("{}: {e}", s.name))?;
         }
         let mut views = std::collections::BTreeSet::new();
         for v in &self.views {

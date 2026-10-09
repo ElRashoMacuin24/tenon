@@ -100,6 +100,58 @@ fn drawings_round_trip_with_model_paths_relative_to_the_file() {
 }
 
 #[test]
+fn title_block_templates_round_trip_and_bad_ones_are_refused() {
+    let dir = scratch("template");
+    let mut s = DrwSession::default();
+    drw::run(&mut s, "drw.new", &json!({ "name": "T", "size": "A3", "standard": "iso" }), None).unwrap();
+    drw::run(&mut s, "drw.sheet.add", &json!({}), None).unwrap();
+    let file = dir.join("block.json");
+    drw::run(&mut s, "drw.template.save", &json!({ "path": file.to_str().unwrap() }), None).unwrap();
+    let saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(saved["format"], "tenon-title-block");
+    assert_eq!(saved["title_block"]["name"], "ISO");
+
+    // A hand-edited template: a fixed company line and a smaller block, on every sheet; undoable.
+    let mut edited = saved.clone();
+    edited["title_block"]["name"] = json!("ACME");
+    edited["title_block"]["fields"] = json!([
+        { "key": "text", "label": "ACME WIDGETS", "at": { "x": -120.0, "y": 30.0 }, "height": 5.0 },
+        { "key": "title", "label": "TITLE", "at": { "x": -120.0, "y": 14.0 }, "height": 4.0 }
+    ]);
+    edited["title_block"]["lines"] = json!([{ "a": { "x": -130.0, "y": 10.0 }, "b": { "x": -10.0, "y": 10.0 } }]);
+    let acme = dir.join("acme.json");
+    std::fs::write(&acme, serde_json::to_vec(&edited).unwrap()).unwrap();
+    let r = drw::run(&mut s, "drw.template.apply", &json!({ "path": acme.to_str().unwrap() }), None).unwrap();
+    assert_eq!(r["sheets"], 2);
+    assert!(s.drawing().sheets.iter().all(|sh| sh.title_block.name == "ACME" && sh.title_block.fields.len() == 2));
+    let g = tenon_drawing::annotate::build(s.drawing(), s.drawing().sheets[0].id, &tenon_drawing::Evaluation::default()).0;
+    assert!(g.texts.iter().any(|(_, t)| t.text == "ACME WIDGETS"));
+    drw::run(&mut s, "drw.undo", &json!({}), None).unwrap();
+    assert_eq!(s.drawing().sheets[1].title_block.name, "ISO");
+
+    // Refused, changing nothing: an unknown field, a value out of reach, not a template, newer.
+    let try_apply = |s: &mut DrwSession, v: &Value| {
+        let f = dir.join("bad.json");
+        std::fs::write(&f, serde_json::to_vec(v).unwrap()).unwrap();
+        drw::run(s, "drw.template.apply", &json!({ "path": f.to_str().unwrap() }), None)
+    };
+    let before = s.drawing().clone();
+    let mut v = saved.clone();
+    v["title_block"]["fields"][0]["key"] = json!("price");
+    assert!(try_apply(&mut s, &v).unwrap_err().to_string().contains("price"));
+    let mut v = saved.clone();
+    v["title_block"]["lines"][0]["a"]["x"] = json!(1e9);
+    assert!(try_apply(&mut s, &v).is_err());
+    let mut v = saved.clone();
+    v["format"] = json!("tenon-drawing");
+    assert!(try_apply(&mut s, &v).unwrap_err().to_string().contains("template"));
+    let mut v = saved.clone();
+    v["version"] = json!(9);
+    assert!(try_apply(&mut s, &v).unwrap_err().to_string().contains("newer"));
+    assert_eq!(*s.drawing(), before);
+}
+
+#[test]
 fn damaged_and_mistaken_drawing_files_are_refused() {
     let dir = scratch("bad");
     let d = sample(&dir);

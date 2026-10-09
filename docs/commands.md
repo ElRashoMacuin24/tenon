@@ -107,6 +107,8 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `drw.export.pdf` | Export PDF | path (.pdf); sheet (default: every sheet, one page each) | no |
 | `drw.export.svg` | Export SVG | path (.svg); sheet (default the first) | no |
 | `drw.export.dxf` | Export DXF | path (.dxf); sheet (default the first) | no |
+| `drw.template.save` | Save Title Block | path (.json); sheet (default the first): its title block as a template file | no |
+| `drw.template.apply` | Apply Title Block | path: a title block template (.json, from drw.template.save or written by hand, docs/file-format.md); sheet (default: every sheet) | yes |
 | `drw.info` | Drawing Info | sheets, views (with their geometry counts) and annotations, dimension values and table rows as they are now | no |
 | `drw.pick` | Pick Geometry | view; at: [x, y] (the edge drawn nearest that sheet point, as a click picks it) or view_at: [x, y] (the same, in the view, model mm), or edge: [face origin, face origin] or {"body", "index"} with component (assembly views); point: start \| end \| mid \| center \| whole (default). Returns a pick for drw.dimension, with its kind (point, line with its length in the view, circle with its diameter) and where it is on the sheet | no |
 | `drw.view.projected` | Projected View | parent (view); side: right \| left \| above \| below \| above_right \| above_left \| below_right \| below_left (diagonals: isometric); at: [x, y] (sheet mm); scale | yes |

@@ -653,6 +653,21 @@ impl Workbench {
                     });
                 }
             }
+            "drw.template.apply" => {
+                let path = self.services.pick_open_ext.as_ref().and_then(|f| f("json")).ok_or("no file chosen")?;
+                let r = self.drw_exec("drw.template.apply", json!({ "path": path.to_string_lossy() }))?;
+                self.set_status(format!("Title block {} on {} sheet(s).", r["name"], r["sheets"]));
+            }
+            "drw.template.save" => {
+                let (name, sheet) = self
+                    .drw
+                    .as_ref()
+                    .map(|d| (d.session.drawing().sheet(d.sheet).map(|s| s.title_block.name.clone()).unwrap_or_default(), d.sheet.0))
+                    .unwrap_or_default();
+                let path = self.services.pick_save.as_ref().and_then(|f| f(&format!("{name}.json"), "json")).ok_or("no file chosen")?;
+                self.drw_exec("drw.template.save", json!({ "path": path.to_string_lossy(), "sheet": sheet }))?;
+                self.set_status(format!("Saved {}", path.display()));
+            }
             "drw.edit_model" => self.edit_model_from_drawing()?,
             "drw.delete" => self.delete_selected()?,
             "export.pdf" | "export.svg" | "export.dxf" => self.export_drawing(&id["export.".len()..])?,

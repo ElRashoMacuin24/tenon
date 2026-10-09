@@ -24,6 +24,8 @@ use crate::viewport::{View, VisualStyle};
 pub struct Services {
     /// Choose a project to open.
     pub pick_open: Option<Box<dyn Fn() -> Option<PathBuf>>>,
+    /// Choose a file of another kind to read: `(extension without dot)`.
+    pub pick_open_ext: Option<Box<dyn Fn(&str) -> Option<PathBuf>>>,
     /// Choose where to save: `(suggested file name, extension without dot)`.
     pub pick_save: Option<Box<dyn Fn(&str, &str) -> Option<PathBuf>>>,
 }

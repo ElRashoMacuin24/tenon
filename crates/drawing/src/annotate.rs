@@ -786,6 +786,7 @@ fn draw_frame(gr: &mut Graphics, d: &Drawing, sheet: SheetId) {
             "sheet" => format!("{index} OF {sheets}"),
             "size" => s.size.name.clone(),
             "units" => "mm".into(),
+            "text" => String::new(),
             other => format!("<{other}>"),
         };
         gr.text(o, p, fld.height, value, Align::Left);

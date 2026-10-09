@@ -270,6 +270,79 @@ fn drw_update(s: &mut DrwSession, k: Option<&mut dyn Kernel>, _p: &Value) -> Cmd
     Ok(json!({ "models": reread }))
 }
 
+// ---- title block templates ----------------------------------------------------------------------
+
+/// `format` of a title block template file (plain JSON, `.json`).
+pub const TEMPLATE_FORMAT: &str = "tenon-title-block";
+/// Current template schema version.
+pub const TEMPLATE_VERSION: u32 = 1;
+/// Largest template file read.
+const MAX_TEMPLATE: u64 = 4 * 1024 * 1024;
+
+#[derive(Serialize, Deserialize)]
+struct TemplateFile {
+    format: String,
+    version: u32,
+    title_block: tenon_drawing::TitleBlock,
+}
+
+/// A title block as template file text.
+pub fn template_json(tb: &tenon_drawing::TitleBlock) -> String {
+    let file = TemplateFile { format: TEMPLATE_FORMAT.into(), version: TEMPLATE_VERSION, title_block: tb.clone() };
+    serde_json::to_string_pretty(&file).unwrap_or_default()
+}
+
+/// Reads a title block template file.
+pub fn read_template(path: &Path) -> Result<tenon_drawing::TitleBlock, ProjectError> {
+    if std::fs::metadata(path)?.len() > MAX_TEMPLATE {
+        return Err(ProjectError::NotAProject("the template is too large".into()));
+    }
+    let head: Value = serde_json::from_slice(&std::fs::read(path)?).map_err(|e| ProjectError::NotAProject(e.to_string()))?;
+    if head.get("format").and_then(Value::as_str) != Some(TEMPLATE_FORMAT) {
+        return Err(ProjectError::NotAProject(format!("not a title block template (\"format\": \"{TEMPLATE_FORMAT}\")")));
+    }
+    let version = head.get("version").and_then(Value::as_u64).ok_or_else(|| ProjectError::Damaged("no version".into()))?;
+    if version > u64::from(TEMPLATE_VERSION) {
+        return Err(ProjectError::TooNew(u32::try_from(version).unwrap_or(u32::MAX)));
+    }
+    let file: TemplateFile = serde_json::from_value(head).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+    file.title_block.validate().map_err(ProjectError::Damaged)?;
+    Ok(file.title_block)
+}
+
+fn drw_template_save(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let path = path(p)?;
+    let d = s.drawing();
+    let sheet = match sheet_param(p)? {
+        Some(n) => d.sheets.iter().find(|x| x.id.0 == n).ok_or_else(|| CmdError(format!("sheet {n} does not exist")))?,
+        None => &d.sheets[0],
+    };
+    let text = template_json(&sheet.title_block);
+    write(&path, text.as_bytes())?;
+    Ok(json!({ "path": path.display().to_string(), "name": sheet.title_block.name, "fields": sheet.title_block.fields.len() }))
+}
+
+fn drw_template_apply(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let path = path(p)?;
+    let tb = read_template(&path).map_err(|e| CmdError(format!("cannot read {}: {e}", path.display())))?;
+    let only = sheet_param(p)?;
+    if let Some(n) = only
+        && !s.drawing().sheets.iter().any(|x| x.id.0 == n)
+    {
+        return Err(CmdError(format!("sheet {n} does not exist")));
+    }
+    let name = tb.name.clone();
+    let n = s.edit(|d| {
+        let mut n = 0;
+        for sh in d.sheets.iter_mut().filter(|x| only.is_none_or(|o| x.id.0 == o)) {
+            sh.title_block = tb.clone();
+            n += 1;
+        }
+        Ok(n)
+    })?;
+    Ok(json!({ "name": name, "sheets": n }))
+}
+
 /// Every sheet (or one) as graphics, from the current views.
 pub fn sheets_graphics(s: &DrwSession, sheet: Option<u32>) -> Result<Vec<tenon_drawing::Graphics>, CmdError> {
     let ev = s.current()?;
@@ -356,6 +429,22 @@ static COMMANDS: &[DrwCommand] = &[
     cmd!("drw.export.pdf", "Export PDF", "path (.pdf); sheet (default: every sheet, one page each)", false, true, drw_export_pdf),
     cmd!("drw.export.svg", "Export SVG", "path (.svg); sheet (default the first)", false, true, drw_export_svg),
     cmd!("drw.export.dxf", "Export DXF", "path (.dxf); sheet (default the first)", false, true, drw_export_dxf),
+    cmd!(
+        "drw.template.save",
+        "Save Title Block",
+        "path (.json); sheet (default the first): its title block as a template file",
+        false,
+        false,
+        drw_template_save
+    ),
+    cmd!(
+        "drw.template.apply",
+        "Apply Title Block",
+        "path: a title block template (.json, from drw.template.save or written by hand, docs/file-format.md); sheet (default: every sheet)",
+        true,
+        false,
+        drw_template_apply
+    ),
 ];
 
 /// The file commands for drawings.

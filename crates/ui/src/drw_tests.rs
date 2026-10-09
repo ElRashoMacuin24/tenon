@@ -229,6 +229,16 @@ fn models_edited_from_the_drawing_update_it() {
     }
     let pdf = String::from_utf8_lossy(&std::fs::read(dir.join("Plate.pdf")).unwrap()).into_owned();
     assert_eq!(pdf.matches("/Type /Page").count() - pdf.matches("/Type /Pages").count(), 2);
+
+    // Manage > Save Template, then the template applied from Manage > Apply Template.
+    wb.run_ui("drw.template.save").unwrap();
+    let template = dir.join("ANSI.json");
+    let mut t: Value = serde_json::from_slice(&std::fs::read(&template).unwrap()).unwrap();
+    t["title_block"]["name"] = json!("SHOP");
+    std::fs::write(&template, serde_json::to_vec(&t).unwrap()).unwrap();
+    wb.services.pick_open_ext = Some(Box::new(move |ext: &str| (ext == "json").then(|| template.clone())));
+    wb.run_ui("drw.template.apply").unwrap();
+    assert!(wb.drawing().unwrap().drawing().sheets.iter().all(|s| s.title_block.name == "SHOP"), "{}", wb.status());
     assert!(wb.run_ui("export.step").unwrap_err().contains("Open Model"));
 
     // A part opened over the drawing closes it.

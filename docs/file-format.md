@@ -273,6 +273,33 @@ Implemented in `crates/io/src/drw.rs` and `crates/drawing/src/model.rs`; tested 
   between 1e-4 and 1e4; sizes, positions and text lengths are bounded. Limits: 500 sheets,
   5 000 views and 50 000 annotations.
 
+## Title block templates (`.json`, version 1)
+
+A title block template is a plain JSON file (`drw.template.save` writes one; Manage > Apply
+Template or `drw.template.apply` uses one on a drawing's sheets):
+
+```json
+{
+  "format": "tenon-title-block",
+  "version": 1,
+  "title_block": {
+    "name": "ACME",
+    "lines": [ { "a": { "x": -180.0, "y": 10.0 }, "b": { "x": -10.0, "y": 10.0 } } ],
+    "fields": [
+      { "key": "text", "label": "ACME WIDGETS", "at": { "x": -178.0, "y": 40.0 }, "height": 5.0 },
+      { "key": "title", "label": "TITLE", "at": { "x": -98.0, "y": 40.0 }, "height": 5.0 }
+    ],
+    "projection_symbol": { "x": -32.5, "y": 18.0 }
+  }
+}
+```
+
+Positions are millimetres from the sheet's bottom-right corner, so one template fits every sheet
+size. A field's `key` says what fills it: a drawing property (`title`, `number`, `revision`,
+`company`, `drawn_by`, `date`), a computed value (`scale`, `sheet`, `size`, `units`), or `text`
+for the label alone. Each sheet keeps its own copy, so a drawing does not depend on the template
+file. Implemented in `crates/io/src/drw.rs`; tested in `crates/io/tests/drw.rs`.
+
 ## Changing the format
 
 Every schema change bumps `version`, adds a migration from the previous version, and adds a

@@ -105,6 +105,7 @@ fn services() -> Services {
             "svg" => "SVG",
             "dxf" => "DXF",
             "csv" => "CSV",
+            "json" => "Title block template (JSON)",
             other => other,
         }
     }
@@ -118,6 +119,7 @@ fn services() -> Services {
                 .add_filter(label("tenondrw"), &["tenondrw"])
                 .pick_file()
         })),
+        pick_open_ext: Some(Box::new(|ext: &str| rfd::FileDialog::new().add_filter(label(ext), &[ext]).pick_file())),
         pick_save: Some(Box::new(|name: &str, ext: &str| {
             let path = rfd::FileDialog::new().set_file_name(name).add_filter(label(ext), &[ext]).save_file()?;
             // Some platforms return the name without the chosen filter's extension.
