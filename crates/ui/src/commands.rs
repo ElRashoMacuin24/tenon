@@ -472,6 +472,26 @@ pub const DRW_RIBBON: &[RibbonTab] = &[
             },
             RibbonPanel { title: "Text", commands: &[large("drw.text", "Text", "Click where the text goes, then type it", Icon::Text, 0).key("T")] },
             RibbonPanel {
+                title: "Symbols",
+                commands: &[
+                    large("drw.center_mark", "Centre\nMark", "Click circles and arcs: a centre mark on each", Icon::CenterMark, 0),
+                    small(
+                        "drw.centerline",
+                        "Centreline",
+                        "Click two places: circles (their centres), lines (their middles) or points",
+                        Icon::Centerline,
+                        0,
+                    ),
+                    small(
+                        "drw.centerline.bisector",
+                        "Centreline Bisector",
+                        "Click two lines: the centreline midway between them",
+                        Icon::CenterlineBisector,
+                        0,
+                    ),
+                ],
+            },
+            RibbonPanel {
                 title: "Table",
                 commands: &[
                     large("drw.parts_list", "Parts\nList", "Click an assembly view, then where the list goes", Icon::Bom, 0),

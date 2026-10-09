@@ -118,6 +118,9 @@ pub enum Icon {
     NewSheet,
     Balloon,
     HoleTable,
+    CenterMark,
+    Centerline,
+    CenterlineBisector,
 }
 
 /// What an icon depicts, for its fill colour.
@@ -785,6 +788,30 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
                 pen.line(&[(0.5, y), (0.92, y)]);
             }
             pen.line(&[(0.08, 0.71), (0.5, 0.71)]);
+        }
+        Icon::CenterMark => {
+            pen.circle((0.5, 0.5), 0.28);
+            pen.line(&[(0.42, 0.5), (0.58, 0.5)]);
+            pen.line(&[(0.5, 0.42), (0.5, 0.58)]);
+            for (a, b) in [(0.06, 0.34), (0.66, 0.94)] {
+                pen.line(&[(a, 0.5), (b, 0.5)]);
+                pen.line(&[(0.5, a), (0.5, b)]);
+            }
+        }
+        Icon::Centerline => {
+            pen.circle((0.24, 0.76), 0.17);
+            pen.circle((0.76, 0.24), 0.17);
+            // A chain line through both centres: long dash, short dash, long dash.
+            for (a, b) in [(0.02, 0.36), (0.45, 0.55), (0.64, 0.98)] {
+                pen.line(&[(a, 1.0 - a), (b, 1.0 - b)]);
+            }
+        }
+        Icon::CenterlineBisector => {
+            pen.line(&[(0.06, 0.16), (0.94, 0.16)]);
+            pen.line(&[(0.06, 0.84), (0.94, 0.84)]);
+            for (a, b) in [(0.0, 0.34), (0.44, 0.56), (0.66, 1.0)] {
+                pen.line(&[(a, 0.5), (b, 0.5)]);
+            }
         }
     }
 }

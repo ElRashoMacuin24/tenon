@@ -112,6 +112,15 @@ pub(crate) enum DrwTool {
         view: Option<ViewId>,
     },
     Text,
+    /// Each click on a circle or an arc puts a centre mark on it.
+    CenterMark,
+    /// Two places (a circle's centre, a line's middle or end), then the centreline through them;
+    /// with `bisector`, two lines, then the centreline midway between them.
+    Centerline {
+        bisector: bool,
+        view: Option<ViewId>,
+        a: Option<Value>,
+    },
 }
 
 impl DrwTool {
@@ -127,6 +136,9 @@ impl DrwTool {
             DrwTool::HoleTable { .. } => "drw.hole_table",
             DrwTool::PartsList { .. } => "drw.parts_list",
             DrwTool::Text => "drw.text",
+            DrwTool::CenterMark => "drw.center_mark",
+            DrwTool::Centerline { bisector: false, .. } => "drw.centerline",
+            DrwTool::Centerline { bisector: true, .. } => "drw.centerline.bisector",
         }
     }
 
@@ -156,6 +168,13 @@ impl DrwTool {
             DrwTool::PartsList { view: None } => "Parts list: click an assembly view.",
             DrwTool::HoleTable { .. } | DrwTool::PartsList { .. } => "Click where the table's top-left corner goes.",
             DrwTool::Text => "Text: click where the text goes.",
+            DrwTool::CenterMark => "Centre mark: click a circle or an arc (Esc ends).",
+            DrwTool::Centerline { bisector: false, a: None, .. } => {
+                "Centreline: click a circle (its centre), a line (its middle) or near a line's end."
+            }
+            DrwTool::Centerline { bisector: false, .. } => "Click the second circle, line or line end.",
+            DrwTool::Centerline { a: None, .. } => "Centreline bisector: click a line.",
+            DrwTool::Centerline { .. } => "Click the second line: parallel, or meeting the first.",
         }
     }
 }
@@ -719,6 +738,10 @@ impl Workbench {
             "drw.hole_table" => self.start_tool(DrwTool::HoleTable { view: selected }),
             "drw.parts_list" => self.start_tool(DrwTool::PartsList { view: selected }),
             "drw.text" => self.start_tool(DrwTool::Text),
+            "drw.center_mark" => self.start_tool(DrwTool::CenterMark),
+            "drw.centerline" | "drw.centerline.bisector" => {
+                self.start_tool(DrwTool::Centerline { bisector: id == "drw.centerline.bisector", view: None, a: None })
+            }
             "drw.sheet.new" => {
                 let size = self.drw.as_ref().and_then(|d| d.session.drawing().sheet(d.sheet).map(|s| s.size.name.clone())).unwrap_or_default();
                 let r = self.drw_exec("drw.sheet.add", json!({ "size": size }))?;
@@ -1007,11 +1030,14 @@ impl Workbench {
         }
         let selecting = d.tool.is_none() && tool_nav == Nav::Select;
 
-        // Dragging a view or an annotation moves it.
+        // Dragging a view or an annotation moves it; centre marks and lines stay on their geometry.
         if selecting && resp.drag_started_by(egui::PointerButton::Primary) {
             let grab = ui.input(|i| i.pointer.press_origin()).map(|p| cam.sheet(rect, p)).and_then(|p| g.pick(p, tol));
             if let Some(o @ (Owner::View(_) | Owner::Annotation(_))) = grab {
-                d.drag = Some((o, Vec2::new(0.0, 0.0)));
+                let fixed = matches!(o, Owner::Annotation(a) if d.session.drawing().annotation(a).is_some_and(|x| x.kind.on_geometry()));
+                if !fixed {
+                    d.drag = Some((o, Vec2::new(0.0, 0.0)));
+                }
                 d.selected = Some(o);
             }
         }
@@ -1342,6 +1368,52 @@ impl Workbench {
                     d.tool = None;
                 }
             }
+            DrwTool::CenterMark => {
+                let v = need_view()?;
+                let pick = self.drw_exec("drw.pick", json!({ "view": v.0, "at": v2(at) })).map_err(|_| "click a circle or an arc".to_string())?;
+                self.drw_exec("drw.center_mark", json!({ "view": v.0, "a": pick }))?;
+                self.set_status("Centre mark placed. Click the next circle or arc, or Esc to end.");
+            }
+            DrwTool::Centerline { bisector, view, a } => {
+                let v = need_view()?;
+                if view.is_some_and(|w| w != v) {
+                    return Err("click in the same view".into());
+                }
+                let what = if bisector { "click a line" } else { "click a circle, a line or a line's end" };
+                let mut pick = self.drw_exec("drw.pick", json!({ "view": v.0, "at": v2(at) })).map_err(|_| what.to_string())?;
+                if bisector && pick["kind"] != "line" {
+                    return Err(what.into());
+                }
+                // Near a line's end (within a quarter of its length): that end, not its middle.
+                if !bisector
+                    && pick["kind"] == "line"
+                    && let Some((s, e)) = line_ends(self, v, &pick)
+                {
+                    let near = s.dist(e) * 0.25;
+                    let end = if at.dist(s) < near {
+                        Some("start")
+                    } else if at.dist(e) < near {
+                        Some("end")
+                    } else {
+                        None
+                    };
+                    if let Some(end) = end {
+                        pick = self.drw_exec("drw.pick", json!({ "view": v.0, "at": v2(at), "point": end }))?;
+                    }
+                }
+                let Some(first) = a else {
+                    next(self, Some(DrwTool::Centerline { bisector, view: Some(v), a: Some(pick) }));
+                    return Ok(());
+                };
+                let id = if bisector { "drw.centerline.bisector" } else { "drw.centerline" };
+                self.drw_exec(id, json!({ "view": v.0, "a": first, "b": pick }))?;
+                next(self, Some(DrwTool::Centerline { bisector, view: None, a: None }));
+                self.set_status(if bisector {
+                    "Centreline bisector placed. Click the next line, or Esc to end."
+                } else {
+                    "Centreline placed. Click the next place, or Esc to end."
+                });
+            }
         }
         let _ = g;
         Ok(())
@@ -1650,7 +1722,7 @@ impl Workbench {
 }
 
 /// The owners that move with a dragged one: a view takes the views projected from it and the
-/// dimensions and balloons on them.
+/// dimensions, balloons, centre marks and centrelines on them.
 fn moving_owners(s: &DrwSession, o: Owner) -> Vec<Owner> {
     let Owner::View(v) = o else { return vec![o] };
     let d = s.drawing();
@@ -1659,7 +1731,11 @@ fn moving_owners(s: &DrwSession, o: Owner) -> Vec<Owner> {
     let mut out: Vec<Owner> = views.iter().map(|x| Owner::View(*x)).collect();
     for a in &d.annotations {
         let on = match &a.kind {
-            AnnotKind::Dimension { view, .. } | AnnotKind::Balloon { view, .. } => Some(*view),
+            AnnotKind::Dimension { view, .. }
+            | AnnotKind::Balloon { view, .. }
+            | AnnotKind::CenterMark { view, .. }
+            | AnnotKind::Centerline { view, .. }
+            | AnnotKind::CenterlineBisector { view, .. } => Some(*view),
             _ => None,
         };
         if on.is_some_and(|x| views.contains(&x)) {
@@ -1829,6 +1905,14 @@ fn draw_tool(p: &egui::Painter, rect: Rect, cam: &SheetCam, d: &DrwDoc, tool: &D
         DrwTool::Balloon { attach: Some(q), .. } => {
             p.line_segment([s(*q), s(at)], ghost);
             p.circle_stroke(s(at), (4.0 * cam.px) as f32, ghost);
+        }
+        DrwTool::Centerline { bisector, a: Some(pk), .. } => {
+            if let Some(q) = pick_at(pk) {
+                p.circle_filled(s(q), 4.0, GHOST);
+                if !bisector {
+                    p.extend(Shape::dashed_line(&[s(q), s(at)], ghost, 10.0, 4.0));
+                }
+            }
         }
         _ => {}
     }

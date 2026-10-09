@@ -382,13 +382,9 @@ fn dialogs_menus_navigation_and_details_by_real_input() {
     assert!(det["visible_curves"].as_u64().unwrap() > 0, "{det}");
 }
 
-#[test]
-fn an_arc_dimensions_as_a_radius_and_meeting_lines_as_an_angle() {
-    let _quiet = crate::tests::timing_lock();
-    let dir = scratch("kinds");
-    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
-    let mut d = Driver::new(vec2(1400.0, 860.0));
-    // A 60 x 40 x 20 block, its back right edge rounded (R10), its top front edge chamfered (5).
+/// A 60 x 40 x 20 block, its back right edge rounded (R10 about 50, 30), its top front edge
+/// chamfered (5), saved at `path`.
+fn rounded_chamfered_block(wb: &mut Workbench, path: &Path) {
     let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
     let rect = wb.exec("sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 })).unwrap();
     let body = wb.exec("model.extrude", json!({ "sketch": sk, "distance": 20 })).unwrap()["feature"].clone();
@@ -397,7 +393,16 @@ fn an_arc_dimensions_as_a_radius_and_meeting_lines_as_an_angle() {
     wb.exec("model.fillet", json!({ "edges": [corner], "radius": 10 })).unwrap();
     let edge = wb.exec("model.edge_ref", json!({ "faces": [{ "type": "cap", "feature": body, "end": "end" }, side(0)] })).unwrap();
     wb.exec("model.chamfer", json!({ "edges": [edge], "distance": 5 })).unwrap();
-    wb.save(&dir.join("block.tenon")).unwrap();
+    wb.save(path).unwrap();
+}
+
+#[test]
+fn an_arc_dimensions_as_a_radius_and_meeting_lines_as_an_angle() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("kinds");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    rounded_chamfered_block(&mut wb, &dir.join("block.tenon"));
 
     wb.run_ui("file.new_drawing").unwrap();
     d.frame(&mut wb, vec![]);
@@ -635,4 +640,108 @@ fn tables_balloons_and_text_through_the_tools() {
     assert!(wb.drw.as_ref().unwrap().text_dialog.is_some());
     d.frame(&mut wb, vec![egui::Event::Text("DEBURR".into())]);
     assert_eq!(wb.drw.as_ref().unwrap().text_dialog.as_ref().unwrap().text, "DEBURR");
+}
+
+#[test]
+fn centre_marks_and_centrelines_by_clicking() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("centres");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    rounded_chamfered_block(&mut wb, &dir.join("block.tenon"));
+    wb.run_ui("file.new_drawing").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.place_base_view(&dir.join("block.tenon"), Orientation::Top, Some(1.0), true).unwrap();
+    d.tap(&mut wb, egui::Key::Escape);
+    wb.drw.as_mut().unwrap().selected = None;
+    // Points of the view (model mm) on the sheet, and the segments an annotation draws.
+    let sheet = |wb: &mut Workbench, x: f64, y: f64| {
+        let r = wb.drw_exec("drw.to_sheet", json!({ "view": 1, "at": [x, y] })).unwrap();
+        Vec2::new(r["x"].as_f64().unwrap(), r["y"].as_f64().unwrap())
+    };
+    let p = |v: &Value| Vec2::new(v[0].as_f64().unwrap(), v[1].as_f64().unwrap());
+    let segments = |a: &Value| -> Vec<[Vec2; 2]> { a["segments"].as_array().unwrap().iter().map(|s| [p(&s[0]), p(&s[1])]).collect() };
+    // A centreline from `a` to `b`, 2 mm longer at each end, either way round.
+    let along = |s: [Vec2; 2], a: Vec2, b: Vec2| {
+        let u = (b - a).normalized();
+        let (a, b) = (a - u * 2.0, b + u * 2.0);
+        (s[0].dist(a) < 1e-6 && s[1].dist(b) < 1e-6) || (s[0].dist(b) < 1e-6 && s[1].dist(a) < 1e-6)
+    };
+    let arc = in_view(&mut wb, 1, 50.0 + 10.0 * 0.5f64.sqrt(), 30.0 + 10.0 * 0.5f64.sqrt());
+    let centre = sheet(&mut wb, 50.0, 30.0);
+
+    // Annotate > Centre Mark, then the rounded corner: a cross at its centre, R10 + 2 each way.
+    wb.run_ui("drw.center_mark").unwrap();
+    d.click(&mut wb, arc);
+    // A straight edge is refused; the tool waits for a circle or an arc.
+    let side = in_view(&mut wb, 1, 0.0, 20.0);
+    d.click(&mut wb, side);
+    assert!(wb.status().contains("circle or an arc"), "{}", wb.status());
+    assert_eq!(tool(&wb), Some(DrwTool::CenterMark));
+    d.tap(&mut wb, egui::Key::Escape);
+    let i = info(&mut wb);
+    let mark = &i["annotations"][0];
+    assert_eq!(mark["type"], "center_mark", "{i}");
+    let cross = segments(mark);
+    assert_eq!(cross.len(), 2, "{mark}");
+    for s in &cross {
+        assert!(((s[0] + s[1]) * 0.5).dist(centre) < 1e-6, "{mark}");
+        assert!((s[0].dist(s[1]) - 24.0).abs() < 1e-6, "{mark}");
+    }
+
+    // Centreline: the arc, then near the end of the left edge: through the centre and that end.
+    wb.run_ui("drw.centerline").unwrap();
+    d.click(&mut wb, arc);
+    assert!(matches!(tool(&wb), Some(DrwTool::Centerline { bisector: false, a: Some(_), .. })), "{}", wb.status());
+    let near_end = in_view(&mut wb, 1, 0.0, 38.0);
+    d.click(&mut wb, near_end);
+    // Then the middle of the left edge and the arc again.
+    let side = in_view(&mut wb, 1, 0.0, 22.0);
+    d.click(&mut wb, side);
+    d.click(&mut wb, arc);
+    d.tap(&mut wb, egui::Key::Escape);
+    let middle = wb.drw_exec("drw.pick", json!({ "view": 1, "view_at": [0.0, 22.0] })).unwrap();
+    let i = info(&mut wb);
+    let lines = &i["annotations"];
+    assert_eq!((lines[1]["type"].as_str(), lines[2]["type"].as_str()), (Some("centerline"), Some("centerline")), "{i}");
+    let corner = sheet(&mut wb, 0.0, 40.0);
+    assert!(along(segments(&lines[1])[0], centre, corner), "{}", lines[1]);
+    assert!(along(segments(&lines[2])[0], p(&middle["at"]), centre), "{} {middle}", lines[2]);
+
+    // Centreline Bisector: the arc is refused, then the left and right edges: x = 30 over both.
+    wb.run_ui("drw.centerline.bisector").unwrap();
+    d.click(&mut wb, arc);
+    assert!(wb.status().contains("click a line"), "{}", wb.status());
+    let (left, right) = (in_view(&mut wb, 1, 0.0, 20.0), in_view(&mut wb, 1, 60.0, 15.0));
+    d.click(&mut wb, left);
+    d.click(&mut wb, right);
+    d.tap(&mut wb, egui::Key::Escape);
+    let i = info(&mut wb);
+    let bisector = &i["annotations"][3];
+    assert_eq!(bisector["type"], "centerline_bisector", "{i}");
+    // Both edges run from y = 5 (the chamfer); the left one to 40, the right one to 30 (the round).
+    let (top, bottom) = (sheet(&mut wb, 30.0, 40.0), sheet(&mut wb, 30.0, 5.0));
+    assert!(along(segments(bisector)[0], top, bottom), "{bisector}");
+    // One undo takes it away.
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    assert_eq!(info(&mut wb)["annotations"].as_array().unwrap().len(), 3);
+
+    // Dragging a centre mark selects it but does not move it off its arc.
+    let on_arm = in_view(&mut wb, 1, 50.0, 21.0);
+    d.drag(&mut wb, on_arm, on_arm + vec2(40.0, 30.0), egui::PointerButton::Primary);
+    let w = wb.drw.as_ref().unwrap();
+    assert_eq!(w.selected, Some(Owner::Annotation(tenon_drawing::AnnotId(mark["id"].as_u64().unwrap() as u32))));
+    assert!(w.drag.is_none());
+    assert_eq!(segments(&info(&mut wb)["annotations"][0]), cross, "{}", wb.status());
+    // Moving the view takes its centre marks and lines along.
+    let before = center(&info(&mut wb), 0);
+    let edge = in_view(&mut wb, 1, 0.0, 30.0);
+    d.drag(&mut wb, edge, edge + vec2(-50.0, 20.0), egui::PointerButton::Primary);
+    let i = info(&mut wb);
+    let by = center(&i, 0) - before;
+    assert!(by.len() > 5.0, "the view moved: {i}");
+    let moved = segments(&i["annotations"][0]);
+    for (s, t) in moved.iter().zip(&cross) {
+        assert!(s[0].dist(t[0] + by) < 1e-6 && s[1].dist(t[1] + by) < 1e-6, "{i}");
+    }
 }

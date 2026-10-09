@@ -415,6 +415,12 @@ impl AnnotKind {
             AnnotKind::Note { .. } => None,
         }
     }
+
+    /// Whether it sits on its view's geometry (centre marks and lines): it moves with the
+    /// geometry, never by itself.
+    pub fn on_geometry(&self) -> bool {
+        matches!(self, AnnotKind::CenterMark { .. } | AnnotKind::Centerline { .. } | AnnotKind::CenterlineBisector { .. })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

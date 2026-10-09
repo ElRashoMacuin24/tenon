@@ -9,9 +9,9 @@ tools and find the free ones rough. It wins on reliability, coherence and speed,
 count: when two tasks compete, the one that makes existing features more dependable and pleasant
 goes first.
 
-Current milestone: **M4 drawings**: the quality bar added on 2026-10-09 is met, with one item
-waiting on the owner (centre marks and centrelines placed by hand need a new annotation kind in
-the drawing format). Next: M5 reliability and project format, after the owner confirms M4.
+Current milestone: **M4 drawings**: complete against the quality bar added on 2026-10-09, waiting
+for the owner's confirmation. Next: M5 reliability and project format, after the owner confirms
+M4.
 
 ## M0 foundations
 
@@ -140,10 +140,11 @@ built and checked by a command script).
 The first pass was reported 2026-10-08. The plan amendment of 2026-10-09 raised the bar
 (auto-dimension suggestions, sheet and title-block templates, clean PDF/SVG/DXF, views that follow
 model changes, all with tests); the rows below are rated against it, and all are met on
-2026-10-09 except centre marks and centrelines placed by hand, which wait on the owner.
+2026-10-09 (centre marks and centrelines placed by hand joined drawing format v1 by the owner's
+choice, DEC-029).
 Hidden-line removal: `crates/kernel-occt/tests/m4.rs` (2). Drawing crate: `crates/drawing/src` (8).
 Sheet raster: `lines_dashes_and_text_land_on_white_paper`. Files: `crates/io/tests/drw.rs` (5).
-Commands and demo: `apps/tenon-cli/tests/m4.rs` (5). UI (real pointer and key input):
+Commands and demo: `apps/tenon-cli/tests/m4.rs` (6). UI (real pointer and key input):
 `crates/ui/src/drw_tests.rs` (10).
 
 | Feature | Status | Proof / gap |
@@ -156,7 +157,7 @@ Commands and demo: `apps/tenon-cli/tests/m4.rs` (5). UI (real pointer and key in
 | Detail views | done | `hatching_clipping_and_covered_hidden_lines` (clipped to the circle), the demo script (2:1), `dialogs_menus_navigation_and_details_by_real_input` (view, centre, radius and place clicked). Gap: circular boundary only |
 | Associative dimensions: horizontal, vertical, aligned, diameter, radius, angle | done | the demo script (values picked from the views; the plate made thicker and the drawing updated: 12 becomes 16), `models_edited_from_the_drawing_update_it` (16 becomes 20 after editing from the drawing), `views_and_dimensions_are_placed_by_clicking_on_the_sheet` (the type chosen from what is clicked), `aligned_radius_and_angle_dimensions_measure_the_model_and_follow_it` (a fillet's radius, a chamfer's true length and its angles in each sector, all following parameter changes), `an_arc_dimensions_as_a_radius_and_meeting_lines_as_an_angle` (chosen from clicks). Gaps: no ordinate, baseline or chain dimensions; no tolerances; model dimensions cannot be retrieved into the drawing |
 | Auto-dimension suggestions | done | for a base, projected or section view: overall width and height from the edges that span it, each size of hole or boss (with its count, "4X Ø8") and of round, placed outside the view, minus what its dimensions already give; added as ordinary associative dimensions in one undo step: `suggested_dimensions_cover_the_part_once_and_follow_it` (the plate's views; nothing suggested twice; the thickness follows the model), `auto_dimension_suggests_reviews_and_adds_in_one_step` (the tool, the review dialog with its preview on the sheet, one undo). Gaps: no hole positions (the hole table gives them), no chained or baseline sets, isometric and detail views are left to the user |
-| Centre marks and centrelines | partial | drawn automatically for holes and cylinders seen end-on (centre marks) or side-on (centrelines), and in sections only for what is left: `the_m4_demo_script_draws_a_plate_and_its_assembly` (a centre mark through each of the plate's five holes in the top view). Gaps: none placed by hand, and none for other symmetric features: that needs a new annotation kind in `.tenondrw`, waiting on the owner (a format change) |
+| Centre marks and centrelines | done | drawn automatically for holes and cylinders seen end-on (centre marks) or side-on (centrelines), and in sections only for what is left: `the_m4_demo_script_draws_a_plate_and_its_assembly` (a centre mark through each of the plate's five holes in the top view). Placed by hand (DEC-029): a centre mark on any circle or arc, a centreline through two picked places (circle centres, line middles, points) and a centreline bisector midway between two lines (parallel or meeting), kept as edge picks so they follow the model: `centre_marks_and_centrelines_placed_by_hand_follow_the_model` (an arc's mark moves when its radius changes, after saving and reopening; bad picks refused; on the CENTER layer in DXF), `centre_marks_and_centrelines_by_clicking` (the three tools, real clicks, one undo each). Gap: no centred pattern (a bolt circle's centreline through a pattern of holes) |
 | Hole tables | done | the demo script (positions and descriptions from the hole features), `tables_balloons_and_text_through_the_tools`. Gap: holes made by Hole features only, not by patterns of them or by cut extrusions |
 | Balloons (placed and automatic) and parts lists from the bill of materials | done | the demo script, `tables_balloons_and_text_through_the_tools` (a balloon attached where the pin's edge was clicked; auto balloon; a parts list placed with the tool), `models_edited_from_the_drawing_update_it` (the list follows the assembly), `drawing_edits_undo_and_bad_input_is_refused` (the parts list equals the assembly's bill of materials row for row, also after parts are added; both come from `bom_with`). Gap: no custom columns or part numbers beyond the file name |
 | Title block templates | done | a Tenon title block per standard with fields from `drw.props` and the projection symbol (`svg_pdf_and_dxf_hold_the_sheet`, the demo's PDF); templates saved, edited and applied as JSON files: `title_block_templates_round_trip_and_bad_ones_are_refused`, `drawing_edits_undo_and_bad_input_is_refused`, `models_edited_from_the_drawing_update_it` (from the Manage tab). Gap: templates are edited as text, not drawn in the app; the border is fixed |
