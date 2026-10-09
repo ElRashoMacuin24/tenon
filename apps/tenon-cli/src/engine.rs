@@ -65,7 +65,7 @@ impl Engine {
             }
             _ if id.starts_with("drw.") => {
                 self.active = Active::Drawing;
-                let params = self.resolve_key(&params, "model");
+                let params = self.resolve_key(&self.resolve_key(&params, "model"), "template");
                 tenon_io::drw::run(&mut self.drw, id, &params, Some(self.kernel.as_mut())).map_err(|e| e.to_string())
             }
             _ => {

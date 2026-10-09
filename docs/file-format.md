@@ -273,6 +273,15 @@ Implemented in `crates/io/src/drw.rs` and `crates/drawing/src/model.rs`; tested 
   between 1e-4 and 1e4; sizes, positions and text lengths are bounded. Limits: 500 sheets,
   5 000 views and 50 000 annotations.
 
+## Drawing templates
+
+A drawing template is an ordinary `.tenondrw` file. Starting a drawing from one
+(`drw.new` with `template`, File > New Drawing from Template) takes its standard, properties and
+sheets (sizes, borders, title blocks) with the notes on them; views, and the dimensions, tables
+and balloons that need a model, are left out, and no model file is read. `drw.save_template`
+writes such a file from the open drawing. Tenon ships an ANSI B and an ISO A3 template in
+`assets/templates`. Implemented in `crates/io/src/drw.rs`; tested in `crates/io/tests/drw.rs`.
+
 ## Title block templates (`.json`, version 1)
 
 A title block template is a plain JSON file (`drw.template.save` writes one; Manage > Apply

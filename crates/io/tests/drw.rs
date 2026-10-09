@@ -210,6 +210,49 @@ fn model_files_changed_on_disk_are_read_again_unless_changed_in_the_drawing() {
 }
 
 #[test]
+fn drawings_start_from_templates_and_save_as_templates() {
+    let dir = scratch("drawing-templates");
+    // A drawing with two sheets, properties, a note and views (of a model that need not exist).
+    let mut d = sample(&dir);
+    let second = d.add_sheet(tenon_drawing::sheets::size_named("A3").unwrap());
+    d.props.company = "ACME".into();
+    d.props.drawn_by = "JD".into();
+    let id = d.take_annotation_id();
+    d.annotations
+        .push(Annotation { id, kind: AnnotKind::Note { sheet: second, at: Vec2::new(30.0, 30.0), text: "GENERAL NOTES".into(), height: 3.5 } });
+    let mut s = DrwSession::default();
+    s.replace(d.clone(), Default::default());
+    let file = dir.join("acme.tenondrw");
+    let r = drw::run(&mut s, "drw.save_template", &json!({ "path": file.to_str().unwrap(), "name": "ACME A3" }), None).unwrap();
+    assert_eq!((r["sheets"].as_u64(), r["notes"].as_u64()), (Some(2), Some(2)));
+
+    // A new drawing from it: the same standard, properties, sheets and notes; no views, no
+    // dimensions; no model read.
+    let mut t = DrwSession::default();
+    let r = drw::run(&mut t, "drw.new", &json!({ "name": "Bracket", "template": file.to_str().unwrap() }), None).unwrap();
+    assert_eq!(r["sheets"], json!(["A3", "A3"]), "{r}");
+    let n = t.drawing();
+    assert_eq!((n.name.as_str(), n.standard, n.props.company.as_str(), n.props.drawn_by.as_str()), ("Bracket", Standard::Iso, "ACME", "JD"));
+    assert!(n.views.is_empty() && t.models.is_empty());
+    assert_eq!(n.sheets.iter().map(|x| &x.title_block).collect::<Vec<_>>(), d.sheets.iter().map(|x| &x.title_block).collect::<Vec<_>>());
+    assert_eq!(n.annotations.len(), 2);
+    assert!(n.annotations.iter().all(|a| matches!(a.kind, AnnotKind::Note { .. })));
+    assert!(n.validate().is_ok());
+    // A template brings its own standard and sheets.
+    assert!(drw::run(&mut t, "drw.new", &json!({ "template": file.to_str().unwrap(), "size": "B" }), None).is_err());
+    assert!(drw::run(&mut t, "drw.new", &json!({ "template": dir.join("none.tenondrw").to_str().unwrap() }), None).is_err());
+    assert_eq!(t.drawing().name, "Bracket", "a refused template changes nothing");
+
+    // The templates Tenon ships: ANSI B, third-angle; ISO A3, first-angle.
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/templates");
+    for (file, standard, size) in [("ansi-b.tenondrw", Standard::Ansi, "B"), ("iso-a3.tenondrw", Standard::Iso, "A3")] {
+        let d = drw::read_drawing_template(&shipped.join(file), "New").unwrap();
+        assert_eq!((d.standard, d.sheets.len(), d.sheets[0].size.name.as_str()), (standard, 1, size), "{file}");
+        assert!(d.views.is_empty() && d.annotations.is_empty() && d.validate().is_ok(), "{file}");
+    }
+}
+
+#[test]
 fn damaged_and_mistaken_drawing_files_are_refused() {
     let dir = scratch("bad");
     let d = sample(&dir);

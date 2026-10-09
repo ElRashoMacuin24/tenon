@@ -410,6 +410,17 @@ impl Workbench {
         self.set_status("New drawing: place a base view of a part or assembly file (Place Views > Base).");
     }
 
+    /// A new drawing starting from a template: its standard, properties, sheets and notes.
+    pub fn new_drawing_from(&mut self, template: &Path) -> Result<(), String> {
+        let mut s = DrwSession::default();
+        tenon_io::drw::run(&mut s, "drw.new", &json!({ "name": "Drawing1", "template": template.to_string_lossy() }), None)
+            .map_err(|e| e.to_string())?;
+        self.enter_drawing(DrwDoc::new(s, None));
+        let name = template.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        self.set_status(format!("New drawing from {name}: place a base view (Place Views > Base)."));
+        Ok(())
+    }
+
     /// Opens a drawing and the model files its views show.
     pub fn open_drawing(&mut self, path: &Path) -> Result<(), String> {
         let (d, models) = tenon_io::drw::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
@@ -605,6 +616,10 @@ impl Workbench {
             self.new_drawing();
             return Ok(());
         }
+        if id == "file.new_drawing_template" {
+            let path = self.services.pick_open_ext.as_ref().and_then(|f| f(tenon_io::drw::EXTENSION)).ok_or("no template chosen")?;
+            return self.new_drawing_from(&path);
+        }
         if id == "drw.return" {
             if !self.editing_from_drawing() {
                 return Err("no model is being edited from a drawing".into());
@@ -691,6 +706,13 @@ impl Workbench {
                 let path = self.services.pick_save.as_ref().and_then(|f| f(&format!("{name}.json"), "json")).ok_or("no file chosen")?;
                 self.drw_exec("drw.template.save", json!({ "path": path.to_string_lossy(), "sheet": sheet }))?;
                 self.set_status(format!("Saved {}", path.display()));
+            }
+            "drw.save_template" => {
+                let name = self.drw.as_ref().map(|d| d.session.drawing().name.clone()).unwrap_or_default();
+                let ext = tenon_io::drw::EXTENSION;
+                let path = self.services.pick_save.as_ref().and_then(|f| f(&format!("{name} template.{ext}"), ext)).ok_or("no file chosen")?;
+                self.drw_exec("drw.save_template", json!({ "path": path.to_string_lossy() }))?;
+                self.set_status(format!("Saved the template {}", path.display()));
             }
             "drw.edit_model" => self.edit_model_from_drawing()?,
             "drw.delete" => self.delete_selected()?,

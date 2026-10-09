@@ -99,7 +99,8 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `asm.redo` | Redo | none | no |
 | `asm.interference` | Interference | components (default all): every pair of visible components whose solids overlap, with the overlap volume | no |
 | `asm.edit_part` | Edit Part in Place | component; run: a part command; with: its parameters. The part changes for every component using it; the assembly is solved again | yes |
-| `drw.new` | New Drawing | name; standard: ansi (default, third-angle) \| iso (first-angle); size: A \| B \| C \| D \| A4 \| A3 \| A2 \| A1 | no |
+| `drw.new` | New Drawing | name; standard: ansi (default, third-angle) \| iso (first-angle); size: A \| B \| C \| D \| A4 \| A3 \| A2 \| A1. Or template: a drawing file (.tenondrw) whose standard, properties, sheets and notes the new drawing starts with | no |
+| `drw.save_template` | Save as Template | path (.tenondrw); name: the drawing's sheets, standard, properties and notes, without views, for new drawings to start from | no |
 | `drw.open` | Open Drawing | path (.tenondrw); reads the model files its views show; clears undo history | no |
 | `drw.save` | Save Drawing | path (.tenondrw); models changed from the drawing are saved to their own files first | no |
 | `drw.view.base` | Base View | model: a part (.tenon) or assembly (.tenonasm) file; orientation: front \| back \| top \| bottom \| left \| right \| iso (default front); scale: a number or "1:2" (default: fits the sheet); at: [x, y] (sheet mm); hidden (default true, false for iso); sheet | yes |

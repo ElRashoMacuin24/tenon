@@ -232,10 +232,40 @@ fn path(p: &Value) -> Result<PathBuf, CmdError> {
     Ok(PathBuf::from(s))
 }
 
+/// A drawing as a template for new ones: its standard, properties and sheets (sizes, borders,
+/// title blocks) with the notes on them; views, and everything that needs a model, left out.
+pub fn as_template(d: &Drawing, name: &str) -> Drawing {
+    let mut t = d.clone();
+    name.clone_into(&mut t.name);
+    t.views.clear();
+    t.annotations.retain(|a| matches!(a.kind, tenon_drawing::AnnotKind::Note { .. }));
+    t
+}
+
+/// Reads a drawing file to start a new drawing from (its models are not read).
+pub fn read_drawing_template(path: &Path, name: &str) -> Result<Drawing, ProjectError> {
+    if std::fs::metadata(path)?.len() > project::MAX_FILE {
+        return Err(ProjectError::NotAProject("the file is too large".into()));
+    }
+    let d = from_bytes(&std::fs::read(path)?, &folder_of(path))?;
+    Ok(as_template(&d, name))
+}
+
 fn drw_new(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let name = p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).unwrap_or("Drawing1");
     if name.len() > 256 {
         return Err("`name` is too long".into());
+    }
+    if let Some(t) = p.get("template").filter(|t| !t.is_null()) {
+        let path = PathBuf::from(t.as_str().ok_or("`template` must be a path")?);
+        if p.get("standard").is_some() || p.get("size").is_some() {
+            return Err("a template brings its own standard and sheets: give `template` or `standard` and `size`".into());
+        }
+        let d = read_drawing_template(&path, name).map_err(|e| CmdError(format!("cannot read the template {}: {e}", path.display())))?;
+        s.replace(d, BTreeMap::new());
+        let d = s.drawing();
+        let sizes: Vec<&str> = d.sheets.iter().map(|x| x.size.name.as_str()).collect();
+        return Ok(json!({ "name": name, "sheet": d.sheets[0].id.0, "size": d.sheets[0].size.name, "sheets": sizes, "standard": d.standard }));
     }
     let standard = match p.get("standard").and_then(Value::as_str) {
         None => Standard::Ansi,
@@ -270,6 +300,15 @@ fn drw_open(s: &mut DrwSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
         s.refresh(k);
     }
     Ok(json!({ "path": path.display().to_string(), "name": s.drawing().name, "views": s.drawing().views.len(), "missing": missing }))
+}
+
+/// Saves the drawing as a template: sheets, standard, properties and notes, no views.
+fn drw_save_template(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let path = path(p)?;
+    let name = p.get("name").and_then(Value::as_str).map_or_else(|| s.drawing().name.clone(), str::to_owned);
+    let t = as_template(s.drawing(), &name);
+    save(&path, &t).map_err(|e| CmdError(e.to_string()))?;
+    Ok(json!({ "path": path.display().to_string(), "sheets": t.sheets.len(), "notes": t.annotations.len() }))
 }
 
 fn drw_save(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
@@ -489,10 +528,18 @@ static COMMANDS: &[DrwCommand] = &[
     cmd!(
         "drw.new",
         "New Drawing",
-        "name; standard: ansi (default, third-angle) | iso (first-angle); size: A | B | C | D | A4 | A3 | A2 | A1",
+        "name; standard: ansi (default, third-angle) | iso (first-angle); size: A | B | C | D | A4 | A3 | A2 | A1. Or template: a drawing file (.tenondrw) whose standard, properties, sheets and notes the new drawing starts with",
         false,
         false,
         drw_new
+    ),
+    cmd!(
+        "drw.save_template",
+        "Save as Template",
+        "path (.tenondrw); name: the drawing's sheets, standard, properties and notes, without views, for new drawings to start from",
+        false,
+        false,
+        drw_save_template
     ),
     cmd!("drw.open", "Open Drawing", "path (.tenondrw); reads the model files its views show; clears undo history", false, false, drw_open),
     cmd!("drw.save", "Save Drawing", "path (.tenondrw); models changed from the drawing are saved to their own files first", false, false, drw_save),

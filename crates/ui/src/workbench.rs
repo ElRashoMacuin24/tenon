@@ -247,7 +247,7 @@ impl Workbench {
             return Err(c.not_yet());
         }
         let export_2d = matches!(id, "export.pdf" | "export.svg" | "export.dxf");
-        if id.starts_with("drw.") || id == "file.new_drawing" || export_2d {
+        if id.starts_with("drw.") || id == "file.new_drawing" || id == "file.new_drawing_template" || export_2d {
             return self.run_drw_ui(id);
         }
         if self.in_drawing() {

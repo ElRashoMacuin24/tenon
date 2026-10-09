@@ -1,0 +1,12 @@
+{
+  "name": "Drawing templates shipped with Tenon",
+  "description": "Makes the drawing templates in this folder: an ANSI B sheet (third-angle projection) and an ISO A3 sheet (first-angle). A new drawing can start from either (File > New Drawing from Template, or drw.new with template). Run from the repository root: tenon-cli run assets/templates/templates.json --out assets/templates",
+  "steps": [
+    { "run": "drw.new", "with": { "name": "ANSI B", "standard": "ansi", "size": "B" }, "expect": { "size": "B" } },
+    { "run": "drw.save_template", "with": { "path": "ansi-b.tenondrw" }, "expect": { "sheets": 1 } },
+    { "run": "drw.new", "with": { "name": "ISO A3", "standard": "iso", "size": "A3" }, "expect": { "size": "A3" } },
+    { "run": "drw.save_template", "with": { "path": "iso-a3.tenondrw" }, "expect": { "sheets": 1 } },
+    { "note": "A drawing started from a template has its standard and sheet.",
+      "run": "drw.new", "with": { "name": "Check", "template": "iso-a3.tenondrw" }, "expect": { "size": "A3", "standard": "iso" } }
+  ]
+}

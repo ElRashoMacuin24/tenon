@@ -21,6 +21,9 @@ Generated-in-code assets are original and have no file to list:
 | Asset | Author | Source | Licence | Notes |
 |---|---|---|---|---|
 | `docs/images/m0-shell.png` | Tenon contributors | screenshot of Tenon itself: `tenon --screenshot docs/images/m0-shell.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `assets/templates/templates.json` | Tenon contributors | written for this repository (the command script that makes the drawing templates) | MIT OR Apache-2.0 | Original |
+| `assets/templates/ansi-b.tenondrw` | Tenon contributors | generated: `tenon-cli run assets/templates/templates.json --out assets/templates` | MIT OR Apache-2.0 | Original; Tenon's own title block |
+| `assets/templates/iso-a3.tenondrw` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original; Tenon's own title block |
 | `examples/m0-bracket/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m0-bracket/bracket.step` | Tenon contributors | generated: `tenon-cli demo m0 --out examples/m0-bracket` | MIT OR Apache-2.0 | Original |
 | `examples/m0-bracket/bracket.stl` | Tenon contributors | generated: `tenon-cli demo m0 --out examples/m0-bracket` | MIT OR Apache-2.0 | Original |

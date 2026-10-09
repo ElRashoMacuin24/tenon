@@ -448,6 +448,43 @@ fn an_arc_dimensions_as_a_radius_and_meeting_lines_as_an_angle() {
 }
 
 #[test]
+fn new_drawings_start_from_templates_and_save_as_templates() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = m4("templates");
+    let iso = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/templates/iso-a3.tenondrw");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    let pick = iso.clone();
+    wb.services.pick_open_ext = Some(Box::new(move |ext: &str| (ext == "tenondrw").then(|| pick.clone())));
+    // File > New Drawing from Template (the command the menu runs), from the part workbench.
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("file.new_drawing_template").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(wb.in_drawing(), "{}", wb.status());
+    let i = info(&mut wb);
+    assert_eq!((i["standard"].as_str(), i["sheets"][0]["size"].as_str()), (Some("iso"), Some("A3")));
+    // First-angle: a view placed to the right of the front view shows the model from its left.
+    wb.place_base_view(&dir.join("plate.tenon"), Orientation::Front, Some(1.0), true).unwrap();
+    let front = center(&info(&mut wb), 0);
+    click_sheet(&mut d, &mut wb, front + Vec2::new(110.0, 0.0));
+    d.tap(&mut wb, egui::Key::Escape);
+    assert_eq!(info(&mut wb)["views"][1]["direction"], json!([-1.0, 0.0, 0.0]));
+
+    // Save as Template: the sheets and properties, no views; a drawing started from it has them.
+    wb.drw_exec("drw.props", json!({ "company": "ACME" })).unwrap();
+    let out = dir.clone();
+    wb.services.pick_save = Some(Box::new(move |name: &str, _ext: &str| Some(out.join(name))));
+    wb.run_ui("drw.save_template").unwrap();
+    let saved = dir.join("Drawing1 template.tenondrw");
+    let t = tenon_io::drw::read_drawing_template(&saved, "x").unwrap();
+    assert!(t.views.is_empty() && t.props.company == "ACME" && t.standard == tenon_drawing::Standard::Iso);
+    wb.services.pick_open_ext = Some(Box::new(move |_ext: &str| Some(saved.clone())));
+    wb.run_ui("file.new_drawing_template").unwrap();
+    let i = info(&mut wb);
+    assert_eq!((i["props"]["company"].as_str(), i["views"].as_array().map(Vec::len)), (Some("ACME"), Some(0)));
+}
+
+#[test]
 fn a_model_saved_elsewhere_updates_the_open_drawing() {
     let _quiet = crate::tests::timing_lock();
     let dir = m4("elsewhere");
