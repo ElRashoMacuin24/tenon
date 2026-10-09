@@ -1316,4 +1316,18 @@ fn a_failing_feature_says_why_in_the_viewport_and_its_browser_row() {
     }
     let shown = d.texts();
     assert!(shown.iter().any(|t| t.starts_with(plain) && t.contains("try a smaller radius")), "{shown:?}");
+
+    // Ctrl+Z: the fillet is gone, the part rebuilds whole and nothing reports a failure.
+    let banner = |d: &Driver| d.texts().iter().any(|t| t.starts_with("Fillet1: "));
+    let block = 20.0 * 20.0 * 10.0;
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(pos2(700.0, 400.0))]);
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    assert!(!banner(&d) && (volume(&wb) - block).abs() < 1e-6, "{:?} {}", d.texts(), volume(&wb));
+    // Ctrl+Y: the same failure, said the same way, and the part as it was just before it.
+    ctrl(&mut d, &mut wb, egui::Key::Y);
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    assert!(banner(&d) && (volume(&wb) - block).abs() < 1e-6, "{:?} {}", d.texts(), volume(&wb));
 }

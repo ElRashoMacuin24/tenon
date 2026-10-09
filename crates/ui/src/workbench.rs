@@ -72,6 +72,8 @@ pub struct Workbench {
     seq: u64,
     pub(crate) waiting: bool,
     pub(crate) regen_note: Option<String>,
+    /// The feature failure the status bar shows, until a rebuild without it.
+    failure_shown: Option<String>,
     pub(crate) view: View,
     pub(crate) mode: Mode,
     pub(crate) panel: Option<Panel>,
@@ -119,6 +121,7 @@ impl Workbench {
             seq: 0,
             waiting: false,
             regen_note: None,
+            failure_shown: None,
             view: View::default(),
             mode: Mode::Model,
             panel: None,
@@ -717,8 +720,18 @@ impl Workbench {
                 _ => None,
             })
             .collect();
-        if let Some(e) = errors.first() {
-            self.set_error(e.clone());
+        match errors.first() {
+            Some(e) => {
+                self.set_error(e.clone());
+                self.failure_shown = Some(e.clone());
+            }
+            // The failure it showed is gone (fixed or undone): so is its message, unless
+            // something else has been said since.
+            None => {
+                if self.failure_shown.take().is_some_and(|m| m == self.status) {
+                    self.set_status("Ready");
+                }
+            }
         }
         self.view.selection.retain(|p| p.valid_in(&self.scene));
         self.view.hover = None;
