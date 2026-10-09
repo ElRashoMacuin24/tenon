@@ -45,6 +45,9 @@ pub(crate) enum Mode {
     Sketch(Box<SketchMode>),
 }
 
+/// Commands that replace the open document (or close the app), so ask to save it first.
+const REPLACE_DOCUMENT: &[&str] = &["file.new", "file.new_assembly", "file.new_drawing", "file.new_drawing_template", "file.open", "app.exit"];
+
 /// The part workbench.
 pub struct Workbench {
     pub(crate) chrome: Chrome,
@@ -240,8 +243,42 @@ impl Workbench {
         }
     }
 
-    /// Ribbon, menu and toolbar commands.
+    /// Ribbon, menu and toolbar commands. New, Open and Exit ask first when they would lose unsaved
+    /// changes, and run once "Save changes?" is answered.
     pub fn run_ui(&mut self, id: &str) -> Result<(), String> {
+        if REPLACE_DOCUMENT.contains(&id) && self.ask_to_save(id) {
+            return Ok(());
+        }
+        self.run_unprompted(id)
+    }
+
+    /// The window is being closed: true when it may close now. With unsaved changes it shows
+    /// "Save changes?" instead, and the app exits after Save or Don't Save (see
+    /// [`Workbench::exit_requested`]).
+    pub fn close_requested(&mut self) -> bool {
+        self.exit || !self.ask_to_save("app.exit")
+    }
+
+    /// Shows "Save changes?" before `then` runs when anything has unsaved changes; false when
+    /// nothing would be lost.
+    fn ask_to_save(&mut self, then: &str) -> bool {
+        let files = self.unsaved_files();
+        if files.is_empty() {
+            return false;
+        }
+        self.chrome.save_prompt = Some(crate::chrome::SavePrompt { then: then.to_owned(), files, focused: false });
+        true
+    }
+
+    /// Save in "Save changes?": the open document from its top level, which saves everything
+    /// changed in it (a drawing the models changed from it, an assembly its parts), the model or
+    /// part being edited included. A document never saved asks where to save it.
+    pub(crate) fn save_everything(&mut self) -> Result<(), String> {
+        if self.drw.is_some() { self.save_drawing_ui(false) } else { self.run_unprompted("file.save") }
+    }
+
+    /// Runs a command without asking to save first.
+    pub(crate) fn run_unprompted(&mut self, id: &str) -> Result<(), String> {
         // A button whose milestone has not come says so, whatever environment it is pressed in.
         if let Some(c) = commands::find(id).filter(|c| !c.available()) {
             return Err(c.not_yet());
@@ -253,17 +290,7 @@ impl Workbench {
         if self.in_drawing() {
             match id {
                 "edit.undo" | "edit.redo" => return self.drw_undo(id == "edit.undo"),
-                "file.save" | "file.save_as" => {
-                    let (saved, name) = self.drw.as_ref().map(|d| (d.path.clone(), d.session.drawing().name.clone())).unwrap_or_default();
-                    let path = match (saved, id) {
-                        (Some(p), "file.save") => p,
-                        _ => {
-                            let file = format!("{name}.{}", tenon_io::drw::EXTENSION);
-                            self.services.pick_save.as_ref().and_then(|f| f(&file, tenon_io::drw::EXTENSION)).ok_or("no file chosen")?
-                        }
-                    };
-                    return self.save_drawing(&path);
-                }
+                "file.save" | "file.save_as" => return self.save_drawing_ui(id == "file.save_as"),
                 "view.fit" | "view.home" => {
                     self.fit_sheet();
                     return Ok(());
@@ -703,6 +730,18 @@ impl Workbench {
 
     /// Draws the whole window. `render` is the wgpu state when the app renders with wgpu.
     pub fn ui(&mut self, ui: &mut Ui, render: Option<&egui_wgpu::RenderState>) {
+        // While "Save changes?" is open, keys are for it alone (Delete must not delete what it
+        // asks about); they are handed back just before it is drawn.
+        let held: Vec<egui::Event> = if self.chrome.save_prompt.is_some() {
+            ui.input_mut(|i| {
+                let (keys, rest) =
+                    std::mem::take(&mut i.events).into_iter().partition(|e| matches!(e, egui::Event::Key { .. } | egui::Event::Text(_)));
+                i.events = rest;
+                keys
+            })
+        } else {
+            Vec::new()
+        };
         self.view.now = ui.input(|i| i.time);
         self.sync_geometry();
         if self.in_assembly() {
@@ -768,6 +807,8 @@ impl Workbench {
         self.asm_windows(ui);
         self.drw_windows(ui);
         self.radial_ui(ui, &t);
+        ui.input_mut(|i| i.events.extend(held));
+        self.save_prompt(ui);
         if self.waiting || self.is_busy() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }

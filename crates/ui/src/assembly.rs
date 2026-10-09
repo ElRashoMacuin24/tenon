@@ -362,7 +362,7 @@ impl Workbench {
     }
 
     /// Runs `f` with the part edited in place back in the assembly (for saving and exporting).
-    fn with_parts_home<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+    pub(crate) fn with_parts_home<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         let key = self.asm.as_ref().and_then(|a| a.editing.as_ref().map(|e| e.key.clone()));
         let swap = |wb: &mut Self| {
             if let (Some(k), Some(a)) = (&key, wb.asm.as_mut())

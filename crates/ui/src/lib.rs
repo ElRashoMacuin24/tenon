@@ -37,4 +37,6 @@ mod asm_tests;
 #[cfg(test)]
 mod drw_tests;
 #[cfg(test)]
+mod save_tests;
+#[cfg(test)]
 mod tests;

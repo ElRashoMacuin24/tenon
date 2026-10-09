@@ -501,6 +501,9 @@ fn new_drawings_start_from_templates_and_save_as_templates() {
     assert!(t.views.is_empty() && t.props.company == "ACME" && t.standard == tenon_drawing::Standard::Iso);
     wb.services.pick_open_ext = Some(Box::new(move |_ext: &str| Some(saved.clone())));
     wb.run_ui("file.new_drawing_template").unwrap();
+    // The drawing has views not saved: Don't Save.
+    settle_frames(&mut d, &mut wb, 3);
+    d.click(&mut wb, pressable(&d, "tn_save_discard"));
     let i = info(&mut wb);
     assert_eq!((i["props"]["company"].as_str(), i["views"].as_array().map(Vec::len)), (Some("ACME"), Some(0)));
 }

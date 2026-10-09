@@ -6,7 +6,8 @@
 //! ribbon command (e.g. `model.extrude`) after it opens.
 //!
 //! `--screenshot` renders the window (after the model has regenerated), saves it as PNG and exits,
-//! so agents and CI can check the UI without screen capture.
+//! so agents and CI can check the UI without screen capture. It never stops to ask about unsaved
+//! changes.
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 
@@ -45,8 +46,12 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        self.wb.ui(ui, frame.wgpu_render_state());
         let ctx = ui.ctx().clone();
+        // The window's close button asks before unsaved changes are lost; screenshot runs never ask.
+        if self.screenshot.is_none() && ctx.input(|i| i.viewport().close_requested()) && !self.wb.close_requested() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
+        self.wb.ui(ui, frame.wgpu_render_state());
         if self.wb.exit_requested() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }

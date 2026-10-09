@@ -475,6 +475,41 @@ impl Workbench {
         Ok(())
     }
 
+    /// Save (or Save As) of the drawing: asks where when it was never saved. A model being edited
+    /// from it, and a part edited in place in that model, are saved with it.
+    pub(crate) fn save_drawing_ui(&mut self, save_as: bool) -> Result<(), String> {
+        let (saved, name) = self.drw.as_ref().map(|d| (d.path.clone(), d.session.drawing().name.clone())).unwrap_or_default();
+        let path = match saved.filter(|_| !save_as) {
+            Some(p) => p,
+            None => {
+                let file = format!("{name}.{}", tenon_io::drw::EXTENSION);
+                self.services.pick_save.as_ref().and_then(|f| f(&file, tenon_io::drw::EXTENSION)).ok_or("no file chosen")?
+            }
+        };
+        self.with_parts_home(|wb| wb.with_model_home(|wb| wb.save_drawing(&path)))
+    }
+
+    /// Runs `f` with the model edited from the drawing back in it (for saving).
+    fn with_model_home<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let swap = |wb: &mut Self| {
+            let Some(d) = wb.drw.as_mut() else { return };
+            let Some(key) = d.editing.clone() else { return };
+            match d.session.models.get_mut(&key) {
+                Some(DrwModel::Part(s)) => std::mem::swap(&mut wb.session, &mut **s),
+                Some(DrwModel::Assembly(a)) => {
+                    if let Some(doc) = wb.asm.as_mut() {
+                        std::mem::swap(&mut doc.session, &mut **a);
+                    }
+                }
+                _ => {}
+            }
+        };
+        swap(self);
+        let r = f(self);
+        swap(self);
+        r
+    }
+
     /// Computes the views when they are out of date: here, or on the worker (one job at a time).
     pub(crate) fn sync_drawing(&mut self) {
         let Some(d) = self.drw.as_mut() else { return };

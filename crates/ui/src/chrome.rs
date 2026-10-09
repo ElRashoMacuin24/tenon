@@ -4,10 +4,15 @@
 use std::collections::BTreeSet;
 
 use egui::{Align2, Color32, Frame, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
+use tenon_assembly::AsmSession;
+use tenon_drawing::DrwModel;
+use tenon_drawing::views::file_name;
 use tenon_model::FeatureId;
 
 use crate::Workbench;
+use crate::assembly::AsmDoc;
 use crate::commands::{self, ASM_RIBBON, DRW_RIBBON, FILE_MENU, QUICK_ACCESS, RIBBON, RibbonTab, Size, UiCommand};
+use crate::drawing::DrwDoc;
 use crate::icons::{self, Icon};
 use crate::theme::{self, ThemeName, Tokens};
 
@@ -46,6 +51,19 @@ pub(crate) struct Chrome {
     pub search_pick: usize,
     /// A split button's drop-down: the button's id and where to open the list.
     pub dropdown: Option<(&'static str, Pos2)>,
+    /// "Save changes?" waiting for an answer.
+    pub save_prompt: Option<SavePrompt>,
+}
+
+/// New, Open or Exit waiting on "Save changes?".
+#[derive(Debug, Clone)]
+pub(crate) struct SavePrompt {
+    /// The command to run after Save or Don't Save.
+    pub then: String,
+    /// What would be lost: file names, the open document's first.
+    pub files: Vec<String>,
+    /// Save has been given the keyboard focus (it is the default button).
+    pub focused: bool,
 }
 
 impl Default for Chrome {
@@ -72,8 +90,51 @@ impl Default for Chrome {
             search: String::new(),
             search_pick: 0,
             dropdown: None,
+            save_prompt: None,
         }
     }
+}
+
+/// The answers to "Save changes?".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SaveAnswer {
+    Save,
+    DontSave,
+    Cancel,
+}
+
+/// A drawing's file name (a drawing never saved: its name).
+fn drw_file(d: &DrwDoc) -> String {
+    d.path
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .map_or_else(|| format!("{}.{}", d.session.drawing().name, tenon_io::drw::EXTENSION), |n| n.to_string_lossy().into_owned())
+}
+
+/// An assembly's file name (an assembly never saved: its name).
+fn asm_file(a: &AsmDoc) -> String {
+    a.path
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .map_or_else(|| format!("{}.{}", a.session.assembly().name, tenon_io::asm::EXTENSION), |n| n.to_string_lossy().into_owned())
+}
+
+/// An assembly's `file` and its changed parts, when anything in it changed. `in_place`: the part
+/// edited in place (its session is the workbench's while it is) and whether it changed.
+fn asm_changes(s: &AsmSession, file: String, in_place: Option<(&str, bool)>) -> Vec<String> {
+    let parts: Vec<String> = s
+        .parts
+        .iter()
+        .filter(|(key, p)| match in_place {
+            Some((k, changed)) if k == key.as_str() => changed,
+            _ => p.session.is_dirty(),
+        })
+        .map(|(key, _)| file_name(key).to_owned())
+        .collect();
+    if !s.is_dirty() && parts.is_empty() {
+        return Vec::new();
+    }
+    std::iter::once(file).chain(parts).collect()
 }
 
 /// Text width in `font`.
@@ -209,39 +270,130 @@ impl Workbench {
     /// The open document's file name and whether it has unsaved changes.
     fn document_label(&self) -> (String, bool) {
         if let Some(d) = &self.drw {
-            let file = d
-                .path
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .map_or_else(|| format!("{}.{}", d.session.drawing().name, tenon_io::drw::EXTENSION), |n| n.to_string_lossy().into_owned());
-            let models_dirty = d.session.models.values().any(tenon_drawing::DrwModel::is_dirty);
+            let file = drw_file(d);
+            let models_dirty = d.session.models.values().any(DrwModel::is_dirty);
             return match &d.editing {
-                Some(key) => (
-                    format!("{file} > {}", tenon_drawing::views::file_name(key)),
-                    self.session.is_dirty() || self.asm.as_ref().is_some_and(|a| a.session.is_dirty()),
-                ),
+                Some(key) => {
+                    (format!("{file} > {}", file_name(key)), self.session.is_dirty() || self.asm.as_ref().is_some_and(|a| a.session.is_dirty()))
+                }
                 None => (file, d.session.is_dirty() || models_dirty),
             };
         }
         if let Some(a) = &self.asm {
-            let file = a
-                .path
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .map_or_else(|| format!("{}.tenonasm", a.session.assembly().name), |n| n.to_string_lossy().into_owned());
             let file = match &a.editing {
-                Some(e) => format!("{file} > {}", a.name(e.component)),
-                None => file,
+                Some(e) => format!("{} > {}", asm_file(a), a.name(e.component)),
+                None => asm_file(a),
             };
             return (file, a.session.is_dirty() || self.session.is_dirty());
         }
-        let file = self
-            .path
+        (self.part_file(), self.session.is_dirty())
+    }
+
+    /// The part's file name (a part never saved: its name).
+    fn part_file(&self) -> String {
+        self.path
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| format!("{}.tenon", self.session.document().name));
-        (file, self.session.is_dirty())
+            .unwrap_or_else(|| format!("{}.tenon", self.session.document().name))
+    }
+
+    /// What New, Open or Exit would lose: the files with unsaved changes, the open document's
+    /// first; empty when everything is saved. Under a drawing come the models changed from it,
+    /// under an assembly its changed parts, the model or part being edited included.
+    pub(crate) fn unsaved_files(&self) -> Vec<String> {
+        // The workbench's part: alone, edited in place in an assembly, or edited from a drawing.
+        let part_dirty = self.session.is_dirty();
+        let asm = self.asm.as_ref().map(|a| asm_changes(&a.session, asm_file(a), a.editing.as_ref().map(|e| (e.key.as_str(), part_dirty))));
+        if let Some(d) = &self.drw {
+            let editing = d.editing.as_deref();
+            let mut models = Vec::new();
+            for (key, m) in &d.session.models {
+                let edited = editing == Some(key.as_str());
+                match m {
+                    DrwModel::Part(_) if edited => models.extend(part_dirty.then(|| file_name(key).to_owned())),
+                    DrwModel::Assembly(_) if edited => models.extend(asm.clone().unwrap_or_default()),
+                    DrwModel::Part(s) => models.extend(s.is_dirty().then(|| file_name(key).to_owned())),
+                    DrwModel::Assembly(a) => models.extend(asm_changes(a, file_name(key).to_owned(), None)),
+                    DrwModel::Missing(_) => {}
+                }
+            }
+            if !d.session.is_dirty() && models.is_empty() {
+                return Vec::new();
+            }
+            return std::iter::once(drw_file(d)).chain(models).collect();
+        }
+        match asm {
+            Some(files) => files,
+            None if part_dirty => vec![self.part_file()],
+            None => Vec::new(),
+        }
+    }
+
+    /// "Save changes to <file>?" with Save, Don't Save and Cancel, over everything else. Enter
+    /// answers Save (the default button), Esc Cancel.
+    pub(crate) fn save_prompt(&mut self, ui: &Ui) {
+        let Some(p) = self.chrome.save_prompt.as_mut() else { return };
+        let focus = !std::mem::replace(&mut p.focused, true);
+        let files = p.files.clone();
+        let mut answer = None;
+        egui::Modal::new(egui::Id::new("tn_save_prompt")).show(ui.ctx(), |ui| {
+            ui.set_width(360.0);
+            let (first, rest) = files.split_first().map_or(("", &[][..]), |(f, r)| (f.as_str(), r));
+            ui.label(egui::RichText::new(format!("Save changes to {first}?")).font(theme::body()).strong());
+            if !rest.is_empty() {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("With the changed files it uses:").font(theme::small()));
+                for f in rest {
+                    ui.label(egui::RichText::new(format!("    {f}")).font(theme::small()));
+                }
+            }
+            ui.add_space(12.0);
+            // Three buttons of one width at the right, in the order Tab visits them.
+            let size = vec2(88.0, 24.0);
+            ui.horizontal(|ui| {
+                ui.add_space(ui.available_width() - 3.0 * size.x - 2.0 * ui.spacing().item_spacing.x);
+                for (label, key, a) in [
+                    ("Save", "tn_save_save", SaveAnswer::Save),
+                    ("Don't Save", "tn_save_discard", SaveAnswer::DontSave),
+                    ("Cancel", "tn_save_cancel", SaveAnswer::Cancel),
+                ] {
+                    let r = ui.add_sized(size, egui::Button::new(label));
+                    crate::drawing::remember(ui, key, r.rect);
+                    if focus && a == SaveAnswer::Save {
+                        r.request_focus();
+                    }
+                    if r.clicked() {
+                        answer = Some(a);
+                    }
+                }
+            });
+        });
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            answer = Some(SaveAnswer::Cancel);
+        }
+        if let Some(a) = answer {
+            self.answer_save_prompt(a);
+        }
+    }
+
+    /// Cancel leaves everything as it was. Save saves (a document never saved asks where); then,
+    /// as after Don't Save, the waiting command runs. A save that fails or is not given a file
+    /// stops there, with nothing lost.
+    pub(crate) fn answer_save_prompt(&mut self, answer: SaveAnswer) {
+        let Some(p) = self.chrome.save_prompt.take() else { return };
+        if answer == SaveAnswer::Cancel {
+            return;
+        }
+        if answer == SaveAnswer::Save
+            && let Err(e) = self.save_everything()
+        {
+            self.set_error(format!("Not saved: {e}"));
+            return;
+        }
+        if let Err(e) = self.run_unprompted(&p.then) {
+            self.set_error(e);
+        }
     }
 
     pub(crate) fn title_bar(&mut self, ui: &mut Ui, t: &Tokens) {
