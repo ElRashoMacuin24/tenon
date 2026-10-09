@@ -9,9 +9,9 @@ tools and find the free ones rough. It wins on reliability, coherence and speed,
 count: when two tasks compete, the one that makes existing features more dependable and pleasant
 goes first.
 
-Current milestone: **M4 drawings**: complete against the quality bar added on 2026-10-09, waiting
-for the owner's confirmation. Next: M5 reliability and project format, after the owner confirms
-M4.
+Current milestone: **M5 reliability and project format** (started 2026-10-09). M4 drawings was
+confirmed by the owner on 2026-10-09. The plain-text format is proposed in
+[docs/format-v2-proposal.md](docs/format-v2-proposal.md) and waits for the owner's answers.
 
 ## M0 foundations
 
@@ -132,7 +132,7 @@ and key input): `crates/ui/src/asm_tests.rs` (5). Worker slots: `worker_regenera
 | In-context editing of parts (with the rest of the assembly shown) | done | `editing_a_part_in_place_and_returning_updates_the_assembly` (double-click, edit, Return, the assembly follows, Save saves the part), the demo's `asm.edit_part`. Gap: no references from one part to another's geometry (adaptive parts) |
 | Assembly STEP export | partial | `the_m3_demo_script_builds_a_verified_pivot_assembly` (volume read back). Gap: placed solids only, no product structure |
 
-## M4 drawings
+## M4 drawings (confirmed by the owner 2026-10-09)
 
 Demo: [examples/m4-plate](examples/m4-plate) (a plate, a pin, their assembly and a two-sheet drawing,
 built and checked by a command script).
@@ -169,8 +169,9 @@ Commands and demo: `apps/tenon-cli/tests/m4.rs` (6). UI (real pointer and key in
 
 ## M5 reliability and project format
 
-Scope: `docs/plan.md` section 10. Starts after the owner confirms M4. The text-based `.tenon`
-format changes DEC-004, so its design goes to the owner before any code.
+Scope: `docs/plan.md` section 10. Started 2026-10-09, after the owner confirmed M4. The
+text-based `.tenon` format changes DEC-004, so its design goes to the owner before any code:
+[docs/format-v2-proposal.md](docs/format-v2-proposal.md).
 
 | Feature | Status | Proof / gap |
 |---|---|---|
@@ -179,7 +180,7 @@ format changes DEC-004, so its design goes to the owner before any code.
 | Autosave and crash recovery | missing | |
 | Unsaved changes are never dropped silently: "Save changes?" (Save, Don't Save, Cancel) before New, Open and Exit and on the window's close button, covering a drawing with the models changed from it and an assembly with the part edited in place (DEC-030) | done | real pointer and key input in `crates/ui/src/save_tests.rs`: `a_changed_part_asks_before_new_and_open_and_each_answer_does_what_it_says` (Cancel, Esc, Enter, a closed save dialog, a part saved before; keys do not reach the part behind), `an_assembly_and_the_part_edited_in_place_are_asked_about_together`, `a_drawing_and_the_model_edited_from_it_are_asked_about_together` (Delete pressed under the prompt deletes nothing), `a_drawing_its_assembly_and_a_part_in_place_in_it_are_saved_whole`, `exit_and_the_window_close_button_ask_first`. Gap: the app's part of the close button (answering the window system's close request with `CancelClose`, `apps/tenon/src/main.rs`) is not driven by a test; the workbench call it makes is |
 | Undo/redo verified across regeneration failures | missing | |
-| Text-based, diffable, versioned `.tenon` with migrations | missing | needs the owner's approval (changes DEC-004) |
+| Text-based, diffable, versioned `.tenon` with migrations | missing | proposed in `docs/format-v2-proposal.md`; waiting for the owner's answers (it changes DEC-004) |
 | `tenon diff` at feature and parameter level | missing | |
 | Round-trip stability, migrations from every older version, persistent-naming corpus | missing | |
 
