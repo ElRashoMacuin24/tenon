@@ -372,6 +372,7 @@ Consequences:
 - M6's "iProperties-style panel" is called Properties in the product (DEC-019 keeps trademarked
   names out).
 - DEC-011's "revisit the wasm scope at M6" now waits on the experimental native kernel.
+
 ## DEC-029 Centre marks and centrelines placed by hand join drawing format v1 (2026-10-09, chosen by the owner)
 
 Automatic centre marks and centrelines cover holes and cylinders only. To place them by hand, and
