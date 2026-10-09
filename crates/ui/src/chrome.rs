@@ -378,6 +378,7 @@ impl Workbench {
         let r = ui.max_rect();
         let file = Rect::from_min_size(pos2(r.left() + 6.0, r.top() + 3.0), vec2(48.0, r.height() - 3.0));
         let resp = ui.interact(file, ui.id().with("file"), Sense::CLICK);
+        crate::drawing::remember(ui, "tn_file_tab", file);
         ui.painter().rect_filled(
             file,
             egui::CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 },
@@ -588,19 +589,15 @@ impl Workbench {
             Frame::menu(ui.style()).fill(t.panel).show(ui, |ui| {
                 ui.set_min_width(190.0);
                 for (label, id) in entries {
-                    if ui.button(*label).clicked() {
+                    if crate::drawing::button(ui, label, id).clicked() {
                         chosen = Some(*id);
                     }
                 }
                 ui.separator();
-                if ui.button("Options...").clicked() {
-                    chosen = Some("tools.options");
-                }
-                if ui.button("About Tenon").clicked() {
-                    chosen = Some("app.about");
-                }
-                if ui.button("Exit").clicked() {
-                    chosen = Some("app.exit");
+                for (label, id) in [("Options...", "tools.options"), ("About Tenon", "app.about"), ("Exit", "app.exit")] {
+                    if crate::drawing::button(ui, label, id).clicked() {
+                        chosen = Some(id);
+                    }
                 }
             });
         });

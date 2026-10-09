@@ -13,7 +13,7 @@ use tenon_kernel_occt::OcctKernel;
 
 use crate::Workbench;
 use crate::drawing::DrwTool;
-use crate::tests::{Driver, browser_row};
+use crate::tests::{Driver, browser_row, ctrl, pressable};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("tenon-ui-drw-{}-{name}", std::process::id()));
@@ -51,25 +51,8 @@ fn click_sheet(d: &mut Driver, wb: &mut Workbench, p: Vec2) {
     d.click(wb, s);
 }
 
-fn ctrl(d: &mut Driver, wb: &mut Workbench, key: egui::Key) {
-    d.modifiers(wb, egui::Modifiers::COMMAND);
-    d.frame(wb, vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }]);
-    d.frame(wb, vec![egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::COMMAND }]);
-    d.modifiers(wb, egui::Modifiers::default());
-}
-
 fn tool(wb: &Workbench) -> Option<DrwTool> {
     wb.drw.as_ref().and_then(|d| d.tool.clone())
-}
-
-/// Where a dialog or menu button was drawn in the last frame.
-fn pressable(d: &Driver, key: &str) -> egui::Pos2 {
-    d.ctx
-        .data(|x| x.get_temp::<std::collections::BTreeMap<String, egui::Rect>>(egui::Id::new("tn_buttons")))
-        .unwrap_or_default()
-        .get(key)
-        .unwrap_or_else(|| panic!("no button {key}"))
-        .center()
 }
 
 /// Clicks a text field, selects what is in it and types `text`.

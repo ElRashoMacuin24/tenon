@@ -213,6 +213,24 @@ impl Driver {
     }
 }
 
+/// Where a dialog or menu button was drawn in the last frame (see `drawing::remember`).
+pub(crate) fn pressable(d: &Driver, key: &str) -> Pos2 {
+    d.ctx
+        .data(|x| x.get_temp::<std::collections::BTreeMap<String, Rect>>(egui::Id::new("tn_buttons")))
+        .unwrap_or_default()
+        .get(key)
+        .unwrap_or_else(|| panic!("no button {key}"))
+        .center()
+}
+
+/// Presses `key` with Ctrl (Cmd on macOS) held.
+pub(crate) fn ctrl(d: &mut Driver, wb: &mut Workbench, key: egui::Key) {
+    d.modifiers(wb, egui::Modifiers::COMMAND);
+    d.frame(wb, vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }]);
+    d.frame(wb, vec![egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::COMMAND }]);
+    d.modifiers(wb, egui::Modifiers::default());
+}
+
 /// Screen position of a model point in the last viewport.
 pub(crate) fn on_screen(wb: &Workbench, p: tenon_geom::Vec3) -> Pos2 {
     let r = wb.view.rect;

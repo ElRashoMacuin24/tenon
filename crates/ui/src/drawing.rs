@@ -1678,28 +1678,28 @@ fn parse_scale(s: &str) -> Result<Option<f64>, String> {
     if v.is_finite() && (1e-4..=1e4).contains(&v) { Ok(Some(v)) } else { Err("the scale is out of range".into()) }
 }
 
-/// A dialog or menu button. In tests its rectangle is kept under `key`, so tests can press it as
-/// a user would.
-fn button(ui: &mut Ui, label: &str, key: &str) -> egui::Response {
-    let r = ui.button(label);
+/// In tests, keeps where something to press was drawn under `key`, so tests can press it as a
+/// user would.
+pub(crate) fn remember(ui: &Ui, key: &str, rect: Rect) {
     #[cfg(test)]
     ui.data_mut(|d| {
-        d.get_temp_mut_or_default::<BTreeMap<String, Rect>>(egui::Id::new("tn_buttons")).insert(key.to_owned(), r.rect);
+        d.get_temp_mut_or_default::<BTreeMap<String, Rect>>(egui::Id::new("tn_buttons")).insert(key.to_owned(), rect);
     });
     #[cfg(not(test))]
-    let _ = key;
+    let _ = (ui, key, rect);
+}
+
+/// A dialog or menu button; in tests its rectangle is kept under `key` (see [`remember`]).
+pub(crate) fn button(ui: &mut Ui, label: &str, key: &str) -> egui::Response {
+    let r = ui.button(label);
+    remember(ui, key, r.rect);
     r
 }
 
 /// A checkbox; in tests its rectangle is kept under `key`, as for [`button`].
 fn check(ui: &mut Ui, on: &mut bool, label: &str, key: &str) -> egui::Response {
     let r = ui.checkbox(on, label);
-    #[cfg(test)]
-    ui.data_mut(|d| {
-        d.get_temp_mut_or_default::<BTreeMap<String, Rect>>(egui::Id::new("tn_buttons")).insert(key.to_owned(), r.rect);
-    });
-    #[cfg(not(test))]
-    let _ = key;
+    remember(ui, key, r.rect);
     r
 }
 
