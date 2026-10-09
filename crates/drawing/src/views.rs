@@ -264,10 +264,24 @@ pub fn drop_covered(curves: Vec<HlrCurve>, eps: f64) -> Vec<HlrCurve> {
 
 /// Hatch lines at 45 degrees, `spacing` apart, over the union of `triangles`.
 pub fn hatch(triangles: &[[Vec2; 3]], spacing: f64) -> Vec<[Vec2; 2]> {
-    if triangles.is_empty() || !(spacing.is_finite() && spacing > 0.0) {
+    hatch_at(triangles, spacing, std::f64::consts::FRAC_PI_4)
+}
+
+/// The hatching of the `i`th solid cut by a section: 45 degrees, then 135, with wider spacing
+/// for the next pair, and so on, so parts that touch read apart.
+pub fn part_hatch(i: usize) -> (f64, f64) {
+    let angle = if i.is_multiple_of(2) { std::f64::consts::FRAC_PI_4 } else { 3.0 * std::f64::consts::FRAC_PI_4 };
+    let spacing = if (i / 2).is_multiple_of(2) { 1.0 } else { 1.6 };
+    (angle, spacing)
+}
+
+/// Hatch lines at `angle` (radians from the view's X), `spacing` apart, over the union of
+/// `triangles`.
+pub fn hatch_at(triangles: &[[Vec2; 3]], spacing: f64, angle: f64) -> Vec<[Vec2; 2]> {
+    if triangles.is_empty() || !(spacing.is_finite() && spacing > 0.0) || !angle.is_finite() {
         return Vec::new();
     }
-    let u = Vec2::new(1.0, 1.0).normalized();
+    let u = Vec2::new(angle.cos(), angle.sin());
     let n = Vec2::new(-u.y, u.x);
     let (mut lo, mut hi) = (f64::MAX, f64::MIN);
     for t in triangles {
@@ -447,10 +461,10 @@ fn compute_view(
         }
         Err(e) => g.error = Some(e.to_string()),
     }
-    // Section faces: on the cut plane, facing the viewer.
+    // Section faces: on the cut plane, facing the viewer; each solid hatched its own way.
     if let Some((point, look)) = plane {
-        let mut tris: Vec<[Vec2; 3]> = Vec::new();
-        for s in &cut {
+        for (i, s) in cut.iter().enumerate() {
+            let mut tris: Vec<[Vec2; 3]> = Vec::new();
             let Ok(mesh) = k.tessellate(*s, &MeshTol::default()) else { continue };
             let Ok(topo) = k.topology(*s) else { continue };
             for fi in 0..topo.faces {
@@ -473,8 +487,9 @@ fn compute_view(
                     }
                 }
             }
+            let (angle, spacing) = part_hatch(i);
+            g.hatch.extend(hatch_at(&tris, HATCH_SPACING * spacing / v.scale, angle));
         }
-        g.hatch = hatch(&tris, HATCH_SPACING / v.scale);
     }
     for s in cut {
         k.release(s);

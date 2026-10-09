@@ -151,6 +151,64 @@ fn title_block_templates_round_trip_and_bad_ones_are_refused() {
     assert_eq!(*s.drawing(), before);
 }
 
+/// Changes `plate.tenon`'s thickness parameter `t` on disk, as another program would.
+fn set_thickness_on_disk(file: &Path, t: f64) {
+    let (doc, extra) = tenon_io::project::open(file).unwrap();
+    let mut s = tenon_model::Session::default();
+    s.replace_document(doc, None);
+    tenon_io::cmd::run(&mut s, "param.set", &json!({ "name": "t", "equation": t.to_string() }), None).unwrap();
+    tenon_io::project::save(file, s.document(), &extra).unwrap();
+}
+
+fn thickness(s: &DrwSession, key: &str) -> f64 {
+    match s.models.get(key) {
+        Some(DrwModel::Part(p)) => p.document().parameter_values()["t"],
+        _ => panic!("no part {key}"),
+    }
+}
+
+#[test]
+fn model_files_changed_on_disk_are_read_again_unless_changed_in_the_drawing() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m4-plate");
+    let dir = scratch("changed");
+    for f in ["plate.tenon", "pin.tenon", "plate-pins.tenonasm", "plate.tenondrw"] {
+        std::fs::copy(src.join(f), dir.join(f)).unwrap();
+    }
+    let mut s = DrwSession::default();
+    drw::run(&mut s, "drw.open", &json!({ "path": dir.join("plate.tenondrw").to_str().unwrap() }), None).unwrap();
+    let plate = tenon_io::asm::part_key(&dir.join("plate.tenon"));
+    let generation = s.generation;
+    // Nothing changed: nothing is read.
+    assert_eq!(drw::reload_changed(&mut s), drw::Changed::default());
+    assert_eq!(s.generation, generation);
+
+    // Another program saves the plate thicker: read again, and the views will be computed anew.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    set_thickness_on_disk(&dir.join("plate.tenon"), 25.0);
+    let changed = drw::reload_changed(&mut s);
+    let mut reloaded = changed.reloaded.clone();
+    reloaded.sort();
+    assert_eq!(reloaded, ["plate-pins.tenonasm".to_string(), "plate.tenon".to_string()], "the assembly uses the plate too: {changed:?}");
+    assert!(changed.kept.is_empty());
+    assert!(s.generation > generation);
+    assert_eq!(thickness(&s, &plate), 25.0);
+    assert_eq!(drw::reload_changed(&mut s), drw::Changed::default(), "once only");
+
+    // Changed in the drawing and not saved: the file's change does not overwrite it.
+    if let Some(DrwModel::Part(p)) = s.models.get_mut(&plate) {
+        tenon_io::cmd::run(p, "param.set", &json!({ "name": "t", "equation": "30" }), None).unwrap();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    set_thickness_on_disk(&dir.join("plate.tenon"), 40.0);
+    let changed = drw::reload_changed(&mut s);
+    assert_eq!(changed.kept, ["plate.tenon".to_string()], "{changed:?}");
+    assert_eq!(thickness(&s, &plate), 30.0);
+    // Saving the drawing writes the drawing's plate; that is not read back as a change.
+    drw::run(&mut s, "drw.save", &json!({ "path": dir.join("plate.tenondrw").to_str().unwrap() }), None).unwrap();
+    assert!(drw::reload_changed(&mut s).reloaded.iter().all(|f| f != "plate.tenon"));
+    assert_eq!(thickness(&s, &plate), 30.0);
+}
+
 #[test]
 fn damaged_and_mistaken_drawing_files_are_refused() {
     let dir = scratch("bad");

@@ -116,6 +116,145 @@ fn the_m4_demo_script_draws_a_plate_and_its_assembly() {
     assert_eq!(r["pages"], 2);
 }
 
+/// A 60 x 40 x 20 block with its back right vertical edge filleted (r) and its top front edge
+/// chamfered (c), both user parameters, saved as `block.tenon`.
+fn filleted_chamfered_block(e: &mut Engine) {
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    run(e, "file.new", json!({ "name": "Block" }));
+    run(e, "param.add", json!({ "name": "r", "equation": "10 mm" }));
+    run(e, "param.add", json!({ "name": "c", "equation": "5 mm" }));
+    let sk = run(e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    let rect = run(e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 }));
+    let body = run(e, "model.extrude", json!({ "sketch": sk, "distance": 20 }))["feature"].clone();
+    let side = |i: usize| json!({ "type": "side", "feature": body, "curve": rect["lines"][i] });
+    let corner = run(e, "model.edge_ref", json!({ "faces": [side(1), side(2)] }));
+    run(e, "model.fillet", json!({ "edges": [corner], "radius": 10, "equations": { "/radius": "r" } }));
+    let top_front = run(e, "model.edge_ref", json!({ "faces": [{ "type": "cap", "feature": body, "end": "end" }, side(0)] }));
+    run(e, "model.chamfer", json!({ "edges": [top_front], "distance": 5, "equations": { "/size/equal": "c" } }));
+    run(e, "file.save", json!({ "path": "block.tenon" }));
+}
+
+#[test]
+fn aligned_radius_and_angle_dimensions_measure_the_model_and_follow_it() {
+    let dir = scratch("dims");
+    let mut e = Engine::new(kernel(), &dir);
+    filleted_chamfered_block(&mut e);
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    run(&mut e, "drw.new", json!({ "name": "Dims" }));
+    let top = run(&mut e, "drw.view.base", json!({ "model": "block.tenon", "orientation": "top", "scale": 1, "at": [100, 150] }))["view"].clone();
+    let right = run(&mut e, "drw.view.base", json!({ "model": "block.tenon", "orientation": "right", "scale": 2, "at": [280, 150] }))["view"].clone();
+
+    // The fillet seen from above is a quarter circle: its radius.
+    let arc = run(&mut e, "drw.pick", json!({ "view": top, "view_at": [50.0 + 10.0 * 0.5f64.sqrt(), 30.0 + 10.0 * 0.5f64.sqrt()] }));
+    assert_eq!((arc["kind"].as_str(), arc["diameter"].as_f64()), (Some("circle"), Some(20.0)), "{arc}");
+    let radius = run(&mut e, "drw.dimension", json!({ "view": top, "type": "radius", "a": arc, "by": [12, 12] }));
+    assert_eq!((radius["value"].as_f64(), radius["shown"].as_str()), (Some(10.0), Some("R10")));
+
+    // From the right (Y across, Z up) the chamfer is a 45-degree line from (0, 15) to (5, 20):
+    // its true length 5 √2, and its angle to the top edge.
+    let chamfer = run(&mut e, "drw.pick", json!({ "view": right, "view_at": [2.5, 17.5] }));
+    assert!((chamfer["length"].as_f64().unwrap() - 5.0 * 2f64.sqrt()).abs() < 1e-9, "{chamfer}");
+    let aligned = run(&mut e, "drw.dimension", json!({ "view": right, "type": "aligned", "a": chamfer, "by": [-8, 8] }));
+    assert!((aligned["value"].as_f64().unwrap() - 5.0 * 2f64.sqrt()).abs() < 1e-9, "{aligned}");
+    assert_eq!(aligned["shown"], "7.07");
+    let top_edge = run(&mut e, "drw.pick", json!({ "view": right, "view_at": [15.0, 20.0] }));
+    assert_eq!(top_edge["kind"], "line");
+    // The lines meet at (5, 20) and make four sectors. Placed between the top edge (rightwards)
+    // and the chamfer's extension (up and right): 45 degrees. Straight above the meeting point,
+    // between that extension and the top edge's extension (leftwards): 135. Below and to the
+    // right, inside the part's corner: 135.
+    let angle = run(&mut e, "drw.dimension", json!({ "view": right, "type": "angle", "a": chamfer, "b": top_edge, "by": [12, 5] }));
+    assert!((angle["value"].as_f64().unwrap() - 45.0).abs() < 1e-9, "{angle}");
+    assert_eq!(angle["shown"], "45°");
+    let above = run(&mut e, "drw.dimension", json!({ "view": right, "type": "angle", "a": chamfer, "b": top_edge, "by": [0, 12] }));
+    assert!((above["value"].as_f64().unwrap() - 135.0).abs() < 1e-9, "{above}");
+    run(&mut e, "drw.undo", json!({}));
+    let obtuse = run(&mut e, "drw.dimension", json!({ "view": right, "type": "angle", "a": chamfer, "b": top_edge, "by": [8, -6] }));
+    assert!((obtuse["value"].as_f64().unwrap() - 135.0).abs() < 1e-9, "{obtuse}");
+
+    // They follow the model: r = 14, c = 3.
+    run(&mut e, "file.open", json!({ "path": "block.tenon" }));
+    run(&mut e, "param.set", json!({ "name": "r", "equation": "14" }));
+    run(&mut e, "param.set", json!({ "name": "c", "equation": "3" }));
+    run(&mut e, "file.save", json!({ "path": "block.tenon" }));
+    run(&mut e, "drw.update", json!({}));
+    let info = run(&mut e, "drw.info", json!({}));
+    let value = |i: usize| info["annotations"][i]["value"].as_f64().unwrap_or(f64::NAN);
+    assert!((value(0) - 14.0).abs() < 1e-9, "{}", info["annotations"][0]);
+    assert!((value(1) - 3.0 * 2f64.sqrt()).abs() < 1e-9, "{}", info["annotations"][1]);
+    assert!((value(2) - 45.0).abs() < 1e-9 && (value(3) - 135.0).abs() < 1e-9);
+}
+
+#[test]
+fn assembly_views_hide_one_part_behind_another_and_sections_cut_every_part() {
+    let dir = scratch("occlusion");
+    let mut e = Engine::new(kernel(), &dir);
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    // Two boxes: a 40 x 10 x 40 wall at the front, and a 20 x 10 x 20 block 30 behind it, in
+    // the middle of the wall as seen from the front.
+    for (name, x, y, z) in [("wall", 40, 10, 40), ("block", 20, 10, 20)] {
+        run(&mut e, "file.new", json!({ "name": name }));
+        let sk = run(&mut e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+        run(&mut e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": x, "y2": y }));
+        run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": z }));
+        run(&mut e, "file.save", json!({ "path": format!("{name}.tenon") }));
+    }
+    run(&mut e, "asm.new", json!({ "name": "Pair" }));
+    run(&mut e, "asm.insert", json!({ "path": "wall.tenon" }));
+    let block = run(&mut e, "asm.insert", json!({ "path": "block.tenon" }))["component"].clone();
+    run(&mut e, "asm.place", json!({ "component": block, "origin": [10, 30, 10] }));
+    run(&mut e, "asm.save", json!({ "path": "pair.tenonasm" }));
+
+    run(&mut e, "drw.new", json!({ "name": "Pair" }));
+    let front =
+        run(&mut e, "drw.view.base", json!({ "model": "pair.tenonasm", "orientation": "front", "scale": 1, "at": [100, 100] }))["view"].clone();
+    run(&mut e, "drw.export.dxf", json!({ "path": "front.dxf" }));
+    // In the DXF, with the view's centre at (100, 100) and the wall from x 0 to 40 and z 0 to 40:
+    // the block's outline (x 10 to 30, z 10 to 30) is all hidden, nothing of it visible.
+    let tags = tenon_dxf::parse(&std::fs::read(dir.join("front.dxf")).unwrap()).unwrap();
+    let entities = tenon_dxf::sections(&tags).into_iter().find(|s| s.name == "ENTITIES").unwrap();
+    let records = tenon_dxf::records(&entities.tags);
+    let field = |r: &[tenon_dxf::Tag], code: i32| r.iter().find(|t| t.code == code).map(tenon_dxf::Tag::f64);
+    let layer = |r: &[tenon_dxf::Tag]| r.iter().find(|t| t.code == 8).map(tenon_dxf::Tag::str).unwrap_or_default();
+    let inside_block = |r: &[tenon_dxf::Tag]| {
+        let pts = [(field(r, 10), field(r, 20)), (field(r, 11), field(r, 21))];
+        pts.iter().all(|p| matches!(p, (Some(x), Some(y)) if (89.0..=111.0).contains(x) && (89.0..=111.0).contains(y)))
+    };
+    let lines: Vec<&(String, Vec<tenon_dxf::Tag>)> = records.iter().filter(|(k, _)| k == "LINE").collect();
+    assert!(lines.iter().any(|(_, r)| layer(r) == "HIDDEN" && inside_block(r)), "the block is drawn hidden");
+    assert!(!lines.iter().any(|(_, r)| layer(r) == "VISIBLE" && inside_block(r)), "nothing of the block is visible through the wall");
+
+    // A section across both parts, seen from the right: both are cut and hatched; the block's
+    // hatching runs the other way from the wall's so the two parts read apart.
+    let section =
+        run(&mut e, "drw.view.section", json!({ "parent": front, "a": [20, -10], "b": [20, 50], "flip": true, "at": [250, 100] }))["view"].clone();
+    let info = run(&mut e, "drw.info", json!({}));
+    let s = info["views"].as_array().unwrap().iter().find(|v| v["id"] == section).unwrap().clone();
+    assert!(s["error"].is_null() && s["hatch"].as_u64().unwrap() > 0, "{s}");
+    let hatch = |e: &mut Engine| {
+        run(e, "drw.export.dxf", json!({ "path": "section.dxf" }));
+        let tags = tenon_dxf::parse(&std::fs::read(dir.join("section.dxf")).unwrap()).unwrap();
+        let entities = tenon_dxf::sections(&tags).into_iter().find(|s| s.name == "ENTITIES").unwrap();
+        tenon_dxf::records(&entities.tags)
+            .into_iter()
+            .filter(|(k, r)| k == "LINE" && layer(r) == "HATCH")
+            .map(|(_, r)| {
+                let (x0, y0, x1, y1) = (field(&r, 10).unwrap(), field(&r, 20).unwrap(), field(&r, 11).unwrap(), field(&r, 21).unwrap());
+                ((x0 + x1) / 2.0, (y0 + y1) / 2.0, (y1 - y0).atan2(x1 - x0).to_degrees().rem_euclid(180.0))
+            })
+            .collect::<Vec<_>>()
+    };
+    let lines = hatch(&mut e);
+    // Seen from the right: Y across (wall 0 to 10, block 30 to 40), Z up.
+    let slope = |lo: f64, hi: f64| {
+        lines.iter().filter(|(x, y, _)| (lo..=hi).contains(&(x - 250.0 + 20.0)) && (90.0..=110.0).contains(y)).map(|l| l.2).collect::<Vec<_>>()
+    };
+    let (wall, block) = (slope(0.5, 9.5), slope(30.5, 39.5));
+    assert!(!wall.is_empty() && !block.is_empty(), "both parts are hatched: {lines:?}");
+    assert!(wall.iter().all(|a| (a - wall[0]).abs() < 1e-6) && block.iter().all(|a| (a - block[0]).abs() < 1e-6));
+    assert!((wall[0] - block[0]).abs() > 45.0, "the parts' hatching differs: {} and {}", wall[0], block[0]);
+}
+
 #[test]
 fn drawing_edits_undo_and_bad_input_is_refused() {
     let dir = demo("edits");
@@ -179,6 +318,27 @@ fn drawing_edits_undo_and_bad_input_is_refused() {
     assert!(e.exec("drw.view.edit", &json!({ "view": 1, "scale": "1:0" })).is_err());
     assert_eq!(n(&mut e), count);
     assert_eq!(info(&mut e)["views"], before["views"]);
+    // The parts list is the assembly's own bill of materials: same items, quantities and names.
+    // After a component of a new part is added to the assembly, both lists number it the same.
+    let check_lists = |e: &mut Engine| {
+        let bom = e.exec("asm.bom", &json!({})).unwrap()["rows"].clone();
+        let list = e.exec("drw.info", &json!({})).unwrap()["annotations"][6]["rows"].clone();
+        let bom = bom.as_array().unwrap();
+        assert_eq!(bom.len(), list.as_array().unwrap().len(), "{bom:?} {list}");
+        for (b, l) in bom.iter().zip(list.as_array().unwrap()) {
+            assert_eq!((&b["item"], &b["quantity"], &b["part"], &b["name"]), (&l["item"], &l["quantity"], &l["part_number"], &l["description"]));
+        }
+    };
+    e.exec("asm.open", &json!({ "path": "plate-pins.tenonasm" })).unwrap();
+    check_lists(&mut e);
+    std::fs::copy(dir.join("pin.tenon"), dir.join("washer.tenon")).unwrap();
+    e.exec("asm.insert", &json!({ "path": "washer.tenon" })).unwrap();
+    e.exec("asm.insert", &json!({ "path": "pin.tenon" })).unwrap();
+    e.exec("asm.save", &json!({ "path": "plate-pins.tenonasm" })).unwrap();
+    e.exec("drw.update", &json!({})).unwrap();
+    check_lists(&mut e);
+    assert_eq!(e.exec("asm.bom", &json!({})).unwrap()["rows"][1]["quantity"], 3);
+
     // A title block template saved from the drawing, changed, and used on its sheets.
     e.exec("drw.template.save", &json!({ "path": "block.json" })).unwrap();
     let text = std::fs::read_to_string(dir.join("block.json")).unwrap().replace("\"COMPANY\"", "\"ORGANISATION\"");

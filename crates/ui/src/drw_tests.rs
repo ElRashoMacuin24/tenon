@@ -62,6 +62,44 @@ fn tool(wb: &Workbench) -> Option<DrwTool> {
     wb.drw.as_ref().and_then(|d| d.tool.clone())
 }
 
+/// Where a dialog or menu button was drawn in the last frame.
+fn pressable(d: &Driver, key: &str) -> egui::Pos2 {
+    d.ctx
+        .data(|x| x.get_temp::<std::collections::BTreeMap<String, egui::Rect>>(egui::Id::new("tn_buttons")))
+        .unwrap_or_default()
+        .get(key)
+        .unwrap_or_else(|| panic!("no button {key}"))
+        .center()
+}
+
+/// Clicks a text field, selects what is in it and types `text`.
+fn type_into(d: &mut Driver, wb: &mut Workbench, field: &str, text: &str) {
+    let r = d.ctx.read_response(egui::Id::new(field)).unwrap_or_else(|| panic!("no field {field}")).rect;
+    d.click(wb, r.center());
+    d.frame(wb, vec![egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }]);
+    d.frame(wb, vec![egui::Event::Text(text.into())]);
+}
+
+fn double_click(d: &mut Driver, wb: &mut Workbench, at: egui::Pos2) {
+    // Pause first: clicks less than 0.6 s after earlier ones would count as a triple click.
+    d.frame(wb, vec![egui::Event::PointerMoved(at)]);
+    settle_frames(d, wb, 45);
+    d.click(wb, at);
+    d.click(wb, at);
+}
+
+fn right_click(d: &mut Driver, wb: &mut Workbench, at: egui::Pos2) {
+    d.frame(wb, vec![egui::Event::PointerMoved(at)]);
+    d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, true)]);
+    d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, false)]);
+}
+
+fn settle_frames(d: &mut Driver, wb: &mut Workbench, n: usize) {
+    for _ in 0..n {
+        d.frame(wb, vec![]);
+    }
+}
+
 #[test]
 fn views_and_dimensions_are_placed_by_clicking_on_the_sheet() {
     let _quiet = crate::tests::timing_lock();
@@ -246,6 +284,195 @@ fn models_edited_from_the_drawing_update_it() {
     // A part opened over the drawing closes it.
     wb.open(&dir.join("pin.tenon")).unwrap();
     assert!(wb.drw.is_none() && !wb.in_drawing());
+}
+
+#[test]
+fn dialogs_menus_navigation_and_details_by_real_input() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = m4("dialogs");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("file.new_drawing").unwrap();
+    d.frame(&mut wb, vec![]);
+
+    // Place Views > Base opens the Drawing View dialog: the file typed in, then OK. With no
+    // scale chosen, the largest standard scale that fits: 1:1 for the plate on a B sheet.
+    wb.run_ui("drw.base").unwrap();
+    settle_frames(&mut d, &mut wb, 3);
+    type_into(&mut d, &mut wb, "tn_base_file", dir.join("plate.tenon").to_str().unwrap());
+    d.frame(&mut wb, vec![]);
+    let ok = pressable(&d, "tn_base_ok");
+    d.click(&mut wb, ok);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.drw.as_ref().unwrap().base_dialog.is_none(), "{}", wb.status());
+    let i = info(&mut wb);
+    assert_eq!(i["views"].as_array().unwrap().len(), 1, "{}", wb.status());
+    assert_eq!(i["views"][0]["scale"], 1.0);
+    assert!(matches!(tool(&wb), Some(DrwTool::Projected { .. })), "projecting starts at once");
+    d.tap(&mut wb, egui::Key::Escape);
+
+    // Double-click the view: Edit View. Scale 1:2, OK.
+    let edge = in_view(&mut wb, 1, 30.0, 0.0);
+    double_click(&mut d, &mut wb, edge);
+    settle_frames(&mut d, &mut wb, 3);
+    assert!(wb.drw.as_ref().unwrap().view_dialog.is_some(), "{}", wb.status());
+    type_into(&mut d, &mut wb, "tn_view_scale", "1:2");
+    let ok = pressable(&d, "tn_view_ok");
+    d.click(&mut wb, ok);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(info(&mut wb)["views"][0]["scale"], 0.5);
+
+    // Right-click the view: Delete from its menu removes it; Ctrl+Z brings it back.
+    let edge = in_view(&mut wb, 1, 30.0, 0.0);
+    right_click(&mut d, &mut wb, edge);
+    settle_frames(&mut d, &mut wb, 2);
+    let delete = pressable(&d, "tn_ctx_delete");
+    d.click(&mut wb, delete);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(info(&mut wb)["views"].as_array().unwrap().len(), 0);
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    assert_eq!(info(&mut wb)["views"].as_array().unwrap().len(), 1);
+
+    // T, a click, the text typed, OK. Double-clicking the text opens it again to change it.
+    d.tap(&mut wb, egui::Key::T);
+    click_sheet(&mut d, &mut wb, Vec2::new(30.0, 40.0));
+    settle_frames(&mut d, &mut wb, 3);
+    type_into(&mut d, &mut wb, "tn_drw_text", "DEBURR");
+    let ok = pressable(&d, "tn_text_ok");
+    d.click(&mut wb, ok);
+    d.frame(&mut wb, vec![]);
+    let note = |wb: &mut Workbench| info(wb)["annotations"].as_array().unwrap().iter().find(|a| a["type"] == "note").map(|a| a["text"].clone());
+    assert_eq!(note(&mut wb), Some(json!("DEBURR")));
+    let on_text = wb.sheet_on_screen(Vec2::new(33.0, 41.0));
+    double_click(&mut d, &mut wb, on_text);
+    settle_frames(&mut d, &mut wb, 3);
+    type_into(&mut d, &mut wb, "tn_drw_text", "DEBURR ALL EDGES");
+    let ok = pressable(&d, "tn_text_ok");
+    d.click(&mut wb, ok);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(note(&mut wb), Some(json!("DEBURR ALL EDGES")));
+
+    // Middle drag pans the sheet; the wheel zooms about the pointer.
+    let cam = |wb: &Workbench| wb.drw.as_ref().unwrap().cam;
+    let before = cam(&wb);
+    let mid = wb.view.rect.center();
+    d.drag(&mut wb, mid, mid + vec2(100.0, 0.0), egui::PointerButton::Middle);
+    let after = cam(&wb);
+    assert!((before.center.x - after.center.x - 100.0 / before.px).abs() < 0.5, "{before:?} {after:?}");
+    let p = mid + vec2(-150.0, 80.0);
+    let under = cam(&wb).sheet(wb.view.rect, p);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(p)]);
+    let wheel = egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, 120.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::default(),
+    };
+    d.frame(&mut wb, vec![wheel]);
+    settle_frames(&mut d, &mut wb, 40);
+    let zoomed = cam(&wb);
+    assert!(zoomed.px > after.px * 1.1, "zoomed in: {after:?} {zoomed:?}");
+    assert!(zoomed.sheet(wb.view.rect, p).dist(under) < 0.05, "the point under the pointer stays there");
+    wb.run_ui("view.fit").unwrap();
+    settle_frames(&mut d, &mut wb, 2);
+
+    // Detail by clicks: the view, the centre, a point on the circle, then where it goes. Its
+    // circle is 10 of the model across the radius (at 1:2, 5 on the sheet), at twice the scale.
+    wb.drw.as_mut().unwrap().selected = None;
+    wb.run_ui("drw.detail").unwrap();
+    let inside = in_view(&mut wb, 1, 60.0, 6.0);
+    d.click(&mut wb, inside);
+    let (c, r) = (in_view(&mut wb, 1, 60.0, 9.0), in_view(&mut wb, 1, 70.0, 9.0));
+    d.click(&mut wb, c);
+    d.click(&mut wb, r);
+    click_sheet(&mut d, &mut wb, Vec2::new(300.0, 160.0));
+    let i = info(&mut wb);
+    let det = i["views"].as_array().unwrap().iter().find(|v| v["kind"]["type"] == "detail").cloned().unwrap_or_else(|| panic!("{i}"));
+    assert!((det["kind"]["radius"].as_f64().unwrap() - 10.0).abs() < 0.05, "{det}");
+    assert!(
+        (det["kind"]["center"]["x"].as_f64().unwrap() - 60.0).abs() < 0.05 && (det["kind"]["center"]["y"].as_f64().unwrap() - 9.0).abs() < 0.05,
+        "{det}"
+    );
+    assert_eq!(det["scale"], 1.0, "twice the parent's 1:2");
+    let placed = Vec2::new(det["center"][0].as_f64().unwrap(), det["center"][1].as_f64().unwrap());
+    assert!(placed.dist(Vec2::new(300.0, 160.0)) < 0.05, "where it was clicked: {det}");
+    assert!(det["visible_curves"].as_u64().unwrap() > 0, "{det}");
+}
+
+#[test]
+fn an_arc_dimensions_as_a_radius_and_meeting_lines_as_an_angle() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("kinds");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    // A 60 x 40 x 20 block, its back right edge rounded (R10), its top front edge chamfered (5).
+    let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    let rect = wb.exec("sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 })).unwrap();
+    let body = wb.exec("model.extrude", json!({ "sketch": sk, "distance": 20 })).unwrap()["feature"].clone();
+    let side = |i: usize| json!({ "type": "side", "feature": body, "curve": rect["lines"][i] });
+    let corner = wb.exec("model.edge_ref", json!({ "faces": [side(1), side(2)] })).unwrap();
+    wb.exec("model.fillet", json!({ "edges": [corner], "radius": 10 })).unwrap();
+    let edge = wb.exec("model.edge_ref", json!({ "faces": [{ "type": "cap", "feature": body, "end": "end" }, side(0)] })).unwrap();
+    wb.exec("model.chamfer", json!({ "edges": [edge], "distance": 5 })).unwrap();
+    wb.save(&dir.join("block.tenon")).unwrap();
+
+    wb.run_ui("file.new_drawing").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.place_base_view(&dir.join("block.tenon"), Orientation::Top, Some(1.0), true).unwrap();
+    d.tap(&mut wb, egui::Key::Escape);
+    wb.drw_exec("drw.view.base", json!({ "model": dir.join("block.tenon").to_str().unwrap(), "orientation": "right", "scale": 2, "at": [300, 150] }))
+        .unwrap();
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Escape);
+
+    // D, the rounded corner seen from above, then beside it: R10.
+    d.tap(&mut wb, egui::Key::D);
+    let arc = in_view(&mut wb, 1, 50.0 + 10.0 * 0.5f64.sqrt(), 30.0 + 10.0 * 0.5f64.sqrt());
+    d.click(&mut wb, arc);
+    d.click(&mut wb, arc + vec2(40.0, -40.0));
+    // The chamfer and the top edge in the right view, then between them: 45 degrees.
+    let (chamfer, top) = (in_view(&mut wb, 2, 2.5, 17.5), in_view(&mut wb, 2, 15.0, 20.0));
+    d.click(&mut wb, chamfer);
+    d.click(&mut wb, top);
+    let between = in_view(&mut wb, 2, 15.0, 24.0);
+    d.click(&mut wb, between);
+    d.tap(&mut wb, egui::Key::Escape);
+    let i = info(&mut wb);
+    let dims: Vec<(String, String)> = i["annotations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| (a["dim"].as_str().unwrap().to_owned(), a["shown"].as_str().unwrap().to_owned()))
+        .collect();
+    assert_eq!(dims, [("radius".to_string(), "R10".to_string()), ("angle".to_string(), "45°".to_string())], "{i}");
+}
+
+#[test]
+fn a_model_saved_elsewhere_updates_the_open_drawing() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = m4("elsewhere");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.open(&dir.join("plate.tenondrw")).unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!((info(&mut wb)["annotations"][3]["value"].as_f64().unwrap() - 16.0).abs() < 1e-9);
+
+    // Another program (or another Tenon window) saves the plate 22 thick.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let file = dir.join("plate.tenon");
+    let (doc, extra) = tenon_io::project::open(&file).unwrap();
+    let mut s = tenon_model::Session::default();
+    s.replace_document(doc, None);
+    tenon_io::cmd::run(&mut s, "param.set", &json!({ "name": "t", "equation": "22" }), None).unwrap();
+    tenon_io::project::save(&file, s.document(), &extra).unwrap();
+    // Within about a second of frames, with no input, the drawing has read it.
+    for _ in 0..75 {
+        d.frame(&mut wb, vec![]);
+    }
+    assert!(wb.status().contains("plate.tenon") && wb.status().contains("changed on disk"), "{}", wb.status());
+    let i = info(&mut wb);
+    assert!((i["annotations"][3]["value"].as_f64().unwrap() - 22.0).abs() < 1e-9, "{}", i["annotations"][3]);
+    assert!((i["views"][0]["size"][1].as_f64().unwrap() - 22.0).abs() < 1e-9);
 }
 
 #[test]

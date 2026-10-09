@@ -26,6 +26,8 @@ use crate::workbench::{Geo, Mode, Workbench};
 
 /// How near the pointer something must be drawn to be under it (pixels).
 const PICK_PX: f64 = 6.0;
+/// How often the model files are checked for changes made outside the drawing (seconds).
+const MODEL_CHECK_SECONDS: f64 = 1.0;
 /// Ink on the paper.
 const INK: Color32 = Color32::from_rgb(0x1e, 0x22, 0x28);
 /// Previews of what a tool is about to place.
@@ -211,6 +213,8 @@ pub(crate) struct DrwDoc {
     pub editing: Option<String>,
     /// Where the pointer is on the sheet.
     pub pointer: Option<Vec2>,
+    /// When the model files were last checked for changes on disk (UI time, seconds).
+    checked_at: f64,
     /// The sheet as drawn, its problems, and what it was drawn from.
     graphics: Option<(u64, Arc<Graphics>, Arc<Vec<String>>)>,
     /// Bumped whenever computed views arrive.
@@ -236,6 +240,7 @@ impl DrwDoc {
             jobs: BTreeMap::new(),
             editing: None,
             pointer: None,
+            checked_at: 0.0,
             graphics: None,
             eval_seq: 0,
         }
@@ -417,6 +422,7 @@ impl Workbench {
             .collect();
         let mut s = DrwSession::default();
         s.replace(d, models);
+        tenon_io::drw::stamp_all(&mut s);
         self.enter_drawing(DrwDoc::new(s, Some(path.to_path_buf())));
         match missing.first() {
             Some(m) => self.set_error(format!("Opened {} ({} model file(s) missing: {m})", path.display(), missing.len())),
@@ -444,7 +450,24 @@ impl Workbench {
     pub(crate) fn sync_drawing(&mut self) {
         let Some(d) = self.drw.as_mut() else { return };
         // A model being edited is not in the drawing's hands until Return.
-        if d.editing.is_some() || d.session.evaluation().is_some() {
+        if d.editing.is_some() {
+            return;
+        }
+        // Model files saved by another program or window: about once a second.
+        if self.view.now - d.checked_at >= MODEL_CHECK_SECONDS || self.view.now < d.checked_at {
+            d.checked_at = self.view.now;
+            let changed = tenon_io::drw::reload_changed(&mut d.session);
+            if !changed.kept.is_empty() {
+                self.set_error(format!(
+                    "{} changed on disk, but the drawing has unsaved changes to it: they are kept (Update reads the file instead)",
+                    changed.kept.join(", ")
+                ));
+            } else if !changed.reloaded.is_empty() {
+                self.set_status(format!("{} changed on disk: the drawing follows.", changed.reloaded.join(", ")));
+            }
+        }
+        let Some(d) = self.drw.as_mut() else { return };
+        if d.session.evaluation().is_some() {
             return;
         }
         let key = d.session.eval_key();
@@ -528,6 +551,7 @@ impl Workbench {
                         return Err(format!("cannot open {}: {why}", model.display()));
                     }
                     d.session.models.insert(key.clone(), m);
+                    tenon_io::drw::restamp(&mut d.session, &key);
                 }
                 let (sources, probe) = tenon_io::drw::probe(&d.session, &key);
                 self.step_seq += 1;
@@ -781,6 +805,8 @@ impl Workbench {
             }
             _ => {}
         }
+        // Saved while it was edited, the model's files are as the drawing holds them.
+        tenon_io::drw::restamp(&mut d.session, &key);
         self.session.replace_document(tenon_model::Document::default(), None);
         self.path = None;
         self.mode = Mode::Model;
@@ -1018,24 +1044,24 @@ impl Workbench {
         let mut chosen: Option<&'static str> = None;
         resp.context_menu(|ui| {
             if let Some(Owner::View(_)) = target {
-                if ui.button("Edit View...").clicked() {
+                if button(ui, "Edit View...", "tn_ctx_edit_view").clicked() {
                     chosen = Some("drw.edit_view");
                     ui.close();
                 }
-                if ui.button("Open Model").clicked() {
+                if button(ui, "Open Model", "tn_ctx_open_model").clicked() {
                     chosen = Some("drw.edit_model");
                     ui.close();
                 }
-                if ui.button("Projected View").clicked() {
+                if button(ui, "Projected View", "tn_ctx_projected").clicked() {
                     chosen = Some("drw.projected");
                     ui.close();
                 }
             }
-            if matches!(target, Some(Owner::View(_) | Owner::Annotation(_))) && ui.button("Delete").clicked() {
+            if matches!(target, Some(Owner::View(_) | Owner::Annotation(_))) && button(ui, "Delete", "tn_ctx_delete").clicked() {
                 chosen = Some("drw.delete");
                 ui.close();
             }
-            if ui.button("Zoom All").clicked() {
+            if button(ui, "Zoom All", "tn_ctx_zoom_all").clicked() {
                 chosen = Some("view.fit");
                 ui.close();
             }
@@ -1048,6 +1074,8 @@ impl Workbench {
         {
             ui.ctx().request_repaint();
         }
+        // Idle, a frame a second still notices model files saved elsewhere.
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(MODEL_CHECK_SECONDS));
     }
 
     /// A click on the sheet while a tool runs (`over`: the view under it).
@@ -1216,7 +1244,7 @@ impl Workbench {
                     egui::Grid::new("tn_base_view").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         ui.label("File");
                         ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(&mut dlg.file).desired_width(220.0));
+                            ui.add(egui::TextEdit::singleline(&mut dlg.file).id(egui::Id::new("tn_base_file")).desired_width(220.0));
                             if ui.button("...").on_hover_text("Choose a part or assembly file").clicked() {
                                 browse = true;
                             }
@@ -1245,10 +1273,10 @@ impl Workbench {
                     });
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui.button("OK").clicked() {
+                        if button(ui, "OK", "tn_base_ok").clicked() {
                             ok = true;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if button(ui, "Cancel", "tn_base_cancel").clicked() {
                             cancel = true;
                         }
                     });
@@ -1282,7 +1310,7 @@ impl Workbench {
                 |ui| {
                     egui::Grid::new("tn_edit_view").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         ui.label("Scale");
-                        ui.add(egui::TextEdit::singleline(&mut dlg.scale).desired_width(90.0));
+                        ui.add(egui::TextEdit::singleline(&mut dlg.scale).id(egui::Id::new("tn_view_scale")).desired_width(90.0));
                         ui.end_row();
                         ui.label("Style");
                         ui.checkbox(&mut dlg.hidden, "Hidden lines");
@@ -1296,10 +1324,10 @@ impl Workbench {
                     });
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui.button("OK").clicked() {
+                        if button(ui, "OK", "tn_view_ok").clicked() {
                             ok = true;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if button(ui, "Cancel", "tn_view_cancel").clicked() {
                             cancel = true;
                         }
                     });
@@ -1324,16 +1352,16 @@ impl Workbench {
             egui::Window::new("Text").open(&mut open).collapsible(false).resizable(false).default_width(340.0).default_pos([320.0, 170.0]).show(
                 &ctx,
                 |ui| {
-                    let r = ui.add(egui::TextEdit::multiline(&mut dlg.text).desired_rows(3).desired_width(310.0));
+                    let r = ui.add(egui::TextEdit::multiline(&mut dlg.text).id(egui::Id::new("tn_drw_text")).desired_rows(3).desired_width(310.0));
                     if dlg.text.is_empty() && !r.has_focus() {
                         r.request_focus();
                     }
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui.button("OK").clicked() {
+                        if button(ui, "OK", "tn_text_ok").clicked() {
                             ok = true;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if button(ui, "Cancel", "tn_text_cancel").clicked() {
                             cancel = true;
                         }
                     });
@@ -1422,7 +1450,7 @@ impl Workbench {
                     resp.context_menu(|ui| {
                         pick_view = Some((sh.id, id));
                         for (label, cmd) in [("Edit View...", "drw.edit_view"), ("Open Model", "drw.edit_model"), ("Delete", "drw.delete")] {
-                            if ui.button(label).clicked() {
+                            if button(ui, label, cmd).clicked() {
                                 menu = Some(cmd);
                                 ui.close();
                             }
@@ -1516,6 +1544,19 @@ fn parse_scale(s: &str) -> Result<Option<f64>, String> {
         None => s.parse().map_err(|_| "the scale is a number or a ratio like 1:2")?,
     };
     if v.is_finite() && (1e-4..=1e4).contains(&v) { Ok(Some(v)) } else { Err("the scale is out of range".into()) }
+}
+
+/// A dialog or menu button. In tests its rectangle is kept under `key`, so tests can press it as
+/// a user would.
+fn button(ui: &mut Ui, label: &str, key: &str) -> egui::Response {
+    let r = ui.button(label);
+    #[cfg(test)]
+    ui.data_mut(|d| {
+        d.get_temp_mut_or_default::<BTreeMap<String, Rect>>(egui::Id::new("tn_buttons")).insert(key.to_owned(), r.rect);
+    });
+    #[cfg(not(test))]
+    let _ = key;
+    r
 }
 
 /// One row of the drawing browser.

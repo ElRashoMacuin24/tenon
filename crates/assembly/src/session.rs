@@ -285,6 +285,8 @@ pub struct BomRow {
     pub item: usize,
     /// The part file's name without its folder or extension.
     pub part: String,
+    /// The part's key (its full path), as components name it.
+    pub key: String,
     /// The part document's name.
     pub name: String,
     pub quantity: usize,
@@ -295,21 +297,36 @@ pub struct BomRow {
 
 /// The parts list, in the order parts were first placed.
 pub fn bom(asm: &Assembly, parts: &Parts) -> Vec<BomRow> {
+    bom_with(
+        asm,
+        |key| parts.get(key).filter(|p| p.missing.is_none()).map(|p| p.session.document().name.clone()),
+        |c| scene_of(parts, c).map(|s| s.bodies.iter().map(|b| b.volume).sum()),
+    )
+}
+
+/// The parts list from what is known of the parts: `name` gives a part's document name (none:
+/// the file name stands in), `volume` a component's part volume. Every parts list in Tenon (the
+/// assembly's, a drawing's) is made here, so they number parts alike.
+pub fn bom_with(asm: &Assembly, name: impl Fn(&str) -> Option<String>, volume: impl Fn(&Component) -> Option<f64>) -> Vec<BomRow> {
     let mut rows: Vec<BomRow> = Vec::new();
-    let mut keys: Vec<&str> = Vec::new();
     for c in &asm.components {
-        if let Some(r) = keys.iter().position(|k| *k == c.part).and_then(|i| rows.get_mut(i)) {
+        if let Some(r) = rows.iter_mut().find(|r| r.key == c.part) {
             r.quantity += 1;
             r.components.push(c.name.clone());
             continue;
         }
-        keys.push(&c.part);
         let file = c.part.rsplit(['/', '\\']).next().unwrap_or(&c.part);
         let stem = file.strip_suffix(".tenon").unwrap_or(file).to_owned();
-        let part = parts.get(&c.part);
-        let name = part.filter(|p| p.missing.is_none()).map_or_else(|| stem.clone(), |p| p.session.document().name.clone());
-        let volume = scene_of(parts, c).map(|s| s.bodies.iter().map(|b| b.volume).sum());
-        rows.push(BomRow { item: rows.len() + 1, part: stem, name, quantity: 1, volume, components: vec![c.name.clone()] });
+        let name = name(&c.part).unwrap_or_else(|| stem.clone());
+        rows.push(BomRow {
+            item: rows.len() + 1,
+            part: stem,
+            key: c.part.clone(),
+            name,
+            quantity: 1,
+            volume: volume(c),
+            components: vec![c.name.clone()],
+        });
     }
     rows
 }

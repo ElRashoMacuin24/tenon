@@ -111,6 +111,87 @@ pub fn save(path: &Path, d: &Drawing) -> Result<(), ProjectError> {
     Ok(())
 }
 
+// ---- noticing model files that change on disk ---------------------------------------------------
+
+/// A fingerprint of a model's files as they are on disk now: the file and, for an assembly, its
+/// part files, each by length and modification time (a missing file counts too).
+pub fn model_stamp(key: &str, m: &DrwModel) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut file = |p: &str| {
+        p.hash(&mut h);
+        match std::fs::metadata(p) {
+            Ok(md) => (md.len(), md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos())).hash(&mut h),
+            Err(_) => "missing".hash(&mut h),
+        }
+    };
+    file(key);
+    if let DrwModel::Assembly(a) = m {
+        for part in a.parts.keys() {
+            file(part);
+        }
+    }
+    h.finish()
+}
+
+/// Records what a model's files are like now, after reading or saving them.
+pub fn restamp(s: &mut DrwSession, key: &str) {
+    if let Some(m) = s.models.get(key) {
+        let stamp = model_stamp(key, m);
+        s.stamps.insert(key.to_owned(), stamp);
+    }
+}
+
+/// Records every model's files as they are now.
+pub fn stamp_all(s: &mut DrwSession) {
+    let keys: Vec<String> = s.models.keys().cloned().collect();
+    for key in keys {
+        restamp(s, &key);
+    }
+}
+
+/// Models whose files changed on disk since the drawing last read or saved them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Changed {
+    /// Read again (file names); the views and dimensions follow.
+    pub reloaded: Vec<String>,
+    /// Changed in the drawing and not saved, so not read again (that would lose the changes).
+    pub kept: Vec<String>,
+}
+
+/// Reads again the models whose files changed on disk, as when another program or window saved
+/// them. A model with unsaved changes made from the drawing is kept and reported once.
+pub fn reload_changed(s: &mut DrwSession) -> Changed {
+    let mut out = Changed::default();
+    let keys: Vec<String> = s.models.keys().cloned().collect();
+    for key in keys {
+        let Some(m) = s.models.get(&key) else { continue };
+        let now = model_stamp(&key, m);
+        let name = Path::new(&key).file_name().map_or(key.clone(), |n| n.to_string_lossy().into_owned());
+        match s.stamps.get(&key) {
+            Some(before) if *before == now => continue,
+            // Never seen: this is how its files are.
+            None => {
+                s.stamps.insert(key, now);
+                continue;
+            }
+            Some(_) => {}
+        }
+        if m.is_dirty() {
+            out.kept.push(name);
+            s.stamps.insert(key, now);
+            continue;
+        }
+        s.models.insert(key.clone(), load_model(Path::new(&key)));
+        restamp(s, &key);
+        out.reloaded.push(name);
+    }
+    if !out.reloaded.is_empty() {
+        s.generation += 1;
+    }
+    out
+}
+
 /// Saves the models changed from the drawing to their own files. Returns their paths.
 pub fn save_models(s: &mut DrwSession) -> Result<Vec<String>, CmdError> {
     let mut saved = Vec::new();
@@ -136,6 +217,8 @@ pub fn save_models(s: &mut DrwSession) -> Result<Vec<String>, CmdError> {
             _ => {}
         }
     }
+    // What was just written is what the drawing holds: not a change to read back.
+    stamp_all(s);
     Ok(saved)
 }
 
@@ -182,6 +265,7 @@ fn drw_open(s: &mut DrwSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
         })
         .collect();
     s.replace(d, models);
+    stamp_all(s);
     if let Some(k) = k {
         s.refresh(k);
     }
@@ -229,6 +313,7 @@ fn drw_base(s: &mut DrwSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
             return Err(CmdError(format!("cannot open {}: {why}", file.display())));
         }
         s.models.insert(key.clone(), m);
+        restamp(s, &key);
     }
     // The model's size picks the scale: build it now when there is a kernel.
     let mut k = k;
@@ -260,6 +345,7 @@ fn drw_update(s: &mut DrwSession, k: Option<&mut dyn Kernel>, _p: &Value) -> Cmd
             continue;
         }
         s.models.insert(key.clone(), load_model(Path::new(&key)));
+        restamp(s, &key);
         reread.push(Path::new(&key).file_name().map_or(key.clone(), |n| n.to_string_lossy().into_owned()));
     }
     s.generation += 1;

@@ -199,19 +199,23 @@ pub fn dimension_anchor(v: &View, g: &ViewGeometry, m: &ModelGeometry, dim: DimK
     Ok(to_sheet(v, g, p))
 }
 
-/// The directions of two lines from their meeting point towards the side `at` is on.
+/// The directions of two lines from their meeting point that bound the sector `at` is in (of
+/// the four the lines make).
 fn towards(a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2, at: Vec2) -> (Vec2, Vec2, Vec2) {
     let vertex = meeting(a1, a2, b1, b2);
-    let to_at = (at - vertex).normalized();
-    let mut u = (a2 - a1).normalized();
-    let mut w = (b2 - b1).normalized();
-    if u.dot(to_at) < 0.0 {
-        u = -u;
+    let t = at - vertex;
+    let (u, w) = ((a2 - a1).normalized(), (b2 - b1).normalized());
+    let det = u.x * w.y - u.y * w.x;
+    if det.abs() < 1e-12 {
+        // Parallel: no sector; each line's direction towards the point.
+        let u = if u.dot(t) < 0.0 { -u } else { u };
+        let w = if w.dot(t) < 0.0 { -w } else { w };
+        return (vertex, u, w);
     }
-    if w.dot(to_at) < 0.0 {
-        w = -w;
-    }
-    (vertex, u, w)
+    // `t` = alpha u + beta w: the signs say which half of each line bounds its sector.
+    let alpha = (t.x * w.y - t.y * w.x) / det;
+    let beta = (u.x * t.y - u.y * t.x) / det;
+    (vertex, if alpha < 0.0 { -u } else { u }, if beta < 0.0 { -w } else { w })
 }
 
 /// The value of a dimension in a view, with the text before and after it. `at` is where it is
@@ -489,21 +493,14 @@ pub struct PartsRow {
     pub part: String,
 }
 
-/// The parts list of an assembly model, in the order parts were first placed.
+/// The parts list of an assembly model: the assembly's bill of materials
+/// (`tenon_assembly::session::bom_with`), so item numbers match the assembly's own list.
 pub fn parts_rows(m: &ModelGeometry) -> Vec<PartsRow> {
     let Some(asm) = &m.assembly else { return Vec::new() };
-    let mut rows: Vec<PartsRow> = Vec::new();
-    for c in &asm.components {
-        if let Some(r) = rows.iter_mut().find(|r| r.part == c.part) {
-            r.quantity += 1;
-            continue;
-        }
-        let file = c.part.rsplit(['/', '\\']).next().unwrap_or(&c.part);
-        let stem = file.strip_suffix(".tenon").unwrap_or(file).to_owned();
-        let description = m.documents.get(&c.part).map_or_else(|| stem.clone(), |d| d.name.clone());
-        rows.push(PartsRow { item: rows.len() + 1, quantity: 1, part_number: stem, description, part: c.part.clone() });
-    }
-    rows
+    tenon_assembly::session::bom_with(asm, |key| m.documents.get(key).map(|d| d.name.clone()), |_| None)
+        .into_iter()
+        .map(|r| PartsRow { item: r.item, quantity: r.quantity, part_number: r.part, description: r.name, part: r.key })
+        .collect()
 }
 
 /// The item number of a component in its model's parts list.

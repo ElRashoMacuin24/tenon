@@ -69,6 +69,9 @@ pub struct DrwSession {
     pub models: BTreeMap<String, DrwModel>,
     /// Bumped when models are read again from their files.
     pub generation: u64,
+    /// Per model: a fingerprint of its files on disk when it was last read or saved (see
+    /// `tenon_io::drw::reload_changed`).
+    pub stamps: BTreeMap<String, u64>,
     /// The computed views and what they were computed from.
     eval: Option<(u64, Evaluation)>,
 }
@@ -81,7 +84,17 @@ impl Default for DrwSession {
 
 impl DrwSession {
     pub fn new(drawing: Drawing) -> DrwSession {
-        DrwSession { drawing, undo: Vec::new(), redo: Vec::new(), revision: 1, saved_revision: 1, models: BTreeMap::new(), generation: 0, eval: None }
+        DrwSession {
+            drawing,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            revision: 1,
+            saved_revision: 1,
+            models: BTreeMap::new(),
+            generation: 0,
+            stamps: BTreeMap::new(),
+            eval: None,
+        }
     }
     pub fn drawing(&self) -> &Drawing {
         &self.drawing
@@ -100,6 +113,7 @@ impl DrwSession {
     pub fn replace(&mut self, drawing: Drawing, models: BTreeMap<String, DrwModel>) {
         self.drawing = drawing;
         self.models = models;
+        self.stamps.clear();
         self.undo.clear();
         self.redo.clear();
         self.revision += 1;
