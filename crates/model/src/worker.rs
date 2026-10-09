@@ -277,6 +277,14 @@ impl Worker {
         let _ = self.tx.send(Request::Regenerate { slot, revision, doc: Box::new(doc), fresh });
     }
 
+    /// Regenerates a preview of `doc` in slot 0 (a feature being set up, a value being dragged)
+    /// without cancelling the one in progress: that one finishes and is shown, then the newest
+    /// waiting preview runs. A stream of previews (one per frame of a drag) so shows a result
+    /// every regeneration instead of none until the stream stops.
+    pub fn preview(&self, revision: u64, doc: Document) {
+        let _ = self.tx.send(Request::Regenerate { slot: 0, revision, doc: Box::new(doc), fresh: false });
+    }
+
     /// Forgets what a slot holds.
     pub fn drop_slot(&self, slot: u64) {
         let _ = self.tx.send(Request::Drop { slot });

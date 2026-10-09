@@ -59,6 +59,8 @@ pub struct Workbench {
     pub(crate) asm: Option<Box<crate::assembly::AsmDoc>>,
     /// Rebuild All: the next regeneration starts from scratch.
     rebuild_all: bool,
+    /// The document revision last sent to the worker (a change of it is an edit, not a preview).
+    sent_revision: Option<u64>,
     seq: u64,
     pub(crate) waiting: bool,
     pub(crate) regen_note: Option<String>,
@@ -104,6 +106,7 @@ impl Workbench {
             shown_key: None,
             asm: None,
             rebuild_all: false,
+            sent_revision: None,
             seq: 0,
             waiting: false,
             regen_note: None,
@@ -578,7 +581,15 @@ impl Workbench {
             let fresh = std::mem::take(&mut self.rebuild_all);
             match &mut self.geo {
                 Geo::Worker(w) => {
-                    w.regenerate(self.seq, doc.clone(), fresh);
+                    // The document itself unchanged (a value being dragged or typed into a
+                    // panel): a preview, which does not cut short the one being computed.
+                    let edit = self.sent_revision != Some(self.session.revision());
+                    if edit || fresh {
+                        w.regenerate(self.seq, doc.clone(), fresh);
+                    } else {
+                        w.preview(self.seq, doc.clone());
+                    }
+                    self.sent_revision = Some(self.session.revision());
                     self.waiting = true;
                 }
                 Geo::Sync(k) => {

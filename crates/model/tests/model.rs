@@ -212,6 +212,38 @@ fn worker_regenerates_off_thread_and_reports_the_latest() {
     w.drop_slot(6);
 }
 
+/// Regression: dragging a value sends a preview every frame. Each used to cancel the one being
+/// computed, so nothing showed until the drag stopped. Previews now finish, then the newest
+/// waiting one runs.
+#[test]
+fn a_stream_of_previews_shows_results_while_it_lasts() {
+    let w = Worker::spawn(|| Box::new(OcctKernel::new()) as Box<dyn Kernel>, MeshTol::default(), None).unwrap();
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ext, _) = bracket(&mut s, &mut k, 8.0);
+    // Heavier: twenty more holes, so a regeneration from scratch takes a while.
+    for i in 0..20 {
+        let top = s.exec("model.face_ref", &json!({ "origin": { "type": "cap", "feature": ext, "end": "end" } }), Some(&mut k)).unwrap();
+        let sk = s.exec("sketch.create", &json!({ "face": top }), None).unwrap()["feature"].as_u64().unwrap();
+        s.exec("sketch.point", &json!({ "sketch": sk, "x": 6.0 + 2.4 * f64::from(i), "y": 34 }), None).unwrap();
+        s.exec("model.hole", &json!({ "sketch": sk, "diameter": 1.5, "through_all": true }), None).unwrap();
+    }
+    let doc = s.document().clone();
+    w.preview(1, doc.clone());
+    // The first is running by now; the rest arrive while it does.
+    std::thread::sleep(Duration::from_millis(20));
+    for rev in 2..=10 {
+        w.preview(rev, doc.clone());
+    }
+    let mut seen = Vec::new();
+    while seen.last() != Some(&10) {
+        match w.recv_timeout(Duration::from_secs(60)) {
+            Some(Response::Scene { revision, .. }) => seen.push(revision),
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(seen, [1, 10], "the first finished, the ones in between were skipped");
+}
+
 #[test]
 fn bad_commands_change_nothing() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());

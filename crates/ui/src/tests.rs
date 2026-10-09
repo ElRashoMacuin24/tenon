@@ -429,10 +429,36 @@ fn properties_panel_and_drag_arrow_drive_the_extrusion() {
     d.drag(&mut wb, tip, out, egui::PointerButton::Primary);
     let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("still editing") };
     assert!(p.distance > 26.0, "dragging the arrow lengthens the extrusion: {}", p.distance);
+    // The arrow follows the pointer along its axis, landing on round numbers.
+    assert!(((p.distance / 0.1).round() * 0.1 - p.distance).abs() < 1e-9, "snapped: {}", p.distance);
     wb.panel_request = Some(crate::panels::PanelRequest::Ok);
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
     assert!(volume(&wb) > 40.0 * 20.0 * 26.0, "{}", volume(&wb));
+
+    // Regression: dragged almost to nothing, the arrow comes back out (it used to stick, since a
+    // drag was scaled by the length shown).
+    wb.edit_feature(ext).unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!() };
+    let tip = on_screen(&wb, base + n * p.distance);
+    let near = on_screen(&wb, base + n * 0.2);
+    d.drag(&mut wb, tip, near, egui::PointerButton::Primary);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!() };
+    assert!(p.distance < 1.0, "down to almost nothing: {}", p.distance);
+    let tip = on_screen(&wb, base + n * p.distance);
+    let to = on_screen(&wb, base + n * 15.0);
+    d.drag(&mut wb, tip, to, egui::PointerButton::Primary);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!() };
+    assert!((p.distance - 15.0).abs() < 0.5, "and back out: {}", p.distance);
+    assert_eq!(p.direction, crate::panels::Direction::Default);
+    // Past the sketch plane, it turns round.
+    let tip = on_screen(&wb, base + n * p.distance);
+    let to = on_screen(&wb, base - n * 8.0);
+    d.drag(&mut wb, tip, to, egui::PointerButton::Primary);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!() };
+    assert_eq!(p.direction, crate::panels::Direction::Flipped);
+    assert!((p.distance - 8.0).abs() < 0.5, "{}", p.distance);
     let _ = Vec3::ZERO;
 }
 

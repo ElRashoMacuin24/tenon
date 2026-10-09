@@ -1417,15 +1417,14 @@ impl Workbench {
             p.add(Shape::convex_polygon(vec![b + d * 9.0, b - d * 3.0 + nrm * 6.0, b - d * 3.0 - nrm * 6.0], color, Stroke::NONE));
         }
         p.circle_filled(a, 3.0, color);
-        if resp.dragged() && len > 1.0 {
-            let mm_per_px = shown / f64::from(len);
-            let moved = f64::from(resp.drag_delta().dot(along / len)) * mm_per_px;
-            let k = if p_direction_symmetric(&self.panel) { 2.0 } else { 1.0 };
-            if let Some(Panel::Extrude(p)) = &mut self.panel {
-                p.distance = (p.distance + moved * k).clamp(0.001, 100_000.0);
-            }
+        if resp.dragged()
+            && let Some(ptr) = resp.interact_pointer_pos()
+            && let Some(s) = arrow_distance(&cam, rect, ptr, base, n)
+            && let Some(Panel::Extrude(p)) = &mut self.panel
+        {
+            set_arrow_distance(p, s, step_at(&cam, rect, tip));
         }
-        let _ = resp.on_hover_text("Drag to change the distance");
+        let _ = resp.on_hover_text("Drag to change the distance (past the sketch to go the other way)");
     }
 
     /// The mini-toolbar beside the preview: the main value, flip, OK, Cancel and Apply.
@@ -1634,8 +1633,47 @@ fn p_before(panel: &Panel, wb: &Workbench, id: tenon_model::FeatureId) -> bool {
     editing.is_none_or(|e| wb.document().index_of(id) < wb.document().index_of(e))
 }
 
-fn p_direction_symmetric(panel: &Option<Panel>) -> bool {
-    matches!(panel, Some(Panel::Extrude(p)) if p.direction == Direction::Symmetric)
+/// Where along the extrusion axis (`base` + `n` s) the pointer is: the point of the axis
+/// nearest the pointer's ray. `None` when looking straight along the axis.
+fn arrow_distance(cam: &tenon_render::Camera, rect: Rect, ptr: Pos2, base: Vec3, n: Vec3) -> Option<f64> {
+    let (o, d) = cam.ray(f64::from(ptr.x - rect.left()), f64::from(ptr.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+    let w0 = base - o;
+    let (b, e, f) = (n.dot(d), n.dot(w0), d.dot(w0));
+    let den = 1.0 - b * b;
+    (den > 1e-6).then(|| (b * f - e) / den)
+}
+
+/// A round step (1, 2 or 5 times a power of ten mm) about five pixels long at `at`, so dragged
+/// values land on tidy numbers that suit the zoom.
+fn step_at(cam: &tenon_render::Camera, rect: Rect, at: Vec3) -> f64 {
+    let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+    let px = match (cam.project(at, w, h), cam.project(at + cam.right(), w, h)) {
+        (Some(a), Some(b)) => ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt(),
+        _ => 1.0,
+    };
+    let raw = 5.0 / px.max(1e-9);
+    let p = 10f64.powf(raw.log10().floor());
+    [1.0, 2.0, 5.0, 10.0].iter().map(|m| m * p).find(|s| *s >= raw).unwrap_or(10.0 * p)
+}
+
+/// The arrow dragged to `s` along the profile normal: the distance follows (rounded to `step`);
+/// past the profile the extrusion turns the other way (one-sided only).
+fn set_arrow_distance(p: &mut crate::panels::ExtrudePanel, s: f64, step: f64) {
+    let round = |v: f64| if step > 0.0 { (v / step).round() * step } else { v };
+    let min = 0.001;
+    match p.direction {
+        Direction::Default | Direction::Flipped => {
+            let flipped = p.direction == Direction::Flipped;
+            // `s` is along the profile normal; the arrow points the extrusion's way.
+            let signed = if flipped { -s } else { s };
+            if signed < 0.0 {
+                p.direction = if flipped { Direction::Default } else { Direction::Flipped };
+            }
+            p.distance = round(signed.abs()).clamp(min, 100_000.0);
+        }
+        Direction::Symmetric => p.distance = round(2.0 * s.abs()).clamp(min, 100_000.0),
+        Direction::Asymmetric => p.distance = round(s.max(0.0)).clamp(min, 100_000.0),
+    }
 }
 
 #[cfg(test)]
