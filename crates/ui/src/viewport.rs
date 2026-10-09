@@ -338,6 +338,10 @@ impl Workbench {
     }
 
     pub(crate) fn viewport(&mut self, ui: &mut Ui, render: Option<&egui_wgpu::RenderState>, t: &Tokens) {
+        if self.in_drawing() {
+            self.drw_canvas(ui, t);
+            return;
+        }
         let rect = ui.max_rect();
         self.view.rect = rect;
         if self.step_view_anim() {

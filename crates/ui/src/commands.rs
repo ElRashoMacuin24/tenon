@@ -402,8 +402,100 @@ pub const ASM_RIBBON: &[RibbonTab] = &[
     },
 ];
 
+/// The ribbon of the drawing environment.
+pub const DRW_RIBBON: &[RibbonTab] = &[
+    RibbonTab {
+        name: "Place Views",
+        panels: &[
+            RibbonPanel {
+                title: "Create",
+                commands: &[
+                    large("drw.base", "Base", "A view of a part or assembly file: choose the file, orientation and scale", Icon::BaseView, 0),
+                    large("drw.projected", "Projected", "Click a view, then click where each view projected from it goes", Icon::ProjectedView, 0),
+                    large(
+                        "drw.section",
+                        "Section",
+                        "Click a view, click the two ends of the section line, then where the section goes",
+                        Icon::SectionView,
+                        0,
+                    ),
+                    large(
+                        "drw.detail",
+                        "Detail",
+                        "Click a view, click the centre of the detail, then its radius, then where it goes",
+                        Icon::DetailView,
+                        0,
+                    ),
+                    small("drw.auxiliary", "Auxiliary", "A view square to an inclined edge", Icon::ProjectedView, 5),
+                    small("drw.overlay", "Overlay", "Positions of an assembly drawn over a view", Icon::Explode, 5),
+                ],
+            },
+            RibbonPanel {
+                title: "Modify",
+                commands: &[
+                    small("drw.break", "Break", "Shorten a long view", Icon::Split, 5),
+                    small("drw.break_out", "Break Out", "Cut away part of a view to show what is inside", Icon::Trim, 5),
+                    small("drw.crop", "Crop", "Show only part of a view", Icon::Rectangle, 5),
+                ],
+            },
+            RibbonPanel { title: "Sheets", commands: &[large("drw.sheet.new", "New\nSheet", "Add a sheet to the drawing", Icon::NewSheet, 0)] },
+        ],
+    },
+    RibbonTab {
+        name: "Annotate",
+        panels: &[
+            RibbonPanel {
+                title: "Dimension",
+                commands: &[
+                    large("drw.dimension", "Dimension", "Click an edge or two, then where the dimension goes", Icon::Dimension, 0).key("D"),
+                    small("drw.baseline", "Baseline", "Dimensions from one datum", Icon::Dimension, 5),
+                    small("drw.ordinate", "Ordinate", "Ordinate dimensions", Icon::Dimension, 5),
+                ],
+            },
+            RibbonPanel { title: "Text", commands: &[large("drw.text", "Text", "Click where the text goes, then type it", Icon::Text, 0).key("T")] },
+            RibbonPanel {
+                title: "Table",
+                commands: &[
+                    large("drw.parts_list", "Parts\nList", "Click an assembly view, then where the list goes", Icon::Bom, 0),
+                    large("drw.balloon", "Balloon", "Click a part in an assembly view, then where the balloon goes", Icon::Balloon, 0)
+                        .key("B")
+                        .more(&["drw.balloon", "drw.balloon.auto"]),
+                    large("drw.hole_table", "Hole", "Click a part view, then where the hole table goes", Icon::HoleTable, 0),
+                ],
+            },
+        ],
+    },
+    RibbonTab {
+        name: "Tools",
+        panels: &[RibbonPanel {
+            title: "Options",
+            commands: &[
+                large("tools.options", "Application\nOptions", "Colour scheme and other settings", Icon::Settings, 0),
+                large("app.about", "About", "Version, licences and kernel information", Icon::Info, 0),
+            ],
+        }],
+    },
+    RibbonTab {
+        name: "Manage",
+        panels: &[RibbonPanel {
+            title: "Update",
+            commands: &[large("drw.update", "Update", "Read the model files again; the views and dimensions follow", Icon::Update, 0)],
+        }],
+    },
+    RibbonTab {
+        name: "View",
+        panels: &[
+            RibbonPanel { title: "Windows", commands: &[small("view.browser", "Browser", "Show or hide the model browser", Icon::Browser, 0)] },
+            RibbonPanel { title: "Navigate", commands: &[small("view.fit", "Zoom All", "Fit the sheet in the window", Icon::ZoomFit, 0)] },
+        ],
+    },
+];
+
 /// The panel shown at the end of the ribbon while a part is edited in place.
 pub const RETURN: UiCommand = large("asm.return", "Return", "Finish editing the part and go back to the assembly", Icon::Return, 0);
+
+/// The same, while a model is edited from a drawing.
+pub const DRW_RETURN: UiCommand = large("drw.return", "Return", "Finish editing the model and go back to the drawing", Icon::Return, 0);
 
 /// Commands reachable from drop-down arrows, menus and keys but not shown on the ribbon itself.
 pub const EXTRA: &[UiCommand] = &[
@@ -416,6 +508,15 @@ pub const EXTRA: &[UiCommand] = &[
     small("file.new_assembly", "New Assembly", "A new assembly of part files", Icon::Assembly, 0),
     small("asm.edit", "Edit", "Edit the selected component's part in place", Icon::Part, 0),
     RETURN,
+    small("file.new_drawing", "New Drawing", "A new drawing of parts and assemblies", Icon::Drawing, 0),
+    small("drw.balloon.auto", "Auto Balloon", "Click an assembly view: a balloon for each part", Icon::Balloon, 0),
+    small("drw.edit_view", "Edit View", "Scale, hidden lines, centrelines and label of the selected view", Icon::BaseView, 0),
+    small("drw.edit_model", "Open Model", "Edit the selected view's part or assembly; Return comes back to the drawing", Icon::Part, 0),
+    small("drw.delete", "Delete", "Delete the selected view (with the views made from it) or annotation", Icon::Delete, 0),
+    small("export.pdf", "Export PDF", "Every sheet as a page of a PDF", Icon::Save, 0),
+    small("export.svg", "Export SVG", "The sheet as SVG", Icon::Save, 0),
+    small("export.dxf", "Export DXF", "The sheet as DXF, a layer per line type", Icon::Save, 0),
+    DRW_RETURN,
 ];
 
 /// Navigation bar (right edge of the viewport). Pan/Zoom/Orbit make the left button do that.
@@ -448,6 +549,7 @@ pub const QUICK_ACCESS: &[&[UiCommand]] = &[
 pub const FILE_MENU: &[(&str, &str)] = &[
     ("New Part", "file.new"),
     ("New Assembly", "file.new_assembly"),
+    ("New Drawing", "file.new_drawing"),
     ("Open...", "file.open"),
     ("Save", "file.save"),
     ("Save As...", "file.save_as"),
@@ -455,11 +557,25 @@ pub const FILE_MENU: &[(&str, &str)] = &[
     ("Export STL...", "export.stl"),
 ];
 
+/// File menu entries in a drawing.
+pub const DRW_FILE_MENU: &[(&str, &str)] = &[
+    ("New Part", "file.new"),
+    ("New Assembly", "file.new_assembly"),
+    ("New Drawing", "file.new_drawing"),
+    ("Open...", "file.open"),
+    ("Save", "file.save"),
+    ("Save As...", "file.save_as"),
+    ("Export PDF...", "export.pdf"),
+    ("Export SVG...", "export.svg"),
+    ("Export DXF...", "export.dxf"),
+];
+
 /// Every command reachable from the ribbon, menus and toolbars.
 pub fn all() -> impl Iterator<Item = &'static UiCommand> {
     RIBBON
         .iter()
         .chain(ASM_RIBBON)
+        .chain(DRW_RIBBON)
         .flat_map(|t| t.panels.iter())
         .flat_map(|p| p.commands.iter())
         .chain(EXTRA)
@@ -477,7 +593,16 @@ pub fn location(id: &str) -> Option<String> {
     RIBBON
         .iter()
         .chain(ASM_RIBBON)
+        .chain(DRW_RIBBON)
         .find_map(|t| t.panels.iter().find(|p| p.commands.iter().any(|c| c.id == id)).map(|p| format!("{} > {}", t.name, p.title)))
+}
+
+/// Which ribbon is showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Env {
+    Part { sketching: bool },
+    Assembly,
+    Drawing,
 }
 
 /// Commands matching a search, best first: label prefix, then word prefix, then substring.
@@ -508,11 +633,15 @@ pub fn search(query: &str) -> Vec<&'static UiCommand> {
 }
 
 /// The command for a single-key shortcut. While sketching, sketch keys come first and the rest
-/// still work (E extrudes, finishing the sketch). In an assembly, the Assemble tab's keys.
-pub fn for_key(key: &str, sketching: bool, assembly: bool) -> Option<&'static UiCommand> {
-    let tabs: &[usize] = if sketching { &[SKETCH_TAB, MODEL_TAB] } else { &[MODEL_TAB] };
-    let ribbon = if assembly { ASM_RIBBON } else { RIBBON };
-    let tabs: &[usize] = if assembly { &[0] } else { tabs };
+/// still work (E extrudes, finishing the sketch). In an assembly, the Assemble tab's keys; in a
+/// drawing, the Place Views and Annotate tabs'.
+pub fn for_key(key: &str, env: Env) -> Option<&'static UiCommand> {
+    let (ribbon, tabs): (&[RibbonTab], &[usize]) = match env {
+        Env::Part { sketching: true } => (RIBBON, &[SKETCH_TAB, MODEL_TAB]),
+        Env::Part { sketching: false } => (RIBBON, &[MODEL_TAB]),
+        Env::Assembly => (ASM_RIBBON, &[0]),
+        Env::Drawing => (DRW_RIBBON, &[0, 1]),
+    };
     tabs.iter()
         .filter_map(|t| ribbon.get(*t))
         .flat_map(|t| t.panels.iter())
@@ -549,6 +678,8 @@ mod tests {
         assert_eq!(RIBBON[MODEL_TAB].name, "3D Model");
         assert_eq!(RIBBON[SKETCH_TAB].name, "Sketch");
         assert!(RIBBON.iter().all(|t| !t.panels.is_empty() && t.panels.iter().all(|p| !p.commands.is_empty())));
+        let names: Vec<_> = DRW_RIBBON.iter().map(|t| t.name).collect();
+        assert_eq!(names, ["Place Views", "Annotate", "Tools", "Manage", "View"]);
     }
 
     #[test]
@@ -557,12 +688,18 @@ mod tests {
         assert_eq!(search("start").first().map(|c| c.id), Some("sketch.new"), "working commands before later milestones");
         assert!(search("sketch").iter().take(2).any(|c| c.id == "sketch.finish"), "a word prefix ranks above a substring");
         assert!(search("zzzz").is_empty());
-        assert_eq!(for_key("E", false, false).map(|c| c.id), Some("model.extrude"));
-        assert_eq!(for_key("L", true, false).map(|c| c.id), Some("sketch.line"));
-        assert!(for_key("L", false, false).is_none(), "sketch keys only while sketching");
-        assert_eq!(for_key("C", false, true).map(|c| c.id), Some("asm.constrain"));
-        assert!(for_key("E", false, true).is_none(), "no part keys in an assembly");
+        let part = Env::Part { sketching: false };
+        assert_eq!(for_key("E", part).map(|c| c.id), Some("model.extrude"));
+        assert_eq!(for_key("L", Env::Part { sketching: true }).map(|c| c.id), Some("sketch.line"));
+        assert!(for_key("L", part).is_none(), "sketch keys only while sketching");
+        assert_eq!(for_key("C", Env::Assembly).map(|c| c.id), Some("asm.constrain"));
+        assert!(for_key("E", Env::Assembly).is_none(), "no part keys in an assembly");
+        assert_eq!(for_key("D", Env::Drawing).map(|c| c.id), Some("drw.dimension"));
+        assert_eq!(for_key("B", Env::Drawing).map(|c| c.id), Some("drw.balloon"));
+        assert!(for_key("E", Env::Drawing).is_none(), "no part keys in a drawing");
         assert_eq!(location("asm.joint").as_deref(), Some("Assemble > Relationships"));
         assert_eq!(location("model.extrude").as_deref(), Some("3D Model > Create"));
+        assert_eq!(location("drw.section").as_deref(), Some("Place Views > Create"));
+        assert_eq!(location("drw.hole_table").as_deref(), Some("Annotate > Table"));
     }
 }

@@ -57,6 +57,9 @@ pub struct Workbench {
     pub(crate) shown_key: Option<u64>,
     /// The open assembly, if the workbench is in the assembly environment.
     pub(crate) asm: Option<Box<crate::assembly::AsmDoc>>,
+    /// The open drawing, if the workbench is in the drawing environment (or editing one of its
+    /// models).
+    pub(crate) drw: Option<Box<crate::drawing::DrwDoc>>,
     /// Rebuild All: the next regeneration starts from scratch.
     rebuild_all: bool,
     /// The document revision last sent to the worker (a change of it is an edit, not a preview).
@@ -105,6 +108,7 @@ impl Workbench {
             shown: None,
             shown_key: None,
             asm: None,
+            drw: None,
             rebuild_all: false,
             sent_revision: None,
             seq: 0,
@@ -180,7 +184,10 @@ impl Workbench {
     }
     /// True while regeneration or an export is running on the worker.
     pub fn is_busy(&self) -> bool {
-        self.waiting || self.step_export.is_some() || self.asm.as_ref().is_some_and(|a| !a.jobs.is_empty())
+        self.waiting
+            || self.step_export.is_some()
+            || self.asm.as_ref().is_some_and(|a| !a.jobs.is_empty())
+            || self.drw.as_ref().is_some_and(|d| !d.jobs.is_empty())
     }
     pub fn is_sketching(&self) -> bool {
         matches!(self.mode, Mode::Sketch(_))
@@ -233,6 +240,44 @@ impl Workbench {
 
     /// Ribbon, menu and toolbar commands.
     pub fn run_ui(&mut self, id: &str) -> Result<(), String> {
+        let export_2d = matches!(id, "export.pdf" | "export.svg" | "export.dxf");
+        if id.starts_with("drw.") || id == "file.new_drawing" || export_2d {
+            return self.run_drw_ui(id);
+        }
+        if self.in_drawing() {
+            match id {
+                "edit.undo" | "edit.redo" => return self.drw_undo(id == "edit.undo"),
+                "file.save" | "file.save_as" => {
+                    let (saved, name) = self.drw.as_ref().map(|d| (d.path.clone(), d.session.drawing().name.clone())).unwrap_or_default();
+                    let path = match (saved, id) {
+                        (Some(p), "file.save") => p,
+                        _ => {
+                            let file = format!("{name}.{}", tenon_io::drw::EXTENSION);
+                            self.services.pick_save.as_ref().and_then(|f| f(&file, tenon_io::drw::EXTENSION)).ok_or("no file chosen")?
+                        }
+                    };
+                    return self.save_drawing(&path);
+                }
+                "view.fit" | "view.home" => {
+                    self.fit_sheet();
+                    return Ok(());
+                }
+                "model.rebuild" => return self.run_drw_ui("drw.update"),
+                "ui.cancel" => {
+                    if let Some(d) = self.drw.as_mut() {
+                        d.tool = None;
+                    }
+                    self.set_status("Ready");
+                    return Ok(());
+                }
+                _ if ["sketch.", "model.", "work.", "asm.", "export."].iter().any(|p| id.starts_with(p))
+                    || ["inspect.measure", "inspect.mass", "tools.parameters", "view.style", "view.look_at", "view.previous"].contains(&id) =>
+                {
+                    return Err("that works on a part or an assembly: select a view and use Open Model to edit its model".into());
+                }
+                _ => {}
+            }
+        }
         if id.starts_with("asm.") || id == "file.new_assembly" {
             return self.run_asm_ui(id);
         }
@@ -289,6 +334,7 @@ impl Workbench {
             "app.exit" => self.exit = true,
             "inspect.mass" => self.chrome.mass = true,
             "file.new" => {
+                self.leave_drawing();
                 self.leave_assembly();
                 self.session.replace_document(Document::default(), None);
                 self.path = None;
@@ -406,13 +452,17 @@ impl Workbench {
         self.panel = None;
     }
 
-    /// Opens a part (`.tenon`) or an assembly (`.tenonasm`).
+    /// Opens a part (`.tenon`), an assembly (`.tenonasm`) or a drawing (`.tenondrw`).
     pub fn open(&mut self, path: &Path) -> Result<(), String> {
         if path.extension().is_some_and(|e| e == tenon_io::asm::EXTENSION) {
             return self.open_assembly(path);
         }
+        if path.extension().is_some_and(|e| e == tenon_io::drw::EXTENSION) {
+            return self.open_drawing(path);
+        }
         // Read first: a file that cannot be opened leaves the assembly as it was.
         tenon_io::project::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        self.leave_drawing();
         self.leave_assembly();
         self.exec("file.open", json!({ "path": path.to_string_lossy() })).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
         self.path = Some(path.to_path_buf());
@@ -493,7 +543,7 @@ impl Workbench {
     /// Sends the shown document (or the assembly's parts) for regeneration when it changed;
     /// takes finished results.
     fn sync_geometry(&mut self) {
-        if !self.in_assembly() {
+        if !self.in_assembly() && !self.in_drawing() {
             self.sync_part();
         }
         let mut responses = Vec::new();
@@ -540,7 +590,11 @@ impl Workbench {
                     }
                 }
                 Response::Job { request, result } => {
-                    self.asm_job(request, result);
+                    if self.owns_drw_job(request) {
+                        self.drw_job(request, result);
+                    } else {
+                        self.asm_job(request, result);
+                    }
                 }
                 _ => {}
             }
@@ -548,6 +602,7 @@ impl Workbench {
         if self.asm.is_some() {
             self.sync_assembly();
         }
+        self.sync_drawing();
     }
 
     /// Sends the part document for regeneration when it changed.
@@ -687,7 +742,9 @@ impl Workbench {
                         let r = egui::Rect::from_min_max(egui::pos2(full.left(), split), full.max);
                         ui.scope_builder(egui::UiBuilder::new().max_rect(r), |ui| {
                             ui.set_clip_rect(r);
-                            if self.in_assembly() {
+                            if self.in_drawing() {
+                                self.drw_browser(ui, &t);
+                            } else if self.in_assembly() {
                                 self.asm_browser(ui, &t);
                             } else {
                                 self.browser(ui, &t);
@@ -703,6 +760,7 @@ impl Workbench {
         self.panels(ui);
         self.windows(ui);
         self.asm_windows(ui);
+        self.drw_windows(ui);
         self.radial_ui(ui, &t);
         if self.waiting || self.is_busy() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
@@ -740,8 +798,15 @@ impl Workbench {
                     _ => None,
                 })
             });
+            let env = if self.in_drawing() {
+                commands::Env::Drawing
+            } else if self.in_assembly() {
+                commands::Env::Assembly
+            } else {
+                commands::Env::Part { sketching: self.is_sketching() }
+            };
             if let Some(k) = letter
-                && let Some(c) = commands::for_key(k.name(), self.is_sketching(), self.in_assembly())
+                && let Some(c) = commands::for_key(k.name(), env)
             {
                 self.command(c.id);
             }

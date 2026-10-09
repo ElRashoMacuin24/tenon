@@ -422,6 +422,9 @@ impl Workbench {
     }
 
     pub(crate) fn active_tool_id(&self) -> Option<&'static str> {
+        if self.in_drawing() {
+            return self.drw.as_ref().and_then(|d| d.tool.as_ref()).map(crate::drawing::DrwTool::id);
+        }
         match &self.mode {
             Mode::Sketch(s) => s.tool.id(),
             Mode::Model => None,

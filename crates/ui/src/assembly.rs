@@ -237,6 +237,7 @@ fn placed_body(b: &BodyView, x: &Rigid) -> BodyView {
         mass,
         bbox: b.bbox.and_then(|bb| Aabb3::from_points(corners(&bb).map(|p| x.point(p)))),
         edges: b.edges.iter().map(|(n, fp)| (*n, EdgeFingerprint { mid: x.point(fp.mid), length: fp.length })).collect(),
+        ends: b.ends.iter().map(|[s, e]| [x.point(*s), x.point(*e)]).collect(),
         curves: b
             .curves
             .iter()
@@ -316,7 +317,12 @@ impl Workbench {
 
     /// Closes the assembly (its worker slots are freed).
     pub(crate) fn leave_assembly(&mut self) {
-        let Some(mut a) = self.asm.take() else { return };
+        self.take_assembly();
+    }
+
+    /// Closes the assembly and hands back its session (with a part edited in place put back).
+    pub(crate) fn take_assembly(&mut self) -> Option<AsmSession> {
+        let mut a = self.asm.take()?;
         if let Some(e) = a.editing.take()
             && let Some(p) = a.session.parts.get_mut(&e.key)
         {
@@ -331,9 +337,11 @@ impl Workbench {
         self.scene_seq += 1;
         self.shown = None;
         self.shown_key = None;
+        Some(a.session)
     }
 
     pub(crate) fn new_assembly(&mut self) {
+        self.leave_drawing();
         self.enter_assembly(AsmDoc::new(AsmSession::default(), None));
         self.set_status("New assembly: place a part file to start (Assemble > Place, or P).");
     }
@@ -344,6 +352,7 @@ impl Workbench {
         let missing: Vec<String> = parts.values().filter_map(|p| p.missing.clone()).collect();
         let mut s = AsmSession::default();
         s.replace(asm, parts);
+        self.leave_drawing();
         self.enter_assembly(AsmDoc::new(s, Some(path.to_path_buf())));
         match missing.first() {
             Some(m) => self.set_error(format!("Opened {} ({} part file(s) missing: {m})", path.display(), missing.len())),

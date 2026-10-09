@@ -109,6 +109,15 @@ pub enum Icon {
     Bom,
     Dof,
     Return,
+    // drawings
+    Drawing,
+    BaseView,
+    ProjectedView,
+    SectionView,
+    DetailView,
+    NewSheet,
+    Balloon,
+    HoleTable,
 }
 
 /// What an icon depicts, for its fill colour.
@@ -116,7 +125,8 @@ fn category(icon: Icon) -> Option<Category> {
     use Icon::*;
     Some(match icon {
         Extrude | Revolve | Sweep | Loft | Coil | Fillet | Chamfer | Shell | Hole | Rib | Draft | Thread | Combine | Split | Part | Body | Cube
-        | MassProps | PatternRect | PatternCircular | Mirror | Assembly | Place | CreateComponent | Explode => Category::Solid,
+        | MassProps | PatternRect | PatternCircular | Mirror | Assembly | Place | CreateComponent | Explode | BaseView | ProjectedView
+        | DetailView => Category::Solid,
         Plane | Axis | Point | Ucs | LookAt => Category::Work,
         NewSketch | FinishSketch => Category::Sketch,
         _ => return None,
@@ -709,6 +719,72 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
         Icon::Return => {
             pen.line(&[(0.85, 0.2), (0.85, 0.6), (0.2, 0.6)]);
             pen.arrow_head((0.15, 0.6), (0.6, 0.6));
+        }
+        Icon::Drawing => {
+            // A sheet with a folded corner and a title strip.
+            pen.fill(&[(0.14, 0.08), (0.66, 0.08), (0.86, 0.28), (0.86, 0.92), (0.14, 0.92)], soft);
+            pen.closed(&[(0.14, 0.08), (0.66, 0.08), (0.86, 0.28), (0.86, 0.92), (0.14, 0.92)]);
+            pen.line(&[(0.66, 0.08), (0.66, 0.28), (0.86, 0.28)]);
+            pen.line(&[(0.48, 0.78), (0.86, 0.78)]);
+            pen.line(&[(0.48, 0.78), (0.48, 0.92)]);
+        }
+        Icon::BaseView => {
+            // A sheet with one view on it.
+            pen.closed(&[(0.08, 0.12), (0.92, 0.12), (0.92, 0.88), (0.08, 0.88)]);
+            pen.fill(&[(0.24, 0.36), (0.6, 0.36), (0.6, 0.7), (0.24, 0.7)], soft);
+            pen.closed(&[(0.24, 0.36), (0.6, 0.36), (0.6, 0.7), (0.24, 0.7)]);
+        }
+        Icon::ProjectedView => {
+            // A view and one projected beside it.
+            pen.fill(&[(0.08, 0.5), (0.45, 0.5), (0.45, 0.9), (0.08, 0.9)], soft);
+            pen.closed(&[(0.08, 0.5), (0.45, 0.5), (0.45, 0.9), (0.08, 0.9)]);
+            pen.closed(&[(0.6, 0.5), (0.92, 0.5), (0.92, 0.9), (0.6, 0.9)]);
+            pen.closed(&[(0.08, 0.1), (0.45, 0.1), (0.45, 0.36), (0.08, 0.36)]);
+            pen.line(&[(0.48, 0.7), (0.58, 0.7)]);
+            pen.arrow_head((0.6, 0.7), (0.48, 0.7));
+        }
+        Icon::SectionView => {
+            // A cut view, hatched, and its cutting line.
+            pen.closed(&[(0.12, 0.32), (0.88, 0.32), (0.88, 0.78), (0.12, 0.78)]);
+            for i in 0..4 {
+                let x = 0.2 + 0.18 * i as f32;
+                pen.line(&[(x, 0.76), (x + 0.16, 0.34)]);
+            }
+            pen.line(&[(0.04, 0.16), (0.96, 0.16)]);
+            pen.arrow_head((0.06, 0.04), (0.06, 0.16));
+            pen.arrow_head((0.94, 0.04), (0.94, 0.16));
+        }
+        Icon::DetailView => {
+            // A circle on a corner, and the corner larger.
+            pen.closed(&[(0.06, 0.4), (0.4, 0.4), (0.4, 0.9), (0.06, 0.9)]);
+            pen.circle((0.36, 0.44), 0.12);
+            pen.fill(&[(0.56, 0.1), (0.94, 0.1), (0.94, 0.62), (0.56, 0.62)], soft);
+            pen.circle((0.75, 0.36), 0.22);
+            pen.line(&[(0.75, 0.36), (0.94, 0.36)]);
+            pen.line(&[(0.75, 0.36), (0.75, 0.58)]);
+        }
+        Icon::NewSheet => {
+            pen.closed(&[(0.12, 0.2), (0.7, 0.2), (0.7, 0.92), (0.12, 0.92)]);
+            pen.line(&[(0.3, 0.08), (0.88, 0.08), (0.88, 0.8)]);
+            pen.line(&[(0.41, 0.42), (0.41, 0.7)]);
+            pen.line(&[(0.27, 0.56), (0.55, 0.56)]);
+        }
+        Icon::Balloon => {
+            pen.circle((0.62, 0.32), 0.22);
+            pen.line(&[(0.46, 0.48), (0.14, 0.86)]);
+            pen.dot((0.14, 0.86), 0.06);
+            pen.line(&[(0.62, 0.22), (0.62, 0.42)]);
+        }
+        Icon::HoleTable => {
+            pen.circle((0.24, 0.24), 0.12);
+            pen.line(&[(0.24, 0.06), (0.24, 0.42)]);
+            pen.line(&[(0.06, 0.24), (0.42, 0.24)]);
+            pen.closed(&[(0.5, 0.12), (0.92, 0.12), (0.92, 0.9), (0.5, 0.9)]);
+            pen.closed(&[(0.08, 0.52), (0.5, 0.52), (0.5, 0.9), (0.08, 0.9)]);
+            for y in [0.38, 0.64] {
+                pen.line(&[(0.5, y), (0.92, y)]);
+            }
+            pen.line(&[(0.08, 0.71), (0.5, 0.71)]);
         }
     }
 }

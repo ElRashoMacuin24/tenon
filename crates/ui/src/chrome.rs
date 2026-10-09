@@ -7,7 +7,7 @@ use egui::{Align2, Color32, Frame, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use tenon_model::FeatureId;
 
 use crate::Workbench;
-use crate::commands::{self, ASM_RIBBON, FILE_MENU, QUICK_ACCESS, RIBBON, RibbonTab, Size, UiCommand};
+use crate::commands::{self, ASM_RIBBON, DRW_RIBBON, FILE_MENU, QUICK_ACCESS, RIBBON, RibbonTab, Size, UiCommand};
 use crate::icons::{self, Icon};
 use crate::theme::{self, ThemeName, Tokens};
 
@@ -182,13 +182,47 @@ pub(crate) fn icon_button(ui: &Ui, rect: Rect, cmd: &UiCommand, active: bool, t:
 }
 
 impl Workbench {
-    /// The ribbon of the environment: assembly, or part (also while a part is edited in place).
+    /// The ribbon of the environment: drawing, assembly, or part (also while a part is edited in
+    /// place or from a drawing).
     pub(crate) fn ribbon_def(&self) -> &'static [RibbonTab] {
-        if self.in_assembly() { ASM_RIBBON } else { RIBBON }
+        if self.in_drawing() {
+            DRW_RIBBON
+        } else if self.in_assembly() {
+            ASM_RIBBON
+        } else {
+            RIBBON
+        }
+    }
+
+    /// The Return button at the end of the ribbon: back to the assembly from a part edited in
+    /// place, or back to the drawing from its model.
+    fn return_command(&self) -> Option<&'static UiCommand> {
+        if self.editing_in_place() {
+            Some(&commands::RETURN)
+        } else if self.editing_from_drawing() {
+            Some(&commands::DRW_RETURN)
+        } else {
+            None
+        }
     }
 
     /// The open document's file name and whether it has unsaved changes.
     fn document_label(&self) -> (String, bool) {
+        if let Some(d) = &self.drw {
+            let file = d
+                .path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map_or_else(|| format!("{}.{}", d.session.drawing().name, tenon_io::drw::EXTENSION), |n| n.to_string_lossy().into_owned());
+            let models_dirty = d.session.models.values().any(tenon_drawing::DrwModel::is_dirty);
+            return match &d.editing {
+                Some(key) => (
+                    format!("{file} > {}", tenon_drawing::views::file_name(key)),
+                    self.session.is_dirty() || self.asm.as_ref().is_some_and(|a| a.session.is_dirty()),
+                ),
+                None => (file, d.session.is_dirty() || models_dirty),
+            };
+        }
         if let Some(a) = &self.asm {
             let file = a
                 .path
@@ -385,15 +419,17 @@ impl Workbench {
         let Some(tab) = self.ribbon_def().get(self.chrome.tab).or_else(|| self.ribbon_def().first()) else {
             return;
         };
-        let return_panel = [commands::RibbonPanel { title: "Return", commands: std::slice::from_ref(&commands::RETURN) }];
-        let editing = self.editing_in_place();
+        let back = self.return_command();
+        let return_panel = back.map(|c| [commands::RibbonPanel { title: "Return", commands: std::slice::from_ref(c) }]);
+        let return_panel: &[commands::RibbonPanel] = return_panel.as_ref().map_or(&[], |p| &p[..]);
+        let editing = back.is_some();
         let title_h = 17.0;
         let top = r.top() + 4.0;
         let content_h = r.height() - title_h - 8.0;
         let mut x = r.left() + 6.0;
         let mut clicked = None;
         let active_tool = self.active_tool_id();
-        let panels: Vec<&commands::RibbonPanel> = tab.panels.iter().chain(if editing { &return_panel[..] } else { &[] }).collect();
+        let panels: Vec<&commands::RibbonPanel> = tab.panels.iter().chain(if editing { return_panel } else { &[] }).collect();
         for panel in panels {
             let start = x;
             let mut hit = |h: Hit, id: &'static str| match h {
@@ -502,7 +538,13 @@ impl Workbench {
         icons::paint_colored(
             ui.painter(),
             Rect::from_min_size(pos2(tab.left() + 6.0, tab.center().y - 7.0), vec2(14.0, 14.0)),
-            if self.asm.is_some() { Icon::Assembly } else { Icon::Part },
+            if self.in_drawing() {
+                Icon::Drawing
+            } else if self.asm.is_some() {
+                Icon::Assembly
+            } else {
+                Icon::Part
+            },
             t.icon,
             t,
             true,
@@ -518,6 +560,9 @@ impl Workbench {
         let status = if self.status.is_empty() { "Ready" } else { &self.status };
         ui.painter().text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, status, theme::small(), color);
         let mut right = Vec::new();
+        if let Some(d) = self.drw_status() {
+            right.push(d);
+        }
         if let Some(a) = self.asm_status() {
             right.push(a);
         }
@@ -526,7 +571,7 @@ impl Workbench {
         }
         if self.waiting {
             right.push("Updating...".into());
-        } else if self.scene_seq > 0 && !self.in_assembly() {
+        } else if self.scene_seq > 0 && !self.in_assembly() && !self.in_drawing() {
             right.push(format!("{:.0} ms", self.scene.regen_ms + self.scene.mesh_ms));
         }
         right.push("mm".to_owned());
@@ -538,10 +583,11 @@ impl Workbench {
             return;
         };
         let mut chosen = None;
+        let entries = if self.in_drawing() { commands::DRW_FILE_MENU } else { FILE_MENU };
         egui::Area::new(egui::Id::new("tn_file_menu")).order(egui::Order::Foreground).fixed_pos(at).show(ui.ctx(), |ui| {
             Frame::menu(ui.style()).fill(t.panel).show(ui, |ui| {
                 ui.set_min_width(190.0);
-                for (label, id) in FILE_MENU {
+                for (label, id) in entries {
                     if ui.button(*label).clicked() {
                         chosen = Some(*id);
                     }
