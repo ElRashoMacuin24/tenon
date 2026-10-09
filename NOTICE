@@ -7,7 +7,8 @@ Portions derived from CADCraft
 ------------------------------
 Tenon is a fork of CADCraft (https://github.com/storytold/cadcraft) at commit 14e143b.
 crates/geom, crates/dxf and xtask originate there; crates/sketch/src/lm.rs is ported from its
-crates/constraints/src/lm.rs, and the sketch solver follows its design.
+crates/constraints/src/lm.rs, and the sketch solver follows its design. crates/drawing/src/stroke.rs
+is CADCraft's crates/fonts/src/stroke.rs (its single-stroke drafting font).
 Copyright (c) 2026 ArtCraft Team and the CADCraft contributors.
 Licensed under the MIT License or the Apache License, Version 2.0, at your option.
 The ArtCraft name, wordmark and logos are trademarks of the ArtCraft Team; per CADCraft's brand

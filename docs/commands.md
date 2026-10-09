@@ -99,7 +99,37 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `asm.redo` | Redo | none | no |
 | `asm.interference` | Interference | components (default all): every pair of visible components whose solids overlap, with the overlap volume | no |
 | `asm.edit_part` | Edit Part in Place | component; run: a part command; with: its parameters. The part changes for every component using it; the assembly is solved again | yes |
-| `render.png` | Render PNG | path (.png, optional: without it the image is returned base64-encoded); view: iso \| front \| back \| left \| right \| top \| bottom (default iso); width, height (pixels, default 1024 x 768); exploded (assemblies: the exploded view) | no |
+| `drw.new` | New Drawing | name; standard: ansi (default, third-angle) \| iso (first-angle); size: A \| B \| C \| D \| A4 \| A3 \| A2 \| A1 | no |
+| `drw.open` | Open Drawing | path (.tenondrw); reads the model files its views show; clears undo history | no |
+| `drw.save` | Save Drawing | path (.tenondrw); models changed from the drawing are saved to their own files first | no |
+| `drw.view.base` | Base View | model: a part (.tenon) or assembly (.tenonasm) file; orientation: front \| back \| top \| bottom \| left \| right \| iso (default front); scale: a number or "1:2" (default: fits the sheet); at: [x, y] (sheet mm); hidden (default true, false for iso); sheet | yes |
+| `drw.update` | Update | reads the model files again (models changed from the drawing and not saved keep their changes); views and dimensions follow. Returns the file names read | no |
+| `drw.export.pdf` | Export PDF | path (.pdf); sheet (default: every sheet, one page each) | no |
+| `drw.export.svg` | Export SVG | path (.svg); sheet (default the first) | no |
+| `drw.export.dxf` | Export DXF | path (.dxf); sheet (default the first) | no |
+| `drw.info` | Drawing Info | sheets, views (with their geometry counts) and annotations, dimension values and table rows as they are now | no |
+| `drw.pick` | Pick Geometry | view; at: [x, y] (the edge drawn nearest that sheet point, as a click picks it) or view_at: [x, y] (the same, in the view, model mm), or edge: [face origin, face origin] or {"body", "index"} with component (assembly views); point: start \| end \| mid \| center \| whole (default). Returns a pick for drw.dimension, with its kind (point, line with its length in the view, circle with its diameter) and where it is on the sheet | no |
+| `drw.view.projected` | Projected View | parent (view); side: right \| left \| above \| below \| above_right \| above_left \| below_right \| below_left (diagonals: isometric); at: [x, y] (sheet mm); scale | yes |
+| `drw.view.section` | Section View | parent; a, b: the section line in the parent view (model mm, see drw.to_view); flip: look the other way; at; scale | yes |
+| `drw.view.detail` | Detail View | parent; center: [x, y] in the parent view (model mm); radius (model mm); scale (default twice the parent's); at | yes |
+| `drw.view.edit` | Edit View | view; at: [x, y] or by: [dx, dy] (projected views move along); scale; hidden, tangent, centerlines, label: true or false | yes |
+| `drw.view.delete` | Delete View | view (and the views made from it, and their annotations) | yes |
+| `drw.dimension` | Dimension | view; type: horizontal \| vertical \| aligned \| diameter \| radius \| angle; a, b: picks from drw.pick (a line alone for its length, a circle for its size); at: [x, y] where the dimension line or text goes (sheet mm), or by: [dx, dy] from the middle of what is measured; text ("<>" is the value); precision (decimals, default 2) | yes |
+| `drw.hole_table` | Hole Table | view (a part view); origin: a pick for the datum (default the view's bottom-left); at: the table's top-left (default top right of the sheet) | yes |
+| `drw.parts_list` | Parts List | view (an assembly view); at: the table's top-left (default above the title block) | yes |
+| `drw.balloon` | Balloon | view; component, or attach_at: a sheet point on an edge of it (the balloon's leader ends there); at: where the balloon goes (default out from the view) | yes |
+| `drw.balloon.auto` | Auto Balloon | view: a balloon on one component of each part not ballooned yet | yes |
+| `drw.note` | Text | text; at: [x, y] (sheet mm); sheet; height (mm, default 3.5) | yes |
+| `drw.annotation.edit` | Edit Annotation | annotation; by: [dx, dy] (move); text (dimension text, "<>" the value, null for the value alone; or a note's text); precision | yes |
+| `drw.delete` | Delete Annotation | annotation | yes |
+| `drw.props` | Drawing Properties | title, number, revision, company, drawn_by, date (the title block's fields) | yes |
+| `drw.sheet.add` | New Sheet | size: A \| B \| C \| D \| A4 \| A3 \| A2 \| A1 (default the standard's) | yes |
+| `drw.sheet.size` | Sheet Size | sheet, size | yes |
+| `drw.to_view` | Sheet to View | view; at: [x, y] on the sheet. Returns where that is in the view (model mm) | no |
+| `drw.to_sheet` | View to Sheet | view; at: [x, y] in the view (model mm). Returns where that is on the sheet | no |
+| `drw.undo` | Undo | none | no |
+| `drw.redo` | Redo | none | no |
+| `render.png` | Render PNG | path (.png, optional: without it the image is returned base64-encoded); view: iso \| front \| back \| left \| right \| top \| bottom (default iso); width, height (pixels, default 1024 x 768); exploded (assemblies: the exploded view); sheet (drawings: which sheet, drawn width pixels wide) | no |
 
 ## Constraints
 

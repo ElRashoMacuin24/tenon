@@ -1,6 +1,6 @@
 [package]
 name = "tenon-drawing"
-description = "Drawing views, dimensions, title blocks, PDF/SVG/DXF output"
+description = "Drawings: views with hidden lines, sections and details, dimensions, tables, title blocks, PDF/SVG/DXF output"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,6 +10,12 @@ workspace = true
 
 [dependencies]
 tenon-geom = { workspace = true }
+tenon-kernel = { workspace = true }
 tenon-model = { workspace = true }
 tenon-assembly = { workspace = true }
 tenon-dxf = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tenon-kernel-occt = { workspace = true }

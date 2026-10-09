@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 tenon-geom = { workspace = true }
 tenon-kernel = { workspace = true }
+tenon-drawing = { workspace = true }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 image = { workspace = true }

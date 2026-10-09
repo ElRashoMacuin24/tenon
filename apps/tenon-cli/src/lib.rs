@@ -28,6 +28,9 @@ pub const M2_MOUNT_SCRIPT: &str = include_str!("../../../examples/m2-mount/mount
 /// The M3 demo script, the pivot assembly (also in examples/m3-pivot).
 pub const M3_PIVOT_SCRIPT: &str = include_str!("../../../examples/m3-pivot/pivot.json");
 
+/// The M4 demo script, drawings of a plate and its assembly (also in examples/m4-plate).
+pub const M4_PLATE_SCRIPT: &str = include_str!("../../../examples/m4-plate/plate.json");
+
 /// Output of a command.
 #[derive(Debug, Clone)]
 pub struct Report {
@@ -256,6 +259,11 @@ pub fn demo_m2_mount(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, 
 /// Builds the M3 demo (four part files and the pivot assembly) into `out_dir`.
 pub fn demo_m3(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
     run_script(kernel, M3_PIVOT_SCRIPT, out_dir)
+}
+
+/// Builds the M4 demo (a plate, a pin, their assembly and a two-sheet drawing) into `out_dir`.
+pub fn demo_m4(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
+    run_script(kernel, M4_PLATE_SCRIPT, out_dir)
 }
 
 /// Opens a project and renders it to PNG.

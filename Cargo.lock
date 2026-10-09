@@ -2969,6 +2969,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tenon-assembly",
+ "tenon-drawing",
+ "tenon-dxf",
  "tenon-geom",
  "tenon-io",
  "tenon-kernel",
@@ -2982,9 +2984,13 @@ dependencies = [
 name = "tenon-drawing"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tenon-assembly",
  "tenon-dxf",
  "tenon-geom",
+ "tenon-kernel",
+ "tenon-kernel-occt",
  "tenon-model",
 ]
 
@@ -3010,6 +3016,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tenon-assembly",
+ "tenon-drawing",
  "tenon-geom",
  "tenon-kernel",
  "tenon-kernel-occt",
@@ -3056,6 +3063,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "image",
+ "tenon-drawing",
  "tenon-geom",
  "tenon-kernel",
  "wgpu",
@@ -3080,6 +3088,7 @@ dependencies = [
  "egui-wgpu",
  "serde_json",
  "tenon-assembly",
+ "tenon-drawing",
  "tenon-geom",
  "tenon-io",
  "tenon-kernel",

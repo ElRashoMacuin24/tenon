@@ -1,13 +1,15 @@
 //! A document session with a kernel: what scripts and the MCP server drive. It runs every
 //! registry command (model, file and assembly) plus the commands only a headless host offers.
 //!
-//! There is one part session and one assembly session. `asm.*` commands work on the assembly;
-//! the others on the part. `render.png` shows whichever was worked on last.
+//! There is one part session, one assembly session and one drawing session. `asm.*` commands
+//! work on the assembly, `drw.*` on the drawing, the others on the part. `render.png` shows
+//! whichever was worked on last.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use tenon_assembly::AsmSession;
+use tenon_drawing::DrwSession;
 use tenon_kernel::{Kernel, Mesh, MeshTol};
 use tenon_model::Session;
 use tenon_render::{Camera, StdView, raster};
@@ -16,17 +18,25 @@ use tenon_render::{Camera, StdView, raster};
 pub const HOST_COMMANDS: &[(&str, &str, &str)] = &[(
     "render.png",
     "Render PNG",
-    "path (.png, optional: without it the image is returned base64-encoded); view: iso | front | back | left | right | top | bottom (default iso); width, height (pixels, default 1024 x 768); exploded (assemblies: the exploded view)",
+    "path (.png, optional: without it the image is returned base64-encoded); view: iso | front | back | left | right | top | bottom (default iso); width, height (pixels, default 1024 x 768); exploded (assemblies: the exploded view); sheet (drawings: which sheet, drawn width pixels wide)",
 )];
 
 /// Largest image side the engine renders.
 pub const MAX_RENDER_SIDE: u32 = 4096;
 
+/// Which document the last command worked on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Active {
+    Part,
+    Assembly,
+    Drawing,
+}
+
 pub struct Engine {
     pub session: Session,
     pub asm: AsmSession,
-    /// The last command worked on the assembly.
-    pub asm_active: bool,
+    pub drw: DrwSession,
+    pub active: Active,
     pub kernel: Box<dyn Kernel>,
     /// Relative paths in commands resolve against this directory.
     pub base: PathBuf,
@@ -34,7 +44,14 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(kernel: Box<dyn Kernel>, base: impl Into<PathBuf>) -> Engine {
-        Engine { session: Session::default(), asm: AsmSession::default(), asm_active: false, kernel, base: base.into() }
+        Engine {
+            session: Session::default(),
+            asm: AsmSession::default(),
+            drw: DrwSession::default(),
+            active: Active::Part,
+            kernel,
+            base: base.into(),
+        }
     }
 
     /// Runs a command by id. `path` parameters are resolved against [`Engine::base`].
@@ -43,14 +60,33 @@ impl Engine {
         match id {
             "render.png" => self.render_command(&params),
             _ if id.starts_with("asm.") => {
-                self.asm_active = true;
+                self.active = Active::Assembly;
                 tenon_io::asm::run(&mut self.asm, id, &params, Some(self.kernel.as_mut())).map_err(|e| e.to_string())
             }
+            _ if id.starts_with("drw.") => {
+                self.active = Active::Drawing;
+                let params = self.resolve_key(&params, "model");
+                tenon_io::drw::run(&mut self.drw, id, &params, Some(self.kernel.as_mut())).map_err(|e| e.to_string())
+            }
             _ => {
-                self.asm_active = false;
+                self.active = Active::Part;
                 tenon_io::cmd::run(&mut self.session, id, &params, Some(self.kernel.as_mut())).map_err(|e| e.to_string())
             }
         }
+    }
+
+    /// Resolves a relative path in key against the base folder.
+    fn resolve_key(&self, params: &Value, key: &str) -> Value {
+        let mut p = params.clone();
+        let resolved = p
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty() && Path::new(path).is_relative())
+            .map(|path| self.base.join(path).to_string_lossy().into_owned());
+        if let (Some(path), Some(o)) = (resolved, p.as_object_mut()) {
+            o.insert(key.into(), json!(path));
+        }
+        p
     }
 
     fn resolve_path(&self, params: &Value) -> Value {
@@ -78,9 +114,19 @@ impl Engine {
                     .ok_or_else(|| format!("`{key}` must be a whole number of pixels from 16 to {MAX_RENDER_SIDE}")),
             }
         };
-        let (w, h) = (side("width", 1024)?, side("height", 768)?);
+        let (mut w, mut h) = (side("width", 1024)?, side("height", 768)?);
         let exploded = p.get("exploded").and_then(Value::as_bool).unwrap_or(false);
-        let png = if self.asm_active { self.render_assembly_png(view, w, h, exploded)? } else { self.render_png(view, w, h)? };
+        let png = match self.active {
+            Active::Assembly => self.render_assembly_png(view, w, h, exploded)?,
+            Active::Drawing => {
+                // A sheet keeps its proportions: `width` sets the size.
+                let sheet = p.get("sheet").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok());
+                let (png, iw, ih) = self.render_sheet(sheet, w)?;
+                (w, h) = (iw, ih);
+                png
+            }
+            Active::Part => self.render_png(view, w, h)?,
+        };
         match p.get("path").and_then(Value::as_str) {
             Some(path) => {
                 std::fs::write(path, &png).map_err(|e| format!("cannot write {path}: {e}"))?;
@@ -110,6 +156,21 @@ impl Engine {
         let scene = tenon_model::scene(&regen, self.kernel.as_mut(), &MeshTol::default())?;
         let meshes: Vec<&Mesh> = scene.bodies.iter().map(|b| &b.mesh).collect();
         Self::render_meshes(&meshes, view, width, height, scene.bbox())
+    }
+
+    /// A drawing sheet as a PNG, width pixels wide.
+    pub fn render_sheet_png(&mut self, sheet: Option<u32>, width: u32) -> Result<Vec<u8>, String> {
+        self.render_sheet(sheet, width).map(|(png, _, _)| png)
+    }
+
+    /// A drawing sheet as a PNG `width` pixels wide, with its width and height.
+    fn render_sheet(&mut self, sheet: Option<u32>, width: u32) -> Result<(Vec<u8>, u32, u32), String> {
+        self.drw.refresh(self.kernel.as_mut());
+        let sheet = sheet.unwrap_or(self.drw.drawing().sheets[0].id.0);
+        let graphics = tenon_io::drw::sheets_graphics(&self.drw, Some(sheet)).map_err(|e| e.to_string())?;
+        let g = graphics.first().ok_or("no sheet")?;
+        let img = tenon_render::sheet::rasterize(g, f64::from(width) / g.width.max(1.0));
+        Ok((raster::encode_png(&img)?, img.width, img.height))
     }
 
     /// The assembly's visible components as a PNG (exploded or not).
@@ -155,6 +216,7 @@ pub fn placed_mesh(m: &Mesh, f: &tenon_geom::Frame) -> Mesh {
 pub fn all_commands() -> Vec<(&'static str, &'static str, &'static str, bool)> {
     let mut v: Vec<_> = tenon_io::cmd::all_commands().map(|c| (c.id, c.label, c.help, c.mutates)).collect();
     v.extend(tenon_io::asm::all_commands().map(|c| (c.id, c.label, c.help, c.mutates)));
+    v.extend(tenon_io::drw::all_commands().map(|c| (c.id, c.label, c.help, c.mutates)));
     v.extend(HOST_COMMANDS.iter().map(|(id, label, help)| (*id, *label, *help, false)));
     v
 }

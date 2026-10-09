@@ -321,3 +321,25 @@ boxes overlap. Overlaps under `tol::CLASH_VOLUME` count as touching.
 
 **Not in M3:** limits on joints, contact and motion studies, tangent constraints, and assembly
 STEP with a product structure. Export writes placed solids.
+
+## DEC-026 Drawings are their own files and link their model (2026-10-08, approved by the owner)
+
+The owner chose this over storing sheets inside the model file.
+
+- A drawing is a `.tenondrw` file: the same zip container, with `project.json` holding
+  `"format": "tenon-drawing"` and its own schema version.
+- It holds sheets, views, dimensions, notes and tables. Views point at the part (`.tenon`) or
+  assembly (`.tenonasm`) they show, by a path relative to the drawing's folder, as assemblies
+  point at parts (DEC-024).
+- Several drawings can show one model. A view shows whatever its model file holds when the
+  drawing is opened or updated.
+- Dimensions refer to the model's geometry by persistent name, so they follow model changes.
+
+## DEC-027 New drawings follow ANSI, third-angle projection (2026-10-08, chosen by the owner)
+
+- New drawings start on ANSI sheets (A, B, C; landscape) with third-angle projection: a view
+  projected to the right of its parent shows the model from its right, one above shows it from
+  above.
+- Dimensions stay in millimetres.
+- ISO (first-angle projection, A4 to A2 sheets) is a per-drawing setting, so either standard can
+  be used in any drawing.

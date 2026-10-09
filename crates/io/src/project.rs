@@ -90,6 +90,7 @@ pub(crate) fn read_head(data: &[u8], format: &str, max_version: u32) -> Result<V
     match head.get("format").and_then(Value::as_str) {
         Some(f) if f == format => {}
         Some(crate::asm::FORMAT) => return Err(ProjectError::NotAProject("this is an assembly (.tenonasm), not a part".into())),
+        Some(crate::drw::FORMAT) => return Err(ProjectError::NotAProject("this is a drawing (.tenondrw)".into())),
         Some(FORMAT) => return Err(ProjectError::NotAProject("this is a part (.tenon), not an assembly".into())),
         _ => return Err(ProjectError::NotAProject(format!("project.json has no \"format\": \"{format}\""))),
     }
