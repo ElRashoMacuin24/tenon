@@ -67,6 +67,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `file.new` | New Part | name (default Part1); clears undo history | no |
 | `file.save` | Save | path (.tenon) | no |
 | `file.open` | Open | path (.tenon); clears undo history | no |
+| `file.diff` | Compare Files | a, b: two parts, assemblies or drawings (any format version). Returns what changed from a to b: each change's section, op (added, removed, changed, moved), item and detail; same; and the text tenon-cli diff prints | no |
 | `export.step` | Export STEP | path (.step) | no |
 | `export.stl` | Export STL | path (.stl); linear (mm), angular (rad) deflection; ascii (default binary) | no |
 | `asm.new` | New Assembly | name (default Assembly1); clears undo history | no |

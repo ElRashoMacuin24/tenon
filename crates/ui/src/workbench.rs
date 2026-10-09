@@ -507,9 +507,9 @@ impl Workbench {
     }
 
     pub fn save(&mut self, path: &Path) -> Result<(), String> {
-        self.exec("file.save", json!({ "path": path.to_string_lossy() }))?;
+        let r = self.exec("file.save", json!({ "path": path.to_string_lossy() }))?;
         self.path = Some(path.to_path_buf());
-        self.set_status(format!("Saved {}", path.display()));
+        self.set_status(format!("Saved {}{}", path.display(), kept_note(&r)));
         Ok(())
     }
 
@@ -920,5 +920,22 @@ impl Workbench {
     /// Ids of the sketches in the document, most recent last.
     pub(crate) fn sketches(&self) -> Vec<(FeatureId, String)> {
         self.document().features().iter().filter(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| (f.id, f.name.clone())).collect()
+    }
+}
+
+/// " Kept the version-1 original as plate.v1.tenon." when a save upgraded a file from format
+/// version 1 (older Tenon builds can still open the copy), from a save command's result.
+pub(crate) fn kept_note(r: &Value) -> String {
+    let names: Vec<String> = r["kept_version_1"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|p| Path::new(p).file_name().map_or_else(|| p.to_owned(), |n| n.to_string_lossy().into_owned()))
+        .collect();
+    match names.as_slice() {
+        [] => String::new(),
+        [one] => format!(". Kept the version-1 original as {one}"),
+        many => format!(". Kept the version-1 originals as {}", many.join(", ")),
     }
 }

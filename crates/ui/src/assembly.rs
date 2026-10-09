@@ -384,7 +384,12 @@ impl Workbench {
             a.path = Some(path.to_path_buf());
         }
         let parts = r["parts_saved"].as_array().map_or(0, Vec::len);
-        self.set_status(if parts > 0 { format!("Saved {} and {parts} part file(s)", path.display()) } else { format!("Saved {}", path.display()) });
+        let note = crate::workbench::kept_note(&r);
+        self.set_status(if parts > 0 {
+            format!("Saved {} and {parts} part file(s){note}", path.display())
+        } else {
+            format!("Saved {}{note}", path.display())
+        });
         Ok(())
     }
 

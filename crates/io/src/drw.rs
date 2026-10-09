@@ -14,12 +14,13 @@ use tenon_kernel::Kernel;
 use tenon_model::{CmdError, CmdResult, Session};
 
 use crate::asm::{normalize, part_key, relative};
+use crate::layout;
 use crate::project::{self, ProjectError};
 
 /// `format` of every drawing file.
 pub const FORMAT: &str = "tenon-drawing";
 /// Current drawing schema version.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 /// The drawing file extension.
 pub const EXTENSION: &str = "tenondrw";
 
@@ -27,8 +28,6 @@ pub const EXTENSION: &str = "tenondrw";
 struct DrwFile {
     format: String,
     version: u32,
-    #[serde(default)]
-    generator: String,
     drawing: Drawing,
     #[serde(flatten)]
     extra: Map<String, Value>,
@@ -38,21 +37,20 @@ struct DrwFile {
 pub fn to_bytes(d: &Drawing, dir: &Path) -> Result<Vec<u8>, ProjectError> {
     let mut stored = d.clone();
     stored.map_models(|p| relative(dir, Path::new(p)));
-    let file = DrwFile {
-        format: FORMAT.into(),
-        version: VERSION,
-        generator: format!("tenon {}", env!("CARGO_PKG_VERSION")),
-        drawing: stored,
-        extra: Map::new(),
-    };
-    let json = serde_json::to_vec_pretty(&file).map_err(|e| ProjectError::Damaged(e.to_string()))?;
-    project::zip_json(&json)
+    let file = DrwFile { format: FORMAT.into(), version: VERSION, drawing: stored, extra: Map::new() };
+    let head = serde_json::to_value(&file).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+    project::to_text(&head, &layout::DRAWING, VERSION)
 }
 
-/// Reads drawing file bytes; model paths are resolved against `dir`.
+/// Reads drawing file bytes of any version; model paths are resolved against `dir`.
 pub fn from_bytes(data: &[u8], dir: &Path) -> Result<Drawing, ProjectError> {
-    let head = project::read_head(data, FORMAT, VERSION)?;
-    let file: DrwFile = serde_json::from_value(head).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+    let (head, lines) = project::read_head(data, FORMAT, &layout::DRAWING, VERSION)?;
+    let file: DrwFile = serde_json::from_value(head.clone()).map_err(|e| {
+        project::locate::<tenon_drawing::Sheet>(&head, &layout::DRAWING, "sheets", &lines)
+            .or_else(|| project::locate::<tenon_drawing::View>(&head, &layout::DRAWING, "views", &lines))
+            .or_else(|| project::locate::<tenon_drawing::Annotation>(&head, &layout::DRAWING, "annotations", &lines))
+            .unwrap_or_else(|| ProjectError::Damaged(e.to_string()))
+    })?;
     let mut d = file.drawing;
     d.validate().map_err(ProjectError::Damaged)?;
     d.map_models(|p| {
@@ -102,13 +100,9 @@ pub fn open(path: &Path) -> Result<(Drawing, BTreeMap<String, DrwModel>), Projec
     Ok((d, models))
 }
 
-/// Writes a drawing atomically.
-pub fn save(path: &Path, d: &Drawing) -> Result<(), ProjectError> {
-    let bytes = to_bytes(d, &folder_of(path))?;
-    let tmp = path.with_extension("tenondrw.tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+/// Writes a drawing atomically; returns where a version-1 original was kept, if one was.
+pub fn save(path: &Path, d: &Drawing) -> Result<Option<PathBuf>, ProjectError> {
+    project::write_file(path, &to_bytes(d, &folder_of(path))?)
 }
 
 // ---- noticing model files that change on disk ---------------------------------------------------
@@ -192,25 +186,30 @@ pub fn reload_changed(s: &mut DrwSession) -> Changed {
     out
 }
 
-/// Saves the models changed from the drawing to their own files. Returns their paths.
-pub fn save_models(s: &mut DrwSession) -> Result<Vec<String>, CmdError> {
+/// Saves the models changed from the drawing to their own files. Returns their paths; adds the
+/// version-1 originals kept to `kept`.
+pub fn save_models(s: &mut DrwSession, kept: &mut Vec<String>) -> Result<Vec<String>, CmdError> {
     let mut saved = Vec::new();
+    let mut keep = |k: Option<PathBuf>| kept.extend(k.map(|k| k.display().to_string()));
     for (key, m) in s.models.iter_mut() {
         match m {
             DrwModel::Part(p) if p.is_dirty() => {
-                project::save(Path::new(key), p.document(), &Map::new()).map_err(|e| CmdError(format!("cannot save {key}: {e}")))?;
+                keep(project::save(Path::new(key), p.document(), &Map::new()).map_err(|e| CmdError(format!("cannot save {key}: {e}")))?);
                 p.mark_saved();
                 saved.push(key.clone());
             }
             DrwModel::Assembly(a) if a.is_dirty() => {
                 for (pk, part) in a.parts.iter_mut() {
                     if part.missing.is_none() && part.session.is_dirty() {
-                        project::save(Path::new(pk), part.session.document(), &Map::new()).map_err(|e| CmdError(format!("cannot save {pk}: {e}")))?;
+                        keep(
+                            project::save(Path::new(pk), part.session.document(), &Map::new())
+                                .map_err(|e| CmdError(format!("cannot save {pk}: {e}")))?,
+                        );
                         part.session.mark_saved();
                         saved.push(pk.clone());
                     }
                 }
-                crate::asm::save(Path::new(key), a.assembly()).map_err(|e| CmdError(format!("cannot save {key}: {e}")))?;
+                keep(crate::asm::save(Path::new(key), a.assembly()).map_err(|e| CmdError(format!("cannot save {key}: {e}")))?);
                 a.mark_saved();
                 saved.push(key.clone());
             }
@@ -313,10 +312,11 @@ fn drw_save_template(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value)
 
 fn drw_save(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let path = path(p)?;
-    let saved = save_models(s)?;
-    save(&path, s.drawing()).map_err(|e| CmdError(e.to_string()))?;
+    let mut kept = Vec::new();
+    let saved = save_models(s, &mut kept)?;
+    kept.extend(save(&path, s.drawing()).map_err(|e| CmdError(e.to_string()))?.map(|k| k.display().to_string()));
     s.mark_saved();
-    Ok(json!({ "path": path.display().to_string(), "models_saved": saved }))
+    Ok(json!({ "path": path.display().to_string(), "models_saved": saved, "kept_version_1": kept }))
 }
 
 /// What to build to learn a loaded model's size: its source, and a drawing with only one view of

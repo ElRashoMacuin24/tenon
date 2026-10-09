@@ -22,6 +22,11 @@ usage:
   tenon-cli mcp [PROJECT.tenon]               Model Context Protocol server on stdin/stdout
   tenon-cli demo m0|m1|m2|m2-mount|m3|m4 [--out DIR] [--json]
                                               build a milestone demo into DIR (default: out)
+  tenon-cli diff A B [--json]                 what changed from document A to B (parts, assemblies or
+                                              drawings, any format version); exit code 0 same,
+                                              1 different, 2 error
+  tenon-cli upgrade FILE... [--json]          save Tenon files in the current format version,
+                                              keeping version-1 originals as NAME.v1.EXT
   tenon-cli info FILE.step [--json]           import STEP; report volume, area, bounding box, topology
   tenon-cli convert IN.step OUT.stl [--json]  tessellate STEP to binary STL (mm)
 ";
@@ -70,8 +75,12 @@ fn main() -> ExitCode {
     }
     let pos: Vec<&str> = pos.iter().map(String::as_str).collect();
     let demo_dir = || out.clone().unwrap_or_else(|| PathBuf::from("out"));
+    if let ["diff", a, b] = pos.as_slice() {
+        return diff(Path::new(a), Path::new(b), json);
+    }
     let result = match pos.as_slice() {
         ["version"] => Ok(tenon_cli::version(&OcctKernel::new())),
+        ["upgrade", files @ ..] if !files.is_empty() => tenon_cli::upgrade(&files.iter().map(Path::new).collect::<Vec<_>>()),
         ["run", file] => match std::fs::read_to_string(file) {
             Ok(text) => tenon_cli::run_script(kernel(), &text, &out.clone().unwrap_or_else(|| PathBuf::from("."))),
             Err(e) => Err(format!("cannot read {file}: {e}")),
@@ -125,6 +134,25 @@ fn mcp(project: Option<&str>) -> ExitCode {
     match tenon_cli::mcp::serve(&mut server, std::io::stdin().lock(), std::io::stdout().lock()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => fail(&format!("MCP transport: {e}")),
+    }
+}
+
+/// `tenon-cli diff`: exit code 0 when the documents are the same, 1 when they differ, 2 when one
+/// cannot be read (as `diff` does).
+fn diff(a: &Path, b: &Path, json: bool) -> ExitCode {
+    match tenon_cli::diff(a, b) {
+        Ok(d) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&d.json()).unwrap_or_default());
+            } else {
+                println!("{}", d.text());
+            }
+            if d.same() { ExitCode::SUCCESS } else { ExitCode::from(1) }
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::from(2)
+        }
     }
 }
 

@@ -486,10 +486,11 @@ impl Workbench {
             d.path = Some(path.to_path_buf());
         }
         let models = r["models_saved"].as_array().map_or(0, Vec::len);
+        let note = crate::workbench::kept_note(&r);
         self.set_status(if models > 0 {
-            format!("Saved {} and {models} model file(s)", path.display())
+            format!("Saved {} and {models} model file(s){note}", path.display())
         } else {
-            format!("Saved {}", path.display())
+            format!("Saved {}{note}", path.display())
         });
         Ok(())
     }

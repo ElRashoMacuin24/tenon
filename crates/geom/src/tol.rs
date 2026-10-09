@@ -39,6 +39,12 @@ pub const ASSEMBLY: f64 = 1e-9;
 /// After a solve, a relationship further than this from holding is reported as failing.
 pub const ASSEMBLY_BROKEN: f64 = 1e-6;
 
+/// Computed coordinates (solved sketch positions and component placements, reference
+/// fingerprints) are written to files rounded to this many decimals of a millimetre: 1e-9 mm, a
+/// hundredth of [`LINEAR`]. Last-digit noise from recomputing then never shows as a change in a
+/// file.
+pub const FILE_DECIMALS: usize = 9;
+
 /// Two solids overlapping by less than this volume (mm^3) only touch; they do not interfere.
 pub const CLASH_VOLUME: f64 = 1e-6;
 

@@ -10,12 +10,13 @@ use tenon_assembly::{AsmSession, Assembly, Part, Parts};
 use tenon_kernel::Kernel;
 use tenon_model::{CmdError, CmdResult};
 
+use crate::layout;
 use crate::project::{self, ProjectError};
 
 /// `format` of every assembly file.
 pub const FORMAT: &str = "tenon-assembly";
 /// Current assembly schema version.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 /// The assembly file extension.
 pub const EXTENSION: &str = "tenonasm";
 
@@ -23,8 +24,6 @@ pub const EXTENSION: &str = "tenonasm";
 struct AsmFile {
     format: String,
     version: u32,
-    #[serde(default)]
-    generator: String,
     assembly: Assembly,
     #[serde(flatten)]
     extra: Map<String, Value>,
@@ -74,21 +73,20 @@ pub fn relative(from: &Path, to: &Path) -> String {
 pub fn to_bytes(asm: &Assembly, dir: &Path) -> Result<Vec<u8>, ProjectError> {
     let mut stored = asm.clone();
     stored.map_parts(|p| relative(dir, Path::new(p)));
-    let file = AsmFile {
-        format: FORMAT.into(),
-        version: VERSION,
-        generator: format!("tenon {}", env!("CARGO_PKG_VERSION")),
-        assembly: stored,
-        extra: Map::new(),
-    };
-    let json = serde_json::to_vec_pretty(&file).map_err(|e| ProjectError::Damaged(e.to_string()))?;
-    project::zip_json(&json)
+    let file = AsmFile { format: FORMAT.into(), version: VERSION, assembly: stored, extra: Map::new() };
+    let head = serde_json::to_value(&file).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+    project::to_text(&head, &layout::ASSEMBLY, VERSION)
 }
 
-/// Reads assembly file bytes; part paths are resolved against `dir` (the file's folder).
+/// Reads assembly file bytes of any version; part paths are resolved against `dir` (the file's
+/// folder).
 pub fn from_bytes(data: &[u8], dir: &Path) -> Result<Assembly, ProjectError> {
-    let head = project::read_head(data, FORMAT, VERSION)?;
-    let file: AsmFile = serde_json::from_value(head).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+    let (head, lines) = project::read_head(data, FORMAT, &layout::ASSEMBLY, VERSION)?;
+    let file: AsmFile = serde_json::from_value(head.clone()).map_err(|e| {
+        project::locate::<tenon_assembly::Component>(&head, &layout::ASSEMBLY, "components", &lines)
+            .or_else(|| project::locate::<tenon_assembly::Relationship>(&head, &layout::ASSEMBLY, "relationships", &lines))
+            .unwrap_or_else(|| ProjectError::Damaged(e.to_string()))
+    })?;
     let mut asm = file.assembly;
     asm.validate().map_err(ProjectError::Damaged)?;
     asm.tidy();
@@ -104,13 +102,10 @@ fn folder_of(path: &Path) -> PathBuf {
     if parent.as_os_str().is_empty() { PathBuf::from(".") } else { parent }
 }
 
-/// Writes an assembly atomically.
-pub fn save(path: &Path, asm: &Assembly) -> Result<(), ProjectError> {
+/// Writes an assembly atomically; returns where a version-1 original was kept, if one was.
+pub fn save(path: &Path, asm: &Assembly) -> Result<Option<PathBuf>, ProjectError> {
     let bytes = to_bytes(asm, &folder_of(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())))?;
-    let tmp = path.with_extension("tenonasm.tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    project::write_file(path, &bytes)
 }
 
 /// Reads an assembly and every part file it uses. A part that cannot be read is marked missing.
@@ -172,17 +167,18 @@ fn asm_open(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
 fn asm_save(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let path = path(p)?;
     // Parts changed in place are saved to their own files first.
-    let mut saved = Vec::new();
+    let (mut saved, mut kept) = (Vec::new(), Vec::new());
     for (key, part) in s.parts.iter_mut() {
         if part.missing.is_none() && part.session.is_dirty() {
-            project::save(Path::new(key), part.session.document(), &Map::new()).map_err(|e| CmdError(format!("cannot save {key}: {e}")))?;
+            let k = project::save(Path::new(key), part.session.document(), &Map::new()).map_err(|e| CmdError(format!("cannot save {key}: {e}")))?;
+            kept.extend(k.map(|k| k.display().to_string()));
             part.session.mark_saved();
             saved.push(key.clone());
         }
     }
-    save(&path, s.assembly()).map_err(|e| CmdError(e.to_string()))?;
+    kept.extend(save(&path, s.assembly()).map_err(|e| CmdError(e.to_string()))?.map(|k| k.display().to_string()));
     s.mark_saved();
-    Ok(json!({ "path": path.display().to_string(), "parts_saved": saved }))
+    Ok(json!({ "path": path.display().to_string(), "parts_saved": saved, "kept_version_1": kept }))
 }
 
 /// Places a part file: its first component is grounded at the origin; later ones go beside the

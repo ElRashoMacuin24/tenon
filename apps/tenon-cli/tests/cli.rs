@@ -1,5 +1,5 @@
 //! tenon-cli commands against the OpenCASCADE kernel: the M0 demo bracket, STEP info, STL
-//! conversion, and failure reporting.
+//! conversion, comparing and upgrading Tenon files, and failure reporting.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::path::PathBuf;
@@ -92,4 +92,58 @@ fn version_names_the_kernel() {
     let r = tenon_cli::version(&OcctKernel::new());
     assert_eq!(r.json["kernel"], "occt");
     assert!(r.json["kernel_version"].as_str().unwrap().contains("8."));
+}
+
+fn cli(args: &[&std::ffi::OsStr]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_tenon-cli")).args(args).output().expect("run tenon-cli")
+}
+
+#[test]
+fn diff_says_what_changed_and_exits_like_diff() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let v1 = root.join("crates/io/tests/fixtures/v1/m2-enclosure/enclosure.tenon");
+    let v2 = root.join("examples/m2-enclosure/enclosure.tenon");
+    // A version-1 file and its upgrade are the same: exit 0.
+    let out = cli(&["diff".as_ref(), v1.as_os_str(), v2.as_os_str()]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "No changes.");
+    // The box made taller: exit 1, and what changed.
+    let dir = scratch("diff");
+    let taller = dir.join("taller.tenon");
+    let text = std::fs::read_to_string(&v2).unwrap().replace("equation = \"30 mm\"", "equation = \"35 mm\"");
+    std::fs::write(&taller, text).unwrap();
+    let out = cli(&["diff".as_ref(), v2.as_os_str(), taller.as_os_str()]);
+    assert_eq!(out.status.code(), Some(1));
+    let shown = String::from_utf8_lossy(&out.stdout);
+    assert!(shown.starts_with("Parameters\n  ~ H  30 mm -> 35 mm (outside height)"), "{shown}");
+    let out = cli(&["diff".as_ref(), v2.as_os_str(), taller.as_os_str(), "--json".as_ref()]);
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).expect("one JSON document");
+    assert_eq!((j["what"].as_str(), j["same"].as_bool()), (Some("part"), Some(false)));
+    // A file that is not there: exit 2.
+    let out = cli(&["diff".as_ref(), v2.as_os_str(), dir.join("missing.tenon").as_os_str()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("missing.tenon"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn upgrade_rewrites_version_1_files_and_keeps_them() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let dir = scratch("upgrade");
+    for f in ["plate.tenon", "pin.tenon", "plate-pins.tenonasm", "plate.tenondrw"] {
+        std::fs::copy(root.join("crates/io/tests/fixtures/v1/m4-plate").join(f), dir.join(f)).unwrap();
+    }
+    let files: Vec<PathBuf> = ["plate.tenon", "plate-pins.tenonasm", "plate.tenondrw"].iter().map(|f| dir.join(f)).collect();
+    let r = tenon_cli::upgrade(&files.iter().map(PathBuf::as_path).collect::<Vec<_>>()).unwrap();
+    assert_eq!(r.json["files"].as_array().unwrap().iter().filter(|f| f["upgraded"] == true).count(), 3, "{}", r.text);
+    for (f, kept) in files.iter().zip(["plate.v1.tenon", "plate-pins.v1.tenonasm", "plate.v1.tenondrw"]) {
+        assert!(std::fs::read_to_string(f).unwrap().contains("\nversion = 2\n"), "{}", f.display());
+        assert!(dir.join(kept).exists(), "{kept}");
+        // The same document as its kept original.
+        assert!(tenon_cli::diff(&dir.join(kept), f).unwrap().same(), "{}", f.display());
+    }
+    // Again: nothing to do.
+    let r = tenon_cli::upgrade(&[files[0].as_path()]).unwrap();
+    assert!(r.text.ends_with("already current"), "{}", r.text);
+    let _ = std::fs::remove_dir_all(&dir);
 }

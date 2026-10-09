@@ -68,14 +68,27 @@ fn drawings_round_trip_with_model_paths_relative_to_the_file() {
     let file = dir.join("plate.tenondrw");
     drw::save(&file, &d).unwrap();
 
-    // Inside the file: the model path relative to the drawing, with forward slashes.
-    let mut za = zip::ZipArchive::new(std::fs::File::open(&file).unwrap()).unwrap();
-    let json: Value = serde_json::from_reader(za.by_name("project.json").unwrap()).unwrap();
-    assert_eq!(json["format"], "tenon-drawing");
-    assert_eq!(json["version"], 1);
-    assert_eq!(json["drawing"]["standard"], "iso");
-    assert_eq!(json["drawing"]["views"][0]["model"], "parts/plate.tenon");
-    assert_eq!(json["drawing"]["views"][1]["model"], "parts/plate.tenon");
+    // Inside the file (text): the model path relative to the drawing, with forward slashes.
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        text.contains(
+            "
+format = \"tenon-drawing\"
+version = 2
+"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "
+standard = \"iso\"
+"
+        ),
+        "{text}"
+    );
+    let models: Vec<&str> = text.lines().filter(|l| l.starts_with("model = ")).collect();
+    assert_eq!(models, ["model = \"parts/plate.tenon\""; 2], "{text}");
 
     // Read back elsewhere: the paths follow the file; everything else is as it was.
     let bytes = std::fs::read(&file).unwrap();
@@ -263,9 +276,18 @@ fn damaged_and_mistaken_drawing_files_are_refused() {
     assert!(matches!(drw::from_bytes(&part, &dir), Err(ProjectError::NotAProject(m)) if m.contains("part")));
     assert!(matches!(tenon_io::project::from_bytes(&good), Err(ProjectError::NotAProject(m)) if m.contains("drawing")));
     assert!(matches!(tenon_io::asm::from_bytes(&good, &dir), Err(ProjectError::NotAProject(m)) if m.contains("drawing")));
-    // Newer than this build.
-    let too_new = json!({ "format": "tenon-drawing", "version": 2, "drawing": serde_json::to_value(&d).unwrap() });
-    assert!(matches!(drw::from_bytes(&zip_with(&serde_json::to_vec(&too_new).unwrap()), &dir), Err(ProjectError::TooNew(2))));
+    // Newer than this build, as a zip or as text.
+    let too_new = json!({ "format": "tenon-drawing", "version": 3, "drawing": serde_json::to_value(&d).unwrap() });
+    assert!(matches!(drw::from_bytes(&zip_with(&serde_json::to_vec(&too_new).unwrap()), &dir), Err(ProjectError::TooNew(3))));
+    let text = String::from_utf8(good.clone()).unwrap().replace(
+        "
+version = 2
+",
+        "
+version = 3
+",
+    );
+    assert!(matches!(drw::from_bytes(text.as_bytes(), &dir), Err(ProjectError::TooNew(3))));
     let base = serde_json::to_value(&d).unwrap();
     let damaged = |edit: &dyn Fn(&mut Value)| {
         let mut v = base.clone();

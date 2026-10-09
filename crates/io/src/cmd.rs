@@ -1,4 +1,4 @@
-//! File commands: save and open projects, export STEP and STL.
+//! File commands: save, open and compare projects, export STEP and STL.
 
 use std::path::PathBuf;
 
@@ -9,18 +9,30 @@ use tenon_model::{CmdError, CmdResult, CommandSpec, Run, Session};
 use crate::{project, stl};
 
 fn path(p: &Value) -> Result<PathBuf, CmdError> {
-    let s = p.get("path").and_then(Value::as_str).ok_or("missing parameter `path`")?;
+    path_in(p, "path")
+}
+
+fn path_in(p: &Value, key: &str) -> Result<PathBuf, CmdError> {
+    let s = p.get(key).and_then(Value::as_str).ok_or_else(|| CmdError(format!("missing parameter `{key}`")))?;
     if s.is_empty() || s.len() > 4096 || s.contains('\0') {
-        return Err("invalid path".into());
+        return Err(format!("invalid path in `{key}`").into());
     }
     Ok(PathBuf::from(s))
 }
 
 fn file_save(s: &mut Session, p: &Value) -> CmdResult {
     let path = path(p)?;
-    project::save(&path, s.document(), &Map::new()).map_err(|e| CmdError(e.to_string()))?;
+    let kept = project::save(&path, s.document(), &Map::new()).map_err(|e| CmdError(e.to_string()))?;
     s.mark_saved();
-    Ok(json!({ "path": path.display().to_string() }))
+    let kept: Vec<String> = kept.map(|k| k.display().to_string()).into_iter().collect();
+    Ok(json!({ "path": path.display().to_string(), "kept_version_1": kept }))
+}
+
+fn file_diff(_s: &mut Session, p: &Value) -> CmdResult {
+    let d = crate::diff::diff_files(&path_in(p, "a")?, &path_in(p, "b")?).map_err(|e| CmdError(e.to_string()))?;
+    let mut out = d.json();
+    out["text"] = Value::String(d.text());
+    Ok(out)
 }
 
 fn file_new(s: &mut Session, p: &Value) -> CmdResult {
@@ -102,6 +114,13 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: "file.new", label: "New Part", help: "name (default Part1); clears undo history", mutates: false, run: Run::Doc(file_new) },
     CommandSpec { id: "file.save", label: "Save", help: "path (.tenon)", mutates: false, run: Run::Doc(file_save) },
     CommandSpec { id: "file.open", label: "Open", help: "path (.tenon); clears undo history", mutates: false, run: Run::Doc(file_open) },
+    CommandSpec {
+        id: "file.diff",
+        label: "Compare Files",
+        help: "a, b: two parts, assemblies or drawings (any format version). Returns what changed from a to b: each change's section, op (added, removed, changed, moved), item and detail; same; and the text tenon-cli diff prints",
+        mutates: false,
+        run: Run::Doc(file_diff),
+    },
     CommandSpec { id: "export.step", label: "Export STEP", help: "path (.step)", mutates: false, run: Run::Geo(export_step) },
     CommandSpec {
         id: "export.stl",

@@ -378,3 +378,40 @@ pub fn convert(k: &mut dyn Kernel, input: &Path, output: &Path) -> Result<Report
         json: json!({ "output": output.display().to_string(), "triangles": mesh.triangle_count(), "shapes": shapes.len() }),
     })
 }
+
+/// What changed from one Tenon document to another (`tenon-cli diff`).
+pub fn diff(a: &Path, b: &Path) -> Result<tenon_io::diff::Diff, String> {
+    tenon_io::diff::diff_files(a, b).map_err(|e| e.to_string())
+}
+
+/// Saves each file in the current format version (`tenon-cli upgrade`). A version-1 file is kept
+/// beside it as `name.v1.ext`; files already current are left alone.
+pub fn upgrade(files: &[&Path]) -> Result<Report, String> {
+    let mut lines = Vec::new();
+    let mut list = Vec::new();
+    for path in files {
+        let data = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        if !tenon_io::project::is_version_1(&data) {
+            lines.push(format!("{}: already current", path.display()));
+            list.push(json!({ "file": path.display().to_string(), "upgraded": false }));
+            continue;
+        }
+        let full = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        let dir = full.parent().map(Path::to_path_buf).unwrap_or_default();
+        let err = |e: tenon_io::project::ProjectError| format!("{}: {e}", path.display());
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let kept = match ext.as_str() {
+            tenon_io::asm::EXTENSION => tenon_io::asm::save(path, &tenon_io::asm::from_bytes(&data, &dir).map_err(err)?).map_err(err)?,
+            tenon_io::drw::EXTENSION => tenon_io::drw::save(path, &tenon_io::drw::from_bytes(&data, &dir).map_err(err)?).map_err(err)?,
+            _ => {
+                let (doc, extra) = tenon_io::project::from_bytes(&data).map_err(err)?;
+                tenon_io::project::save(path, &doc, &extra).map_err(err)?
+            }
+        };
+        let note =
+            kept.as_ref().map_or_else(|| " (a version-1 copy was already kept)".to_owned(), |k| format!(" (version 1 kept as {})", k.display()));
+        lines.push(format!("{}: upgraded{note}", path.display()));
+        list.push(json!({ "file": path.display().to_string(), "upgraded": true, "kept_version_1": kept.map(|k| k.display().to_string()) }));
+    }
+    Ok(Report { text: lines.join("\n"), json: json!({ "files": list }) })
+}

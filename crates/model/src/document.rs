@@ -844,10 +844,14 @@ impl Document {
         {
             return Err(format!("the End of Part marker is before {e}, which does not exist"));
         }
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = std::collections::BTreeMap::new();
         for (i, f) in self.features.iter().enumerate() {
-            if f.id.0 > self.next_feature || !seen.insert(f.id) {
-                return Err(format!("{} has an invalid id", f.name));
+            if f.id.0 == 0 || f.id.0 > self.next_feature {
+                return Err(format!("{} has id {}, outside 1 to {} (next_feature)", f.name, f.id.0, self.next_feature));
+            }
+            // Two branches that each added a feature, merged, give both the same id.
+            if let Some(first) = seen.insert(f.id, &f.name) {
+                return Err(format!("two features have id {}: {first} and {}", f.id.0, f.name));
             }
             for dep in f.kind.depends_on() {
                 match self.index_of(dep) {

@@ -48,13 +48,19 @@ fn assemblies_round_trip_with_part_paths_relative_to_the_file() {
     let file = dir.join("pair.tenonasm");
     asm::save(&file, s.assembly()).unwrap();
 
-    // Inside the file: relative paths with forward slashes.
-    let mut za = zip::ZipArchive::new(std::fs::File::open(&file).unwrap()).unwrap();
-    let json: Value = serde_json::from_reader(za.by_name("project.json").unwrap()).unwrap();
-    assert_eq!(json["format"], "tenon-assembly");
-    assert_eq!(json["version"], 1);
-    assert_eq!(json["assembly"]["components"][0]["part"], "plate.tenon");
-    assert_eq!(json["assembly"]["components"][1]["part"], "parts/pin.tenon");
+    // Inside the file (text): relative paths with forward slashes.
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        text.contains(
+            "
+format = \"tenon-assembly\"
+version = 2
+"
+        ),
+        "{text}"
+    );
+    let parts: Vec<&str> = text.lines().filter(|l| l.starts_with("part = ")).collect();
+    assert_eq!(parts, ["part = \"plate.tenon\"", "part = \"parts/pin.tenon\""], "{text}");
 
     // Read back elsewhere: the paths follow the file.
     let bytes = std::fs::read(&file).unwrap();
@@ -83,9 +89,18 @@ fn damaged_and_mistaken_assembly_files_are_refused() {
     let part = tenon_io::project::to_bytes(&Document::default(), &serde_json::Map::new()).unwrap();
     assert!(matches!(asm::from_bytes(&part, &dir), Err(ProjectError::NotAProject(m)) if m.contains("part")));
     assert!(matches!(tenon_io::project::from_bytes(&good), Err(ProjectError::NotAProject(m)) if m.contains("assembly")));
-    // Newer than this build.
-    let too_new = json!({ "format": "tenon-assembly", "version": 2, "assembly": Assembly::default() });
-    assert!(matches!(asm::from_bytes(&zip_with(&serde_json::to_vec(&too_new).unwrap()), &dir), Err(ProjectError::TooNew(2))));
+    // Newer than this build, as a zip or as text.
+    let too_new = json!({ "format": "tenon-assembly", "version": 3, "assembly": Assembly::default() });
+    assert!(matches!(asm::from_bytes(&zip_with(&serde_json::to_vec(&too_new).unwrap()), &dir), Err(ProjectError::TooNew(3))));
+    let text = String::from_utf8(good.clone()).unwrap().replace(
+        "
+version = 2
+",
+        "
+version = 3
+",
+    );
+    assert!(matches!(asm::from_bytes(text.as_bytes(), &dir), Err(ProjectError::TooNew(3))));
     // A relationship pointing at a missing component, and a placement that is not a rotation.
     let mut v: Value = serde_json::to_value(s.assembly()).unwrap();
     v["relationships"][0]["kind"]["b"]["component"] = json!(42);

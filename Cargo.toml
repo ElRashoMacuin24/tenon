@@ -25,10 +25,11 @@ tenon-ui = { path = "crates/ui" }
 # foundation
 thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 log = "0.4"
 robust = "1.2"
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+toml_edit = { version = "0.25.15", default-features = false, features = ["parse"] }
 # tests only: SVG output is read back as XML
 quick-xml = "0.41"
 
