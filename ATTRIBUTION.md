@@ -40,6 +40,17 @@ Generated-in-code assets are original and have no file to list:
 | `examples/m2-enclosure/enclosure.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m2-enclosure/enclosure-larger.png` | Tenon contributors | generated: same command (software render at L = 100, H = 40) | MIT OR Apache-2.0 | Original |
 | `examples/m2-enclosure/workbench.png` | Tenon contributors | generated: `tenon examples/m2-enclosure/enclosure.tenon --screenshot examples/m2-enclosure/workbench.png` | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/pivot.json` | Tenon contributors | written for this repository (the M3 demo command script) | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/base.tenon` | Tenon contributors | generated: `tenon-cli run examples/m3-pivot/pivot.json --out examples/m3-pivot` | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/arm.tenon` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/pin.tenon` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/block.tenon` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/pivot.tenonasm` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/pivot.step` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/pivot-bom.csv` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/pivot.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/pivot-exploded.png` | Tenon contributors | generated: same command (software render, exploded) | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.json` | Tenon contributors | written for this repository (a second M2 example script) | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.tenon` | Tenon contributors | generated: `tenon-cli run examples/m2-mount/mount.json --out examples/m2-mount` | MIT OR Apache-2.0 | Original |

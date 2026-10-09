@@ -23,6 +23,19 @@ fn file_save(s: &mut Session, p: &Value) -> CmdResult {
     Ok(json!({ "path": path.display().to_string() }))
 }
 
+fn file_new(s: &mut Session, p: &Value) -> CmdResult {
+    let mut doc = tenon_model::Document::default();
+    if let Some(name) = p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()) {
+        if name.len() > 256 {
+            return Err("`name` is too long".into());
+        }
+        doc.name = name.to_owned();
+    }
+    let name = doc.name.clone();
+    s.replace_document(doc, None);
+    Ok(json!({ "name": name }))
+}
+
 fn file_open(s: &mut Session, p: &Value) -> CmdResult {
     let path = path(p)?;
     let (doc, _) = project::open(&path).map_err(|e| CmdError(e.to_string()))?;
@@ -86,6 +99,7 @@ fn export_stl(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
 }
 
 static COMMANDS: &[CommandSpec] = &[
+    CommandSpec { id: "file.new", label: "New Part", help: "name (default Part1); clears undo history", mutates: false, run: Run::Doc(file_new) },
     CommandSpec { id: "file.save", label: "Save", help: "path (.tenon)", mutates: false, run: Run::Doc(file_save) },
     CommandSpec { id: "file.open", label: "Open", help: "path (.tenon); clears undo history", mutates: false, run: Run::Doc(file_open) },
     CommandSpec { id: "export.step", label: "Export STEP", help: "path (.step)", mutates: false, run: Run::Geo(export_step) },

@@ -135,6 +135,64 @@ After parsing, the document is validated:
 
 A file that fails validation is reported as damaged.
 
+## Assemblies (`.tenonasm`, version 1)
+
+An assembly is its own file (DEC-024): the same zip container, with `project.json` holding
+
+```json
+{
+  "format": "tenon-assembly",
+  "version": 1,
+  "generator": "tenon 0.1.0",
+  "assembly": {
+    "name": "Pivot",
+    "components": [
+      { "id": 1, "name": "base:1", "part": "base.tenon",
+        "placement": { "origin": {...}, "x": {...}, "y": {...}, "z": {...} },
+        "grounded": true, "visible": true }
+    ],
+    "relationships": [
+      { "id": 1, "name": "Rotational:1", "suppressed": false,
+        "kind": { "type": "joint", "joint": "revolute", "a": Target, "b": Target,
+                  "flip": false, "offset": 0.0, "angle": 0.0 } }
+    ],
+    "explode": [ { "components": [2, 3], "direction": {...}, "distance": 30.0 } ],
+    "next_component": 6,
+    "next_relationship": 6
+  }
+}
+```
+
+Implemented in `crates/io/src/asm.rs` and `crates/assembly/src/model.rs`; tested in
+`crates/io/tests/asm.rs`.
+
+- **`part`** is the part file's path relative to the assembly file's folder, with `/`
+  separators. A part on another drive is stored as a full path. Opening resolves it against
+  the folder the assembly is opened from, so the folder can move. A part that cannot be read
+  is reported and its component shown as missing.
+- **`placement`** maps part coordinates to assembly coordinates: a right-handed orthonormal
+  frame. A frame that is not orthonormal (to 1e-6) or has coordinates beyond 1 km is refused.
+- **`name`** is the part file's name and an occurrence number.
+- **Ids** are positive and never reused within their counter.
+- **`kind.type`:**
+  - `mate`, `flush` (`offset`);
+  - `angle` (`angle` in radians, `reference`: a unit vector in A's part coordinates);
+  - `insert` (`offset`, `aligned`);
+  - `joint`, with `joint` being `rigid`, `revolute`, `slider`, `cylindrical`, `planar` or
+    `ball`.
+- **A `Target`** is `{ "component": id, "geom": Geom }`. Without `component` it is the
+  assembly's own origin geometry (only `plane`, `axis` and `origin`). `Geom` is one of:
+  - `{ "type": "face", "face": FaceRef }`;
+  - `{ "type": "edge", "edge": EdgeRef }` (persistent references into the part, as in part
+    files);
+  - `{ "type": "plane", "plane": "XY" | "YZ" | "XZ" }`;
+  - `{ "type": "axis", "axis": "X" | "Y" | "Z" }`;
+  - `{ "type": "origin" }`;
+  - `{ "type": "work", "feature": id }`.
+- **Validation:** relationships must name existing components, and never join a component to
+  itself. Exploded-view steps need a unit `direction`. Limits: 5 000 components and 20 000
+  relationships.
+
 ## Changing the format
 
 Every schema change bumps `version`, adds a migration from the previous version, and adds a

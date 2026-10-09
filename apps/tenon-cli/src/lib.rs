@@ -25,6 +25,9 @@ pub const M2_ENCLOSURE_SCRIPT: &str = include_str!("../../../examples/m2-enclosu
 /// The second M2 example, the parametric L-mount (also in examples/m2-mount).
 pub const M2_MOUNT_SCRIPT: &str = include_str!("../../../examples/m2-mount/mount.json");
 
+/// The M3 demo script, the pivot assembly (also in examples/m3-pivot).
+pub const M3_PIVOT_SCRIPT: &str = include_str!("../../../examples/m3-pivot/pivot.json");
+
 /// Output of a command.
 #[derive(Debug, Clone)]
 pub struct Report {
@@ -248,6 +251,11 @@ pub fn demo_m2(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String
 /// Builds the second M2 example (a parametric L-mount) into `out_dir`.
 pub fn demo_m2_mount(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
     run_script(kernel, M2_MOUNT_SCRIPT, out_dir)
+}
+
+/// Builds the M3 demo (four part files and the pivot assembly) into `out_dir`.
+pub fn demo_m3(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
+    run_script(kernel, M3_PIVOT_SCRIPT, out_dir)
 }
 
 /// Opens a project and renders it to PNG.

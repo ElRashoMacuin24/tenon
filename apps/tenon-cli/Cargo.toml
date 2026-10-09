@@ -25,6 +25,7 @@ tenon-kernel = { workspace = true }
 tenon-kernel-occt = { workspace = true }
 tenon-sketch = { workspace = true }
 tenon-model = { workspace = true }
+tenon-assembly = { workspace = true }
 tenon-io = { workspace = true }
 tenon-render = { workspace = true }
 serde = { workspace = true }

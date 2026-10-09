@@ -12,7 +12,7 @@
 
 mod constraint;
 mod entity;
-mod lm;
+pub mod lm;
 mod profile;
 mod sketch;
 mod solve;

@@ -234,3 +234,90 @@ extents are sized once, for the original; a copy reaching past the part is the k
   floor ceil ln log exp min max`. Units are converted, not checked.
 - Every value field takes an equation; it shows `fx: <equation>` until a plain number replaces
   it, and driven dimensions read `fx: 20`.
+
+## DEC-024 Assemblies are their own files and link part files (2026-10-08, approved by the owner)
+
+The owner chose this over keeping parts inside the assembly file.
+
+- An assembly is a `.tenonasm` file: the same zip container as a part (DEC-004), with
+  `project.json` holding `"format": "tenon-assembly"` and its own schema version
+  (docs/file-format.md).
+- Components point at `.tenon` part files by path, stored relative to the assembly file's folder
+  with `/` separators.
+  - A part may be used by many assemblies, and several times in one.
+  - Editing a part (also in context) changes it for every assembly that uses it.
+- Opening an assembly whose part is missing reports the path; the component stays in the
+  assembly and is shown as missing.
+- Embedding parts inside an assembly file was considered and left out.
+- Sub-assemblies (a `.tenonasm` placed in another) are not in M3.
+
+## DEC-025 Assembly relationships and the solver (2026-10-08)
+
+**Relationships.** Both kinds of the familiar workflow are kept: constraints (mate, flush,
+angle, insert) and joints (rigid, rotational, slider, cylindrical, planar, ball). Each refers to
+geometry by the part's persistent names (`Target`), so it survives edits to the part.
+
+**What each geometry means:**
+
+- A planar face gives its plane, with the normal out of the material.
+- A cylinder, cone or straight edge gives its axis; a sphere gives its centre.
+- A circular edge gives its centre and axis. The axis points out of the material of the planar
+  face the edge bounds.
+- A joint takes a frame from its geometry: the face centroid, circle centre or point on the
+  axis, with Z along the normal or axis and X chosen from Z alone.
+
+**What each relationship requires:**
+
+- **Mate:** planes face each other `offset` apart; axes are in line; points meet; a point or
+  line lies on a plane.
+- **Flush:** planes face the same way, `offset` apart.
+- **Angle:** the turn from A's direction to B's about a reference axis is `angle`. The
+  reference is fixed in A when the angle is made: the axis the two directions turn about then.
+- **Insert:** circle centres on one axis, the circles' planes facing each other `offset` apart.
+- **Joints:** the two frames' Z axes face each other (flip: the same way). Origins meet:
+  - rigid and rotational: at a point;
+  - slider and cylindrical: anywhere on the axis;
+  - planar: anywhere on the plane;
+  - ball: at a point.
+  Rigid and slider joints also fix the turn about Z (`angle`).
+
+**The solver.**
+
+- Every free component has six unknowns: a translation, and a rotation vector about its
+  bounding-box centre.
+- The residuals are solved by the sketch solver's damped minimum-norm Gauss-Newton (the sketch
+  crate's `lm`, now public). Rotations are weighted by the component's size squared, so "move
+  as little as possible" means the component's points move least.
+- A new relationship first snaps the free side into place: turned onto the other geometry,
+  then slid. The whole assembly is then solved. A start exactly half a turn from the answer is
+  retried from a slight turn.
+- A relationship that cannot hold with the others is refused, naming the ones it conflicts
+  with.
+- Dragging puts a component where the pointer says and solves with that component weighted
+  10 000 times, so the relationships pull it back only along what they forbid.
+
+**Degrees of freedom.**
+
+- A component's remaining motions are counted with the other components held still, as its
+  symbol shows them. They come from the null space of its 6-column Jacobian:
+  - turning axes from the rotation parts;
+  - sliding directions from the pure translations.
+- The assembly's total is 6 x free components minus the rank of the whole Jacobian. Small
+  singular values count as free below `tol::DOF_REL` of the largest.
+
+**Names.** A component is named after its part file and an occurrence number (`pin:2`). The
+parts list shows the part document's name.
+
+**Exploded view.** The view is stored in the assembly as steps, each moving some components
+along a direction. Auto Explode starts at the grounded components:
+
+- every other component moves `spacing` away from the one that holds it, carrying everything
+  attached beyond it;
+- the direction is the holding face's normal, which points out of the holder;
+- an axis or edge has no side, so for those the component moves away from the holder's centre.
+
+**Interference.** Interference intersects the solids of every pair of visible components whose
+boxes overlap. Overlaps under `tol::CLASH_VOLUME` count as touching.
+
+**Not in M3:** limits on joints, contact and motion studies, tangent constraints, and assembly
+STEP with a product structure. Export writes placed solids.

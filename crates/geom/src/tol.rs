@@ -28,6 +28,24 @@ pub const MAX_SIZE: f64 = 1e6;
 /// example before and after a STEP round trip, or by two kernel backends.
 pub const MEASURE_REL: f64 = 1e-6;
 
+/// Stored unit vectors and placement frames (from files or commands) are accepted within this of
+/// unit length and of perpendicular.
+pub const UNIT: f64 = 1e-6;
+
+/// An assembly constraint or joint holds when its residual is below this (mm, radians, or the
+/// difference of unit vectors).
+pub const ASSEMBLY: f64 = 1e-9;
+
+/// After a solve, a relationship further than this from holding is reported as failing.
+pub const ASSEMBLY_BROKEN: f64 = 1e-6;
+
+/// Two solids overlapping by less than this volume (mm^3) only touch; they do not interfere.
+pub const CLASH_VOLUME: f64 = 1e-6;
+
+/// When counting degrees of freedom, a motion is free when the constraints resist it by less than
+/// this fraction of the stiffest direction (relative singular value).
+pub const DOF_REL: f64 = 1e-7;
+
 /// Default chord deviation for display tessellation (mm).
 pub const MESH_LINEAR: f64 = 0.01;
 

@@ -2953,9 +2953,13 @@ dependencies = [
 name = "tenon-assembly"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tenon-geom",
  "tenon-kernel",
+ "tenon-kernel-occt",
  "tenon-model",
+ "tenon-sketch",
 ]
 
 [[package]]
@@ -2964,6 +2968,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tenon-assembly",
  "tenon-geom",
  "tenon-io",
  "tenon-kernel",
@@ -3004,6 +3009,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tenon-assembly",
  "tenon-geom",
  "tenon-kernel",
  "tenon-kernel-occt",

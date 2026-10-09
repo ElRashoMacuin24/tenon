@@ -12,3 +12,9 @@ workspace = true
 tenon-geom = { workspace = true }
 tenon-kernel = { workspace = true }
 tenon-model = { workspace = true }
+tenon-sketch = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tenon-kernel-occt = { workspace = true }

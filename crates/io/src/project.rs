@@ -44,6 +44,19 @@ fn zip_err(e: zip::result::ZipError) -> ProjectError {
     ProjectError::NotAProject(e.to_string())
 }
 
+/// A zip holding `project.json` with `json` in it.
+pub(crate) fn zip_json(json: &[u8]) -> Result<Vec<u8>, ProjectError> {
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        zw.start_file("project.json", opts).map_err(zip_err)?;
+        zw.write_all(json)?;
+        zw.finish().map_err(zip_err)?;
+    }
+    Ok(buf.into_inner())
+}
+
 /// Project file bytes for `doc`. `extra` carries unknown top-level fields from the file it was
 /// opened from.
 pub fn to_bytes(doc: &Document, extra: &Map<String, Value>) -> Result<Vec<u8>, ProjectError> {
@@ -55,19 +68,11 @@ pub fn to_bytes(doc: &Document, extra: &Map<String, Value>) -> Result<Vec<u8>, P
         extra: extra.clone(),
     };
     let json = serde_json::to_vec_pretty(&file).map_err(|e| ProjectError::Damaged(e.to_string()))?;
-    let mut buf = std::io::Cursor::new(Vec::new());
-    {
-        let mut zw = zip::ZipWriter::new(&mut buf);
-        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        zw.start_file("project.json", opts).map_err(zip_err)?;
-        zw.write_all(&json)?;
-        zw.finish().map_err(zip_err)?;
-    }
-    Ok(buf.into_inner())
+    zip_json(&json)
 }
 
-/// Reads project file bytes: the document plus any unknown top-level fields.
-pub fn from_bytes(data: &[u8]) -> Result<(Document, Map<String, Value>), ProjectError> {
+/// The `project.json` of a zip container, checked for `format` and a `version` this build reads.
+pub(crate) fn read_head(data: &[u8], format: &str, max_version: u32) -> Result<Value, ProjectError> {
     if data.len() as u64 > MAX_FILE {
         return Err(ProjectError::NotAProject("the file is too large".into()));
     }
@@ -82,14 +87,23 @@ pub fn from_bytes(data: &[u8]) -> Result<(Document, Map<String, Value>), Project
         return Err(ProjectError::Damaged("project.json is too large".into()));
     }
     let head: Value = serde_json::from_slice(&json).map_err(|e| ProjectError::Damaged(e.to_string()))?;
-    if head.get("format").and_then(Value::as_str) != Some(FORMAT) {
-        return Err(ProjectError::NotAProject("project.json has no \"format\": \"tenon\"".into()));
+    match head.get("format").and_then(Value::as_str) {
+        Some(f) if f == format => {}
+        Some(crate::asm::FORMAT) => return Err(ProjectError::NotAProject("this is an assembly (.tenonasm), not a part".into())),
+        Some(FORMAT) => return Err(ProjectError::NotAProject("this is a part (.tenon), not an assembly".into())),
+        _ => return Err(ProjectError::NotAProject(format!("project.json has no \"format\": \"{format}\""))),
     }
     let version = head.get("version").and_then(Value::as_u64).ok_or_else(|| ProjectError::Damaged("no version".into()))?;
     let version = u32::try_from(version).map_err(|_| ProjectError::Damaged("bad version".into()))?;
-    if version > VERSION {
+    if version > max_version {
         return Err(ProjectError::TooNew(version));
     }
+    Ok(head)
+}
+
+/// Reads project file bytes: the document plus any unknown top-level fields.
+pub fn from_bytes(data: &[u8]) -> Result<(Document, Map<String, Value>), ProjectError> {
+    let head = read_head(data, FORMAT, VERSION)?;
     let file: ProjectFile = serde_json::from_value(head).map_err(|e| ProjectError::Damaged(e.to_string()))?;
     file.document.validate().map_err(ProjectError::Damaged)?;
     Ok((file.document, file.extra))

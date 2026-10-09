@@ -64,11 +64,42 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `model.measure` | Measure | a, and optionally b: {"face": face reference} \| {"edge": edge reference} \| {"body": n, "face" or "edge": index}; one gives its area, length or diameter, two give the distance (with the nearest points) and the angle | no |
 | `model.edge_ref` | Edge Reference | faces: [face origin, face origin] (the two faces the edge joins); or body (default 0) and edge (index from model.edges) | no |
 | `model.face_ref` | Face Reference | origin: {"type": "cap", "feature": id, "end": "start" \| "end"} or {"type": "side", "feature": id, "curve": id}; or body (default 0) and face (index from model.faces) | no |
+| `file.new` | New Part | name (default Part1); clears undo history | no |
 | `file.save` | Save | path (.tenon) | no |
 | `file.open` | Open | path (.tenon); clears undo history | no |
 | `export.step` | Export STEP | path (.step) | no |
 | `export.stl` | Export STL | path (.stl); linear (mm), angular (rad) deflection; ascii (default binary) | no |
-| `render.png` | Render PNG | path (.png, optional: without it the image is returned base64-encoded); view: iso \| front \| back \| left \| right \| top \| bottom (default iso); width, height (pixels, default 1024 x 768) | no |
+| `asm.new` | New Assembly | name (default Assembly1); clears undo history | no |
+| `asm.open` | Open Assembly | path (.tenonasm); reads every part file it uses; clears undo history | no |
+| `asm.save` | Save Assembly | path (.tenonasm); parts changed in place are saved to their own files first | no |
+| `asm.insert` | Place Component | path (.tenon part file); at: [x, y, z] (default: grounded at the origin for the first, beside the others after); grounded | yes |
+| `asm.export_step` | Export Assembly STEP | path (.step); exploded (default false) | no |
+| `asm.export_bom` | Export Bill of Materials | path (.csv) | no |
+| `asm.tree` | Assembly Tree | none | no |
+| `asm.geom` | Assembly Geometry | component; and face: a face origin or {"body", "index"} \| edge: [face origin, face origin] or {"body", "index"} \| plane: "xy" \| "yz" \| "xz" \| axis: "x" \| "y" \| "z" \| origin: true \| work: feature id. Without component: the assembly's own origin planes, axes and point. Returns a target for asm.constrain and asm.joint | no |
+| `asm.constrain` | Constrain | type: mate \| flush \| angle \| insert; a, b: targets from asm.geom; offset (mm); angle (rad, for angle); aligned (insert: axes the same way) | yes |
+| `asm.joint` | Joint | type: rigid \| revolute \| slider \| cylindrical \| planar \| ball; a, b: targets from asm.geom (their origins); flip (Z axes the same way); offset (mm along A's Z); angle (rad, rigid and slider) | yes |
+| `asm.edit_relationship` | Edit Relationship | relationship; offset, angle, flip, aligned, type (joints) as in asm.constrain / asm.joint | yes |
+| `asm.suppress` | Suppress Relationship | relationship, suppressed (default true) | yes |
+| `asm.delete` | Delete | component or relationship | yes |
+| `asm.rename` | Rename | name; component or relationship (neither: the assembly) | yes |
+| `asm.ground` | Ground | component, grounded (default true) | yes |
+| `asm.visible` | Visibility | component, visible (default true) | yes |
+| `asm.move` | Free Move | component; by: [x, y, z]; turn: {axis, angle (rad), through: a point (default its centre)}; the relationships then pull it where they must | yes |
+| `asm.place` | Place At | component; origin: [x, y, z]; z, x: its part's Z and X directions (default unturned) | yes |
+| `asm.update` | Update | solves again (after parts changed) | yes |
+| `asm.dof` | Degrees of Freedom | each component's free directions and axes (others held still), and the assembly's total | no |
+| `asm.bom` | Bill of Materials | one row per part: quantity, volume | no |
+| `asm.mass` | Assembly Mass | total volume and centre of mass of the visible components | no |
+| `asm.explode.add` | Tweak Components | components: [ids]; direction: [x, y, z] or "x" \| "-z" ...; distance (mm) | yes |
+| `asm.explode.auto` | Auto Explode | spacing (mm, default a quarter of the assembly's size): replaces the exploded view with one made from the relationships | yes |
+| `asm.explode.clear` | Clear Explode | step (default: every step) | yes |
+| `asm.explode.positions` | Exploded Positions | where each component is in the exploded view | no |
+| `asm.undo` | Undo | none | no |
+| `asm.redo` | Redo | none | no |
+| `asm.interference` | Interference | components (default all): every pair of visible components whose solids overlap, with the overlap volume | no |
+| `asm.edit_part` | Edit Part in Place | component; run: a part command; with: its parameters. The part changes for every component using it; the assembly is solved again | yes |
+| `render.png` | Render PNG | path (.png, optional: without it the image is returned base64-encoded); view: iso \| front \| back \| left \| right \| top \| bottom (default iso); width, height (pixels, default 1024 x 768); exploded (assemblies: the exploded view) | no |
 
 ## Constraints
 

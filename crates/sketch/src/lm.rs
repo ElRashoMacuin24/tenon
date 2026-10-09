@@ -12,12 +12,12 @@
 pub const MAX_ROWS: usize = 800;
 
 #[derive(Debug)]
-pub(crate) struct Outcome {
+pub struct Outcome {
     pub x: Vec<f64>,
     pub converged: bool,
 }
 
-pub(crate) fn max_abs(v: &[f64]) -> f64 {
+pub fn max_abs(v: &[f64]) -> f64 {
     v.iter().fold(0.0f64, |m, a| if a.is_finite() { m.max(a.abs()) } else { f64::INFINITY })
 }
 
@@ -26,7 +26,7 @@ fn norm2(v: &[f64]) -> f64 {
 }
 
 /// Numerical Jacobian over the free parameters (row-major, rows × free.len()).
-pub(crate) fn jacobian(f: &dyn Fn(&[f64], &mut Vec<f64>), x: &[f64], free: &[usize], rows: usize) -> Vec<f64> {
+pub fn jacobian(f: &dyn Fn(&[f64], &mut Vec<f64>), x: &[f64], free: &[usize], rows: usize) -> Vec<f64> {
     let nf = free.len();
     let mut jac = vec![0.0; rows * nf];
     let mut xp = x.to_vec();
@@ -106,7 +106,7 @@ fn solve_dense(mut a: Vec<f64>, mut b: Vec<f64>, n: usize) -> Option<Vec<f64>> {
 }
 
 /// Numerical rank of a row-major `rows × cols` matrix (rows normalised first).
-pub(crate) fn rank(m: &[f64], rows: usize, cols: usize) -> usize {
+pub fn rank(m: &[f64], rows: usize, cols: usize) -> usize {
     let mut a: Vec<Vec<f64>> = (0..rows)
         .map(|i| {
             let r: Vec<f64> = m.get(i * cols..(i + 1) * cols).map(<[f64]>::to_vec).unwrap_or_default();
@@ -152,7 +152,7 @@ pub(crate) fn rank(m: &[f64], rows: usize, cols: usize) -> usize {
 }
 
 /// Run the solver from `x0`. Only `free` parameters change.
-pub(crate) fn solve(f: &dyn Fn(&[f64], &mut Vec<f64>), x0: &[f64], free: &[usize], weights: &[f64], tol: f64, max_iter: usize) -> Outcome {
+pub fn solve(f: &dyn Fn(&[f64], &mut Vec<f64>), x0: &[f64], free: &[usize], weights: &[f64], tol: f64, max_iter: usize) -> Outcome {
     let mut x = x0.to_vec();
     let mut r = Vec::new();
     f(&x, &mut r);

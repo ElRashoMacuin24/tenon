@@ -1086,6 +1086,8 @@ pub struct BodyView {
     pub bbox: Option<Aabb3>,
     /// Per edge: the names of its two faces (if both are named) and its geometry.
     pub edges: Vec<(Option<[FaceOrigin; 2]>, EdgeFingerprint)>,
+    /// Per edge: its curve (lines and circles carry their geometry).
+    pub curves: Vec<CurveKind>,
 }
 
 impl BodyView {
@@ -1127,12 +1129,14 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
             faces.push((b.names.get(i as usize).copied().flatten(), k.face_info(b.shape.face(i)).map_err(kerr)?));
         }
         let mut edges = Vec::with_capacity(topo.edges as usize);
+        let mut curves = Vec::with_capacity(topo.edges as usize);
         for (i, adj) in topo.edge_faces.iter().enumerate() {
             let info = k.edge_info(b.shape.edge(u32::try_from(i).map_err(|_| "too many edges")?)).map_err(kerr)?;
             edges.push((edge_names(&b.names, adj), EdgeFingerprint::of(&info)));
+            curves.push(info.curve);
         }
         let mass = k.mass_properties(b.shape, 1.0).map_err(kerr)?;
-        bodies.push(BodyView { mesh, faces, edges, volume: mass.volume, mass, bbox: k.bounding_box(b.shape).map_err(kerr)? });
+        bodies.push(BodyView { mesh, faces, edges, curves, volume: mass.volume, mass, bbox: k.bounding_box(b.shape).map_err(kerr)? });
     }
     Ok(Scene {
         bodies,
