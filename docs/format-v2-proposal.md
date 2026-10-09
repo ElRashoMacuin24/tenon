@@ -1,8 +1,7 @@
 # Proposal: format version 2, plain text (M5)
 
-Status: **waiting for the owner's approval.** This replaces the zip container of DEC-004 (and of
-DEC-024 and DEC-026 if question 3 is approved), so it is decided by the owner. No code is written
-for it until then.
+Status: **approved by the owner on 2026-10-09, all four recommendations (DEC-031), and built.**
+The format as built is specified in `docs/file-format.md`; this page keeps the reasoning.
 
 ## Why
 

@@ -408,3 +408,38 @@ anything open has unsaved changes.
 - **Not asked:** a new document never edited; a file opened from the command line (nothing is
   open yet); scripts, the CLI and MCP (their `file.new` and `file.open` are explicit); and
   `--screenshot` runs, which always close.
+
+## DEC-031 Format version 2: plain-text TOML documents (2026-10-09, chosen by the owner)
+
+Parts, assemblies and drawings move from zips holding JSON (DEC-004, DEC-024, DEC-026) to
+version 2: one plain UTF-8 text file each, in TOML with a fixed layout. The owner approved all
+four recommendations of `docs/format-v2-proposal.md`.
+
+- **The container is one text file per document.** Git diffs and merges it.
+- **The syntax is TOML with a layout Tenon writes itself:**
+  - one field per line;
+  - lists of things one per line, each ending in a comma, so appends never conflict;
+  - records as `[[feature]]` tables with their `kind` flattened in;
+  - sketch entities and constraints as records with their ids.
+
+  It is read with `toml_edit` (MIT/Apache, already in the dependency tree). Canonical JSON was
+  the cheaper alternative; it was not chosen because of its long lines and its appends that
+  conflict.
+- **All three kinds of document** follow the same rules (`.tenonasm` and `.tenondrw` as well as
+  `.tenon`).
+- **Version-1 files** are read forever and upgraded when saved. The first save keeps the
+  original once as `name.v1.ext`; a copy already there is never overwritten.
+- **Stable output:**
+  - no generator or timestamps;
+  - fields in the model's declaration order (serde_json's `preserve_order` is now on across the
+    workspace);
+  - computed values (solved sketch positions and component placements, fingerprints) rounded to
+    `tol::FILE_DECIMALS` = 9 decimals of a millimetre;
+  - values the user gave written exactly.
+- **What it adds:**
+  - `tenon-cli diff` and `file.diff` report changes by parameter and feature;
+  - `tenon-cli upgrade` rewrites old files;
+  - errors give a line number and the record.
+- **Merging:** two branches that each add a feature give both the same id. That is refused on
+  open with both features named, not repaired; an automatic renumbering is left for later.
+- Title block templates stay small JSON files: they are not documents.

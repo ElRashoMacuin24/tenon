@@ -10,8 +10,8 @@ count: when two tasks compete, the one that makes existing features more dependa
 goes first.
 
 Current milestone: **M5 reliability and project format** (started 2026-10-09). M4 drawings was
-confirmed by the owner on 2026-10-09. The plain-text format is proposed in
-[docs/format-v2-proposal.md](docs/format-v2-proposal.md) and waits for the owner's answers.
+confirmed by the owner on 2026-10-09. Done so far: format version 2, plain text (DEC-031), with
+`tenon-cli diff` and `upgrade`.
 
 ## M0 foundations
 
@@ -170,8 +170,8 @@ Commands and demo: `apps/tenon-cli/tests/m4.rs` (6). UI (real pointer and key in
 ## M5 reliability and project format
 
 Scope: `docs/plan.md` section 10. Started 2026-10-09, after the owner confirmed M4. The
-text-based `.tenon` format changes DEC-004, so its design goes to the owner before any code:
-[docs/format-v2-proposal.md](docs/format-v2-proposal.md).
+plain-text format was proposed in [docs/format-v2-proposal.md](docs/format-v2-proposal.md),
+approved by the owner (DEC-031) and is specified in [docs/file-format.md](docs/file-format.md).
 
 | Feature | Status | Proof / gap |
 |---|---|---|
@@ -180,9 +180,9 @@ text-based `.tenon` format changes DEC-004, so its design goes to the owner befo
 | Autosave and crash recovery | missing | |
 | Unsaved changes are never dropped silently: "Save changes?" (Save, Don't Save, Cancel) before New, Open and Exit and on the window's close button, covering a drawing with the models changed from it and an assembly with the part edited in place (DEC-030) | done | real pointer and key input in `crates/ui/src/save_tests.rs`: `a_changed_part_asks_before_new_and_open_and_each_answer_does_what_it_says` (Cancel, Esc, Enter, a closed save dialog, a part saved before; keys do not reach the part behind), `an_assembly_and_the_part_edited_in_place_are_asked_about_together`, `a_drawing_and_the_model_edited_from_it_are_asked_about_together` (Delete pressed under the prompt deletes nothing), `a_drawing_its_assembly_and_a_part_in_place_in_it_are_saved_whole`, `exit_and_the_window_close_button_ask_first`. Gap: the app's part of the close button (answering the window system's close request with `CancelClose`, `apps/tenon/src/main.rs`) is not driven by a test; the workbench call it makes is |
 | Undo/redo verified across regeneration failures | missing | |
-| Text-based, diffable, versioned `.tenon` with migrations | missing | proposed in `docs/format-v2-proposal.md`; waiting for the owner's answers (it changes DEC-004) |
-| `tenon diff` at feature and parameter level | missing | |
-| Round-trip stability, migrations from every older version, persistent-naming corpus | missing | |
+| Text-based, diffable, versioned `.tenon` with migrations | done | format version 2 (DEC-031, `docs/file-format.md`): parts, assemblies and drawings as plain TOML text with a fixed layout, one field per line and one list item per line; version-1 zips read and upgraded on save, the original kept once as `name.v1.ext`; `tenon-cli upgrade`. Tests: the writer and reader (`layout_is_fixed_and_reads_back`, `numbers_keep_their_kind_and_value`, `crlf_a_byte_order_mark_and_odd_keys_read`, `bad_text_says_where`, `objects_named_as_sub_tables_follow_their_record`, `a_part_lays_out_and_comes_back`, `clashes_and_strays_are_caught_when_writing`); `crates/io/tests/format_v2.rs`: `saving_over_a_version_1_file_keeps_it_once`, `damaged_text_is_refused_with_its_line_and_record` (wrong types and unknown feature types name the record and its line; two features with one id name both), `names_with_quotes_backslashes_newlines_and_other_scripts_round_trip`, `a_parameter_change_and_a_new_feature_merge_cleanly` (with `git merge-file`; the merge opens and regenerates); `upgrade_rewrites_version_1_files_and_keeps_them`. Gap: two branches that each add a feature still give both the same id (refused clearly, not renumbered) |
+| `tenon diff` at feature and parameter level | done | `tenon-cli diff A B` and the `file.diff` command: parameters, features (added, removed, moved, renamed, suppressed, each changed field, sketch dimensions by name), values that follow from a changed parameter marked "(from H)", assemblies' components, relationships and explode steps, drawings' sheets, views and annotations; any format version; exit code 0, 1 or 2. Tests: `diff_names_parameters_and_features_and_what_follows_from_what`, `diff_reports_assemblies_and_drawings_and_refuses_mixed_kinds`, `diff_says_what_changed_and_exits_like_diff`. Gap: no Git merge driver yet |
+| Round-trip stability, migrations from every older version, persistent-naming corpus | partial | every version-1 example and template is kept in `crates/io/tests/fixtures/v1` and upgrades to the text checked in beside it, byte for byte on every OS, and saves the same again (`every_version_1_file_upgrades_to_the_text_beside_it_and_saves_the_same_again`); upgraded parts regenerate the same solids (`upgraded_parts_regenerate_the_same_solids`) and upgraded assemblies solve with every relationship holding (`upgraded_assemblies_solve_with_every_relationship_holding`). Gap: the persistent-naming corpus of edit-then-regenerate cases |
 
 ## M6 part feature breadth
 
