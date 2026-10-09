@@ -1273,6 +1273,32 @@ fn model_edges(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     Ok(json!({ "body": body, "edges": out }))
 }
 
+/// The broken references of the failing feature, with the nearest replacements (DEC-034).
+fn model_broken(s: &mut Session, k: &mut dyn Kernel, _p: &Value) -> CmdResult {
+    let r = s.regen(k).clone();
+    let Some((feature, message)) = r.first_error().map(|(f, m)| (f, m.to_owned())) else {
+        return Ok(json!({ "feature": null, "broken": [] }));
+    };
+    let scene = crate::regen::scene(&r, k, &tenon_kernel::MeshTol::default()).map_err(CmdError)?;
+    let broken: Vec<Value> = crate::repair::broken(s.document(), &scene, feature)
+        .into_iter()
+        .map(|b| {
+            let candidates: Vec<Value> = b.candidates.into_iter().map(|c| json!({ "reference": c.reference, "distance": c.distance })).collect();
+            json!({ "path": b.path, "kind": if b.kind == crate::repair::RefKind::Edge { "edge" } else { "face" }, "candidates": candidates })
+        })
+        .collect();
+    let name = s.document().feature(feature).map(|f| f.name.clone()).unwrap_or_default();
+    Ok(json!({ "feature": feature.0, "name": name, "message": message, "broken": broken }))
+}
+
+/// Puts a reference in place of a broken one, as one undoable edit.
+fn model_repair(s: &mut Session, p: &Value) -> CmdResult {
+    let id = feature_id(p)?;
+    let path = p.get("path").and_then(Value::as_str).ok_or("missing parameter `path`")?.to_owned();
+    let with = p.get("with").cloned().ok_or("missing parameter `with`: an edge or face reference")?;
+    s.edit(|d| crate::repair::replace(d, id, &path, with).map(|()| json!({})).map_err(CmdError))
+}
+
 fn model_edge_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let r = s.regen(k).clone();
     let er = if let Some(faces) = p.get("faces") {
@@ -1509,6 +1535,19 @@ static COMMANDS: &[CommandSpec] = &[
         "Measure",
         "a, and optionally b: {\"face\": face reference} | {\"edge\": edge reference} | {\"body\": n, \"face\" or \"edge\": index}; one gives its area, length or diameter, two give the distance (with the nearest points) and the angle",
         model_measure
+    ),
+    geo_cmd!(
+        "model.broken",
+        "Broken References",
+        "the failing feature, its message, and each of its references that no longer finds its face or edge: path (in the feature definition), kind (edge or face) and up to three candidates (reference, distance in mm), nearest first",
+        model_broken
+    ),
+    doc_cmd!(
+        "model.repair",
+        "Repair Reference",
+        "feature; path (from model.broken); with: the edge or face reference to use instead (from model.broken, model.edge_ref or model.face_ref)",
+        true,
+        model_repair
     ),
     geo_cmd!(
         "model.edge_ref",

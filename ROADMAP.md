@@ -9,11 +9,17 @@ tools and find the free ones rough. It wins on reliability, coherence and speed,
 count: when two tasks compete, the one that makes existing features more dependable and pleasant
 goes first.
 
-Current milestone: **M5 reliability and project format** (started 2026-10-09). M4 drawings was
-confirmed by the owner on 2026-10-09. Done so far: format version 2, plain text (DEC-031), with
-`tenon-cli diff` and `upgrade`; kernel failures explained in plain words (DEC-032); undo and
-redo verified through failing rebuilds; autosave and crash recovery (DEC-033); a persistent-naming
-corpus. Left: broken-reference repair.
+Current milestone: **M5 reliability and project format**: complete on 2026-10-09, waiting for the
+owner's confirmation. It brought:
+- format version 2, plain text (DEC-031), with `tenon-cli diff` and `upgrade`;
+- kernel failures explained in plain words (DEC-032);
+- undo and redo verified through failing rebuilds;
+- autosave and crash recovery (DEC-033);
+- a persistent-naming corpus;
+- broken-reference repair (DEC-034).
+
+Next: M6 part feature breadth, after the owner confirms M5. M4 drawings was confirmed on
+2026-10-09.
 
 ## M0 foundations
 
@@ -177,7 +183,7 @@ approved by the owner (DEC-031) and is specified in [docs/file-format.md](docs/f
 
 | Feature | Status | Proof / gap |
 |---|---|---|
-| Broken-reference repair: show what broke, highlight candidates, re-pick in one step | missing | |
+| Broken-reference repair: show what broke, highlight candidates, re-pick in one step | done | DEC-034: the failing feature's lost references are found in the part as it stood before it, with the nearest replacements (an edge sharing a face first; faces of the same sort by centroid, direction and area); `model.broken` and `model.repair` for scripts and MCP: `a_broken_reference_is_named_with_the_nearest_replacements_and_repaired_in_one_step` (a fillet's edge: path, the exact replacement first, repaired, one undo, wrong sorts refused), `a_broken_face_reference_finds_the_face_in_the_same_place` (a shell's removed face). In the app, by real input: `a_lost_edge_is_repaired_from_the_banner_with_one_click` (Repair on the failure banner highlights the candidates; one click on the edge fixes the part; Ctrl+Z brings the break back; Esc stops). Gap: references in assemblies and drawings are not repaired this way yet |
 | Per-feature errors in plain language, in the browser | done | kernel failures are explained for the feature that hit them (DEC-032): what could not be made, the likely reason and what to try, then the kernel's own words in brackets: `each_feature_says_what_it_could_not_do_and_what_to_try` (every feature type), `kernel_failures_are_explained_in_plain_words_and_never_pass_silently` (a fillet too large, a cut that removes everything, and a shell the kernel "built" without hollowing anything, which used to pass as a success); shown in the viewport and on the failing browser row by real pointer input: `a_failing_feature_says_why_in_the_viewport_and_its_browser_row`. References that break say which feature and face are gone (`a_lost_edge_breaks_the_fillet_with_a_clear_message`). Gap: the reason is the likely one for the feature type, not a diagnosis of the geometry (no "largest radius that fits") |
 | Autosave and crash recovery | done | DEC-033: every 30 s, unsaved work is copied to a recovery folder of the app's own (locked while that Tenon runs); after a crash the next start asks "Recover unsaved work?" (Recover, Discard, Not Now). Recovered work opens as unsaved edits over the files, so Save writes it back and Undo returns to the saved file. Storage: `a_running_tenons_copies_are_not_offered_and_a_crashed_ones_are`, `saved_work_clears_the_copies_and_damaged_folders_are_dropped`. Real input, `crates/ui/src/recovery_tests.rs`: `unsaved_part_work_survives_a_crash_and_comes_back_on_request` (Enter recovers; the file untouched until Save; Ctrl+Z, Ctrl+Y, Ctrl+S; a proper close leaves nothing), `not_now_keeps_the_work_for_next_time_and_discard_drops_it` (a part never saved), `a_drawing_comes_back_with_the_model_edited_from_it` (each copy back where it was changed, though the drawing also shows the part inside an assembly), `a_running_tenons_work_is_never_offered_to_another`. Gap: a crash is simulated by dropping the workbench without closing; the app's own exit hook (`on_exit`) is not driven by a test |
 | Unsaved changes are never dropped silently: "Save changes?" (Save, Don't Save, Cancel) before New, Open and Exit and on the window's close button, covering a drawing with the models changed from it and an assembly with the part edited in place (DEC-030) | done | real pointer and key input in `crates/ui/src/save_tests.rs`: `a_changed_part_asks_before_new_and_open_and_each_answer_does_what_it_says` (Cancel, Esc, Enter, a closed save dialog, a part saved before; keys do not reach the part behind), `an_assembly_and_the_part_edited_in_place_are_asked_about_together`, `a_drawing_and_the_model_edited_from_it_are_asked_about_together` (Delete pressed under the prompt deletes nothing), `a_drawing_its_assembly_and_a_part_in_place_in_it_are_saved_whole`, `exit_and_the_window_close_button_ask_first`. Gap: the app's part of the close button (answering the window system's close request with `CancelClose`, `apps/tenon/src/main.rs`) is not driven by a test; the workbench call it makes is |

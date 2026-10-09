@@ -15,6 +15,7 @@ pub mod measure;
 pub mod naming;
 pub mod params;
 pub mod regen;
+pub mod repair;
 pub mod worker;
 
 pub use cmd::{CmdError, CmdResult, CommandSpec, Run, Session};

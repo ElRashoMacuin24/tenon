@@ -401,7 +401,9 @@ impl Workbench {
         if sketching {
             self.sketch_ui(ui, &resp, rect, t);
         }
-        self.messages(ui, rect, t);
+        if let Some(banner) = self.messages(ui, rect, t) {
+            self.repair_button(ui, banner);
+        }
         self.triad(ui, pos2(rect.left() + 46.0, rect.bottom() - 46.0), t);
         if self.chrome.show_cube {
             self.cube(ui, pos2(rect.right() - 92.0, rect.top() + 82.0), t);
@@ -658,6 +660,9 @@ impl Workbench {
             self.pick_sketch_plane(ui, resp, rect);
             return;
         }
+        if self.repair_pointer(ui, resp, rect) {
+            return;
+        }
         if self.panel_pointer(resp, rect) {
             return;
         }
@@ -710,6 +715,7 @@ impl Workbench {
         }
         let mut v: Vec<(Pick, Color32)> = self.view.selection.iter().map(|p| (*p, SELECTED)).collect();
         v.extend(self.panel_picks().into_iter().map(|p| (p, SELECTED)));
+        v.extend(self.repair_candidates().into_iter().map(|p| (p, crate::repair_ui::CANDIDATE)));
         v.extend(self.view.hover.map(|p| (p, HOVER)));
         v
     }
@@ -845,7 +851,8 @@ impl Workbench {
         }
     }
 
-    fn messages(&self, ui: &Ui, rect: Rect, t: &Tokens) {
+    /// Hints, the failure banner (its rectangle is returned) and the "Regenerating" note.
+    fn messages(&self, ui: &Ui, rect: Rect, t: &Tokens) -> Option<Rect> {
         let p = ui.painter();
         if self.in_assembly() {
             if self.asm.as_ref().is_some_and(|a| a.session.assembly().components.is_empty()) {
@@ -882,15 +889,17 @@ impl Workbench {
                 _ => None,
             })
         };
-        if let Some((text, color)) = banner {
+        let shown = banner.map(|(text, color)| {
             let galley = p.layout_no_wrap(text, theme::body(), color);
             let r = Rect::from_min_size(pos2(rect.left() + 12.0, rect.top() + 10.0), galley.size() + vec2(16.0, 10.0));
             p.rect_filled(r, 4.0, t.panel.gamma_multiply(0.92));
             p.galley(r.min + vec2(8.0, 5.0), galley, color);
-        }
+            r
+        });
         if self.waiting {
             p.text(pos2(rect.right() - 14.0, rect.bottom() - 12.0), Align2::RIGHT_BOTTOM, "Regenerating...", theme::small(), t.text_dim);
         }
+        shown
     }
 
     /// A camera with the current orientation for the small widgets (cube, triad).

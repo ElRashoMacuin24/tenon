@@ -183,17 +183,7 @@ fn corpus() -> Vec<(&'static str, Edit, Check)> {
         ),
         (
             "the line the rounded edge came from deleted and drawn again",
-            |s, k, b| {
-                let ends = run(s, k, "sketch.info", json!({ "sketch": b.sketch }))["entities"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|e| e["id"] == b.lines[1])
-                    .map(|e| (e["start"].clone(), e["end"].clone()))
-                    .unwrap();
-                run(s, k, "sketch.delete", json!({ "sketch": b.sketch, "entities": [b.lines[1]] }));
-                run(s, k, "sketch.line", json!({ "sketch": b.sketch, "start": ends.0, "end": ends.1 }));
-            },
+            |s, k, b| redraw(s, k, b, b.lines[1]),
             // A new line is a new face: the fillet says its edge is gone and what it was.
             |l| matches!(l, Err(m) if m.contains("no longer exists") && m.contains("Extrusion1")),
         ),
@@ -223,4 +213,68 @@ fn references_land_where_they_belong_after_each_upstream_edit_or_break_clearly()
         }
     }
     assert!(failures.is_empty(), "{} case(s) failed:\n{}", failures.len(), failures.join("\n"));
+}
+
+/// Deletes sketch line `line` of the first sketch and draws it again between the same points:
+/// the face it swept is a new face, so references to the old one break.
+fn redraw(s: &mut Session, k: &mut OcctKernel, b: &Base, line: u64) {
+    let ends = run(s, k, "sketch.info", json!({ "sketch": b.sketch }))["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == line)
+        .map(|e| (e["start"].clone(), e["end"].clone()))
+        .unwrap();
+    run(s, k, "sketch.delete", json!({ "sketch": b.sketch, "entities": [line] }));
+    run(s, k, "sketch.line", json!({ "sketch": b.sketch, "start": ends.0, "end": ends.1 }));
+}
+
+#[test]
+fn a_broken_reference_is_named_with_the_nearest_replacements_and_repaired_in_one_step() {
+    let mut k = OcctKernel::new();
+    let mut s = Session::default();
+    let b = base(&mut s, &mut k);
+    redraw(&mut s, &mut k, &b, b.lines[1]);
+    let found = run(&mut s, &mut k, "model.broken", json!({}));
+    assert_eq!((found["feature"].as_u64(), found["name"].as_str()), (Some(u64::from(b.fillet)), Some("Fillet1")), "{found}");
+    let broken = found["broken"].as_array().unwrap();
+    assert_eq!(broken.len(), 1, "{found}");
+    assert_eq!((broken[0]["path"].as_str(), broken[0]["kind"].as_str()), (Some("/edges/0"), Some("edge")));
+    // The nearest: the edge between the top and the side the new line made, where the old one was.
+    let best = &broken[0]["candidates"][0];
+    assert!(best["distance"].as_f64().unwrap() < 1e-6, "{best}");
+    assert!(best["reference"]["faces"].as_array().unwrap().iter().any(|f| f["type"] == "cap"), "{best}");
+    run(&mut s, &mut k, "model.repair", json!({ "feature": b.fillet, "path": "/edges/0", "with": best["reference"] }));
+    let l = landed(&mut s, &mut k, &b);
+    assert!(l.as_ref().is_ok_and(|l| rounded(l, 40.0, 10.0)), "{l:?}");
+    assert!(run(&mut s, &mut k, "model.broken", json!({}))["broken"].as_array().unwrap().is_empty());
+    // One undo: broken again.
+    s.undo();
+    assert_eq!(run(&mut s, &mut k, "model.broken", json!({}))["broken"].as_array().unwrap().len(), 1);
+    // A reference of the wrong sort, or to nothing, is refused.
+    let face = run(&mut s, &mut k, "model.face_ref", json!({ "origin": { "type": "cap", "feature": b.extrusion, "end": "end" } }));
+    let e = s.exec("model.repair", &json!({ "feature": b.fillet, "path": "/edges/0", "with": face }), Some(&mut k)).unwrap_err().0;
+    assert!(e.contains("needs an edge"), "{e}");
+    assert!(s.exec("model.repair", &json!({ "feature": b.fillet, "path": "/edges/7", "with": best["reference"] }), Some(&mut k)).is_err());
+}
+
+#[test]
+fn a_broken_face_reference_finds_the_face_in_the_same_place() {
+    let mut k = OcctKernel::new();
+    let mut s = Session::default();
+    let b = base(&mut s, &mut k);
+    // A shell opened on the left side.
+    let left = run(&mut s, &mut k, "model.face_ref", json!({ "origin": { "type": "side", "feature": b.extrusion, "curve": b.lines[3] } }));
+    let shell = run(&mut s, &mut k, "model.shell", json!({ "remove": [left], "thickness": 1 }))["feature"].as_u64().unwrap();
+    redraw(&mut s, &mut k, &b, b.lines[3]);
+    let found = run(&mut s, &mut k, "model.broken", json!({}));
+    assert_eq!(found["feature"].as_u64(), Some(shell), "{found}");
+    let broken = &found["broken"][0];
+    assert_eq!((broken["path"].as_str(), broken["kind"].as_str()), (Some("/remove/0"), Some("face")), "{found}");
+    let best = &broken["candidates"][0];
+    // The new left side: the same plane, in the same place.
+    assert!(best["distance"].as_f64().unwrap() < 1e-6, "{best}");
+    assert_eq!(best["reference"]["origin"]["type"], "side");
+    run(&mut s, &mut k, "model.repair", json!({ "feature": shell, "path": "/remove/0", "with": best["reference"] }));
+    assert!(run(&mut s, &mut k, "model.regenerate", json!({}))["error"].is_null());
 }

@@ -486,3 +486,24 @@ the user's files. After a crash, the next start offers them back.
   the next start.
 - **Closing properly** (after Save or Don't Save) removes the folder. Screenshot runs neither
   keep nor offer anything.
+
+## DEC-034 Repairing broken references (2026-10-09)
+
+When a feature fails because a face or edge it uses is gone, Tenon names the reference, offers
+the nearest replacements, and puts one in with one click.
+
+- **Which reference broke** is found after the fact, not threaded through each feature: every
+  edge and face reference in the failing feature's definition is checked against the part as it
+  stood just before that feature (the scene a failed rebuild shows). This works for every feature
+  type, including ones added later.
+- **Candidates**, nearest first (at most three):
+  - edges: one sharing a face with the lost edge first (a redrawn side keeps the top), then by
+    how far the middle moved plus the change in length;
+  - faces of the same surface sort: by how far the centroid moved, how much the direction
+    turned (a right angle counts as 10 mm) and the relative change in area.
+- **Commands:** `model.broken` (the failing feature, its message, each lost reference's path in
+  the feature definition and its candidates) and `model.repair` (feature, path, with). The
+  repair is one undoable edit; a reference of the wrong sort is refused.
+- **In the app:** the failure banner's Repair button (or Repair Reference in the browser's
+  context menu) highlights the candidates in green. A click on any face or edge of the right
+  sort, highlighted or not, puts it in. Esc stops.

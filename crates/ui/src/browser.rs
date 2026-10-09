@@ -17,6 +17,8 @@ pub(crate) const ROW_H: f32 = 21.0;
 pub(crate) enum BrowserAction {
     SketchOn(OriginPlane),
     Edit(FeatureId),
+    /// Re-pick a face or edge a failing feature lost.
+    Repair(FeatureId),
     Rename(FeatureId),
     Suppress(FeatureId, bool),
     Delete(FeatureId),
@@ -292,9 +294,14 @@ impl Workbench {
                         action = Some(BrowserAction::Pick(id));
                     }
                     let sketch_child = features.iter().find(|c| owner.get(&c.0) == Some(&id)).map(|c| c.0);
+                    let failed = matches!(status, Some(FeatureStatus::Error { .. }));
                     resp.context_menu(|ui| {
                         if ui.button("Edit Feature").clicked() {
                             action = Some(BrowserAction::Edit(id));
+                            ui.close();
+                        }
+                        if failed && ui.button("Repair Reference").clicked() {
+                            action = Some(BrowserAction::Repair(id));
                             ui.close();
                         }
                         if let Some(s) = sketch_child
@@ -359,6 +366,10 @@ impl Workbench {
         let result = match a {
             BrowserAction::SketchOn(p) => self.create_sketch(json!({ "plane": format!("{p:?}").to_lowercase() })),
             BrowserAction::Edit(id) => self.edit_feature(id),
+            BrowserAction::Repair(id) => {
+                self.start_repair(Some(id));
+                Ok(())
+            }
             BrowserAction::Rename(id) => {
                 self.panel = Some(Panel::Rename { feature: id, name: self.feature_name(id) });
                 Ok(())

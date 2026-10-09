@@ -108,6 +108,8 @@ pub struct Workbench {
     pub(crate) recover_offer: Option<crate::recovery::Offer>,
     /// Seconds between autosaves.
     pub(crate) autosave_seconds: f64,
+    /// A lost reference being repaired from the viewport (DEC-034).
+    pub(crate) repair: Option<crate::repair_ui::RepairMode>,
 }
 
 impl Workbench {
@@ -150,6 +152,7 @@ impl Workbench {
             recovery: None,
             recover_offer: None,
             autosave_seconds: crate::recovery::AUTOSAVE_SECONDS,
+            repair: None,
         }
     }
 

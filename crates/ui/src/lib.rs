@@ -24,6 +24,7 @@ mod params_dialog;
 mod properties;
 mod radial;
 mod recovery;
+mod repair_ui;
 mod sketcher;
 pub mod theme;
 mod viewport;

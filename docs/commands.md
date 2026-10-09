@@ -62,6 +62,8 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `model.edges` | Edges | body (default 0): every edge with the names of its two faces | no |
 | `model.work` | Work Features | where every work plane, axis and point is | no |
 | `model.measure` | Measure | a, and optionally b: {"face": face reference} \| {"edge": edge reference} \| {"body": n, "face" or "edge": index}; one gives its area, length or diameter, two give the distance (with the nearest points) and the angle | no |
+| `model.broken` | Broken References | the failing feature, its message, and each of its references that no longer finds its face or edge: path (in the feature definition), kind (edge or face) and up to three candidates (reference, distance in mm), nearest first | no |
+| `model.repair` | Repair Reference | feature; path (from model.broken); with: the edge or face reference to use instead (from model.broken, model.edge_ref or model.face_ref) | yes |
 | `model.edge_ref` | Edge Reference | faces: [face origin, face origin] (the two faces the edge joins); or body (default 0) and edge (index from model.edges) | no |
 | `model.face_ref` | Face Reference | origin: {"type": "cap", "feature": id, "end": "start" \| "end"} or {"type": "side", "feature": id, "curve": id}; or body (default 0) and face (index from model.faces) | no |
 | `file.new` | New Part | name (default Part1); clears undo history | no |

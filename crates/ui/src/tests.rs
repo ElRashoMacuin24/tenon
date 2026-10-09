@@ -1331,3 +1331,63 @@ fn a_failing_feature_says_why_in_the_viewport_and_its_browser_row() {
     d.frame(&mut wb, vec![]);
     assert!(banner(&d) && (volume(&wb) - block).abs() < 1e-6, "{:?} {}", d.texts(), volume(&wb));
 }
+
+#[test]
+fn a_lost_edge_is_repaired_from_the_banner_with_one_click() {
+    let _quiet = timing_lock();
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    // A 40 x 30 x 10 block, the edge between its top and its right side rounded (R2).
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let sk = sketching(&wb);
+    let rect = wb.exec("sketch.rectangle", json!({ "sketch": sk.0, "x1": 0, "y1": 0, "x2": 40, "y2": 30 })).unwrap();
+    wb.finish_sketch();
+    let ex = wb.exec("model.extrude", json!({ "sketch": sk.0, "distance": 10 })).unwrap()["feature"].clone();
+    let right = rect["lines"][1].clone();
+    let edge = wb
+        .exec(
+            "model.edge_ref",
+            json!({ "faces": [{ "type": "cap", "feature": ex, "end": "end" }, { "type": "side", "feature": ex, "curve": right }] }),
+        )
+        .unwrap();
+    wb.exec("model.fillet", json!({ "edges": [edge], "radius": 2 })).unwrap();
+    let rounded = 40.0 * 30.0 * 10.0 - (4.0 - std::f64::consts::PI) * 30.0;
+    d.settle(&mut wb);
+    assert!((volume(&wb) - rounded).abs() < 1e-6);
+    // The right line deleted and drawn again: a new side face, so the fillet's edge is gone.
+    let info = wb.exec("sketch.info", json!({ "sketch": sk.0 })).unwrap();
+    let line = info["entities"].as_array().unwrap().iter().find(|e| e["id"] == right).unwrap().clone();
+    wb.exec("sketch.delete", json!({ "sketch": sk.0, "entities": [right] })).unwrap();
+    wb.exec("sketch.line", json!({ "sketch": sk.0, "start": line["start"], "end": line["end"] })).unwrap();
+    d.settle(&mut wb);
+    for _ in 0..3 {
+        d.frame(&mut wb, vec![]);
+    }
+    assert!(d.texts().iter().any(|t| t.starts_with("Fillet1: the referenced edge no longer exists")), "{:?}", d.texts());
+
+    // Repair: the nearest edges are highlighted and the status says what to do.
+    let at = pressable(&d, "tn_repair");
+    d.click(&mut wb, at);
+    assert!(wb.status().starts_with("Fillet1 uses an edge that no longer exists. Click the edge to use instead"), "{}", wb.status());
+    assert!(!wb.repair_candidates().is_empty());
+    // One click on the edge where the old one was: the fillet is back, as one undoable edit.
+    let corner = on_screen(&wb, tenon_geom::Vec3::new(40.0, 15.0, 10.0));
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(corner)]);
+    d.click(&mut wb, corner);
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.repair.is_none() && wb.status() == "Fillet1 now uses the one you picked.", "{}", wb.status());
+    assert!(wb.scene.status.iter().all(|(_, s)| !matches!(s, tenon_model::FeatureStatus::Error { .. })));
+    assert!((volume(&wb) - rounded).abs() < 1e-6, "{}", volume(&wb));
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(egui::pos2(700.0, 120.0))]);
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t.starts_with("Fillet1: the referenced edge no longer exists")), "undone: {:?}", d.texts());
+    // Esc leaves repairing without changing anything.
+    let at = pressable(&d, "tn_repair");
+    d.click(&mut wb, at);
+    assert!(wb.repair.is_some());
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(wb.repair.is_none() && wb.status() == "Repair stopped.", "{}", wb.status());
+}
