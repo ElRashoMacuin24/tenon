@@ -879,3 +879,47 @@ fn every_face_of_m2_features_is_named() {
     regenerates(&mut s, &mut k);
     assert_eq!(unnamed(&mut s, &mut k), 0, "{}", run(&mut s, &mut k, "model.faces", json!({})));
 }
+
+#[test]
+fn kernel_failures_are_explained_in_plain_words_and_never_pass_silently() {
+    let mut k = OcctKernel::new();
+    let failure = |s: &mut Session, k: &mut OcctKernel| -> String {
+        let r = run(s, k, "model.regenerate", json!({}));
+        r["error"]["message"].as_str().unwrap_or_else(|| panic!("no failure: {r}")).to_owned()
+    };
+    // A fillet larger than the block's corner can take: what failed, why, what to try, and the
+    // kernel's own words last.
+    let mut s = Session::default();
+    let (_, ex, l, _) = block(&mut s, &mut k, 20.0, 20.0, 10.0);
+    let edge = run(&mut s, &mut k, "model.edge_ref", json!({ "faces": [side(ex, l[0]), side(ex, l[1])] }));
+    run(&mut s, &mut k, "model.fillet", json!({ "edges": [edge], "radius": 25.0 }));
+    let m = failure(&mut s, &mut k);
+    assert!(m.starts_with("The 25 mm fillet could not be made on this edge. The radius is probably too large"), "{m}");
+    assert!(m.contains("try a smaller radius") && m.contains(" (Kernel: fillet failed: "), "{m}");
+    // A cut that takes the whole block away.
+    let mut s = Session::default();
+    block(&mut s, &mut k, 20.0, 20.0, 10.0);
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": -5, "y1": -5, "x2": 25, "y2": 25 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 20, "operation": "cut" }));
+    let m = failure(&mut s, &mut k);
+    assert!(m.starts_with("This removes the whole part, so nothing would be left: try"), "{m}");
+    // Walls thicker than the block: the kernel "builds" the shell but hollows nothing. That is
+    // reported, not passed as a success.
+    let mut s = Session::default();
+    let (_, ex, _, _) = block(&mut s, &mut k, 20.0, 20.0, 10.0);
+    let top = run(&mut s, &mut k, "model.face_ref", json!({ "origin": { "type": "cap", "feature": ex, "end": "end" } }));
+    run(&mut s, &mut k, "model.shell", json!({ "remove": [top.clone()], "thickness": 12.0 }));
+    let m = failure(&mut s, &mut k);
+    assert!(m.starts_with("The part could not be hollowed out with 12 mm walls: the kernel left it solid."), "{m}");
+    // Thinner walls: hollowed.
+    let shell = s.document().features().last().unwrap().id.0;
+    run(
+        &mut s,
+        &mut k,
+        "feature.update",
+        json!({ "feature": shell, "kind": { "type": "shell", "remove": [top], "thickness": 2.0, "outside": false } }),
+    );
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 20.0 * 20.0 * 10.0 - 16.0 * 16.0 * 8.0), "{}", volume(&mut s, &mut k));
+}

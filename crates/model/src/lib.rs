@@ -9,6 +9,7 @@
 
 pub mod cmd;
 mod document;
+mod explain;
 pub mod expr;
 pub mod measure;
 pub mod naming;

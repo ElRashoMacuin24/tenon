@@ -160,17 +160,36 @@ pub(crate) struct Driver {
     pub(crate) ctx: egui::Context,
     time: f64,
     size: egui::Vec2,
+    /// What the last frame drew.
+    shapes: Vec<egui::epaint::ClippedShape>,
 }
 
 impl Driver {
     pub(crate) fn new(size: egui::Vec2) -> Driver {
-        Driver { ctx: egui::Context::default(), time: 0.0, size }
+        Driver { ctx: egui::Context::default(), time: 0.0, size, shapes: Vec::new() }
     }
     pub(crate) fn frame(&mut self, wb: &mut Workbench, events: Vec<egui::Event>) {
         self.time += 1.0 / 60.0;
         let input =
             egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)), time: Some(self.time), events, ..Default::default() };
-        self.ctx.run_ui(input, |ui| wb.ui(ui, None)).drop_without_applying_deltas();
+        let mut out = self.ctx.run_ui(input, |ui| wb.ui(ui, None));
+        self.shapes = std::mem::take(&mut out.shapes);
+        out.drop_without_applying_deltas();
+    }
+    /// The texts the last frame drew (labels, banners, tooltips), one per piece.
+    pub(crate) fn texts(&self) -> Vec<String> {
+        fn walk(s: &egui::Shape, out: &mut Vec<String>) {
+            match s {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+                egui::Shape::Vec(v) => v.iter().for_each(|x| walk(x, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for c in &self.shapes {
+            walk(&c.shape, &mut out);
+        }
+        out
     }
     /// Holds (or releases) modifier keys from the next frame on.
     pub(crate) fn modifiers(&mut self, wb: &mut Workbench, m: egui::Modifiers) {
@@ -1265,4 +1284,36 @@ fn dimension_tool_creates_a_driving_dimension() {
     let (a, b) = wb.document().sketch(f).unwrap().line(bottom).unwrap();
     assert!((a.dist(b) - 45.0).abs() < 1e-7);
     frame(&mut wb, &ctx, vec2(1200.0, 800.0));
+}
+
+#[test]
+fn a_failing_feature_says_why_in_the_viewport_and_its_browser_row() {
+    let _quiet = timing_lock();
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let sk = sketching(&wb);
+    let rect = wb.exec("sketch.rectangle", json!({ "sketch": sk.0, "x1": 0, "y1": 0, "x2": 20, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    let ex = wb.exec("model.extrude", json!({ "sketch": sk.0, "distance": 10 })).unwrap()["feature"].clone();
+    let side = |i: usize| json!({ "type": "side", "feature": ex, "curve": rect["lines"][i] });
+    let edge = wb.exec("model.edge_ref", json!({ "faces": [side(0), side(1)] })).unwrap();
+    // A fillet far too large for the 20 mm block.
+    wb.exec("model.fillet", json!({ "edges": [edge], "radius": 25 })).unwrap();
+    d.settle(&mut wb);
+    for _ in 0..3 {
+        d.frame(&mut wb, vec![]);
+    }
+    let plain = "The 25 mm fillet could not be made on this edge. The radius is probably too large";
+    // The viewport says which feature failed and why, in plain words, without being asked.
+    let shown = d.texts();
+    assert!(shown.iter().any(|t| t.starts_with(&format!("Fillet1: {plain}"))), "{shown:?}");
+    // Its browser row says the same when the pointer rests on it.
+    let row = browser_row(&d, "Fillet1");
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(row.center())]);
+    for _ in 0..90 {
+        d.frame(&mut wb, vec![]);
+    }
+    let shown = d.texts();
+    assert!(shown.iter().any(|t| t.starts_with(plain) && t.contains("try a smaller radius")), "{shown:?}");
 }

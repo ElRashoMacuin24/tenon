@@ -443,3 +443,19 @@ four recommendations of `docs/format-v2-proposal.md`.
 - **Merging:** two branches that each add a feature give both the same id. That is refused on
   open with both features named, not repaired; an automatic renumbering is left for later.
 - Title block templates stay small JSON files: they are not documents.
+
+## DEC-032 Kernel failures in plain words; no silent successes (2026-10-09)
+
+A feature that fails in the kernel shows three things: what could not be made, the likely
+reason for that feature type, and what to try. The kernel's own words follow in brackets
+("The 25 mm fillet could not be made on this edge. The radius is probably too large ...: try a
+smaller radius, or fewer edges. (Kernel: fillet failed: ...)").
+
+- **The plain part comes first.** It is chosen by the feature type and the kind of kernel
+  failure (`crates/model/src/explain.rs`). The kernel's words stay for diagnosis and bug
+  reports.
+- **Already plain messages are left as they are:** messages Tenon writes itself (a lost
+  reference, an empty result) and inputs the kernel refused.
+- **A result that cannot be right is a failure even when the kernel reports success.** A shell
+  that leaves the volume unchanged hollowed nothing (OCCT does this when the walls are thicker
+  than the part allows). Such checks belong in the model, so every kernel backend gets them.

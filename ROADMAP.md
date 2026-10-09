@@ -11,7 +11,7 @@ goes first.
 
 Current milestone: **M5 reliability and project format** (started 2026-10-09). M4 drawings was
 confirmed by the owner on 2026-10-09. Done so far: format version 2, plain text (DEC-031), with
-`tenon-cli diff` and `upgrade`.
+`tenon-cli diff` and `upgrade`; kernel failures explained in plain words (DEC-032).
 
 ## M0 foundations
 
@@ -176,7 +176,7 @@ approved by the owner (DEC-031) and is specified in [docs/file-format.md](docs/f
 | Feature | Status | Proof / gap |
 |---|---|---|
 | Broken-reference repair: show what broke, highlight candidates, re-pick in one step | missing | |
-| Per-feature errors in plain language, in the browser | partial | messages exist (`a_lost_edge_breaks_the_fillet_with_a_clear_message`); kernel errors are passed through in OCCT's words; the browser display is not asserted |
+| Per-feature errors in plain language, in the browser | done | kernel failures are explained for the feature that hit them (DEC-032): what could not be made, the likely reason and what to try, then the kernel's own words in brackets: `each_feature_says_what_it_could_not_do_and_what_to_try` (every feature type), `kernel_failures_are_explained_in_plain_words_and_never_pass_silently` (a fillet too large, a cut that removes everything, and a shell the kernel "built" without hollowing anything, which used to pass as a success); shown in the viewport and on the failing browser row by real pointer input: `a_failing_feature_says_why_in_the_viewport_and_its_browser_row`. References that break say which feature and face are gone (`a_lost_edge_breaks_the_fillet_with_a_clear_message`). Gap: the reason is the likely one for the feature type, not a diagnosis of the geometry (no "largest radius that fits") |
 | Autosave and crash recovery | missing | |
 | Unsaved changes are never dropped silently: "Save changes?" (Save, Don't Save, Cancel) before New, Open and Exit and on the window's close button, covering a drawing with the models changed from it and an assembly with the part edited in place (DEC-030) | done | real pointer and key input in `crates/ui/src/save_tests.rs`: `a_changed_part_asks_before_new_and_open_and_each_answer_does_what_it_says` (Cancel, Esc, Enter, a closed save dialog, a part saved before; keys do not reach the part behind), `an_assembly_and_the_part_edited_in_place_are_asked_about_together`, `a_drawing_and_the_model_edited_from_it_are_asked_about_together` (Delete pressed under the prompt deletes nothing), `a_drawing_its_assembly_and_a_part_in_place_in_it_are_saved_whole`, `exit_and_the_window_close_button_ask_first`. Gap: the app's part of the close button (answering the window system's close request with `CancelClose`, `apps/tenon/src/main.rs`) is not driven by a test; the workbench call it makes is |
 | Undo/redo verified across regeneration failures | missing | |

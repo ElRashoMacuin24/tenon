@@ -279,6 +279,10 @@ pub fn regenerate_with(doc: &Document, k: &mut dyn Kernel, mut cache: Option<&mu
                     failed = true;
                     FeatureStatus::Error { message }
                 }
+                Err(Stop::Kernel(e)) => {
+                    failed = true;
+                    FeatureStatus::Error { message: crate::explain::explain(&f.kind, &e) }
+                }
             }
         };
         cx.regen.status.push((f.id, status));
@@ -296,7 +300,10 @@ pub fn regenerate_with(doc: &Document, k: &mut dyn Kernel, mut cache: Option<&mu
 
 enum Stop {
     Cancelled,
+    /// A message already in plain words.
     Failed(String),
+    /// The kernel failed: explained for the feature (`explain`).
+    Kernel(KernelError),
 }
 
 impl From<String> for Stop {
@@ -313,7 +320,7 @@ impl From<KernelError> for Stop {
     fn from(e: KernelError) -> Self {
         match e {
             KernelError::Cancelled => Stop::Cancelled,
-            e => Stop::Failed(kerr(e)),
+            e => Stop::Kernel(e),
         }
     }
 }
@@ -386,6 +393,24 @@ impl<'a> Ctx<'a> {
                 let shape = self.body_shape(bi)?;
                 let t = if s.outside { -s.thickness } else { s.thickness };
                 let op = self.k.shell(shape, &faces.iter().map(|f| shape.face(*f)).collect::<Vec<_>>(), t)?;
+                // A kernel can "build" a shell that hollows nothing (walls thicker than the part
+                // allows): that is a failure, never a silent success.
+                let volumes = self.k.mass_properties(shape, 1.0).and_then(|a| Ok((a.volume, self.k.mass_properties(op.shape, 1.0)?.volume)));
+                match volumes {
+                    Ok((before, after)) if (after - before).abs() > tenon_geom::tol::MEASURE_REL * before.abs() => {}
+                    Ok(_) => {
+                        self.k.release(op.shape);
+                        return Err(format!(
+                            "The part could not be hollowed out with {} mm walls: the kernel left it solid. The walls are probably too thick for it: try thinner walls.",
+                            crate::explain::mm(s.thickness)
+                        )
+                        .into());
+                    }
+                    Err(e) => {
+                        self.k.release(op.shape);
+                        return Err(e.into());
+                    }
+                }
                 self.replace_body(f.id, bi, op)
             }
             FeatureKind::Hole(h) => self.hole(f.id, h),
@@ -1002,7 +1027,11 @@ impl<'a> Ctx<'a> {
         let volume = self.k.mass_properties(op.shape, 1.0)?.volume;
         if volume.abs() <= tenon_geom::tol::MIN_SIZE {
             self.k.release(op.shape);
-            return Err("the result has no volume left".into());
+            return Err(match operation {
+                Operation::Intersect => "The feature and the part do not overlap, so nothing of the part would be left: check its size and position.",
+                _ => "This removes the whole part, so nothing would be left: try a smaller size, a shorter distance, or the other direction.",
+            }
+            .into());
         }
         let faces = self.k.topology(op.shape)?.faces;
         let inputs: Vec<&[Option<FaceOrigin>]> = std::iter::once(target_names.as_slice()).chain(tools.iter().map(|t| t.1.as_slice())).collect();
