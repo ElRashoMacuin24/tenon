@@ -269,9 +269,13 @@ fn editing_a_part_in_place_and_returning_updates_the_assembly() {
 
 /// Dragging a component (solving its relationships, moving its bodies, picking) stays well inside
 /// a 60 Hz frame. Numbers: `cargo test --release -p tenon-ui assembly_drag -- --nocapture`.
+///
+/// The median frame is what is held to the budget: tests run in parallel, and on a small CI
+/// machine a few frames can wait for the processor behind other tests' geometry work.
 #[test]
 fn assembly_drag_frame_time_stays_within_budget() {
     use std::time::Instant;
+    let _quiet = crate::tests::timing_lock();
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
     let mut d = Driver::new(vec2(1440.0, 900.0));
     wb.open(&pivot("timing")).unwrap();
@@ -279,13 +283,17 @@ fn assembly_drag_frame_time_stays_within_budget() {
     let from = on_screen(&wb, Vec3::new(40.0, 20.0, 20.0));
     d.frame(&mut wb, vec![egui::Event::PointerMoved(from)]);
     d.frame(&mut wb, vec![Driver::button(from, egui::PointerButton::Primary, true)]);
-    let t = Instant::now();
-    for i in 0..60 {
-        d.frame(&mut wb, vec![egui::Event::PointerMoved(from + vec2(i as f32 * 2.0, i as f32))]);
-    }
-    let ms = t.elapsed().as_secs_f64() * 1000.0 / 60.0;
+    let mut frames: Vec<f64> = (0..60)
+        .map(|i| {
+            let t = Instant::now();
+            d.frame(&mut wb, vec![egui::Event::PointerMoved(from + vec2(i as f32 * 2.0, i as f32))]);
+            t.elapsed().as_secs_f64() * 1000.0
+        })
+        .collect();
     d.frame(&mut wb, vec![Driver::button(from + vec2(120.0, 60.0), egui::PointerButton::Primary, false)]);
-    println!("dragging a component of a 5-component assembly: {ms:.2} ms per frame");
+    frames.sort_by(f64::total_cmp);
+    let (median, p90, mean) = (frames[30], frames[54], frames.iter().sum::<f64>() / 60.0);
+    println!("dragging a component of a 5-component assembly: median {median:.2} ms, 90th percentile {p90:.2} ms, mean {mean:.2} ms per frame");
     assert!(placement(&wb, 5).origin().x > 31.0, "the block moved");
-    assert!(ms < 16.0, "over the 16 ms frame budget: {ms:.2} ms");
+    assert!(median < 16.0, "over the 16 ms frame budget: median {median:.2} ms (90th percentile {p90:.2} ms)");
 }

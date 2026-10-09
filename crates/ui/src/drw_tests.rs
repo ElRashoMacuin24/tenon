@@ -64,6 +64,7 @@ fn tool(wb: &Workbench) -> Option<DrwTool> {
 
 #[test]
 fn views_and_dimensions_are_placed_by_clicking_on_the_sheet() {
+    let _quiet = crate::tests::timing_lock();
     let dir = m4("place");
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
     let mut d = Driver::new(vec2(1400.0, 860.0));
@@ -167,6 +168,7 @@ fn views_and_dimensions_are_placed_by_clicking_on_the_sheet() {
 
 #[test]
 fn models_edited_from_the_drawing_update_it() {
+    let _quiet = crate::tests::timing_lock();
     let dir = m4("edit");
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
     let mut d = Driver::new(vec2(1400.0, 860.0));
@@ -248,6 +250,7 @@ fn models_edited_from_the_drawing_update_it() {
 
 #[test]
 fn views_are_computed_on_the_geometry_thread() {
+    let _quiet = crate::tests::timing_lock();
     let dir = m4("worker");
     let mut wb = Workbench::new(|| Box::new(OcctKernel::new()), None, crate::Services::default());
     let mut d = Driver::new(vec2(1400.0, 860.0));
@@ -279,6 +282,7 @@ fn views_are_computed_on_the_geometry_thread() {
 
 #[test]
 fn tables_balloons_and_text_through_the_tools() {
+    let _quiet = crate::tests::timing_lock();
     let dir = m4("tables");
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
     let mut d = Driver::new(vec2(1400.0, 860.0));

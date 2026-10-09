@@ -145,6 +145,15 @@ fn sketch_extrude_and_sketch_on_the_top_face_through_the_ui() {
     }
 }
 
+/// Held by the frame-time tests and by tests with heavy geometry work, so the timings measure the
+/// workbench and not other tests competing for the processor.
+pub(crate) static TIMING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Takes [`TIMING`] (a test that panicked while holding it does not poison it for the rest).
+pub(crate) fn timing_lock() -> std::sync::MutexGuard<'static, ()> {
+    TIMING.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Feeds raw pointer events through egui, frame by frame, as the windowing layer would.
 pub(crate) struct Driver {
     pub(crate) ctx: egui::Context,
@@ -973,6 +982,7 @@ fn end_of_part_and_features_are_dragged_in_the_browser() {
 #[test]
 fn frame_time_stays_within_budget() {
     use std::time::Instant;
+    let _quiet = timing_lock();
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
     let mut d = Driver::new(vec2(1440.0, 900.0));
     wb.create_sketch(json!({ "plane": "xy" })).unwrap();
