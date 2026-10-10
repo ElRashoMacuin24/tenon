@@ -46,7 +46,7 @@ pub fn placed_parts(
     let mut out = Vec::new();
     for c in asm.components.iter().filter(|c| c.visible) {
         let bbox = local_bbox(parts, c);
-        let part = parts.get_mut(&c.part).ok_or_else(|| format!("{}: the part is not loaded", c.name))?;
+        let part = parts.get_mut(&c.key()).ok_or_else(|| format!("{}: the part is not loaded", c.name))?;
         if let Some(why) = &part.missing {
             return Err(format!("{} is missing: {why}", c.name));
         }

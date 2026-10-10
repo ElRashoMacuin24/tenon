@@ -9,8 +9,9 @@ tools and find the free ones rough. It wins on reliability, coherence and speed,
 count: when two tasks compete, the one that makes existing features more dependable and pleasant
 goes first.
 
-Current milestone: **M6 part feature breadth**, started 2026-10-09 and complete on 2026-10-10,
-awaiting the owner's confirmation. It brought:
+Current milestone: **M7 standard parts and maker workflow**, started 2026-10-10.
+
+**M6 part feature breadth** was confirmed by the owner on 2026-10-10 (DEC-046). It brought:
 - sweep, coil and loft;
 - draft, split and combine;
 - threads, cosmetic or cut into the part, and tapered extrusions;
@@ -21,11 +22,13 @@ awaiting the owner's confirmation. It brought:
   dimensions drawn and placed as dimensions (DEC-041), and a first round of closer matching to
   Inventor's workflow, tracked in [docs/inventor-fidelity.md](docs/inventor-fidelity.md)
   (DEC-042);
-- the example [examples/m6-fittings](examples/m6-fittings).
+- the example [examples/m6-fittings](examples/m6-fittings);
+- after the owner handed over the decisions left open in the M6 report: sketch curves that
+  cross divide a profile into regions that are clicked apart (DEC-046), driven dimensions
+  (DEC-047), and assembly components in a named size of their part (DEC-048).
 
 M5 reliability and project format was confirmed by the owner on 2026-10-09.
 
-Next: M7 standard parts and maker workflow, after the owner confirms M6.
 
 ## M0 foundations
 
@@ -221,6 +224,9 @@ feature types join format version 2 (DEC-035).
 | Design tables (one part in several sizes) | done | DEC-044. Columns are parameters, rows are named sizes, the active row is the part. Model: `a_design_table_holds_the_sizes_of_one_part` (made from the part as it stands; a row added and made active resizes the part, and undo returns; the active row follows edits made anywhere; a value set in another row waits there; rows renamed and removed, but not the active one; a renamed parameter keeps its column; one that starts to follow an equation, or whose feature is deleted, leaves the table and undo brings it back; twelve refusals in plain words). In the app, by real input: `a_design_table_is_made_from_ticked_parameters_and_its_rows_resize_the_part` (parameters ticked, Create Table, Add Row, cells typed, a row ticked and the part resizes, "wide" and -5 refused, Delete Table). Storage: `material_appearance_and_design_table_are_written_as_text_and_read_back` (`[table]`; the diff names the active row and each changed size; a table naming a missing parameter, a short row, two rows of one name or a missing active row refused as damaged; a file edited so the active row disagrees with the part is read with the part's values). Gap: columns are parameters only (no suppressed features, no material per row); an assembly uses a part at its active row (a component cannot name a row yet: a file-format question for the owner); no file per row |
 | An example of every M6 feature | done | [examples/m6-fittings](examples/m6-fittings): a spring (coil, design table), a bolt (cosmetic then cut thread, design table), a handle (sweep, appearance) and a nozzle (draft, loft, tapered extrusion, split, combine), each with a material, and their assembly with its parts list. Volumes and masses are checked against analytic values as the script runs (DEC-045: `within` for the two the kernel approximates). `the_m6_demo_script_builds_four_verified_fittings_and_weighs_their_assembly`, `the_checked_in_m6_example_is_what_the_script_writes` |
 | An assembly opens fitted to all of its parts | done | found while making the M6 example: the view was fitted to the first part to regenerate. `a_newly_opened_assembly_is_fitted_again_as_its_parts_arrive` (DEC-045) |
+| Curves that cross divide a sketch into regions; regions side by side make one profile | done | DEC-046. Lines, arcs and circles divide one another where they cross, touch or end on one another. Sketch: `a_line_through_a_circle_gives_two_halves_and_both_together_the_circle`, `a_rectangle_divided_by_a_line_resting_on_its_sides`, `overlapping_circles_give_a_lens_and_two_crescents`, `touching_curves_meet_at_one_place_and_leave_no_sliver`, `regions_alike_in_curves_and_sides_are_counted_along_a_curve`, `a_plain_key_keeps_its_holes_and_splines_are_not_divided`. Model, with persistent names and the failure: `a_circle_divided_by_a_line_is_used_whole_or_by_halves` (half the volume, the walls named after circle and line, a fillet that holds when the circle grows, the dividing line deleted says the region is gone), `a_plate_divided_by_a_line_keeps_its_plain_keys_and_its_holes` (keys written before stay good; the divider dragged and the half follows). File: `a_region_of_a_divided_sketch_is_named_by_side_in_the_file`. By real clicks: `a_line_through_a_circle_divides_it_into_halves_that_are_clicked_apart` (the hovered half is outlined; Revolve takes the line as its axis). Gap: splines do not divide or get divided midway |
+| Driven dimensions | done | DEC-047. Sketch: `a_driven_dimension_follows_the_sketch_and_holds_nothing` (it reads what the sketch measures, leaves its freedom alone, changes places with a driving one). Model: `a_driven_dimension_is_taken_where_one_more_would_be_too_many_and_equations_read_it` (refused as driving with what to do instead; "auto"; a name equations read, through a chain of parameters, in one edit; cannot be set by value, equation or table; a dimension of the same sketch may not follow it). File: `a_driven_dimension_says_so_on_its_own_record`. By real input: `a_dimension_too_many_is_put_down_driven_and_a_click_changes_driven_and_driving` (no value box; "(40)"; the Driven Dimension tool; the Parameters dialog shows "driven"). Gap: the Format button does not act on dimensions selected beforehand |
+| Assembly components in a named size of their part (a row of its design table) | done | DEC-048. `components_of_one_part_file_come_in_the_sizes_of_its_design_table` (three pins from one file in two sizes: volume, mass, an item per size in the parts list; a size changed and undone; a size the part has not is refused naming those it has; the part edited in place and every size follows; saved as one field per component and no file per size; a drawing view and its parts list; a row the part lost shows that component missing). In the app: `a_component_is_shown_in_its_size_and_changes_size_from_the_browser` (the browser names the size; right-click, Size, a row). Gap: the size is not asked for when a part is placed from the Place dialog |
 
 ## M7 standard parts and maker workflow
 

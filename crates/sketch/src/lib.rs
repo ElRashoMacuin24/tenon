@@ -20,7 +20,7 @@ mod tools;
 
 pub use constraint::Constraint;
 pub use entity::{ConstraintId, Entity, EntityId, Geometry, PointRef};
-pub use profile::{SketchRegion, default_regions, profile, regions};
+pub use profile::{Piece, RegionKey, SketchRegion, default_regions, find, key_of, outlines, profile, regions};
 pub use sketch::{MAX_CONSTRAINTS, MAX_ENTITIES, Sketch, SketchError, SketchResult};
 pub use solve::{Dof, GaussNewton, SketchSolver, SolveOptions};
 

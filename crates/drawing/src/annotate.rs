@@ -505,8 +505,8 @@ pub fn parts_rows(m: &ModelGeometry) -> Vec<PartsRow> {
 
 /// The item number of a component in its model's parts list.
 pub fn item_of(m: &ModelGeometry, component: ComponentId) -> Option<usize> {
-    let part = &m.assembly.as_ref()?.component(component)?.part;
-    parts_rows(m).iter().find(|r| &r.part == part).map(|r| r.item)
+    let part = m.assembly.as_ref()?.component(component)?.key();
+    parts_rows(m).iter().find(|r| r.part == part).map(|r| r.item)
 }
 
 /// A table: rows of cells, column widths, top-left at `at`, header first.

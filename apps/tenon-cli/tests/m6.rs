@@ -111,3 +111,121 @@ fn the_checked_in_m6_example_is_what_the_script_writes() {
     let d = tenon_io::diff::diff_files(&example.join("spring.tenon"), &dir.join("spring-stiff.tenon")).unwrap();
     assert!(d.text().contains("active row  Soft -> Stiff"), "{}", d.text());
 }
+
+/// A part file in `dir`: a pin of diameter 8 whose length (the extrusion's distance, `d0`) comes
+/// in three sizes from a design table.
+fn sized_pin(dir: &std::path::Path) {
+    let mut e = Engine::new(kernel(), dir);
+    e.exec("file.new", &json!({ "name": "Pin" })).unwrap();
+    let sk = e.exec("sketch.create", &json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    e.exec("sketch.circle", &json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 4 })).unwrap();
+    e.exec("model.extrude", &json!({ "sketch": sk, "distance": 20 })).unwrap();
+    e.exec("document.material", &json!({ "name": "Steel, mild" })).unwrap();
+    e.exec("table.create", &json!({ "columns": ["d0"], "row": "8x20" })).unwrap();
+    e.exec("table.add_row", &json!({ "name": "8x30", "values": { "d0": 30 } })).unwrap();
+    e.exec("table.add_row", &json!({ "name": "8x50", "values": { "d0": 50 } })).unwrap();
+    e.exec("file.save", &json!({ "path": "pin.tenon" })).unwrap();
+}
+
+#[test]
+fn components_of_one_part_file_come_in_the_sizes_of_its_design_table() {
+    let dir = scratch("sizes");
+    sized_pin(&dir);
+    let mut e = Engine::new(kernel(), &dir);
+    e.exec("asm.new", &json!({ "name": "Pins" })).unwrap();
+    // The part as its file has it (20 long), then two more of it in other sizes.
+    let a = e.exec("asm.insert", &json!({ "path": "pin.tenon" })).unwrap();
+    let b = e.exec("asm.insert", &json!({ "path": "pin.tenon", "at": [20, 0, 0], "row": "8x50" })).unwrap();
+    let c = e.exec("asm.insert", &json!({ "path": "pin.tenon", "at": [40, 0, 0], "row": "8x50" })).unwrap();
+    assert_eq!((a["row"].is_null(), b["row"].as_str(), c["row"].as_str()), (true, Some("8x50"), Some("8x50")));
+    let per_mm = PI * 16.0;
+    let mass = e.exec("asm.mass", &json!({})).unwrap();
+    assert!(near(mass["volume"].as_f64().unwrap(), per_mm * (20.0 + 50.0 + 50.0), 1e-9), "{mass}");
+    assert!(near(mass["mass"].as_f64().unwrap(), per_mm * 120.0 * 7.85 / 1000.0, 1e-9), "{mass}");
+    // The parts list has an item for each size, named with it.
+    let bom = e.exec("asm.bom", &json!({})).unwrap();
+    let rows = bom["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{bom}");
+    assert_eq!((rows[0]["part"].as_str(), rows[0]["name"].as_str(), rows[0]["quantity"].as_u64()), (Some("pin"), Some("Pin"), Some(1)));
+    assert_eq!((rows[1]["part"].as_str(), rows[1]["name"].as_str(), rows[1]["quantity"].as_u64()), (Some("pin (8x50)"), Some("Pin, 8x50"), Some(2)));
+    assert!(near(rows[1]["volume"].as_f64().unwrap(), per_mm * 50.0, 1e-9) && rows[1]["material"] == "Steel, mild", "{bom}");
+    let tree = e.exec("asm.tree", &json!({})).unwrap();
+    assert_eq!(tree["components"][1]["row"], "8x50");
+    assert!(tree["components"][0]["row"].is_null() && tree["components"][1]["missing"].is_null(), "{tree}");
+
+    // A component changes size: the third one becomes 30 long; the first takes a size too.
+    let r = e.exec("asm.set_row", &json!({ "component": c["component"], "row": "8x30" })).unwrap();
+    assert_eq!(r["rows"], json!(["8x20", "8x30", "8x50"]));
+    let mass = e.exec("asm.mass", &json!({})).unwrap();
+    assert!(near(mass["volume"].as_f64().unwrap(), per_mm * (20.0 + 50.0 + 30.0), 1e-9), "{mass}");
+    assert_eq!(e.exec("asm.bom", &json!({})).unwrap()["parts"], 3);
+    // Undo puts it back; a size the part does not have is refused, saying which it has.
+    e.exec("asm.undo", &json!({})).unwrap();
+    let mass = e.exec("asm.mass", &json!({})).unwrap();
+    assert!(near(mass["volume"].as_f64().unwrap(), per_mm * 120.0, 1e-9), "{mass}");
+    let err = e.exec("asm.set_row", &json!({ "component": c["component"], "row": "8x99" })).unwrap_err();
+    assert!(err.contains("no row `8x99`") && err.contains("8x20, 8x30, 8x50"), "{err}");
+    let err = e.exec("asm.insert", &json!({ "path": "pin.tenon", "row": "long" })).unwrap_err();
+    assert!(err.contains("no row `long`"), "{err}");
+
+    // The part edited in place: every size follows (the pin is made thicker; each keeps its length).
+    let info = e.exec("asm.edit_part", &json!({ "component": a["component"], "run": "sketch.info", "with": { "sketch": 1 } })).unwrap();
+    let ring = info["result"]["entities"].as_array().unwrap().iter().find(|x| x["type"] == "circle").unwrap()["id"].clone();
+    e.exec("asm.edit_part", &json!({ "component": a["component"], "run": "sketch.constrain", "with": { "sketch": 1, "constraint": { "type": "radius", "curve": ring, "value": 5.0 } } }))
+        .unwrap();
+    let mass = e.exec("asm.mass", &json!({})).unwrap();
+    assert!(near(mass["volume"].as_f64().unwrap(), PI * 25.0 * 120.0, 1e-9), "{mass}");
+
+    // Saved and opened again: the sizes are in the assembly file, one field on each component,
+    // and no file is written for a size.
+    e.exec("asm.save", &json!({ "path": "pins.tenonasm" })).unwrap();
+    let text = std::fs::read_to_string(dir.join("pins.tenonasm")).unwrap();
+    assert_eq!(text.matches("row = \"8x50\"").count(), 2, "{text}");
+    assert_eq!(text.matches("row = ").count(), 2, "the component as its file has it says nothing: {text}");
+    let files: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|f| f.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(files.len(), 2, "{files:?}");
+    let mut again = Engine::new(kernel(), &dir);
+    let opened = again.exec("asm.open", &json!({ "path": "pins.tenonasm" })).unwrap();
+    assert_eq!(opened["missing"].as_array().map(Vec::len), Some(0), "{opened}");
+    let mass = again.exec("asm.mass", &json!({})).unwrap();
+    assert!(near(mass["volume"].as_f64().unwrap(), PI * 25.0 * 120.0, 1e-9), "{mass}");
+
+    // A drawing of the assembly: the front view shows each pin at its own length (the tallest is
+    // 50), and the parts list has the assembly's items, a size each.
+    again.exec("drw.new", &json!({ "name": "Pins" })).unwrap();
+    let front = again.exec("drw.view.base", &json!({ "model": "pins.tenonasm", "orientation": "front", "scale": 1, "at": [100, 100] })).unwrap();
+    again.exec("drw.parts_list", &json!({ "view": front["view"] })).unwrap();
+    let info = again.exec("drw.info", &json!({})).unwrap();
+    let view = &info["views"][0];
+    assert!(view["error"].is_null(), "{view}");
+    let list = info["annotations"].as_array().unwrap().iter().find(|a| a["rows"].is_array()).unwrap_or_else(|| panic!("no parts list: {info}"));
+    let rows = list["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{list}");
+    assert_eq!((rows[0]["quantity"].as_u64(), rows[0]["part_number"].as_str(), rows[0]["description"].as_str()), (Some(1), Some("pin"), Some("Pin")));
+    assert_eq!(
+        (rows[1]["quantity"].as_u64(), rows[1]["part_number"].as_str(), rows[1]["description"].as_str()),
+        (Some(2), Some("pin (8x50)"), Some("Pin, 8x50"))
+    );
+    again.exec("drw.export.dxf", &json!({ "path": "pins.dxf" })).unwrap();
+    let tags = tenon_dxf::parse(&std::fs::read(dir.join("pins.dxf")).unwrap()).unwrap();
+    let entities = tenon_dxf::sections(&tags).into_iter().find(|s| s.name == "ENTITIES").unwrap();
+    let ys: Vec<f64> = tenon_dxf::records(&entities.tags)
+        .iter()
+        .filter(|(k, r)| k == "LINE" && r.iter().any(|t| t.code == 8 && t.str() == "VISIBLE"))
+        .flat_map(|(_, r)| r.iter().filter(|t| t.code == 20 || t.code == 21).map(tenon_dxf::Tag::f64).collect::<Vec<_>>())
+        .collect();
+    let (lo, hi) = ys.iter().fold((f64::MAX, f64::MIN), |(lo, hi), y| (lo.min(*y), hi.max(*y)));
+    assert!(near(hi - lo, 50.0, 1e-6), "the view is as tall as the longest pin: {lo} to {hi}");
+    std::fs::remove_file(dir.join("pins.dxf")).unwrap();
+
+    // A row that the part no longer has: the component says so, the others are there.
+    let pin = std::fs::read_to_string(dir.join("pin.tenon")).unwrap();
+    std::fs::write(dir.join("pin.tenon"), pin.replace("name = \"8x50\"", "name = \"8x55\"")).unwrap();
+    let mut gone = Engine::new(kernel(), &dir);
+    let opened = gone.exec("asm.open", &json!({ "path": "pins.tenonasm" })).unwrap();
+    let missing = opened["missing"].as_array().unwrap();
+    assert_eq!(missing.len(), 1, "{opened}");
+    assert!(missing[0].as_str().unwrap().contains("cannot be had at row `8x50`"), "{opened}");
+    let tree = gone.exec("asm.tree", &json!({})).unwrap();
+    assert!(tree["components"][0]["missing"].is_null() && tree["components"][1]["missing"].is_string(), "{tree}");
+}

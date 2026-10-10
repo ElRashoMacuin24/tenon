@@ -68,6 +68,10 @@ pub struct Sketch {
     /// without one is drawn beside its geometry.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "as_pairs")]
     places: BTreeMap<ConstraintId, Vec2>,
+    /// Dimensions that follow the sketch instead of driving it (drawn in parentheses). The
+    /// solver leaves them out; their values are measured again after every change.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    driven: BTreeSet<ConstraintId>,
 }
 
 impl Sketch {
@@ -435,6 +439,24 @@ impl Sketch {
 
     /// Checks that a constraint's references have the right types and its value is sane.
     pub fn check_constraint(&self, c: &Constraint) -> SketchResult<()> {
+        self.check_kinds(c)?;
+        use Constraint::*;
+        if let Some(v) = c.value() {
+            let fine = match c {
+                Angle { .. } => v.is_finite() && v > 0.0 && v < std::f64::consts::TAU,
+                HorizontalDistance { .. } | VerticalDistance { .. } => tol::is_valid_coord(v),
+                Distance { .. } => v.is_finite() && (0.0..=tol::MAX_SIZE).contains(&v),
+                _ => tol::is_valid_size(v),
+            };
+            if !fine {
+                return Err(invalid(format!("{} value {v} is out of range", c.name())));
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks that a constraint's references exist and have the right types.
+    pub fn check_kinds(&self, c: &Constraint) -> SketchResult<()> {
         use Constraint::*;
         for r in c.refs() {
             if self.entity(r).is_none() {
@@ -462,18 +484,57 @@ impl Sketch {
         if !ok {
             return Err(invalid(format!("{} cannot apply to these entities", c.name())));
         }
-        if let Some(v) = c.value() {
-            let fine = match c {
-                Angle { .. } => v.is_finite() && v > 0.0 && v < std::f64::consts::TAU,
-                HorizontalDistance { .. } | VerticalDistance { .. } => tol::is_valid_coord(v),
-                Distance { .. } => v.is_finite() && (0.0..=tol::MAX_SIZE).contains(&v),
-                _ => tol::is_valid_size(v),
-            };
-            if !fine {
-                return Err(invalid(format!("{} value {v} is out of range", c.name())));
+        Ok(())
+    }
+
+    /// Dimension `id` follows the sketch instead of driving it.
+    pub fn is_driven(&self, id: ConstraintId) -> bool {
+        self.driven.contains(&id)
+    }
+
+    /// The driven dimensions.
+    pub fn driven(&self) -> impl Iterator<Item = ConstraintId> + '_ {
+        self.driven.iter().copied()
+    }
+
+    /// Adds a dimension that follows the sketch: it shows a size without setting it, so it can
+    /// be put where a driving dimension would be redundant. Its value is measured, whatever `c`
+    /// holds.
+    pub fn add_driven(&mut self, mut c: Constraint) -> SketchResult<ConstraintId> {
+        if !c.is_dimensional() {
+            return Err(invalid(format!("{} is not a dimension, so it cannot be driven", c.name())));
+        }
+        self.check_kinds(&c)?;
+        let v = self.measure(&c).filter(|v| v.is_finite()).ok_or_else(|| invalid(format!("{} cannot be measured here", c.name())))?;
+        c.set_value(v);
+        if self.constraints.len() >= MAX_CONSTRAINTS {
+            return Err(SketchError::TooMany);
+        }
+        self.next_constraint = self.next_constraint.checked_add(1).ok_or(SketchError::TooMany)?;
+        let id = ConstraintId(self.next_constraint);
+        self.constraints.insert(id, c);
+        self.driven.insert(id);
+        Ok(id)
+    }
+
+    /// Marks dimension `id` as driven without checking anything (see `set_driven` in `solve.rs`).
+    pub(crate) fn mark_driven(&mut self, id: ConstraintId, driven: bool) {
+        if driven {
+            self.driven.insert(id);
+        } else {
+            self.driven.remove(&id);
+        }
+    }
+
+    /// Measures every driven dimension again.
+    pub fn refresh_driven(&mut self) {
+        let ids: Vec<ConstraintId> = self.driven.iter().copied().collect();
+        for id in ids {
+            let measured = self.constraints.get(&id).and_then(|c| self.measure(c)).filter(|v| v.is_finite());
+            if let (Some(v), Some(c)) = (measured, self.constraints.get_mut(&id)) {
+                c.set_value(v);
             }
         }
-        Ok(())
     }
 
     /// Adds a constraint without solving (the geometry is assumed to satisfy it).
@@ -490,6 +551,7 @@ impl Sketch {
 
     pub fn remove_constraint(&mut self, id: ConstraintId) -> SketchResult<Constraint> {
         self.places.remove(&id);
+        self.driven.remove(&id);
         self.constraints.remove(&id).ok_or(SketchError::NoConstraint(id))
     }
 
@@ -516,10 +578,11 @@ impl Sketch {
         }
     }
 
-    /// Forgets the places of dimensions that are gone.
+    /// Forgets the places (and the driven marks) of dimensions that are gone.
     fn drop_stale_places(&mut self) {
         let constraints = &self.constraints;
         self.places.retain(|id, _| constraints.contains_key(id));
+        self.driven.retain(|id| constraints.contains_key(id));
     }
 
     // ---- deleting ---------------------------------------------------------------------------
@@ -579,7 +642,25 @@ impl Sketch {
             if id.0 > self.next_constraint {
                 return Err(invalid(format!("{id} is beyond the id counter")));
             }
-            self.check_constraint(c).map_err(|e| invalid(format!("{id}: {e}")))?;
+            // (A driven dimension reads whatever the sketch measures: only its number must be one.)
+            if self.driven.contains(id) {
+                self.check_kinds(c).map_err(|e| invalid(format!("{id}: {e}")))?;
+                if !c.is_dimensional() {
+                    return Err(invalid(format!("{id} is marked driven but is not a dimension")));
+                }
+                if !c.value().is_some_and(f64::is_finite) {
+                    return Err(invalid(format!("{id} is a driven dimension without a finite value")));
+                }
+            } else {
+                self.check_constraint(c).map_err(|e| invalid(format!("{id}: {e}")))?;
+            }
+        }
+        for id in &self.driven {
+            match self.constraints.get(id) {
+                Some(c) if c.is_dimensional() => {}
+                Some(_) => return Err(invalid(format!("{id} is marked driven but is not a dimension"))),
+                None => return Err(invalid(format!("{id} is marked driven but does not exist"))),
+            }
         }
         for (id, at) in &self.places {
             match self.constraints.get(id) {

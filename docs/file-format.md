@@ -232,9 +232,20 @@ Field values:
 - **An axis** (patterns, work features): `{ origin = "X" }`, `{ edge = <edge reference> }`,
   `{ face = <face reference> }` (a cylinder's axis) or `{ work = <id> }`.
 - **A direction:** `{ origin = "X" }`, `{ edge = <edge reference> }` or `{ work = <id> }`.
-- **`regions`:**
-  - `"default"`: every region at even nesting depth; or
-  - `{ keys = [[curve ids], ...] }`: each key is the sorted ids of a region's outer boundary.
+- **`regions`:** the closed regions of the sketch the feature is made from. Lines, arcs and
+  circles that cross or touch divide one another, so a line through a circle gives two regions.
+  Regions side by side are used as one: the curve between them leaves no face.
+  - `"default"`: every region at even nesting depth (a plate with its holes, but not the discs
+    in the holes); or
+  - `{ keys = [<key>, ...] }`, each key one of:
+    - `[<curve ids>]`: what those curves enclose on their own, whole, however other curves
+      divide it. This is the only form written for a region no other curve divides, and the
+      only form before DEC-046;
+    - `{ left = [<curve ids>], right = [<curve ids>], nth = <n> }`: one region of a divided
+      sketch, by the side of each curve of its outer boundary it lies on. A curve runs from its
+      start to its end; a circle or arc runs counter-clockwise, so its left is its inside.
+      `nth` (left out when 0) tells apart regions with the same curves on the same sides,
+      counted along the lowest-numbered curve. An empty list is left out.
 - **Extrusion `extent`:**
   - `{ distance = d }`
   - `{ symmetric = d }`
@@ -295,6 +306,10 @@ Every entity also has `construction`.
   A dimension placed by hand also has `at = { x, y }`: where its value is shown in the sketch
   (its dimension line runs through there). Without it, the dimension is drawn beside its
   geometry. Moving a dimension changes only this field.
+
+  A driven dimension has `driven = true` (DEC-047). It follows the sketch instead of setting
+  it: the solver leaves it out, and its `value` is what the sketch measures, written like any
+  computed number. It has a parameter name, which equations may read but nothing may set.
 
 Point positions are where the solver left them; they are rounded on writing (see
 [Text files](#text-files)).
@@ -383,6 +398,10 @@ Implemented in `crates/io/src/asm.rs` and `crates/assembly/src/model.rs`; tested
   - It is solved, so it is rounded on writing.
   - A frame that is not orthonormal (to 1e-6) or has coordinates beyond 1 km is refused.
 - **`name`** is the part file's name and an occurrence number.
+- **`row`** (optional, DEC-048) names a row of the part's design table: the component is the
+  part in that size, whatever row the part file itself is at. Components of one part file may
+  name different rows. Nothing is written for a size: it is worked out from the part file each
+  time. A row the part no longer has is reported and the component shown as missing.
 - **Relationship `type`:**
   - `mate`, `flush` (`offset`);
   - `angle` (`angle` in radians, `reference`: a unit vector in A's part coordinates);
@@ -627,7 +646,9 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   it without a bump (DEC-029, DEC-035): files without them are unchanged, and a build that does
   not know a type refuses the file naming the record. Version 2 has gained the M6 feature types
   this way (`sweep`, `coil`, `loft`, `draft`, `split`, `combine`, `thread`), the optional
-  `taper` of an extrusion, the optional `at` of a sketch dimension, and a part's optional
+  `taper` of an extrusion, the optional `at` and `driven` of a sketch dimension, region keys by
+  side (`{ left, right, nth }`) beside the lists of curves they were, the optional `row` of an
+  assembly component, and a part's optional
   `appearance`, `[material]` and `[table]`.
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.

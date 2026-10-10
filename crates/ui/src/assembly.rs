@@ -216,7 +216,7 @@ fn placed_info(info: &FaceInfo, x: &Rigid) -> FaceInfo {
 pub(crate) fn arrived(asm: &Assembly, parts: &asm_session::Parts) -> (usize, bool) {
     let visible = || asm.components.iter().filter(|c| c.visible);
     let have = visible().filter(|c| asm_session::scene_of(parts, c).is_some()).count();
-    let can = visible().filter(|c| parts.get(&c.part).is_some_and(|p| p.missing.is_none())).count();
+    let can = visible().filter(|c| parts.get(&c.key()).is_some_and(|p| p.missing.is_none())).count();
     (have, have >= can)
 }
 
@@ -362,9 +362,11 @@ impl Workbench {
     /// Opens an assembly file and the part files it uses.
     pub fn open_assembly(&mut self, path: &Path) -> Result<(), String> {
         let (asm, parts) = tenon_io::asm::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
-        let missing: Vec<String> = parts.values().filter_map(|p| p.missing.clone()).collect();
         let mut s = AsmSession::default();
         s.replace(asm, parts);
+        // (After the parts in a row of their design tables are worked out: one of those may be
+        // what cannot be had.)
+        let missing: Vec<String> = s.parts.values().filter_map(|p| p.missing.clone()).collect();
         self.leave_drawing();
         self.enter_assembly(AsmDoc::new(s, Some(path.to_path_buf())));
         match missing.first() {
@@ -411,6 +413,11 @@ impl Workbench {
     pub(crate) fn sync_assembly(&mut self) {
         let Some(a) = self.asm.as_mut() else { return };
         let editing = a.editing.as_ref().map(|e| e.key.clone());
+        // Parts in a row of their design table follow their part file's document. (Not while
+        // that is being edited in place: it is the workbench's own document then.)
+        if editing.is_none() {
+            a.session.sync_variants();
+        }
         match &mut self.geo {
             Geo::Sync(k) => {
                 // The part being edited in place is regenerated as the workbench's own document.
@@ -474,8 +481,9 @@ impl Workbench {
         if let Some(p) = a.session.parts.get_mut(&key)
             && p.session.revision() == revision
         {
-            if p.scene.is_some() {
-                // The part changed after it was first shown: the relationships may need solving.
+            if p.scene.is_some() || p.variant.is_some() {
+                // The part changed after it was first shown, or a component has just been given
+                // this size of it: the relationships may need solving.
                 a.needs_update = true;
             }
             p.scene = Some((revision, Arc::new(scene)));
@@ -508,8 +516,8 @@ impl Workbench {
         let mut keys: Vec<(ComponentId, u64)> = Vec::new();
         for c in asm.components.iter().filter(|c| c.visible) {
             let mut ch = std::collections::hash_map::DefaultHasher::new();
-            c.part.hash(&mut ch);
-            let scene = a.session.parts.get(&c.part).and_then(|p| p.scene.as_ref());
+            c.key().hash(&mut ch);
+            let scene = a.session.parts.get(&c.key()).and_then(|p| p.scene.as_ref());
             scene.map(|(r, s)| (*r, Arc::as_ptr(s) as usize)).hash(&mut ch);
             if let Some(f) = frames.get(&c.id) {
                 hash_frame(f, &mut ch);
@@ -1294,7 +1302,7 @@ fn slot_items(a: &AsmDoc) -> Vec<SlotItem> {
         .components
         .iter()
         .filter(|c| c.visible)
-        .filter_map(|c| a.slots.get(&c.part).map(|(slot, _)| (c.id, *slot, c.placement, asm_session::local_bbox(&a.session.parts, c))))
+        .filter_map(|c| a.slots.get(&c.key()).map(|(slot, _)| (c.id, *slot, c.placement, asm_session::local_bbox(&a.session.parts, c))))
         .collect()
 }
 

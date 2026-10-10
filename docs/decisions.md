@@ -747,3 +747,93 @@ beside the part (a second file, and not compared or merged with the part).
 - **The M6 example** is four small parts rather than one: no single part uses a coil, a thread,
   a sweep and a drafted, lofted, split body sensibly, and four parts with four materials also
   show the assembly's parts list (examples/m6-fittings).
+
+## DEC-046 The owner confirms M6 and hands over the open decisions (2026-10-10)
+
+The M6 report ended with four decisions for the owner. The answer: "Do what you feel
+necessary, let's keep moving forward." M6 is confirmed, and the four are settled here:
+
+1. **Format version 2 grows without a version bump** (DEC-035 stands). Every addition so far
+   is optional: a file without it is byte for byte what it was.
+2. **`model.mass` in grams from g/cm^3** (DEC-043 stands).
+3. **An assembly component may name a design table row.** Done: DEC-048.
+4. **Curves that cross divide a sketch into regions.** Done: the rest of this decision.
+
+Driven dimensions, next on the list in [inventor-fidelity.md](inventor-fidelity.md), followed
+with DEC-047.
+
+**Regions from crossing curves.** A sketch's closed regions were traced along whole curves
+joined at their end points, so a line drawn through a circle divided nothing. Now lines, arcs
+and circles divide one another where they cross, where they touch, and where one ends on
+another; each bounded face of that arrangement is a region that can be clicked.
+
+- **Side by side is one profile.** A feature made from several regions uses their union: a
+  piece of curve with a chosen region on both sides is inside the profile and left out, and
+  pieces of one curve that follow one another are one curve again. Both halves of a divided
+  circle extrude to one cylinder with one round wall, exactly as the undivided circle does. So
+  "nothing picked" (every outer region) gives what it always gave, and existing parts
+  regenerate as they did.
+- **How a region is named in a feature.** A list of curves still means what those curves
+  enclose on their own, whole, however other curves divide it; it is the only form written for
+  a region nothing else divides, so files that had it are unchanged. One region of a divided
+  sketch is named by the side of each curve of its outer boundary it lies on: `{ left, right }`
+  (a curve runs from its start to its end; a circle or arc counter-clockwise, so left is
+  inside). Regions alike in curves and sides (two regions between the same two lines and the
+  same two circles) are counted along the lowest-numbered curve: `nth`. All three survive
+  dimension edits; a region that is gone (its dividing line deleted) makes the feature say so
+  rather than take something else.
+- **Touching is one point.** Curves closer than a micrometre meet at one place, so a circle
+  resting on a line makes no sliver, and faces under 1e-9 mm^2 are not regions.
+- **Splines** join at their ends only. Dividing a spline needs trimmed splines in the kernel's
+  profile type, which it does not have; listed as a gap.
+
+Rejected: naming a region by a point inside it (it does not survive a dimension edit); always
+naming regions by side (every existing file's keys would change).
+
+## DEC-047 Driven dimensions (2026-10-10)
+
+A dimension that would hold a sketch where it is already held was refused as redundant. It can
+now be kept as a driven dimension: it follows the sketch instead of setting it, and reads in
+parentheses, as in Inventor.
+
+- **The solver leaves it out.** Its value is measured again after every change. It is saved as
+  `driven = true` on the dimension's own record.
+- **The Dimension tool decides.** Where a driving dimension would be one too many, the
+  dimension is put down as driven at once and the status bar says why (Inventor can ask first;
+  Tenon follows its option not to). **Driven Dimension** on the Format panel is a tool: click a
+  dimension to change it over. Making a dimension drive again is refused, with the reason,
+  when the sketch is held without it.
+- **It is a parameter that is read, never set.** It has a name like any dimension; equations
+  may use it (a block as high as half its base's diagonal), and it cannot be given a value, an
+  equation or a design table column. Equations are evaluated in dependency order as before; a
+  driven dimension becomes known once nothing more is to be written into its sketch. A
+  dimension of the same sketch that tried to follow it would chase itself, and is refused in
+  those words.
+
+Rejected: asking before making the dimension driven (a dialog for something that is undone with
+one key); leaving driven dimensions out of the parameters (they are what makes one sketch's
+result usable in the next feature).
+
+## DEC-048 An assembly component may name the size of its part (2026-10-10)
+
+With design tables (DEC-044) a part file holds several sizes, but an assembly could use it
+only at the row the file was saved at. A component may now name a row: `row = "M8x50"` on its
+record in the assembly file.
+
+- **Nothing new is written.** A size is worked out from the part file's document whenever that
+  changes (in memory it is a part of its own, keyed by file and row), so there is one file to
+  edit and the sizes cannot drift from it. Editing the part in place changes every size.
+- **It is a part like any other everywhere else:** geometry, relationships (faces are found by
+  the same names in every size), interference, mass, STEP export, drawing views. The parts
+  list has an item per size, named with it ("Pin, 8x50").
+- **Changing size** is a command (`asm.set_row`), on the component's right-click menu in the
+  browser (Size); `asm.insert` takes a `row`. The relationships are solved again.
+- **A row the part no longer has** (renamed or removed) shows its components as missing and
+  says which row; the rest of the assembly opens.
+
+Not done: choosing the size while placing a part from the Place dialog (it is placed as its
+file has it, then changed); a file per size, for sending one size to someone.
+
+Rejected: a copy of the part file per size (Inventor's members: the copies must be kept in
+step, and a maker's folder fills with files); storing the row's values in the assembly (they
+would go stale when the table changes).

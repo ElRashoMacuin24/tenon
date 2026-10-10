@@ -433,3 +433,86 @@ fn a_newly_opened_assembly_is_fitted_again_as_its_parts_arrive() {
     }
     assert_eq!(crate::assembly::arrived(&asm, &parts), (3, true));
 }
+
+/// An assembly file of three pins from one part file whose length comes in three sizes: the
+/// first as the file has it (20), the others at the row "8x50".
+fn sized_pins(name: &str) -> PathBuf {
+    let dir = scratch(name);
+    let mut s = Session::default();
+    let run = |s: &mut Session, id: &str, p: serde_json::Value| tenon_io::cmd::run(s, id, &p, None).unwrap();
+    run(&mut s, "document.rename", json!({ "name": "Pin" }));
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(&mut s, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 4 }));
+    run(&mut s, "model.extrude", json!({ "sketch": sk, "distance": 20 }));
+    run(&mut s, "table.create", json!({ "columns": ["d0"], "row": "8x20" }));
+    run(&mut s, "table.add_row", json!({ "name": "8x30", "values": { "d0": 30 } }));
+    run(&mut s, "table.add_row", json!({ "name": "8x50", "values": { "d0": 50 } }));
+    tenon_io::project::save(&dir.join("pin.tenon"), s.document(), &serde_json::Map::new()).unwrap();
+    let mut a = tenon_assembly::AsmSession::default();
+    let mut k = OcctKernel::new();
+    let pin = dir.join("pin.tenon").to_string_lossy().into_owned();
+    let mut place = |p: serde_json::Value| tenon_io::asm::run(&mut a, "asm.insert", &p, Some(&mut k)).unwrap();
+    place(json!({ "path": pin }));
+    place(json!({ "path": pin, "at": [20, 0, 0], "row": "8x50" }));
+    place(json!({ "path": pin, "at": [40, 0, 0], "row": "8x50" }));
+    let file = dir.join("pins.tenonasm");
+    tenon_io::asm::run(&mut a, "asm.save", &json!({ "path": file.to_string_lossy() }), None).unwrap();
+    file
+}
+
+#[test]
+fn a_component_is_shown_in_its_size_and_changes_size_from_the_browser() {
+    let path = sized_pins("sizes");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.open(&path).unwrap();
+    d.settle(&mut wb);
+    let per_mm = PI * 16.0;
+    let volume = |wb: &Workbench| wb.scene().bodies.iter().map(|b| b.volume).sum::<f64>();
+    // Three pins: 20, 50 and 50 long. The browser says which are in a size of their own.
+    assert_eq!(wb.scene().bodies.len(), 3);
+    assert!((volume(&wb) - per_mm * 120.0).abs() < 1e-6, "{}", volume(&wb));
+    browser_row(&d, "pin:1");
+    browser_row(&d, "pin:2 (8x50)");
+    let third = browser_row(&d, "pin:3 (8x50)");
+
+    // Right-click the third pin, Size, 8x30: it is 30 long now.
+    let at = third.center();
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(at)]);
+    d.frame(&mut wb, vec![Driver::button(at, egui::PointerButton::Secondary, true)]);
+    d.frame(&mut wb, vec![Driver::button(at, egui::PointerButton::Secondary, false)]);
+    d.frame(&mut wb, vec![]);
+    let size = d.text_pos("Size").expect("the Size menu");
+    d.click(&mut wb, size);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(d.text_pos("As the part file").is_some() && d.text_pos("8x20").is_some(), "{:?}", d.texts());
+    let small = d.text_pos("8x30").expect("the 8x30 row");
+    d.click(&mut wb, small);
+    d.settle(&mut wb);
+    assert!(!wb.status_error, "{}", wb.status());
+    let rows: Vec<Option<String>> = wb.assembly().unwrap().assembly().components.iter().map(|c| c.row.clone()).collect();
+    assert_eq!(rows, [None, Some("8x50".to_owned()), Some("8x30".to_owned())]);
+    assert!((volume(&wb) - per_mm * 100.0).abs() < 1e-6, "{}", volume(&wb));
+    browser_row(&d, "pin:3 (8x30)");
+    // The parts list has an item for each size.
+    let bom = tenon_assembly::session::bom(wb.assembly().unwrap().assembly(), &wb.assembly().unwrap().parts);
+    assert_eq!(bom.iter().map(|r| (r.name.as_str(), r.quantity)).collect::<Vec<_>>(), [("Pin", 1), ("Pin, 8x50", 1), ("Pin, 8x30", 1)]);
+
+    // The part edited in place (the pin made thicker): on return every size has followed.
+    let first = ComponentId(1);
+    wb.asm_exec("asm.edit_part", json!({ "component": first.0, "run": "sketch.info", "with": { "sketch": 1 } })).unwrap();
+    let info = wb.asm_exec("asm.edit_part", json!({ "component": first.0, "run": "sketch.info", "with": { "sketch": 1 } })).unwrap();
+    let ring = info["result"]["entities"].as_array().unwrap().iter().find(|x| x["type"] == "circle").unwrap()["id"].clone();
+    let thicker = json!({ "sketch": 1, "constraint": { "type": "radius", "curve": ring, "value": 5.0 } });
+    wb.asm_exec("asm.edit_part", json!({ "component": first.0, "run": "sketch.constrain", "with": thicker })).unwrap();
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    assert!((volume(&wb) - PI * 25.0 * 100.0).abs() < 1e-6, "{}", volume(&wb));
+    // Saving writes the part file and the assembly, and nothing for the sizes.
+    wb.run_ui("file.save").unwrap();
+    assert!(wb.status().contains("1 part file"), "{}", wb.status());
+    let files = std::fs::read_dir(path.parent().unwrap()).unwrap().count();
+    assert_eq!(files, 2);
+    assert!(!wb.status_error, "{}", wb.status());
+}

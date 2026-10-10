@@ -265,7 +265,7 @@ fn regions_with_holes_splits_and_nesting() {
     assert_eq!(r.len(), 2);
     let ring = r.iter().find(|x| x.depth == 0).unwrap();
     let disk = r.iter().find(|x| x.depth == 1).unwrap();
-    assert_eq!(ring.holes, vec![vec![hole]]);
+    assert_eq!(ring.holes.iter().map(|h| h.iter().map(|p| p.curve).collect::<Vec<_>>()).collect::<Vec<_>>(), vec![vec![hole]]);
     assert!((ring.area - (1600.0 - 25.0 * PI)).abs() < 0.5, "{}", ring.area);
     assert!((disk.area - 25.0 * PI).abs() < 0.5);
     assert!(ring.contains(v(2.0, 2.0)) && !ring.contains(v(20.0, 20.0)) && disk.contains(v(20.0, 20.0)));
@@ -386,4 +386,317 @@ fn a_dimension_keeps_the_place_it_was_put_until_it_is_gone() {
     let _ = lines;
     assert!(s.constraint(h).is_none() && s.place(h).is_none());
     s.validate().unwrap();
+}
+
+/// The curve tags of a kernel loop, in order.
+fn tags(l: &tenon_kernel::Loop) -> Vec<u64> {
+    l.curves.iter().map(|c| c.tag).collect()
+}
+
+#[test]
+fn a_line_through_a_circle_gives_two_halves_and_both_together_the_circle() {
+    use tenon_kernel::Curve2;
+    let mut s = Sketch::new();
+    let c = s.add_circle(v(0.0, 0.0), 10.0).unwrap();
+    // Left to right, sticking out both sides: its ends bound nothing.
+    let l = s.add_line(v(-15.0, 0.0), v(15.0, 0.0)).unwrap();
+    let all = regions(&s);
+    assert_eq!(all.len(), 2, "{all:?}");
+    let upper = all.iter().find(|r| r.contains(v(0.0, 5.0))).unwrap();
+    let lower = all.iter().find(|r| r.contains(v(0.0, -5.0))).unwrap();
+    for half in [upper, lower] {
+        assert_eq!(half.key, vec![c, l]);
+        assert!((half.area - 50.0 * PI).abs() < 0.5, "{}", half.area);
+        assert_eq!((half.depth, half.nth), (0, 0));
+        assert!(half.contains(half.inside));
+    }
+    // Told apart by the side of the line they are on: its left is above it.
+    assert_eq!((upper.left.clone(), upper.right.clone()), (vec![c, l], vec![]));
+    assert_eq!((lower.left.clone(), lower.right.clone()), (vec![c], vec![l]));
+    assert_eq!(key_of(&s, &all, upper), RegionKey::Sided { left: vec![c, l], right: vec![], nth: 0 });
+    assert_eq!(find(&s, &all, &key_of(&s, &all, lower)), vec![lower]);
+    // The circle named alone is all of it, however it is divided.
+    assert_eq!(find(&s, &all, &RegionKey::Curves(vec![c])).len(), 2);
+    assert!(find(&s, &all, &RegionKey::Curves(vec![l])).is_empty());
+    assert!(find(&s, &all, &RegionKey::Sided { left: vec![l], right: vec![c], nth: 0 }).is_empty());
+
+    // One half: half the circle and the stretch of line across it.
+    let p = profile(&s, Frame::WORLD, &[upper]);
+    assert_eq!(p.regions.len(), 1);
+    let curves = &p.regions[0].outer.curves;
+    assert_eq!(curves.len(), 2, "{curves:?}");
+    let arc = curves.iter().find(|x| x.tag == u64::from(c.0)).unwrap();
+    let Curve2::Arc { radius, start_angle, end_angle, .. } = arc.curve else { panic!("{arc:?}") };
+    assert!(close(radius, 10.0) && close(start_angle, 0.0) && close(end_angle, PI), "{arc:?}");
+    let chord = curves.iter().find(|x| x.tag == u64::from(l.0)).unwrap();
+    let Curve2::Line { start, end } = chord.curve else { panic!("{chord:?}") };
+    assert!(start.near(v(-10.0, 0.0), 1e-9) && end.near(v(10.0, 0.0), 1e-9), "{chord:?}");
+    // Both halves, or what is used when nothing is picked: the circle whole, and no line.
+    for both in [vec![upper, lower], vec![lower, upper], default_regions(&all)] {
+        let p = profile(&s, Frame::WORLD, &both);
+        assert_eq!(p.regions.len(), 1);
+        assert!(p.regions[0].holes.is_empty());
+        assert_eq!(p.regions[0].outer.curves, vec![tenon_kernel::TaggedCurve2 { tag: u64::from(c.0), curve: s.curve2(c).unwrap() }]);
+        assert_eq!(outlines(&s, &both).len(), 1);
+    }
+}
+
+#[test]
+fn a_rectangle_divided_by_a_line_resting_on_its_sides() {
+    use tenon_kernel::Curve2;
+    let mut s = Sketch::new();
+    let r = s.add_rectangle(v(0.0, 0.0), v(40.0, 20.0)).unwrap();
+    // From the middle of one long side to the middle of the other: it shares no point with them.
+    let d = s.add_line(v(20.0, 0.0), v(20.0, 20.0)).unwrap();
+    let all = regions(&s);
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert!(all.iter().all(|x| (x.area - 400.0).abs() < 1e-9 && x.depth == 0));
+    let left = all.iter().find(|x| x.contains(v(5.0, 5.0))).unwrap();
+    let right = all.iter().find(|x| x.contains(v(35.0, 5.0))).unwrap();
+    // Each half has a side the other has not, so its curves alone name it.
+    assert_ne!(left.key, right.key);
+    assert_eq!(key_of(&s, &all, left), RegionKey::Curves(left.key.clone()));
+    assert_eq!(find(&s, &all, &RegionKey::Curves(right.key.clone())), vec![right]);
+    // The rectangle's own four sides name both halves: what they enclose, whole.
+    assert_eq!(find(&s, &all, &RegionKey::Curves(r.to_vec())).len(), 2);
+
+    // One half: the long sides are used as far as the divider.
+    let p = profile(&s, Frame::WORLD, &[left]);
+    let curves = &p.regions[0].outer.curves;
+    assert_eq!(curves.len(), 4, "{curves:?}");
+    let lengths: Vec<f64> = curves
+        .iter()
+        .map(|c| match c.curve {
+            Curve2::Line { start, end } => start.dist(end),
+            _ => panic!("{c:?}"),
+        })
+        .collect();
+    assert!(lengths.iter().all(|x| close(*x, 20.0)), "{lengths:?}");
+    assert!(curves.iter().any(|c| c.tag == u64::from(d.0)));
+    // Both: the four sides whole, as if the divider were not there.
+    let p = profile(&s, Frame::WORLD, &[left, right]);
+    assert_eq!(p.regions.len(), 1);
+    let mut whole = tags(&p.regions[0].outer);
+    whole.sort_unstable();
+    assert_eq!(whole, r.iter().map(|x| u64::from(x.0)).collect::<Vec<_>>());
+    for c in &p.regions[0].outer.curves {
+        assert_eq!(Some(c.curve.clone()), s.curve2(EntityId(c.tag as u32)), "a side is the sketch's own line again");
+    }
+}
+
+#[test]
+fn overlapping_circles_give_a_lens_and_two_crescents() {
+    let mut s = Sketch::new();
+    let a = s.add_circle(v(0.0, 0.0), 10.0).unwrap();
+    let b = s.add_circle(v(10.0, 0.0), 10.0).unwrap();
+    let all = regions(&s);
+    assert_eq!(all.len(), 3, "{all:?}");
+    let lens = all.iter().find(|r| r.contains(v(5.0, 0.0))).unwrap();
+    let first = all.iter().find(|r| r.contains(v(-5.0, 0.0))).unwrap();
+    let second = all.iter().find(|r| r.contains(v(15.0, 0.0))).unwrap();
+    // 2 r^2 acos(d / 2r) - d/2 sqrt(4 r^2 - d^2)
+    let overlap = 200.0 * 0.5_f64.acos() - 5.0 * 300.0_f64.sqrt();
+    assert!((lens.area - overlap).abs() < 0.5 && (first.area - (100.0 * PI - overlap)).abs() < 0.5, "{} {}", lens.area, first.area);
+    // All three are bounded by both circles: inside both, or inside one and outside the other.
+    assert!(all.iter().all(|r| r.key == vec![a, b] && r.nth == 0));
+    assert_eq!((lens.left.clone(), lens.right.clone()), (vec![a, b], vec![]));
+    assert_eq!((first.left.clone(), first.right.clone()), (vec![a], vec![b]));
+    assert_eq!((second.left.clone(), second.right.clone()), (vec![b], vec![a]));
+    for r in &all {
+        assert_eq!(find(&s, &all, &key_of(&s, &all, r)), vec![r]);
+    }
+    // Everything together is the outline of both: the far arc of each circle, nothing between.
+    let p = profile(&s, Frame::WORLD, &default_regions(&all));
+    assert_eq!(p.regions.len(), 1);
+    assert_eq!(p.regions[0].outer.curves.len(), 2, "{:?}", p.regions[0].outer);
+    // The lens and one crescent are that circle whole.
+    let p = profile(&s, Frame::WORLD, &[lens, first]);
+    assert_eq!(p.regions[0].outer.curves, vec![tenon_kernel::TaggedCurve2 { tag: u64::from(a.0), curve: s.curve2(a).unwrap() }]);
+}
+
+#[test]
+fn touching_curves_meet_at_one_place_and_leave_no_sliver() {
+    // A circle resting on a line, and one a hair into it.
+    for dip in [0.0, 1e-9, -1e-9] {
+        let mut s = Sketch::new();
+        s.add_circle(v(0.0, 10.0 - dip), 10.0).unwrap();
+        s.add_line(v(-20.0, 0.0), v(20.0, 0.0)).unwrap();
+        let all = regions(&s);
+        assert_eq!(all.len(), 1, "dip {dip}: {all:?}");
+        assert!((all[0].area - 100.0 * PI).abs() < 0.5);
+    }
+    // A circle inside a square, touching all four sides: the disc and the four corners.
+    let mut s = Sketch::new();
+    s.add_rectangle(v(-10.0, -10.0), v(10.0, 10.0)).unwrap();
+    let c = s.add_circle(v(0.0, 0.0), 10.0).unwrap();
+    let all = regions(&s);
+    assert_eq!(all.len(), 5, "{all:?}");
+    let corner = 100.0 - 25.0 * PI;
+    assert_eq!(all.iter().filter(|r| (r.area - corner).abs() < 0.2).count(), 4);
+    let disc = all.iter().find(|r| r.contains(v(0.0, 0.0))).unwrap();
+    assert_eq!((disc.key.clone(), disc.right.clone()), (vec![c], vec![]));
+    // Two circles touching from outside stay two discs.
+    let mut s = Sketch::new();
+    s.add_circle(v(0.0, 0.0), 5.0).unwrap();
+    s.add_circle(v(8.0, 0.0), 3.0).unwrap();
+    let all = regions(&s);
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert!(all.iter().all(|r| r.depth == 0));
+}
+
+#[test]
+fn regions_alike_in_curves_and_sides_are_counted_along_a_curve() {
+    let mut s = Sketch::new();
+    // Two level lines across two circles about one centre: between the lines and between the
+    // circles there is a region each side, with the same four curves on the same sides.
+    let big = s.add_circle(v(0.0, 0.0), 10.0).unwrap();
+    let small = s.add_circle(v(0.0, 0.0), 3.0).unwrap();
+    let top = s.add_line(v(-15.0, 1.0), v(15.0, 1.0)).unwrap();
+    let bottom = s.add_line(v(-15.0, -1.0), v(15.0, -1.0)).unwrap();
+    let all = regions(&s);
+    let mut key = vec![big, small, top, bottom];
+    key.sort();
+    let twins: Vec<&SketchRegion> = all.iter().filter(|r| r.key == key).collect();
+    assert_eq!(twins.len(), 2, "{all:?}");
+    assert_eq!((twins[0].left.clone(), twins[0].right.clone()), (twins[1].left.clone(), twins[1].right.clone()));
+    assert_eq!((twins[0].nth, twins[1].nth), (0, 1));
+    let (west, east) = (all.iter().find(|r| r.contains(v(-6.0, 0.0))).unwrap(), all.iter().find(|r| r.contains(v(6.0, 0.0))).unwrap());
+    assert_ne!(west.nth, east.nth);
+    for r in [west, east] {
+        let k = key_of(&s, &all, r);
+        assert!(matches!(&k, RegionKey::Sided { nth, .. } if *nth == r.nth), "{k:?}");
+        assert_eq!(find(&s, &all, &k), vec![r]);
+        assert_eq!(profile(&s, Frame::WORLD, &[r]).regions[0].outer.curves.len(), 4);
+    }
+    // The numbering holds when a size changes: the same region is found again.
+    let before = key_of(&s, &all, east);
+    let Geometry::Circle { .. } = s.geometry(small).cloned().unwrap() else { panic!() };
+    s.add_constraint(Constraint::Radius { curve: small, value: 4.0 }).unwrap();
+    s.solve().unwrap();
+    let again = regions(&s);
+    let found = find(&s, &again, &before);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].contains(v(6.0, 0.0)) && !found[0].contains(v(-6.0, 0.0)));
+}
+
+#[test]
+fn a_plain_key_keeps_its_holes_and_splines_are_not_divided() {
+    // A plate with a hole, and a line through the hole only: the plate named by its sides is
+    // still the plate with its hole, not the discs in it.
+    let mut s = Sketch::new();
+    let r = s.add_rectangle(v(0.0, 0.0), v(40.0, 40.0)).unwrap();
+    let hole = s.add_circle(v(20.0, 20.0), 5.0).unwrap();
+    s.add_line(v(14.0, 20.0), v(26.0, 20.0)).unwrap();
+    let all = regions(&s);
+    assert_eq!(all.len(), 3, "{all:?}");
+    let plate = find(&s, &all, &RegionKey::Curves(r.to_vec()));
+    assert_eq!(plate.len(), 1);
+    assert!((plate[0].area - (1600.0 - 25.0 * PI)).abs() < 0.5 && plate[0].depth == 0);
+    assert_eq!(plate[0].holes.len(), 1);
+    assert_eq!(find(&s, &all, &RegionKey::Curves(vec![hole])).len(), 2, "both halves of the disc in the hole");
+    // The profile of the plate: its hole is the circle whole, though the line cuts the circle.
+    let p = profile(&s, Frame::WORLD, &plate);
+    assert_eq!(tags(&p.regions[0].holes[0]), vec![u64::from(hole.0)]);
+    assert_eq!(p.regions[0].holes[0].curves[0].curve, s.curve2(hole).unwrap());
+    // The plate and the discs together: no hole.
+    let p = profile(&s, Frame::WORLD, &all.iter().collect::<Vec<_>>());
+    assert_eq!(p.regions.len(), 1);
+    assert!(p.regions[0].holes.is_empty() && p.regions[0].outer.curves.len() == 4);
+
+    // A spline joins at its ends only: a line across it does not divide what it bounds.
+    let mut s = Sketch::new();
+    let poles = [v(0.0, 0.0).into(), v(10.0, 15.0).into(), v(20.0, 15.0).into(), v(30.0, 0.0).into()];
+    let sp = s.add_spline(&poles, 3).unwrap();
+    let Geometry::Spline { poles: ids, .. } = s.geometry(sp).cloned().unwrap() else { panic!() };
+    let chord = s.add_line(ids[3], ids[0]).unwrap();
+    s.add_line(v(15.0, -5.0), v(15.0, 25.0)).unwrap();
+    let all = regions(&s);
+    assert_eq!(all.len(), 1, "{all:?}");
+    assert_eq!(all[0].key, vec![sp, chord]);
+    let p = profile(&s, Frame::WORLD, &[&all[0]]);
+    let curves = &p.regions[0].outer.curves;
+    assert_eq!(curves.len(), 2, "the chord is one line again: {curves:?}");
+    assert!(curves.iter().all(|c| Some(c.curve.clone()) == s.curve2(EntityId(c.tag as u32))));
+}
+
+#[test]
+fn region_keys_are_written_as_a_list_or_by_side() {
+    let plain: RegionKey = serde_json::from_str("[5, 6, 7]").unwrap();
+    assert_eq!(plain, RegionKey::Curves(vec![EntityId(5), EntityId(6), EntityId(7)]));
+    assert_eq!(serde_json::to_string(&plain).unwrap(), "[5,6,7]");
+    let sided = RegionKey::Sided { left: vec![EntityId(3)], right: vec![EntityId(9)], nth: 0 };
+    assert_eq!(serde_json::to_string(&sided).unwrap(), r#"{"left":[3],"right":[9]}"#);
+    assert_eq!(serde_json::from_str::<RegionKey>(r#"{"left":[3],"right":[9]}"#).unwrap(), sided);
+    let second = RegionKey::Sided { left: vec![EntityId(3)], right: vec![], nth: 1 };
+    assert_eq!(serde_json::to_string(&second).unwrap(), r#"{"left":[3],"nth":1}"#);
+    assert_eq!(serde_json::from_str::<RegionKey>(r#"{"left":[3],"nth":1}"#).unwrap(), second);
+    assert_eq!(second.curves(), vec![EntityId(3)]);
+    assert!(serde_json::from_str::<RegionKey>(r#"{"left":[3],"inside":[4]}"#).is_err());
+    assert!(serde_json::from_str::<RegionKey>("7").is_err());
+}
+
+#[test]
+fn a_driven_dimension_follows_the_sketch_and_holds_nothing() {
+    let (mut s, l, w, h) = fixed_rect();
+    assert_eq!(s.dof().unwrap().dof, 0);
+    // The rectangle is fully held: its top side's length, or its diagonal, would be one too many.
+    let top = Constraint::Length { line: l[2], value: 40.0 };
+    assert!(matches!(s.add_constraint(top.clone()), Err(SketchError::Redundant(_))));
+    let (p0, p2) = (s.line(l[0]).unwrap().0, s.line(l[1]).unwrap().1);
+    let Geometry::Line { start: a, .. } = s.geometry(l[0]).cloned().unwrap() else { panic!() };
+    let Geometry::Line { end: c, .. } = s.geometry(l[1]).cloned().unwrap() else { panic!() };
+    assert!(p0.near(v(0.0, 0.0), 1e-9) && p2.near(v(40.0, 20.0), 1e-9));
+    // As driven dimensions they are taken: they read what the sketch measures, whatever value
+    // they were given, and leave its freedom as it was.
+    let top = s.add_driven(Constraint::Length { line: l[2], value: 999.0 }).unwrap();
+    let diagonal = s.add_driven(Constraint::Distance { a, b: c, value: 1.0 }).unwrap();
+    assert!(s.is_driven(top) && s.is_driven(diagonal) && !s.is_driven(w));
+    assert_eq!(s.driven().collect::<Vec<_>>(), vec![top, diagonal]);
+    assert!(close(s.constraint(top).unwrap().value().unwrap(), 40.0));
+    assert!(close(s.constraint(diagonal).unwrap().value().unwrap(), 2000.0_f64.sqrt()));
+    assert_eq!(s.dof().unwrap().dof, 0);
+    // The width changed: they follow.
+    s.set_dimension(w, 30.0).unwrap();
+    assert!(close(s.constraint(top).unwrap().value().unwrap(), 30.0));
+    assert!(close(s.constraint(diagonal).unwrap().value().unwrap(), 1300.0_f64.sqrt()));
+    // A driven dimension cannot be given a value, and only a dimension can be driven.
+    let e = s.set_dimension(top, 50.0).unwrap_err().to_string();
+    assert!(e.contains("driven dimension") && e.contains("cannot be given a value"), "{e}");
+    assert!(close(s.constraint(top).unwrap().value().unwrap(), 30.0));
+    assert!(s.add_driven(Constraint::Horizontal { line: l[0] }).is_err());
+    assert!(s.set_driven(ConstraintId(999), true).is_err());
+
+    // Driving and driven change places: the height becomes driven, which frees the sketch by
+    // one; then the diagonal can drive, and the height reads what follows from it.
+    assert!(matches!(s.set_driven(diagonal, false), Err(SketchError::Redundant(_))), "the sketch is held without it");
+    assert!(s.is_driven(diagonal));
+    s.set_driven(h, true).unwrap();
+    assert_eq!(s.dof().unwrap().dof, 1);
+    s.set_driven(diagonal, false).unwrap();
+    assert_eq!(s.dof().unwrap().dof, 0);
+    s.set_dimension(diagonal, 50.0).unwrap();
+    assert!(close(s.constraint(h).unwrap().value().unwrap(), 40.0), "30, 40, 50: {:?}", s.constraint(h));
+    assert!(s.set_dimension(h, 10.0).is_err());
+
+    // It is saved with the sketch, and goes when its dimension goes.
+    let json = serde_json::to_string(&s).unwrap();
+    assert!(json.contains(&format!("\"driven\":[{},{}]", h.0.min(top.0), h.0.max(top.0))), "{json}");
+    let back: Sketch = serde_json::from_str(&json).unwrap();
+    back.validate().unwrap();
+    assert_eq!(back, s);
+    s.remove_constraint(top).unwrap();
+    assert_eq!(s.driven().collect::<Vec<_>>(), vec![h]);
+    s.delete(&[l[1]]);
+    assert!(s.driven().all(|id| s.constraint(id).is_some()));
+    // A sketch without driven dimensions is written as it always was.
+    let (plain, ..) = fixed_rect();
+    assert!(!serde_json::to_string(&plain).unwrap().contains("driven"));
+    // A driven mark on what is no dimension, or on nothing, is refused when read.
+    let geometric = plain.constraints().find(|(_, c)| !c.is_dimensional()).unwrap().0;
+    for bad in [geometric.0, 9999] {
+        let mut v = serde_json::to_value(&plain).unwrap();
+        v["driven"] = serde_json::json!([bad]);
+        let broken: Sketch = serde_json::from_value(v).unwrap();
+        assert!(broken.validate().unwrap_err().to_string().contains("marked driven"), "{bad}");
+    }
 }

@@ -183,16 +183,23 @@ fn build_model(k: &mut dyn Kernel, key: &str, src: &ModelSource) -> (ModelGeomet
             parts
                 .iter()
                 .map(|(pk, doc)| {
-                    let at = asm.components.iter().filter(|c| c.visible && &c.part == pk).map(|c| (Some(c.id), c.placement)).collect();
+                    let at = asm.components.iter().filter(|c| c.visible && c.key() == *pk).map(|c| (Some(c.id), c.placement)).collect();
                     (pk.clone(), doc.clone(), at)
                 })
                 .collect()
         }
     };
     for (pk, doc, at) in docs {
+        // A part file every component of which uses a row of its design table is nowhere itself:
+        // only its name is wanted (the parts list reads it).
+        if at.is_empty() {
+            g.documents.insert(pk, doc);
+            continue;
+        }
+        let pk_shown = tenon_assembly::key_file(&pk).to_owned();
         let mut regen = tenon_model::regenerate(&doc, k);
         if let Some((f, msg)) = regen.first_error() {
-            g.error = Some(format!("{pk}: feature {f} fails: {msg}"));
+            g.error = Some(format!("{pk_shown}: feature {f} fails: {msg}"));
         }
         match tenon_model::scene(&regen, k, &MeshTol::default()) {
             Ok(s) => {

@@ -79,6 +79,7 @@ pub enum Icon {
     Equal,
     Concentric,
     Construction,
+    Driven,
     Text,
     Move,
     Copy,
@@ -555,6 +556,14 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
         Icon::Concentric => {
             pen.circle((0.5, 0.5), 0.4);
             pen.circle((0.5, 0.5), 0.2);
+        }
+        // A dimension in parentheses.
+        Icon::Driven => {
+            pen.arc((0.3, 0.5), 0.2, 0.38, 2.2, 4.08);
+            pen.arc((0.7, 0.5), 0.2, 0.38, -0.94, 0.94);
+            pen.line(&[(0.3, 0.5), (0.7, 0.5)]);
+            pen.arrow_head((0.3, 0.5), (0.5, 0.5));
+            pen.arrow_head((0.7, 0.5), (0.5, 0.5));
         }
         Icon::Construction => {
             for i in 0..4 {

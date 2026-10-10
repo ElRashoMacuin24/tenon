@@ -2132,3 +2132,196 @@ fn a_design_table_is_made_from_ticked_parameters_and_its_rows_resize_the_part() 
     assert!(wb.chrome.table, "the dialog stays open, offering to make a table again");
     assert!(d.texts().iter().any(|t| t == "Create Table"));
 }
+
+#[test]
+fn a_line_through_a_circle_divides_it_into_halves_that_are_clicked_apart() {
+    use tenon_geom::Vec3;
+    use tenon_model::RegionSel;
+    use tenon_sketch::RegionKey;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    let c = wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": 0, "cy": 0, "r": 20 })).unwrap()["circle"].as_u64().unwrap() as u32;
+    let l = wb.exec("sketch.line", json!({ "sketch": f.0, "x1": -30, "y1": 0, "x2": 30, "y2": 0 })).unwrap()["line"].as_u64().unwrap() as u32;
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::E);
+    d.settle(&mut wb);
+    // Nothing clicked: the whole disc, counted as one profile though the line divides it.
+    let disc = PI * 400.0 * 10.0;
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel") };
+    assert_eq!(p.regions, RegionSel::Default);
+    assert!((volume(&wb) - disc).abs() < 1e-6, "{}", volume(&wb));
+    assert_eq!(wb.profile_count(p.sketch, &p.regions), 1);
+
+    // The region under the pointer is the half it is over, not the disc.
+    let (upper, lower) = (on_screen(&wb, Vec3::new(0.0, 10.0, 0.0)), on_screen(&wb, Vec3::new(0.0, -10.0, 0.0)));
+    let rect = wb.view.rect;
+    let outline = wb.profile_hover(Some(upper), rect).expect("a region under the pointer");
+    assert!(outline[0].iter().all(|q| q.y > -1e-6) && outline[0].iter().any(|q| q.y > 19.0), "the upper half: {:?}", outline[0]);
+    assert!(wb.profile_hover(Some(on_screen(&wb, Vec3::new(40.0, 40.0, 0.0))), rect).is_none());
+
+    // A click on the upper half takes it out: the lower half is left, named by the side of the
+    // line it is on.
+    d.click(&mut wb, upper);
+    d.settle(&mut wb);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel") };
+    let below = RegionKey::Sided { left: vec![tenon_sketch::EntityId(c)], right: vec![tenon_sketch::EntityId(l)], nth: 0 };
+    assert_eq!(p.regions, RegionSel::Keys(vec![below.clone()]));
+    assert!((volume(&wb) - disc / 2.0).abs() < 1e-6, "{}", volume(&wb));
+    assert!(wb.scene().bodies[0].mass.center_of_mass.y < -5.0, "it is the lower half");
+    // The upper half back: the disc again, as one profile and one round wall.
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, upper);
+    d.settle(&mut wb);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel") };
+    assert!(matches!(&p.regions, RegionSel::Keys(k) if k.len() == 2), "{:?}", p.regions);
+    assert_eq!(wb.profile_count(p.sketch, &p.regions), 1);
+    assert!((volume(&wb) - disc).abs() < 1e-6, "{}", volume(&wb));
+    // The lower half out, and OK: the feature is the upper half and stays so when edited again.
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, lower);
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - disc / 2.0).abs() < 1e-6, "{}", volume(&wb));
+    assert!(wb.scene().bodies[0].mass.center_of_mass.y > 5.0, "the upper half");
+    let ext = wb.document().features().last().unwrap().id;
+    wb.edit_feature(ext).unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel") };
+    let above = RegionKey::Sided { left: vec![tenon_sketch::EntityId(c), tenon_sketch::EntityId(l)], right: vec![], nth: 0 };
+    assert_eq!(p.regions, RegionSel::Keys(vec![above]));
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+
+    // Revolve offers the line through the circle as its axis, and half the disc turned about
+    // it is the ball.
+    wb.exec("feature.delete", json!({ "feature": ext.0 })).unwrap();
+    d.settle(&mut wb);
+    wb.run_ui("model.revolve").unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Revolve(p)) = wb.panel.clone() else { panic!("no revolve panel: {}", wb.status()) };
+    assert_eq!(p.axis, crate::panels::AxisChoice::Line(tenon_sketch::EntityId(l)));
+    let ball = 4.0 / 3.0 * PI * 8000.0;
+    assert!((volume(&wb) - ball).abs() < 1e-6 * ball, "{}", volume(&wb));
+    let upper = on_screen(&wb, Vec3::new(0.0, 10.0, 0.0));
+    d.click(&mut wb, upper);
+    d.settle(&mut wb);
+    let Some(Panel::Revolve(p)) = wb.panel.clone() else { panic!("no revolve panel") };
+    assert_eq!(p.regions, RegionSel::Keys(vec![below]));
+    assert!((volume(&wb) - ball).abs() < 1e-6 * ball, "half a disc about its straight side: {}", volume(&wb));
+    assert!(!wb.status_error, "{}", wb.status());
+}
+
+#[test]
+fn a_dimension_too_many_is_put_down_driven_and_a_click_changes_driven_and_driving() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    // A 40 x 20 rectangle, a corner fixed, its width and height dimensioned: fully held.
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    let r = wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.exec("sketch.constrain", json!({ "sketch": f.0, "constraint": { "type": "fix", "point": r["corners"][0] } })).unwrap();
+    let dim = |wb: &mut Workbench, line: usize, value: f64, x: f64, y: f64| {
+        let c = json!({ "type": "length", "line": r["lines"][line], "value": value });
+        tenon_sketch::ConstraintId(
+            wb.exec("sketch.constrain", json!({ "sketch": f.0, "constraint": c, "at_x": x, "at_y": y })).unwrap()["constraint"].as_u64().unwrap()
+                as u32,
+        )
+    };
+    let width = dim(&mut wb, 0, 40.0, 20.0, -8.0);
+    let height = dim(&mut wb, 1, 20.0, 50.0, 10.0);
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+    let shows = |d: &Driver, text: &str| d.texts().iter().any(|t| t == text);
+    let driven = |wb: &Workbench| -> Vec<tenon_sketch::ConstraintId> { wb.document().sketch(f).unwrap().driven().collect() };
+    let dof = |wb: &Workbench| wb.document().sketch(f).unwrap().dof().unwrap().dof;
+    let rest = |d: &mut Driver, wb: &mut Workbench| {
+        for _ in 0..45 {
+            d.frame(wb, vec![]);
+        }
+    };
+    assert!(shows(&d, "40") && shows(&d, "20"), "{:?}", d.texts());
+    assert_eq!(dof(&wb), 0);
+
+    // D, the top side, a click above it: one dimension too many. No value box opens: it is put
+    // down as a driven dimension, in parentheses, and the status bar says why.
+    d.tap(&mut wb, egui::Key::D);
+    let top = at(&wb, 25.0, 20.0);
+    d.click(&mut wb, top);
+    let above = at(&wb, 20.0, 30.0);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(above)]);
+    rest(&mut d, &mut wb);
+    d.click(&mut wb, above);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "nothing to type for a driven dimension");
+    let [top_dim] = driven(&wb)[..] else { panic!("one driven dimension: {:?} {}", driven(&wb), wb.status()) };
+    assert!(wb.status().contains("driven dimension"), "{}", wb.status());
+    assert!(shows(&d, "(40)"), "{:?}", d.texts());
+    assert_eq!(dof(&wb), 0);
+    let place = wb.document().sketch(f).unwrap().place(top_dim).expect("it is where it was put");
+    assert!((place.y - 30.0).abs() < 1.0, "{place:?}");
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+
+    // Double-clicking it opens no box: it has no value of its own.
+    rest(&mut d, &mut wb);
+    let label = at(&wb, place.x, place.y);
+    d.click(&mut wb, label);
+    d.click(&mut wb, label);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none() && wb.status().contains("no value to type"), "{}", wb.status());
+    // The width changed: it follows.
+    wb.exec("sketch.set_dimension", json!({ "sketch": f.0, "constraint": width.0, "value": 30.0 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(shows(&d, "(30)") && shows(&d, "30"), "{:?}", d.texts());
+
+    // Driven Dimension (Format): a click on a dimension changes it over. The height becomes
+    // driven, which frees the sketch by one...
+    wb.run_ui("sketch.driven").unwrap();
+    rest(&mut d, &mut wb);
+    let height_label = at(&wb, 50.0, 10.0);
+    d.click(&mut wb, height_label);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(driven(&wb), vec![height, top_dim], "{}", wb.status());
+    assert!(shows(&d, "(20)") && dof(&wb) == 1, "{:?}", d.texts());
+    // ... and back.
+    rest(&mut d, &mut wb);
+    d.click(&mut wb, height_label);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(driven(&wb), vec![top_dim]);
+    assert!(wb.status().starts_with("Driving"), "{}", wb.status());
+    // The driven top side cannot drive while the width does: refused, and it stays driven.
+    rest(&mut d, &mut wb);
+    let label = at(&wb, place.x, place.y);
+    d.click(&mut wb, label);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status_error && wb.status().contains("held without this dimension"), "{}", wb.status());
+    assert_eq!(driven(&wb), vec![top_dim]);
+    // A click beside the dimensions with this tool does nothing to the sketch.
+    let before = wb.document().sketch(f).unwrap().clone();
+    rest(&mut d, &mut wb);
+    let nowhere = at(&wb, 20.0, 10.0);
+    d.click(&mut wb, nowhere);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.document().sketch(f).unwrap(), &before);
+
+    // The Parameters dialog shows it as driven, with its value, and nothing to type into.
+    d.tap(&mut wb, egui::Key::Escape);
+    wb.run_ui("tools.parameters").unwrap();
+    for _ in 0..5 {
+        d.frame(&mut wb, vec![]);
+    }
+    assert!(shows(&d, "driven"), "{:?}", d.texts());
+    assert!(d.ctx.read_response(egui::Id::new(("tn_param_eq", "d2"))).is_none(), "no equation cell for the driven d2");
+    assert!(d.ctx.read_response(egui::Id::new(("tn_param_eq", "d0"))).is_some());
+}

@@ -479,9 +479,11 @@ impl Workbench {
             return AxisChoice::Line(*id);
         }
         let regions = tenon_sketch::regions(sk);
-        let bounding: std::collections::BTreeSet<tenon_sketch::EntityId> =
-            regions.iter().flat_map(|r| r.outer.iter().chain(r.holes.iter().flatten())).copied().collect();
-        let loose: Vec<tenon_sketch::EntityId> = lines.iter().filter(|l| !bounding.contains(&l.0)).map(|l| l.0).collect();
+        // What bounds the profile as a whole: a line drawn through it divides it, but is inside.
+        let whole = tenon_sketch::profile(sk, tenon_geom::Frame::WORLD, &tenon_sketch::default_regions(&regions));
+        let bounding: std::collections::BTreeSet<u64> =
+            whole.regions.iter().flat_map(|r| std::iter::once(&r.outer).chain(&r.holes)).flat_map(|l| l.curves.iter().map(|c| c.tag)).collect();
+        let loose: Vec<tenon_sketch::EntityId> = lines.iter().filter(|l| !bounding.contains(&u64::from(l.0.0))).map(|l| l.0).collect();
         if let [only] = loose.as_slice() {
             return AxisChoice::Line(*only);
         }
@@ -594,13 +596,16 @@ impl Workbench {
         }
     }
 
-    /// The regions of sketch `sk` the open panel uses.
-    fn chosen_regions(&self, sk: &tenon_sketch::Sketch) -> Vec<tenon_sketch::SketchRegion> {
-        let all = tenon_sketch::regions(sk);
-        match self.profile_panel().map(|p| p.1) {
-            Some(RegionSel::Keys(keys)) => all.into_iter().filter(|r| keys.contains(&r.key)).collect(),
-            _ => tenon_sketch::default_regions(&all).into_iter().cloned().collect(),
+    /// Where the pointer at `pos` is on the plane of a sketch with `frame`, in sketch coordinates.
+    fn on_sketch_plane(&self, pos: egui::Pos2, rect: egui::Rect, frame: &tenon_geom::Frame) -> Option<tenon_geom::Vec2> {
+        let (o, d) =
+            self.view.camera.ray(f64::from(pos.x - rect.left()), f64::from(pos.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+        let along = d.dot(frame.z());
+        if along.abs() < 1e-9 {
+            return None;
         }
+        let local = frame.to_local(o + d * ((frame.origin() - o).dot(frame.z()) / along));
+        Some(tenon_geom::Vec2::new(local.x, local.y))
     }
 
     /// A click at `pos` in the viewport while a profile panel is open: the closed region of the
@@ -609,30 +614,21 @@ impl Workbench {
     pub(crate) fn toggle_profile_at(&mut self, pos: egui::Pos2, rect: egui::Rect) -> bool {
         let Some((sketch, sel)) = self.profile_panel() else { return false };
         let (Some(sk), Some(frame)) = (self.document().sketch(sketch), self.sketch_frame(sketch)) else { return false };
-        // Where the pointer's ray meets the sketch plane.
-        let (o, d) =
-            self.view.camera.ray(f64::from(pos.x - rect.left()), f64::from(pos.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
-        let along = d.dot(frame.z());
-        if along.abs() < 1e-9 {
-            return false;
-        }
-        let local = frame.to_local(o + d * ((frame.origin() - o).dot(frame.z()) / along));
-        let at = tenon_geom::Vec2::new(local.x, local.y);
+        let Some(at) = self.on_sketch_plane(pos, rect, &frame) else { return false };
         let all = tenon_sketch::regions(sk);
         // The innermost region there: a hole's disc before the plate round it.
         let Some(hit) = all.iter().filter(|r| r.contains(at)).max_by_key(|r| r.depth) else { return false };
-        let mut keys: Vec<Vec<tenon_sketch::EntityId>> = match sel {
-            RegionSel::Keys(k) => k.clone(),
-            RegionSel::Default => tenon_sketch::default_regions(&all).iter().map(|r| r.key.clone()).collect(),
-        };
+        let mut chosen = regions_of(sk, &all, sel);
         let mut note = None;
-        match keys.iter().position(|k| *k == hit.key) {
-            Some(_) if keys.len() == 1 => note = Some("A feature needs at least one profile: click another region to add it first."),
+        match chosen.iter().position(|r| std::ptr::eq(*r, hit)) {
+            Some(_) if chosen.len() == 1 => note = Some("A feature needs at least one profile: click another region to add it first."),
             Some(i) => {
-                keys.remove(i);
+                chosen.remove(i);
             }
-            None => keys.push(hit.key.clone()),
+            None => chosen.push(hit),
         }
+        // Each region by the shortest name that is its alone.
+        let keys: Vec<tenon_sketch::RegionKey> = chosen.iter().map(|r| tenon_sketch::key_of(sk, &all, r)).collect();
         let regions = match &mut self.panel {
             Some(Panel::Extrude(p)) => &mut p.regions,
             Some(Panel::Revolve(p)) => &mut p.regions,
@@ -647,25 +643,70 @@ impl Workbench {
         true
     }
 
-    /// The outlines of the regions the open profile panel uses, drawn boldly over the sketch so
-    /// it is plain what the feature is made from.
+    /// The region of the open profile panel's sketch under the pointer, as its outlines (the
+    /// outer one first), when the pointer is over the viewport and on a region.
+    pub(crate) fn profile_hover(&self, pointer: Option<egui::Pos2>, rect: egui::Rect) -> Option<Vec<Vec<tenon_geom::Vec2>>> {
+        let (sketch, _) = self.profile_panel()?;
+        let (sk, frame) = (self.document().sketch(sketch)?, self.sketch_frame(sketch)?);
+        let at = self.on_sketch_plane(pointer.filter(|p| rect.contains(*p))?, rect, &frame)?;
+        let all = tenon_sketch::regions(sk);
+        let hit = all.iter().filter(|r| r.contains(at)).max_by_key(|r| r.depth)?;
+        Some(std::iter::once(hit.outline.clone()).chain(hit.hole_outlines.iter().cloned()).collect())
+    }
+
+    /// What the open profile panel's feature is made from, drawn boldly over the sketch: the
+    /// outline of the chosen regions taken together (regions side by side are one profile), and
+    /// more lightly the region under the pointer, which a click adds or takes away.
     pub(crate) fn profile_overlay(&self, ui: &Ui, rect: egui::Rect, t: &Tokens) {
-        let Some((sketch, _)) = self.profile_panel() else { return };
+        let Some((sketch, sel)) = self.profile_panel() else { return };
         let (Some(sk), Some(frame)) = (self.document().sketch(sketch), self.sketch_frame(sketch)) else { return };
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
         let painter = ui.painter().with_clip_rect(rect);
-        for r in self.chosen_regions(sk) {
-            for outline in std::iter::once(&r.outline).chain(&r.hole_outlines) {
-                let mut pts: Vec<egui::Pos2> = outline
-                    .iter()
-                    .filter_map(|q| self.view.camera.project(frame.plane_point(*q), w, h))
-                    .map(|(x, y, _)| rect.min + egui::vec2(x as f32, y as f32))
-                    .collect();
-                if let Some(first) = pts.first().copied() {
-                    pts.push(first);
-                }
-                painter.add(egui::Shape::line(pts, egui::Stroke::new(3.0, t.accent)));
+        let draw = |outline: &[tenon_geom::Vec2], stroke: egui::Stroke| {
+            let mut pts: Vec<egui::Pos2> = outline
+                .iter()
+                .filter_map(|q| self.view.camera.project(frame.plane_point(*q), w, h))
+                .map(|(x, y, _)| rect.min + egui::vec2(x as f32, y as f32))
+                .collect();
+            if let Some(first) = pts.first().copied() {
+                pts.push(first);
+            }
+            painter.add(egui::Shape::line(pts, stroke));
+        };
+        let all = tenon_sketch::regions(sk);
+        for outline in tenon_sketch::outlines(sk, &regions_of(sk, &all, sel)) {
+            draw(&outline, egui::Stroke::new(3.0, t.accent));
+        }
+        if let Some(hover) = self.profile_hover(ui.ctx().pointer_hover_pos(), rect) {
+            for outline in &hover {
+                draw(outline, egui::Stroke::new(1.5, crate::viewport::HOVER));
             }
         }
     }
+}
+
+/// The regions of `all` (every region of `sk`) that `sel` names.
+pub(crate) fn regions_of<'r>(
+    sk: &tenon_sketch::Sketch,
+    all: &'r [tenon_sketch::SketchRegion],
+    sel: &RegionSel,
+) -> Vec<&'r tenon_sketch::SketchRegion> {
+    match sel {
+        RegionSel::Default => tenon_sketch::default_regions(all),
+        RegionSel::Keys(keys) => {
+            let mut out: Vec<&tenon_sketch::SketchRegion> = Vec::new();
+            for r in keys.iter().flat_map(|k| tenon_sketch::find(sk, all, k)) {
+                if !out.iter().any(|o| std::ptr::eq(*o, r)) {
+                    out.push(r);
+                }
+            }
+            out
+        }
+    }
+}
+
+/// How many separate profiles `sel` comes to in `sk`: regions side by side count once.
+pub(crate) fn profiles_in(sk: &tenon_sketch::Sketch, sel: &RegionSel) -> usize {
+    let all = tenon_sketch::regions(sk);
+    tenon_sketch::profile(sk, tenon_geom::Frame::WORLD, &regions_of(sk, &all, sel)).regions.len()
 }

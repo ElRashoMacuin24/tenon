@@ -33,7 +33,7 @@ impl Workbench {
                 .map
                 .get(i)
                 .and_then(|(id, _)| a.shown_assembly().component(*id))
-                .and_then(|c| a.session.parts.get(&c.part))
+                .and_then(|c| a.session.parts.get(&c.key()))
                 .map(|p| p.session.document()),
             None => Some(self.document()),
         };
@@ -59,7 +59,7 @@ impl Workbench {
                 match components.iter_mut().find(|r| r.0 == *id) {
                     Some(r) => r.3 += grams,
                     None => {
-                        let doc = a.shown_assembly().component(*id).and_then(|c| a.session.parts.get(&c.part)).map(|p| p.session.document());
+                        let doc = a.shown_assembly().component(*id).and_then(|c| a.session.parts.get(&c.key())).map(|p| p.session.document());
                         let material = doc.and_then(|d| d.material()).map_or("Generic", |m| m.name.as_str());
                         components.push((*id, a.name(*id), material.to_owned(), grams));
                     }

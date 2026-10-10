@@ -156,8 +156,9 @@ fn asm_new(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
 fn asm_open(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let path = path(p)?;
     let (asm, parts) = open(&path).map_err(|e| CmdError(format!("cannot open {}: {e}", path.display())))?;
-    let missing: Vec<String> = parts.iter().filter_map(|(k, p)| p.missing.as_ref().map(|m| format!("{k}: {m}"))).collect();
     s.replace(asm, parts);
+    let missing: Vec<String> =
+        s.parts.iter().filter_map(|(k, p)| p.missing.as_ref().map(|m| format!("{}: {m}", tenon_assembly::key_file(k)))).collect();
     if let Some(k) = k {
         s.refresh(k).map_err(CmdError)?;
     }
@@ -169,7 +170,8 @@ fn asm_save(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
     // Parts changed in place are saved to their own files first.
     let (mut saved, mut kept) = (Vec::new(), Vec::new());
     for (key, part) in s.parts.iter_mut() {
-        if part.missing.is_none() && part.session.is_dirty() {
+        // (A part in a row of its design table is worked out from its file's entry: not a file.)
+        if part.variant.is_none() && part.missing.is_none() && part.session.is_dirty() {
             let k = project::save(Path::new(key), part.session.document(), &Map::new()).map_err(|e| CmdError(format!("cannot save {key}: {e}")))?;
             kept.extend(k.map(|k| k.display().to_string()));
             part.session.mark_saved();
@@ -183,7 +185,7 @@ fn asm_save(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
 
 /// Places a part file: its first component is grounded at the origin; later ones go beside the
 /// others (or `at`).
-fn asm_insert(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+fn asm_insert(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let path = path(p)?;
     let key = part_key(&path);
     if !s.parts.contains_key(&key) {
@@ -192,7 +194,7 @@ fn asm_insert(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
         part.session.replace_document(doc, None);
         s.add_part(&key, part);
     }
-    if let Some(k) = k {
+    if let Some(k) = k.as_deref_mut() {
         s.refresh(k).map_err(CmdError)?;
     }
     let at = match p.get("at").filter(|v| !v.is_null()) {
@@ -206,9 +208,30 @@ fn asm_insert(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
         None => None,
     };
     let grounded = p.get("grounded").and_then(Value::as_bool);
-    let id = s.edit(|asm, parts| Ok(tenon_assembly::session::insert(asm, parts, &key, at, grounded)))?;
+    // In one size of the part: a row of its design table.
+    let row = match p.get("row") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(r)) => Some(r.clone()),
+        Some(_) => return Err("`row` must be the name of a row of the part's design table".into()),
+    };
+    if let Some(row) = &row {
+        tenon_assembly::cmd::check_row(&s.parts, &key, row)?;
+    }
+    let id = s.edit(|asm, parts| {
+        let id = tenon_assembly::session::insert(asm, parts, &key, at, grounded);
+        if let Some(c) = asm.component_mut(id) {
+            c.row = row.clone();
+        }
+        Ok(id)
+    })?;
+    // (The part in that size is another solid to make.)
+    if row.is_some()
+        && let Some(k) = k
+    {
+        s.refresh(k).map_err(CmdError)?;
+    }
     let c = s.component(id)?;
-    Ok(json!({ "component": id.0, "name": c.name, "grounded": c.grounded }))
+    Ok(json!({ "component": id.0, "name": c.name, "grounded": c.grounded, "row": c.row }))
 }
 
 fn asm_export_step(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
@@ -260,7 +283,7 @@ static COMMANDS: &[AsmCommand] = &[
     cmd!(
         "asm.insert",
         "Place Component",
-        "path (.tenon part file); at: [x, y, z] (default: grounded at the origin for the first, beside the others after); grounded",
+        "path (.tenon part file); at: [x, y, z] (default: grounded at the origin for the first, beside the others after); grounded; row: a row of the part's design table (the component is the part in that size)",
         true,
         false,
         asm_insert

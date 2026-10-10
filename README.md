@@ -4,8 +4,8 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestones M0 to M5 are done; M6 (more part features, materials and design tables) is
-complete and under review.** CI runs on Linux, macOS and Windows.
+**Status: milestones M0 to M6 are done; M7 (standard parts and the maker workflow) is next.**
+CI runs on Linux, macOS and Windows.
 
 Tenon is for makers, students and small shops. It aims to win on reliability, coherence and speed
 rather than feature count.
@@ -22,7 +22,7 @@ In parts, you can:
 - copy features in rectangular and circular patterns, and mirror them;
 - place work planes, axes and points;
 - drive any dimension or feature value by an equation of named parameters (fx);
-- keep one part in several sizes with a design table;
+- keep one part in several sizes with a design table, and use it in an assembly in any of them;
 - give the part a material and a colour, and read its mass, volume and centre of gravity;
 - roll the part back with the End of Part marker, reorder and suppress features;
 - measure areas, lengths, distances and angles;

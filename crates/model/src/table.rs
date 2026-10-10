@@ -60,6 +60,9 @@ impl Document {
     /// value, not the result of an equation (a table would overwrite the equation).
     fn table_column_unit(&self, name: &str) -> Result<ParamUnit, String> {
         if let Some(m) = self.params.model.iter().find(|m| m.name == name) {
+            if self.driven_in(&m.target).is_some() {
+                return Err(format!("{name} is a driven dimension: it follows its sketch, so a table cannot set it"));
+            }
             if m.equation.is_some() {
                 return Err(format!("{name} follows an equation: put the parameters it is worked out from in the table instead"));
             }

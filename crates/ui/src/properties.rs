@@ -382,12 +382,9 @@ pub(crate) const OPS: [(Glyph, &str, Operation); 4] = [
 ];
 
 impl Workbench {
-    /// Number of profile regions a feature will use.
+    /// Number of profiles a feature will use: regions side by side are one.
     pub(crate) fn profile_count(&self, sketch: tenon_model::FeatureId, sel: &RegionSel) -> usize {
-        match sel {
-            RegionSel::Keys(k) => k.len(),
-            RegionSel::Default => self.document().sketch(sketch).map(|s| tenon_sketch::default_regions(&tenon_sketch::regions(s)).len()).unwrap_or(0),
-        }
+        self.document().sketch(sketch).map(|s| crate::sweeps::profiles_in(s, sel)).unwrap_or(0)
     }
 
     /// True while a feature command shows the properties panel.

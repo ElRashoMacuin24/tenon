@@ -135,9 +135,9 @@ fn asm_tree(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
         .zip(&per)
         .map(|(c, d)| {
             json!({
-                "id": c.id.0, "name": c.name, "part": c.part, "grounded": c.grounded, "visible": c.visible,
+                "id": c.id.0, "name": c.name, "part": c.part, "row": c.row, "grounded": c.grounded, "visible": c.visible,
                 "placement": frame_json(&c.placement),
-                "missing": s.parts.get(&c.part).and_then(|p| p.missing.clone()),
+                "missing": s.parts.get(&c.key()).and_then(|p| p.missing.clone()),
                 "dof": d.count(),
             })
         })
@@ -187,7 +187,7 @@ fn asm_mass(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
     let mut rows = Vec::new();
     for c in asm.components.iter().filter(|c| c.visible) {
         let scene = scene_of(&s.parts, c).ok_or_else(|| CmdError(format!("{}: the part's geometry is not available", c.name)))?;
-        let doc = s.parts.get(&c.part).map(|p| p.session.document());
+        let doc = s.parts.get(&c.key()).map(|p| p.session.document());
         let density = doc.map_or(tenon_model::materials::DEFAULT_DENSITY, tenon_model::Document::density);
         let v: f64 = scene.bodies.iter().map(|b| b.volume).sum();
         let grams = v * density / 1000.0;
@@ -415,9 +415,52 @@ fn asm_delete(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
     let cid = component(p, "component")?;
     s.edit(|asm, _| if asm.remove_component(cid) { Ok(()) } else { Err(CmdError(format!("{cid} does not exist"))) })?;
     // Parts no component uses any more are closed.
-    let used: std::collections::BTreeSet<String> = s.assembly().components.iter().map(|c| c.part.clone()).collect();
+    let used: std::collections::BTreeSet<String> = s.assembly().components.iter().flat_map(|c| [c.part.clone(), c.key()]).collect();
     s.parts.retain(|k, p| used.contains(k) || p.session.is_dirty());
     after(s, json!({ "deleted": cid.0 }))
+}
+
+/// The rows of the design table of the part file at `part` (empty without a table).
+pub fn rows_of(parts: &crate::Parts, part: &str) -> Vec<String> {
+    parts.get(part).and_then(|p| p.session.document().table()).map(|t| t.rows.iter().map(|r| r.name.clone()).collect()).unwrap_or_default()
+}
+
+/// Checks that the part file at `part` can be had at `row`: says which rows there are when not.
+pub fn check_row(parts: &crate::Parts, part: &str, row: &str) -> Result<(), CmdError> {
+    let file = part.rsplit(['/', '\\']).next().unwrap_or(part);
+    let rows = rows_of(parts, part);
+    if rows.is_empty() {
+        return Err(CmdError(format!("{file} has no design table, so it comes in one size only")));
+    }
+    if !rows.iter().any(|r| r == row) {
+        return Err(CmdError(format!("{file} has no row `{row}` in its design table: it has {}", rows.join(", "))));
+    }
+    Ok(())
+}
+
+/// Which size of its part a component is: a row of the part's design table, or (null) the part
+/// as its file has it.
+fn asm_set_row(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let cid = component(p, "component")?;
+    let row = match p.get("row") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(r)) => Some(r.clone()),
+        Some(_) => return Err("`row` must be the name of a row, or null".into()),
+    };
+    let part = s.component(cid)?.part.clone();
+    if let Some(row) = &row {
+        check_row(&s.parts, &part, row)?;
+    }
+    s.edit(|asm, _| {
+        asm.component_mut(cid).ok_or_else(|| CmdError(format!("{cid} does not exist")))?.row = row.clone();
+        Ok(())
+    })?;
+    // The part in that size, then the relationships that hold the component.
+    if let Some(k) = k {
+        s.refresh(k).map_err(CmdError)?;
+    }
+    let solved = s.update()?;
+    Ok(json!({ "component": cid.0, "row": row, "rows": rows_of(&s.parts, &part), "converged": solved.converged }))
 }
 
 fn asm_rename(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
@@ -693,6 +736,14 @@ static COMMANDS: &[AsmCommand] = &[
         mutates: true,
         kernel: false,
         run: asm_rename,
+    },
+    AsmCommand {
+        id: "asm.set_row",
+        label: "Change Size",
+        help: "component; row: a row of its part's design table (the component is the part in that size), or null for the part as its file has it",
+        mutates: true,
+        kernel: false,
+        run: asm_set_row,
     },
     AsmCommand { id: "asm.ground", label: "Ground", help: "component, grounded (default true)", mutates: true, kernel: false, run: asm_ground },
     AsmCommand { id: "asm.visible", label: "Visibility", help: "component, visible (default true)", mutates: true, kernel: false, run: asm_visible },

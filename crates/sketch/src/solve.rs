@@ -116,6 +116,10 @@ impl<'s> System<'s> {
         }
         sys.locked = vec![false; sys.x0.len()];
         for (id, c) in sketch.constraints() {
+            // A driven dimension follows the sketch: it is no equation.
+            if sketch.is_driven(id) {
+                continue;
+            }
             sketch.check_constraint(c)?;
             if let Constraint::Fix { point } = c {
                 if let Some(&o) = sys.point_at.get(point) {
@@ -481,6 +485,7 @@ impl SketchSolver for GaussNewton {
         // Write back on a copy so a failure leaves the sketch untouched.
         let mut next = sketch.clone();
         write_back(&mut next, &point_at, &radius_at, &x)?;
+        next.refresh_driven();
         *sketch = next;
         Ok(())
     }
@@ -575,6 +580,9 @@ impl Sketch {
 
     /// Changes a dimension and solves; unchanged on failure.
     pub fn set_dimension(&mut self, id: ConstraintId, value: f64) -> SketchResult<()> {
+        if self.is_driven(id) {
+            return Err(SketchError::Invalid(format!("{id} is a driven dimension: it follows the sketch, so it cannot be given a value")));
+        }
         let mut trial = self.clone();
         let c = trial.constraint_mut(id).ok_or(SketchError::NoConstraint(id))?;
         if !c.set_value(value) {
@@ -583,6 +591,31 @@ impl Sketch {
         let c = c.clone();
         trial.check_constraint(&c)?;
         GaussNewton.solve(&mut trial, &SolveOptions::default())?;
+        *self = trial;
+        Ok(())
+    }
+
+    /// Makes dimension `id` driven (from now on it follows the sketch) or driving again (it
+    /// holds the sketch at the value it shows). Making it driving is refused, with the sketch
+    /// unchanged, when the sketch is already held without it: the dimension would be redundant.
+    pub fn set_driven(&mut self, id: ConstraintId, driven: bool) -> SketchResult<()> {
+        let c = self.constraint(id).ok_or(SketchError::NoConstraint(id))?;
+        if !c.is_dimensional() {
+            return Err(SketchError::Invalid(format!("{id} is not a dimension")));
+        }
+        if self.is_driven(id) == driven {
+            return Ok(());
+        }
+        let mut trial = self.clone();
+        trial.mark_driven(id, driven);
+        if driven {
+            trial.refresh_driven();
+        } else {
+            let c = c.clone();
+            trial.check_constraint(&c)?;
+            GaussNewton.solve(&mut trial, &SolveOptions::default())?;
+            GaussNewton.check_redundant(&trial, id)?;
+        }
         *self = trial;
         Ok(())
     }

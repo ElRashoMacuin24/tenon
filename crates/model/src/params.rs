@@ -38,7 +38,7 @@ impl ParamUnit {
 pub enum ValuePath {
     /// A number in a feature's definition, by JSON pointer (e.g. `/extent/distance`).
     Feature { feature: FeatureId, field: String },
-    /// A driving dimension of a sketch.
+    /// A dimension of a sketch: driving, or driven (then it is read, never set).
     Dimension { sketch: FeatureId, constraint: ConstraintId },
 }
 
@@ -237,6 +237,15 @@ impl Document {
         }
     }
 
+    /// The sketch a driven dimension belongs to, when `path` is one: a value the document works
+    /// out, which nothing can set.
+    pub fn driven_in(&self, path: &ValuePath) -> Option<FeatureId> {
+        match path {
+            ValuePath::Dimension { sketch, constraint } if self.sketch(*sketch).is_some_and(|s| s.is_driven(*constraint)) => Some(*sketch),
+            _ => None,
+        }
+    }
+
     /// The parameter name of a value, if it has one.
     pub fn name_of(&self, path: &ValuePath) -> Option<&str> {
         self.params.model.iter().find(|m| m.target == *path).map(|m| m.name.as_str())
@@ -285,17 +294,23 @@ impl Document {
     /// Names the values, then evaluates every equation in dependency order and writes the results.
     /// Fails on an unknown name, a cycle or a value the document refuses.
     pub fn sync_parameters(&mut self) -> Result<(), String> {
+        // Driven dimensions read their sketches as they now stand.
+        self.refresh_driven();
         self.name_values();
         // name -> (equation, target)
         let mut eqs: BTreeMap<String, (expr::Expr, Option<ValuePath>)> = BTreeMap::new();
         let mut env: BTreeMap<String, f64> = BTreeMap::new();
+        // Driven dimensions, with their sketches: read once their sketch has its equations' values.
+        let mut waiting: Vec<(String, ValuePath, FeatureId)> = Vec::new();
         for m in &self.params.model {
-            match &m.equation {
-                Some(e) => {
+            match (&m.equation, self.driven_in(&m.target)) {
+                (Some(_), Some(_)) => return Err(format!("{} is a driven dimension: it follows its sketch and cannot have an equation", m.name)),
+                (Some(e), None) => {
                     let parsed = expr::parse(e).map_err(|err| format!("{}: {err}", m.name))?;
                     eqs.insert(m.name.clone(), (parsed, Some(m.target.clone())));
                 }
-                None => {
+                (None, Some(sketch)) => waiting.push((m.name.clone(), m.target.clone(), sketch)),
+                (None, None) => {
                     if let Some((v, _)) = self.value_at(&m.target) {
                         env.insert(m.name.clone(), v);
                     }
@@ -307,7 +322,22 @@ impl Document {
             eqs.insert(u.name.clone(), (parsed, None));
         }
         // Evaluate whatever is ready until nothing is left; what remains is a cycle or unknown.
-        while !eqs.is_empty() {
+        loop {
+            // A driven dimension can be read when no equation is left to write into its sketch.
+            let mut released = false;
+            waiting.retain(|(name, path, sketch)| {
+                if eqs.values().any(|(_, t)| matches!(t, Some(ValuePath::Dimension { sketch: s, .. }) if s == sketch)) {
+                    return true;
+                }
+                if let Some((v, _)) = self.value_at(path) {
+                    env.insert(name.clone(), v);
+                }
+                released = true;
+                false
+            });
+            if eqs.is_empty() {
+                break;
+            }
             let ready: Vec<String> = eqs
                 .iter()
                 .filter(|(_, (e, _))| {
@@ -318,13 +348,21 @@ impl Document {
                 .map(|(n, _)| n.clone())
                 .collect();
             if ready.is_empty() {
+                if released {
+                    continue;
+                }
                 let (name, (e, _)) = eqs.iter().next().ok_or("no equation")?;
                 let mut names = Vec::new();
                 e.names(&mut names);
                 let all: BTreeSet<&String> = self.params.model.iter().map(|m| &m.name).chain(self.params.user.iter().map(|u| &u.name)).collect();
-                return Err(match names.iter().find(|n| !all.contains(n)) {
-                    Some(missing) => format!("{name}: there is no parameter `{missing}`"),
-                    None => format!("{name}: the equations refer to each other in a circle"),
+                return Err(match (names.iter().find(|n| !all.contains(n)), names.iter().find(|n| waiting.iter().any(|w| &w.0 == *n))) {
+                    (Some(missing), _) => format!("{name}: there is no parameter `{missing}`"),
+                    (None, Some(driven)) => {
+                        format!(
+                            "{name}: `{driven}` is a driven dimension of a sketch this would change, so it cannot be used here: it would chase itself"
+                        )
+                    }
+                    (None, None) => format!("{name}: the equations refer to each other in a circle"),
                 });
             }
             for name in ready {
@@ -348,6 +386,9 @@ impl Document {
     pub fn set_equation(&mut self, name: &str, equation: Option<&str>) -> Result<(), String> {
         if let Some(e) = equation {
             expr::parse(e).map_err(|err| format!("{name}: {err}"))?;
+            if self.params.model.iter().any(|m| m.name == name && self.driven_in(&m.target).is_some()) {
+                return Err(format!("{name} is a driven dimension: it follows its sketch and cannot be set. Make it a driving dimension first"));
+            }
         }
         if let Some(m) = self.params.model.iter_mut().find(|m| m.name == name) {
             m.equation = equation.map(str::to_owned);

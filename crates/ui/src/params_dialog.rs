@@ -101,7 +101,11 @@ impl Workbench {
                                     let value = row["value"].as_f64();
                                     // A model value without an equation shows its number as the equation.
                                     let eq = row["equation"].as_str().map(str::to_owned).unwrap_or_else(|| value.map(fmt_value).unwrap_or_default());
-                                    if let Some(new) = edit_cell(ui, egui::Id::new(("tn_param_eq", &name)), &eq, EQ_W, t) {
+                                    if row["driven"] == true {
+                                        // A driven dimension is read, not set: its sketch works it out.
+                                        ui.add_sized([EQ_W, 18.0], egui::Label::new(RichText::new("driven").italics().color(t.text_dim)))
+                                            .on_hover_text("A driven dimension follows its sketch. Other equations can use its name.");
+                                    } else if let Some(new) = edit_cell(ui, egui::Id::new(("tn_param_eq", &name)), &eq, EQ_W, t) {
                                         changes.push(Change::Equation(name.clone(), new));
                                     }
                                     ui.label(

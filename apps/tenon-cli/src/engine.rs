@@ -193,7 +193,7 @@ impl Engine {
             let (Some(scene), Some(f)) = (tenon_assembly::session::scene_of(&self.asm.parts, c), frames.get(&c.id)) else { continue };
             for b in &scene.bodies {
                 meshes.push(placed_mesh(&b.mesh, f));
-                colors.push(self.asm.parts.get(&c.part).and_then(|p| p.session.document().color()));
+                colors.push(self.asm.parts.get(&c.key()).and_then(|p| p.session.document().color()));
             }
         }
         let bbox = tenon_geom::Aabb3::from_points(

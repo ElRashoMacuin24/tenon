@@ -22,16 +22,20 @@ pub struct Part {
     pub session: Session,
     /// Its geometry and the document revision it was made from.
     pub scene: Option<(u64, Arc<Scene>)>,
-    /// Why the file could not be read; its components are shown as missing.
+    /// Why the file could not be read (or, for a part in a row of its design table, why that
+    /// row cannot be had); its components are shown as missing.
     pub missing: Option<String>,
+    /// Set for a part in one row of its design table: worked out from the part file's own entry,
+    /// never saved, and worked out again when that changes.
+    pub variant: Option<Variant>,
 }
 
 impl Part {
     pub fn new(doc: Document) -> Part {
-        Part { session: Session::new(doc), scene: None, missing: None }
+        Part { session: Session::new(doc), scene: None, missing: None, variant: None }
     }
     pub fn missing(why: impl Into<String>) -> Part {
-        Part { session: Session::default(), scene: None, missing: Some(why.into()) }
+        Part { session: Session::default(), scene: None, missing: Some(why.into()), variant: None }
     }
     /// The geometry is from the current document revision.
     pub fn is_current(&self) -> bool {
@@ -39,12 +43,22 @@ impl Part {
     }
 }
 
-/// Parts by path (as in [`Component::part`]).
+/// What a part in one row of its design table was worked out from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Variant {
+    /// The key of the part file's own entry.
+    pub base: String,
+    pub row: String,
+    /// That entry's document revision when this was worked out (none: it was not loaded).
+    pub base_revision: Option<u64>,
+}
+
+/// Parts by key ([`Component::key`]): a part file's path, or path and design table row.
 pub type Parts = BTreeMap<String, Part>;
 
 /// The geometry of a component's part, if there is any yet.
 pub fn scene_of<'p>(parts: &'p Parts, c: &Component) -> Option<&'p Scene> {
-    parts.get(&c.part).and_then(|p| p.scene.as_ref()).map(|(_, s)| s.as_ref())
+    parts.get(&c.key()).and_then(|p| p.scene.as_ref()).map(|(_, s)| s.as_ref())
 }
 
 /// A component's bounding box in its part's coordinates.
@@ -109,7 +123,7 @@ pub fn resolve_target(asm: &Assembly, parts: &Parts, t: &Target) -> Result<End, 
         Some(id) => {
             let i = asm.components.iter().position(|c| c.id == id).ok_or_else(|| format!("{id} does not exist"))?;
             let c = &asm.components[i];
-            if let Some(why) = parts.get(&c.part).and_then(|p| p.missing.as_ref()) {
+            if let Some(why) = parts.get(&c.key()).and_then(|p| p.missing.as_ref()) {
                 return Err(format!("{} is missing: {why}", c.name));
             }
             let prim = geometry::resolve(&t.geom, scene_of(parts, c)).map_err(|e| format!("{}: {e}", c.name))?;
@@ -279,16 +293,19 @@ pub fn auto_explode(asm: &Assembly, parts: &Parts, spacing: f64) -> Vec<Tweak> {
     tweaks
 }
 
-/// A bill of materials row: one per part file.
+/// A bill of materials row: one per part file, or per size of one (a row of its design table).
 #[derive(Clone, Debug, PartialEq)]
 pub struct BomRow {
     pub item: usize,
-    /// The part file's name without its folder or extension.
+    /// The part file's name without its folder or extension, and the size when a row is named:
+    /// "bolt (M8x50)".
     pub part: String,
-    /// The part's key (its full path), as components name it.
+    /// The part's key among the assembly's parts ([`Component::key`]).
     pub key: String,
-    /// The part document's name.
+    /// The part document's name, and the size when a row is named: "Bolt, M8x50".
     pub name: String,
+    /// The row of the part's design table these components use.
+    pub row: Option<String>,
     pub quantity: usize,
     /// What the part is made of, when it has a material.
     pub material: Option<String>,
@@ -321,7 +338,8 @@ pub fn bom(asm: &Assembly, parts: &Parts) -> Vec<BomRow> {
 pub fn bom_with(asm: &Assembly, name: impl Fn(&str) -> Option<String>, volume: impl Fn(&Component) -> Option<f64>) -> Vec<BomRow> {
     let mut rows: Vec<BomRow> = Vec::new();
     for c in &asm.components {
-        if let Some(r) = rows.iter_mut().find(|r| r.key == c.part) {
+        let key = c.key();
+        if let Some(r) = rows.iter_mut().find(|r| r.key == key) {
             r.quantity += 1;
             r.components.push(c.name.clone());
             continue;
@@ -329,11 +347,16 @@ pub fn bom_with(asm: &Assembly, name: impl Fn(&str) -> Option<String>, volume: i
         let file = c.part.rsplit(['/', '\\']).next().unwrap_or(&c.part);
         let stem = file.strip_suffix(".tenon").unwrap_or(file).to_owned();
         let name = name(&c.part).unwrap_or_else(|| stem.clone());
+        let (stem, name) = match &c.row {
+            Some(row) => (format!("{stem} ({row})"), format!("{name}, {row}")),
+            None => (stem, name),
+        };
         rows.push(BomRow {
             item: rows.len() + 1,
             part: stem,
-            key: c.part.clone(),
+            key,
             name,
+            row: c.row.clone(),
             quantity: 1,
             material: None,
             mass: None,
@@ -342,6 +365,63 @@ pub fn bom_with(asm: &Assembly, name: impl Fn(&str) -> Option<String>, volume: i
         });
     }
     rows
+}
+
+/// Keeps the parts that are a part file in one row of its design table in step with the
+/// assembly and with the part files' own entries: makes those components need, works them out
+/// again when their part file's document has changed, and drops those no component uses.
+/// Returns true when anything changed.
+pub fn sync_variants(asm: &Assembly, parts: &mut Parts) -> bool {
+    let wanted: BTreeMap<String, (&str, &str)> =
+        asm.components.iter().filter_map(|c| c.row.as_deref().map(|row| (c.key(), (c.part.as_str(), row)))).collect();
+    let before = parts.len();
+    parts.retain(|k, p| p.variant.is_none() || wanted.contains_key(k));
+    let mut changed = parts.len() != before;
+    for (key, (base, row)) in wanted {
+        let base_revision = parts.get(base).filter(|b| b.missing.is_none()).map(|b| b.session.revision());
+        let variant = Variant { base: base.to_owned(), row: row.to_owned(), base_revision };
+        if parts.get(&key).is_some_and(|p| p.variant.as_ref() == Some(&variant)) {
+            continue;
+        }
+        // The part file's document, put at the row.
+        let made: Result<Document, String> = match parts.get(base) {
+            None => Err("its part file is not loaded".into()),
+            Some(b) => match &b.missing {
+                Some(why) => Err(why.clone()),
+                None => {
+                    let mut doc = b.session.document().clone();
+                    let file = base.rsplit(['/', '\\']).next().unwrap_or(base);
+                    match doc.table_activate(row).and_then(|()| doc.sync_parameters()) {
+                        Ok(()) => Ok(doc),
+                        Err(e) => Err(format!("{file} cannot be had at row `{row}`: {e}")),
+                    }
+                }
+            },
+        };
+        match (parts.get_mut(&key), made) {
+            // (The entry is kept, so whoever regenerates it sees its revision move on.)
+            (Some(p), Ok(doc)) => {
+                p.session.replace_document(doc, None);
+                p.missing = None;
+                p.variant = Some(variant);
+            }
+            (Some(p), Err(why)) => {
+                p.scene = None;
+                p.missing = Some(why);
+                p.variant = Some(variant);
+            }
+            (None, made) => {
+                let mut p = match made {
+                    Ok(doc) => Part::new(doc),
+                    Err(why) => Part::missing(why),
+                };
+                p.variant = Some(variant);
+                parts.insert(key, p);
+            }
+        }
+        changed = true;
+    }
+    changed
 }
 
 /// An open assembly.
@@ -374,7 +454,7 @@ impl AsmSession {
     }
     /// The assembly or one of its parts has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.revision != self.saved_revision || self.parts.values().any(|p| p.session.is_dirty())
+        self.revision != self.saved_revision || self.parts.values().any(|p| p.variant.is_none() && p.session.is_dirty())
     }
     pub fn mark_saved(&mut self) {
         self.saved_revision = self.revision;
@@ -395,6 +475,7 @@ impl AsmSession {
         self.revision += 1;
         self.saved_revision = self.revision;
         self.failing.clear();
+        self.sync_variants();
     }
 
     /// Applies `f` as one undoable step; on error nothing changes.
@@ -409,6 +490,7 @@ impl AsmSession {
                     }
                     self.redo.clear();
                     self.revision += 1;
+                    self.sync_variants();
                 }
                 Ok(v)
             }
@@ -424,6 +506,7 @@ impl AsmSession {
             Some(a) => {
                 self.redo.push(std::mem::replace(&mut self.asm, a));
                 self.revision += 1;
+                self.sync_variants();
                 true
             }
             None => false,
@@ -434,15 +517,24 @@ impl AsmSession {
             Some(a) => {
                 self.undo.push(std::mem::replace(&mut self.asm, a));
                 self.revision += 1;
+                self.sync_variants();
                 true
             }
             None => false,
         }
     }
 
+    /// Works out the parts that are a part file in one row of its design table (see
+    /// [`sync_variants`]). Called after every change here; call it after changing a part's
+    /// document directly. True when anything changed.
+    pub fn sync_variants(&mut self) -> bool {
+        sync_variants(&self.asm, &mut self.parts)
+    }
+
     /// Adds a part file (if it is not already there).
     pub fn add_part(&mut self, key: &str, part: Part) {
         self.parts.entry(key.to_owned()).or_insert(part);
+        self.sync_variants();
     }
 
     /// Sets the geometry of a part, made from document revision `revision`.
@@ -454,6 +546,7 @@ impl AsmSession {
 
     /// Regenerates every part whose geometry is out of date, with `k`.
     pub fn refresh(&mut self, k: &mut dyn Kernel) -> Result<(), String> {
+        self.sync_variants();
         for (key, p) in self.parts.iter_mut() {
             if p.is_current() {
                 continue;
@@ -524,7 +617,7 @@ pub fn insert(asm: &mut Assembly, parts: &Parts, key: &str, at: Option<Frame>, g
     });
     let id = asm.take_component_id();
     let name = asm.occurrence_name(&base);
-    asm.components.push(Component { id, name, part: key.to_owned(), placement, grounded: grounded.unwrap_or(first), visible: true });
+    asm.components.push(Component { id, name, part: key.to_owned(), placement, grounded: grounded.unwrap_or(first), row: None, visible: true });
     id
 }
 

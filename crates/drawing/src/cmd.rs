@@ -768,8 +768,8 @@ fn drw_balloon_auto(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) 
         .collect();
     let mut kinds = Vec::new();
     for row in parts_rows(&m) {
-        let Some(c) = asm.components.iter().find(|c| c.part == row.part && c.visible) else { continue };
-        let ballooned = have.iter().any(|h| asm.component(*h).is_some_and(|x| x.part == row.part));
+        let Some(c) = asm.components.iter().find(|c| c.key() == row.part && c.visible) else { continue };
+        let ballooned = have.iter().any(|h| asm.component(*h).is_some_and(|x| x.key() == row.part));
         if !ballooned {
             let (attach, at) = balloon_place(s, &v, c.id)?;
             kinds.push(AnnotKind::Balloon { view: vid, component: c.id, attach, offset: at - v.center });

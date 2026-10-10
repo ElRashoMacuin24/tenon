@@ -29,9 +29,10 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.rectangle` | Rectangle | sketch, x1, y1, x2, y2 (opposite corners); returns lines and corners (the first at x1, y1) | yes |
 | `sketch.polygon` | Polygon | sketch, cx, cy, x, y (a corner), sides | yes |
 | `sketch.spline` | Spline | sketch, points: [[x, y], ...] (control points), degree (default 3) | yes |
-| `sketch.constrain` | Constrain | sketch, constraint: {"type": "horizontal", "line": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. "width / 2"); at_x, at_y: where a dimension's value is shown (default: beside its geometry) | yes |
+| `sketch.constrain` | Constrain | sketch, constraint: {"type": "horizontal", "line": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. "width / 2"); at_x, at_y: where a dimension's value is shown (default: beside its geometry); driven: true for a dimension that follows the sketch instead of setting it (shown in parentheses), or "auto" to make it driven only when a driving one would be one too many | yes |
 | `sketch.place_dimension` | Move Dimension | sketch, constraint (a dimension's id), x, y: where its value is shown; its dimension line runs through there | yes |
 | `sketch.set_dimension` | Edit Dimension | sketch, constraint (id); value (mm or rad), or equation (e.g. "d0 / 2", lengths in mm, angles in degrees) | yes |
+| `sketch.set_driven` | Driven Dimension | sketch, constraint (id), driven: true (the dimension follows the sketch from now on) or false (it holds the sketch at the value it shows; refused when the sketch is held without it) | yes |
 | `sketch.remove_constraint` | Delete Constraint | sketch, constraint (id) | yes |
 | `sketch.drag` | Drag Point | sketch, point (id), x, y | yes |
 | `sketch.delete` | Delete | sketch, entities: [ids] | yes |
@@ -41,7 +42,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.offset` | Offset | sketch, curves: [ids], distance (positive: outward / left) | yes |
 | `sketch.mirror` | Mirror | sketch, entities: [ids], axis (line id) | yes |
 | `sketch.info` | Sketch Info | sketch | no |
-| `model.extrude` | Extrude | sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join \| cut \| new_body \| intersect; regions: [[curve ids]]; taper (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through_all only) | yes |
+| `model.extrude` | Extrude | sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join \| cut \| new_body \| intersect; regions: the closed regions to use (default: every outer one), each as sketch.info lists it under `select`: [curve ids] for what those curves enclose, or {left: [ids], right: [ids], nth} for one region of a divided sketch; taper (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through_all only) | yes |
 | `model.revolve` | Revolve | sketch; axis: line id or "x" \| "y" \| "z"; angle (rad, default full); symmetric; operation; regions | yes |
 | `model.fillet` | Fillet | edges: [edge references from model.edge_ref], radius | yes |
 | `model.chamfer` | Chamfer | edges: [edge references]; distance; and either distance2 or angle (rad) with reference: a face reference for the first distance | yes |
@@ -97,7 +98,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `asm.new` | New Assembly | name (default Assembly1); clears undo history | no |
 | `asm.open` | Open Assembly | path (.tenonasm); reads every part file it uses; clears undo history | no |
 | `asm.save` | Save Assembly | path (.tenonasm); parts changed in place are saved to their own files first | no |
-| `asm.insert` | Place Component | path (.tenon part file); at: [x, y, z] (default: grounded at the origin for the first, beside the others after); grounded | yes |
+| `asm.insert` | Place Component | path (.tenon part file); at: [x, y, z] (default: grounded at the origin for the first, beside the others after); grounded; row: a row of the part's design table (the component is the part in that size) | yes |
 | `asm.export_step` | Export Assembly STEP | path (.step); exploded (default false) | no |
 | `asm.export_bom` | Export Bill of Materials | path (.csv) | no |
 | `asm.tree` | Assembly Tree | none | no |
@@ -108,6 +109,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `asm.suppress` | Suppress Relationship | relationship, suppressed (default true) | yes |
 | `asm.delete` | Delete | component or relationship | yes |
 | `asm.rename` | Rename | name; component or relationship (neither: the assembly) | yes |
+| `asm.set_row` | Change Size | component; row: a row of its part's design table (the component is the part in that size), or null for the part as its file has it | yes |
 | `asm.ground` | Ground | component, grounded (default true) | yes |
 | `asm.visible` | Visibility | component, visible (default true) | yes |
 | `asm.move` | Free Move | component; by: [x, y, z]; turn: {axis, angle (rad), through: a point (default its centre)}; the relationships then pull it where they must | yes |

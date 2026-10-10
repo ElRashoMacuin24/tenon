@@ -752,9 +752,43 @@ fn sketch_constrain(s: &mut Session, p: &Value) -> CmdResult {
     let eq = param_value(p, "equation")?.filter(|e| e.trim().parse::<f64>().is_err());
     // Where a dimension's value is shown, when it was placed by hand.
     let at = if p.get("at_x").is_some() || p.get("at_y").is_some() { Some(pos(p, "at_x", "at_y")?) } else { None };
-    let id = s.edit(|d| {
+    // A driven dimension follows the sketch instead of setting it: asked for (`true`), or taken
+    // when a driving one would be one too many (`"auto"`).
+    let (driven, auto) = match p.get("driven") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => (false, false),
+        Some(Value::Bool(true)) => (true, false),
+        Some(Value::String(a)) if a == "auto" => (false, true),
+        Some(_) => return Err("`driven` must be true, false or \"auto\"".into()),
+    };
+    if driven && eq.is_some() {
+        return Err("a driven dimension follows the sketch: it cannot have an equation".into());
+    }
+    let dimension = c.is_dimensional();
+    let (id, driven) = s.edit(|d| {
         let sk = d.sketch_mut(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
-        let id = sk.add_constraint(c)?;
+        // One too many: the sketch is already held where this dimension, at the size it now
+        // measures, would hold it.
+        let surplus = |sk: &Sketch| {
+            let mut as_measured = c.clone();
+            if let Some(v) = sk.measure(&c) {
+                as_measured.set_value(v);
+            }
+            dimension && matches!(sk.clone().add_constraint(as_measured), Err(tenon_sketch::SketchError::Redundant(_)))
+        };
+        let (id, driven) = if driven {
+            (sk.add_driven(c.clone())?, true)
+        } else {
+            match sk.add_constraint(c.clone()) {
+                Ok(id) => (id, false),
+                Err(_) if auto && eq.is_none() && surplus(sk) => (sk.add_driven(c.clone())?, true),
+                Err(tenon_sketch::SketchError::Redundant(_)) if dimension => {
+                    return Err("the sketch is already held here, so this dimension would be one too many: add it as a driven dimension \
+                                (`driven`: true), which shows the size without setting it"
+                        .into());
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
         if let Some(at) = at {
             sk.set_place(id, at)?;
         }
@@ -763,10 +797,37 @@ fn sketch_constrain(s: &mut Session, p: &Value) -> CmdResult {
             let name = d.name_of(&ValuePath::Dimension { sketch, constraint: id }).ok_or("only a dimension can have an equation")?.to_owned();
             d.set_equation(&name, Some(eq)).map_err(CmdError)?;
         }
-        Ok(id)
+        Ok((id, driven))
     })?;
     let name = s.document().name_of(&ValuePath::Dimension { sketch, constraint: id }).map(str::to_owned);
-    Ok(json!({ "constraint": id.0, "name": name }))
+    let value = s.document().sketch(sketch).and_then(|sk| sk.constraint(id)).and_then(Constraint::value);
+    Ok(json!({ "constraint": id.0, "name": name, "driven": driven, "value": value }))
+}
+
+/// Makes a dimension driven (it follows the sketch) or driving again.
+fn sketch_set_driven(s: &mut Session, p: &Value) -> CmdResult {
+    let (sketch, c) = (sketch_id(p)?, ConstraintId(id_u32(p, "constraint")?));
+    let driven = field(p, "driven")?.as_bool().ok_or("`driven` must be true or false")?;
+    let path = ValuePath::Dimension { sketch, constraint: c };
+    s.edit(|d| {
+        let sk = d.sketch_mut(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
+        match sk.set_driven(c, driven) {
+            Ok(()) => {}
+            Err(tenon_sketch::SketchError::Redundant(_)) => {
+                return Err("the sketch is held without this dimension, so it would be one too many: it stays driven. \
+                            Make another dimension driven, or remove a constraint, first"
+                    .into());
+            }
+            Err(e) => return Err(e.into()),
+        }
+        if driven {
+            // Whatever set it sets it no longer.
+            d.clear_equation_at(&path);
+        }
+        Ok(())
+    })?;
+    let value = s.document().sketch(sketch).and_then(|sk| sk.constraint(c)).and_then(Constraint::value);
+    Ok(json!({ "constraint": c.0, "driven": driven, "value": value }))
 }
 
 /// Sets a dimension's value (clearing its equation), or with `equation` drives it by one.
@@ -882,13 +943,28 @@ pub fn sketch_info_value(sk: &Sketch) -> Value {
             let mut v = serde_json::to_value(c).unwrap_or(Value::Null);
             if let Some(o) = v.as_object_mut() {
                 o.insert("id".into(), json!(id.0));
+                if sk.is_driven(id) {
+                    o.insert("driven".into(), json!(true));
+                }
             }
             v
         })
         .collect();
-    let regions: Vec<Value> = regions(sk)
+    // (`select` is what a feature's `regions` takes to use that region: its curves when they
+    // name it alone, else its curves by side.)
+    let all = regions(sk);
+    let regions: Vec<Value> = all
         .iter()
-        .map(|r| json!({ "key": r.key.iter().map(|e| e.0).collect::<Vec<_>>(), "area": r.area, "depth": r.depth, "holes": r.holes.len() }))
+        .map(|r| {
+            json!({
+                "key": r.key.iter().map(|e| e.0).collect::<Vec<_>>(),
+                "select": tenon_sketch::key_of(sk, &all, r),
+                "area": r.area,
+                "depth": r.depth,
+                "holes": r.holes.len(),
+                "inside": [r.inside.x, r.inside.y],
+            })
+        })
         .collect();
     json!({
         "entities": entities,
@@ -917,10 +993,7 @@ fn operation(p: &Value) -> Result<Operation, CmdError> {
 fn region_sel(p: &Value) -> Result<RegionSel, CmdError> {
     match p.get("regions") {
         None | Some(Value::Null) => Ok(RegionSel::Default),
-        Some(_) => {
-            let keys: Vec<Vec<u32>> = parse(p, "regions")?;
-            Ok(RegionSel::Keys(keys.into_iter().map(|k| k.into_iter().map(EntityId).collect()).collect()))
-        }
+        Some(_) => Ok(RegionSel::Keys(parse(p, "regions")?)),
     }
 }
 
@@ -1298,7 +1371,7 @@ fn param_list(s: &mut Session, _p: &Value) -> CmdResult {
         .iter()
         .map(|m| {
             let (value, unit) = d.value_at(&m.target).map_or((Value::Null, Value::Null), |(v, u)| (json!(v), json!(u.label())));
-            json!({ "name": m.name, "of": d.describe_path(&m.target), "target": m.target, "unit": unit, "equation": m.equation, "value": value, "comment": m.comment })
+            json!({ "name": m.name, "of": d.describe_path(&m.target), "target": m.target, "unit": unit, "equation": m.equation, "value": value, "comment": m.comment, "driven": d.driven_in(&m.target).is_some() })
         })
         .collect();
     let env = d.parameter_values();
@@ -1743,7 +1816,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sketch.constrain",
         "Constrain",
-        "sketch, constraint: {\"type\": \"horizontal\", \"line\": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. \"width / 2\"); at_x, at_y: where a dimension's value is shown (default: beside its geometry)",
+        "sketch, constraint: {\"type\": \"horizontal\", \"line\": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. \"width / 2\"); at_x, at_y: where a dimension's value is shown (default: beside its geometry); driven: true for a dimension that follows the sketch instead of setting it (shown in parentheses), or \"auto\" to make it driven only when a driving one would be one too many",
         true,
         sketch_constrain
     ),
@@ -1761,6 +1834,13 @@ static COMMANDS: &[CommandSpec] = &[
         true,
         sketch_set_dimension
     ),
+    doc_cmd!(
+        "sketch.set_driven",
+        "Driven Dimension",
+        "sketch, constraint (id), driven: true (the dimension follows the sketch from now on) or false (it holds the sketch at the value it shows; refused when the sketch is held without it)",
+        true,
+        sketch_set_driven
+    ),
     doc_cmd!("sketch.remove_constraint", "Delete Constraint", "sketch, constraint (id)", true, sketch_remove_constraint),
     doc_cmd!("sketch.drag", "Drag Point", "sketch, point (id), x, y", true, sketch_drag),
     doc_cmd!("sketch.delete", "Delete", "sketch, entities: [ids]", true, sketch_delete),
@@ -1773,7 +1853,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.extrude",
         "Extrude",
-        "sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join | cut | new_body | intersect; regions: [[curve ids]]; taper (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through_all only)",
+        "sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join | cut | new_body | intersect; regions: the closed regions to use (default: every outer one), each as sketch.info lists it under `select`: [curve ids] for what those curves enclose, or {left: [ids], right: [ids], nth} for one region of a divided sketch; taper (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through_all only)",
         true,
         model_extrude
     ),

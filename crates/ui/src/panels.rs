@@ -1553,7 +1553,7 @@ fn direction_json(d: &DirectionRef) -> Value {
 fn regions_json(sel: &RegionSel) -> Option<Value> {
     match sel {
         RegionSel::Default => None,
-        RegionSel::Keys(keys) => Some(json!(keys.iter().map(|k| k.iter().map(|e| e.0).collect::<Vec<_>>()).collect::<Vec<_>>())),
+        RegionSel::Keys(keys) => Some(json!(keys)),
     }
 }
 

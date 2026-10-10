@@ -207,13 +207,16 @@ pub const RIBBON: &[RibbonTab] = &[
             },
             RibbonPanel {
                 title: "Format",
-                commands: &[small(
-                    "sketch.construction",
-                    "Construction",
-                    "Make the selected geometry construction (or normal again)",
-                    Icon::Construction,
-                    0,
-                )],
+                commands: &[
+                    small("sketch.construction", "Construction", "Make the selected geometry construction (or normal again)", Icon::Construction, 0),
+                    small(
+                        "sketch.driven",
+                        "Driven Dimension",
+                        "Click a dimension to make it driven (it follows the sketch, in parentheses) or driving again",
+                        Icon::Driven,
+                        0,
+                    ),
+                ],
             },
             RibbonPanel { title: "Exit", commands: &[large("sketch.finish", "Finish\nSketch", "Leave the sketch", Icon::FinishSketch, 0)] },
         ],

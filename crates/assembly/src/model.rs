@@ -50,8 +50,33 @@ pub struct Component {
     /// A grounded component never moves.
     #[serde(default)]
     pub grounded: bool,
+    /// The row of the part's design table this component uses: the part in that size. Without
+    /// one, the part as its file has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row: Option<String>,
     #[serde(default = "yes")]
     pub visible: bool,
+}
+
+/// The key of a part among an assembly's loaded parts: its file's path, and for a part in one
+/// row of its design table, the path and the row (parted by a character no path can hold).
+pub fn part_key(part: &str, row: Option<&str>) -> String {
+    match row {
+        Some(row) => format!("{part}\0{row}"),
+        None => part.to_owned(),
+    }
+}
+
+/// The file of a part key (see [`part_key`]).
+pub fn key_file(key: &str) -> &str {
+    key.split('\0').next().unwrap_or(key)
+}
+
+impl Component {
+    /// The key of this component's part among the assembly's loaded parts.
+    pub fn key(&self) -> String {
+        part_key(&self.part, self.row.as_deref())
+    }
 }
 
 /// Geometry of a part that a relationship refers to, in the part's coordinates.
@@ -374,6 +399,9 @@ impl Assembly {
             if c.part.is_empty() || c.part.len() > 4096 || c.part.contains('\0') {
                 return Err(format!("{} has a bad part path", c.name));
             }
+            if c.row.as_ref().is_some_and(|r| r.is_empty() || r.chars().count() > 64 || r.chars().any(char::is_control)) {
+                return Err(format!("{} names a bad design table row", c.name));
+            }
             if c.name.len() > 256 {
                 return Err(format!("{} has too long a name", c.id));
             }
@@ -448,7 +476,7 @@ mod tests {
     fn comp(asm: &mut Assembly, name: &str) -> ComponentId {
         let id = asm.take_component_id();
         let name = asm.occurrence_name(name);
-        asm.components.push(Component { id, name, part: "p.tenon".into(), placement: Frame::WORLD, grounded: false, visible: true });
+        asm.components.push(Component { id, name, part: "p.tenon".into(), placement: Frame::WORLD, grounded: false, row: None, visible: true });
         id
     }
 

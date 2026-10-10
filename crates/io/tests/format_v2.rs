@@ -457,3 +457,80 @@ fn material_appearance_and_design_table_are_written_as_text_and_read_back() {
     assert_eq!(read.table().unwrap().rows[0].values, [40.0, 10.0]);
     assert_eq!(project::to_bytes(&read, &extra).unwrap(), bytes);
 }
+
+#[test]
+fn a_region_of_a_divided_sketch_is_named_by_side_in_the_file() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let c = run(&mut s, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 10 }))["circle"].as_u64().unwrap();
+    let l = run(&mut s, "sketch.line", json!({ "sketch": sk, "x1": -15, "y1": 0, "x2": 15, "y2": 0 }))["line"].as_u64().unwrap();
+    // Above the line (its left) and below it; and the circle whole, as files always wrote it.
+    run(&mut s, "model.extrude", json!({ "sketch": sk, "distance": 5, "regions": [{ "left": [c, l] }] }));
+    run(&mut s, "model.extrude", json!({ "sketch": sk, "distance": 2, "regions": [{ "left": [c], "right": [l] }] }));
+    run(&mut s, "model.extrude", json!({ "sketch": sk, "distance": 1, "regions": [[c]] }));
+    let extra = Map::new();
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(text.contains(&format!("\nregions = {{ keys = [{{ left = [{c}, {l}] }}] }}\n")), "{text}");
+    assert!(text.contains(&format!("\nregions = {{ keys = [{{ left = [{c}], right = [{l}] }}] }}\n")), "{text}");
+    assert!(text.contains(&format!("\nregions = {{ keys = [[{c}]] }}\n")), "{text}");
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(&back, s.document());
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+    // The diff says which feature changed what it is made from.
+    let before = serde_json::to_value(s.document()).unwrap();
+    let first = s.document().features()[1].id.0;
+    let mut kind = serde_json::to_value(&s.document().features()[1].kind).unwrap();
+    kind["regions"] = json!({ "keys": [{ "left": [c], "right": [l] }] });
+    run(&mut s, "feature.update", json!({ "feature": first, "kind": kind }));
+    let d = diff::diff_documents("part", &before, &serde_json::to_value(s.document()).unwrap()).text();
+    assert!(d.contains("Extrusion1") && d.contains("regions"), "{d}");
+    // A key that is neither a list of curves nor sides is refused, with the feature's line.
+    let m = damaged(&text.replacen(&format!("{{ left = [{c}, {l}] }}"), &format!("{{ left = [{c}], inside = [{l}] }}"), 1));
+    assert!(m.contains("feature 2 (Extrusion1)"), "{m}");
+}
+
+#[test]
+fn a_driven_dimension_says_so_on_its_own_record() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let r = run(&mut s, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 40, "y2": 20 }));
+    run(&mut s, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "fix", "point": r["corners"][0] } }));
+    run(&mut s, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "length", "line": r["lines"][0], "value": 40.0 } }));
+    run(&mut s, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "length", "line": r["lines"][1], "value": 20.0 } }));
+    let extra = Map::new();
+    let plain = String::from_utf8(project::to_bytes(s.document(), &extra).unwrap()).unwrap();
+    assert!(!plain.contains("driven"), "a sketch without one is written as it always was: {plain}");
+    // The top side, driven and placed by hand.
+    let top = json!({ "type": "length", "line": r["lines"][2], "value": 1.0 });
+    let made = run(&mut s, "sketch.constrain", json!({ "sketch": sk, "constraint": top, "driven": true, "at_x": 20, "at_y": 28 }));
+    let id = made["constraint"].as_u64().unwrap();
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    let record =
+        format!("{{ id = {id}, type = \"length\", line = {}, value = 40.0, driven = true, at = {{ x = 20.0, y = 28.0 }} }},\n", r["lines"][2]);
+    assert!(text.contains(&record), "{text}");
+    assert_eq!(text.matches("driven").count(), 1, "nothing but the record says so: {text}");
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(&back, s.document());
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+    // Its parameter has a name, like any dimension's.
+    assert!(text.contains(&format!("{{ name = \"d2\", target = {{ kind = \"dimension\", sketch = {sk}, constraint = {id} }} }}")), "{text}");
+
+    // Made driving in the file by hand (`driven = false`, or the field taken out): one
+    // dimension too many is not an error of the file; the sketch is read as it was written.
+    for edited in [text.replace("driven = true, ", "driven = false, "), text.replace("driven = true, ", "")] {
+        let (doc, _) = project::from_bytes(edited.as_bytes()).unwrap();
+        assert!(doc.sketch(tenon_model::FeatureId(sk as u32)).unwrap().driven().next().is_none());
+    }
+    // Neither yes nor no, or on what is no dimension: refused, with the sketch's line.
+    let m = damaged(&text.replace("driven = true", "driven = \"maybe\""));
+    assert!(m.contains("feature 1 (Sketch1)"), "{m}");
+    let m = damaged(&text.replacen("type = \"horizontal\", line", "type = \"horizontal\", driven = true, line", 1));
+    assert!(m.contains("marked driven but is not a dimension"), "{m}");
+    // The diff says the dimension changed over.
+    let before = serde_json::to_value(s.document()).unwrap();
+    run(&mut s, "sketch.set_driven", json!({ "sketch": sk, "constraint": 6, "driven": true }));
+    let d = diff::diff_documents("part", &before, &serde_json::to_value(s.document()).unwrap()).text();
+    assert!(d.contains("Sketch1") && d.contains("dimension d0 now driven"), "{d}");
+}

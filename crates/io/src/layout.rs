@@ -85,7 +85,7 @@ const HEAD: &[&str] = &["format", "version", "generator"];
 /// A sketch entity's own fields; the rest are its geometry's.
 const ENTITY_OWN: &[&str] = &["construction"];
 /// A sketch's fields, in file order.
-const SKETCH: &[&str] = &["next_entity", "next_constraint", "entities", "constraints", "places"];
+const SKETCH: &[&str] = &["next_entity", "next_constraint", "entities", "constraints", "places", "driven"];
 
 impl Shape {
     /// The file's name for a list (`"features"` gives `"feature"`).
@@ -223,7 +223,9 @@ fn sketch_out(r: &mut Value) -> Result<(), String> {
         if let Some(k) = s.keys().find(|k| !SKETCH.contains(&k.as_str())) {
             return Err(format!("the sketch field `{k}` has no place in the file"));
         }
-        // Where a dimension's value was placed goes on the dimension's own record, as `at`.
+        // A driven dimension says so on its own record (`driven = true`), and where a dimension's
+        // value was placed goes there too, as `at`.
+        let mut driven: Vec<Value> = s.get("driven").and_then(Value::as_array).cloned().unwrap_or_default();
         let mut places = match s.get("places") {
             Some(x) => pairs(x)?,
             None => Vec::new(),
@@ -235,6 +237,13 @@ fn sketch_out(r: &mut Value) -> Result<(), String> {
                 "constraints" => {
                     let mut records = Vec::new();
                     for (id, mut c) in pairs(x)? {
+                        if let Some(i) = driven.iter().position(|d| *d == id) {
+                            if c.contains_key("driven") {
+                                return Err(format!("{id}: the field `driven` would clash"));
+                            }
+                            driven.remove(i);
+                            c.insert("driven".into(), Value::Bool(true));
+                        }
                         if let Some(i) = places.iter().position(|p| p.0 == id) {
                             if c.contains_key("at") {
                                 return Err(format!("{id}: the field `at` would clash"));
@@ -247,10 +256,13 @@ fn sketch_out(r: &mut Value) -> Result<(), String> {
                     }
                     Value::Array(records)
                 }
-                "places" => continue,
+                "places" | "driven" => continue,
                 _ => x.clone(),
             };
             out.insert((*f).into(), x);
+        }
+        if let Some(id) = driven.first() {
+            return Err(format!("dimension {id} is marked driven, but the sketch does not have it"));
         }
         if let Some((id, _)) = places.first() {
             return Err(format!("a place is given for dimension {id}, which the sketch does not have"));
@@ -267,7 +279,7 @@ fn sketch_in(r: &mut Value) {
         return;
     }
     let (mut out, mut sketch) = (Map::new(), Map::new());
-    let mut places = Vec::new();
+    let (mut places, mut driven) = (Vec::new(), Vec::new());
     for (k, v) in o {
         match k.as_str() {
             "entities" => {
@@ -278,6 +290,12 @@ fn sketch_in(r: &mut Value) {
                 for c in v.as_array().into_iter().flatten() {
                     let mut c = c.as_object().cloned().unwrap_or_default();
                     let id = c.shift_remove("id").unwrap_or(Value::Null);
+                    match c.shift_remove("driven") {
+                        Some(Value::Bool(true)) => driven.push(id.clone()),
+                        Some(Value::Bool(false)) | None => {}
+                        // (Not yes or no: left for the reader to refuse.)
+                        Some(other) => driven.push(other),
+                    }
                     if let Some(at) = c.shift_remove("at") {
                         places.push(Value::Array(vec![id.clone(), at]));
                     }
@@ -292,6 +310,9 @@ fn sketch_in(r: &mut Value) {
                 out.insert(k.clone(), v.clone());
             }
         }
+    }
+    if !driven.is_empty() {
+        sketch.insert("driven".into(), Value::Array(driven));
     }
     if !places.is_empty() {
         sketch.insert("places".into(), Value::Array(places));

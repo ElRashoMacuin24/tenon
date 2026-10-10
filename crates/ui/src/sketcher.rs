@@ -27,6 +27,7 @@ pub(crate) enum Tool {
     Mirror,
     Fillet,
     Dimension,
+    Driven,
     Coincident,
     Horizontal,
     Vertical,
@@ -54,6 +55,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("sketch.mirror", Tool::Mirror),
     ("sketch.fillet", Tool::Fillet),
     ("sketch.dimension", Tool::Dimension),
+    ("sketch.driven", Tool::Driven),
     ("sketch.coincident", Tool::Coincident),
     ("sketch.horizontal", Tool::Horizontal),
     ("sketch.vertical", Tool::Vertical),
@@ -83,6 +85,7 @@ impl Tool {
             Tool::Mirror => "Click the mirror line.",
             Tool::Fillet => "Click a corner where two lines meet.",
             Tool::Dimension => "Click a line, circle or arc, or two points or lines; then click where the dimension goes.",
+            Tool::Driven => "Click a dimension to make it driven (it follows the sketch, in parentheses) or driving again.",
             Tool::Coincident => "Click two points, or a point and a curve.",
             Tool::Horizontal | Tool::Vertical => "Click a line.",
             Tool::Parallel | Tool::Perpendicular => "Click two lines.",
@@ -569,6 +572,8 @@ impl Workbench {
             s.constraints()
                 .filter_map(|(cid, c)| {
                     let text = label_text(cid, dimension_text(c)?);
+                    // A driven dimension reads in parentheses: it is the sketch's, not the user's.
+                    let text = if s.is_driven(cid) { format!("({text})") } else { text };
                     let place = moved.filter(|m| m.0 == cid).map(|m| m.1).or_else(|| s.place(cid));
                     plane.dimension(ui, s, Some(cid), c, place, text)
                 })
@@ -641,14 +646,42 @@ impl Workbench {
         if !typing && delete {
             self.delete_selection(feature);
         }
-        // Double-clicking a dimension edits it.
-        if resp.double_clicked()
-            && let Some(p) = pointer
-            && let Some((cid, c)) = labels.iter().find(|l| l.rect.contains(p)).and_then(|l| Some((l.id?, &l.constraint)))
+        let tool = match &self.mode {
+            Mode::Sketch(sm) => sm.tool,
+            Mode::Model => Tool::Select,
+        };
+        // The dimension under the pointer.
+        let on_dimension = pointer.and_then(|p| labels.iter().find(|l| l.rect.contains(p))).and_then(|l| Some((l.id?, l.constraint.clone())));
+        // With the Driven Dimension tool, a click on a dimension changes it from driving to
+        // driven or back.
+        if tool == Tool::Driven
+            && resp.clicked_by(egui::PointerButton::Primary)
+            && let Some((cid, _)) = &on_dimension
         {
-            let equation = self.dimension_equation(feature, cid);
-            self.panel =
-                Some(Panel::EditDimension { sketch: feature, constraint: cid, value: c.value().unwrap_or(0.0), angular: c.is_angular(), equation });
+            let driven = !doc_sketch.is_driven(*cid);
+            if self.exec_status("sketch.set_driven", json!({ "sketch": feature.0, "constraint": cid.0, "driven": driven })).is_some() {
+                self.set_status(if driven {
+                    "Driven: the dimension follows the sketch now, and reads in parentheses."
+                } else {
+                    "Driving: the dimension holds the sketch at its value again."
+                });
+            }
+        // Double-clicking a dimension edits it; a driven one has nothing to edit.
+        } else if resp.double_clicked()
+            && let Some((cid, c)) = &on_dimension
+        {
+            if doc_sketch.is_driven(*cid) {
+                self.set_status("A driven dimension follows the sketch, so it has no value to type. Driven Dimension (Format) makes it drive again.");
+            } else {
+                let equation = self.dimension_equation(feature, *cid);
+                self.panel = Some(Panel::EditDimension {
+                    sketch: feature,
+                    constraint: *cid,
+                    value: c.value().unwrap_or(0.0),
+                    angular: c.is_angular(),
+                    equation,
+                });
+            }
         } else if resp.clicked_by(egui::PointerButton::Primary)
             && let Some(at) = cursor
         {
@@ -1178,6 +1211,8 @@ impl Workbench {
                 None => self.set_error("click the mirror line"),
             },
             Tool::Dimension => self.dimension_click(feature, sketch, hover, click.at),
+            // (Its clicks are on dimensions, which are handled where they are drawn.)
+            Tool::Driven => self.set_status(Tool::Driven.hint()),
             t => self.constraint_click(feature, sketch, t, hover),
         }
     }
@@ -1216,8 +1251,18 @@ impl Workbench {
         let shown = if c.is_angular() { value.to_degrees() } else { value };
         // (To a hundredth of a millimetre: a place is where the pointer happened to be.)
         let tidy = |v: f64| (v * 100.0).round() / 100.0;
-        let at = Some(Vec2::new(tidy(at.x), tidy(at.y)));
-        self.panel = Some(Panel::Value(ValuePanel::new(title, label, shown, ValueFor::Dimension { sketch: feature, constraint: c, at })));
+        let at = Vec2::new(tidy(at.x), tidy(at.y));
+        // Where the sketch is already held, a dimension can only follow it. It is put down at
+        // once as a driven dimension, in parentheses, with no value to type.
+        if matches!(s.clone().add_constraint(c.clone()), Err(tenon_sketch::SketchError::Redundant(_))) {
+            let constraint = serde_json::to_value(&c).unwrap_or(Value::Null);
+            let p = json!({ "sketch": feature.0, "constraint": constraint, "driven": true, "at_x": at.x, "at_y": at.y });
+            if self.exec_status("sketch.constrain", p).is_some() {
+                self.set_status("The sketch is already held here, so this is a driven dimension (in parentheses): it follows the sketch.");
+            }
+            return;
+        }
+        self.panel = Some(Panel::Value(ValuePanel::new(title, label, shown, ValueFor::Dimension { sketch: feature, constraint: c, at: Some(at) })));
     }
 
     fn constraint_click(&mut self, feature: FeatureId, s: &Sketch, tool: Tool, hover: Option<EntityId>) {

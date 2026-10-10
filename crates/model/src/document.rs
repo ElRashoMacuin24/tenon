@@ -85,8 +85,9 @@ pub enum RegionSel {
     /// Every region at even nesting depth (outer regions with their holes).
     #[default]
     Default,
-    /// Regions by key (the sorted ids of their outer boundary curves).
-    Keys(Vec<Vec<EntityId>>),
+    /// Regions by key: the curves that enclose one, or one region of those the sketch's curves
+    /// divide it into, by the side of each curve it is on (`tenon_sketch::RegionKey`).
+    Keys(Vec<tenon_sketch::RegionKey>),
 }
 
 /// How a feature's solid combines with the part.
@@ -1010,6 +1011,14 @@ impl Document {
     /// The colour the part is shown in, when it has one: its own, else its material's.
     pub fn color(&self) -> Option<[u8; 3]> {
         self.appearance.as_deref().or(self.material.as_ref().map(|m| m.color.as_str())).and_then(crate::materials::parse_color)
+    }
+    /// Measures the driven dimensions of every sketch again.
+    pub(crate) fn refresh_driven(&mut self) {
+        for f in &mut self.features {
+            if let FeatureKind::Sketch { sketch, .. } = &mut f.kind {
+                sketch.refresh_driven();
+            }
+        }
     }
     pub fn features(&self) -> &[Feature] {
         &self.features

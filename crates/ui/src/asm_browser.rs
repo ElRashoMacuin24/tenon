@@ -16,6 +16,8 @@ enum Action {
     Edit(ComponentId),
     Ground(ComponentId, bool),
     Visible(ComponentId, bool),
+    /// The size a component is: a row of its part's design table, or the part as its file has it.
+    Size(ComponentId, Option<String>),
     DeleteComponent(ComponentId),
     SelectRelationship(RelationshipId),
     EditRelationship(RelationshipId),
@@ -93,8 +95,10 @@ impl Workbench {
         let failing: Vec<(RelationshipId, String)> = a.session.failing.clone();
         let selected = a.selected.clone();
         let (rel_open, expanded) = (a.relationships_open, a.expanded.clone());
-        let missing = |c: &tenon_assembly::Component| a.session.parts.get(&c.part).and_then(|p| p.missing.clone());
+        let missing = |c: &tenon_assembly::Component| a.session.parts.get(&c.key()).and_then(|p| p.missing.clone());
         let missing: Vec<Option<String>> = asm.components.iter().map(missing).collect();
+        // The sizes each component's part comes in (the rows of its design table).
+        let sizes: Vec<Vec<String>> = asm.components.iter().map(|c| tenon_assembly::cmd::rows_of(&a.session.parts, &c.part)).collect();
         let dof = self.asm_dof().map(|(per, _)| per.iter().map(|d| d.count()).collect::<Vec<_>>()).unwrap_or_default();
         let mut action: Option<Action> = None;
         let mut toggle_rel = false;
@@ -179,7 +183,12 @@ impl Workbench {
                 } else {
                     Style::Normal
                 };
-                let (mut resp, toggled) = row(ui, t, 1, Icon::Part, &c.name, (!mine.is_empty()).then_some(open), style, c.grounded);
+                // A component in a size of its own says which.
+                let label = match &c.row {
+                    Some(size) => format!("{} ({size})", c.name),
+                    None => c.name.clone(),
+                };
+                let (mut resp, toggled) = row(ui, t, 1, Icon::Part, &label, (!mine.is_empty()).then_some(open), style, c.grounded);
                 let tip = match missing.get(i).cloned().flatten() {
                     Some(m) => format!("{} is missing: {m}", c.part),
                     None => {
@@ -203,6 +212,21 @@ impl Workbench {
                     if ui.button(if c.grounded { "Unground" } else { "Grounded" }).clicked() {
                         action = Some(Action::Ground(c.id, !c.grounded));
                         ui.close();
+                    }
+                    // The sizes of a part with a design table: the one this component is, ticked.
+                    if let Some(rows) = sizes.get(i).filter(|r| !r.is_empty()) {
+                        ui.menu_button("Size", |ui| {
+                            if ui.radio(c.row.is_none(), "As the part file").on_hover_text("Whichever size the part's own file is at").clicked() {
+                                action = Some(Action::Size(c.id, None));
+                                ui.close();
+                            }
+                            for size in rows {
+                                if ui.radio(c.row.as_deref() == Some(size.as_str()), size).clicked() {
+                                    action = Some(Action::Size(c.id, Some(size.clone())));
+                                    ui.close();
+                                }
+                            }
+                        });
                     }
                     if ui.button(if c.visible { "Hide" } else { "Show" }).clicked() {
                         action = Some(Action::Visible(c.id, !c.visible));
@@ -265,6 +289,7 @@ impl Workbench {
             Action::Edit(c) => self.edit_in_place(c),
             Action::Ground(c, on) => self.asm_exec("asm.ground", json!({ "component": c.0, "grounded": on })).map(|_| ()),
             Action::Visible(c, on) => self.asm_exec("asm.visible", json!({ "component": c.0, "visible": on })).map(|_| ()),
+            Action::Size(c, size) => self.asm_exec("asm.set_row", json!({ "component": c.0, "row": size })).map(|_| ()),
             Action::DeleteComponent(c) => {
                 if let Some(a) = self.asm.as_mut() {
                     a.selected.retain(|x| *x != c);

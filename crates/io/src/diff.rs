@@ -395,10 +395,21 @@ fn sketch_detail(a: &Value, b: &Value, sketch: u64, params: &Value, changed: &BT
     let (ca, cb) = (pairs(&a["constraints"]), pairs(&b["constraints"]));
     let added = cb.keys().filter(|k| !ca.contains_key(k)).count();
     let removed = ca.keys().filter(|k| !cb.contains_key(k)).count();
+    // Driven dimensions: their values are worked out, so only becoming one (or ceasing to be) is
+    // a change.
+    let driven = |v: &Value| -> BTreeSet<u64> { v["driven"].as_array().into_iter().flatten().filter_map(Value::as_u64).collect() };
+    let (da, db) = (driven(a), driven(b));
+    let dimension_name = |k: &u64| {
+        let target = json!({ "kind": "dimension", "sketch": sketch, "constraint": k });
+        param(params, &target).and_then(|p| p["name"].as_str()).map_or_else(|| format!("#{k}"), str::to_owned)
+    };
     let mut other = 0;
     for (k, y) in &cb {
         let Some(x) = ca.get(k) else { continue };
-        if same(x, y) {
+        if da.contains(k) != db.contains(k) {
+            out.push(format!("dimension {} now {}", dimension_name(k), if db.contains(k) { "driven" } else { "driving" }));
+        }
+        if same(x, y) || (da.contains(k) && db.contains(k)) {
             continue;
         }
         let mut xv = x.clone();
