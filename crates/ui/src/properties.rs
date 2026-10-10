@@ -250,14 +250,14 @@ pub(crate) fn glyph_row(ui: &mut Ui, items: &[(Glyph, &str, bool)], selected: us
 
 /// A selector: shows what is chosen; pressed while it takes clicks in the part. Returns true when
 /// clicked (to make it the active one).
-fn slot_button(ui: &mut Ui, active: bool, label: &str, t: &Tokens) -> bool {
+pub(crate) fn slot_button(ui: &mut Ui, active: bool, label: &str, t: &Tokens) -> bool {
     let text = egui::RichText::new(label).color(if active { t.accent_text } else { t.text });
     let b = egui::Button::new(text).fill(if active { t.accent } else { t.field }).min_size(vec2(96.0, 22.0));
     ui.add(b).on_hover_text("Click, then pick in the part").clicked()
 }
 
 /// The flip toggle beside a direction.
-fn flip_button(ui: &mut Ui, flipped: &mut bool, t: &Tokens) {
+pub(crate) fn flip_button(ui: &mut Ui, flipped: &mut bool, t: &Tokens) {
     let items = [(Glyph::Default, "Default direction", true), (Glyph::Flipped, "Flipped", true)];
     if let Some(i) = glyph_row(ui, &items, usize::from(*flipped), t) {
         *flipped = i == 1;
@@ -266,7 +266,7 @@ fn flip_button(ui: &mut Ui, flipped: &mut bool, t: &Tokens) {
 
 /// A direction selector: the chosen direction, a list of origin axes (and None when
 /// `optional`). Returns true when the selector was clicked to pick an edge.
-type WorkNames<'a> = [(tenon_model::FeatureId, String, &'a str)];
+pub(crate) type WorkNames<'a> = [(tenon_model::FeatureId, String, &'a str)];
 
 fn work_name(work: &WorkNames, id: tenon_model::FeatureId) -> String {
     work.iter().find(|x| x.0 == id).map_or_else(|| format!("{id}"), |x| x.1.clone())
@@ -299,7 +299,7 @@ fn axis_picker(ui: &mut Ui, id: &str, a: &mut Option<AxisSel>, active: bool, wor
 }
 
 /// A plane selector: what is chosen (or a hint), and a list of origin and work planes.
-fn plane_picker(ui: &mut Ui, id: &str, p: &mut Option<PlaneRef>, active: bool, work: &WorkNames, t: &Tokens) -> bool {
+pub(crate) fn plane_picker(ui: &mut Ui, id: &str, p: &mut Option<PlaneRef>, active: bool, work: &WorkNames, t: &Tokens) -> bool {
     let label = match p {
         None => "click a plane".into(),
         Some(PlaneRef::Origin(o)) => format!("{o:?} Plane"),
@@ -359,7 +359,7 @@ fn direction_picker(
 }
 
 /// "N selected" with a button that clears the picks; returns true when it was clicked.
-fn picked_row(ui: &mut Ui, n: usize, hint: &str) -> bool {
+pub(crate) fn picked_row(ui: &mut Ui, n: usize, hint: &str) -> bool {
     let mut clear = false;
     ui.horizontal(|ui| {
         ui.label(if n == 0 { hint.to_string() } else { format!("{n} selected") });
@@ -408,6 +408,9 @@ impl Workbench {
                     | Panel::Sweep(_)
                     | Panel::Coil(_)
                     | Panel::Loft(_)
+                    | Panel::Draft(_)
+                    | Panel::Split(_)
+                    | Panel::Combine(_)
                     | Panel::Asm(_)
             )
         )
@@ -461,6 +464,9 @@ impl Workbench {
             Panel::Sweep(p) => ("Sweep", p.editing.map(|f| self.feature_name(f))),
             Panel::Coil(p) => ("Coil", p.editing.map(|f| self.feature_name(f))),
             Panel::Loft(p) => ("Loft", p.editing.map(|f| self.feature_name(f))),
+            Panel::Draft(p) => ("Draft", p.editing.map(|f| self.feature_name(f))),
+            Panel::Split(p) => ("Split", p.editing.map(|f| self.feature_name(f))),
+            Panel::Combine(p) => ("Combine", p.editing.map(|f| self.feature_name(f))),
             Panel::Asm(p) => {
                 (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
             }
@@ -1220,6 +1226,11 @@ impl Workbench {
                     p @ (Panel::Sweep(_) | Panel::Coil(_) | Panel::Loft(_)) => {
                         enter |= self.sweeps_properties(ui, p, &mut eqs, &sketches, &work_names, t);
                     }
+                    p @ (Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_)) => {
+                        let (entered, cleared) = self.bodies_properties(ui, p, &mut eqs, &work_names, t);
+                        enter |= entered;
+                        clear |= cleared;
+                    }
                     Panel::Measure(m) => {
                         let label = |p: &crate::viewport::Pick| match p {
                             crate::viewport::Pick::Face { body, face } => self
@@ -1444,13 +1455,17 @@ impl Workbench {
             Some(Panel::Sweep(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Coil(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Loft(p)) => p.sections.first().and_then(|s| self.profile_anchor(*s)).map(|a| a.0),
-            Some(Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_)) => self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center())),
+            Some(Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_) | Panel::Draft(_)) => {
+                self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center()))
+            }
             Some(Panel::Hole(p)) => p
                 .points
                 .first()
                 .and_then(|e| Some(self.sketch_frame(p.sketch)?.plane_point(self.document().sketch(p.sketch)?.point(*e)?)))
                 .or_else(|| self.scene.bbox().map(|b| b.center())),
-            Some(Panel::Pattern(_) | Panel::Work(_) | Panel::Rib(_)) => self.scene.bbox().map(|b| Vec3::new(b.max.x, b.min.y, b.max.z)),
+            Some(Panel::Pattern(_) | Panel::Work(_) | Panel::Rib(_) | Panel::Split(_) | Panel::Combine(_)) => {
+                self.scene.bbox().map(|b| Vec3::new(b.max.x, b.min.y, b.max.z))
+            }
             _ => return,
         };
         let is_extrude = matches!(self.panel, Some(Panel::Extrude(_)));
@@ -1641,6 +1656,8 @@ fn p_before(panel: &Panel, wb: &Workbench, id: tenon_model::FeatureId) -> bool {
         Panel::Pattern(p) => p.editing,
         Panel::Work(w) => w.editing,
         Panel::Coil(p) => p.editing,
+        Panel::Draft(p) => p.editing,
+        Panel::Split(p) => p.editing,
         _ => None,
     };
     editing.is_none_or(|e| wb.document().index_of(id) < wb.document().index_of(e))

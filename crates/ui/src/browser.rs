@@ -112,6 +112,9 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::Sweep(_) => Icon::Sweep,
         FeatureKind::Coil(_) => Icon::Coil,
         FeatureKind::Loft(_) => Icon::Loft,
+        FeatureKind::Draft(_) => Icon::Draft,
+        FeatureKind::Split(_) => Icon::Split,
+        FeatureKind::Combine(_) => Icon::Combine,
     }
 }
 

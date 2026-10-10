@@ -109,12 +109,15 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         FeatureKind::WorkPlane(_) => &[("/distance", Mm), ("/angle", Deg)],
         FeatureKind::Rib(_) => &[("/thickness", Mm), ("/extent/distance", Mm)],
         FeatureKind::Coil(_) => &[("/pitch", Mm), ("/turns", Ul)],
+        FeatureKind::Draft(_) => &[("/angle", Deg)],
         FeatureKind::Sketch { .. }
         | FeatureKind::Mirror(_)
         | FeatureKind::WorkAxis(_)
         | FeatureKind::WorkPoint(_)
         | FeatureKind::Sweep(_)
-        | FeatureKind::Loft(_) => &[],
+        | FeatureKind::Loft(_)
+        | FeatureKind::Split(_)
+        | FeatureKind::Combine(_) => &[],
     }
 }
 

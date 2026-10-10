@@ -66,6 +66,17 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::Loft(_), _) => {
             "The loft could not be made through these sections. They may twist or cross each other: check they are in order and alike in shape.".into()
         }
+        (FeatureKind::Draft(d), _) => format!(
+            "The {} degree draft could not be made on {}. A face may lie flat on the neutral plane's direction (only faces that stand up from the plane can be tilted), or the angle may be too large for the faces beside them: pick the side faces only, or try a smaller angle.",
+            mm(d.angle.to_degrees()),
+            count(d.faces.len(), "this face", "these faces")
+        ),
+        (FeatureKind::Split(_), _) => {
+            "The part could not be split along this plane. The plane may only touch the part along a face or an edge: move it a little.".into()
+        }
+        (FeatureKind::Combine(_), _) => {
+            "The bodies could not be combined. They may only touch along a face or an edge: move one slightly, or check which bodies are picked.".into()
+        }
         (FeatureKind::PatternRect(_) | FeatureKind::PatternCircular(_) | FeatureKind::Mirror(_), _) => {
             "The copies could not be joined to the part. A copy may touch the part only along an edge or at a point: change the spacing, count or plane.".into()
         }
@@ -131,6 +142,22 @@ mod tests {
         assert!(explain(&hole, &failed("boolean", "x")).starts_with("The 3 holes could not be cut."));
         let mirror = kind(json!({ "type": "mirror", "features": [2], "plane": { "origin": "XY" } }));
         assert!(explain(&mirror, &failed("boolean", "x")).starts_with("The copies could not be joined to the part."));
+        // The M6 features.
+        let sweep = kind(json!({ "type": "sweep", "sketch": 1, "path": { "sketch": 2, "curves": [1] } }));
+        assert!(explain(&sweep, &failed("sweep", "x")).starts_with("The sweep could not be made along this path."));
+        assert!(explain(&sweep, &failed("boolean", "x")).starts_with("The new solid could not be combined with the part."));
+        let coil = kind(json!({ "type": "coil", "sketch": 1, "axis": { "origin": "Z" }, "pitch": 5.0, "turns": 3.0 }));
+        assert!(explain(&coil, &failed("sweep", "x")).starts_with("The coil could not be made."));
+        let loft = kind(json!({ "type": "loft", "sections": [1, 2] }));
+        assert!(explain(&loft, &failed("loft", "x")).starts_with("The loft could not be made through these sections."));
+        let zero = json!({ "x": 0.0, "y": 0.0, "z": 0.0 });
+        let face = json!({ "origin": { "type": "cap", "feature": 1, "end": "end" }, "fingerprint": { "surface": "plane", "direction": zero, "centroid": zero, "area": 1.0 } });
+        let draft = kind(json!({ "type": "draft", "faces": [face.clone(), face.clone()], "plane": { "origin": "XY" }, "angle": 5f64.to_radians() }));
+        assert!(explain(&draft, &failed("draft", "x")).starts_with("The 5 degree draft could not be made on these 2 faces."));
+        let split = kind(json!({ "type": "split", "plane": { "origin": "XY" } }));
+        assert!(explain(&split, &failed("boolean", "x")).starts_with("The part could not be split along this plane."));
+        let combine = kind(json!({ "type": "combine", "base": face.clone(), "tools": [face] }));
+        assert!(explain(&combine, &failed("boolean", "x")).starts_with("The bodies could not be combined."));
         // Messages that are already plain, and kernels that cannot do something, stay short.
         assert_eq!(
             explain(&join, &KernelError::InvalidInput("a profile line has zero length".into())),

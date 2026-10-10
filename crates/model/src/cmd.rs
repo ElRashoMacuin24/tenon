@@ -11,9 +11,9 @@ use tenon_kernel::{Kernel, ShapeHandle};
 use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions};
 
 use crate::document::{
-    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, DRILL_POINT, DirectionRef, Extrude, ExtrudeExtent, FeatureKind, Fillet, Hole,
-    HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent,
-    Shell, SketchCurves, Sweep, WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
+    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Extrude, ExtrudeExtent, FeatureKind,
+    Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle,
+    Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
@@ -1007,6 +1007,54 @@ fn model_loft(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::Loft(loft), p)
 }
 
+/// A plane that must be named: plane ("xy" | "yz" | "xz"), face (a planar face reference) or
+/// work_plane (a work plane id).
+fn plane_named(s: &Session, p: &Value) -> Result<PlaneRef, CmdError> {
+    if !["plane", "face", "work_plane"].iter().any(|k| p.get(*k).is_some()) {
+        return Err("name the plane: plane (xy, yz or xz), face (a planar face reference) or work_plane (a work plane id)".into());
+    }
+    let plane = plane_param(p)?;
+    if let PlaneRef::Work(id) = plane
+        && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
+    {
+        return Err(format!("{id} is not a work plane").into());
+    }
+    Ok(plane)
+}
+
+fn model_draft(s: &mut Session, p: &Value) -> CmdResult {
+    let draft = Draft {
+        faces: parse(p, "faces")?,
+        plane: plane_named(s, p)?,
+        angle: num(p, "angle")?,
+        reverse: p.get("reverse").and_then(Value::as_bool).unwrap_or(false),
+    };
+    draft.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Draft(draft), p)
+}
+
+fn model_split(s: &mut Session, p: &Value) -> CmdResult {
+    let keep = match p.get("keep").and_then(Value::as_str).unwrap_or("both") {
+        "both" => SplitKeep::Both,
+        "front" => SplitKeep::Front,
+        "back" => SplitKeep::Back,
+        other => return Err(format!("unknown keep `{other}` (both, front, back)").into()),
+    };
+    let body = if p.get("body").is_some() { Some(parse(p, "body")?) } else { None };
+    add_feature(s, FeatureKind::Split(Split { plane: plane_named(s, p)?, keep, body }), p)
+}
+
+fn model_combine(s: &mut Session, p: &Value) -> CmdResult {
+    let combine = Combine {
+        base: parse(p, "base")?,
+        tools: parse(p, "tools")?,
+        operation: operation(p)?,
+        keep_tools: p.get("keep_tools").and_then(Value::as_bool).unwrap_or(false),
+    };
+    combine.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Combine(combine), p)
+}
+
 fn feature_update(s: &mut Session, p: &Value) -> CmdResult {
     let id = feature_id(p)?;
     let kind: FeatureKind = parse(p, "kind")?;
@@ -1513,6 +1561,27 @@ static COMMANDS: &[CommandSpec] = &[
         "sections: [sketch ids], two or more in order, each with one closed profile; ruled (flat sides between sections); operation",
         true,
         model_loft
+    ),
+    doc_cmd!(
+        "model.draft",
+        "Draft",
+        "faces: [face references] (the faces to tilt, on one body); the neutral plane, where the faces stay put: plane (\"xy\" | \"yz\" | \"xz\"), face (a planar face reference) or work_plane (id); angle (radians from the plane's normal, the pull direction); reverse (tilt the other way)",
+        true,
+        model_draft
+    ),
+    doc_cmd!(
+        "model.split",
+        "Split",
+        "the cutting plane: plane (\"xy\" | \"yz\" | \"xz\"), face (a planar face reference) or work_plane (id); keep: \"both\" (two bodies, default) | \"front\" (the side the plane's normal points to) | \"back\"; body: a face reference on the one body to split (default: every body the plane passes through)",
+        true,
+        model_split
+    ),
+    doc_cmd!(
+        "model.combine",
+        "Combine",
+        "base: a face reference on the body that stays; tools: [face references], one on each other body; operation: \"join\" (default) | \"cut\" | \"intersect\"; keep_tools (default false: the other bodies are used up)",
+        true,
+        model_combine
     ),
     doc_cmd!(
         "model.pattern.rect",

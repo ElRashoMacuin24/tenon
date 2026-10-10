@@ -29,9 +29,12 @@ fn failure(s: &mut Session, k: &mut OcctKernel) -> String {
     r["error"]["message"].as_str().unwrap_or_else(|| panic!("no failure: {r}")).to_owned()
 }
 
-/// How many faces of the part carry the name `origin`.
+/// How many faces of the part, over all its bodies, carry the name `origin`.
 fn faces_named(s: &mut Session, k: &mut OcctKernel, origin: &Value) -> usize {
-    run(s, k, "model.faces", json!({}))["faces"].as_array().unwrap().iter().filter(|f| f["name"] == *origin).count()
+    let bodies = run(s, k, "model.mass", json!({}))["bodies"].as_array().unwrap().len();
+    (0..bodies)
+        .map(|b| run(s, k, "model.faces", json!({ "body": b }))["faces"].as_array().unwrap().iter().filter(|f| f["name"] == *origin).count())
+        .sum()
 }
 
 /// Some face carries the name `origin`.
@@ -151,6 +154,172 @@ fn a_loft_joins_its_sections_in_order() {
     run(&mut s, &mut k, "model.loft", json!({ "sections": [bottom, open], "operation": "new_body" }));
     let m = failure(&mut s, &mut k);
     assert!(m.contains("loft section 2") && m.contains("no closed profile"), "{m}");
+}
+
+/// A 20 x 20 block `h` tall on the XY plane, centred on the origin; returns (sketch, the
+/// rectangle's lines, extrusion).
+fn block(s: &mut Session, k: &mut OcctKernel, h: f64) -> (u64, Vec<Value>, u64) {
+    let sk = run(s, k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let lines = run(s, k, "sketch.rectangle", json!({ "sketch": sk, "x1": -10, "y1": -10, "x2": 10, "y2": 10 }))["lines"].as_array().unwrap().clone();
+    let ext = run(s, k, "model.extrude", json!({ "sketch": sk, "distance": h }))["feature"].as_u64().unwrap();
+    (sk, lines, ext)
+}
+
+/// A reference to the face named `origin`.
+fn face(s: &mut Session, k: &mut OcctKernel, origin: Value) -> Value {
+    run(s, k, "model.face_ref", json!({ "origin": origin }))
+}
+
+fn volumes(s: &mut Session, k: &mut OcctKernel) -> Vec<f64> {
+    let r = run(s, k, "model.regenerate", json!({}));
+    assert!(r["error"].is_null(), "{r}");
+    run(s, k, "model.mass", json!({}))["bodies"].as_array().unwrap().iter().map(|b| b["volume"].as_f64().unwrap()).collect()
+}
+
+/// The volume of a square frustum `h` tall between squares of sides `a` and `b`.
+fn frustum(a: f64, b: f64, h: f64) -> f64 {
+    h / 3.0 * (a * a + b * b + a * b)
+}
+
+#[test]
+fn a_draft_tilts_its_faces_about_the_neutral_plane_and_keeps_their_names() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, lines, ext) = block(&mut s, &mut k, 10.0);
+    let sides: Vec<Value> = lines.iter().map(|l| face(&mut s, &mut k, json!({ "type": "side", "feature": ext, "curve": l }))).collect();
+    let angle = 5f64.to_radians();
+    let draft = run(&mut s, &mut k, "model.draft", json!({ "faces": sides, "plane": "xy", "angle": angle }))["feature"].as_u64().unwrap();
+    // The sides lean in as they rise from the XY plane, where they stay put: a frustum.
+    let top = |h: f64, a: f64| 20.0 - 2.0 * h * a.tan();
+    assert!(near(volume(&mut s, &mut k), frustum(20.0, top(10.0, angle), 10.0), 1e-9), "{}", volume(&mut s, &mut k));
+    // Every face keeps its name, so later features hold them: the top is opened by a shell.
+    for l in &lines {
+        assert_eq!(faces_named(&mut s, &mut k, &json!({ "type": "side", "feature": ext, "curve": l })), 1);
+    }
+    let lid = face(&mut s, &mut k, json!({ "type": "cap", "feature": ext, "end": "end" }));
+    run(&mut s, &mut k, "model.shell", json!({ "remove": [lid], "thickness": 1 }));
+    let drafted = frustum(20.0, top(10.0, angle), 10.0);
+    let v = volume(&mut s, &mut k);
+    assert!(v > 0.2 * drafted && v < 0.5 * drafted, "a hollow frustum: {v}");
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    // The block made taller and the draft steeper, by its parameter: the draft follows.
+    let mut kind = serde_json::to_value(&s.document().features()[1].kind).unwrap();
+    kind["extent"]["distance"] = json!(15.0);
+    run(&mut s, &mut k, "feature.update", json!({ "feature": ext, "kind": kind }));
+    run(&mut s, &mut k, "param.set", json!({ "name": "d1", "equation": "8 deg" }));
+    let steep = 8f64.to_radians();
+    assert!(near(volume(&mut s, &mut k), frustum(20.0, top(15.0, steep), 15.0), 1e-9));
+    // The other way, the part widens as it rises.
+    let mut kind = serde_json::to_value(&s.document().features()[2].kind).unwrap();
+    kind["reverse"] = json!(true);
+    run(&mut s, &mut k, "feature.update", json!({ "feature": draft, "kind": kind }));
+    assert!(near(volume(&mut s, &mut k), frustum(20.0, 20.0 + 2.0 * 15.0 * steep.tan(), 15.0), 1e-9));
+    // A face lying flat on the pull direction cannot be tilted: said in plain words.
+    let lid = face(&mut s, &mut k, json!({ "type": "cap", "feature": ext, "end": "end" }));
+    run(&mut s, &mut k, "model.draft", json!({ "faces": [lid], "plane": "xy", "angle": angle }));
+    let m = failure(&mut s, &mut k);
+    assert!(m.starts_with("The 5 degree draft could not be made on this face."), "{m}");
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    // Angles a mould cannot use, and no plane, are refused when asked for.
+    let side = face(&mut s, &mut k, json!({ "type": "side", "feature": ext, "curve": lines[0] }));
+    let e = s.exec("model.draft", &json!({ "faces": [side], "plane": "xy", "angle": 1.55 }), Some(&mut k)).unwrap_err().0;
+    assert!(e.contains("at most 85 degrees"), "{e}");
+    let e = s.exec("model.draft", &json!({ "faces": [side], "angle": 0.1 }), Some(&mut k)).unwrap_err().0;
+    assert!(e.contains("name the plane"), "{e}");
+}
+
+#[test]
+fn a_split_cuts_the_part_along_a_plane_and_names_both_cut_faces() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    block(&mut s, &mut k, 10.0);
+    let plane = run(&mut s, &mut k, "work.plane", json!({ "by": "offset", "base": "xy", "distance": 4 }))["feature"].as_u64().unwrap();
+    let split = run(&mut s, &mut k, "model.split", json!({ "work_plane": plane }))["feature"].as_u64().unwrap();
+    // Two bodies: the piece behind the plane stays where the body was, the one in front is new.
+    let v = volumes(&mut s, &mut k);
+    assert!(v.len() == 2 && near(v[0], 1600.0, 1e-9) && near(v[1], 2400.0, 1e-9), "{v:?}");
+    // The cut is two faces in one place, named apart: the front piece's and the back piece's.
+    let (front_cut, back_cut) =
+        (json!({ "type": "cap", "feature": split, "end": "start" }), json!({ "type": "cap", "feature": split, "end": "end" }));
+    assert_eq!((faces_named(&mut s, &mut k, &front_cut), faces_named(&mut s, &mut k, &back_cut)), (1, 1));
+    // A later feature holds one: the front piece is hollowed, open at its cut face.
+    let open = face(&mut s, &mut k, front_cut.clone());
+    run(&mut s, &mut k, "model.shell", json!({ "remove": [open], "thickness": 1 }));
+    let v = volumes(&mut s, &mut k);
+    assert!(near(v[0], 1600.0, 1e-9) && near(v[1], 2400.0 - 18.0 * 18.0 * 5.0, 1e-9), "{v:?}");
+    // The plane moved: both pieces and the shell follow.
+    run(&mut s, &mut k, "param.set", json!({ "name": "d1", "equation": "5 mm" }));
+    let v = volumes(&mut s, &mut k);
+    assert!(near(v[0], 2000.0, 1e-9) && near(v[1], 2000.0 - 18.0 * 18.0 * 4.0, 1e-9), "{v:?}");
+    // Keeping only the front leaves one body, still hollowed.
+    let at = s.document().features().iter().position(|f| u64::from(f.id.0) == split).unwrap();
+    let mut kind = serde_json::to_value(&s.document().features()[at].kind).unwrap();
+    kind["keep"] = json!("front");
+    run(&mut s, &mut k, "feature.update", json!({ "feature": split, "kind": kind }));
+    let v = volumes(&mut s, &mut k);
+    assert!(v.len() == 1 && near(v[0], 2000.0 - 18.0 * 18.0 * 4.0, 1e-9), "{v:?}");
+    // Keeping only the back, the shell's face is gone: it says which.
+    kind["keep"] = json!("back");
+    run(&mut s, &mut k, "feature.update", json!({ "feature": split, "kind": kind }));
+    let m = failure(&mut s, &mut k);
+    assert!(m.contains("no longer exists") && m.contains("start face of Split1"), "{m}");
+    // A plane that passes the part by splits nothing, and says so.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    block(&mut s, &mut k, 10.0);
+    let far = run(&mut s, &mut k, "work.plane", json!({ "by": "offset", "base": "xy", "distance": 50 }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "model.split", json!({ "work_plane": far }));
+    assert!(failure(&mut s, &mut k).starts_with("The split plane does not pass through the part"));
+}
+
+#[test]
+fn combine_joins_cuts_and_intersects_bodies_and_keeps_their_face_names() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, _, ext) = block(&mut s, &mut k, 10.0);
+    // A second body: a cylinder of radius 5 standing on the block's edge, half inside it.
+    let (sk, ring) = circle(&mut s, &mut k, "xy", 10.0, 0.0, 5.0);
+    let post = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 10, "operation": "new_body" }))["feature"].as_u64().unwrap();
+    assert_eq!(volumes(&mut s, &mut k).len(), 2);
+    let base = face(&mut s, &mut k, json!({ "type": "cap", "feature": ext, "end": "end" }));
+    let tool = face(&mut s, &mut k, json!({ "type": "side", "feature": post, "curve": ring }));
+    let combine = run(&mut s, &mut k, "model.combine", json!({ "base": base, "tools": [tool] }))["feature"].as_u64().unwrap();
+    let (block_v, half) = (4000.0, PI * 25.0 * 10.0 / 2.0);
+    let v = volumes(&mut s, &mut k);
+    assert!(v.len() == 1 && near(v[0], block_v + half, 1e-9), "joined into one body: {v:?}");
+    // Faces of both bodies keep their names in the result.
+    assert!(named(&mut s, &mut k, json!({ "type": "side", "feature": post, "curve": ring })));
+    assert!(named(&mut s, &mut k, json!({ "type": "cap", "feature": ext, "end": "start" })));
+    // Cut and intersect, and the other body kept.
+    let at = s.document().features().iter().position(|f| u64::from(f.id.0) == combine).unwrap();
+    let mut kind = serde_json::to_value(&s.document().features()[at].kind).unwrap();
+    for (operation, expected) in [("cut", block_v - half), ("intersect", half)] {
+        kind["operation"] = json!(operation);
+        run(&mut s, &mut k, "feature.update", json!({ "feature": combine, "kind": kind }));
+        let v = volumes(&mut s, &mut k);
+        assert!(v.len() == 1 && near(v[0], expected, 1e-9), "{operation}: {v:?}");
+    }
+    kind["operation"] = json!("cut");
+    kind["keep_tools"] = json!(true);
+    run(&mut s, &mut k, "feature.update", json!({ "feature": combine, "kind": kind }));
+    let v = volumes(&mut s, &mut k);
+    assert!(v.len() == 2 && near(v[0], block_v - half, 1e-9) && near(v[1], 2.0 * half, 1e-9), "{v:?}");
+    // The cylinder made smaller: the cut follows.
+    let r = run(&mut s, &mut k, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "radius", "curve": ring, "value": 5.0 } }));
+    run(&mut s, &mut k, "sketch.set_dimension", json!({ "sketch": sk, "constraint": r["constraint"], "value": 4.0 }));
+    let v = volumes(&mut s, &mut k);
+    assert!(near(v[0], block_v - PI * 16.0 * 10.0 / 2.0, 1e-9), "{v:?}");
+    // Bodies that do not overlap have nothing in common: said in plain words.
+    let (far, _) = circle(&mut s, &mut k, "xy", 100.0, 0.0, 5.0);
+    let away = run(&mut s, &mut k, "model.extrude", json!({ "sketch": far, "distance": 10, "operation": "new_body" }))["feature"].as_u64().unwrap();
+    let lid = face(&mut s, &mut k, json!({ "type": "cap", "feature": away, "end": "end" }));
+    let base = face(&mut s, &mut k, json!({ "type": "cap", "feature": ext, "end": "start" }));
+    run(&mut s, &mut k, "model.combine", json!({ "base": base, "tools": [lid], "operation": "intersect" }));
+    assert!(failure(&mut s, &mut k).starts_with("The bodies do not overlap"));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    // A body with itself, and a new body, are refused.
+    let other = face(&mut s, &mut k, json!({ "type": "cap", "feature": ext, "end": "end" }));
+    run(&mut s, &mut k, "model.combine", json!({ "base": base, "tools": [other] }));
+    assert!(failure(&mut s, &mut k).starts_with("A body cannot be combined with itself"));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    let e = s.exec("model.combine", &json!({ "base": base, "tools": [lid], "operation": "new_body" }), Some(&mut k)).unwrap_err().0;
+    assert!(e.contains("cannot make a new body"), "{e}");
 }
 
 /// The app regenerates on a worker thread, with cancellation: each new feature finishes there too.

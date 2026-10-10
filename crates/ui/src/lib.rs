@@ -12,6 +12,7 @@
 mod asm_browser;
 mod asm_panel;
 mod assembly;
+mod bodies;
 mod browser;
 mod chrome;
 pub mod commands;

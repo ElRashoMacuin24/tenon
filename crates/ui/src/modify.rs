@@ -62,7 +62,7 @@ impl Workbench {
         match &self.panel {
             Some(Panel::Fillet(_)) => Some(Wants { edges: true, faces: false }),
             Some(Panel::Chamfer(p)) => Some(Wants { edges: true, faces: p.method != ChamferMethod::Distance }),
-            Some(Panel::Shell(_)) => Some(Wants { edges: false, faces: true }),
+            Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_)) => Some(Wants { edges: false, faces: true }),
             Some(Panel::Pattern(p)) => Some(match p.slot {
                 Slot::Features | Slot::Plane => Wants { edges: false, faces: true },
                 Slot::Dir1 | Slot::Dir2 => Wants { edges: true, faces: false },
@@ -123,6 +123,7 @@ impl Workbench {
                 v
             }
             Some(Panel::Shell(p)) => p.faces.iter().filter_map(face).collect(),
+            Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_)) => self.bodies_picks(),
             Some(Panel::Measure(m)) => m.a.into_iter().chain(m.b).collect(),
             Some(Panel::Pattern(p)) => {
                 // The faces of the features being copied, and the picked direction, axis or plane.
@@ -166,7 +167,7 @@ impl Workbench {
         self.scene.bodies.get(body)?.edge_ref(edge)
     }
 
-    fn face_ref_of(&self, body: usize, face: u32) -> Option<FaceRef> {
+    pub(crate) fn face_ref_of(&self, body: usize, face: u32) -> Option<FaceRef> {
         let (name, info) = self.scene.bodies.get(body)?.faces.get(face as usize)?;
         Some(FaceRef { origin: (*name)?, fingerprint: Fingerprint::of(info) })
     }
@@ -192,6 +193,7 @@ impl Workbench {
                         WorkSlot::Edge => false,
                     }
             }
+            (Pick::Face { body, face }, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_))) => self.bodies_referable(body, face),
             (Pick::Edge { body, edge }, _) => wants.edges && self.edge_ref_of(body, edge).is_some(),
             (Pick::Face { body, face }, _) => wants.faces && self.face_ref_of(body, face).is_some(),
         }
@@ -202,6 +204,9 @@ impl Workbench {
     pub(crate) fn pick_into_panel(&mut self, p: Pick, toggle: bool) -> bool {
         if matches!(self.panel, Some(Panel::Work(_))) {
             return self.work_pick(p);
+        }
+        if matches!(self.panel, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_))) {
+            return self.bodies_pick(p, toggle);
         }
         if let Some(Panel::Pattern(pp)) = &self.panel {
             let slot = pp.slot;
@@ -443,6 +448,8 @@ impl Workbench {
             Some(Panel::Shell(s)) => s.faces.clear(),
             Some(Panel::Hole(h)) => h.points.clear(),
             Some(Panel::Pattern(p)) => p.features.clear(),
+            Some(Panel::Draft(d)) => d.faces.clear(),
+            Some(Panel::Combine(c)) => c.tools.clear(),
             _ => {}
         }
     }

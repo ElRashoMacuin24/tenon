@@ -431,6 +431,9 @@ pub(crate) enum Panel {
     Sweep(crate::sweeps::SweepPanel),
     Coil(crate::sweeps::CoilPanel),
     Loft(crate::sweeps::LoftPanel),
+    Draft(crate::bodies::DraftPanel),
+    Split(crate::bodies::SplitPanel),
+    Combine(crate::bodies::CombinePanel),
     Value(ValuePanel),
     EditDimension {
         sketch: FeatureId,
@@ -463,6 +466,9 @@ impl Panel {
             Panel::Sweep(p) => p.editing,
             Panel::Coil(p) => p.editing,
             Panel::Loft(p) => p.editing,
+            Panel::Draft(p) => p.editing,
+            Panel::Split(p) => p.editing,
+            Panel::Combine(p) => p.editing,
             _ => None,
         }
     }
@@ -515,6 +521,7 @@ impl Panel {
             Panel::Rib(p) if p.to_next => vec![("thickness", "/thickness")],
             Panel::Rib(_) => vec![("thickness", "/thickness"), ("distance", "/extent/distance")],
             Panel::Coil(_) => vec![("pitch", "/pitch"), ("turns", "/turns")],
+            Panel::Draft(_) => vec![("degrees", "/angle")],
             Panel::Work(w) => match w.method {
                 crate::work::WorkMethod::Offset => vec![("distance", "/distance")],
                 crate::work::WorkMethod::Angle => vec![("degrees", "/angle")],
@@ -639,6 +646,14 @@ impl Workbench {
                 Some(kind) => with_feature(self.document(), p.editing, kind),
                 None => rolled(p.editing),
             },
+            Some(Panel::Draft(p)) if !p.faces.is_empty() => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::Draft(p)) => rolled(p.editing),
+            Some(Panel::Split(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind),
+                None => rolled(p.editing),
+            },
+            // The bodies as they are before, so each can be clicked.
+            Some(Panel::Combine(p)) => rolled(p.editing),
             Some(Panel::Fillet(p)) => rolled(p.editing),
             Some(Panel::Chamfer(p)) => rolled(p.editing),
             Some(Panel::Shell(p)) => rolled(p.editing),
@@ -1107,7 +1122,12 @@ impl Workbench {
                         ("model.rib", p)
                     }
                     // Added whole: their commands take the same fields as the feature.
-                    FeatureKind::Sweep(_) | FeatureKind::Coil(_) | FeatureKind::Loft(_) => ("feature.add", json!({ "kind": kind_json })),
+                    FeatureKind::Sweep(_)
+                    | FeatureKind::Coil(_)
+                    | FeatureKind::Loft(_)
+                    | FeatureKind::Draft(_)
+                    | FeatureKind::Split(_)
+                    | FeatureKind::Combine(_) => ("feature.add", json!({ "kind": kind_json })),
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
@@ -1235,6 +1255,45 @@ impl Workbench {
                             keep = !self.commit_panel(&ptrs, p.editing, kind);
                             if !keep && again {
                                 reopen = Some("model.loft");
+                            }
+                        }
+                    }
+                }
+            }
+            Panel::Draft(p) => {
+                if commit {
+                    if p.faces.is_empty() {
+                        self.set_error("Draft: click at least one face to tilt".to_string());
+                    } else {
+                        keep = !self.commit_panel(&ptrs, p.editing, p.kind());
+                        if !keep && again {
+                            reopen = Some("model.draft");
+                        }
+                    }
+                }
+            }
+            Panel::Split(p) => {
+                if commit {
+                    match p.kind() {
+                        None => self.set_error("Split: click the plane that cuts the part".to_string()),
+                        Some(kind) => {
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("model.split");
+                            }
+                        }
+                    }
+                }
+            }
+            Panel::Combine(p) => {
+                if commit {
+                    match p.kind() {
+                        None if p.base.is_none() => self.set_error("Combine: click the solid that stays".to_string()),
+                        None => self.set_error("Combine: click at least one other solid".to_string()),
+                        Some(kind) => {
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("model.combine");
                             }
                         }
                     }

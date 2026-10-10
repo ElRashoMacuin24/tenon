@@ -334,6 +334,8 @@ impl Workbench {
                 Slot::Axis | Slot::Dir1 | Slot::Dir2 => (false, true),
                 Slot::Features => (false, false),
             },
+            Some(Panel::Draft(d)) => (d.slot == crate::bodies::DraftSlot::Plane, false),
+            Some(Panel::Split(_)) => (true, false),
             _ => (false, false),
         }
     }
@@ -365,6 +367,7 @@ impl Workbench {
                 true
             }
             Some(Panel::Pattern(p)) => set_pattern_ref(p, plane, axis),
+            Some(Panel::Draft(_) | Panel::Split(_)) => plane.is_some_and(|p| self.bodies_plane(p)),
             _ => false,
         }
     }

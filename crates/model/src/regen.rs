@@ -13,11 +13,11 @@ use tenon_sketch::{EntityId, Sketch, SketchRegion, default_regions, profile, reg
 
 use crate::FeatureId;
 use crate::document::{
-    AxisRef, AxisSel, ChamferSize, Coil, DirectionRef, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent, HoleType, Loft,
-    Operation, PlaneRef, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Sweep, WorkAxis, WorkPlane, WorkPoint,
+    AxisRef, AxisSel, ChamferSize, Coil, Combine, DirectionRef, Document, Draft, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent,
+    HoleType, Loft, Operation, PlaneRef, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Split, SplitKeep, Sweep, WorkAxis, WorkPlane, WorkPoint,
 };
 use crate::naming::{
-    EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
+    CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
     names_of_tagged, resolve, resolve_edge,
 };
 
@@ -418,6 +418,9 @@ impl<'a> Ctx<'a> {
             FeatureKind::Sweep(s) => self.sweep(f.id, s),
             FeatureKind::Coil(c) => self.coil(f.id, c),
             FeatureKind::Loft(l) => self.loft(f.id, l),
+            FeatureKind::Draft(d) => self.draft(f.id, d),
+            FeatureKind::Split(s) => self.split(f.id, s),
+            FeatureKind::Combine(c) => self.combine_bodies(c),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };
@@ -1048,6 +1051,186 @@ impl<'a> Ctx<'a> {
         let faces = self.k.topology(op.shape)?.faces;
         let names = names_of_sweep(&op.history, id, faces);
         self.combine(id, vec![(op.shape, names)], l.operation)
+    }
+
+    fn draft(&mut self, id: FeatureId, d: &Draft) -> Result<(), Stop> {
+        d.check()?;
+        let neutral = self.plane_frame(&d.plane)?;
+        let mut bi = None;
+        let mut faces = Vec::new();
+        for fref in &d.faces {
+            let (b, face) = self.regen.resolve(fref, &*self.k).map_err(|e| self.describe_ref(fref, &e))?;
+            if bi.is_some_and(|x| x != b) {
+                return Err("the faces to draft are on different bodies".into());
+            }
+            bi = Some(b);
+            faces.push(face);
+        }
+        let bi = bi.ok_or("select at least one face to draft")?;
+        let shape = self.body_shape(bi)?;
+        let pull = if d.reverse { -neutral.z() } else { neutral.z() };
+        let op = self.k.draft(shape, &faces.iter().map(|f| shape.face(*f)).collect::<Vec<_>>(), pull, d.angle, &neutral)?;
+        self.replace_body(id, bi, op)
+    }
+
+    /// One piece of `body` cut by the half-space solid `tool`; None when nothing is left of it.
+    fn split_piece(&mut self, kind: BoolOp, body: &Body, tool: ShapeHandle, tool_names: &[Option<FaceOrigin>]) -> Result<Option<Body>, Stop> {
+        let op = match self.k.boolean(kind, body.shape, &[tool]) {
+            Ok(op) => op,
+            Err(e) if e.to_string().contains("empty shape") => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let checked = self.k.mass_properties(op.shape, 1.0).map(|m| m.volume).and_then(|v| Ok((v, self.k.topology(op.shape)?.faces)));
+        match checked {
+            Ok((volume, _)) if volume.abs() <= tenon_geom::tol::MIN_SIZE => {
+                self.k.release(op.shape);
+                Ok(None)
+            }
+            Ok((_, faces)) => {
+                let names = names_of_boolean(&op.history, &[body.names.as_slice(), tool_names], faces);
+                Ok(Some(Body { shape: op.shape, names, created_by: body.created_by }))
+            }
+            Err(e) => {
+                self.k.release(op.shape);
+                Err(e.into())
+            }
+        }
+    }
+
+    fn split(&mut self, id: FeatureId, s: &Split) -> Result<(), Stop> {
+        let plane = self.plane_frame(&s.plane)?;
+        let targets: Vec<usize> = match &s.body {
+            Some(fref) => vec![self.regen.resolve(fref, &*self.k).map_err(|e| self.describe_ref(fref, &e))?.0],
+            None => (0..self.regen.bodies.len()).collect(),
+        };
+        if targets.is_empty() {
+            return Err("there is no body to split".into());
+        }
+        let mut crossed = false;
+        for bi in targets {
+            let body = self.regen.bodies.get(bi).cloned().ok_or("no such body")?;
+            let Some(bb) = self.k.bounding_box(body.shape)? else { continue };
+            let reach = corners(&bb).into_iter().map(|c| (c - plane.origin()).dot(plane.z())).fold(f64::NEG_INFINITY, f64::max);
+            if reach <= tenon_geom::tol::LINEAR {
+                continue;
+            }
+            // Everything in front of the plane that the body could reach: a square on the plane
+            // round the body's middle, as deep as the body goes.
+            let (mid, half) = (bb.center() - plane.origin(), (bb.max - bb.min).len() + 1.0);
+            let (cx, cy) = (mid.dot(plane.x()), mid.dot(plane.y()));
+            let quad =
+                [Vec2::new(cx - half, cy - half), Vec2::new(cx + half, cy - half), Vec2::new(cx + half, cy + half), Vec2::new(cx - half, cy + half)];
+            let curves = (0..4).map(|i| TaggedCurve2 { tag: i as u64 + 1, curve: Curve2::Line { start: quad[i], end: quad[(i + 1) % 4] } }).collect();
+            let profile = Profile { frame: plane, regions: vec![Region { outer: Loop { curves }, holes: vec![] }] };
+            let front = self.k.extrude(&profile, &Extent::Distance(reach + 1.0), None)?;
+            // The cut face of the front piece is the split's start face, of the back piece its
+            // end face: two faces in one place that later features can tell apart.
+            let pieces = (|| -> Result<(Option<Body>, Option<Body>), Stop> {
+                let faces = self.k.topology(front.shape)?.faces;
+                let front_names: Vec<Option<FaceOrigin>> = names_of_sweep(&front.history, id, faces)
+                    .into_iter()
+                    .map(|n| n.filter(|o| matches!(o, FaceOrigin::Cap { end: CapEnd::Start, .. })))
+                    .collect();
+                let back_names: Vec<Option<FaceOrigin>> =
+                    front_names.iter().map(|n| n.map(|_| FaceOrigin::Cap { feature: id, end: CapEnd::End })).collect();
+                let a = self.split_piece(BoolOp::Intersect, &body, front.shape, &front_names)?;
+                let b = match self.split_piece(BoolOp::Cut, &body, front.shape, &back_names) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        if let Some(a) = a {
+                            self.k.release(a.shape);
+                        }
+                        return Err(e);
+                    }
+                };
+                Ok((a, b))
+            })();
+            self.k.release(front.shape);
+            let (front_piece, back_piece) = match pieces? {
+                (Some(a), Some(b)) => (a, b),
+                // The plane passes the body by: it stays whole.
+                (a, b) => {
+                    for piece in a.into_iter().chain(b) {
+                        self.k.release(piece.shape);
+                    }
+                    continue;
+                }
+            };
+            crossed = true;
+            let (stays, other) = match s.keep {
+                SplitKeep::Front => (front_piece, back_piece),
+                SplitKeep::Back | SplitKeep::Both => (back_piece, front_piece),
+            };
+            self.k.release(body.shape);
+            if let Some(slot) = self.regen.bodies.get_mut(bi) {
+                *slot = stays;
+            }
+            if s.keep == SplitKeep::Both {
+                self.regen.bodies.push(Body { created_by: id, ..other });
+            } else {
+                self.k.release(other.shape);
+            }
+        }
+        if !crossed {
+            return Err("The split plane does not pass through the part, so there is nothing to split: move the plane, or choose another.".into());
+        }
+        Ok(())
+    }
+
+    fn combine_bodies(&mut self, c: &Combine) -> Result<(), Stop> {
+        c.check()?;
+        let body_of = |me: &Self, fref: &FaceRef| me.regen.resolve(fref, &*me.k).map(|r| r.0).map_err(|e| me.describe_ref(fref, &e));
+        let base = body_of(self, &c.base)?;
+        let mut tools: Vec<usize> = Vec::new();
+        for t in &c.tools {
+            let b = body_of(self, t)?;
+            if b == base {
+                return Err("A body cannot be combined with itself: for the other bodies, pick faces of bodies other than the base.".into());
+            }
+            if !tools.contains(&b) {
+                tools.push(b);
+            }
+        }
+        let kind = match c.operation {
+            Operation::Cut => BoolOp::Cut,
+            Operation::Intersect => BoolOp::Intersect,
+            Operation::Join | Operation::NewBody => BoolOp::Union,
+        };
+        let target = self.regen.bodies.get(base).cloned().ok_or("no such body")?;
+        let others: Vec<Body> = tools.iter().filter_map(|b| self.regen.bodies.get(*b).cloned()).collect();
+        let op = self.k.boolean(kind, target.shape, &others.iter().map(|b| b.shape).collect::<Vec<_>>())?;
+        let checked = self.k.mass_properties(op.shape, 1.0).map(|m| m.volume).and_then(|v| Ok((v, self.k.topology(op.shape)?.faces)));
+        let faces = match checked {
+            Ok((volume, _)) if volume.abs() <= tenon_geom::tol::MIN_SIZE => {
+                self.k.release(op.shape);
+                return Err(match c.operation {
+                    Operation::Intersect => "The bodies do not overlap, so nothing would be left of the base: check which bodies are picked.",
+                    _ => "This removes the whole base body, so nothing would be left: check which body is the base.",
+                }
+                .into());
+            }
+            Ok((_, faces)) => faces,
+            Err(e) => {
+                self.k.release(op.shape);
+                return Err(e.into());
+            }
+        };
+        let inputs: Vec<&[Option<FaceOrigin>]> = std::iter::once(target.names.as_slice()).chain(others.iter().map(|b| b.names.as_slice())).collect();
+        let names = names_of_boolean(&op.history, &inputs, faces);
+        self.k.release(target.shape);
+        if let Some(slot) = self.regen.bodies.get_mut(base) {
+            slot.shape = op.shape;
+            slot.names = names;
+        }
+        if !c.keep_tools {
+            // From the back, so the indices before stay what they were.
+            tools.sort_unstable_by_key(|b| std::cmp::Reverse(*b));
+            for b in tools {
+                let gone = self.regen.bodies.remove(b);
+                self.k.release(gone.shape);
+            }
+        }
+        Ok(())
     }
 
     /// Adds a feature's tool solids to the part according to `operation`.

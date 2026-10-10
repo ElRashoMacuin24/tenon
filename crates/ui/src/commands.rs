@@ -119,10 +119,10 @@ pub const RIBBON: &[RibbonTab] = &[
                     large("model.fillet", "Fillet", "Round edges", Icon::Fillet, 0).key("F"),
                     small("model.chamfer", "Chamfer", "Bevel edges", Icon::Chamfer, 0),
                     small("model.shell", "Shell", "Hollow a solid, removing faces", Icon::Shell, 0),
-                    small("model.draft", "Draft", "Taper faces for moulding", Icon::Draft, 6),
+                    small("model.draft", "Draft", "Taper faces for moulding", Icon::Draft, 0),
                     small("model.thread", "Thread", "Cosmetic thread on a cylinder", Icon::Thread, 6),
-                    small("model.combine", "Combine", "Join, cut or intersect bodies", Icon::Combine, 6),
-                    small("model.split", "Split", "Split faces or bodies", Icon::Split, 6),
+                    small("model.combine", "Combine", "Join, cut or intersect bodies", Icon::Combine, 0),
+                    small("model.split", "Split", "Cut solids in two along a plane, or keep one side", Icon::Split, 0),
                 ],
             },
             RibbonPanel {

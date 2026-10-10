@@ -1005,7 +1005,27 @@ std::unique_ptr<Shape> draft(const Shape& body, rust::Slice<const std::uint32_t>
     }
     require_valid(mk.Shape(), "the draft gave an invalid solid (is the angle too large?)");
     auto out = wrap(single_solid(mk.Shape()));
-    record_history(mk, 0, body.shape, *out, hist);
+    // A draft makes nothing new: every face and edge becomes one face or edge of the result (a
+    // tilted face is the same face). OCCT reports the tilted faces as "generated" and the rest as
+    // "modified", so each one's image is asked for directly.
+    const std::pair<std::uint8_t, TopAbs_ShapeEnum> kinds[] = {{KIND_FACE, TopAbs_FACE}, {KIND_EDGE, TopAbs_EDGE}};
+    for (const auto& kind : kinds) {
+      ShapeMap map;
+      TopExp::MapShapes(body.shape, kind.second, map);
+      const ShapeMap& result_map = kind.first == KIND_FACE ? out->faces : out->edges;
+      for (int i = 1; i <= map.Extent(); ++i) {
+        ImageEntry entry;
+        entry.input = 0;
+        entry.kind = kind.first;
+        entry.index = static_cast<std::uint32_t>(i - 1);
+        try {
+          push_index(entry.images, result_map, mk.ModifiedShape(map(i)));
+        } catch (const Standard_Failure&) {
+          // Not in the result: no image.
+        }
+        hist.images.push_back(std::move(entry));
+      }
+    }
     return out;
   });
 }

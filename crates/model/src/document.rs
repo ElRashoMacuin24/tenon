@@ -423,6 +423,86 @@ impl Loft {
     }
 }
 
+/// Tilts faces of a body about a neutral plane, so a moulded or cast part comes out of its tool.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Draft {
+    pub faces: Vec<FaceRef>,
+    /// The neutral plane: where it crosses a face, the face stays put. The part is pulled along
+    /// its normal.
+    pub plane: PlaneRef,
+    /// Radians from the pull direction.
+    pub angle: f64,
+    /// Tilt the other way (material is removed above the plane instead of added).
+    #[serde(default)]
+    pub reverse: bool,
+}
+
+/// Most a draft may tilt its faces.
+pub const MAX_DRAFT_ANGLE: f64 = 1.5; // just under 86 degrees
+
+impl Draft {
+    pub fn check(&self) -> Result<(), String> {
+        if self.faces.is_empty() || self.faces.len() > 1000 {
+            return Err("a draft needs 1 to 1000 faces".into());
+        }
+        if !(self.angle.is_finite() && self.angle > 0.0 && self.angle <= MAX_DRAFT_ANGLE) {
+            return Err("the draft angle must be more than 0 and at most 85 degrees".into());
+        }
+        Ok(())
+    }
+}
+
+/// Which pieces of a split body stay.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitKeep {
+    /// Both, as two bodies.
+    #[default]
+    Both,
+    /// The piece on the side the plane's normal points to.
+    Front,
+    /// The piece on the other side.
+    Back,
+}
+
+/// Cuts bodies along a plane, into two bodies or keeping one side.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Split {
+    pub plane: PlaneRef,
+    #[serde(default)]
+    pub keep: SplitKeep,
+    /// A face of the one body to split. Without it, every body the plane crosses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<FaceRef>,
+}
+
+/// Joins bodies to a base body, cuts them from it or keeps what they share with it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Combine {
+    /// A face of the body that stays and changes.
+    pub base: FaceRef,
+    /// A face of each of the other bodies.
+    pub tools: Vec<FaceRef>,
+    /// Join, cut or intersect.
+    #[serde(default)]
+    pub operation: Operation,
+    /// Leave the other bodies in the part instead of using them up.
+    #[serde(default)]
+    pub keep_tools: bool,
+}
+
+impl Combine {
+    pub fn check(&self) -> Result<(), String> {
+        if self.tools.is_empty() || self.tools.len() > 100 {
+            return Err("Combine needs 1 to 100 other bodies".into());
+        }
+        if self.operation == Operation::NewBody {
+            return Err("Combine joins, cuts or intersects: it cannot make a new body".into());
+        }
+        Ok(())
+    }
+}
+
 /// A direction for a pattern: an origin axis or a straight edge of the part.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -603,6 +683,9 @@ pub enum FeatureKind {
     Sweep(Sweep),
     Coil(Coil),
     Loft(Loft),
+    Draft(Draft),
+    Split(Split),
+    Combine(Combine),
 }
 
 impl FeatureKind {
@@ -653,6 +736,9 @@ impl FeatureKind {
             FeatureKind::Sweep(_) => "Sweep",
             FeatureKind::Coil(_) => "Coil",
             FeatureKind::Loft(_) => "Loft",
+            FeatureKind::Draft(_) => "Draft",
+            FeatureKind::Split(_) => "Split",
+            FeatureKind::Combine(_) => "Combine",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -675,6 +761,9 @@ impl FeatureKind {
             FeatureKind::Sweep(_) => "Sweep",
             FeatureKind::Coil(_) => "Coil",
             FeatureKind::Loft(_) => "Loft",
+            FeatureKind::Draft(_) => "Draft",
+            FeatureKind::Split(_) => "Split",
+            FeatureKind::Combine(_) => "Combine",
         }
     }
     /// Features this one depends on.
@@ -703,6 +792,9 @@ impl FeatureKind {
                 _ => vec![c.sketch],
             },
             FeatureKind::Loft(l) => l.sections.clone(),
+            FeatureKind::Draft(d) => d.faces.iter().filter_map(FaceRef::feature).chain(d.plane.feature()).collect(),
+            FeatureKind::Split(s) => s.plane.feature().into_iter().chain(s.body.as_ref().and_then(FaceRef::feature)).collect(),
+            FeatureKind::Combine(c) => std::iter::once(&c.base).chain(&c.tools).filter_map(FaceRef::feature).collect(),
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -981,6 +1073,8 @@ impl Document {
                     return Err(format!("{}: every loft section must be a sketch", f.name));
                 }
                 FeatureKind::Loft(l) => l.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Draft(d) => d.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Combine(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

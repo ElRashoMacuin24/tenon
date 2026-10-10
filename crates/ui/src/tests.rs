@@ -68,7 +68,7 @@ fn every_available_command_has_a_handler() {
             assert!(!e.contains("unknown command"), "{id}: {e}");
         }
     }
-    assert!(Workbench::without_kernel().run_ui("model.draft").unwrap_err().contains("milestone M6"));
+    assert!(Workbench::without_kernel().run_ui("model.thread").unwrap_err().contains("milestone M6"));
     assert!(Workbench::without_kernel().run_ui("sketch.stretch").unwrap_err().contains("not in the current plan"));
     assert!(Workbench::without_kernel().run_ui("model.fillet").unwrap_err().contains("no solid"));
     assert!(Workbench::without_kernel().run_ui("nonsense.cmd").unwrap_err().contains("unknown"));
@@ -1474,4 +1474,86 @@ fn sweep_coil_and_loft_from_the_ribbon() {
     wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": 0, "cy": 0, "r": 2 })).unwrap();
     let e = wb.run_ui("model.loft").unwrap_err();
     assert!(e.contains("two or more sketches"), "{e}");
+}
+
+#[test]
+fn draft_split_and_combine_pick_faces_planes_and_bodies() {
+    use tenon_geom::Vec3;
+    let block = |wb: &mut Workbench, d: &mut Driver| {
+        wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+        let f = sketching(wb);
+        wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+        wb.finish_sketch();
+        wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+        d.frame(wb, vec![]);
+        wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+        d.settle(wb);
+    };
+    // Draft: the front and right faces, clicked, lean in from the XY plane by the angle typed.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    block(&mut wb, &mut d);
+    wb.run_ui("model.draft").unwrap();
+    assert!(wb.has_properties());
+    let (front, right) = (on_screen(&wb, Vec3::new(20.0, 0.0, 5.0)), on_screen(&wb, Vec3::new(40.0, 10.0, 5.0)));
+    d.click(&mut wb, front);
+    d.click(&mut wb, right);
+    let Some(Panel::Draft(p)) = wb.panel.clone() else { panic!("no draft panel") };
+    assert_eq!((p.faces.len(), p.degrees), (2, 3.0));
+    assert_eq!(wb.panel_picks().len(), 2, "both faces are highlighted");
+    // Each level is a rectangle shorter by z tan(a) both ways.
+    let drafted = |deg: f64| {
+        let k = deg.to_radians().tan();
+        8000.0 - 3000.0 * k + 1000.0 / 3.0 * k * k
+    };
+    d.settle(&mut wb);
+    assert!((volume(&wb) - drafted(3.0)).abs() < 1e-6, "preview: {}", volume(&wb));
+    type_into(&mut d, &mut wb, "tn_props_draft_angle", "5");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - drafted(5.0)).abs() < 1e-6, "{}", volume(&wb));
+    assert_eq!(wb.document().features().last().unwrap().name, "Draft1");
+
+    // Split: the work plane made last is offered; both sides stay, as two solids.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    block(&mut wb, &mut d);
+    let wp = wb.exec("work.plane", json!({ "base": "xy", "distance": 4 })).unwrap()["feature"].as_u64().unwrap();
+    wb.run_ui("model.split").unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Split(p)) = wb.panel.clone() else { panic!("no split panel: {}", wb.status()) };
+    assert_eq!(p.plane, Some(tenon_model::PlaneRef::Work(FeatureId(u32::try_from(wp).unwrap()))));
+    assert_eq!(wb.scene().bodies.len(), 2, "preview");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let volumes: Vec<f64> = wb.scene().bodies.iter().map(|b| b.volume).collect();
+    assert!((volumes[0] - 3200.0).abs() < 1e-6 && (volumes[1] - 4800.0).abs() < 1e-6, "{volumes:?}");
+
+    // Combine: the first solid clicked stays, the next is joined to it; a click on the first
+    // again is refused, saying why.
+    wb.run_ui("model.combine").unwrap();
+    d.settle(&mut wb);
+    let (low, high) = (on_screen(&wb, Vec3::new(20.0, 0.0, 2.0)), on_screen(&wb, Vec3::new(20.0, 0.0, 7.0)));
+    d.click(&mut wb, low);
+    let Some(Panel::Combine(p)) = wb.panel.clone() else { panic!("no combine panel") };
+    assert!(p.base.is_some() && p.slot == crate::bodies::CombineSlot::Tools, "the other solids are picked next");
+    assert_eq!(wb.panel_picks().len(), 6, "the whole solid is highlighted");
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, low);
+    assert!(wb.status().contains("the body that stays"), "{}", wb.status());
+    d.click(&mut wb, high);
+    let Some(Panel::Combine(p)) = wb.panel.clone() else { panic!("no combine panel") };
+    assert_eq!(p.tools.len(), 1);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(wb.scene().bodies.len(), 1);
+    assert!((volume(&wb) - 8000.0).abs() < 1e-6, "{}", volume(&wb));
+    assert_eq!(wb.document().features().last().unwrap().name, "Combine1");
+    // With one solid there is nothing to combine.
+    let e = wb.run_ui("model.combine").unwrap_err();
+    assert!(e.contains("two or more solid bodies"), "{e}");
 }
