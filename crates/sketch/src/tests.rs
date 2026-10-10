@@ -356,3 +356,34 @@ fn delete_cleans_up_points_and_constraints() {
     assert!(gone.contains(&l[1]), "deleting a point deletes the curves using it");
     s.validate().unwrap();
 }
+
+#[test]
+fn a_dimension_keeps_the_place_it_was_put_until_it_is_gone() {
+    let (mut s, lines, w, h) = fixed_rect();
+    assert_eq!(s.place(w), None, "beside its geometry until it is placed");
+    s.set_place(w, v(20.0, -8.0)).unwrap();
+    s.set_place(h, v(48.0, 10.0)).unwrap();
+    assert_eq!((s.place(w), s.place(h)), (Some(v(20.0, -8.0)), Some(v(48.0, 10.0))));
+    // Only dimensions have a place, and only a real position will do.
+    let level = s.constraints().find(|(_, c)| matches!(c, Constraint::Horizontal { .. })).map(|(id, _)| id).unwrap();
+    assert!(matches!(s.set_place(level, v(1.0, 1.0)), Err(SketchError::Invalid(_))));
+    assert!(matches!(s.set_place(ConstraintId(999), v(1.0, 1.0)), Err(SketchError::NoConstraint(_))));
+    assert!(matches!(s.set_place(w, v(f64::NAN, 0.0)), Err(SketchError::Invalid(_))));
+    s.validate().unwrap();
+    // It is saved with the sketch, and a sketch with nothing placed says nothing of places.
+    let json = serde_json::to_value(&s).unwrap();
+    assert_eq!(json["places"].as_array().map(Vec::len), Some(2));
+    assert_eq!(serde_json::from_value::<Sketch>(json).unwrap(), s);
+    assert!(serde_json::to_value(fixed_rect().0).unwrap().get("places").is_none());
+    // Editing a dimension's value leaves it where it is; removing it, or what it measures,
+    // forgets the place.
+    s.set_dimension(w, 50.0).unwrap();
+    assert_eq!(s.place(w), Some(v(20.0, -8.0)));
+    s.remove_constraint(w).unwrap();
+    assert_eq!(s.place(w), None);
+    let corner = s.constraint(h).unwrap().refs()[1];
+    s.delete(&[corner]);
+    let _ = lines;
+    assert!(s.constraint(h).is_none() && s.place(h).is_none());
+    s.validate().unwrap();
+}

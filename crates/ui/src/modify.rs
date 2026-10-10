@@ -411,6 +411,17 @@ impl Workbench {
                 }
                 return true;
             }
+        }
+        if matches!(self.panel, Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Sweep(_) | Panel::Coil(_))) {
+            // A click inside a closed region of the profile's sketch: that region joins the
+            // feature, or leaves it.
+            if resp.clicked()
+                && let Some(pos) = resp.interact_pointer_pos()
+                && self.toggle_profile_at(pos, rect)
+            {
+                self.view.hover = None;
+                return true;
+            }
             return false;
         }
         let Some(wants) = self.panel_wants() else { return false };

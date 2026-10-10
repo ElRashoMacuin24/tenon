@@ -1239,8 +1239,11 @@ fn dimensions_are_typed_into_a_box_on_the_dimension() {
     // Double-click the dimension's label: the same box, now editing it.
     d.tap(&mut wb, egui::Key::Escape);
     let sk = wb.document().sketch(f).unwrap().clone();
-    let c = sk.constraints().find(|(_, c)| matches!(c, tenon_sketch::Constraint::Length { .. })).map(|(_, c)| c.clone()).unwrap();
-    let label = wb.dimension_anchor(f, &c).unwrap();
+    let (cid, c) = sk.constraints().find(|(_, c)| matches!(c, tenon_sketch::Constraint::Length { .. })).map(|(id, c)| (id, c.clone())).unwrap();
+    // It stays where it was put down: 6 below the line.
+    let placed = sk.place(cid).expect("the dimension has a place");
+    assert!((placed.x - 15.0).abs() < 0.5 && (placed.y + 6.0).abs() < 0.5, "{placed:?}");
+    let label = wb.dimension_anchor(f, &c, Some(placed)).unwrap();
     d.frame(&mut wb, vec![egui::Event::PointerMoved(label)]);
     // (Pause first: clicks less than 0.6 s after the earlier ones would count as a triple click.)
     for _ in 0..45 {
@@ -1277,15 +1280,15 @@ fn dimension_tool_creates_a_driving_dimension() {
     wb.run_ui("sketch.dimension").unwrap();
     let sketch = wb.document().sketch(f).unwrap().clone();
     // Click the line twice: its length.
-    wb.dimension_click(f, &sketch, Some(bottom));
-    wb.dimension_click(f, &sketch, Some(bottom));
+    wb.dimension_click(f, &sketch, Some(bottom), Vec2::new(15.0, 0.0));
+    wb.dimension_click(f, &sketch, Some(bottom), Vec2::new(15.0, 0.0));
     let Some(Panel::Value(v)) = wb.panel.clone() else { panic!("no value panel") };
     assert!((v.value - 30.0).abs() < 1e-9);
     let mut v2 = v;
     v2.value = 45.0;
     wb.panel = Some(Panel::Value(v2));
     if let Some(Panel::Value(v)) = wb.panel.take()
-        && let crate::panels::ValueFor::Dimension { sketch, constraint } = v.what
+        && let crate::panels::ValueFor::Dimension { sketch, constraint, .. } = v.what
     {
         let mut c = constraint;
         c.set_value(v.value);
@@ -1745,4 +1748,207 @@ fn revolve_turns_a_circle_into_a_sphere_and_takes_a_clicked_line_for_its_axis() 
     d.settle(&mut wb);
     assert!(wb.panel.is_none() && !wb.status_error, "{}", wb.status());
     assert_eq!(wb.document().features().last().unwrap().name, "Revolution1");
+}
+
+#[test]
+fn a_dimension_follows_the_pointer_is_put_down_by_a_click_and_can_be_dragged() {
+    use tenon_geom::Vec3;
+    use tenon_sketch::Constraint;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    // A sloping line from (0, 0) to (40, 30), and a circle.
+    let line = wb.exec("sketch.line", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 30 })).unwrap()["line"].as_u64().unwrap();
+    let ring = wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": 80, "cy": 10, "r": 10 })).unwrap()["circle"].as_u64().unwrap();
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+    let dims = |wb: &Workbench| -> Vec<(tenon_sketch::ConstraintId, Constraint)> {
+        let sk = wb.document().sketch(f).unwrap();
+        sk.constraints().filter(|(_, c)| c.is_dimensional()).map(|(id, c)| (id, c.clone())).collect()
+    };
+    let move_to = |d: &mut Driver, wb: &mut Workbench, p: Pos2| {
+        d.frame(wb, vec![egui::Event::PointerMoved(p)]);
+        d.frame(wb, vec![]);
+    };
+
+    // D, a click on the line: nothing is made yet. The dimension follows the pointer, and what
+    // it measures depends on where the pointer is: under the line its width, beside it its
+    // height, off its end its length.
+    d.tap(&mut wb, egui::Key::D);
+    let on_line = at(&wb, 20.0, 15.0);
+    d.click(&mut wb, on_line);
+    assert!(wb.panel.is_none() && dims(&wb).is_empty());
+    let under = at(&wb, 20.0, -10.0);
+    move_to(&mut d, &mut wb, under);
+    assert!(d.texts().iter().any(|t| t == "40"), "its width, under the line: {:?}", d.texts());
+    let beside = at(&wb, 55.0, 15.0);
+    move_to(&mut d, &mut wb, beside);
+    assert!(d.texts().iter().any(|t| t == "30"), "its height, beside it: {:?}", d.texts());
+    let off_end = at(&wb, -10.0, 40.0);
+    move_to(&mut d, &mut wb, off_end);
+    assert!(d.texts().iter().any(|t| t == "50"), "its length, off its end: {:?}", d.texts());
+    // A click under the line puts the width down there; its value box opens on it; Enter.
+    d.click(&mut wb, under);
+    assert!(matches!(wb.panel, Some(Panel::Value(_))), "the value box is open");
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let made = dims(&wb);
+    assert!(matches!(made.as_slice(), [(_, Constraint::HorizontalDistance { value, .. })] if (value.abs() - 40.0).abs() < 1e-9), "{made:?}");
+    let place = wb.document().sketch(f).unwrap().place(made[0].0).expect("it stays where it was put");
+    assert!((place.x - 20.0).abs() < 0.5 && (place.y + 10.0).abs() < 0.5, "{place:?}");
+
+    // The circle: a click on it, a click beside it, and its diameter is there.
+    let on_ring = at(&wb, 90.0, 10.0);
+    d.click(&mut wb, on_ring);
+    let outside = at(&wb, 100.0, 30.0);
+    move_to(&mut d, &mut wb, outside);
+    assert!(d.texts().iter().any(|t| t == "Ø20"), "{:?}", d.texts());
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, outside);
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    let made = dims(&wb);
+    assert!(made.iter().any(|(_, c)| matches!(c, Constraint::Diameter { curve, .. } if u64::from(curve.0) == ring)), "{made:?}");
+    let _ = line;
+
+    // With no tool running, the width's value is dragged somewhere else: the dimension moves
+    // with it, in one step that Ctrl+Z takes back.
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    let width = made.iter().find(|(_, c)| matches!(c, Constraint::HorizontalDistance { .. })).unwrap().0;
+    let from = at(&wb, place.x, place.y);
+    let to = at(&wb, 25.0, -22.0);
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.drag(&mut wb, from, to, egui::PointerButton::Primary);
+    let moved = wb.document().sketch(f).unwrap().place(width).unwrap();
+    assert!((moved.x - 25.0).abs() < 1.0 && (moved.y + 22.0).abs() < 1.0, "{moved:?}");
+    assert_eq!(dims(&wb).len(), 2, "moving a dimension changes nothing else");
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    d.frame(&mut wb, vec![]);
+    let back = wb.document().sketch(f).unwrap().place(width).unwrap();
+    assert!((back.x - place.x).abs() < 1e-9 && (back.y - place.y).abs() < 1e-9, "{back:?}");
+}
+
+#[test]
+fn profiles_are_chosen_by_clicking_the_regions_of_the_sketch() {
+    use tenon_geom::Vec3;
+    use tenon_model::RegionSel;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    // Two rectangles side by side, 20 x 10 and 10 x 10, far enough apart to click each.
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 20, "y2": 10 })).unwrap();
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 60, "y1": 0, "x2": 70, "y2": 10 })).unwrap();
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::E);
+    d.settle(&mut wb);
+    // Both are extruded until one is clicked.
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel") };
+    assert_eq!(p.regions, RegionSel::Default);
+    assert!((volume(&wb) - 3000.0).abs() < 1e-6, "{}", volume(&wb));
+    assert!(wb.shown_sketches().contains(&(f, true)), "the profile's sketch shows over the preview");
+    // A click inside the small one takes it out; another puts it back.
+    let small = on_screen(&wb, Vec3::new(66.0, 3.0, 0.0));
+    d.click(&mut wb, small);
+    d.settle(&mut wb);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel") };
+    assert!(matches!(&p.regions, RegionSel::Keys(k) if k.len() == 1), "{:?}", p.regions);
+    assert!((volume(&wb) - 2000.0).abs() < 1e-6, "{}", volume(&wb));
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, small);
+    d.settle(&mut wb);
+    assert!((volume(&wb) - 3000.0).abs() < 1e-6, "{}", volume(&wb));
+    // The large one out: only the small one is left, and it cannot be taken out as well.
+    let large = on_screen(&wb, Vec3::new(4.0, 3.0, 0.0));
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, large);
+    d.settle(&mut wb);
+    assert!((volume(&wb) - 1000.0).abs() < 1e-6, "{}", volume(&wb));
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, small);
+    d.settle(&mut wb);
+    assert!((volume(&wb) - 1000.0).abs() < 1e-6, "the last profile stays: {}", volume(&wb));
+    assert!(wb.status().contains("at least one profile"), "{}", wb.status());
+    // OK: the feature keeps the choice.
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - 1000.0).abs() < 1e-6);
+    let tenon_model::FeatureKind::Extrude(e) = &wb.document().features().last().unwrap().kind else { panic!("not an extrusion") };
+    assert!(matches!(&e.regions, RegionSel::Keys(k) if k.len() == 1));
+}
+
+#[test]
+fn the_status_bar_changes_how_dimensions_read_and_hides_constraint_symbols() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    let lines = wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 30 })).unwrap();
+    let (bottom, side) = (lines["lines"][0].clone(), lines["lines"][1].clone());
+    // The width, and the height driven by it.
+    wb.exec("sketch.constrain", json!({ "sketch": f.0, "constraint": { "type": "length", "line": bottom, "value": 40.0 }, "at_x": 20, "at_y": -10 }))
+        .unwrap();
+    wb.exec(
+        "sketch.constrain",
+        json!({ "sketch": f.0, "constraint": { "type": "length", "line": side, "value": 20.0 }, "equation": "d0 / 2", "at_x": 52, "at_y": 10 }),
+    )
+    .unwrap();
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    let drawn = |d: &Driver, text: &str| d.texts().iter().any(|t| t == text);
+    // Values, an equation's marked "fx:".
+    assert!(drawn(&d, "40") && drawn(&d, "fx: 20"), "{:?}", d.texts());
+    // One click on the status bar's Dimensions button: their names. Another: name and value, or
+    // the equation that drives it. A third: values again.
+    let button = pressable(&d, "tn_status_dimensions");
+    d.click(&mut wb, button);
+    d.frame(&mut wb, vec![]);
+    assert!(drawn(&d, "d0") && drawn(&d, "d1") && !drawn(&d, "40"), "{:?}", d.texts());
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, button);
+    d.frame(&mut wb, vec![]);
+    assert!(drawn(&d, "d0 = 40") && drawn(&d, "d1 = d0 / 2"), "{:?}", d.texts());
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, button);
+    d.frame(&mut wb, vec![]);
+    assert!(drawn(&d, "40") && drawn(&d, "fx: 20"), "{:?}", d.texts());
+
+    // The rectangle's sides carry their constraint symbols until F9; F8 brings them back, and
+    // so does the status bar's Constraints button.
+    assert!(drawn(&d, "H") && drawn(&d, "V"), "{:?}", d.texts());
+    d.tap(&mut wb, egui::Key::F9);
+    d.frame(&mut wb, vec![]);
+    assert!(!drawn(&d, "H") && !drawn(&d, "V") && drawn(&d, "40"), "symbols hidden, dimensions not: {:?}", d.texts());
+    d.tap(&mut wb, egui::Key::F8);
+    d.frame(&mut wb, vec![]);
+    assert!(drawn(&d, "H"));
+    let button = pressable(&d, "tn_status_constraints");
+    for _ in 0..45 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, button);
+    d.frame(&mut wb, vec![]);
+    assert!(!drawn(&d, "H"), "{:?}", d.texts());
+    assert!(d.texts().iter().any(|t| t == "Constraints: hidden"));
 }

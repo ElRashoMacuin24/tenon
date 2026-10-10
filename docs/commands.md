@@ -16,7 +16,8 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.rectangle` | Rectangle | sketch, x1, y1, x2, y2 (opposite corners); returns lines and corners (the first at x1, y1) | yes |
 | `sketch.polygon` | Polygon | sketch, cx, cy, x, y (a corner), sides | yes |
 | `sketch.spline` | Spline | sketch, points: [[x, y], ...] (control points), degree (default 3) | yes |
-| `sketch.constrain` | Constrain | sketch, constraint: {"type": "horizontal", "line": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. "width / 2") | yes |
+| `sketch.constrain` | Constrain | sketch, constraint: {"type": "horizontal", "line": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. "width / 2"); at_x, at_y: where a dimension's value is shown (default: beside its geometry) | yes |
+| `sketch.place_dimension` | Move Dimension | sketch, constraint (a dimension's id), x, y: where its value is shown; its dimension line runs through there | yes |
 | `sketch.set_dimension` | Edit Dimension | sketch, constraint (id); value (mm or rad), or equation (e.g. "d0 / 2", lengths in mm, angles in degrees) | yes |
 | `sketch.remove_constraint` | Delete Constraint | sketch, constraint (id) | yes |
 | `sketch.drag` | Drag Point | sketch, point (id), x, y | yes |

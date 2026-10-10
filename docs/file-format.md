@@ -249,6 +249,10 @@ Every entity also has `construction`.
   - `length` (`line`)
   - `radius`, `diameter` (`curve`)
 
+  A dimension placed by hand also has `at = { x, y }`: where its value is shown in the sketch
+  (its dimension line runs through there). Without it, the dimension is drawn beside its
+  geometry. Moving a dimension changes only this field.
+
 Point positions are where the solver left them; they are rounded on writing (see
 [Text files](#text-files)).
 
@@ -575,8 +579,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
 - **Until a version has shipped in a release,** new feature types and new optional fields join
   it without a bump (DEC-029, DEC-035): files without them are unchanged, and a build that does
   not know a type refuses the file naming the record. Version 2 has gained the M6 feature types
-  this way (`sweep`, `coil`, `loft`, `draft`, `split`, `combine`, `thread`) and the optional
-  `taper` of an extrusion.
+  this way (`sweep`, `coil`, `loft`, `draft`, `split`, `combine`, `thread`), the optional
+  `taper` of an extrusion and the optional `at` of a sketch dimension.
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

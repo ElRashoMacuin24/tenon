@@ -728,7 +728,43 @@ impl Workbench {
             right.push(format!("{:.0} ms", self.scene.regen_ms + self.scene.mesh_ms));
         }
         right.push("mm".to_owned());
-        ui.painter().text(pos2(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, right.join("      "), theme::small(), t.text_dim);
+        let right = right.join("      ");
+        let width = ui.painter().layout_no_wrap(right.clone(), theme::small(), t.text_dim).size().x;
+        ui.painter().text(pos2(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, right, theme::small(), t.text_dim);
+        if !self.is_sketching() {
+            return;
+        }
+        // While sketching: how dimensions read, and whether constraint symbols show. Each is a
+        // button to the left of the counts.
+        let mut edge = r.right() - 10.0 - width - 18.0;
+        let mut button = |ui: &mut Ui, key: &str, label: String, tip: &str| -> bool {
+            let w = ui.painter().layout_no_wrap(label.clone(), theme::small(), t.text).size().x + 14.0;
+            let br = Rect::from_min_size(pos2(edge - w, r.top() + 2.0), vec2(w, r.height() - 4.0));
+            edge = br.left() - 6.0;
+            let resp = ui.interact(br, ui.id().with(key), Sense::CLICK);
+            ui.painter().rect_filled(br, 3.0, if resp.hovered() { t.hover } else { t.field });
+            ui.painter().text(br.center(), Align2::CENTER_CENTER, label, theme::small(), t.text);
+            crate::drawing::remember(ui, key, br);
+            resp.on_hover_text(tip).clicked()
+        };
+        let display = self.view.dim_display;
+        if button(
+            ui,
+            "tn_status_dimensions",
+            format!("Dimensions: {}", display.label()),
+            "How dimensions read in the sketch: their value, their parameter's name, or both. Click to change.",
+        ) {
+            self.view.dim_display = display.next();
+        }
+        let shown = self.view.show_constraints;
+        if button(
+            ui,
+            "tn_status_constraints",
+            format!("Constraints: {}", if shown { "shown" } else { "hidden" }),
+            "Show or hide the constraint symbols beside the sketch's geometry (F8 shows them, F9 hides them).",
+        ) {
+            self.view.show_constraints = !shown;
+        }
     }
 
     pub(crate) fn file_menu(&mut self, ui: &mut Ui, t: &Tokens) {

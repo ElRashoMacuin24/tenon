@@ -64,6 +64,10 @@ pub struct Sketch {
     constraints: BTreeMap<ConstraintId, Constraint>,
     next_entity: u32,
     next_constraint: u32,
+    /// Where each dimension's value sits in the sketch, for those placed by hand. A dimension
+    /// without one is drawn beside its geometry.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "as_pairs")]
+    places: BTreeMap<ConstraintId, Vec2>,
 }
 
 impl Sketch {
@@ -250,6 +254,7 @@ impl Sketch {
         if self.is_point(p) && self.curves_at(p).is_empty() {
             self.entities.remove(&p);
             self.constraints.retain(|_, c| !c.refs().contains(&p));
+            self.drop_stale_places();
         }
     }
 
@@ -484,11 +489,37 @@ impl Sketch {
     }
 
     pub fn remove_constraint(&mut self, id: ConstraintId) -> SketchResult<Constraint> {
+        self.places.remove(&id);
         self.constraints.remove(&id).ok_or(SketchError::NoConstraint(id))
     }
 
     pub(crate) fn constraint_mut(&mut self, id: ConstraintId) -> Option<&mut Constraint> {
         self.constraints.get_mut(&id)
+    }
+
+    /// Where dimension `id`'s value was placed, if it was placed by hand.
+    pub fn place(&self, id: ConstraintId) -> Option<Vec2> {
+        self.places.get(&id).copied()
+    }
+
+    /// Places dimension `id`'s value at `at` (sketch coordinates): its dimension line runs
+    /// through there.
+    pub fn set_place(&mut self, id: ConstraintId, at: Vec2) -> SketchResult<()> {
+        match self.constraints.get(&id) {
+            None => Err(SketchError::NoConstraint(id)),
+            Some(c) if !c.is_dimensional() => Err(invalid(format!("{id} is not a dimension, so it has no place to be shown"))),
+            Some(_) if !valid_pos(at) => Err(invalid("the dimension's place is not a valid position")),
+            Some(_) => {
+                self.places.insert(id, at);
+                Ok(())
+            }
+        }
+    }
+
+    /// Forgets the places of dimensions that are gone.
+    fn drop_stale_places(&mut self) {
+        let constraints = &self.constraints;
+        self.places.retain(|id, _| constraints.contains_key(id));
     }
 
     // ---- deleting ---------------------------------------------------------------------------
@@ -514,6 +545,7 @@ impl Sketch {
             self.entities.remove(id);
         }
         self.constraints.retain(|_, c| c.refs().iter().all(|r| !gone.contains(r)));
+        self.drop_stale_places();
         gone
     }
 
@@ -548,6 +580,13 @@ impl Sketch {
                 return Err(invalid(format!("{id} is beyond the id counter")));
             }
             self.check_constraint(c).map_err(|e| invalid(format!("{id}: {e}")))?;
+        }
+        for (id, at) in &self.places {
+            match self.constraints.get(id) {
+                Some(c) if c.is_dimensional() && valid_pos(*at) => {}
+                Some(_) => return Err(invalid(format!("{id} has a place to be shown but is not a dimension, or the place is not valid"))),
+                None => return Err(invalid(format!("a place is given for {id}, which does not exist"))),
+            }
         }
         Ok(())
     }

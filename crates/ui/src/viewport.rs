@@ -48,6 +48,35 @@ struct Gpu {
     texture: Option<egui::TextureId>,
 }
 
+/// How a sketch dimension reads (the status bar's Dimensions button, while sketching).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum DimDisplay {
+    /// "40".
+    #[default]
+    Value,
+    /// "d0": the parameter's name, to use in other dimensions' equations.
+    Name,
+    /// "d0 = 40", or "d1 = d0 / 2" for one driven by an equation.
+    Expression,
+}
+
+impl DimDisplay {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            DimDisplay::Value => "Value",
+            DimDisplay::Name => "Name",
+            DimDisplay::Expression => "Expression",
+        }
+    }
+    pub(crate) fn next(self) -> DimDisplay {
+        match self {
+            DimDisplay::Value => DimDisplay::Name,
+            DimDisplay::Name => DimDisplay::Expression,
+            DimDisplay::Expression => DimDisplay::Value,
+        }
+    }
+}
+
 /// How the model is drawn (View > Visual Style).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) enum VisualStyle {
@@ -106,6 +135,10 @@ pub(crate) struct View {
     /// What the GPU holds: (geometry and base colours, highlights) keys.
     uploaded: Option<(u64, u64)>,
     soft: Option<(egui::TextureHandle, u64)>,
+    /// How sketch dimensions read: their value, their name, or both.
+    pub dim_display: DimDisplay,
+    /// Constraint symbols are drawn beside sketch geometry (F8 shows them, F9 hides them).
+    pub show_constraints: bool,
     /// Last viewport rectangle (points).
     pub rect: Rect,
 }
@@ -124,6 +157,8 @@ impl Default for View {
             anim: None,
             style: VisualStyle::default(),
             box_start: None,
+            dim_display: DimDisplay::Value,
+            show_constraints: true,
             home: (c.yaw, c.pitch, c.roll),
             previous: Vec::new(),
             sketch_return: None,
@@ -399,6 +434,7 @@ impl Workbench {
         }
         if self.has_properties() {
             self.hole_markers(ui, rect, t);
+            self.profile_overlay(ui, rect, t);
             self.axis_overlay(ui, rect, t);
             self.measure_overlay(ui, rect, t);
             self.manipulator(ui, rect, t);

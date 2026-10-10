@@ -82,7 +82,7 @@ impl Tool {
             Tool::Trim => "Click the piece of a curve to remove.",
             Tool::Mirror => "Click the mirror line.",
             Tool::Fillet => "Click a corner where two lines meet.",
-            Tool::Dimension => "Click a line, circle or arc; or two points/lines. Click empty space to place a line's length.",
+            Tool::Dimension => "Click a line, circle or arc, or two points or lines; then click where the dimension goes.",
             Tool::Coincident => "Click two points, or a point and a curve.",
             Tool::Horizontal | Tool::Vertical => "Click a line.",
             Tool::Parallel | Tool::Perpendicular => "Click two lines.",
@@ -138,6 +138,9 @@ pub(crate) struct SketchMode {
     pub selection: Vec<EntityId>,
     pub hover: Option<EntityId>,
     pub drag: Option<(EntityId, Sketch)>,
+    /// The dimension whose value is being dragged: where the value is now, and how far from the
+    /// pointer it was taken hold of (sketch coordinates).
+    pub dim_drag: Option<(ConstraintId, Vec2, Vec2)>,
     pub hud: Hud,
     dof: Option<(u64, Option<usize>, BTreeSet<EntityId>)>,
     /// The sketch as it was when opened. Until Finish Sketch the part is regenerated with this,
@@ -155,6 +158,7 @@ impl SketchMode {
             selection: Vec::new(),
             hover: None,
             drag: None,
+            dim_drag: None,
             hud: Hud::default(),
             dof: None,
             base,
@@ -329,38 +333,45 @@ fn draw_grid(ui: &Ui, plane: &Plane, rect: Rect, t: &Tokens) {
     }
 }
 
-/// Where a dimension label sits (sketch coordinates) and its text.
-fn dimension_label(s: &Sketch, c: &Constraint) -> Option<(Vec2, String)> {
-    use Constraint::*;
+/// A dimension's value as it reads on the sketch: "40", "Ø12", "R6", "30°".
+fn dimension_text(c: &Constraint) -> Option<String> {
     let value = c.value()?;
-    let text = if c.is_angular() { format!("{}deg", fmt_len(value.to_degrees())) } else { fmt_len(value.abs()) };
-    let at = match c {
-        Length { line, .. } => {
-            let (a, b) = s.line(*line)?;
-            a.mid(b) + (b - a).normalized().perp() * 4.0
-        }
-        Radius { curve, .. } | Diameter { curve, .. } => {
-            let (center, r) = s.circle(*curve)?;
-            center + Vec2::new(r * 0.707, r * 0.707) * 1.15
-        }
-        Distance { a, b, .. } | HorizontalDistance { a, b, .. } | VerticalDistance { a, b, .. } => {
-            let pa = s.point(*a).or_else(|| s.line(*a).map(|(p, q)| p.mid(q)))?;
-            let pb = s.point(*b).or_else(|| s.line(*b).map(|(p, q)| p.mid(q)))?;
-            pa.mid(pb) + Vec2::new(0.0, 3.0)
-        }
-        Angle { a, b, .. } => {
-            let (a1, b1) = s.line(*a)?;
-            let (a2, b2) = s.line(*b)?;
-            a1.mid(b1).mid(a2.mid(b2))
-        }
-        _ => return None,
-    };
-    let prefix = match c {
-        Diameter { .. } => "D",
-        Radius { .. } => "R",
-        _ => "",
-    };
-    Some((at, format!("{prefix}{text}")))
+    Some(match c {
+        Constraint::Diameter { .. } => format!("Ø{}", fmt_len(value.abs())),
+        Constraint::Radius { .. } => format!("R{}", fmt_len(value.abs())),
+        _ if c.is_angular() => format!("{}°", fmt_len(value.to_degrees())),
+        _ => fmt_len(value.abs()),
+    })
+}
+
+/// One dimension as drawn: its lines and arrowheads, its value, and the rectangle the value
+/// takes on screen (for hovering, double-clicking and dragging).
+struct DimLabel {
+    id: Option<ConstraintId>,
+    constraint: Constraint,
+    shape: crate::dims::DimShape,
+    text: String,
+    rect: Rect,
+}
+
+impl Plane {
+    /// `c` of `s` drawn with its value at `place` (or beside its geometry when it has none),
+    /// reading `text`.
+    fn dimension(self, ui: &Ui, s: &Sketch, id: Option<ConstraintId>, c: &Constraint, place: Option<Vec2>, text: String) -> Option<DimLabel> {
+        let project = |q: Vec2| self.project(q);
+        let place = match place {
+            Some(p) => p,
+            None => {
+                // Beside the geometry, a fixed way off on screen.
+                let near = c.refs().first().and_then(|e| s.point(*e).or_else(|| s.line(*e).map(|(a, b)| a.mid(b)))).unwrap_or(Vec2::ZERO);
+                crate::dims::default_place(s, c, crate::dims::mm_per_px(near, &project))?
+            }
+        };
+        let size = ui.painter().layout_no_wrap(text.clone(), theme::small(), Color32::WHITE).size();
+        let shape = crate::dims::shape(s, c, place, size, &project)?;
+        let rect = Rect::from_center_size(shape.text, size + vec2(8.0, 4.0));
+        Some(DimLabel { id, constraint: c.clone(), shape, text, rect })
+    }
 }
 
 fn glyph(c: &Constraint) -> Option<(&'static str, EntityId)> {
@@ -531,20 +542,39 @@ impl Workbench {
             },
             _ => (raw_cursor, None),
         };
-        // Dimensions driven by an equation read "fx: 20".
-        let fx: std::collections::BTreeSet<ConstraintId> =
-            doc_sketch.constraints().map(|(cid, _)| cid).filter(|cid| self.dimension_equation(feature, *cid).is_some()).collect();
-        let label_text = |cid: ConstraintId, text: String| if fx.contains(&cid) { format!("fx: {text}") } else { text };
-        let labels: Vec<(Rect, ConstraintId, Constraint)> = doc_sketch
+        // How each dimension reads (the status bar's Dimensions button): its value ("20", or
+        // "fx: 20" when an equation drives it), its parameter's name ("d0"), or both ("d0 = 20",
+        // "d1 = d0 / 2").
+        let display = self.view.dim_display;
+        let named: std::collections::BTreeMap<ConstraintId, (Option<String>, Option<String>)> = doc_sketch
             .constraints()
-            .filter_map(|(cid, c)| {
-                let (at, text) = dimension_label(&doc_sketch, c)?;
-                let text = label_text(cid, text);
-                let p = plane.project(at)?;
-                let galley = ui.painter().layout_no_wrap(text, theme::small(), Color32::WHITE);
-                Some((Rect::from_center_size(p, galley.size() + vec2(8.0, 4.0)), cid, c.clone()))
+            .filter(|(_, c)| c.is_dimensional())
+            .map(|(cid, _)| {
+                let name = self.document().name_of(&tenon_model::ValuePath::Dimension { sketch: feature, constraint: cid }).map(str::to_owned);
+                (cid, (name, self.dimension_equation(feature, cid)))
             })
             .collect();
+        let label_text = |cid: ConstraintId, text: String| {
+            let (name, equation) = named.get(&cid).cloned().unwrap_or_default();
+            match (display, name, equation) {
+                (crate::viewport::DimDisplay::Name, Some(n), _) => n,
+                (crate::viewport::DimDisplay::Expression, Some(n), Some(e)) => format!("{n} = {e}"),
+                (crate::viewport::DimDisplay::Expression, Some(n), None) => format!("{n} = {text}"),
+                (_, _, Some(_)) => format!("fx: {text}"),
+                _ => text,
+            }
+        };
+        // Every dimension of `s` as drawn; one being dragged, where it has been dragged to.
+        let dims_of = |s: &Sketch, moved: Option<(ConstraintId, Vec2)>| -> Vec<DimLabel> {
+            s.constraints()
+                .filter_map(|(cid, c)| {
+                    let text = label_text(cid, dimension_text(c)?);
+                    let place = moved.filter(|m| m.0 == cid).map(|m| m.1).or_else(|| s.place(cid));
+                    plane.dimension(ui, s, Some(cid), c, place, text)
+                })
+                .collect()
+        };
+        let labels = dims_of(&doc_sketch, None);
 
         // ---- input ----
         if let Mode::Sketch(sm) = &mut self.mode {
@@ -600,17 +630,25 @@ impl Workbench {
         if !typing && enter {
             self.finish_spline(feature);
         }
+        if !typing {
+            // Show All Constraints and Hide All Constraints.
+            let (show, hide) = ui.input(|i| (i.key_pressed(egui::Key::F8), i.key_pressed(egui::Key::F9)));
+            if show || hide {
+                self.view.show_constraints = show;
+                self.set_status(if show { "Constraint symbols shown (F9 hides them)." } else { "Constraint symbols hidden (F8 shows them)." });
+            }
+        }
         if !typing && delete {
             self.delete_selection(feature);
         }
         // Double-clicking a dimension edits it.
         if resp.double_clicked()
             && let Some(p) = pointer
-            && let Some((_, cid, c)) = labels.iter().find(|(r, _, _)| r.contains(p))
+            && let Some((cid, c)) = labels.iter().find(|l| l.rect.contains(p)).and_then(|l| Some((l.id?, &l.constraint)))
         {
-            let equation = self.dimension_equation(feature, *cid);
+            let equation = self.dimension_equation(feature, cid);
             self.panel =
-                Some(Panel::EditDimension { sketch: feature, constraint: *cid, value: c.value().unwrap_or(0.0), angular: c.is_angular(), equation });
+                Some(Panel::EditDimension { sketch: feature, constraint: cid, value: c.value().unwrap_or(0.0), angular: c.is_angular(), equation });
         } else if resp.clicked_by(egui::PointerButton::Primary)
             && let Some(at) = cursor
         {
@@ -623,9 +661,36 @@ impl Workbench {
             Mode::Model => Tool::Select,
         };
         if tool == Tool::Select {
+            // A dimension's value dragged: the dimension moves with it, one command on release.
+            // (Taken hold of where the button went down, like a point below.)
+            if resp.drag_started_by(egui::PointerButton::Primary)
+                && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+                && let Some(l) = labels.iter().find(|l| l.rect.contains(origin))
+                && let (Some(cid), Some(held), Some(value_at)) = (l.id, plane.unproject(origin), plane.unproject(l.shape.text))
+                && let Mode::Sketch(sm) = &mut self.mode
+            {
+                sm.dim_drag = Some((cid, value_at, value_at - held));
+            }
+            if let (Some(at), Mode::Sketch(sm)) = (raw_cursor, &mut self.mode)
+                && let Some((_, place, grab)) = &mut sm.dim_drag
+            {
+                *place = at + *grab;
+            }
+            if resp.drag_stopped()
+                && let Mode::Sketch(sm) = &mut self.mode
+                && let Some((cid, place, _)) = sm.dim_drag.take()
+            {
+                let tidy = |v: f64| (v * 100.0).round() / 100.0;
+                let _ = self.exec_status(
+                    "sketch.place_dimension",
+                    json!({ "sketch": feature.0, "constraint": cid.0, "x": tidy(place.x), "y": tidy(place.y) }),
+                );
+            }
             // Pick the point where the button went down: a drag is only recognised once the
             // pointer has moved, and a quick flick can already be outside the snap radius.
+            let dragging_dimension = matches!(&self.mode, Mode::Sketch(sm) if sm.dim_drag.is_some());
             if resp.drag_started_by(egui::PointerButton::Primary)
+                && !dragging_dimension
                 && let Some(origin) = ui.input(|i| i.pointer.press_origin())
                 && let Some(p) = hit_test(&doc_sketch, &plane, origin).filter(|h| doc_sketch.is_point(*h))
                 && let Mode::Sketch(sm) = &mut self.mode
@@ -698,7 +763,8 @@ impl Workbench {
             }
         }
         // Constraint glyphs next to their first entity.
-        for (_, c) in shown.constraints() {
+        // (F8 shows them all, F9 hides them all.)
+        for (_, c) in shown.constraints().filter(|_| self.view.show_constraints) {
             if let Some((g, on)) = glyph(c) {
                 let anchor = shown
                     .line(on)
@@ -712,11 +778,36 @@ impl Workbench {
                 }
             }
         }
-        for (r, cid, c) in &labels {
-            if let Some((_, text)) = dimension_label(shown, c) {
-                let text = label_text(*cid, text);
-                p.rect_filled(*r, 2.0, t.panel.gamma_multiply(0.92));
-                p.text(r.center(), Align2::CENTER_CENTER, text, theme::small(), done);
+        // Dimensions: extension lines, a dimension line with arrowheads, and the value on it. The
+        // one under the pointer, or being dragged, lights up (it can be dragged, or
+        // double-clicked to edit).
+        let dim_line = Color32::from_rgb(0x9a, 0xa8, 0xb6);
+        let moved = sm.dim_drag.map(|(cid, at, _)| (cid, at));
+        for l in dims_of(shown, moved) {
+            let lit = moved.is_some_and(|m| Some(m.0) == l.id)
+                || (moved.is_none() && sm.tool == Tool::Select && pointer.is_some_and(|q| l.rect.contains(q)));
+            l.shape.paint(p, if lit { hot } else { dim_line });
+            p.text(l.shape.text, Align2::CENTER_CENTER, &l.text, theme::small(), if lit { hot } else { done });
+        }
+        // The dimension being placed: it follows the pointer until a click puts it down, and
+        // stays where it was put while its value is typed.
+        let placing = match &self.panel {
+            Some(Panel::Value(v)) => match &v.what {
+                ValueFor::Dimension { constraint, at, .. } => at.map(|at| (constraint.clone(), at, false)),
+                _ => None,
+            },
+            None if sm.tool == Tool::Dimension => raw_cursor.and_then(|cur| Some((crate::dims::pending(shown, &sm.picks, cur)?, cur, true))),
+            _ => None,
+        };
+        if let Some((mut c, at, with_value)) = placing {
+            if let Some(v) = shown.measure(&c) {
+                c.set_value(v);
+            }
+            // (Its value box covers the value once it is put down.)
+            let text = if with_value { dimension_text(&c).unwrap_or_default() } else { String::new() };
+            if let Some(l) = plane.dimension(ui, shown, None, &c, Some(at), text) {
+                l.shape.paint(p, under);
+                p.text(l.shape.text, Align2::CENTER_CENTER, &l.text, theme::small(), under);
             }
         }
         // Tool preview from the pending clicks to the pointer.
@@ -806,12 +897,20 @@ impl Workbench {
         self.document().parameters().model.iter().find(|m| m.name == name)?.equation.clone()
     }
 
-    /// Where a dimension's label is on screen (for the inline edit box).
-    pub(crate) fn dimension_anchor(&self, sketch: FeatureId, c: &Constraint) -> Option<Pos2> {
+    /// Where a dimension's value is on screen (for the inline edit box): where it was placed, or
+    /// beside its geometry when it has no place.
+    pub(crate) fn dimension_anchor(&self, sketch: FeatureId, c: &Constraint, place: Option<Vec2>) -> Option<Pos2> {
         let frame = self.sketch_frame(sketch)?;
         let sk = self.document().sketch(sketch)?;
-        let (at, _) = dimension_label(sk, c)?;
-        Plane { frame, cam: self.view.camera, rect: self.view.rect }.project(at)
+        let plane = Plane { frame, cam: self.view.camera, rect: self.view.rect };
+        let place = match place {
+            Some(p) => p,
+            None => {
+                let near = c.refs().first().and_then(|e| sk.point(*e).or_else(|| sk.line(*e).map(|(a, b)| a.mid(b)))).unwrap_or(Vec2::ZERO);
+                crate::dims::default_place(sk, c, crate::dims::mm_per_px(near, &|q| plane.project(q)))?
+            }
+        };
+        plane.project(place)
     }
 
     /// Adds the horizontal or vertical constraint inferred while drawing a line. Inference is a
@@ -1078,53 +1177,47 @@ impl Workbench {
                 }
                 None => self.set_error("click the mirror line"),
             },
-            Tool::Dimension => self.dimension_click(feature, sketch, hover),
+            Tool::Dimension => self.dimension_click(feature, sketch, hover, click.at),
             t => self.constraint_click(feature, sketch, t, hover),
         }
     }
 
-    pub(crate) fn dimension_click(&mut self, feature: FeatureId, s: &Sketch, hover: Option<EntityId>) {
+    /// A click with the Dimension tool at `at`. A click on geometry picks what to measure (a
+    /// line, a circle or arc, or a point; then a second point or line to measure between). The
+    /// dimension then follows the pointer, and the next click puts it down there and opens its
+    /// value box.
+    pub(crate) fn dimension_click(&mut self, feature: FeatureId, s: &Sketch, hover: Option<EntityId>, at: Vec2) {
         let Mode::Sketch(sm) = &mut self.mode else { return };
         let picks = sm.picks.clone();
-        let c = match (picks.as_slice(), hover) {
-            ([l], None) if kind(s, *l) == Kind::Line => Some(Constraint::Length { line: *l, value: 0.0 }),
-            ([], Some(h)) if kind(s, h) == Kind::Round => Some(match s.geometry(h) {
-                Some(Geometry::Circle { .. }) => Constraint::Diameter { curve: h, value: 0.0 },
-                _ => Constraint::Radius { curve: h, value: 0.0 },
-            }),
-            ([], Some(h)) if matches!(kind(s, h), Kind::Line | Kind::Point) => {
+        let between = |id: EntityId| matches!(kind(s, id), Kind::Line | Kind::Point);
+        match (picks.as_slice(), hover) {
+            ([], Some(h)) if between(h) || kind(s, h) == Kind::Round => {
                 sm.picks.push(h);
-                None
+                return;
             }
-            ([l], Some(h)) if *l == h && kind(s, h) == Kind::Line => Some(Constraint::Length { line: h, value: 0.0 }),
-            ([a], Some(b)) => match (kind(s, *a), kind(s, b)) {
-                (Kind::Point, Kind::Point) | (Kind::Point, Kind::Line) => Some(Constraint::Distance { a: *a, b, value: 0.0 }),
-                (Kind::Line, Kind::Point) => Some(Constraint::Distance { a: b, b: *a, value: 0.0 }),
-                (Kind::Line, Kind::Line) => {
-                    let parallel = match (s.line(*a), s.line(b)) {
-                        (Some((p, q)), Some((r, t))) => (q - p).normalized().cross((t - r).normalized()).abs() < 1e-6,
-                        _ => false,
-                    };
-                    if parallel {
-                        s.geometry(b).and_then(|g| g.points().first().copied()).map(|pt| Constraint::Distance { a: pt, b: *a, value: 0.0 })
-                    } else {
-                        Some(Constraint::Angle { a: *a, b, value: 0.0 })
-                    }
-                }
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(mut c) = c else { return };
-        if let Mode::Sketch(sm) = &mut self.mode {
-            sm.picks.clear();
+            // A second point or line: the distance or angle between the two.
+            ([first], Some(h)) if h != *first && between(*first) && between(h) => {
+                sm.picks.push(h);
+                return;
+            }
+            _ => {}
         }
+        // Anywhere else: this is where the dimension goes.
+        let Some(mut c) = crate::dims::pending(s, &picks, at) else {
+            let hint = if picks.is_empty() { Tool::Dimension.hint() } else { "Click a second point or a line to measure to." };
+            self.set_status(hint);
+            return;
+        };
+        sm.picks.clear();
         let measured = s.measure(&c).unwrap_or(1.0);
         let value = if matches!(c, Constraint::HorizontalDistance { .. } | Constraint::VerticalDistance { .. }) { measured } else { measured.abs() };
         c.set_value(value);
         let (title, label) = if c.is_angular() { ("Angle", "Degrees") } else { ("Dimension", "Millimetres") };
         let shown = if c.is_angular() { value.to_degrees() } else { value };
-        self.panel = Some(Panel::Value(ValuePanel::new(title, label, shown, ValueFor::Dimension { sketch: feature, constraint: c })));
+        // (To a hundredth of a millimetre: a place is where the pointer happened to be.)
+        let tidy = |v: f64| (v * 100.0).round() / 100.0;
+        let at = Some(Vec2::new(tidy(at.x), tidy(at.y)));
+        self.panel = Some(Panel::Value(ValuePanel::new(title, label, shown, ValueFor::Dimension { sketch: feature, constraint: c, at })));
     }
 
     fn constraint_click(&mut self, feature: FeatureId, s: &Sketch, tool: Tool, hover: Option<EntityId>) {

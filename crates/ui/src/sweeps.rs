@@ -400,6 +400,8 @@ impl Workbench {
             Some(Panel::Coil(p)) => vec![p.sketch],
             // (Its lines can be clicked to turn about.)
             Some(Panel::Revolve(p)) => vec![p.sketch],
+            // (Its closed regions can be clicked to choose what is extruded.)
+            Some(Panel::Extrude(p)) => vec![p.sketch],
             Some(Panel::Loft(p)) => p.sections.clone(),
             _ => vec![],
         };
@@ -574,6 +576,96 @@ impl Workbench {
             && let (Some(a), Some(b)) = (screen(frame.plane_point(a)), screen(frame.plane_point(b)))
         {
             painter.line_segment([a, b], egui::Stroke::new(3.0, t.tint_work));
+        }
+    }
+}
+
+/// Choosing which closed regions of a sketch a feature is made from, by clicking them in the
+/// viewport while its panel is open.
+impl Workbench {
+    /// The sketch and regions of the open panel, when it makes a feature from a sketch profile.
+    fn profile_panel(&self) -> Option<(FeatureId, &RegionSel)> {
+        match &self.panel {
+            Some(Panel::Extrude(p)) => Some((p.sketch, &p.regions)),
+            Some(Panel::Revolve(p)) => Some((p.sketch, &p.regions)),
+            Some(Panel::Sweep(p)) => Some((p.sketch, &p.regions)),
+            Some(Panel::Coil(p)) => Some((p.sketch, &p.regions)),
+            _ => None,
+        }
+    }
+
+    /// The regions of sketch `sk` the open panel uses.
+    fn chosen_regions(&self, sk: &tenon_sketch::Sketch) -> Vec<tenon_sketch::SketchRegion> {
+        let all = tenon_sketch::regions(sk);
+        match self.profile_panel().map(|p| p.1) {
+            Some(RegionSel::Keys(keys)) => all.into_iter().filter(|r| keys.contains(&r.key)).collect(),
+            _ => tenon_sketch::default_regions(&all).into_iter().cloned().collect(),
+        }
+    }
+
+    /// A click at `pos` in the viewport while a profile panel is open: the closed region of the
+    /// profile's sketch under it joins the feature, or leaves it if it was in. Returns false
+    /// when the click is on no region.
+    pub(crate) fn toggle_profile_at(&mut self, pos: egui::Pos2, rect: egui::Rect) -> bool {
+        let Some((sketch, sel)) = self.profile_panel() else { return false };
+        let (Some(sk), Some(frame)) = (self.document().sketch(sketch), self.sketch_frame(sketch)) else { return false };
+        // Where the pointer's ray meets the sketch plane.
+        let (o, d) =
+            self.view.camera.ray(f64::from(pos.x - rect.left()), f64::from(pos.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+        let along = d.dot(frame.z());
+        if along.abs() < 1e-9 {
+            return false;
+        }
+        let local = frame.to_local(o + d * ((frame.origin() - o).dot(frame.z()) / along));
+        let at = tenon_geom::Vec2::new(local.x, local.y);
+        let all = tenon_sketch::regions(sk);
+        // The innermost region there: a hole's disc before the plate round it.
+        let Some(hit) = all.iter().filter(|r| r.contains(at)).max_by_key(|r| r.depth) else { return false };
+        let mut keys: Vec<Vec<tenon_sketch::EntityId>> = match sel {
+            RegionSel::Keys(k) => k.clone(),
+            RegionSel::Default => tenon_sketch::default_regions(&all).iter().map(|r| r.key.clone()).collect(),
+        };
+        let mut note = None;
+        match keys.iter().position(|k| *k == hit.key) {
+            Some(_) if keys.len() == 1 => note = Some("A feature needs at least one profile: click another region to add it first."),
+            Some(i) => {
+                keys.remove(i);
+            }
+            None => keys.push(hit.key.clone()),
+        }
+        let regions = match &mut self.panel {
+            Some(Panel::Extrude(p)) => &mut p.regions,
+            Some(Panel::Revolve(p)) => &mut p.regions,
+            Some(Panel::Sweep(p)) => &mut p.regions,
+            Some(Panel::Coil(p)) => &mut p.regions,
+            _ => return false,
+        };
+        *regions = RegionSel::Keys(keys);
+        if let Some(n) = note {
+            self.set_status(n);
+        }
+        true
+    }
+
+    /// The outlines of the regions the open profile panel uses, drawn boldly over the sketch so
+    /// it is plain what the feature is made from.
+    pub(crate) fn profile_overlay(&self, ui: &Ui, rect: egui::Rect, t: &Tokens) {
+        let Some((sketch, _)) = self.profile_panel() else { return };
+        let (Some(sk), Some(frame)) = (self.document().sketch(sketch), self.sketch_frame(sketch)) else { return };
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let painter = ui.painter().with_clip_rect(rect);
+        for r in self.chosen_regions(sk) {
+            for outline in std::iter::once(&r.outline).chain(&r.hole_outlines) {
+                let mut pts: Vec<egui::Pos2> = outline
+                    .iter()
+                    .filter_map(|q| self.view.camera.project(frame.plane_point(*q), w, h))
+                    .map(|(x, y, _)| rect.min + egui::vec2(x as f32, y as f32))
+                    .collect();
+                if let Some(first) = pts.first().copied() {
+                    pts.push(first);
+                }
+                painter.add(egui::Shape::line(pts, egui::Stroke::new(3.0, t.accent)));
+            }
         }
     }
 }

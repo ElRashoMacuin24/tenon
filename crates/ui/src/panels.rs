@@ -79,6 +79,8 @@ pub(crate) enum ValueFor {
     Dimension {
         sketch: FeatureId,
         constraint: Constraint,
+        /// Where its value was put down (sketch coordinates), when it was placed by a click.
+        at: Option<tenon_geom::Vec2>,
     },
 }
 
@@ -1020,6 +1022,9 @@ impl Workbench {
                 let params = match &kind {
                     FeatureKind::Extrude(e) => {
                         let mut p = json!({ "sketch": e.sketch.0, "reverse": e.reverse, "operation": op_name(e.operation) });
+                        if let Some(regions) = regions_json(&e.regions) {
+                            p["regions"] = regions;
+                        }
                         match e.extent {
                             ExtrudeExtent::Distance(d) => p["distance"] = json!(d),
                             ExtrudeExtent::Symmetric(d) => p["symmetric"] = json!(d),
@@ -1036,6 +1041,9 @@ impl Workbench {
                     }
                     FeatureKind::Revolve(r) => {
                         let mut p = json!({ "sketch": r.sketch.0, "operation": op_name(r.operation) });
+                        if let Some(regions) = regions_json(&r.regions) {
+                            p["regions"] = regions;
+                        }
                         p["axis"] = match r.axis {
                             AxisRef::Origin(a) => json!(format!("{a:?}").to_lowercase()),
                             AxisRef::SketchLine(l) => json!(l.0),
@@ -1384,10 +1392,10 @@ impl Workbench {
             }
             Panel::Value(v) if matches!(v.what, ValueFor::Dimension { .. }) => {
                 // A new dimension: the inline box sits on the dimension itself.
-                let ValueFor::Dimension { sketch, constraint } = &v.what else { return };
-                let (sketch, constraint) = (*sketch, constraint.clone());
+                let ValueFor::Dimension { sketch, constraint, at: place } = &v.what else { return };
+                let (sketch, constraint, place) = (*sketch, constraint.clone(), *place);
                 let unit = if constraint.is_angular() { "deg" } else { "mm" };
-                let at = self.dimension_anchor(sketch, &constraint).unwrap_or(self.view.rect.center());
+                let at = self.dimension_anchor(sketch, &constraint, place).unwrap_or(self.view.rect.center());
                 let (ok, cancel) = inline_value(&ctx, at, &mut v.value, &mut v.equation, unit, &t);
                 if cancel {
                     keep = false;
@@ -1400,13 +1408,21 @@ impl Workbench {
                     if let Some(e) = &v.equation {
                         p["equation"] = json!(e);
                     }
+                    // The dimension stays where it was put down.
+                    if let Some(place) = place {
+                        p["at_x"] = json!(place.x);
+                        p["at_y"] = json!(place.y);
+                    }
                     keep = self.exec_status("sketch.constrain", p).is_none();
                 }
             }
             Panel::EditDimension { sketch, constraint, value, angular, equation } => {
                 // Double-clicked dimension: the same inline box.
-                let c = self.document().sketch(*sketch).and_then(|s| s.constraint(*constraint).cloned());
-                let at = c.as_ref().and_then(|c| self.dimension_anchor(*sketch, c)).unwrap_or(self.view.rect.center());
+                let (c, place) = match self.document().sketch(*sketch) {
+                    Some(s) => (s.constraint(*constraint).cloned(), s.place(*constraint)),
+                    None => (None, None),
+                };
+                let at = c.as_ref().and_then(|c| self.dimension_anchor(*sketch, c, place)).unwrap_or(self.view.rect.center());
                 let mut shown = if *angular { value.to_degrees() } else { *value };
                 let (ok, cancel) = inline_value(&ctx, at, &mut shown, equation, if *angular { "deg" } else { "mm" }, &t);
                 *value = if *angular { shown.to_radians() } else { shown };
@@ -1449,7 +1465,7 @@ impl Workbench {
                             let ids: Vec<u32> = curves.iter().map(|c| c.0).collect();
                             self.exec_status("sketch.offset", json!({ "sketch": sketch.0, "curves": ids, "distance": v.value }))
                         }
-                        ValueFor::Dimension { sketch, constraint } => {
+                        ValueFor::Dimension { sketch, constraint, .. } => {
                             let mut c = constraint.clone();
                             let value = if c.is_angular() { v.value.to_radians() } else { v.value };
                             let signed = matches!(c, Constraint::HorizontalDistance { .. } | Constraint::VerticalDistance { .. });
@@ -1529,6 +1545,15 @@ fn direction_json(d: &DirectionRef) -> Value {
         DirectionRef::Origin(a) => json!(format!("{a:?}").to_lowercase()),
         DirectionRef::Edge(e) => json!(e),
         DirectionRef::Work(id) => json!({ "work": id.0 }),
+    }
+}
+
+/// The regions a feature was told to use, as its command takes them; None for the default
+/// choice.
+fn regions_json(sel: &RegionSel) -> Option<Value> {
+    match sel {
+        RegionSel::Default => None,
+        RegionSel::Keys(keys) => Some(json!(keys.iter().map(|k| k.iter().map(|e| e.0).collect::<Vec<_>>()).collect::<Vec<_>>())),
     }
 }
 

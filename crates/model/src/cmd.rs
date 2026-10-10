@@ -601,9 +601,14 @@ fn sketch_constrain(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
     // A dimension may come with an equation that drives it (`d0 / 2`).
     let eq = param_value(p, "equation")?.filter(|e| e.trim().parse::<f64>().is_err());
+    // Where a dimension's value is shown, when it was placed by hand.
+    let at = if p.get("at_x").is_some() || p.get("at_y").is_some() { Some(pos(p, "at_x", "at_y")?) } else { None };
     let id = s.edit(|d| {
         let sk = d.sketch_mut(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
         let id = sk.add_constraint(c)?;
+        if let Some(at) = at {
+            sk.set_place(id, at)?;
+        }
         if let Some(eq) = &eq {
             d.name_values();
             let name = d.name_of(&ValuePath::Dimension { sketch, constraint: id }).ok_or("only a dimension can have an equation")?.to_owned();
@@ -649,6 +654,13 @@ fn sketch_set_dimension(s: &mut Session, p: &Value) -> CmdResult {
 fn sketch_remove_constraint(s: &mut Session, p: &Value) -> CmdResult {
     let c = ConstraintId(id_u32(p, "constraint")?);
     on_sketch(s, p, |sk| Ok(sk.remove_constraint(c).map(|_| ())?))?;
+    Ok(json!({}))
+}
+
+/// Moves where a dimension's value is shown; the dimension itself is unchanged.
+fn sketch_place_dimension(s: &mut Session, p: &Value) -> CmdResult {
+    let (c, at) = (ConstraintId(id_u32(p, "constraint")?), pos(p, "x", "y")?);
+    on_sketch(s, p, |sk| Ok(sk.set_place(c, at)?))?;
     Ok(json!({}))
 }
 
@@ -1525,9 +1537,16 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sketch.constrain",
         "Constrain",
-        "sketch, constraint: {\"type\": \"horizontal\", \"line\": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. \"width / 2\")",
+        "sketch, constraint: {\"type\": \"horizontal\", \"line\": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. \"width / 2\"); at_x, at_y: where a dimension's value is shown (default: beside its geometry)",
         true,
         sketch_constrain
+    ),
+    doc_cmd!(
+        "sketch.place_dimension",
+        "Move Dimension",
+        "sketch, constraint (a dimension's id), x, y: where its value is shown; its dimension line runs through there",
+        true,
+        sketch_place_dimension
     ),
     doc_cmd!(
         "sketch.set_dimension",

@@ -76,7 +76,7 @@ const HEAD: &[&str] = &["format", "version", "generator"];
 /// A sketch entity's own fields; the rest are its geometry's.
 const ENTITY_OWN: &[&str] = &["construction"];
 /// A sketch's fields, in file order.
-const SKETCH: &[&str] = &["next_entity", "next_constraint", "entities", "constraints"];
+const SKETCH: &[&str] = &["next_entity", "next_constraint", "entities", "constraints", "places"];
 
 impl Shape {
     /// The file's name for a list (`"features"` gives `"feature"`).
@@ -214,14 +214,37 @@ fn sketch_out(r: &mut Value) -> Result<(), String> {
         if let Some(k) = s.keys().find(|k| !SKETCH.contains(&k.as_str())) {
             return Err(format!("the sketch field `{k}` has no place in the file"));
         }
+        // Where a dimension's value was placed goes on the dimension's own record, as `at`.
+        let mut places = match s.get("places") {
+            Some(x) => pairs(x)?,
+            None => Vec::new(),
+        };
         for f in SKETCH {
             let Some(x) = s.get(*f) else { continue };
             let x = match *f {
                 "entities" => Value::Array(pairs(x)?.into_iter().map(entity_out).collect::<Result<_, _>>()?),
-                "constraints" => Value::Array(pairs(x)?.into_iter().map(|(id, c)| with_id(id, c)).collect::<Result<_, _>>()?),
+                "constraints" => {
+                    let mut records = Vec::new();
+                    for (id, mut c) in pairs(x)? {
+                        if let Some(i) = places.iter().position(|p| p.0 == id) {
+                            if c.contains_key("at") {
+                                return Err(format!("{id}: the field `at` would clash"));
+                            }
+                            let mut at = Value::Object(places.remove(i).1);
+                            round(&mut at);
+                            c.insert("at".into(), at);
+                        }
+                        records.push(with_id(id, c)?);
+                    }
+                    Value::Array(records)
+                }
+                "places" => continue,
                 _ => x.clone(),
             };
             out.insert((*f).into(), x);
+        }
+        if let Some((id, _)) = places.first() {
+            return Err(format!("a place is given for dimension {id}, which the sketch does not have"));
         }
     }
     *r = Value::Object(out);
@@ -235,18 +258,23 @@ fn sketch_in(r: &mut Value) {
         return;
     }
     let (mut out, mut sketch) = (Map::new(), Map::new());
+    let mut places = Vec::new();
     for (k, v) in o {
         match k.as_str() {
             "entities" => {
                 sketch.insert(k.clone(), Value::Array(v.as_array().into_iter().flatten().map(entity_in).collect()));
             }
             "constraints" => {
-                let items = v.as_array().into_iter().flatten().map(|c| {
+                let mut items = Vec::new();
+                for c in v.as_array().into_iter().flatten() {
                     let mut c = c.as_object().cloned().unwrap_or_default();
                     let id = c.shift_remove("id").unwrap_or(Value::Null);
-                    Value::Array(vec![id, Value::Object(c)])
-                });
-                sketch.insert(k.clone(), Value::Array(items.collect()));
+                    if let Some(at) = c.shift_remove("at") {
+                        places.push(Value::Array(vec![id.clone(), at]));
+                    }
+                    items.push(Value::Array(vec![id, Value::Object(c)]));
+                }
+                sketch.insert(k.clone(), Value::Array(items));
             }
             "next_entity" | "next_constraint" => {
                 sketch.insert(k.clone(), v.clone());
@@ -255,6 +283,9 @@ fn sketch_in(r: &mut Value) {
                 out.insert(k.clone(), v.clone());
             }
         }
+    }
+    if !places.is_empty() {
+        sketch.insert("places".into(), Value::Array(places));
     }
     out.insert("sketch".into(), Value::Object(sketch));
     *r = Value::Object(out);

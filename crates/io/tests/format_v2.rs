@@ -336,3 +336,49 @@ fn upgraded_assemblies_solve_with_every_relationship_holding() {
     }
     assert_eq!(n, 2);
 }
+
+#[test]
+fn a_placed_dimension_keeps_its_place_on_its_own_record() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let lines = run(&mut s, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 40, "y2": 20 }))["lines"].clone();
+    // One dimension placed by hand, one left beside its geometry.
+    let placed = run(
+        &mut s,
+        "sketch.constrain",
+        json!({ "sketch": sk, "constraint": { "type": "length", "line": lines[0], "value": 40.0 }, "at_x": 20, "at_y": -8.123456789012345 }),
+    )["constraint"]
+        .as_u64()
+        .unwrap();
+    run(&mut s, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "length", "line": lines[1], "value": 20.0 } }));
+    let extra = Map::new();
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    // Its place is on the dimension's line, rounded like every stored number; the other
+    // dimension's line is as it always was.
+    assert!(
+        text.contains(&format!(
+            "{{ id = {placed}, type = \"length\", line = {}, value = 40.0, at = {{ x = 20.0, y = -8.123456789 }} }},\n",
+            lines[0]
+        )),
+        "{text}"
+    );
+    assert!(text.contains(&format!("type = \"length\", line = {}, value = 20.0 }},\n", lines[1])), "{text}");
+    assert!(!text.contains("places"), "no list of places beside the dimensions: {text}");
+    // Read back, it is the same document to the stored precision, and saves the same again.
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+    let places = serde_json::to_value(&back).unwrap()["features"][0]["kind"]["sketch"]["places"].clone();
+    assert_eq!(places, json!([[placed, { "x": 20.0, "y": -8.123456789 }]]));
+    // Moved: the diff says a dimension moved, and nothing else changed.
+    let before = serde_json::to_value(s.document()).unwrap();
+    run(&mut s, "sketch.place_dimension", json!({ "sketch": sk, "constraint": placed, "x": 25, "y": -14 }));
+    let d = diff::diff_documents("part", &before, &serde_json::to_value(s.document()).unwrap());
+    assert!(d.text().contains("1 dimension moved"), "{}", d.text());
+    assert!(!d.text().contains("constraint"), "{}", d.text());
+    // A place on something that is not a dimension is refused, with the record's line.
+    let bad = text.replacen("type = \"horizontal\", line", "type = \"horizontal\", at = { x = 1.0, y = 2.0 }, line", 1);
+    assert_ne!(bad, text, "the rectangle has a horizontal constraint to damage");
+    let m = damaged(&bad);
+    assert!(m.contains("not a dimension"), "{m}");
+}

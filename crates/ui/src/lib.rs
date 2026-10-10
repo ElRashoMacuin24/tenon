@@ -17,6 +17,7 @@ mod browser;
 mod chrome;
 pub mod commands;
 mod cube;
+mod dims;
 mod drawing;
 pub mod icons;
 mod modify;

@@ -622,3 +622,47 @@ The taper is optional in the file (`taper`, absent for straight extrusions, so e
 are unchanged) and is a parameter in degrees. It works for one distance and Through All; a
 symmetric or two-distance extrusion would need a different angle each side of the sketch and is
 refused, saying so.
+
+## DEC-041 Sketch dimensions are drawn and placed as dimensions (2026-10-10, asked for by the owner)
+
+A sketch dimension was a number in a box beside its geometry. The owner asked for it to be drawn
+as Inventor draws it. It now is:
+
+- **Drawn** with extension lines, a dimension line with arrowheads and the value on the line; a
+  leader through the centre for a diameter and from it for a radius; an arc for an angle.
+  Arrowheads go outside when there is no room between the extension lines, and the line runs out
+  to a value placed beyond them (`crates/ui/src/dims.rs`). Positions are worked out in the
+  sketch and sizes on screen, so arrowheads do not grow with the zoom.
+- **Placed by a click.** With the Dimension tool, picking geometry starts a dimension that
+  follows the pointer; the next click puts it down and opens its value box there. Between two
+  points or on a sloping line, the pointer chooses: over or under gives a horizontal dimension,
+  beside gives a vertical one, anywhere else the aligned one.
+- **Moved by dragging** its value, as one undoable step (`sketch.place_dimension`).
+- **Saved.** Where a dimension was placed is kept with the sketch and written on the
+  dimension's own record (`at = { x, y }`), so moving one changes one line of the file. It is an
+  optional field of format version 2 (DEC-035); files without it are unchanged, and a dimension
+  without it is drawn beside its geometry, away from the middle of the sketch. `tenon-cli diff`
+  reports "1 dimension moved".
+
+Rejected: text turned along the dimension line (harder to read at small sizes; it can follow
+when dimension styles do), and a separate list of placements in the file (a moved dimension
+would then change a line far from the dimension).
+
+## DEC-042 Closer to Inventor in the sketch and feature workflow (2026-10-10, asked for by the owner)
+
+The owner asked for research into Inventor's interface and for Tenon to look and feel more like
+it. The findings, what Tenon now does and what is still missing are kept in
+[inventor-fidelity.md](inventor-fidelity.md), in the order the gaps should be closed. Behaviour
+is taken from Autodesk's published help; no artwork, text or screenshot of the product is used
+(DEC-019). Done with this decision:
+
+- **Profiles are chosen by clicking.** With an Extrude, Revolve, Sweep or Coil panel open, the
+  profile's sketch shows over the preview and a click inside a closed region adds it to the
+  feature or takes it out (the last one stays). The chosen regions are outlined boldly. Until a
+  region is clicked the feature uses every outer region, as before. (Extrude and Revolve had
+  silently dropped a chosen set of regions when the feature was made; they now keep it.)
+- **The sketch status bar** has Inventor's two display controls: how dimensions read (Value,
+  Name, Expression) and whether constraint symbols show (also F8 and F9).
+
+The largest gap left is that crossing curves do not divide a sketch into regions: a line drawn
+through a circle does not give two halves to pick from.

@@ -337,6 +337,14 @@ fn sketch_detail(a: &Value, b: &Value, sketch: u64, params: &Value, changed: &BT
             out.push(format!("{n} {} {how}", if n == 1 { "constraint" } else { "constraints" }));
         }
     }
+    // Dimensions in both whose value is shown somewhere else (placed, moved, or back beside the
+    // geometry).
+    let (pa, pb) = (pairs(&a["places"]), pairs(&b["places"]));
+    let moved =
+        cb.keys().filter(|k| ca.contains_key(k)).filter(|k| !same(pa.get(k).unwrap_or(&Value::Null), pb.get(k).unwrap_or(&Value::Null))).count();
+    if moved > 0 {
+        out.push(format!("{moved} {} moved", if moved == 1 { "dimension" } else { "dimensions" }));
+    }
     out
 }
 
