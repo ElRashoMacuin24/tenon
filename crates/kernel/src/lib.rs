@@ -150,6 +150,12 @@ pub trait Kernel: Send {
         let _ = (sections, opts);
         unsupported!("loft")
     }
+    /// Tilts `faces` of `body` by `angle` (radians) away from the `pull` direction, hinged where they
+    /// meet the neutral plane (`neutral`: its origin is on the plane, its Z the plane's normal).
+    fn draft(&mut self, body: ShapeHandle, faces: &[FaceId], pull: Vec3, angle: f64, neutral: &Frame) -> KResult<Op> {
+        let _ = (body, faces, pull, angle, neutral);
+        unsupported!("draft")
+    }
     /// Constant-radius fillet on edges of `body`.
     fn fillet(&mut self, body: ShapeHandle, edges: &[EdgeId], radius: f64) -> KResult<Op> {
         let _ = (body, edges, radius);

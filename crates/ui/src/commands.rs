@@ -104,9 +104,9 @@ pub const RIBBON: &[RibbonTab] = &[
                 commands: &[
                     large("model.extrude", "Extrude", "Add or cut material by sweeping a profile straight", Icon::Extrude, 0).key("E"),
                     large("model.revolve", "Revolve", "Add or cut material by rotating a profile about an axis", Icon::Revolve, 0).key("R"),
-                    small("model.sweep", "Sweep", "Sweep a profile along a path", Icon::Sweep, 6),
-                    small("model.loft", "Loft", "Blend between two or more profiles", Icon::Loft, 6),
-                    small("model.coil", "Coil", "Helical sweep", Icon::Coil, 6),
+                    small("model.sweep", "Sweep", "Sweep a profile along a path", Icon::Sweep, 0),
+                    small("model.loft", "Loft", "Blend between two or more profiles", Icon::Loft, 0),
+                    small("model.coil", "Coil", "Helical sweep", Icon::Coil, 0),
                     small("model.rib", "Rib", "A thin wall from an open profile", Icon::Rib, 0),
                     small("model.emboss", "Emboss", "Raise or recess a profile on a face", Icon::Text, LATER),
                     small("model.derive", "Derive", "Bring in another part", Icon::Copy, LATER),

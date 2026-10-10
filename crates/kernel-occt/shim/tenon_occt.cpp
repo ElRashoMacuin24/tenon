@@ -21,7 +21,19 @@
 #include <HLRBRep_HLRToShape.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepOffsetAPI_DraftAngle.hxx>
+#include <BRepOffsetAPI_MakePipe.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRepOffsetAPI_ThruSections.hxx>
+#include <BRepTools.hxx>
+#include <GC_MakeArcOfCircle.hxx>
+#include <Geom2d_Line.hxx>
+#include <GeomFill_Trihedron.hxx>
+#include <Geom_CylindricalSurface.hxx>
+#include <gp_Dir2d.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Pnt2d.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -810,6 +822,194 @@ std::unique_ptr<Shape> shell(const Shape& body, rust::Slice<const std::uint32_t>
   });
 }
 
+namespace {
+
+/// A helix on a cylinder of radius `h.radius`: a straight line in the cylinder's (angle, height)
+/// parameter space, `h.turns` turns of `h.pitch`.
+TopoDS_Wire helix_wire(const HelixIn& h) {
+  if (!(h.radius > Precision::Confusion() && h.pitch > Precision::Confusion() && h.turns > 1e-6 && h.turns <= 10000.0)) {
+    throw std::invalid_argument("a helix needs a radius, a pitch and a number of turns above zero");
+  }
+  const gp_Ax3 ax(pnt(h.axis.origin), dir(h.axis.z_dir), dir(h.axis.x_dir));
+  occ::handle<Geom_CylindricalSurface> cyl = new Geom_CylindricalSurface(ax, h.radius);
+  // Per turn: 2 pi of angle and one pitch of height (a left-hand helix turns the other way).
+  const double du = h.left ? -kTwoPi : kTwoPi;
+  const gp_Dir2d d(du, h.pitch);
+  occ::handle<Geom2d_Line> line = new Geom2d_Line(gp_Pnt2d(0.0, 0.0), d);
+  const double length = h.turns * std::sqrt(du * du + h.pitch * h.pitch);
+  BRepBuilderAPI_MakeEdge mk(line, cyl, 0.0, length);
+  if (!mk.IsDone()) {
+    throw std::runtime_error("could not build the helix");
+  }
+  TopoDS_Edge e = mk.Edge();
+  BRepLib::BuildCurves3d(e);
+  return BRepBuilderAPI_MakeWire(e).Wire();
+}
+
+/// The spine of a sweep: lines and arcs end to end, or a helix.
+TopoDS_Wire path_wire(const PathIn& p) {
+  if (p.kind == 1) {
+    return helix_wire(p.helix);
+  }
+  BRepBuilderAPI_MakeWire mw;
+  std::size_t k = 0;
+  for (const std::uint8_t ck : p.curve_kinds) {
+    const std::size_t need = ck == 0 ? 2 : 3;
+    if (k + need > p.points.size()) {
+      throw std::invalid_argument("the path has too few points");
+    }
+    TopoDS_Edge e;
+    if (ck == 0) {
+      const gp_Pnt a = pnt(p.points[k]);
+      const gp_Pnt b = pnt(p.points[k + 1]);
+      if (a.Distance(b) <= Precision::Confusion()) {
+        throw std::invalid_argument("a path line has zero length");
+      }
+      e = BRepBuilderAPI_MakeEdge(a, b).Edge();
+    } else {
+      GC_MakeArcOfCircle arc(pnt(p.points[k]), pnt(p.points[k + 1]), pnt(p.points[k + 2]));
+      if (!arc.IsDone()) {
+        throw std::invalid_argument("a path arc's three points are in a line");
+      }
+      e = BRepBuilderAPI_MakeEdge(arc.Value()).Edge();
+    }
+    k += need;
+    mw.Add(e);
+    if (!mw.IsDone()) {
+      throw std::runtime_error("the path curves do not join end to end");
+    }
+  }
+  if (p.curve_kinds.empty()) {
+    throw std::invalid_argument("the path is empty");
+  }
+  return mw.Wire();
+}
+
+/// The one face of a profile with one region and no holes, and its outer wire.
+TopoDS_Wire single_outer_wire(const TopoDS_Shape& faces, const char* what) {
+  TopExp_Explorer ex(faces, TopAbs_FACE);
+  if (!ex.More()) {
+    throw std::invalid_argument("the profile has no region");
+  }
+  const TopoDS_Face face = TopoDS::Face(ex.Current());
+  ex.Next();
+  if (ex.More()) {
+    throw std::invalid_argument(std::string(what) + " takes a profile of one region");
+  }
+  int wires = 0;
+  for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) {
+    ++wires;
+  }
+  if (wires != 1) {
+    throw std::invalid_argument(std::string(what) + " cannot take a profile with holes yet");
+  }
+  return BRepTools::OuterWire(face);
+}
+
+} // namespace
+
+std::unique_ptr<Shape> sweep(const ProfileIn& profile, const PathIn& path, std::uint8_t mode, const V3& binormal, HistoryOut& hist) {
+  return guarded("sweep", [&] {
+    std::vector<TaggedCurve> curves;
+    const TopoDS_Shape base = profile_faces(profile, 0.0, curves);
+    const TaggedEdges tags = tag_edges(base, curves);
+    const TopoDS_Wire spine = path_wire(path);
+    TopoDS_Shape result;
+    std::unique_ptr<Shape> out;
+    if (mode == 2 || path.kind == 1) {
+      // A fixed binormal (springs, threads): the pipe shell, one region without holes.
+      const TopoDS_Wire section = single_outer_wire(base, "a sweep along a helix");
+      BRepOffsetAPI_MakePipeShell mk(spine);
+      mk.SetMode(mode == 2 ? dir(binormal) : dir(path.helix.axis.z_dir));
+      mk.Add(section, false, false);
+      mk.Build();
+      if (!mk.IsDone() || !mk.MakeSolid()) {
+        throw std::runtime_error("the sweep did not complete (does the profile cross itself along the path?)");
+      }
+      result = single_solid(mk.Shape());
+      out = wrap(result);
+      add_roles(hist, ROLE_START_CAP, *out, mk.FirstShape());
+      add_roles(hist, ROLE_END_CAP, *out, mk.LastShape());
+      record_tagged(mk, tags, *out, hist);
+    } else {
+      BRepOffsetAPI_MakePipe mk(spine, base, mode == 1 ? GeomFill_IsFixed : GeomFill_IsCorrectedFrenet, false);
+      mk.Build();
+      if (!mk.IsDone()) {
+        throw std::runtime_error("the sweep did not complete (does the profile cross itself along the path?)");
+      }
+      result = single_solid(mk.Shape());
+      out = wrap(result);
+      add_roles(hist, ROLE_START_CAP, *out, mk.FirstShape());
+      add_roles(hist, ROLE_END_CAP, *out, mk.LastShape());
+      record_tagged(mk, tags, *out, hist);
+    }
+    require_valid(result, "the sweep is not a valid solid (is the path too tight for the profile, or does it cross itself?)");
+    return out;
+  });
+}
+
+std::unique_ptr<Shape> loft(rust::Slice<const ProfileIn> sections, bool solid, bool ruled, HistoryOut& hist) {
+  return guarded("loft", [&] {
+    if (sections.size() < 2) {
+      throw std::invalid_argument("a loft needs at least two sections");
+    }
+    BRepOffsetAPI_ThruSections mk(solid, ruled);
+    mk.CheckCompatibility(true);
+    TaggedEdges first;
+    for (std::size_t i = 0; i < sections.size(); ++i) {
+      std::vector<TaggedCurve> curves;
+      const TopoDS_Shape base = profile_faces(sections[i], 0.0, curves);
+      const TopoDS_Wire w = single_outer_wire(base, "a loft");
+      if (i == 0) {
+        first = tag_edges(w, curves);
+      }
+      mk.AddWire(w);
+    }
+    mk.Build();
+    if (!mk.IsDone()) {
+      throw std::runtime_error("the loft did not complete (do the sections twist or cross?)");
+    }
+    const TopoDS_Shape result = solid ? single_solid(mk.Shape()) : mk.Shape();
+    auto out = wrap(result);
+    if (solid) {
+      add_roles(hist, ROLE_START_CAP, *out, mk.FirstShape());
+      add_roles(hist, ROLE_END_CAP, *out, mk.LastShape());
+      require_valid(result, "the loft is not a valid solid (do the sections twist or cross?)");
+    }
+    // Side faces are named after the first section's curves.
+    for (const auto& entry : first) {
+      const TopoDS_Shape side = mk.GeneratedFace(entry.first);
+      TagGen gen{entry.second, 0, 0};
+      if (!side.IsNull() && locate(*out, side, gen.gen_kind, gen.gen_index)) {
+        hist.tagged.push_back(gen);
+      }
+    }
+    return out;
+  });
+}
+
+std::unique_ptr<Shape> draft(const Shape& body, rust::Slice<const std::uint32_t> faces, const V3& pull, double angle, const V3& plane_origin,
+                             const V3& plane_normal, HistoryOut& hist) {
+  return guarded("draft", [&] {
+    BRepOffsetAPI_DraftAngle mk(body.shape);
+    const gp_Pln neutral(pnt(plane_origin), dir(plane_normal));
+    for (const std::uint32_t f : faces) {
+      mk.Add(face_at(body, f), dir(pull), angle, neutral);
+      if (!mk.AddDone()) {
+        throw std::runtime_error("a face cannot be drafted (is it square to the pull direction, or curved the wrong way?)");
+      }
+    }
+    mk.Build();
+    if (!mk.IsDone()) {
+      throw std::runtime_error("the draft did not complete (is the angle too large for the faces beside them?)");
+    }
+    require_valid(mk.Shape(), "the draft gave an invalid solid (is the angle too large?)");
+    auto out = wrap(single_solid(mk.Shape()));
+    record_history(mk, 0, body.shape, *out, hist);
+    return out;
+  });
+}
+
 void topology(const Shape& s, TopoOut& out) {
   guarded("topology", [&] {
     out.kind = static_cast<std::uint8_t>(s.shape.ShapeType());
@@ -1019,8 +1219,17 @@ void edge_info(const Shape& s, std::uint32_t index, EdgeOut& out) {
 
 void tessellate(const Shape& s, double linear, double angular, MeshOut& out) {
   guarded("tessellate", [&] {
-    // Faces are meshed in parallel (OCCT's own thread pool).
-    BRepMesh_IncrementalMesh mesher(s.shape, linear, false, angular, true);
+    // Faces are meshed in parallel (OCCT's own thread pool). Edges keep the full tolerance; the
+    // inside of a freeform face (a sweep, loft or blend) may deviate five times as far. Refining
+    // it to the edge tolerance made a 5-turn coil take 7.6 s and half a million triangles; this
+    // takes 1.3 s and looks the same, since shading uses the exact surface normals.
+    IMeshTools_Parameters mp;
+    mp.Deflection = linear;
+    mp.Angle = angular;
+    mp.DeflectionInterior = 5.0 * linear;
+    mp.AngleInterior = std::max(angular, 0.5);
+    mp.InParallel = true;
+    BRepMesh_IncrementalMesh mesher(s.shape, mp);
     if (!mesher.IsDone()) {
       throw std::runtime_error("meshing did not complete");
     }

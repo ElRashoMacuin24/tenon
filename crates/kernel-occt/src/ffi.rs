@@ -97,6 +97,27 @@ pub(crate) mod bridge {
         poles: Vec<f64>,
     }
 
+    /// A helix on a cylinder: `axis` origin on the axis, `x_dir` towards the start point, `z_dir`
+    /// along the axis; `turns` turns of `pitch` each; left-handed when `left`.
+    #[derive(Clone, Copy, Debug, Default)]
+    struct HelixIn {
+        axis: Frame3,
+        radius: f64,
+        pitch: f64,
+        turns: f64,
+        left: bool,
+    }
+
+    /// A sweep path. `kind` 0: lines and arcs end to end (`curve_kinds` 0 a line through the next
+    /// two `points`, 1 an arc through the next three: start, a point on it, end); 1: `helix`.
+    #[derive(Debug, Default)]
+    struct PathIn {
+        kind: u8,
+        curve_kinds: Vec<u8>,
+        points: Vec<V3>,
+        helix: HelixIn,
+    }
+
     /// Topology with adjacency in compressed rows: entries of row `i` are
     /// `values[offsets[i]..offsets[i + 1]]`.
     #[derive(Debug, Default)]
@@ -230,6 +251,23 @@ pub(crate) mod bridge {
         fn chamfer(body: &Shape, edges: &[u32], kind: u8, a: f64, b: f64, reference: u32, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// Thick solid from `body` with `faces` removed; `offset` < 0 thickens inwards.
         fn shell(body: &Shape, faces: &[u32], offset: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// Sweeps the profile along `path`. `mode`: 0 corrected Frenet, 1 fixed, 2 the profile keeps
+        /// its binormal along `binormal` (a helix path always keeps it along the helix axis).
+        fn sweep(profile: &ProfileIn, path: &PathIn, mode: u8, binormal: &V3, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// A solid (or, not `solid`, a shell) through the sections' outer loops in order; `ruled`
+        /// makes flat sides between sections.
+        fn loft(sections: &[ProfileIn], solid: bool, ruled: bool, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// Tilts `faces` of `body` by `angle` (radians) from the `pull` direction, hinged on the
+        /// neutral plane through `plane_origin` with normal `plane_normal`.
+        fn draft(
+            body: &Shape,
+            faces: &[u32],
+            pull: &V3,
+            angle: f64,
+            plane_origin: &V3,
+            plane_normal: &V3,
+            hist: &mut HistoryOut,
+        ) -> Result<UniquePtr<Shape>>;
 
         fn topology(shape: &Shape, out: &mut TopoOut) -> Result<()>;
         fn face_info(shape: &Shape, index: u32, out: &mut FaceOut) -> Result<()>;

@@ -9,8 +9,9 @@ tools and find the free ones rough. It wins on reliability, coherence and speed,
 count: when two tasks compete, the one that makes existing features more dependable and pleasant
 goes first.
 
-Current milestone: **M5 reliability and project format**: complete on 2026-10-09, waiting for the
-owner's confirmation. It brought:
+Current milestone: **M6 part feature breadth**, started 2026-10-09. So far: sweep, coil and loft
+(see the table below). M5 reliability and project format was confirmed by the owner on
+2026-10-09. It brought:
 - format version 2, plain text (DEC-031), with `tenon-cli diff` and `upgrade`;
 - kernel failures explained in plain words (DEC-032);
 - undo and redo verified through failing rebuilds;
@@ -18,8 +19,7 @@ owner's confirmation. It brought:
 - a persistent-naming corpus;
 - broken-reference repair (DEC-034).
 
-Next: M6 part feature breadth, after the owner confirms M5. M4 drawings was confirmed on
-2026-10-09.
+Next: M7 standard parts and maker workflow, after the owner confirms M6.
 
 ## M0 foundations
 
@@ -175,7 +175,7 @@ Commands and demo: `apps/tenon-cli/tests/m4.rs` (6). UI (real pointer and key in
 | Drawing environment in the UI (Place Views and Annotate ribbons, sheet that pans and zooms, browser, dragging and deleting, dialogs) | done | `crates/ui/src/drw_tests.rs` with real pointer and key input; dialogs, the context menu, panning and zooming: `dialogs_menus_navigation_and_details_by_real_input` |
 | Demo: a drawing of a part and its assembly that follows a model change | done | `examples/m4-plate`, `the_m4_demo_script_draws_a_plate_and_its_assembly`, `drawing_edits_undo_and_bad_input_is_refused` |
 
-## M5 reliability and project format
+## M5 reliability and project format (confirmed by the owner 2026-10-09)
 
 Scope: `docs/plan.md` section 10. Started 2026-10-09, after the owner confirmed M4. The
 plain-text format was proposed in [docs/format-v2-proposal.md](docs/format-v2-proposal.md),
@@ -194,9 +194,16 @@ approved by the owner (DEC-031) and is specified in [docs/file-format.md](docs/f
 
 ## M6 part feature breadth
 
+Scope: `docs/plan.md` section 10. Started 2026-10-09, after the owner confirmed M5. The new
+feature types join format version 2 (DEC-035).
+
 | Feature | Status | Proof / gap |
 |---|---|---|
-| Sweep, loft, coil (helix), threads (cosmetic and modelled), draft, split, combine | missing | the ribbon buttons exist and say which milestone brings them |
+| Sweep: a closed profile along a path of lines and arcs drawn in another sketch | done | the profile follows the path or keeps its direction (Fixed); Join, Cut, Intersect or New Solid. Kernel: `a_sweep_along_a_bent_path_is_area_times_path_length` (Pappus, to 1e-6; side faces tagged by profile curve), `bad_sweeps_lofts_and_drafts_are_refused`. Model, with persistent names: `a_sweep_follows_its_path_and_names_its_faces` (the wall named after the profile's circle and the ends after the sweep; the profile made smaller and the sweep follows, keeping its names; a profile lying in the path's own plane and a path whose curves do not meet are refused in plain words), `a_path_sets_off_along_its_first_line_or_square_to_its_first_arcs_radius`. In the app: `sweep_coil_and_loft_from_the_ribbon` (Sweep started while drawing the path; the profile offered is the one that can be swept; preview volume; Enter is OK). Gap: no guide rails, twist or taper; the path is one planar sketch (no 3D sketch, no edges of the part); the path's curves are all of the sketch's lines and arcs, not picked one by one in the viewport |
+| Coil: a profile wound round an axis (springs, and the solid a modelled thread cuts with) | done | pitch and turns (both take equations), right- or left-handed, about an origin axis, a sketch line or a work axis. Kernel: `a_coil_sweeps_its_profile_round_the_axis` (area times the distance the centre travels, both hands, the height). Model: `a_coil_winds_round_its_axis_and_says_when_its_turns_collide` (4.5 turns by its parameter; a pitch smaller than the profile is tall is refused with both sizes named, where the kernel built a self-crossing solid without complaint; a profile on the axis). In the app: `sweep_coil_and_loft_from_the_ribbon` (the axis found in the sketch's plane, 3 typed into Turns, edited again from the browser). Gap: pitch and turns only (no height-and-turns or height-and-pitch, no taper, no flat ends) |
+| Loft: a solid through two or more sketched sections, in order | done | smooth or ruled. Kernel: `a_loft_between_two_squares_is_a_frustum` (exact for ruled; smooth through a wider middle section bulges). Model: `a_loft_joins_its_sections_in_order` (each side named after the first section's line; a section added later must come before the loft; a section with no closed profile is named). In the app: `sweep_coil_and_loft_from_the_ribbon` (every unused closed sketch offered, in order; one sketch alone is refused saying what is needed). Gap: no rails, centre line, point sections or tangency to neighbouring faces; a section is a sketch's outer profile (no picking among several); sections are ticked in the panel, not clicked in the viewport |
+| The new solids show quickly and their sketches can be seen | done | on the worker thread the app uses: `sweeps_coils_and_lofts_regenerate_on_the_worker`. Freeform faces are meshed looser inside than along their edges (DEC-036): `a_long_coil_meshes_without_excess_triangles` (a five-turn coil of radius 40: 108 000 triangles in 1.3 s, from 549 000 in 7.6 s). Sketches no feature uses yet show over the part, the open panel's brighter (DEC-037): `sweep_coil_and_loft_from_the_ribbon`. The failure banner wraps instead of running off the viewport. Gap: the sketch lines are drawn over the part without hiding behind it |
+| Threads (cosmetic and modelled), draft, split, combine | missing | the ribbon buttons exist and say which milestone brings them |
 | Mass properties with materials and appearance, in a Properties panel | partial | volume, area, centre of mass and inertia at unit density (`box_inertia_about_centre_of_mass`, the Mass Properties window); no materials, density or appearance |
 | Design tables (configurations from a table of parameters) | missing | |
 

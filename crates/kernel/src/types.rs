@@ -99,6 +99,16 @@ pub enum Curve3 {
         mid: Vec3,
         end: Vec3,
     },
+    /// A helix on a cylinder of `radius`: `frame` has its origin on the axis, X towards the start
+    /// point and Z along the axis; `turns` turns of `pitch`, left-handed when `left`. A helix is
+    /// a whole path by itself.
+    Helix {
+        frame: Frame,
+        radius: f64,
+        pitch: f64,
+        turns: f64,
+        left: bool,
+    },
 }
 
 /// An open or closed chain of 3D curves.

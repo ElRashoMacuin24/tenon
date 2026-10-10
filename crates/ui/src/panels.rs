@@ -428,6 +428,9 @@ pub(crate) enum Panel {
     Work(Box<crate::work::WorkPanel>),
     Measure(Box<MeasurePanel>),
     Rib(RibPanel),
+    Sweep(crate::sweeps::SweepPanel),
+    Coil(crate::sweeps::CoilPanel),
+    Loft(crate::sweeps::LoftPanel),
     Value(ValuePanel),
     EditDimension {
         sketch: FeatureId,
@@ -457,6 +460,9 @@ impl Panel {
             Panel::Pattern(p) => p.editing,
             Panel::Work(w) => w.editing,
             Panel::Rib(p) => p.editing,
+            Panel::Sweep(p) => p.editing,
+            Panel::Coil(p) => p.editing,
+            Panel::Loft(p) => p.editing,
             _ => None,
         }
     }
@@ -508,6 +514,7 @@ impl Panel {
             },
             Panel::Rib(p) if p.to_next => vec![("thickness", "/thickness")],
             Panel::Rib(_) => vec![("thickness", "/thickness"), ("distance", "/extent/distance")],
+            Panel::Coil(_) => vec![("pitch", "/pitch"), ("turns", "/turns")],
             Panel::Work(w) => match w.method {
                 crate::work::WorkMethod::Offset => vec![("distance", "/distance")],
                 crate::work::WorkMethod::Angle => vec![("degrees", "/angle")],
@@ -623,6 +630,15 @@ impl Workbench {
                 Some(kind) => with_feature(self.document(), w.editing, kind),
                 None => rolled(w.editing),
             },
+            Some(Panel::Sweep(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind),
+                None => rolled(p.editing),
+            },
+            Some(Panel::Coil(p)) => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::Loft(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind),
+                None => rolled(p.editing),
+            },
             Some(Panel::Fillet(p)) => rolled(p.editing),
             Some(Panel::Chamfer(p)) => rolled(p.editing),
             Some(Panel::Shell(p)) => rolled(p.editing),
@@ -664,7 +680,9 @@ impl Workbench {
             None => None,
         };
         // The document, not the scene: the scene may still be regenerating.
-        let solid = self.document().features().iter().any(|f| matches!(f.kind, FeatureKind::Extrude(_) | FeatureKind::Revolve(_)));
+        let solid = self.document().features().iter().any(|f| {
+            matches!(f.kind, FeatureKind::Extrude(_) | FeatureKind::Revolve(_) | FeatureKind::Sweep(_) | FeatureKind::Coil(_) | FeatureKind::Loft(_))
+        });
         if editing.is_none() && !solid {
             return Err("there is no solid yet: extrude or revolve a sketch first".into());
         }
@@ -893,7 +911,12 @@ impl Workbench {
                 _ => return Err("not a hole".into()),
             },
             None => {
-                if !self.document().features().iter().any(|f| matches!(f.kind, FeatureKind::Extrude(_) | FeatureKind::Revolve(_))) {
+                if !self.document().features().iter().any(|f| {
+                    matches!(
+                        f.kind,
+                        FeatureKind::Extrude(_) | FeatureKind::Revolve(_) | FeatureKind::Sweep(_) | FeatureKind::Coil(_) | FeatureKind::Loft(_)
+                    )
+                }) {
                     return Err("there is no solid to drill yet: extrude or revolve a sketch first".into());
                 }
                 // The sketch being edited, else the last sketch with centre points.
@@ -1083,6 +1106,8 @@ impl Workbench {
                         }
                         ("model.rib", p)
                     }
+                    // Added whole: their commands take the same fields as the feature.
+                    FeatureKind::Sweep(_) | FeatureKind::Coil(_) | FeatureKind::Loft(_) => ("feature.add", json!({ "kind": kind_json })),
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
@@ -1177,6 +1202,40 @@ impl Workbench {
                         keep = !self.commit_panel(&ptrs, p.editing, p.kind());
                         if !keep && again {
                             reopen = Some("model.rib");
+                        }
+                    }
+                }
+            }
+            Panel::Sweep(p) => {
+                if commit {
+                    match p.kind() {
+                        None => self.set_error("Sweep: choose a sketch with lines and arcs for the path".to_string()),
+                        Some(kind) => {
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("model.sweep");
+                            }
+                        }
+                    }
+                }
+            }
+            Panel::Coil(p) => {
+                if commit {
+                    keep = !self.commit_panel(&ptrs, p.editing, p.kind());
+                    if !keep && again {
+                        reopen = Some("model.coil");
+                    }
+                }
+            }
+            Panel::Loft(p) => {
+                if commit {
+                    match p.kind() {
+                        None => self.set_error("Loft: tick two or more sections".to_string()),
+                        Some(kind) => {
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("model.loft");
+                            }
                         }
                     }
                 }

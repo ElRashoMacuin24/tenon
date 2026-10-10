@@ -108,7 +108,13 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         FeatureKind::PatternCircular(_) => &[("/count", Ul), ("/angle", Deg)],
         FeatureKind::WorkPlane(_) => &[("/distance", Mm), ("/angle", Deg)],
         FeatureKind::Rib(_) => &[("/thickness", Mm), ("/extent/distance", Mm)],
-        FeatureKind::Sketch { .. } | FeatureKind::Mirror(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_) => &[],
+        FeatureKind::Coil(_) => &[("/pitch", Mm), ("/turns", Ul)],
+        FeatureKind::Sketch { .. }
+        | FeatureKind::Mirror(_)
+        | FeatureKind::WorkAxis(_)
+        | FeatureKind::WorkPoint(_)
+        | FeatureKind::Sweep(_)
+        | FeatureKind::Loft(_) => &[],
     }
 }
 
@@ -208,7 +214,8 @@ impl Document {
                 let mut json = serde_json::to_value(&f.kind).map_err(|e| e.to_string())?;
                 let slot = json.pointer_mut(field).ok_or("not a parameter")?;
                 *slot = match unit {
-                    ParamUnit::Ul => {
+                    // Counts are whole numbers; other unitless values (a coil's turns) need not be.
+                    ParamUnit::Ul if slot.is_u64() => {
                         if v < 0.0 || v.fract().abs() > 1e-9 {
                             return Err(format!("{v} is not a whole number"));
                         }

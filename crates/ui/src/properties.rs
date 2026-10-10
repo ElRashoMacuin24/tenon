@@ -154,7 +154,7 @@ pub(crate) fn eq_field(
 
 /// The small pictures on the direction and output buttons.
 #[derive(Clone, Copy)]
-enum Glyph {
+pub(crate) enum Glyph {
     Default,
     Flipped,
     Symmetric,
@@ -218,7 +218,7 @@ fn paint_glyph(ui: &Ui, r: Rect, g: Glyph, color: Color32, fill: Color32) {
 }
 
 /// A row of picture buttons; returns the index clicked.
-fn glyph_row(ui: &mut Ui, items: &[(Glyph, &str, bool)], selected: usize, t: &Tokens) -> Option<usize> {
+pub(crate) fn glyph_row(ui: &mut Ui, items: &[(Glyph, &str, bool)], selected: usize, t: &Tokens) -> Option<usize> {
     let mut clicked = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
@@ -370,11 +370,11 @@ fn picked_row(ui: &mut Ui, n: usize, hint: &str) -> bool {
     clear
 }
 
-fn section(ui: &mut Ui, title: &str, open: bool, body: impl FnOnce(&mut Ui)) {
+pub(crate) fn section(ui: &mut Ui, title: &str, open: bool, body: impl FnOnce(&mut Ui)) {
     egui::CollapsingHeader::new(egui::RichText::new(title).font(theme::body()).strong()).default_open(open).show(ui, body);
 }
 
-const OPS: [(Glyph, &str, Operation); 4] = [
+pub(crate) const OPS: [(Glyph, &str, Operation); 4] = [
     (Glyph::Join, "Join: add material", Operation::Join),
     (Glyph::Cut, "Cut: remove material", Operation::Cut),
     (Glyph::Intersect, "Intersect: keep what is common", Operation::Intersect),
@@ -383,7 +383,7 @@ const OPS: [(Glyph, &str, Operation); 4] = [
 
 impl Workbench {
     /// Number of profile regions a feature will use.
-    fn profile_count(&self, sketch: tenon_model::FeatureId, sel: &RegionSel) -> usize {
+    pub(crate) fn profile_count(&self, sketch: tenon_model::FeatureId, sel: &RegionSel) -> usize {
         match sel {
             RegionSel::Keys(k) => k.len(),
             RegionSel::Default => self.document().sketch(sketch).map(|s| tenon_sketch::default_regions(&tenon_sketch::regions(s)).len()).unwrap_or(0),
@@ -405,6 +405,9 @@ impl Workbench {
                     | Panel::Work(_)
                     | Panel::Measure(_)
                     | Panel::Rib(_)
+                    | Panel::Sweep(_)
+                    | Panel::Coil(_)
+                    | Panel::Loft(_)
                     | Panel::Asm(_)
             )
         )
@@ -455,6 +458,9 @@ impl Workbench {
             Panel::Work(w) => (w.title(), w.editing.map(|f| self.feature_name(f))),
             Panel::Measure(_) => ("Measure", Some("Distance, angle, length, area".to_string())),
             Panel::Rib(p) => ("Rib", p.editing.map(|f| self.feature_name(f))),
+            Panel::Sweep(p) => ("Sweep", p.editing.map(|f| self.feature_name(f))),
+            Panel::Coil(p) => ("Coil", p.editing.map(|f| self.feature_name(f))),
+            Panel::Loft(p) => ("Loft", p.editing.map(|f| self.feature_name(f))),
             Panel::Asm(p) => {
                 (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
             }
@@ -1211,6 +1217,9 @@ impl Workbench {
                             });
                         });
                     }
+                    p @ (Panel::Sweep(_) | Panel::Coil(_) | Panel::Loft(_)) => {
+                        enter |= self.sweeps_properties(ui, p, &mut eqs, &sketches, &work_names, t);
+                    }
                     Panel::Measure(m) => {
                         let label = |p: &crate::viewport::Pick| match p {
                             crate::viewport::Pick::Face { body, face } => self
@@ -1432,6 +1441,9 @@ impl Workbench {
         let at3 = match &self.panel {
             Some(Panel::Extrude(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Revolve(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
+            Some(Panel::Sweep(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
+            Some(Panel::Coil(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
+            Some(Panel::Loft(p)) => p.sections.first().and_then(|s| self.profile_anchor(*s)).map(|a| a.0),
             Some(Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_)) => self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center())),
             Some(Panel::Hole(p)) => p
                 .points
@@ -1628,6 +1640,7 @@ fn p_before(panel: &Panel, wb: &Workbench, id: tenon_model::FeatureId) -> bool {
         Panel::Revolve(p) => p.editing,
         Panel::Pattern(p) => p.editing,
         Panel::Work(w) => w.editing,
+        Panel::Coil(p) => p.editing,
         _ => None,
     };
     editing.is_none_or(|e| wb.document().index_of(id) < wb.document().index_of(e))

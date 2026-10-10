@@ -172,6 +172,9 @@ may refer only to features before them.
 | `work_axis` | `by`: `along` (`axis`) or `planes` (`a`, `b`) |
 | `work_point` | `by`: `center` (`edge`) or `intersection` (`axis`, `plane`) |
 | `rib` | `sketch`, `lines` (sketch line ids), `thickness`, `extent`, `flip` |
+| `sweep` | `sketch`, `regions`, `path` (`{ sketch = <id>, curves = [<line and arc ids>] }`: the path's sketch and its curves, joined end to end), `fixed` (the profile keeps its direction instead of turning with the path), `operation` |
+| `coil` | `sketch`, `regions`, `axis` (revolve axis), `pitch` (mm per turn), `turns`, `left` (left-handed), `operation` |
+| `loft` | `sections` (sketch ids, in order), `ruled` (flat sides between sections), `operation` |
 
 Field values:
 
@@ -565,6 +568,10 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
 - **A change to what a document holds** bumps `version` and adds a migration step in
   `project::read_head`, from the previous version. The fixture files of every older version stay
   in `crates/io/tests/fixtures` and are tested.
+- **Until a version has shipped in a release,** new feature types and new optional fields join
+  it without a bump (DEC-029, DEC-035): files without them are unchanged, and a build that does
+  not know a type refuses the file naming the record. Version 2 has gained `sweep`, `coil` and
+  `loft` this way.
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

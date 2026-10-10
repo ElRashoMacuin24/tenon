@@ -54,6 +54,18 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::Rib(_), _) => {
             "The rib could not be made. Its lines may not reach walls on both sides: check the sketch, or give the rib a distance.".into()
         }
+        (FeatureKind::Sweep(_) | FeatureKind::Coil(_) | FeatureKind::Loft(_), _) if is_boolean(e) => {
+            "The new solid could not be combined with the part. It may only touch the part along a face or an edge: move it slightly.".into()
+        }
+        (FeatureKind::Sweep(_), _) => {
+            "The sweep could not be made along this path. The path may bend tighter than the profile is wide, or the profile may not sit at the start of the path: try a wider bend, or move the profile to the path's start.".into()
+        }
+        (FeatureKind::Coil(_), _) => {
+            "The coil could not be made. The profile may cross the axis or be too big for its turns: move it away from the axis, or try a larger pitch.".into()
+        }
+        (FeatureKind::Loft(_), _) => {
+            "The loft could not be made through these sections. They may twist or cross each other: check they are in order and alike in shape.".into()
+        }
         (FeatureKind::PatternRect(_) | FeatureKind::PatternCircular(_) | FeatureKind::Mirror(_), _) => {
             "The copies could not be joined to the part. A copy may touch the part only along an edge or at a point: change the spacing, count or plane.".into()
         }

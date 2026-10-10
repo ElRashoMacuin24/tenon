@@ -339,6 +339,90 @@ pub fn open_lines(sk: &Sketch) -> Vec<EntityId> {
     sk.entities().filter(|(id, e)| !e.construction && sk.is_line(*id) && !closed.contains(id)).map(|(id, _)| id).collect()
 }
 
+/// Lines and arcs of a sketch, joined end to end: a sweep's path.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SketchCurves {
+    pub sketch: FeatureId,
+    pub curves: Vec<EntityId>,
+}
+
+/// A profile swept along a path drawn in another sketch.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Sweep {
+    /// The profile's sketch.
+    pub sketch: FeatureId,
+    #[serde(default)]
+    pub regions: RegionSel,
+    pub path: SketchCurves,
+    /// Keep the profile's orientation as it is, instead of turning it with the path.
+    #[serde(default)]
+    pub fixed: bool,
+    #[serde(default)]
+    pub operation: Operation,
+}
+
+impl Sweep {
+    pub fn check(&self) -> Result<(), String> {
+        if self.path.curves.is_empty() || self.path.curves.len() > 1000 {
+            return Err("the sweep path needs 1 to 1000 lines and arcs".into());
+        }
+        Ok(())
+    }
+}
+
+/// A profile swept round an axis along a helix: springs, coils, threads.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Coil {
+    pub sketch: FeatureId,
+    #[serde(default)]
+    pub regions: RegionSel,
+    pub axis: AxisRef,
+    /// How far the coil advances along the axis in one turn (mm).
+    pub pitch: f64,
+    pub turns: f64,
+    /// Left-handed: turning clockwise when seen going along the axis.
+    #[serde(default)]
+    pub left: bool,
+    #[serde(default)]
+    pub operation: Operation,
+}
+
+impl Coil {
+    pub fn check(&self) -> Result<(), String> {
+        if !tenon_geom::tol::is_valid_size(self.pitch) {
+            return Err("the coil pitch must be positive".into());
+        }
+        if !(self.turns.is_finite() && self.turns > 1e-6 && self.turns <= 10_000.0) {
+            return Err("the coil needs 0 to 10000 turns".into());
+        }
+        Ok(())
+    }
+}
+
+/// A solid through the profiles of two or more sketches, in order.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Loft {
+    pub sections: Vec<FeatureId>,
+    /// Flat sides between sections instead of smooth ones.
+    #[serde(default)]
+    pub ruled: bool,
+    #[serde(default)]
+    pub operation: Operation,
+}
+
+impl Loft {
+    pub fn check(&self) -> Result<(), String> {
+        if self.sections.len() < 2 || self.sections.len() > 100 {
+            return Err("a loft needs 2 to 100 section sketches".into());
+        }
+        let unique: std::collections::BTreeSet<_> = self.sections.iter().collect();
+        if unique.len() != self.sections.len() {
+            return Err("a sketch is a loft section only once".into());
+        }
+        Ok(())
+    }
+}
+
 /// A direction for a pattern: an origin axis or a straight edge of the part.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -516,6 +600,9 @@ pub enum FeatureKind {
     WorkAxis(WorkAxis),
     WorkPoint(WorkPoint),
     Rib(Rib),
+    Sweep(Sweep),
+    Coil(Coil),
+    Loft(Loft),
 }
 
 impl FeatureKind {
@@ -536,6 +623,9 @@ impl FeatureKind {
                 | FeatureKind::Revolve(_)
                 | FeatureKind::Hole(_)
                 | FeatureKind::Rib(_)
+                | FeatureKind::Sweep(_)
+                | FeatureKind::Coil(_)
+                | FeatureKind::Loft(_)
                 | FeatureKind::PatternRect(_)
                 | FeatureKind::PatternCircular(_)
                 | FeatureKind::Mirror(_)
@@ -560,6 +650,9 @@ impl FeatureKind {
             FeatureKind::WorkAxis(_) => "Work Axis",
             FeatureKind::WorkPoint(_) => "Work Point",
             FeatureKind::Rib(_) => "Rib",
+            FeatureKind::Sweep(_) => "Sweep",
+            FeatureKind::Coil(_) => "Coil",
+            FeatureKind::Loft(_) => "Loft",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -579,6 +672,9 @@ impl FeatureKind {
             FeatureKind::WorkAxis(_) => "Work Axis",
             FeatureKind::WorkPoint(_) => "Work Point",
             FeatureKind::Rib(_) => "Rib",
+            FeatureKind::Sweep(_) => "Sweep",
+            FeatureKind::Coil(_) => "Coil",
+            FeatureKind::Loft(_) => "Loft",
         }
     }
     /// Features this one depends on.
@@ -601,6 +697,12 @@ impl FeatureKind {
             FeatureKind::Shell(s) => s.remove.iter().filter_map(FaceRef::feature).collect(),
             FeatureKind::Hole(h) => vec![h.sketch],
             FeatureKind::Rib(r) => vec![r.sketch],
+            FeatureKind::Sweep(s) => vec![s.sketch, s.path.sketch],
+            FeatureKind::Coil(c) => match c.axis {
+                AxisRef::Work(a) => vec![c.sketch, a],
+                _ => vec![c.sketch],
+            },
+            FeatureKind::Loft(l) => l.sections.clone(),
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -869,6 +971,16 @@ impl Document {
                 FeatureKind::Hole(h) => h.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Rib(r) if self.sketch(r.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, r.sketch)),
                 FeatureKind::Rib(r) => r.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Sweep(s) if self.sketch(s.sketch).is_none() || self.sketch(s.path.sketch).is_none() => {
+                    return Err(format!("{}: the profile and the path must be sketches", f.name));
+                }
+                FeatureKind::Sweep(s) => s.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Coil(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
+                FeatureKind::Coil(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Loft(l) if l.sections.iter().any(|s| self.sketch(*s).is_none()) => {
+                    return Err(format!("{}: every loft section must be a sketch", f.name));
+                }
+                FeatureKind::Loft(l) => l.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

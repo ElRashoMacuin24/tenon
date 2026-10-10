@@ -68,7 +68,7 @@ fn every_available_command_has_a_handler() {
             assert!(!e.contains("unknown command"), "{id}: {e}");
         }
     }
-    assert!(Workbench::without_kernel().run_ui("model.sweep").unwrap_err().contains("milestone M6"));
+    assert!(Workbench::without_kernel().run_ui("model.draft").unwrap_err().contains("milestone M6"));
     assert!(Workbench::without_kernel().run_ui("sketch.stretch").unwrap_err().contains("not in the current plan"));
     assert!(Workbench::without_kernel().run_ui("model.fillet").unwrap_err().contains("no solid"));
     assert!(Workbench::without_kernel().run_ui("nonsense.cmd").unwrap_err().contains("unknown"));
@@ -1390,4 +1390,88 @@ fn a_lost_edge_is_repaired_from_the_banner_with_one_click() {
     assert!(wb.repair.is_some());
     d.tap(&mut wb, egui::Key::Escape);
     assert!(wb.repair.is_none() && wb.status() == "Repair stopped.", "{}", wb.status());
+}
+
+#[test]
+fn sweep_coil_and_loft_from_the_ribbon() {
+    // Sweep: a Ø4 circle along a path drawn last, in a sketch of its own.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let profile = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": profile.0, "cx": 0, "cy": 0, "r": 2 })).unwrap();
+    wb.finish_sketch();
+    // Another closed profile, drawn later, in a plane parallel to the path's: it cannot be swept
+    // along the path, so it is not the one offered.
+    wb.create_sketch(json!({ "plane": "xz" })).unwrap();
+    let other = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": other.0, "cx": 40, "cy": 0, "r": 1 })).unwrap();
+    wb.finish_sketch();
+    wb.create_sketch(json!({ "plane": "xz" })).unwrap();
+    let path = sketching(&wb);
+    wb.exec("sketch.line", json!({ "sketch": path.0, "x1": 0, "y1": 0, "x2": 0, "y2": 20 })).unwrap();
+    // Sweep while drawing the path: the path is not taken for the profile.
+    wb.run_ui("model.sweep").unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Sweep(p)) = wb.panel.clone() else { panic!("no sweep panel: {}", wb.status()) };
+    assert_eq!((p.sketch, p.path.map(|c| c.sketch)), (profile, Some(path)));
+    assert!((volume(&wb) - PI * 4.0 * 20.0).abs() < 1e-6, "preview: {}", volume(&wb));
+    // The sketches show over the part: the profile and the path brighter.
+    assert_eq!(wb.shown_sketches(), [(profile, true), (other, false), (path, true)]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(wb.document().features().last().unwrap().name, "Sweep1");
+    assert_eq!(wb.shown_sketches(), [(other, false)], "the sweep's own sketches are in it now");
+
+    // Coil: a Ø2 circle 10 from the Z axis, the axis found in the sketch's plane; 3 turns typed.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    wb.create_sketch(json!({ "plane": "xz" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": 10, "cy": 0, "r": 1 })).unwrap();
+    wb.run_ui("model.coil").unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Coil(p)) = wb.panel.clone() else { panic!("no coil panel: {}", wb.status()) };
+    assert_eq!(p.axis, crate::panels::AxisChoice::Origin(tenon_model::OriginAxis::Z));
+    let per_turn = PI * 2.0 * PI * 10.0;
+    assert!((volume(&wb) - 5.0 * per_turn).abs() < 1e-3 * per_turn, "preview: {}", volume(&wb));
+    type_into(&mut d, &mut wb, "tn_props_turns", "3");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - 3.0 * per_turn).abs() < 1e-3 * per_turn, "{}", volume(&wb));
+    // Edited from the browser: the panel starts with its values.
+    let coil = wb.document().features().last().unwrap().id;
+    wb.edit_feature(coil).unwrap();
+    let Some(Panel::Coil(p)) = wb.panel.clone() else { panic!() };
+    assert_eq!((p.pitch, p.turns), (10.0, 3.0));
+    wb.panel = None;
+
+    // Loft: two squares 10 apart; both sections are picked.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let bottom = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": bottom.0, "x1": -10, "y1": -10, "x2": 10, "y2": 10 })).unwrap();
+    wb.finish_sketch();
+    let up = wb.exec("work.plane", json!({ "base": "xy", "distance": 10 })).unwrap()["feature"].as_u64().unwrap();
+    wb.create_sketch(json!({ "work_plane": up })).unwrap();
+    let top = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": top.0, "x1": -5, "y1": -5, "x2": 5, "y2": 5 })).unwrap();
+    wb.run_ui("model.loft").unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Loft(p)) = wb.panel.clone() else { panic!("no loft panel: {}", wb.status()) };
+    assert_eq!(p.sections, vec![bottom, top]);
+    let frustum = 10.0 / 3.0 * (400.0 + 100.0 + 200.0);
+    assert!((volume(&wb) - frustum).abs() < 1e-6, "preview: {}", volume(&wb));
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(wb.document().features().last().unwrap().name, "Loft1");
+    // One sketch alone cannot be lofted: said in the status bar.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": 0, "cy": 0, "r": 2 })).unwrap();
+    let e = wb.run_ui("model.loft").unwrap_err();
+    assert!(e.contains("two or more sketches"), "{e}");
 }

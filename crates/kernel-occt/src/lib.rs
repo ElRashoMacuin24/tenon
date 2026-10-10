@@ -15,9 +15,10 @@ use cxx::UniquePtr;
 use ffi::bridge as sys;
 use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3, tol};
 use tenon_kernel::{
-    AngleExtent, BoolOp, CancelToken, ChamferSpec, Curve2, CurveKind, Distance, EdgeId, EdgeInfo, EdgePolyline, Extent, FaceId, FaceInfo, FaceRange,
-    Generated, History, HlrCurve, HlrKind, Image, InputRef, KResult, Kernel, KernelError, MassProps, Mesh, MeshTol, Op, Origin, PrimitiveRole,
-    Profile, ShapeHandle, ShapeKind, SubShape, SurfaceKind, TopoId, TopoKind, Topology, Transform, check,
+    AngleExtent, BoolOp, CancelToken, ChamferSpec, Curve2, Curve3, CurveKind, Distance, EdgeId, EdgeInfo, EdgePolyline, Extent, FaceId, FaceInfo,
+    FaceRange, Generated, History, HlrCurve, HlrKind, Image, InputRef, KResult, Kernel, KernelError, LoftOpts, MassProps, Mesh, MeshTol, Op, Origin,
+    Path3, PrimitiveRole, Profile, ShapeHandle, ShapeKind, SubShape, SurfaceKind, SweepOpts, SweepOrientation, TopoId, TopoKind, Topology, Transform,
+    check,
 };
 
 /// OCCT's STEP translator keeps global state; exchange calls are serialised process-wide.
@@ -480,6 +481,100 @@ impl Kernel for OcctKernel {
         // Positive thickness keeps the outer skin: the wall grows inwards.
         let offset = if thickness >= 0.0 { -t } else { t };
         let shape = sys::shell(self.get(body)?, &idx, offset, &mut hist).map_err(failed("shell"))?;
+        self.finish(shape, hist)
+    }
+
+    fn sweep(&mut self, profile: &Profile, path: &Path3, opts: &SweepOpts) -> KResult<Op> {
+        self.not_cancelled()?;
+        if !opts.solid {
+            return Err(KernelError::Unsupported("a sweep that is not solid"));
+        }
+        let p = profile_in(profile)?;
+        let mut path_in = sys::PathIn::default();
+        match path.curves.as_slice() {
+            [Curve3::Helix { frame, radius, pitch, turns, left }] => {
+                check::point("helix axis", frame.origin())?;
+                path_in.kind = 1;
+                path_in.helix = sys::HelixIn {
+                    axis: frame3(frame),
+                    radius: check::size("helix radius", *radius)?,
+                    pitch: check::size("helix pitch", *pitch)?,
+                    turns: if turns.is_finite() && *turns > 1e-6 && *turns <= 10_000.0 {
+                        *turns
+                    } else {
+                        return Err(bad("a helix needs 0 to 10000 turns"));
+                    },
+                    left: *left,
+                };
+            }
+            [] => return Err(bad("the sweep path is empty")),
+            curves => {
+                if curves.len() > MAX_PROFILE_CURVES {
+                    return Err(bad("the sweep path has too many curves"));
+                }
+                for c in curves {
+                    match c {
+                        Curve3::Line { start, end } => {
+                            path_in.curve_kinds.push(0);
+                            path_in.points.extend([v3(check::point("path point", *start)?), v3(check::point("path point", *end)?)]);
+                        }
+                        Curve3::Arc { start, mid, end } => {
+                            path_in.curve_kinds.push(1);
+                            for q in [start, mid, end] {
+                                path_in.points.push(v3(check::point("path point", *q)?));
+                            }
+                        }
+                        Curve3::Helix { .. } => return Err(bad("a helix is a whole path by itself")),
+                    }
+                }
+            }
+        }
+        let (mode, binormal) = match opts.orientation {
+            SweepOrientation::Frenet => (0, Vec3::Z),
+            SweepOrientation::Fixed => (1, Vec3::Z),
+            SweepOrientation::Binormal(b) => (2, b.normalized()),
+        };
+        if !binormal.x.is_finite() || binormal.len() < 0.5 {
+            return Err(bad("the sweep's binormal direction has no length"));
+        }
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::sweep(&p, &path_in, mode, &v3(binormal), &mut hist).map_err(failed("sweep"))?;
+        self.finish(shape, hist)
+    }
+
+    fn loft(&mut self, sections: &[Profile], opts: &LoftOpts) -> KResult<Op> {
+        self.not_cancelled()?;
+        if opts.closed {
+            return Err(KernelError::Unsupported("a closed loop of loft sections"));
+        }
+        if sections.len() < 2 || sections.len() > 1000 {
+            return Err(bad("a loft takes 2 to 1000 sections"));
+        }
+        let p: Vec<sys::ProfileIn> = sections.iter().map(profile_in).collect::<KResult<_>>()?;
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::loft(&p, opts.solid, opts.ruled, &mut hist).map_err(failed("loft"))?;
+        self.finish(shape, hist)
+    }
+
+    fn draft(&mut self, body: ShapeHandle, faces: &[FaceId], pull: Vec3, angle: f64, neutral: &Frame) -> KResult<Op> {
+        self.not_cancelled()?;
+        if faces.is_empty() || faces.len() > 10_000 {
+            return Err(bad("select 1 to 10000 faces to draft"));
+        }
+        if faces.iter().any(|f| f.shape != body) {
+            return Err(bad("a face to draft is not on the body"));
+        }
+        if !(angle.is_finite() && angle.abs() > tol::ANGULAR && angle.abs() < std::f64::consts::FRAC_PI_2 - 1e-3) {
+            return Err(bad("a draft angle must be between 0 and 90 degrees"));
+        }
+        if !(pull.x.is_finite() && pull.y.is_finite() && pull.z.is_finite()) || pull.len() < tol::UNIT {
+            return Err(bad("the pull direction has no length"));
+        }
+        check::point("neutral plane", neutral.origin())?;
+        let idx: Vec<u32> = faces.iter().map(|f| f.index).collect();
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::draft(self.get(body)?, &idx, &v3(pull.normalized()), angle, &v3(neutral.origin()), &v3(neutral.z()), &mut hist)
+            .map_err(failed("draft"))?;
         self.finish(shape, hist)
     }
 

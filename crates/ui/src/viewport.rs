@@ -388,6 +388,9 @@ impl Workbench {
         self.asm_overlays(ui, rect, t);
         if !self.in_assembly() {
             self.draw_work(ui, rect, t);
+            if !sketching {
+                self.sketch_wires(ui, rect, t);
+            }
         }
         if self.pick_plane {
             self.draw_origin_planes(ui, rect, self.view.plane_hover, t);
@@ -890,7 +893,10 @@ impl Workbench {
             })
         };
         let shown = banner.map(|(text, color)| {
-            let galley = p.layout_no_wrap(text, theme::body(), color);
+            // Wrapped to the viewport, clear of the view cube and with room for the Repair button
+            // beside it: the messages say what to try, and are long.
+            let room = (rect.width() - 130.0 - if self.chrome.show_cube { 170.0 } else { 0.0 }).max(200.0);
+            let galley = p.layout(text, theme::body(), color, room);
             let r = Rect::from_min_size(pos2(rect.left() + 12.0, rect.top() + 10.0), galley.size() + vec2(16.0, 10.0));
             p.rect_filled(r, 4.0, t.panel.gamma_multiply(0.92));
             p.galley(r.min + vec2(8.0, 5.0), galley, color);

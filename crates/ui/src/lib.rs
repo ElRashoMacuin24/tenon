@@ -26,6 +26,7 @@ mod radial;
 mod recovery;
 mod repair_ui;
 mod sketcher;
+mod sweeps;
 pub mod theme;
 mod viewport;
 mod work;

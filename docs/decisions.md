@@ -507,3 +507,48 @@ the nearest replacements, and puts one in with one click.
 - **In the app:** the failure banner's Repair button (or Repair Reference in the browser's
   context menu) highlights the candidates in green. A click on any face or edge of the right
   sort, highlighted or not, puts it in. Esc stops.
+
+## DEC-035 M6 feature types join format version 2 (2026-10-09)
+
+Sweep, coil and loft (and the M6 features after them) are new feature types in part files.
+They join format version 2 instead of starting version 3, following DEC-029: version 2 was
+introduced the same day and no build has been released, so no file in anyone's hands changes
+meaning. Files without the new types are byte for byte what they were; a build that does not
+know a type refuses the file and names the record ("line 66: feature 4 (Sweep1): unknown
+variant `sweep`"). The rule is now written into `docs/file-format.md` ("Changing the format"):
+once a version has shipped in a release, any change to what a document holds bumps it.
+
+This is the cheap choice to reverse: starting version 3 instead means changing one number and
+adding an empty migration step. It is listed in the M6 report for the owner.
+
+## DEC-036 Freeform faces are meshed looser inside than along their edges (2026-10-09)
+
+A swept, lofted or blended face is a B-spline surface. OCCT refined the inside of such a face
+until every triangle was within the edge tolerance (0.01 mm) of it: a five-turn coil of radius
+40 came out at 549 000 triangles and took 7.6 s to show, against 26 000 for a torus of the same
+size. The inside of a face may now deviate five times the edge tolerance (0.05 mm) and its
+facets turn up to 0.5 rad; edges keep the full tolerance, so faces still meet exactly and
+silhouettes of analytic faces (planes, cylinders, cones, spheres, tori) do not change at all.
+The same coil is 108 000 triangles in 1.3 s and looks the same, because shading uses the exact
+surface normal at each vertex.
+
+- **Rejected: no refinement inside at all.** Sixteen times faster still, but the error then has
+  no bound on a large, gently curved face, and the app's STL export uses the same mesh.
+- **Rejected: other ways of building the helix** (an interpolated spline, lower degree, tighter
+  approximation): the triangle count did not move; the cost is in the mesher.
+- `a_long_coil_meshes_without_excess_triangles` holds the count down.
+
+## DEC-037 Sketches show in the part until a feature uses them (2026-10-09)
+
+Outside sketch mode, a sketch that no feature uses yet is drawn over the part in a dim line,
+as Inventor shows unconsumed sketches. A sweep needs two sketches and a loft
+several, and they could not be seen while being chosen. The sketches an open Sweep, Coil or
+Loft panel takes its shape from are drawn in the accent colour. A sketch disappears once a
+feature uses it, and sketches past End of Part or suppressed do not show.
+
+A new Sweep offers the last sketch with a closed profile whose plane is not parallel to the
+path's (a profile in the path's own plane cannot be swept along it, and the part says so in
+plain words if asked to); the path is the last other sketch of lines and arcs, preferring one
+with no closed profile of its own. A new Coil takes a construction line of the profile's sketch
+for its axis, else the origin axis lying in the sketch plane. A new Loft takes every sketch
+with a closed profile that nothing uses yet, in order.

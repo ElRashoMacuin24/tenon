@@ -11,9 +11,9 @@ use tenon_kernel::{Kernel, ShapeHandle};
 use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions};
 
 use crate::document::{
-    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, DRILL_POINT, DirectionRef, Extrude, ExtrudeExtent, FeatureKind, Fillet, Hole, HoleExtent,
-    HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, WorkAxis,
-    WorkPlane, WorkPoint, hole_centres, open_lines,
+    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, DRILL_POINT, DirectionRef, Extrude, ExtrudeExtent, FeatureKind, Fillet, Hole,
+    HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent,
+    Shell, SketchCurves, Sweep, WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
@@ -793,20 +793,7 @@ fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
 
 fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
-    let axis = match field(p, "axis")? {
-        Value::String(a) => AxisRef::Origin(match a.to_ascii_lowercase().as_str() {
-            "x" => OriginAxis::X,
-            "y" => OriginAxis::Y,
-            "z" => OriginAxis::Z,
-            _ => return Err(format!("unknown axis `{a}` (x, y, z or a sketch line id)").into()),
-        }),
-        v if work_id(v).is_some() => {
-            let id = work_id(v).ok_or("bad work axis")?;
-            check_work_refs(s, &FeatureKind::WorkAxis(WorkAxis::Along { axis: AxisSel::Work(id) }))?;
-            AxisRef::Work(id)
-        }
-        _ => AxisRef::SketchLine(EntityId(id_u32(p, "axis")?)),
-    };
+    let axis = axis_ref(s, p)?;
     let angle = match opt_num(p, "angle")? {
         None => RevolveAngle::Full,
         Some(a) if p.get("symmetric").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::Symmetric(a),
@@ -949,6 +936,75 @@ fn model_rib(s: &mut Session, p: &Value) -> CmdResult {
     let rib = Rib { sketch, lines, thickness: num(p, "thickness")?, extent, flip: p.get("flip").and_then(Value::as_bool).unwrap_or(false) };
     rib.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::Rib(rib), p)
+}
+
+/// An axis for revolves and coils: "x" | "y" | "z", a line id of the sketch, or {"work": id}.
+fn axis_ref(s: &Session, p: &Value) -> Result<AxisRef, CmdError> {
+    Ok(match field(p, "axis")? {
+        Value::String(a) => AxisRef::Origin(match a.to_ascii_lowercase().as_str() {
+            "x" => OriginAxis::X,
+            "y" => OriginAxis::Y,
+            "z" => OriginAxis::Z,
+            _ => return Err(format!("unknown axis `{a}` (x, y, z or a sketch line id)").into()),
+        }),
+        v if work_id(v).is_some() => {
+            let id = work_id(v).ok_or("bad work axis")?;
+            check_work_refs(s, &FeatureKind::WorkAxis(WorkAxis::Along { axis: AxisSel::Work(id) }))?;
+            AxisRef::Work(id)
+        }
+        _ => AxisRef::SketchLine(EntityId(id_u32(p, "axis")?)),
+    })
+}
+
+fn model_sweep(s: &mut Session, p: &Value) -> CmdResult {
+    let sketch = sketch_id(p)?;
+    let path_sketch = FeatureId(id_u32(p, "path_sketch")?);
+    let sk = s.document().sketch(path_sketch).ok_or_else(|| CmdError(format!("{path_sketch} is not a sketch")))?;
+    // By default, every line and arc of the path's sketch that is not construction.
+    let curves = if p.get("path").is_some() {
+        ids(p, "path")?
+    } else {
+        sk.entities()
+            .filter(|(_, e)| !e.construction && matches!(e.geometry, tenon_sketch::Geometry::Line { .. } | tenon_sketch::Geometry::Arc { .. }))
+            .map(|(id, _)| id)
+            .collect()
+    };
+    let sweep = Sweep {
+        sketch,
+        regions: region_sel(p)?,
+        path: SketchCurves { sketch: path_sketch, curves },
+        fixed: p.get("fixed").and_then(Value::as_bool).unwrap_or(false),
+        operation: operation(p)?,
+    };
+    sweep.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Sweep(sweep), p)
+}
+
+fn model_coil(s: &mut Session, p: &Value) -> CmdResult {
+    let coil = Coil {
+        sketch: sketch_id(p)?,
+        regions: region_sel(p)?,
+        axis: axis_ref(s, p)?,
+        pitch: num(p, "pitch")?,
+        turns: num(p, "turns")?,
+        left: p.get("left").and_then(Value::as_bool).unwrap_or(false),
+        operation: operation(p)?,
+    };
+    coil.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Coil(coil), p)
+}
+
+fn model_loft(s: &mut Session, p: &Value) -> CmdResult {
+    let loft = Loft {
+        sections: ids(p, "sections")?.into_iter().map(|e| FeatureId(e.0)).collect(),
+        ruled: p.get("ruled").and_then(Value::as_bool).unwrap_or(false),
+        operation: operation(p)?,
+    };
+    loft.check().map_err(CmdError)?;
+    if let Some(bad) = loft.sections.iter().find(|f| s.document().sketch(**f).is_none()) {
+        return Err(format!("{bad} is not a sketch").into());
+    }
+    add_feature(s, FeatureKind::Loft(loft), p)
 }
 
 fn feature_update(s: &mut Session, p: &Value) -> CmdResult {
@@ -1436,6 +1492,27 @@ static COMMANDS: &[CommandSpec] = &[
         "sketch; lines: [line ids] (default: its open lines); thickness (half on each side of the sketch plane); distance (default: until it meets the part); flip",
         true,
         model_rib
+    ),
+    doc_cmd!(
+        "model.sweep",
+        "Sweep",
+        "sketch (the profile); regions; path_sketch; path: [line and arc ids], joined end to end (default: every line and arc of path_sketch that is not construction); the sweep starts at the end nearer the profile; fixed (keep the profile's orientation; default: turn it with the path); operation",
+        true,
+        model_sweep
+    ),
+    doc_cmd!(
+        "model.coil",
+        "Coil",
+        "sketch (the profile, off the axis); regions; axis: x | y | z, a line id of the sketch, or {\"work\": id}; pitch (mm per turn); turns; left (left-handed); operation",
+        true,
+        model_coil
+    ),
+    doc_cmd!(
+        "model.loft",
+        "Loft",
+        "sections: [sketch ids], two or more in order, each with one closed profile; ruled (flat sides between sections); operation",
+        true,
+        model_loft
     ),
     doc_cmd!(
         "model.pattern.rect",

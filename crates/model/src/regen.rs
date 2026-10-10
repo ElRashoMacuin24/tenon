@@ -6,15 +6,15 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3};
 use tenon_kernel::{
-    AngleExtent, BoolOp, ChamferSpec, Curve2, CurveKind, Extent, FaceInfo, Kernel, KernelError, Loop, MassProps, Mesh, MeshTol, Profile, Region,
-    ShapeHandle, SubShape, SurfaceKind, TaggedCurve2, Transform,
+    AngleExtent, BoolOp, ChamferSpec, Curve2, Curve3, CurveKind, Extent, FaceInfo, Kernel, KernelError, LoftOpts, Loop, MassProps, Mesh, MeshTol,
+    Path3, Profile, Region, ShapeHandle, SubShape, SurfaceKind, SweepOpts, SweepOrientation, TaggedCurve2, Transform,
 };
 use tenon_sketch::{EntityId, Sketch, SketchRegion, default_regions, profile, regions};
 
 use crate::FeatureId;
 use crate::document::{
-    AxisRef, AxisSel, ChamferSize, DirectionRef, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent, HoleType, Operation,
-    PlaneRef, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, WorkAxis, WorkPlane, WorkPoint,
+    AxisRef, AxisSel, ChamferSize, Coil, DirectionRef, Document, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent, HoleType, Loft,
+    Operation, PlaneRef, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Sweep, WorkAxis, WorkPlane, WorkPoint,
 };
 use crate::naming::{
     EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
@@ -415,6 +415,9 @@ impl<'a> Ctx<'a> {
             }
             FeatureKind::Hole(h) => self.hole(f.id, h),
             FeatureKind::Rib(r) => self.rib(f.id, r),
+            FeatureKind::Sweep(s) => self.sweep(f.id, s),
+            FeatureKind::Coil(c) => self.coil(f.id, c),
+            FeatureKind::Loft(l) => self.loft(f.id, l),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };
@@ -970,6 +973,83 @@ impl<'a> Ctx<'a> {
         self.combine(id, vec![(op.shape, names)], r.operation)
     }
 
+    fn sweep(&mut self, id: FeatureId, s: &Sweep) -> Result<(), Stop> {
+        let (sketch, frame) = self.sketch_and_frame(s.sketch)?;
+        let all = regions(sketch);
+        let profile = profile(sketch, frame, &select(&all, &s.regions)?);
+        let (path_sketch, path_frame) = self.sketch_and_frame(s.path.sketch)?;
+        let path = path_of(path_sketch, &path_frame, &s.path.curves, profile_centre(&profile))?;
+        // A profile whose plane holds the path's direction sweeps into a sheet with no thickness,
+        // which a kernel may build without complaint.
+        if let Some(t) = path.curves.first().and_then(start_direction)
+            && profile.frame.z().dot(t).abs() < 1f64.to_radians().sin()
+        {
+            return Err("The profile lies along the path: its sketch plane holds the direction the path starts in, so the sweep would have no thickness. Draw the profile on a plane across the path, for example square to its first line.".into());
+        }
+        let orientation = if s.fixed { SweepOrientation::Fixed } else { SweepOrientation::Frenet };
+        let op = self.k.sweep(&profile, &path, &SweepOpts { orientation, solid: true })?;
+        let faces = self.k.topology(op.shape)?.faces;
+        let names = names_of_sweep(&op.history, id, faces);
+        self.combine(id, vec![(op.shape, names)], s.operation)
+    }
+
+    fn coil(&mut self, id: FeatureId, c: &Coil) -> Result<(), Stop> {
+        let (sketch, frame) = self.sketch_and_frame(c.sketch)?;
+        let axis = match &c.axis {
+            AxisRef::Origin(a) => a.axis(),
+            AxisRef::SketchLine(line) => {
+                let (a, b) = sketch.line(*line).ok_or("the coil axis is not a line of the sketch")?;
+                let (a3, b3) = (frame.plane_point(a), frame.plane_point(b));
+                Axis::new(a3, b3 - a3).ok_or("the coil axis has no length")?
+            }
+            AxisRef::Work(w) => self.work_axis(*w)?,
+        };
+        let all = regions(sketch);
+        let profile = profile(sketch, frame, &select(&all, &c.regions)?);
+        // The helix runs through the middle of the profile, round the axis.
+        let centre = profile_centre(&profile);
+        let foot = axis.origin() + axis.dir() * (centre - axis.origin()).dot(axis.dir());
+        let radius = centre.dist(foot);
+        if radius <= tenon_geom::tol::MIN_SIZE {
+            return Err("the coil profile is on its axis: move it off the axis".into());
+        }
+        // Turns closer together than the profile is tall run into each other, and a kernel may
+        // build that without complaint: refuse it here.
+        let along: Vec<f64> = profile_points(&profile).iter().map(|q| (*q - axis.origin()).dot(axis.dir())).collect();
+        let height = along.iter().copied().fold(f64::NEG_INFINITY, f64::max) - along.iter().copied().fold(f64::INFINITY, f64::min);
+        if c.pitch <= height + tenon_geom::tol::LINEAR {
+            return Err(format!(
+                "The coil's turns run into each other: the pitch ({} mm) must be more than the profile's height along the axis ({} mm). Try a larger pitch or a smaller profile.",
+                crate::explain::mm(c.pitch),
+                crate::explain::mm(height)
+            )
+            .into());
+        }
+        let helix_frame = Frame::new(foot, axis.dir(), centre - foot).ok_or("the coil axis has no direction")?;
+        let helix = Curve3::Helix { frame: helix_frame, radius, pitch: c.pitch, turns: c.turns, left: c.left };
+        let opts = SweepOpts { orientation: SweepOrientation::Binormal(axis.dir()), solid: true };
+        let op = self.k.sweep(&profile, &Path3 { curves: vec![helix] }, &opts)?;
+        let faces = self.k.topology(op.shape)?.faces;
+        let names = names_of_sweep(&op.history, id, faces);
+        self.combine(id, vec![(op.shape, names)], c.operation)
+    }
+
+    fn loft(&mut self, id: FeatureId, l: &Loft) -> Result<(), Stop> {
+        let mut sections = Vec::new();
+        for (i, s) in l.sections.iter().enumerate() {
+            let (sketch, frame) = self.sketch_and_frame(*s)?;
+            let all = regions(sketch);
+            if all.is_empty() {
+                return Err(format!("loft section {} ({}) has no closed profile", i + 1, label(self.doc, *s)).into());
+            }
+            sections.push(profile(sketch, frame, &select(&all, &RegionSel::Default)?));
+        }
+        let op = self.k.loft(&sections, &LoftOpts { solid: true, ruled: l.ruled, closed: false })?;
+        let faces = self.k.topology(op.shape)?.faces;
+        let names = names_of_sweep(&op.history, id, faces);
+        self.combine(id, vec![(op.shape, names)], l.operation)
+    }
+
     /// Adds a feature's tool solids to the part according to `operation`.
     fn combine(&mut self, id: FeatureId, tools: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>, operation: Operation) -> Result<(), Stop> {
         let kind = match operation {
@@ -1179,4 +1259,143 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
         regen_ms: regen.millis,
         mesh_ms: t0.elapsed().as_secs_f64() * 1000.0,
     })
+}
+
+/// Points along a profile's outer boundaries, in space (arcs and circles sampled; splines by
+/// their poles, which bound them).
+fn profile_points(p: &Profile) -> Vec<Vec3> {
+    let mut pts = Vec::new();
+    let round = |pts: &mut Vec<Vec2>, center: Vec2, radius: f64, a0: f64, sweep: f64| {
+        pts.extend((0..16).map(|i| {
+            let a = a0 + sweep * f64::from(i) / 16.0;
+            center + Vec2::new(a.cos(), a.sin()) * radius
+        }));
+    };
+    for r in &p.regions {
+        for c in &r.outer.curves {
+            match &c.curve {
+                Curve2::Line { start, .. } => pts.push(*start),
+                Curve2::Arc { center, radius, start_angle, end_angle } => {
+                    let mut sweep = end_angle - start_angle;
+                    while sweep <= 0.0 {
+                        sweep += std::f64::consts::TAU;
+                    }
+                    round(&mut pts, *center, *radius, *start_angle, sweep);
+                }
+                Curve2::Circle { center, radius } => round(&mut pts, *center, *radius, 0.0, std::f64::consts::TAU),
+                Curve2::BSpline { poles, .. } => pts.extend(poles.iter().copied()),
+            }
+        }
+    }
+    pts.into_iter().map(|q| p.frame.plane_point(q)).collect()
+}
+
+/// About the middle of a profile: the average of points along its outer boundaries.
+fn profile_centre(p: &Profile) -> Vec3 {
+    let pts = profile_points(p);
+    let n = pts.len().max(1) as f64;
+    pts.into_iter().fold(Vec3::ZERO, |a, b| a + b) * (1.0 / n)
+}
+
+/// A sweep path: the sketch's lines and arcs `curves`, joined end to end and placed in space,
+/// starting at whichever end of the chain is nearer `near` (the profile).
+/// The unit direction a path curve sets off in.
+fn start_direction(c: &Curve3) -> Option<Vec3> {
+    match c {
+        Curve3::Line { start, end } => Some((*end - *start).normalized()).filter(|d| d.len() > 0.0),
+        Curve3::Arc { start, mid, end } => {
+            // Square to the radius at the start, in the arc's plane, heading towards the middle.
+            let (a, b) = (*mid - *start, *end - *start);
+            let n = a.cross(b);
+            let centre = *start + (b.cross(n) * a.dot(a) + n.cross(a) * b.dot(b)) * (0.5 / n.dot(n));
+            let t = Some(n.cross(*start - centre).normalized()).filter(|d| d.len() > 0.0)?;
+            Some(if t.dot(a) < 0.0 { -t } else { t })
+        }
+        Curve3::Helix { .. } => None,
+    }
+}
+
+fn path_of(sketch: &Sketch, frame: &Frame, curves: &[EntityId], near: Vec3) -> Result<Path3, String> {
+    // Each curve by its end point ids: lines and arcs share points where they join.
+    let mut segs = Vec::new();
+    for id in curves {
+        match sketch.geometry(*id) {
+            Some(tenon_sketch::Geometry::Line { start, end } | tenon_sketch::Geometry::Arc { start, end, .. }) => segs.push((*id, *start, *end)),
+            Some(_) => return Err(format!("a sweep path is lines and arcs only, and e{} is neither", id.0)),
+            None => return Err(format!("the sweep path's e{} is not in its sketch", id.0)),
+        }
+    }
+    let ends = |p: EntityId| segs.iter().filter(|s| s.1 == p || s.2 == p).count();
+    if segs.is_empty() {
+        return Err("the sweep path is empty".into());
+    }
+    // Start from a free end (an open path), or anywhere on a closed one.
+    let first = segs.iter().position(|s| ends(s.1) == 1 || ends(s.2) == 1).unwrap_or(0);
+    let mut at = if ends(segs[first].2) == 1 && ends(segs[first].1) != 1 { segs[first].2 } else { segs[first].1 };
+    let mut left = segs.clone();
+    let mut chain = Vec::new();
+    while !left.is_empty() {
+        let Some(i) = left.iter().position(|s| s.1 == at || s.2 == at) else {
+            return Err("the sweep path's curves do not join end to end".into());
+        };
+        let (id, a, b) = left.remove(i);
+        let forward = a == at;
+        at = if forward { b } else { a };
+        chain.push((id, forward));
+    }
+    let mut out = Vec::new();
+    for (id, forward) in &chain {
+        if let Some((a, b)) = sketch.line(*id) {
+            let (a, b) = if *forward { (a, b) } else { (b, a) };
+            out.push(Curve3::Line { start: frame.plane_point(a), end: frame.plane_point(b) });
+        } else if let Some(arc) = sketch.arc(*id) {
+            let at_angle = |t: f64| frame.plane_point(arc.center + Vec2::new(t.cos(), t.sin()) * arc.radius);
+            let (s, m, e) = (at_angle(arc.start), at_angle(arc.start + arc.sweep() / 2.0), at_angle(arc.start + arc.sweep()));
+            let (s, e) = if *forward { (s, e) } else { (e, s) };
+            out.push(Curve3::Arc { start: s, mid: m, end: e });
+        }
+    }
+    // Begin at the end nearer the profile.
+    let start_of = |c: &Curve3| match c {
+        Curve3::Line { start, .. } | Curve3::Arc { start, .. } => *start,
+        Curve3::Helix { frame, .. } => frame.origin(),
+    };
+    let end_of = |c: &Curve3| match c {
+        Curve3::Line { end, .. } | Curve3::Arc { end, .. } => *end,
+        Curve3::Helix { frame, .. } => frame.origin(),
+    };
+    let (Some(head), Some(tail)) = (out.first(), out.last()) else { return Err("the sweep path is empty".into()) };
+    if end_of(tail).dist(near) < start_of(head).dist(near) {
+        out.reverse();
+        for c in &mut out {
+            let turned = match &*c {
+                Curve3::Line { start, end } => Curve3::Line { start: *end, end: *start },
+                Curve3::Arc { start, mid, end } => Curve3::Arc { start: *end, mid: *mid, end: *start },
+                h => h.clone(),
+            };
+            *c = turned;
+        }
+    }
+    Ok(Path3 { curves: out })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_path_sets_off_along_its_first_line_or_square_to_its_first_arcs_radius() {
+        let line = Curve3::Line { start: Vec3::ZERO, end: Vec3::new(0.0, 0.0, 5.0) };
+        assert_eq!(start_direction(&line), Some(Vec3::Z));
+        assert_eq!(start_direction(&Curve3::Line { start: Vec3::X, end: Vec3::X }), None);
+        // A quarter circle round (10, 0, 0) from the origin, up and over: it sets off along +Z.
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let arc = Curve3::Arc { start: Vec3::ZERO, mid: Vec3::new(10.0 - 10.0 * s, 0.0, 10.0 * s), end: Vec3::new(10.0, 0.0, 10.0) };
+        let t = start_direction(&arc).unwrap();
+        assert!((t - Vec3::Z).len() < 1e-12, "{t:?}");
+        // Run backwards it sets off along -X from its far end.
+        let back = Curve3::Arc { start: Vec3::new(10.0, 0.0, 10.0), mid: Vec3::new(10.0 - 10.0 * s, 0.0, 10.0 * s), end: Vec3::ZERO };
+        let t = start_direction(&back).unwrap();
+        assert!((t + Vec3::X).len() < 1e-12, "{t:?}");
+    }
 }
