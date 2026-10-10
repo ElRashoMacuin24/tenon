@@ -1,5 +1,5 @@
-Item,Part,Name,Quantity,Volume (mm^3)
-1,base,Base,1,30994.690
-2,arm,Arm,1,6875.752
-3,pin,Pin,2,1445.133
-4,block,Block,1,8000.000
+Item,Part,Name,Quantity,Volume (mm^3),Material,Mass (g)
+1,base,Base,1,30994.690,,30.995
+2,arm,Arm,1,6875.752,,6.876
+3,pin,Pin,2,1445.133,,1.445
+4,block,Block,1,8000.000,,8.000

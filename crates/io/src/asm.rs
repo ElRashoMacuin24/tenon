@@ -229,10 +229,13 @@ fn csv(s: &str) -> String {
 
 /// The parts list as CSV text.
 pub fn bom_csv(asm: &Assembly, parts: &Parts) -> String {
-    let mut out = String::from("Item,Part,Name,Quantity,Volume (mm^3)\r\n");
+    // (Material and mass came with M6, after the columns scripts may already read by position.)
+    let mut out = String::from("Item,Part,Name,Quantity,Volume (mm^3),Material,Mass (g)\r\n");
     for r in tenon_assembly::session::bom(asm, parts) {
         let volume = r.volume.map(|v| format!("{v:.3}")).unwrap_or_default();
-        out.push_str(&format!("{},{},{},{},{}\r\n", r.item, csv(&r.part), csv(&r.name), r.quantity, volume));
+        let material = csv(r.material.as_deref().unwrap_or(""));
+        let mass = r.mass.map(|m| format!("{m:.3}")).unwrap_or_default();
+        out.push_str(&format!("{},{},{},{},{volume},{material},{mass}\r\n", r.item, csv(&r.part), csv(&r.name), r.quantity));
     }
     out
 }

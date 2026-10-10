@@ -32,7 +32,7 @@ started through the pixi task.
 | `run_command` | `command`, `params` | The command's result (new feature and entity ids, ...) |
 | `model_tree` | | Regenerates; the feature tree with each feature's status, body count, first error |
 | `query_topology` | `body` (optional) | Solids, faces, edges, vertices, validity, bounding box per body; with `body`, its faces with persistent names, surface type, area, centroid |
-| `measure` | `density` (optional) | Volume, area, mass, centre of mass, inertia per body; bounding boxes |
+| `measure` | `density` (g/cm^3, optional: the part's material's, or 1 without one) | Volume (mm^3), area, mass (g), centre of mass, inertia per body; the total mass and the material; bounding boxes |
 | `render_png` | `view`, `width`, `height` | A PNG image (software renderer; iso, front, back, left, right, top, bottom) |
 | `export` | `format` (`tenon`, `step`, `stl`), `path` | Writes the file |
 

@@ -224,7 +224,7 @@ pub const RIBBON: &[RibbonTab] = &[
             title: "Measure",
             commands: &[
                 large("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 0),
-                large("inspect.mass", "Mass\nProperties", "Volume, area, centre of mass, inertia", Icon::MassProps, 0),
+                large("inspect.mass", "Properties", "Material, appearance, mass, volume and centre of gravity", Icon::MassProps, 0),
             ],
         }],
     },
@@ -243,7 +243,16 @@ pub const RIBBON: &[RibbonTab] = &[
         panels: &[
             RibbonPanel {
                 title: "Parameters",
-                commands: &[large("tools.parameters", "Parameters", "Named parameters and expressions", Icon::Parameters, 0)],
+                commands: &[
+                    large("tools.parameters", "Parameters", "Named parameters and expressions", Icon::Parameters, 0),
+                    large(
+                        "tools.table",
+                        "Design\nTable",
+                        "The sizes this part comes in: a row for each, a column for each parameter that differs",
+                        Icon::Bom,
+                        0,
+                    ),
+                ],
             },
             RibbonPanel {
                 title: "Update",
@@ -349,7 +358,13 @@ pub const ASM_RIBBON: &[RibbonTab] = &[
             },
             RibbonPanel {
                 title: "Measure",
-                commands: &[large("inspect.mass", "Mass\nProperties", "Volume, area, centre of mass, inertia", Icon::MassProps, 0)],
+                commands: &[large(
+                    "inspect.mass",
+                    "Properties",
+                    "Mass, volume and centre of gravity, each component at its part's material",
+                    Icon::MassProps,
+                    0,
+                )],
             },
         ],
     },
@@ -368,7 +383,13 @@ pub const ASM_RIBBON: &[RibbonTab] = &[
         panels: &[
             RibbonPanel {
                 title: "Bill of Materials",
-                commands: &[large("asm.bom", "Bill of\nMaterials", "The parts list with quantities and volumes; export it as CSV", Icon::Bom, 0)],
+                commands: &[large(
+                    "asm.bom",
+                    "Bill of\nMaterials",
+                    "The parts list with quantities, materials and masses; export it as CSV",
+                    Icon::Bom,
+                    0,
+                )],
             },
             RibbonPanel { title: "Update", commands: &[large("asm.update", "Update", "Solve every relationship again", Icon::Update, 0)] },
         ],

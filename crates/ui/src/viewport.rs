@@ -215,6 +215,21 @@ fn srgb(c: Color32) -> [f32; 3] {
 const BODY: Color32 = Color32::from_rgb(0xb8, 0xc0, 0xc8);
 const BODY_DIM: Color32 = Color32::from_rgb(0x8a, 0x92, 0x9a);
 const EDGE: Color32 = Color32::from_rgb(0x18, 0x1c, 0x22);
+/// Edges on a body too dark for `EDGE` to show.
+const EDGE_LIGHT: Color32 = Color32::from_rgb(0x9a, 0xa2, 0xaa);
+
+/// The edge colour that shows on faces of colour `face`.
+fn edge_on(face: Color32) -> Color32 {
+    let luma = 0.299 * f32::from(face.r()) + 0.587 * f32::from(face.g()) + 0.114 * f32::from(face.b());
+    if luma < 70.0 { EDGE_LIGHT } else { EDGE }
+}
+
+/// `c` darkened to `by` of its brightness.
+fn shaded(c: Color32, by: f32) -> Color32 {
+    let s = |v: u8| (f32::from(v) * by).round() as u8;
+    Color32::from_rgb(s(c.r()), s(c.g()), s(c.b()))
+}
+
 pub(crate) const HOVER: Color32 = Color32::from_rgb(0x8f, 0xdc, 0xd6);
 pub(crate) const SELECTED: Color32 = Color32::from_rgb(0xf0, 0xa0, 0x3c);
 /// Other components while a part is edited in place.
@@ -768,16 +783,32 @@ impl Workbench {
         self.scene.threads.iter().filter(|t| !t.mark.modelled).filter_map(|t| t.at).collect()
     }
 
+    /// The colours body `bi` is drawn in: (faces, edges, faces with a cosmetic thread). A part
+    /// with a material or an appearance is drawn in that colour.
+    pub(crate) fn body_palette(&self, bi: usize) -> (Color32, Color32, Color32) {
+        let own = self.body_part(bi).1.map(|[r, g, b]| Color32::from_rgb(r, g, b));
+        let face = own.unwrap_or(BODY);
+        // In wireframe the edges are all there is, so they take the body colour.
+        let edge = if self.view.style == VisualStyle::Wireframe { face } else { edge_on(face) };
+        (face, edge, own.map_or(THREAD, |c| shaded(c, 0.7)))
+    }
+
     fn colors(&self) -> Vec<BodyColors> {
         let dim = matches!(self.mode, Mode::Sketch(_));
         let lit = self.highlights();
         (0..self.scene.bodies.len())
             .map(|bi| {
-                // In wireframe the edges are all there is, so they take the body colour.
-                let edge = if self.view.style == VisualStyle::Wireframe { BODY } else { EDGE };
-                let mut c = BodyColors { face: srgb(if dim { BODY_DIM } else { BODY }), edge: srgb(edge), ..Default::default() };
+                let (face, edge, thread) = self.body_palette(bi);
+                let face = if !dim {
+                    face
+                } else if face == BODY {
+                    BODY_DIM
+                } else {
+                    shaded(face, 0.75)
+                };
+                let mut c = BodyColors { face: srgb(face), edge: srgb(edge), ..Default::default() };
                 // Cosmetic threads first: a highlight on the same face goes over the tint.
-                c.faces.extend(self.thread_faces().into_iter().filter(|(body, _)| *body == bi).map(|(_, face)| (face, srgb(THREAD))));
+                c.faces.extend(self.thread_faces().into_iter().filter(|(body, _)| *body == bi).map(|(_, face)| (face, srgb(thread))));
                 for (p, color) in lit.iter().map(|(p, c)| (p, *c)) {
                     match p {
                         Pick::Face { body, face } if *body == bi => c.faces.push((*face, srgb(color))),
@@ -880,11 +911,13 @@ impl Workbench {
                             Pick::Edge { .. } => None,
                         })
                         // (The first colour listed for a face is the one used here.)
-                        .chain(self.thread_faces().into_iter().map(|(body, face)| (body, face, to8(THREAD))))
+                        .chain(self.thread_faces().into_iter().map(|(body, face)| (body, face, to8(self.body_palette(body).2))))
                         .collect();
                     let style = Style {
                         body: to8(BODY),
-                        edge: to8(if self.view.style == VisualStyle::Wireframe { BODY } else { EDGE }),
+                        body_colors: (0..self.scene.bodies.len()).map(|bi| (bi, to8(self.body_palette(bi).0))).collect(),
+                        // (One edge colour here: the first body's.)
+                        edge: to8(self.body_palette(0).1),
                         face_colors,
                         faces: self.view.style.faces(),
                         edges: self.view.style.edges(),

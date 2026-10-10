@@ -1,0 +1,56 @@
+# Tenon part file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon"
+version = 2
+name = "Spring"
+next_feature = 2
+
+[material]
+name = "Stainless steel"
+density = 8.0
+color = "#b4bac1"
+
+[table]
+active = "Soft"
+columns = ["d0", "d1"]
+rows = [
+  { name = "Soft", values = [5.0, 6.0] },
+  { name = "Stiff", values = [3.0, 10.0] },
+]
+
+[parameters]
+next = 2
+user = []
+model = [
+  { name = "d0", target = { kind = "feature", feature = 2, field = "/pitch" } },
+  { name = "d1", target = { kind = "feature", feature = 2, field = "/turns" } },
+]
+
+[[feature]]
+id = 1
+name = "Sketch1"
+suppressed = false
+type = "sketch"
+plane = { origin = "XZ" }
+next_entity = 3
+next_constraint = 1
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 8.0, y = 0.0 }, construction = false },
+  { id = 3, type = "circle", center = 2, radius = 1.0, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+]
+
+[[feature]]
+id = 2
+name = "Coil1"
+suppressed = false
+type = "coil"
+sketch = 1
+regions = "default"
+axis = { origin = "Z" }
+pitch = 5.0
+turns = 6.0
+left = false
+operation = "join"

@@ -1,0 +1,67 @@
+# Tenon part file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon"
+version = 2
+name = "Handle"
+next_feature = 3
+appearance = "#d04030"
+
+[material]
+name = "ABS"
+density = 1.04
+color = "#e8e4d8"
+
+[parameters]
+next = 0
+user = []
+model = []
+
+[[feature]]
+id = 1
+name = "Sketch1"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 3
+next_constraint = 1
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0 }, construction = false },
+  { id = 3, type = "circle", center = 2, radius = 3.0, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+]
+
+[[feature]]
+id = 2
+name = "Sketch2"
+suppressed = false
+type = "sketch"
+plane = { origin = "XZ" }
+next_entity = 9
+next_constraint = 1
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0 }, construction = false },
+  { id = 3, type = "point", pos = { x = 0.0, y = 20.0 }, construction = false },
+  { id = 4, type = "line", start = 2, end = 3, construction = false },
+  { id = 5, type = "point", pos = { x = 10.0, y = 30.0 }, construction = false },
+  { id = 6, type = "point", pos = { x = 40.0, y = 30.0 }, construction = false },
+  { id = 7, type = "line", start = 5, end = 6, construction = false },
+  { id = 8, type = "point", pos = { x = 10.0, y = 20.0 }, construction = false },
+  { id = 9, type = "arc", center = 8, start = 5, end = 3, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+]
+
+[[feature]]
+id = 3
+name = "Sweep1"
+suppressed = false
+type = "sweep"
+sketch = 1
+regions = "default"
+path = { sketch = 2, curves = [4, 7, 9] }
+fixed = false
+operation = "join"

@@ -102,9 +102,23 @@ fn software_render_draws_the_cube_and_encodes_png() {
     let green = render(&[&m], &c, 320, 240, &Style { body: [0, 255, 0, 255], ..Style::default() });
     let body = green.rgba.as_chunks::<4>().0.iter().filter(|p| p[1] > p[0].saturating_add(50) && p[1] > p[2].saturating_add(50)).count();
     assert!(body > 5000, "the cube covers a good part of the image: {body} pixels");
-    // Highlighting a face changes pixels.
+    // A body with a colour of its own (its part's material) is drawn in it, exactly as if it
+    // were the colour of every body; a colour for some other body changes nothing.
+    let own = render(&[&m], &c, 320, 240, &Style { body_colors: vec![(0, [0, 255, 0, 255])], ..Style::default() });
+    assert_eq!(own.rgba, green.rgba);
+    let other = render(&[&m], &c, 320, 240, &Style { body_colors: vec![(1, [0, 255, 0, 255])], ..Style::default() });
+    assert_eq!(other.rgba, img.rgba);
+    // Highlighting a face changes pixels, also on a body with its own colour.
     let lit = render(&[&m], &c, 320, 240, &Style { face_colors: vec![(0, 1, [255, 0, 0, 255])], ..Style::default() });
     assert_ne!(lit.rgba, img.rgba);
+    let lit_own = render(
+        &[&m],
+        &c,
+        320,
+        240,
+        &Style { body_colors: vec![(0, [0, 255, 0, 255])], face_colors: vec![(0, 1, [255, 0, 0, 255])], ..Style::default() },
+    );
+    assert!(lit_own.rgba != own.rgba && lit_own.rgba != lit.rgba);
     let png = encode_png(&img).unwrap();
     assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
     // Degenerate sizes are clamped, not panics.

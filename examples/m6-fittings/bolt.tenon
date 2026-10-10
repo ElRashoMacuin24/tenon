@@ -1,0 +1,117 @@
+# Tenon part file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon"
+version = 2
+name = "Bolt"
+next_feature = 5
+
+[material]
+name = "Steel, mild"
+density = 7.85
+color = "#8a9199"
+
+[table]
+active = "M8x30"
+columns = ["d1"]
+rows = [
+  { name = "M8x30", values = [30.0] },
+  { name = "M8x50", values = [50.0] },
+]
+
+[parameters]
+next = 3
+user = []
+model = [
+  { name = "d0", target = { kind = "feature", feature = 2, field = "/extent/distance" } },
+  { name = "d1", target = { kind = "feature", feature = 4, field = "/extent/distance" } },
+  { name = "d2", target = { kind = "feature", feature = 5, field = "/length/distance" } },
+]
+
+[[feature]]
+id = 1
+name = "Sketch1"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 15
+next_constraint = 12
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0 }, construction = false },
+  { id = 3, type = "circle", center = 2, radius = 7.5, construction = true },
+  { id = 4, type = "point", pos = { x = 7.5, y = 0.0 }, construction = false },
+  { id = 5, type = "point", pos = { x = 3.75, y = 6.495190528 }, construction = false },
+  { id = 6, type = "point", pos = { x = -3.75, y = 6.495190528 }, construction = false },
+  { id = 7, type = "point", pos = { x = -7.5, y = 0.0 }, construction = false },
+  { id = 8, type = "point", pos = { x = -3.75, y = -6.495190528 }, construction = false },
+  { id = 9, type = "point", pos = { x = 3.75, y = -6.495190528 }, construction = false },
+  { id = 10, type = "line", start = 4, end = 5, construction = false },
+  { id = 11, type = "line", start = 5, end = 6, construction = false },
+  { id = 12, type = "line", start = 6, end = 7, construction = false },
+  { id = 13, type = "line", start = 7, end = 8, construction = false },
+  { id = 14, type = "line", start = 8, end = 9, construction = false },
+  { id = 15, type = "line", start = 9, end = 4, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+  { id = 2, type = "point_on_curve", point = 4, curve = 3 },
+  { id = 3, type = "point_on_curve", point = 5, curve = 3 },
+  { id = 4, type = "point_on_curve", point = 6, curve = 3 },
+  { id = 5, type = "point_on_curve", point = 7, curve = 3 },
+  { id = 6, type = "point_on_curve", point = 8, curve = 3 },
+  { id = 7, type = "point_on_curve", point = 9, curve = 3 },
+  { id = 8, type = "equal", a = 10, b = 11 },
+  { id = 9, type = "equal", a = 11, b = 12 },
+  { id = 10, type = "equal", a = 12, b = 13 },
+  { id = 11, type = "equal", a = 13, b = 14 },
+  { id = 12, type = "equal", a = 14, b = 15 },
+]
+
+[[feature]]
+id = 2
+name = "Extrusion1"
+suppressed = false
+type = "extrude"
+sketch = 1
+regions = "default"
+extent = { distance = 5.3 }
+reverse = false
+operation = "join"
+
+[[feature]]
+id = 3
+name = "Sketch2"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 3
+next_constraint = 1
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0 }, construction = false },
+  { id = 3, type = "circle", center = 2, radius = 4.0, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+]
+
+[[feature]]
+id = 4
+name = "Extrusion2"
+suppressed = false
+type = "extrude"
+sketch = 3
+regions = "default"
+extent = { distance = 30.0 }
+reverse = true
+operation = "join"
+
+[[feature]]
+id = 5
+name = "Thread1"
+suppressed = false
+type = "thread"
+face = { origin = { type = "side", feature = 4, curve = 3 }, fingerprint = { surface = "cylinder", direction = { x = 0.0, y = 0.0, z = 1.0 }, centroid = { x = 0.0, y = 0.0, z = -15.0 }, area = 753.982236862 } }
+length = { distance = 20.0 }
+reverse = false
+left = false
+modelled = true

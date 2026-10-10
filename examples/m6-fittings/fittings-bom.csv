@@ -1,0 +1,5 @@
+Item,Part,Name,Quantity,Volume (mm^3),Material,Mass (g)
+1,nozzle,Nozzle,1,34993.304,PLA,43.392
+2,bolt,Bolt,1,2110.172,"Steel, mild",16.565
+3,spring,Spring,1,947.481,Stainless steel,7.580
+4,handle,Handle,1,1857.849,ABS,1.932

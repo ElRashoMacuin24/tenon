@@ -10,7 +10,8 @@
 //!
 //! A string `"$name.path"` in `with` is replaced by that part of the result of the step saved
 //! `as` `name` (path segments are object keys or array indices; `"$$"` escapes a dollar sign).
-//! `expect` checks parts of a step's result: numbers within a relative 1e-6, anything else exactly.
+//! `expect` checks parts of a step's result: numbers within a relative 1e-6 (or the step's own
+//! `within`, for values the kernel approximates), anything else exactly.
 //! The format is documented in docs/scripts.md.
 
 use std::collections::BTreeMap;
@@ -22,6 +23,8 @@ use crate::engine::Engine;
 
 /// Relative tolerance for numeric `expect` checks.
 pub const EXPECT_REL: f64 = 1e-6;
+/// The loosest tolerance a step may ask for with `within`: beyond it a check says little.
+pub const MAX_WITHIN: f64 = 0.1;
 /// Most steps a script may have (hostile-input cap).
 pub const MAX_STEPS: usize = 100_000;
 
@@ -35,6 +38,10 @@ pub struct Step {
     pub save_as: Option<String>,
     #[serde(default)]
     pub expect: Map<String, Value>,
+    /// The relative tolerance of this step's numeric expectations, in place of [`EXPECT_REL`]:
+    /// for values the kernel approximates (a coil's volume, a thread's groove).
+    #[serde(default)]
+    pub within: Option<f64>,
     /// A note for readers; ignored.
     #[serde(default)]
     pub note: Option<String>,
@@ -61,6 +68,11 @@ impl Script {
         };
         if script.steps.len() > MAX_STEPS {
             return Err(format!("a script may have at most {MAX_STEPS} steps"));
+        }
+        for (i, step) in script.steps.iter().enumerate() {
+            if step.within.is_some_and(|w| !(w.is_finite() && w > 0.0 && w <= MAX_WITHIN)) {
+                return Err(format!("step {} ({}): `within` must be more than 0 and at most {MAX_WITHIN}", i + 1, step.run));
+            }
         }
         Ok(script)
     }
@@ -96,7 +108,7 @@ pub fn run(engine: &mut Engine, script: &Script) -> Result<Vec<StepResult>, (Vec
         let fail = |message: String| ScriptError { step: i + 1, run: step.run.clone(), message };
         let outcome = substitute(&step.with, &saved)
             .and_then(|params| engine.exec(&step.run, &if params.is_null() { json!({}) } else { params }))
-            .and_then(|result| check(&result, &step.expect).map(|()| result));
+            .and_then(|result| check(&result, &step.expect, step.within.unwrap_or(EXPECT_REL)).map(|()| result));
         match outcome {
             Ok(result) => {
                 if let Some(name) = &step.save_as {
@@ -137,16 +149,17 @@ fn lookup<'v, 'p>(mut v: &'v Value, path: impl Iterator<Item = &'p str>) -> Opti
     Some(v)
 }
 
-/// Checks `expect` against a result.
-fn check(result: &Value, expect: &Map<String, Value>) -> Result<(), String> {
+/// Checks `expect` against a result, numbers within the relative tolerance `rel`.
+fn check(result: &Value, expect: &Map<String, Value>, rel: f64) -> Result<(), String> {
     for (path, want) in expect {
         let got = lookup(result, path.split('.')).ok_or_else(|| format!("expected `{path}` in the result, which is {result}"))?;
         let ok = match (got.as_f64(), want.as_f64()) {
-            (Some(g), Some(w)) => (g - w).abs() <= EXPECT_REL * w.abs().max(1.0),
+            (Some(g), Some(w)) => (g - w).abs() <= rel * w.abs().max(1.0),
             _ => got == want,
         };
         if !ok {
-            return Err(format!("expected `{path}` = {want}, got {got}"));
+            let note = if rel == EXPECT_REL { String::new() } else { format!(" (within {rel})") };
+            return Err(format!("expected `{path}` = {want}{note}, got {got}"));
         }
     }
     Ok(())
@@ -173,9 +186,18 @@ mod tests {
         let mut e = Map::new();
         e.insert("bodies.0.volume".into(), json!(1000.0));
         e.insert("bodies.0.valid".into(), json!(true));
-        assert!(check(&r, &e).is_ok());
+        assert!(check(&r, &e, EXPECT_REL).is_ok());
         e.insert("bodies.0.volume".into(), json!(1001.0));
-        assert!(check(&r, &e).unwrap_err().contains("expected `bodies.0.volume`"));
+        assert!(check(&r, &e, EXPECT_REL).unwrap_err().contains("expected `bodies.0.volume`"));
+        // A step may ask for a looser check, and the failure says how loose it was.
+        assert!(check(&r, &e, 2e-3).is_ok());
+        e.insert("bodies.0.volume".into(), json!(1010.0));
+        assert!(check(&r, &e, 2e-3).unwrap_err().contains("= 1010.0 (within 0.002), got 1000.0004"));
+        assert_eq!(Script::parse(r#"[{"run": "model.mass", "within": 0.01}]"#).unwrap().steps[0].within, Some(0.01));
+        for bad in ["0", "-1", "0.5"] {
+            let e = Script::parse(&format!(r#"[{{"run": "model.tree"}}, {{"run": "model.mass", "within": {bad}}}]"#)).unwrap_err();
+            assert!(e.contains("step 2 (model.mass): `within`"), "{e}");
+        }
     }
 
     #[test]

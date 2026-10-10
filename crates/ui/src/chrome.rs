@@ -39,6 +39,9 @@ pub(crate) struct Chrome {
     pub about: bool,
     pub mass: bool,
     pub options: bool,
+    /// The Design Table dialog is open, and the parameters ticked in it for a new table.
+    pub table: bool,
+    pub table_pick: std::collections::BTreeSet<String>,
     /// The Parameters dialog is open.
     pub params: bool,
     /// A browser row being dragged.
@@ -83,6 +86,8 @@ impl Default for Chrome {
             mass: false,
             options: false,
             params: false,
+            table: false,
+            table_pick: Default::default(),
             browser_drag: None,
             radial: None,
             theme: ThemeName::default(),
@@ -828,32 +833,10 @@ impl Workbench {
         });
         self.chrome.options = options;
 
-        let mut mass = self.chrome.mass;
-        egui::Window::new("Mass Properties").open(&mut mass).collapsible(false).resizable(false).default_width(340.0).show(ui.ctx(), |ui| {
-            if self.scene.bodies.is_empty() {
-                ui.label("There is no solid yet.");
-            }
-            for (i, b) in self.scene.bodies.iter().enumerate() {
-                let c = b.mass.center_of_mass;
-                ui.strong(format!("Solid{}", i + 1));
-                egui::Grid::new(("mass", i)).num_columns(2).show(ui, |ui| {
-                    ui.label("Volume");
-                    ui.label(format!("{:.3} mm^3", b.mass.volume));
-                    ui.end_row();
-                    ui.label("Surface area");
-                    ui.label(format!("{:.3} mm^2", b.mass.area));
-                    ui.end_row();
-                    ui.label("Centre of mass");
-                    ui.label(format!("{:.3}, {:.3}, {:.3} mm", c.x, c.y, c.z));
-                    ui.end_row();
-                });
-                ui.add_space(4.0);
-            }
-            ui.small("Mass equals volume at unit density; materials arrive in M6.");
-        });
-        self.chrome.mass = mass;
         let t = crate::theme::Tokens::of(self.chrome.theme);
         self.parameters_window(ui, &t);
+        self.part_properties_window(ui, &t);
+        self.design_table_window(ui, &t);
     }
 }
 

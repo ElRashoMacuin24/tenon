@@ -61,7 +61,7 @@ pub fn tools() -> Vec<Value> {
         tool(
             "measure",
             "Mass properties of each body: volume (mm^3), surface area (mm^2), mass, centre of mass, inertia tensor; and the overall bounding box.",
-            json!({ "density": { "type": "number", "description": "Mass per mm^3 (default 1)" } }),
+            json!({ "density": { "type": "number", "description": "g/cm^3 (default: the material of the part, or 1 without one)" } }),
             &[],
         ),
         tool(

@@ -1952,3 +1952,183 @@ fn the_status_bar_changes_how_dimensions_read_and_hides_constraint_symbols() {
     assert!(!drawn(&d, "H"), "{:?}", d.texts());
     assert!(d.texts().iter().any(|t| t == "Constraints: hidden"));
 }
+
+/// A 40 x 20 x 10 block whose width is the dimension d0, depth d1 and height d2.
+fn dimensioned_block(wb: &mut Workbench) {
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(wb);
+    let lines = wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap()["lines"].clone();
+    for (line, value) in [(0, 40), (1, 20)] {
+        wb.exec("sketch.constrain", json!({ "sketch": f.0, "constraint": { "type": "length", "line": lines[line], "value": value } })).unwrap();
+    }
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+}
+
+/// Runs the frames a new window takes to size itself.
+fn open_window(d: &mut Driver, wb: &mut Workbench) {
+    for _ in 0..5 {
+        d.frame(wb, vec![]);
+    }
+}
+
+#[test]
+fn a_part_is_given_a_material_a_density_and_a_colour_in_its_properties() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    dimensioned_block(&mut wb);
+    d.settle(&mut wb);
+    let shows = |d: &Driver, text: &str| d.texts().iter().any(|t| t == text);
+    let standard = wb.body_palette(0).0;
+
+    wb.run_ui("inspect.mass").unwrap();
+    open_window(&mut d, &mut wb);
+    // 8 cubic centimetres of nothing in particular weigh as water does.
+    assert!(shows(&d, "8 g") && shows(&d, "8000 mm³"), "{:?}", d.texts());
+
+    // The material is picked from the list: brass is 8.5 g/cm^3 and brass-coloured.
+    let combo = d.text_pos("Generic").expect("the material box");
+    d.click(&mut wb, combo);
+    d.frame(&mut wb, vec![]);
+    let brass = d.text_pos("Brass").expect("Brass in the list");
+    d.click(&mut wb, brass);
+    open_window(&mut d, &mut wb);
+    assert_eq!(wb.document().material().map(|m| (m.name.as_str(), m.density)), Some(("Brass", 8.5)), "{}", wb.status());
+    assert!(shows(&d, "68 g"), "{:?}", d.texts());
+    assert_eq!(wb.body_palette(0).0, egui::Color32::from_rgb(0xc9, 0xa6, 0x4a));
+
+    // A density of one's own keeps the name.
+    type_into(&mut d, &mut wb, "tn_partprops_density", "8.4");
+    d.tap(&mut wb, egui::Key::Enter);
+    open_window(&mut d, &mut wb);
+    assert_eq!(wb.document().material().map(|m| (m.name.as_str(), m.density)), Some(("Brass", 8.4)), "{}", wb.status());
+    assert!(shows(&d, "67.2 g"), "{:?}", d.texts());
+    // What is not a density is refused, and says so.
+    type_into(&mut d, &mut wb, "tn_partprops_density", "heavy");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status_error && wb.status().contains("is not a density"), "{}", wb.status());
+    type_into(&mut d, &mut wb, "tn_partprops_density", "0");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status_error && wb.status().contains("more than 0"), "{}", wb.status());
+    assert_eq!(wb.document().density(), 8.4);
+
+    // A swatch gives the part a colour of its own; As Material takes it back.
+    d.click(&mut wb, pressable(&d, "tn_partprops_swatch_#d04030"));
+    open_window(&mut d, &mut wb);
+    assert_eq!(wb.document().appearance(), Some("#d04030"), "{}", wb.status());
+    assert_eq!(wb.body_palette(0).0, egui::Color32::from_rgb(0xd0, 0x40, 0x30));
+    let back = d.text_pos("As Material").expect("the As Material button");
+    d.click(&mut wb, back);
+    open_window(&mut d, &mut wb);
+    assert_eq!(wb.document().appearance(), None);
+    assert_eq!(wb.body_palette(0).0, egui::Color32::from_rgb(0xc9, 0xa6, 0x4a));
+    // A colour is also typed.
+    type_into(&mut d, &mut wb, "tn_partprops_color", "#3C3F44");
+    d.tap(&mut wb, egui::Key::Enter);
+    open_window(&mut d, &mut wb);
+    assert_eq!(wb.document().appearance(), Some("#3c3f44"), "{}", wb.status());
+    // (On a part this dark the edges are drawn light.)
+    assert!(wb.body_palette(0).1.r() > 0x80);
+    type_into(&mut d, &mut wb, "tn_partprops_color", "red");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status_error && wb.status().contains("#rrggbb"), "{}", wb.status());
+
+    // Each change is one undo step: back to the standard part.
+    for _ in 0..5 {
+        wb.run_ui("edit.undo").unwrap();
+    }
+    d.frame(&mut wb, vec![]);
+    assert!(wb.document().material().is_none() && wb.document().appearance().is_none());
+    assert_eq!(wb.body_palette(0).0, standard);
+    assert!(wb.chrome.mass, "the window stays open");
+}
+
+#[test]
+fn a_design_table_is_made_from_ticked_parameters_and_its_rows_resize_the_part() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    dimensioned_block(&mut wb);
+    d.settle(&mut wb);
+
+    wb.run_ui("tools.table").unwrap();
+    open_window(&mut d, &mut wb);
+    // Nothing ticked: Create Table does nothing.
+    d.click(&mut wb, pressable(&d, "tn_table_create"));
+    d.frame(&mut wb, vec![]);
+    assert!(wb.document().table().is_none());
+    // Width and height go in the table; the part as it stands is its first row.
+    for name in ["d0", "d2"] {
+        let tick = pressable(&d, &format!("tn_table_pick_{name}"));
+        d.click(&mut wb, tick);
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, pressable(&d, "tn_table_create"));
+    open_window(&mut d, &mut wb);
+    let table = wb.document().table().cloned().unwrap_or_else(|| panic!("no table: {}", wb.status()));
+    assert_eq!(table.columns, ["d0", "d2"]);
+    assert_eq!((table.active.as_str(), table.rows.len(), table.rows[0].values.as_slice()), ("Size 1", 1, [40.0, 10.0].as_slice()));
+
+    // Another size: it starts as the active one, and its cells are typed into.
+    d.click(&mut wb, pressable(&d, "tn_table_add_row"));
+    open_window(&mut d, &mut wb);
+    assert_eq!(wb.document().table().unwrap().rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["Size 1", "Size 2"]);
+    let set = |d: &mut Driver, wb: &mut Workbench, row: &str, column: &str, text: &str| {
+        let at = d.ctx.read_response(egui::Id::new(("tn_table_cell", row, column))).expect("the cell").rect.center();
+        d.click(wb, at);
+        d.frame(
+            wb,
+            vec![egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }],
+        );
+        d.frame(wb, vec![egui::Event::Text(text.into())]);
+        d.tap(wb, egui::Key::Enter);
+        for _ in 0..3 {
+            d.frame(wb, vec![]);
+        }
+    };
+    set(&mut d, &mut wb, "Size 2", "d0", "60");
+    set(&mut d, &mut wb, "Size 2", "d2", "25");
+    assert_eq!(wb.document().table().unwrap().rows[1].values, [60.0, 25.0], "{}", wb.status());
+    // The part is still at Size 1.
+    assert!((volume(&wb) - 40.0 * 20.0 * 10.0).abs() < 1e-6, "{}", volume(&wb));
+
+    // Ticking the other row makes the part that size.
+    d.click(&mut wb, pressable(&d, "tn_table_row_Size 2"));
+    open_window(&mut d, &mut wb);
+    assert_eq!(wb.document().table().unwrap().active, "Size 2", "{}", wb.status());
+    assert!((volume(&wb) - 60.0 * 20.0 * 25.0).abs() < 1e-6, "{}", volume(&wb));
+    // A cell of the active row changes the part at once.
+    set(&mut d, &mut wb, "Size 2", "d2", "30");
+    assert!((volume(&wb) - 60.0 * 20.0 * 30.0).abs() < 1e-6, "{} {}", volume(&wb), wb.status());
+    // What is not a size is refused: the row keeps its value and the part its shape.
+    set(&mut d, &mut wb, "Size 2", "d0", "wide");
+    assert!(wb.status_error && wb.status().contains("is not a number"), "{}", wb.status());
+    set(&mut d, &mut wb, "Size 2", "d0", "-5");
+    assert!(wb.status_error, "{}", wb.status());
+    assert_eq!(wb.document().table().unwrap().rows[1].values, [60.0, 30.0]);
+    assert!((volume(&wb) - 60.0 * 20.0 * 30.0).abs() < 1e-6);
+
+    // Editing the part outside the table: the active row follows it.
+    wb.exec("param.set", json!({ "name": "d0", "equation": "50" })).unwrap();
+    open_window(&mut d, &mut wb);
+    assert_eq!(wb.document().table().unwrap().rows[1].values, [50.0, 30.0]);
+    // Back to the first size, by its row; undo returns to the second.
+    d.click(&mut wb, pressable(&d, "tn_table_row_Size 1"));
+    open_window(&mut d, &mut wb);
+    assert!((volume(&wb) - 40.0 * 20.0 * 10.0).abs() < 1e-6, "{} {}", volume(&wb), wb.status());
+    wb.run_ui("edit.undo").unwrap();
+    open_window(&mut d, &mut wb);
+    assert_eq!(wb.document().table().unwrap().active, "Size 2");
+    assert!((volume(&wb) - 50.0 * 20.0 * 30.0).abs() < 1e-6, "{}", volume(&wb));
+
+    // Delete Table: the part keeps the size it is at.
+    let delete = d.text_pos("Delete Table").expect("the Delete Table button");
+    d.click(&mut wb, delete);
+    open_window(&mut d, &mut wb);
+    assert!(wb.document().table().is_none(), "{}", wb.status());
+    assert!((volume(&wb) - 50.0 * 20.0 * 30.0).abs() < 1e-6);
+    assert!(wb.chrome.table, "the dialog stays open, offering to make a table again");
+    assert!(d.texts().iter().any(|t| t == "Create Table"));
+}

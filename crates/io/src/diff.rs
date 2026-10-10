@@ -165,12 +165,93 @@ fn part(a: &Value, b: &Value, out: &mut Vec<Change>) {
         };
         doc(out, format!("End of Part {} -> {}", at(a), at(b)));
     }
+    part_material(a, b, out);
     let changed = parameters(&a["params"], &b["params"], out);
     let params = &b["params"]["model"];
     let label = |f: &Value| label(f);
     let summary = |f: &Value| feature_summary(f);
     let detail = |x: &Value, y: &Value| feature_detail(x, y, params, &changed);
     records("Features", &a["features"], &b["features"], &label, &summary, &detail, out);
+    design_table(&a["table"], &b["table"], out);
+}
+
+/// What the part is made of and the colour it is shown in.
+fn part_material(a: &Value, b: &Value, out: &mut Vec<Change>) {
+    let doc = |c: &mut Vec<Change>, detail: String| c.push(Change { section: "Document", op: '~', item: String::new(), detail });
+    if !same(&a["material"], &b["material"]) {
+        let m = |v: &Value| match v["name"].as_str() {
+            Some(n) => format!("{n} ({} g/cm^3, {})", show(&v["density"]), show(&v["color"])),
+            None => "none".into(),
+        };
+        doc(out, format!("material {} -> {}", m(&a["material"]), m(&b["material"])));
+    }
+    if a["appearance"] != b["appearance"] {
+        let c = |v: &Value| v.as_str().map_or_else(|| "the material's".to_owned(), str::to_owned);
+        doc(out, format!("appearance {} -> {}", c(&a["appearance"]), c(&b["appearance"])));
+    }
+}
+
+/// The design table: made or deleted, the active row, its parameters and its rows.
+fn design_table(a: &Value, b: &Value, out: &mut Vec<Change>) {
+    let push = |out: &mut Vec<Change>, op, item: &str, detail: String| out.push(Change { section: "Design Table", op, item: item.into(), detail });
+    let columns =
+        |t: &Value| -> Vec<String> { t["columns"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(str::to_owned)).collect() };
+    // Each row as parameter -> value.
+    let rows = |t: &Value| -> Vec<(String, BTreeMap<String, Value>)> {
+        let cols = columns(t);
+        let row = |r: &Value| {
+            let values = r["values"].as_array().cloned().unwrap_or_default();
+            Some((r["name"].as_str()?.to_owned(), cols.iter().cloned().zip(values).collect()))
+        };
+        t["rows"].as_array().into_iter().flatten().filter_map(row).collect()
+    };
+    let sizes = |r: &BTreeMap<String, Value>, cols: &[String]| -> String {
+        cols.iter().filter_map(|c| Some(format!("{c} = {}", show(r.get(c)?)))).collect::<Vec<_>>().join(", ")
+    };
+    match (a.is_null(), b.is_null()) {
+        (true, true) => {}
+        (true, false) => {
+            push(out, '+', "table", format!("{} at row {}", columns(b).join(", "), show(&b["active"])));
+            for (name, r) in rows(b) {
+                push(out, '+', &name, sizes(&r, &columns(b)));
+            }
+        }
+        (false, true) => push(out, '-', "table", String::new()),
+        (false, false) => {
+            if a["active"] != b["active"] {
+                push(out, '~', "active row", format!("{} -> {}", show(&a["active"]), show(&b["active"])));
+            }
+            let (ca, cb) = (columns(a), columns(b));
+            for c in ca.iter().filter(|c| !cb.contains(c)) {
+                push(out, '-', &format!("parameter {c}"), String::new());
+            }
+            for c in cb.iter().filter(|c| !ca.contains(c)) {
+                push(out, '+', &format!("parameter {c}"), String::new());
+            }
+            let (ra, rb) = (rows(a), rows(b));
+            for (name, _) in ra.iter().filter(|r| !rb.iter().any(|q| q.0 == r.0)) {
+                push(out, '-', name, String::new());
+            }
+            for (name, r) in &rb {
+                match ra.iter().find(|p| &p.0 == name) {
+                    None => push(out, '+', name, sizes(r, &cb)),
+                    Some((_, old)) => {
+                        // (A parameter new to the table is listed above, not on every row.)
+                        let moved: Vec<String> = cb
+                            .iter()
+                            .filter_map(|c| {
+                                let (p, q) = (old.get(c)?, r.get(c)?);
+                                (!same(p, q)).then(|| format!("{c} {} -> {}", show(p), show(q)))
+                            })
+                            .collect();
+                        if !moved.is_empty() {
+                            push(out, '~', name, moved.join(", "));
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Parameter changes; returns the names whose values may have changed.

@@ -130,6 +130,49 @@ operation = "join"
 | `name` | The part's name. |
 | `next_feature` | The id the next feature gets. |
 | `end_before` | Optional: the End of Part marker sits just before this feature, so it and the features after it are not computed. Absent: after the last feature. |
+| `appearance` | Optional: the part's own colour, `"#rrggbb"`, shown in place of its material's. |
+
+### Material (`[material]`) and appearance
+
+Optional. A part without `[material]` weighs 1 g/cm^3 and is shown in the standard colour.
+
+```toml
+appearance = "#d04030"
+
+[material]
+name = "Brass"
+density = 8.5
+color = "#c9a64a"
+```
+
+- **`name`:** 1 to 64 characters. It need not be a material of Tenon's library: the file
+  carries the density and the colour itself, so it reads the same wherever it is opened.
+- **`density`:** grams per cubic centimetre, more than 0 and at most 30.
+- **`color`:** `"#rrggbb"`, lower case.
+
+The part is shown in `appearance` when it has one, else in its material's `color`.
+
+### Design table (`[table]`)
+
+Optional: the sizes one part comes in (DEC-044).
+
+```toml
+[table]
+active = "Small"
+columns = ["d0", "d1"]
+rows = [
+  { name = "Small", values = [40.0, 10.0] },
+  { name = "Large", values = [60.0, 25.5] },
+]
+```
+
+- **`columns`:** the parameters the table sets, by name (1 to 100). Each is a model parameter
+  without an equation or a user parameter whose equation is a plain value.
+- **`rows`:** 1 to 1000, each with a `name` of its own and one number per column, as the
+  parameters show them: millimetres, degrees or plain numbers.
+- **`active`:** the row the part is at. The file's parameters and features hold that row's
+  values, so a reader that ignores the table still gets the right part. Should a file edited by
+  hand disagree with itself, the part's own values stand and the active row takes them.
 
 ### Parameters (`[parameters]`)
 
@@ -286,7 +329,10 @@ After reading, a part is checked:
 - ids are unique and within their counters;
 - references point to earlier features;
 - sketch references point to entities of the right type;
-- numbers are finite and in range.
+- numbers are finite and in range;
+- a material has a name, a density in range and a colour; an appearance is a colour;
+- a design table names parameters of the part, each once; its rows have names of their own and
+  one number for each parameter; its active row is one of them.
 
 A file that fails is reported as damaged, naming what is wrong.
 
@@ -531,7 +577,8 @@ Features
 
 - **The markers:** `+` added, `-` removed, `~` changed, `>` moved.
 - **What is compared:**
-  - parts: parameters and features;
+  - parts: the name, material and appearance, parameters, features, and the design table (its
+    active row, its parameters, and each row that was added, removed or changed);
   - assemblies: components (a changed placement shows as "moved"), relationships and explode
     steps;
   - drawings: the drawing's own fields, sheets, views and annotations.
@@ -580,7 +627,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   it without a bump (DEC-029, DEC-035): files without them are unchanged, and a build that does
   not know a type refuses the file naming the record. Version 2 has gained the M6 feature types
   this way (`sweep`, `coil`, `loft`, `draft`, `split`, `combine`, `thread`), the optional
-  `taper` of an extrusion and the optional `at` of a sketch dimension.
+  `taper` of an extrusion, the optional `at` of a sketch dimension, and a part's optional
+  `appearance`, `[material]` and `[table]`.
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

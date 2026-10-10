@@ -11,11 +11,13 @@ pub mod cmd;
 mod document;
 mod explain;
 pub mod expr;
+pub mod materials;
 pub mod measure;
 pub mod naming;
 pub mod params;
 pub mod regen;
 pub mod repair;
+pub mod table;
 pub mod threads;
 pub mod worker;
 

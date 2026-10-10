@@ -18,11 +18,16 @@ fails if an asset file is missing from this table.
 Generated-in-code assets are original and have no file to list:
 - the UI icon set (`crates/ui/src/icons.rs`, from M0's layout shell onward).
 
-Standard sizes held in code:
+Standard sizes and physical constants held in code:
 - the ISO metric coarse thread series, M1 to M64 (`crates/model/src/threads.rs`): 21 pairs of
   nominal diameter and pitch, the first-choice coarse sizes of ISO 261, with the proportions of
   the basic 60 degree profile (ISO 68-1). These are facts of the standard, typed in; no dataset,
   table or text of the standard is copied (DEC-038).
+- the material library (`crates/model/src/materials.rs`): 22 common workshop materials, each
+  with a typical density in g/cm^3 and a display colour. The densities are rounded handbook
+  values, facts typed in one by one; the names are generic and the colours were chosen for
+  Tenon. No material database, library file or vendor data is copied (DEC-043). A density is a
+  typical figure, not a specification: a part's own density can be typed over it.
 
 | Asset | Author | Source | Licence | Notes |
 |---|---|---|---|---|
@@ -73,6 +78,26 @@ Standard sizes held in code:
 | `examples/m4-plate/plate-sheet1.png` | Tenon contributors | generated: same command (software render of sheet 1) | MIT OR Apache-2.0 | Original |
 | `examples/m4-plate/plate-sheet2.png` | Tenon contributors | generated: same command (software render of sheet 2) | MIT OR Apache-2.0 | Original |
 | `examples/m4-plate/workbench.png` | Tenon contributors | generated: `tenon examples/m4-plate/plate.tenondrw --screenshot examples/m4-plate/workbench.png` | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/fittings.json` | Tenon contributors | written for this repository (the M6 demo command script) | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/spring.tenon` | Tenon contributors | generated: `tenon-cli run examples/m6-fittings/fittings.json --out examples/m6-fittings` | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/bolt.tenon` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/handle.tenon` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/nozzle.tenon` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/fittings.tenonasm` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/fittings-bom.csv` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/nozzle.step` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/nozzle.stl` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/spring.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/spring-stiff.png` | Tenon contributors | generated: same command (software render, the table's other row) | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/bolt.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/handle.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/nozzle.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/nozzle-section.png` | Tenon contributors | generated: same command (software render of the split nozzle) | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/fittings.png` | Tenon contributors | generated: same command (software render of the assembly) | MIT OR Apache-2.0 | Original |
+| `examples/m6-fittings/workbench.png` | Tenon contributors | generated: `tenon examples/m6-fittings/fittings.tenonasm --screenshot examples/m6-fittings/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m6-fittings/properties.png` | Tenon contributors | generated: `tenon examples/m6-fittings/nozzle.tenon --run inspect.mass --screenshot examples/m6-fittings/properties.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m6-fittings/design-table.png` | Tenon contributors | generated: `tenon examples/m6-fittings/spring.tenon --run tools.table --screenshot examples/m6-fittings/design-table.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m2-mount/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.json` | Tenon contributors | written for this repository (a second M2 example script) | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.tenon` | Tenon contributors | generated: `tenon-cli run examples/m2-mount/mount.json --out examples/m2-mount` | MIT OR Apache-2.0 | Original |

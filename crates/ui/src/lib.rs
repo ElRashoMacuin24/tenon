@@ -23,6 +23,7 @@ pub mod icons;
 mod modify;
 mod panels;
 mod params_dialog;
+mod part_dialogs;
 mod properties;
 mod radial;
 mod recovery;

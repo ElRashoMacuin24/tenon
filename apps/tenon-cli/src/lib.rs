@@ -31,6 +31,9 @@ pub const M3_PIVOT_SCRIPT: &str = include_str!("../../../examples/m3-pivot/pivot
 /// The M4 demo script, drawings of a plate and its assembly (also in examples/m4-plate).
 pub const M4_PLATE_SCRIPT: &str = include_str!("../../../examples/m4-plate/plate.json");
 
+/// The M6 demo script, four fittings and their assembly (also in examples/m6-fittings).
+pub const M6_FITTINGS_SCRIPT: &str = include_str!("../../../examples/m6-fittings/fittings.json");
+
 /// Output of a command.
 #[derive(Debug, Clone)]
 pub struct Report {
@@ -264,6 +267,11 @@ pub fn demo_m3(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String
 /// Builds the M4 demo (a plate, a pin, their assembly and a two-sheet drawing) into `out_dir`.
 pub fn demo_m4(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
     run_script(kernel, M4_PLATE_SCRIPT, out_dir)
+}
+
+/// Builds the M6 demo (a spring, a bolt, a handle, a nozzle and their assembly) into `out_dir`.
+pub fn demo_m6(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
+    run_script(kernel, M6_FITTINGS_SCRIPT, out_dir)
 }
 
 /// Opens a project and renders it to PNG.

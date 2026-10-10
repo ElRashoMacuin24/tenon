@@ -4,8 +4,8 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestones M0 to M3 are done; M4 (drawings) works and is being finished to a higher
-quality bar.** CI runs on Linux, macOS and Windows.
+**Status: milestones M0 to M5 are done; M6 (more part features, materials and design tables) is
+complete and under review.** CI runs on Linux, macOS and Windows.
 
 Tenon is for makers, students and small shops. It aims to win on reliability, coherence and speed
 rather than feature count.
@@ -14,11 +14,16 @@ In parts, you can:
 
 - sketch on a plane, a face of the part or a work plane (lines, arcs, circles, rectangles,
   polygons, splines), with typed values, inference, live solving and a degrees-of-freedom readout;
-- extrude and revolve to add, cut or intersect, with a live preview;
+- extrude (straight or tapered) and revolve to add, cut or intersect, with a live preview;
+- sweep a profile along a path, loft through sections, wind coils;
 - fillet, chamfer and shell; drill simple, counterbored and countersunk holes; add ribs;
+- thread shafts and holes (cosmetic, or cut into the part), draft faces, split and combine
+  solids;
 - copy features in rectangular and circular patterns, and mirror them;
 - place work planes, axes and points;
 - drive any dimension or feature value by an equation of named parameters (fx);
+- keep one part in several sizes with a design table;
+- give the part a material and a colour, and read its mass, volume and centre of gravity;
 - roll the part back with the End of Part marker, reorder and suppress features;
 - measure areas, lengths, distances and angles;
 - edit any feature later: faces and edges you referred to are found again after upstream edits;
@@ -29,7 +34,8 @@ In assemblies (`.tenonasm` files that use your part files), you can:
 - place components, ground them, and hold them together with mate, flush, angle and insert
   constraints or rigid, rotational, slider, cylindrical, planar and ball joints;
 - drag components (their relationships hold) and see the degrees of freedom each has left;
-- check interference, list the parts (and export the list as CSV), explode the assembly;
+- check interference, list the parts with their materials and masses (and export the list as
+  CSV), weigh the assembly, explode it;
 - double-click a component to edit its part in place, with the rest of the assembly in view.
 
 In drawings (`.tenondrw` files that show your parts and assemblies), you can:
@@ -50,6 +56,8 @@ server for AI agents. What works, with the test that proves each item, is in
 ![The M3 demo assembly in the Tenon workbench](examples/m3-pivot/workbench.png)
 
 ![The M4 demo drawing in the Tenon workbench](examples/m4-plate/workbench.png)
+
+![The M6 demo parts in the Tenon workbench, each in its material's colour](examples/m6-fittings/workbench.png)
 
 ## Design
 
@@ -84,6 +92,7 @@ pixi run app                       # the desktop app (release build)
 pixi run app examples/m2-enclosure/enclosure.tenon
 pixi run app examples/m3-pivot/pivot.tenonasm
 pixi run app examples/m4-plate/plate.tenondrw
+pixi run app examples/m6-fittings/fittings.tenonasm
 pixi run cargo test --workspace    # build and test
 pixi run ci                        # the full gate CI runs
 pixi run cargo run -p tenon-cli -- run examples/m2-enclosure/enclosure.json --out out

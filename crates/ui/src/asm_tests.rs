@@ -297,3 +297,139 @@ fn assembly_drag_frame_time_stays_within_budget() {
     assert!(placement(&wb, 5).origin().x > 31.0, "the block moved");
     assert!(median < 16.0, "over the 16 ms frame budget: median {median:.2} ms (90th percentile {p90:.2} ms)");
 }
+
+#[test]
+fn an_assembly_weighs_and_shows_each_component_in_its_parts_material() {
+    let path = pivot("material");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.open(&path).unwrap();
+    d.settle(&mut wb);
+    let standard = wb.body_palette(0).0;
+
+    // The arm is made of brass: set in its part, edited in place.
+    let at = on_screen(&wb, Vec3::new(20.0, 60.0, 18.0));
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(at)]);
+    d.click(&mut wb, at);
+    d.click(&mut wb, at);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.editing_in_place(), "{}", wb.status());
+    wb.exec("document.material", json!({ "name": "Brass" })).unwrap();
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.body_palette(0).0, egui::Color32::from_rgb(0xc9, 0xa6, 0x4a), "the part being edited is brass-coloured");
+    wb.command("asm.return");
+    d.settle(&mut wb);
+    assert!(wb.in_assembly(), "{}", wb.status());
+
+    // In the assembly only the arm is brass-coloured.
+    let a = wb.asm.as_ref().unwrap();
+    let arm = a.session.assembly().components.iter().find(|c| a.name(c.id).starts_with("arm")).expect("the arm").id;
+    let bodies: Vec<(bool, f64)> = wb.scene().bodies.iter().enumerate().map(|(i, b)| (a.map[i].0 == arm, b.volume)).collect();
+    assert_eq!(bodies.iter().filter(|b| b.0).count(), 1);
+    for (i, (is_arm, _)) in bodies.iter().enumerate() {
+        let want = if *is_arm { egui::Color32::from_rgb(0xc9, 0xa6, 0x4a) } else { standard };
+        assert_eq!(wb.body_palette(i).0, want, "body {i}");
+    }
+
+    // Properties adds the components up, the arm at 8.5 g/cm^3 and the rest at 1.
+    wb.command("inspect.mass");
+    for _ in 0..5 {
+        d.frame(&mut wb, vec![]);
+    }
+    let grams: f64 = bodies.iter().map(|(is_arm, v)| v * if *is_arm { 8.5 } else { 1.0 } / 1000.0).sum();
+    let texts = d.texts();
+    assert!(texts.contains(&crate::part_dialogs::mass_text(grams)), "{grams}: {texts:?}");
+    assert_eq!(texts.iter().filter(|t| *t == "Brass").count(), 1, "{texts:?}");
+    assert_eq!(texts.iter().filter(|t| *t == "Generic").count(), 4, "{texts:?}");
+    // (No material is chosen for an assembly: that is done in the parts.)
+    assert!(!texts.iter().any(|t| t == "Appearance"));
+
+    // The parts list names the material and weighs one of each part; the scripted total agrees.
+    let arm_volume = bodies.iter().find(|b| b.0).unwrap().1;
+    let rows = tenon_assembly::session::bom(wb.assembly().unwrap().assembly(), &wb.assembly().unwrap().parts);
+    assert_eq!(rows.iter().map(|r| r.material.as_deref()).collect::<Vec<_>>(), [None, Some("Brass"), None, None]);
+    assert!((rows[1].mass.unwrap() - arm_volume * 8.5 / 1000.0).abs() < 1e-9, "{:?}", rows[1]);
+    assert!((rows[2].mass.unwrap() - rows[2].volume.unwrap() / 1000.0).abs() < 1e-9, "one pin, not both: {:?}", rows[2]);
+    let csv = tenon_io::asm::bom_csv(wb.assembly().unwrap().assembly(), &wb.assembly().unwrap().parts);
+    assert!(csv.lines().nth(2).unwrap().ends_with(&format!(",Brass,{:.3}", arm_volume * 8.5 / 1000.0)), "{csv}");
+    let total = wb.asm_exec("asm.mass", json!({})).unwrap();
+    assert!((total["mass"].as_f64().unwrap() - grams).abs() < 1e-9, "{total}");
+    assert_eq!(total["components"][1]["material"], "Brass");
+    wb.command("asm.bom");
+    for _ in 0..5 {
+        d.frame(&mut wb, vec![]);
+    }
+    assert!(d.texts().contains(&crate::part_dialogs::mass_text(arm_volume * 8.5 / 1000.0)), "{:?}", d.texts());
+
+    // Saving the assembly saves the arm's file, material and all.
+    wb.run_ui("file.save").unwrap();
+    let (doc, _) = tenon_io::project::open(&path.with_file_name("arm.tenon")).unwrap();
+    assert_eq!(doc.material().map(|m| m.name.as_str()), Some("Brass"));
+    assert!(!wb.status_error, "{}", wb.status());
+}
+
+#[test]
+fn a_newly_opened_assembly_is_fitted_again_as_its_parts_arrive() {
+    // Parts regenerate one after another on the worker. A view fitted to the first of them
+    // would leave the rest off screen, so it is fitted with each arrival until all are in.
+    let path = pivot("fit");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.open(&path).unwrap();
+    d.settle(&mut wb);
+    assert!(wb.view.fitted);
+    let whole = wb.view.camera.distance;
+    let asm = wb.assembly().unwrap().assembly().clone();
+    assert_eq!(crate::assembly::arrived(&asm, &wb.assembly().unwrap().parts), (5, true));
+
+    // As if only the block had arrived so far: the view is fitted to it, and is not final.
+    let scenes: Vec<(String, Option<(u64, std::sync::Arc<tenon_model::Scene>)>)> = wb
+        .asm
+        .as_mut()
+        .unwrap()
+        .session
+        .parts
+        .iter_mut()
+        .filter(|(k, _)| !k.ends_with("block.tenon"))
+        .map(|(k, p)| (k.clone(), p.scene.take()))
+        .collect();
+    assert_eq!(crate::assembly::arrived(&asm, &wb.assembly().unwrap().parts), (1, false));
+    wb.view.fitted = false;
+    wb.asm.as_mut().unwrap().fitted_parts = 0;
+    wb.asm.as_mut().unwrap().shown = None;
+    wb.flatten();
+    assert_eq!(wb.scene().bodies.len(), 1);
+    assert!(!wb.view.fitted, "more parts are to come");
+    let close = wb.view.camera.distance;
+    assert!(close < 0.7 * whole, "fitted to the block alone: {close} vs {whole}");
+    // Nothing new: the view is left alone (a part that never arrives must not keep it moving).
+    wb.view.camera.distance = close * 3.0;
+    wb.asm.as_mut().unwrap().shown = None;
+    wb.flatten();
+    assert_eq!(wb.view.camera.distance, close * 3.0);
+
+    // The rest arrive: fitted to the whole assembly, for the last time.
+    for (k, s) in scenes {
+        wb.asm.as_mut().unwrap().session.parts.get_mut(&k).unwrap().scene = s;
+    }
+    wb.flatten();
+    assert_eq!(wb.scene().bodies.len(), 5);
+    assert!(wb.view.fitted);
+    assert!((wb.view.camera.distance - whole).abs() < 1e-6 * whole, "{} vs {whole}", wb.view.camera.distance);
+    wb.view.camera.distance = whole * 2.0;
+    wb.asm.as_mut().unwrap().shown = None;
+    wb.flatten();
+    assert_eq!(wb.view.camera.distance, whole * 2.0, "the user's view is theirs from then on");
+
+    // A part whose file is missing is not waited for.
+    let mut parts = tenon_assembly::Parts::new();
+    for (k, p) in wb.asm.as_mut().unwrap().session.parts.iter_mut() {
+        let mut copy = tenon_assembly::Part::missing("gone");
+        if !k.ends_with("pin.tenon") {
+            copy = tenon_assembly::Part::new(p.session.document().clone());
+            copy.scene = p.scene.clone();
+        }
+        parts.insert(k.clone(), copy);
+    }
+    assert_eq!(crate::assembly::arrived(&asm, &parts), (3, true));
+}

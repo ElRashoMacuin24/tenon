@@ -945,17 +945,71 @@ pub struct Document {
     /// rolled back (not computed). `None`: after the last feature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     end_before: Option<FeatureId>,
+    /// What the part is made of: its density gives the part its mass, its colour the part's.
+    /// Without one the part weighs a gram per cubic centimetre and has the standard colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    material: Option<crate::materials::Material>,
+    /// A colour of the part's own ("#rrggbb"), shown in place of its material's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    appearance: Option<String>,
+    /// The part's sizes, when it comes in several (see `table.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) table: Option<crate::table::DesignTable>,
 }
 
 impl Default for Document {
     fn default() -> Self {
-        Document { name: "Part1".into(), features: Vec::new(), next_feature: 0, params: Default::default(), end_before: None }
+        Document {
+            name: "Part1".into(),
+            features: Vec::new(),
+            next_feature: 0,
+            params: Default::default(),
+            end_before: None,
+            material: None,
+            appearance: None,
+            table: None,
+        }
     }
 }
 
 impl Document {
     pub fn new(name: impl Into<String>) -> Self {
         Document { name: name.into(), ..Default::default() }
+    }
+    /// What the part is made of, if that has been said.
+    pub fn material(&self) -> Option<&crate::materials::Material> {
+        self.material.as_ref()
+    }
+    /// Gives the part a material, or with `None` takes it away.
+    pub fn set_material(&mut self, material: Option<crate::materials::Material>) -> Result<(), String> {
+        if let Some(m) = &material {
+            m.check()?;
+        }
+        self.material = material.map(|m| crate::materials::Material { name: m.name.trim().to_owned(), color: m.color.trim().to_lowercase(), ..m });
+        Ok(())
+    }
+    /// The part's own colour ("#rrggbb"), when it has one in place of its material's.
+    pub fn appearance(&self) -> Option<&str> {
+        self.appearance.as_deref()
+    }
+    /// Gives the part a colour of its own, or with `None` returns it to its material's.
+    pub fn set_appearance(&mut self, color: Option<&str>) -> Result<(), String> {
+        match color {
+            Some(c) => {
+                let rgb = crate::materials::parse_color(c).ok_or_else(|| format!("`{c}` is not a colour: write it as #rrggbb"))?;
+                self.appearance = Some(crate::materials::color_text(rgb));
+            }
+            None => self.appearance = None,
+        }
+        Ok(())
+    }
+    /// The part's density in grams per cubic centimetre: its material's, else water's.
+    pub fn density(&self) -> f64 {
+        self.material.as_ref().map_or(crate::materials::DEFAULT_DENSITY, |m| m.density)
+    }
+    /// The colour the part is shown in, when it has one: its own, else its material's.
+    pub fn color(&self) -> Option<[u8; 3]> {
+        self.appearance.as_deref().or(self.material.as_ref().map(|m| m.color.as_str())).and_then(crate::materials::parse_color)
     }
     pub fn features(&self) -> &[Feature] {
         &self.features
@@ -1012,6 +1066,9 @@ impl Document {
             next_feature: self.next_feature,
             params: self.params.clone(),
             end_before: None,
+            material: self.material.clone(),
+            appearance: self.appearance.clone(),
+            table: self.table.clone(),
         }
     }
 
@@ -1168,6 +1225,12 @@ impl Document {
             }
             self.check_copies(&f.kind).map_err(|e| format!("{}: {e}", f.name))?;
         }
-        Ok(())
+        if let Some(m) = &self.material {
+            m.check()?;
+        }
+        if self.appearance.as_deref().is_some_and(|c| crate::materials::parse_color(c).is_none()) {
+            return Err("the part's appearance is not a colour: write it as #rrggbb".into());
+        }
+        self.table_check()
     }
 }

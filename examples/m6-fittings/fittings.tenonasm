@@ -1,0 +1,40 @@
+# Tenon assembly file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon-assembly"
+version = 2
+name = "Fittings"
+next_component = 5
+next_relationship = 1
+relationship = []
+explode = []
+
+[[component]]
+id = 1
+name = "nozzle:1"
+part = "nozzle.tenon"
+placement = { origin = { x = 0.0, y = 0.0, z = 0.0 }, x = { x = 1.0, y = 0.0, z = 0.0 }, y = { x = 0.0, y = 1.0, z = 0.0 }, z = { x = 0.0, y = 0.0, z = 1.0 } }
+grounded = true
+visible = true
+
+[[component]]
+id = 2
+name = "bolt:1"
+part = "bolt.tenon"
+placement = { origin = { x = 50.0, y = 0.0, z = 30.0 }, x = { x = 1.0, y = 0.0, z = 0.0 }, y = { x = 0.0, y = 1.0, z = 0.0 }, z = { x = 0.0, y = 0.0, z = 1.0 } }
+grounded = false
+visible = true
+
+[[component]]
+id = 3
+name = "spring:1"
+part = "spring.tenon"
+placement = { origin = { x = 0.0, y = 55.0, z = 1.0 }, x = { x = 1.0, y = 0.0, z = 0.0 }, y = { x = 0.0, y = 1.0, z = 0.0 }, z = { x = 0.0, y = 0.0, z = 1.0 } }
+grounded = false
+visible = true
+
+[[component]]
+id = 4
+name = "handle:1"
+part = "handle.tenon"
+placement = { origin = { x = -70.0, y = 0.0, z = 0.0 }, x = { x = 1.0, y = 0.0, z = 0.0 }, y = { x = 0.0, y = 1.0, z = 0.0 }, z = { x = 0.0, y = 0.0, z = 1.0 } }
+grounded = false
+visible = true

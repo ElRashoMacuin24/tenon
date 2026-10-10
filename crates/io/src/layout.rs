@@ -30,7 +30,16 @@ pub(crate) struct Shape {
 pub(crate) const PART: Shape = Shape {
     what: "part",
     body: "document",
-    fields: &[("name", "name"), ("next_feature", "next_feature"), ("end_before", "end_before"), ("params", "parameters"), ("features", "feature")],
+    fields: &[
+        ("name", "name"),
+        ("next_feature", "next_feature"),
+        ("end_before", "end_before"),
+        ("appearance", "appearance"),
+        ("material", "material"),
+        ("table", "table"),
+        ("params", "parameters"),
+        ("features", "feature"),
+    ],
     kinds: &[("features", &["id", "name", "suppressed"])],
     computed: &[],
     tables: &[],

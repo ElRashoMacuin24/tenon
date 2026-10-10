@@ -7,6 +7,19 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | Command | Name | Parameters | Undoable |
 |---|---|---|---|
 | `document.rename` | Rename Part | name: text | yes |
+| `document.material` | Material | name: a material of the library (see document.materials), or null for none; density (g/cm^3) and color ("#rrggbb") to change them or to describe a material of one's own | yes |
+| `document.appearance` | Appearance | color: "#rrggbb", the part's own colour in place of its material's; or null to go back to the material's | yes |
+| `document.materials` | Materials | the material library (name, density in g/cm^3, colour) and the part's material, appearance, density and colour | no |
+| `table.show` | Design Table | the part's design table: its parameters (columns), its rows and the active one; null without one | no |
+| `table.create` | Create Design Table | columns: [parameter names] (plain values, not ones worked out by an equation); row: the name of the first row, which is the part as it stands (default "Size 1") | yes |
+| `table.delete` | Delete Design Table | the part keeps the active row's values | yes |
+| `table.add_row` | Add Row | name; values: {"parameter": number, ...} (the rest as the active row; lengths in mm, angles in degrees) | yes |
+| `table.remove_row` | Remove Row | name (not the active row) | yes |
+| `table.rename_row` | Rename Row | name, to | yes |
+| `table.set` | Set Table Value | row, column (a parameter name), value; in the active row this changes the part | yes |
+| `table.add_column` | Add Table Column | name: a parameter; every row gets its present value | yes |
+| `table.remove_column` | Remove Table Column | name; the parameter keeps its value | yes |
+| `table.activate` | Activate Row | row: the part takes that row's values | yes |
 | `sketch.create` | New Sketch | plane: "xy" \| "yz" \| "xz" (default xy), or face: a face reference from model.face_ref; project_origin (default true: a fixed point at the part origin, returned as `origin`) | yes |
 | `sketch.point` | Point | sketch, x, y | yes |
 | `sketch.line` | Line | sketch; start (point id) or x1, y1; end (point id) or x2, y2 | yes |
@@ -28,7 +41,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.offset` | Offset | sketch, curves: [ids], distance (positive: outward / left) | yes |
 | `sketch.mirror` | Mirror | sketch, entities: [ids], axis (line id) | yes |
 | `sketch.info` | Sketch Info | sketch | no |
-| `model.extrude` | Extrude | sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join \| cut \| new_body \| intersect; regions: [[curve ids]] | yes |
+| `model.extrude` | Extrude | sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join \| cut \| new_body \| intersect; regions: [[curve ids]]; taper (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through_all only) | yes |
 | `model.revolve` | Revolve | sketch; axis: line id or "x" \| "y" \| "z"; angle (rad, default full); symmetric; operation; regions | yes |
 | `model.fillet` | Fillet | edges: [edge references from model.edge_ref], radius | yes |
 | `model.chamfer` | Chamfer | edges: [edge references]; distance; and either distance2 or angle (rad) with reference: a face reference for the first distance | yes |
@@ -64,7 +77,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `edit.redo` | Redo | none | no |
 | `model.tree` | Model Tree | none | no |
 | `model.regenerate` | Regenerate | none | no |
-| `model.mass` | Mass Properties | density (mass per mm^3, default 1) | no |
+| `model.mass` | Mass Properties | density (g/cm^3; default: the part's material's, or 1 without one). Per body: volume (mm^3), area (mm^2), mass (g), centre of mass (mm), inertia about it (g mm^2); and the total mass, the density used and the material | no |
 | `model.threads` | Threads | every thread on the part: its feature, designation, pitch, major diameter, internal (in a hole), length, left, modelled, and where on its axis it starts and which way it runs | no |
 | `model.topology` | Topology | none | no |
 | `model.faces` | Faces | body (default 0) | no |
@@ -101,8 +114,8 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `asm.place` | Place At | component; origin: [x, y, z]; z, x: its part's Z and X directions (default unturned) | yes |
 | `asm.update` | Update | solves again (after parts changed) | yes |
 | `asm.dof` | Degrees of Freedom | each component's free directions and axes (others held still), and the assembly's total | no |
-| `asm.bom` | Bill of Materials | one row per part: quantity, volume | no |
-| `asm.mass` | Assembly Mass | total volume and centre of mass of the visible components | no |
+| `asm.bom` | Bill of Materials | one row per part: quantity, volume, material and mass (grams, of one) | no |
+| `asm.mass` | Assembly Mass | total volume, mass (grams) and centre of mass of the visible components, each at its part's material | no |
 | `asm.explode.add` | Tweak Components | components: [ids]; direction: [x, y, z] or "x" \| "-z" ...; distance (mm) | yes |
 | `asm.explode.auto` | Auto Explode | spacing (mm, default a quarter of the assembly's size): replaces the exploded view with one made from the relationships | yes |
 | `asm.explode.clear` | Clear Explode | step (default: every step) | yes |

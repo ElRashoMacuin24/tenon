@@ -319,7 +319,8 @@ impl Workbench {
                     return Ok(());
                 }
                 _ if ["sketch.", "model.", "work.", "asm.", "export."].iter().any(|p| id.starts_with(p))
-                    || ["inspect.measure", "inspect.mass", "tools.parameters", "view.style", "view.look_at", "view.previous"].contains(&id) =>
+                    || ["inspect.measure", "inspect.mass", "tools.parameters", "tools.table", "view.style", "view.look_at", "view.previous"]
+                        .contains(&id) =>
                 {
                     return Err("that works on a part or an assembly: select a view and use Open Model to edit its model".into());
                 }
@@ -348,7 +349,11 @@ impl Workbench {
                     return self.export_assembly_step(&path);
                 }
                 "model.rebuild" => return self.run_asm_ui("asm.update"),
-                _ if ["sketch.", "model.", "work."].iter().any(|p| id.starts_with(p)) || id == "inspect.measure" || id == "tools.parameters" => {
+                _ if ["sketch.", "model.", "work."].iter().any(|p| id.starts_with(p))
+                    || id == "inspect.measure"
+                    || id == "tools.parameters"
+                    || id == "tools.table" =>
+                {
                     return Err("that works on a part: double-click a component to edit its part in place".into());
                 }
                 _ => {}
@@ -458,6 +463,7 @@ impl Workbench {
             "model.pattern.circular" => self.open_pattern(crate::panels::CopyKind::Circular, None)?,
             "model.mirror" => self.open_pattern(crate::panels::CopyKind::Mirror, None)?,
             "tools.parameters" => self.chrome.params = !self.chrome.params,
+            "tools.table" => self.chrome.table = !self.chrome.table,
             "inspect.measure" => {
                 self.panel = Some(Panel::Measure(Box::default()));
                 self.set_status("Measure: click a face or edge, then another for the distance and angle.");

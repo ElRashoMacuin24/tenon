@@ -382,3 +382,78 @@ fn a_placed_dimension_keeps_its_place_on_its_own_record() {
     let m = damaged(&bad);
     assert!(m.contains("not a dimension"), "{m}");
 }
+
+#[test]
+fn material_appearance_and_design_table_are_written_as_text_and_read_back() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let lines = run(&mut s, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 40, "y2": 20 }))["lines"].clone();
+    run(&mut s, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "length", "line": lines[0], "value": 40.0 } }));
+    run(&mut s, "model.extrude", json!({ "sketch": sk, "distance": 10 }));
+    let extra = Map::new();
+    // A part with none of the three says nothing of them: files written before are as they were.
+    let plain = String::from_utf8(project::to_bytes(s.document(), &extra).unwrap()).unwrap();
+    assert!(!plain.contains("material") && !plain.contains("appearance") && !plain.contains("[table]"), "{plain}");
+
+    run(&mut s, "document.material", json!({ "name": "Brass" }));
+    run(&mut s, "document.appearance", json!({ "color": "#D04030" }));
+    run(&mut s, "table.create", json!({ "columns": ["d0", "d1"], "row": "Small" }));
+    run(&mut s, "table.add_row", json!({ "name": "Large", "values": { "d0": 60, "d1": 25.5 } }));
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    // Each on lines of its own, before the parameters.
+    assert!(text.contains("\nappearance = \"#d04030\"\n"), "{text}");
+    assert!(text.contains("\n[material]\nname = \"Brass\"\ndensity = 8.5\ncolor = \"#c9a64a\"\n"), "{text}");
+    let table = "\n[table]\nactive = \"Small\"\ncolumns = [\"d0\", \"d1\"]\nrows = [\n  { name = \"Small\", values = [40.0, 10.0] },\n  { name = \"Large\", values = [60.0, 25.5] },\n]\n";
+    assert!(text.contains(table), "{text}");
+    assert!(text.find("[table]").unwrap() < text.find("[parameters]").unwrap(), "{text}");
+    // Read back it is the same part, and saves the same again.
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(&back, s.document());
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+
+    // The diff says what changed about the part as a whole, and which size moved.
+    let before = serde_json::to_value(s.document()).unwrap();
+    run(&mut s, "document.material", json!({ "name": "PLA" }));
+    run(&mut s, "document.appearance", json!({ "color": null }));
+    run(&mut s, "table.set", json!({ "row": "Large", "column": "d0", "value": 70 }));
+    run(&mut s, "table.add_row", json!({ "name": "Tall", "values": { "d1": 80 } }));
+    run(&mut s, "table.activate", json!({ "row": "Large" }));
+    let d = diff::diff_documents("part", &before, &serde_json::to_value(s.document()).unwrap()).text();
+    for line in [
+        "~ material Brass (8.5 g/cm^3, #c9a64a) -> PLA (1.24 g/cm^3, #4f9fd8)",
+        "~ appearance #d04030 -> the material's",
+        "~ active row  Small -> Large",
+        "~ Large       d0 60 -> 70",
+        "+ Tall        d0 = 40, d1 = 80",
+    ] {
+        assert!(d.contains(line), "no `{line}` in:\n{d}");
+    }
+    // Deleted, or made where there was none.
+    run(&mut s, "table.delete", json!({}));
+    let after = serde_json::to_value(s.document()).unwrap();
+    assert!(diff::diff_documents("part", &before, &after).text().contains("Design Table\n  - table"));
+    let made = diff::diff_documents("part", &after, &before).text();
+    assert!(made.contains("+ table  d0, d1 at row Small") && made.contains("+ Large  d0 = 60, d1 = 25.5"), "{made}");
+
+    // Damaged by hand or by a merge: refused, saying what is wrong.
+    let m = damaged(&text.replace("density = 8.5", "density = -1.0"));
+    assert!(m.contains("density"), "{m}");
+    let m = damaged(&text.replace("appearance = \"#d04030\"", "appearance = \"red\""));
+    assert!(m.contains("#rrggbb"), "{m}");
+    let m = damaged(&text.replace("columns = [\"d0\", \"d1\"]", "columns = [\"d0\", \"d9\"]"));
+    assert!(m.contains("`d9`, which is not a parameter"), "{m}");
+    let m = damaged(&text.replace("active = \"Small\"", "active = \"Medium\""));
+    assert!(m.contains("active row `Medium`"), "{m}");
+    let m = damaged(&text.replace("values = [60.0, 25.5]", "values = [60.0]"));
+    assert!(m.contains("row `Large`"), "{m}");
+    let m = damaged(&text.replace("name = \"Large\", values", "name = \"Small\", values"));
+    assert!(m.contains("two rows named `Small`"), "{m}");
+    // The active row is the part as it stands. A file edited so that the two disagree is read
+    // with the part's own values, and written back whole.
+    let edited = text.replace("values = [40.0, 10.0]", "values = [41.0, 10.0]");
+    assert_ne!(edited, text);
+    let (read, _) = project::from_bytes(edited.as_bytes()).unwrap();
+    assert_eq!(read.table().unwrap().rows[0].values, [40.0, 10.0]);
+    assert_eq!(project::to_bytes(&read, &extra).unwrap(), bytes);
+}

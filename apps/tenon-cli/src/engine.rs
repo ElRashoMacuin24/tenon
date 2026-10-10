@@ -136,14 +136,23 @@ impl Engine {
         }
     }
 
-    fn render_meshes(meshes: &[&Mesh], view: &str, width: u32, height: u32, bbox: Option<tenon_geom::Aabb3>) -> Result<Vec<u8>, String> {
+    /// `colors`: per mesh, the colour of the part it is of, where that has one.
+    fn render_meshes(
+        meshes: &[&Mesh],
+        colors: &[Option<[u8; 3]>],
+        view: &str,
+        width: u32,
+        height: u32,
+        bbox: Option<tenon_geom::Aabb3>,
+    ) -> Result<Vec<u8>, String> {
         let std_view = StdView::from_name(view).ok_or_else(|| format!("unknown view `{view}` (iso, front, back, left, right, top, bottom)"))?;
         let mut cam = Camera::default();
         cam.set_view(std_view);
         if let Some(b) = bbox {
             cam.fit(&b);
         }
-        let img = raster::render(meshes, &cam, width, height, &raster::Style::default());
+        let body_colors = colors.iter().enumerate().filter_map(|(i, c)| c.map(|[r, g, b]| (i, [r, g, b, 255]))).collect();
+        let img = raster::render(meshes, &cam, width, height, &raster::Style { body_colors, ..raster::Style::default() });
         raster::encode_png(&img)
     }
 
@@ -155,7 +164,8 @@ impl Engine {
         }
         let scene = tenon_model::scene(&regen, self.kernel.as_mut(), &MeshTol::default())?;
         let meshes: Vec<&Mesh> = scene.bodies.iter().map(|b| &b.mesh).collect();
-        Self::render_meshes(&meshes, view, width, height, scene.bbox())
+        let colors = vec![self.session.document().color(); meshes.len()];
+        Self::render_meshes(&meshes, &colors, view, width, height, scene.bbox())
     }
 
     /// A drawing sheet as a PNG, width pixels wide.
@@ -178,18 +188,19 @@ impl Engine {
         self.asm.refresh(self.kernel.as_mut())?;
         let asm = self.asm.assembly();
         let frames = if exploded { tenon_assembly::session::exploded(asm) } else { asm.components.iter().map(|c| (c.id, c.placement)).collect() };
-        let mut meshes = Vec::new();
+        let (mut meshes, mut colors) = (Vec::new(), Vec::new());
         for c in asm.components.iter().filter(|c| c.visible) {
             let (Some(scene), Some(f)) = (tenon_assembly::session::scene_of(&self.asm.parts, c), frames.get(&c.id)) else { continue };
             for b in &scene.bodies {
                 meshes.push(placed_mesh(&b.mesh, f));
+                colors.push(self.asm.parts.get(&c.part).and_then(|p| p.session.document().color()));
             }
         }
         let bbox = tenon_geom::Aabb3::from_points(
             meshes.iter().flat_map(|m| m.positions.iter().map(|p| tenon_geom::Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))),
         );
         let refs: Vec<&Mesh> = meshes.iter().collect();
-        Self::render_meshes(&refs, view, width, height, bbox)
+        Self::render_meshes(&refs, &colors, view, width, height, bbox)
     }
 }
 

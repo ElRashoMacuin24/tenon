@@ -33,6 +33,7 @@ A bare list of steps is accepted too. Each step has:
 | `with` | Parameters (an object; default `{}`) |
 | `as` | Saves the step's result under a name for later steps |
 | `expect` | Checks on the result: `{ "path": value }`. Numbers match within a relative 1e-6 (absolute 1e-6 below 1); anything else must be equal |
+| `within` | The relative tolerance of this step's numeric expectations in place of 1e-6, at most 0.1. For values the kernel approximates (a coil's volume, a cut thread): say in the `note` why |
 | `note` | A comment; ignored |
 
 Unknown keys are errors, so typos do not pass silently.
@@ -117,3 +118,22 @@ convert). `drw.dimension` places the dimension at `at`, or `by` an offset from t
 it measures. `drw.info` reports every view and every dimension's value and hole table's rows as
 they are now; after a model file changes, `drw.update` reads it again and the values follow.
 `examples/m4-plate/plate.json` uses all of this.
+## Materials and design tables
+
+`document.material` gives the part a material of the library by name (`document.materials`
+lists them), or one of its own with a `density` (g/cm^3) and a `color`; `document.appearance`
+gives it a colour of its own. `model.mass` then returns the mass in grams. A design table is
+made from the part as it stands and grows a row per size; `table.activate` makes the part that
+size.
+
+```json
+{ "run": "document.material", "with": { "name": "Stainless steel" } },
+{ "run": "model.mass", "expect": { "mass": 7.57985618 }, "within": 0.0001 },
+{ "run": "table.create", "with": { "columns": ["d0", "d1"], "row": "Soft" } },
+{ "run": "table.add_row", "with": { "name": "Stiff", "values": { "d0": 3, "d1": 10 } } },
+{ "run": "table.activate", "with": { "row": "Stiff" } }
+```
+
+In an assembly, `asm.bom` lists each part's material and the mass of one of it, and `asm.mass`
+weighs the assembly with each component at its part's density.
+`examples/m6-fittings/fittings.json` uses all of this, and every M6 feature.

@@ -666,3 +666,84 @@ is taken from Autodesk's published help; no artwork, text or screenshot of the p
 
 The largest gap left is that crossing curves do not divide a sketch into regions: a line drawn
 through a circle does not give two halves to pick from.
+
+## DEC-043 Materials, appearance and physical properties (2026-10-10)
+
+M6 asks for mass properties, materials and appearance in a Properties panel.
+
+- **A part has one material:** a name, a density and a colour. The part file holds all three
+  (`[material]`), not a reference into a library, so a file reads the same on every machine and
+  a later change to the library does not change parts already made.
+- **The library** is 22 common workshop materials held in code
+  (`crates/model/src/materials.rs`): metals, printing and moulding plastics, woods. Densities
+  are typical handbook figures typed in; names are generic; colours were chosen for Tenon
+  (ATTRIBUTION.md). A library material's density can be typed over, and a material that is not
+  in the library is a name, a density and a colour.
+- **Appearance** is one colour of the part's own (`appearance = "#rrggbb"`), shown in place of
+  its material's. Without either the part is the standard grey.
+- **Units.** Parts are in millimetres, so densities are in g/cm^3 and masses in grams
+  (kilograms from 1000 g in the window). A part without a material is at 1 g/cm^3, so its mass
+  in grams is its volume in cm^3.
+- **`model.mass` changed meaning:** its `density` was a mass per mm^3 with a default of 1; it
+  is now g/cm^3, defaulting to the part's material. `mass` in its result is therefore 1000
+  times smaller than before for the same number. Volumes, areas and centres are unchanged.
+  Nothing released used the old meaning (the examples check volumes).
+- **The Properties window** (Inspect > Properties) replaces Mass Properties: material, density,
+  appearance, then mass, volume, area and centre of gravity, per solid. Every change is a
+  command and one undo step. Values follow the part, so there is nothing to update by hand.
+- **In an assembly** the same button gives a summary: the whole assembly's mass, volume, area
+  and centre of gravity with each component at its own part's density, and a row per
+  component. Components are drawn in their part's colour. The parts list gains Material and
+  Mass; in the CSV they are the last two columns, so a script that reads the earlier columns by
+  position still works.
+- **Renders** (`render.png`, `tenon-cli render`) show parts in their colours.
+
+Rejected: a material library as a file beside the parts (a second file to ship, and parts that
+break when it is missing); appearances for single bodies or faces now (they need face
+references in the appearance and a way to repair them: later, see inventor-fidelity.md);
+strength and thermal properties (M11 adds what its solver needs).
+
+## DEC-044 Design tables (2026-10-10)
+
+M6 asks for design tables: one part in several sizes.
+
+- **One table per part.** Its columns are parameters, by name; its rows are named sizes; one
+  row is active (`crates/model/src/table.rs`).
+- **The active row is the part.** Making a row active writes its values into the parameters, as
+  one undo step. From then on that row follows the part: a dimension edited in the sketch, in a
+  panel or in the Parameters dialog is that size's value. So the parameters and features in the
+  file always hold the active size, and a reader that knows nothing of tables still gets the
+  right part.
+- **Only plain values.** A column is a model parameter without an equation or a user parameter
+  whose equation is a number. A parameter that begins to follow an equation, or whose feature
+  is deleted, leaves the table (the table would overwrite the equation, or set nothing); one
+  that is renamed keeps its column; a table with no column left is removed. Undo brings each
+  back.
+- **Stored** as `[table]` in the part file, an optional part of format version 2 (DEC-035).
+  When a file edited by hand disagrees with itself, the part's own values stand and the active
+  row takes them.
+- **The dialog** (Manage > Design Table): tick the parameters, Create Table; then a grid with a
+  row per size, the active one ticked.
+
+Not done, and listed in inventor-fidelity.md: columns that suppress features or set the
+material; a file per row; an assembly component that names the row it uses. The last needs a
+field on the component and a rule for when the row is renamed or removed, so it goes to the
+owner with the M6 report.
+
+Rejected: a copy of the feature list per size (the copies drift apart); a spreadsheet file
+beside the part (a second file, and not compared or merged with the part).
+
+## DEC-045 Smaller things settled in M6 (2026-10-10)
+
+- **Scripts: `within`.** A step may give the relative tolerance of its numeric expectations
+  (`"within": 0.0001`, at most 0.1) in place of the usual 1e-6. It is for values the kernel
+  approximates: a coil's volume is right to about 1e-6 and a cut thread's to a part of a turn,
+  and the M6 example checks both against their analytic values rather than against numbers
+  copied from a run (docs/scripts.md).
+- **A newly opened assembly is fitted as its parts arrive.** Parts regenerate one after
+  another; the view was fitted to whichever came first and left the rest off screen. It is now
+  fitted again with each arrival and for the last time when all are in
+  (`a_newly_opened_assembly_is_fitted_again_as_its_parts_arrive`).
+- **The M6 example** is four small parts rather than one: no single part uses a coil, a thread,
+  a sweep and a drafted, lofted, split body sensibly, and four parts with four materials also
+  show the assembly's parts list (examples/m6-fittings).

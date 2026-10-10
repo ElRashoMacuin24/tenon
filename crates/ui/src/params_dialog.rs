@@ -9,7 +9,7 @@ use crate::theme::{self, Tokens};
 use crate::workbench::Workbench;
 
 /// A text cell that commits on Enter or when it loses focus. Returns the new text.
-fn edit_cell(ui: &mut Ui, id: egui::Id, current: &str, width: f32, t: &Tokens) -> Option<String> {
+pub(crate) fn edit_cell(ui: &mut Ui, id: egui::Id, current: &str, width: f32, t: &Tokens) -> Option<String> {
     let focused = ui.memory(|m| m.has_focus(id));
     let mut text = if focused { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.to_owned()) } else { current.to_owned() };
     let r = ui.add(egui::TextEdit::singleline(&mut text).id(id).desired_width(width).font(theme::body()).text_color(t.text));

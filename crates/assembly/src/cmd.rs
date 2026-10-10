@@ -174,7 +174,7 @@ fn asm_dof(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdRe
 fn asm_bom(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdResult {
     let rows: Vec<Value> = bom(s.assembly(), &s.parts)
         .iter()
-        .map(|r| json!({ "item": r.item, "part": r.part, "name": r.name, "quantity": r.quantity, "volume": r.volume, "components": r.components }))
+        .map(|r| json!({ "item": r.item, "part": r.part, "name": r.name, "quantity": r.quantity, "volume": r.volume, "material": r.material, "mass": r.mass, "components": r.components }))
         .collect();
     let total: usize = rows.iter().filter_map(|r| r["quantity"].as_u64()).map(|q| q as usize).sum();
     Ok(json!({ "rows": rows, "parts": rows.len(), "components": total }))
@@ -182,18 +182,23 @@ fn asm_bom(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdRe
 
 fn asm_mass(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdResult {
     let asm = s.assembly();
-    let (mut volume, mut moment) = (0.0, Vec3::ZERO);
+    // Each component at its own part's density (g/cm^3; a part without a material is at 1).
+    let (mut volume, mut mass, mut moment) = (0.0, 0.0, Vec3::ZERO);
     let mut rows = Vec::new();
     for c in asm.components.iter().filter(|c| c.visible) {
         let scene = scene_of(&s.parts, c).ok_or_else(|| CmdError(format!("{}: the part's geometry is not available", c.name)))?;
+        let doc = s.parts.get(&c.part).map(|p| p.session.document());
+        let density = doc.map_or(tenon_model::materials::DEFAULT_DENSITY, tenon_model::Document::density);
         let v: f64 = scene.bodies.iter().map(|b| b.volume).sum();
-        let m = scene.bodies.iter().fold(Vec3::ZERO, |a, b| a + c.placement.to_world(b.mass.center_of_mass) * b.volume);
+        let grams = v * density / 1000.0;
+        let m = scene.bodies.iter().fold(Vec3::ZERO, |a, b| a + c.placement.to_world(b.mass.center_of_mass) * (b.volume * density / 1000.0));
         volume += v;
+        mass += grams;
         moment = moment + m;
-        rows.push(json!({ "name": c.name, "volume": v }));
+        rows.push(json!({ "name": c.name, "volume": v, "mass": grams, "material": doc.and_then(|d| d.material()).map(|m| m.name.clone()) }));
     }
-    let com = if volume > 0.0 { moment * (1.0 / volume) } else { Vec3::ZERO };
-    Ok(json!({ "volume": volume, "center_of_mass": v3(com), "components": rows }))
+    let com = if mass > 0.0 { moment * (1.0 / mass) } else { Vec3::ZERO };
+    Ok(json!({ "volume": volume, "mass": mass, "center_of_mass": v3(com), "components": rows }))
 }
 
 /// Builds a target from a component and a way to name its geometry.
@@ -716,11 +721,18 @@ static COMMANDS: &[AsmCommand] = &[
         kernel: false,
         run: asm_dof,
     },
-    AsmCommand { id: "asm.bom", label: "Bill of Materials", help: "one row per part: quantity, volume", mutates: false, kernel: false, run: asm_bom },
+    AsmCommand {
+        id: "asm.bom",
+        label: "Bill of Materials",
+        help: "one row per part: quantity, volume, material and mass (grams, of one)",
+        mutates: false,
+        kernel: false,
+        run: asm_bom,
+    },
     AsmCommand {
         id: "asm.mass",
         label: "Assembly Mass",
-        help: "total volume and centre of mass of the visible components",
+        help: "total volume, mass (grams) and centre of mass of the visible components, each at its part's material",
         mutates: false,
         kernel: false,
         run: asm_mass,

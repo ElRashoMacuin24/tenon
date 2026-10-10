@@ -78,6 +78,9 @@ pub(crate) struct AsmDoc {
     flat_seq: Option<u64>,
     /// What the shown scene was made from.
     pub shown: Option<u64>,
+    /// How many components had their geometry when the view was last fitted to a newly opened
+    /// assembly.
+    pub(crate) fitted_parts: usize,
     /// Worker slot of each part, and the document revision last sent to it.
     slots: BTreeMap<String, (u64, Option<u64>)>,
     next_slot: u64,
@@ -112,6 +115,7 @@ impl AsmDoc {
             cache: BTreeMap::new(),
             flat_seq: None,
             shown: None,
+            fitted_parts: 0,
             slots: BTreeMap::new(),
             next_slot: 0,
             editing: None,
@@ -205,6 +209,15 @@ fn placed_info(info: &FaceInfo, x: &Rigid) -> FaceInfo {
         other => other.clone(),
     };
     FaceInfo { surface, area: info.area, centroid: x.point(info.centroid), reversed: info.reversed }
+}
+
+/// How many visible components have their geometry, and whether that is every one that can (a
+/// part that could not be read never will, and is not waited for).
+pub(crate) fn arrived(asm: &Assembly, parts: &asm_session::Parts) -> (usize, bool) {
+    let visible = || asm.components.iter().filter(|c| c.visible);
+    let have = visible().filter(|c| asm_session::scene_of(parts, c).is_some()).count();
+    let can = visible().filter(|c| parts.get(&c.part).is_some_and(|p| p.missing.is_none())).count();
+    (have, have >= can)
 }
 
 fn placed_body(b: &BodyView, x: &Rigid) -> BodyView {
@@ -487,7 +500,7 @@ impl Workbench {
     }
 
     /// Builds the shown scene from the components (only what changed is moved again).
-    fn flatten(&mut self) {
+    pub(crate) fn flatten(&mut self) {
         let frames = self.display_frames();
         let Some(a) = self.asm.as_mut() else { return };
         let asm = a.shown_assembly().clone();
@@ -541,13 +554,22 @@ impl Workbench {
         a.cache = next_cache;
         a.map = map;
         a.keys = body_keys;
+        let (arrived, complete) = arrived(&asm, &a.session.parts);
+        // (Only when another part has arrived: one that never does must not keep the view moving.)
+        let fit = !self.view.fitted && arrived > a.fitted_parts;
+        if fit {
+            a.fitted_parts = arrived;
+        }
         self.scene = Scene { bodies, ..Scene::default() };
         self.scene_seq += 1;
         a.flat_seq = Some(self.scene_seq);
         self.view.selection.clear();
-        if !self.view.fitted && !self.scene.bodies.is_empty() {
+        // A newly opened assembly is fitted as its parts arrive, and for the last time when
+        // every one is there: parts regenerate one after another, and a view fitted to the
+        // first of them would leave the rest off screen.
+        if fit && !self.scene.bodies.is_empty() {
             self.fit_view();
-            self.view.fitted = true;
+            self.view.fitted = complete;
         }
     }
 
@@ -1178,8 +1200,8 @@ impl Workbench {
                 .default_width(520.0)
                 .default_pos([300.0, 170.0])
                 .show(ui.ctx(), |ui| {
-                    egui::Grid::new("tn_bom").num_columns(5).striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
-                        for h in ["Item", "Part", "Name", "Qty", "Volume (mm^3)"] {
+                    egui::Grid::new("tn_bom").num_columns(7).striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
+                        for h in ["Item", "Part", "Name", "Qty", "Material", "Mass", "Volume (mm³)"] {
                             ui.strong(h);
                         }
                         ui.end_row();
@@ -1188,6 +1210,9 @@ impl Workbench {
                             ui.label(&r.part);
                             ui.label(&r.name);
                             ui.label(r.quantity.to_string());
+                            ui.label(r.material.as_deref().unwrap_or("Generic"));
+                            // (Of one part, as the volume is.)
+                            ui.label(r.mass.map_or_else(|| "-".into(), crate::part_dialogs::mass_text));
                             ui.label(r.volume.map_or_else(|| "-".into(), |v| format!("{v:.2}")));
                             ui.end_row();
                         }

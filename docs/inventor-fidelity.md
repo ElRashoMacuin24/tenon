@@ -56,6 +56,24 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 3. A Centerline format, with diameter dimensions measured from it.
 4. Constraint symbols as pictures that can be selected and deleted.
 5. Dimension text turned along its line; tolerances on dimensions.
+6. For the part as a whole (the table below): an appearance for one body or face; design table
+   rows that suppress features or set the material; placing a part in an assembly at a chosen
+   row.
+
+## The part as a whole: physical properties and sizes
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| The Physical tab of a part's properties: its material and density, then mass, area, volume and centre of gravity | done | Inspect > Properties (DEC-043): `a_part_is_given_a_material_a_density_and_a_colour_in_its_properties`. Gap: the window does not list moments of inertia (the `model.mass` command returns them), and a mass or volume cannot be overridden by hand |
+| The values are recalculated on Update; out-of-date values read N/A | done differently | Tenon's values follow every change, so there is no Update button and nothing goes stale |
+| The material comes from a library and brings its density; a part with the default material has a density of 1 | done | a library of 22 materials; without one a part is at 1 g/cm³. Gap: no library of one's own kept between parts (a material typed in stays with its part); no properties beyond density and colour |
+| An appearance is shown in place of the material's own, and can be set for one body or one face | partial | one colour for the whole part (twelve swatches or a typed `#rrggbb`). Gap: bodies and faces cannot have their own; no textures or finishes |
+| An assembly's physical properties add up its components, each with its own material | done | `an_assembly_weighs_and_shows_each_component_in_its_parts_material`; components are also drawn in their part's colour |
+| The bill of materials can list each part's material and mass | done | the Material and Mass columns of the parts list and its CSV: the same test, `the_m6_demo_script_builds_four_verified_fittings_and_weighs_their_assembly` |
+| A part family is a table: each row is a member, each column a value that differs between members; one row is the default | done | Manage > Design Table (DEC-044): `a_design_table_is_made_from_ticked_parameters_and_its_rows_resize_the_part`. The ticked row is the size the part is at |
+| Columns can also suppress features, set the material and appearance, or hold other properties | missing | columns are parameters only |
+| Each member is generated as a file of its own, and the member is chosen when the part is placed in an assembly | missing | an assembly uses the part at its active row. Needs a way for a component to name a row, which is a file-format question |
+| Key columns order how members are listed; the table can be edited as a spreadsheet | missing | |
 
 ## Sources
 
@@ -66,3 +84,6 @@ Behaviour described above is from Autodesk's help for Inventor:
 - [Dimension commands](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-05281AB1-87BD-4C9E-95CE-177BB702F774.htm) (one command; the type follows the selection)
 - [Change display style of dimension value](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-1144C51A-18CB-4461-BF4B-71BE054EBD98.htm) and the [sketch status bar commands](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-938F7A77-3FDA-417E-8FB0-4241FCEBE313.htm)
 - [To create revolved features](https://help.autodesk.com/cloudhelp/2020/ENU/Inventor-Help/files/GUID-401BABD2-8D5B-4300-BA8D-70037445044F.htm) (a centre line is taken as the axis)
+- [iProperties, Physical tab](https://help.autodesk.com/cloudhelp/2022/ENU/Inventor-Help/files/GUID-877564AC-78CE-4216-9913-003A2DE8D698.htm) and [About Mass Properties](https://help.autodesk.com/cloudhelp/2022/ENU/Inventor-Help/files/GUID-2D7AC6B0-7B1E-4F1A-900F-C98A0705D47A.htm) (material and density, mass, area, volume, centre of gravity, Update)
+- [To Set Physical Properties and Appearances of Part Bodies and Faces](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-549F82A0-E151-4995-8C60-1E602E5128CA.htm)
+- [iParts](https://help.autodesk.com/cloudhelp/2022/ENU/Inventor-Help/files/GUID-60919937-2247-4C32-B9C9-6045D751FFF9.htm) and the [iPart Author dialog box](https://help.autodesk.com/cloudhelp/2015/ENU/Inventor-Help/files/GUID-B7820955-D0F8-478A-8965-64ACD5CA0B54.htm) (rows are members, columns the values that differ, keys, the default row)

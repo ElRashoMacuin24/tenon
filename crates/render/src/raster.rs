@@ -15,6 +15,8 @@ pub struct Style {
     pub background_top: Rgba,
     pub background_bottom: Rgba,
     pub body: Rgba,
+    /// Per body, a colour of its own in place of `body` (a part's material or appearance).
+    pub body_colors: Vec<(usize, Rgba)>,
     pub edge: Rgba,
     /// Per body and face, an override colour (e.g. a selection).
     pub face_colors: Vec<(usize, u32, Rgba)>,
@@ -30,6 +32,7 @@ impl Default for Style {
             background_bottom: [0x1f, 0x24, 0x2b, 255],
             body: [0xb8, 0xc0, 0xc8, 255],
             edge: [0x15, 0x18, 0x1c, 255],
+            body_colors: Vec::new(),
             face_colors: Vec::new(),
             faces: true,
             edges: true,
@@ -90,8 +93,9 @@ pub fn render(meshes: &[&Mesh], camera: &Camera, width: u32, height: u32, style:
     let light = camera.key_light();
 
     for (bi, m) in meshes.iter().enumerate().filter(|_| style.faces) {
+        let body = style.body_colors.iter().find(|(b, _)| *b == bi).map_or(style.body, |c| c.1);
         for range in &m.faces {
-            let base = style.face_colors.iter().find(|(b, f, _)| *b == bi && *f == range.face).map_or(style.body, |c| c.2);
+            let base = style.face_colors.iter().find(|(b, f, _)| *b == bi && *f == range.face).map_or(body, |c| c.2);
             let tris = m.indices.get(range.first as usize..(range.first as usize).saturating_add(range.count as usize)).unwrap_or(&[]);
             for t in tris.as_chunks::<3>().0 {
                 let pts: Option<Vec<Vec3>> = t.iter().map(|i| m.positions.get(*i as usize).map(|p| v3(*p))).collect();

@@ -42,8 +42,9 @@ fn the_m3_demo_script_builds_a_verified_pivot_assembly() {
     }
     let csv = std::fs::read_to_string(dir.join("pivot-bom.csv")).unwrap();
     let lines: Vec<&str> = csv.lines().collect();
-    assert_eq!(lines[0], "Item,Part,Name,Quantity,Volume (mm^3)");
-    assert!(lines[3].starts_with("3,pin,Pin,2,1445.133"), "{csv}");
+    assert_eq!(lines[0], "Item,Part,Name,Quantity,Volume (mm^3),Material,Mass (g)");
+    // (No material: a pin weighs as much water would.)
+    assert_eq!(lines[3], "3,pin,Pin,2,1445.133,,1.445", "{csv}");
     assert_eq!(lines.len(), 5);
 
     // Part paths are stored relative to the assembly: the folder can move.

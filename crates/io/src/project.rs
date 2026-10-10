@@ -169,8 +169,12 @@ pub fn from_bytes(data: &[u8]) -> Result<(Document, Map<String, Value>), Project
     let file: ProjectFile = serde_json::from_value(head.clone()).map_err(|e| {
         locate::<tenon_model::Feature>(&head, &layout::PART, "features", &lines).unwrap_or_else(|| ProjectError::Damaged(e.to_string()))
     })?;
-    file.document.validate().map_err(ProjectError::Damaged)?;
-    Ok((file.document, file.extra))
+    let mut document = file.document;
+    document.validate().map_err(ProjectError::Damaged)?;
+    // (A design table's active row is the part as it stands: the part's own values are the ones
+    // that count, should a file edited by hand say two things.)
+    document.table_follow();
+    Ok((document, file.extra))
 }
 
 /// Writes a file atomically (a temporary file, then a rename). A version-1 file about to be

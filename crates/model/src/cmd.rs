@@ -305,6 +305,155 @@ fn document_rename(s: &mut Session, p: &Value) -> CmdResult {
     })
 }
 
+// ---- materials and appearance ----------------------------------------------------------------
+
+/// What the part is made of now: its material (or null), its own colour (or null), its density
+/// and the colour it is shown in.
+fn material_json(d: &crate::Document) -> Value {
+    json!({
+        "material": d.material(),
+        "appearance": d.appearance(),
+        "density": d.density(),
+        "color": d.color().map(crate::materials::color_text),
+    })
+}
+
+fn document_material(s: &mut Session, p: &Value) -> CmdResult {
+    let material = match p.get("name") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(name)) => {
+            // From the library, unless a density is given: then it is a material of one's own,
+            // which may start from a library one.
+            let listed = crate::materials::find(name);
+            let density = opt_num(p, "density")?;
+            let color = match p.get("color") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(c)) => Some(c.clone()),
+                Some(_) => return Err("`color` must be text like #rrggbb".into()),
+            };
+            match (listed, density) {
+                (Some(m), d) => Some(crate::materials::Material { density: d.unwrap_or(m.density), color: color.unwrap_or(m.color), ..m }),
+                (None, Some(d)) => {
+                    Some(crate::materials::Material { name: name.clone(), density: d, color: color.unwrap_or_else(|| "#b8c0c8".into()) })
+                }
+                (None, None) => {
+                    return Err(
+                        format!("`{name}` is not in the material library: give its density (g/cm^3) to use it, or see document.materials").into()
+                    );
+                }
+            }
+        }
+        Some(_) => return Err("`name` must be text, or null for no material".into()),
+    };
+    s.edit(|d| d.set_material(material).map_err(CmdError))?;
+    Ok(material_json(s.document()))
+}
+
+fn document_appearance(s: &mut Session, p: &Value) -> CmdResult {
+    let color = match field(p, "color")? {
+        Value::Null => None,
+        Value::String(c) => Some(c.clone()),
+        _ => return Err("`color` must be text like #rrggbb, or null for the material's colour".into()),
+    };
+    s.edit(|d| d.set_appearance(color.as_deref()).map_err(CmdError))?;
+    Ok(material_json(s.document()))
+}
+
+fn document_materials(s: &mut Session, _: &Value) -> CmdResult {
+    let library: Vec<Value> =
+        crate::materials::LIBRARY.iter().map(|(name, density, color)| json!({ "name": name, "density": density, "color": color })).collect();
+    let mut out = material_json(s.document());
+    out["library"] = json!(library);
+    Ok(out)
+}
+
+// ---- design table -----------------------------------------------------------------------------
+
+fn text(p: &Value, key: &str) -> Result<String, CmdError> {
+    field(p, key)?.as_str().map(str::to_owned).ok_or_else(|| CmdError(format!("`{key}` must be text")))
+}
+
+/// The table as it stands: its parameters, its rows and the one the part is at.
+fn table_json(d: &crate::Document) -> Value {
+    match d.table() {
+        None => json!({ "table": Value::Null }),
+        Some(t) => json!({
+            "table": {
+                "active": t.active,
+                "columns": t.columns,
+                "rows": t.rows.iter().map(|r| json!({ "name": r.name, "values": r.values })).collect::<Vec<_>>(),
+            }
+        }),
+    }
+}
+
+fn table_show(s: &mut Session, _: &Value) -> CmdResult {
+    Ok(table_json(s.document()))
+}
+
+fn table_create(s: &mut Session, p: &Value) -> CmdResult {
+    let columns: Vec<String> = parse(p, "columns")?;
+    let row = p.get("row").and_then(Value::as_str).unwrap_or("Size 1").to_owned();
+    s.edit(|d| d.table_create(&columns, &row).map_err(CmdError))?;
+    Ok(table_json(s.document()))
+}
+
+fn table_delete(s: &mut Session, _: &Value) -> CmdResult {
+    s.edit(|d| d.table_delete().map_err(CmdError))?;
+    Ok(table_json(s.document()))
+}
+
+fn table_add_row(s: &mut Session, p: &Value) -> CmdResult {
+    let name = text(p, "name")?;
+    // values: {"column": number, ...}
+    let values: Vec<(String, f64)> = match p.get("values") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Object(o)) => o
+            .iter()
+            .map(|(k, v)| v.as_f64().map(|v| (k.clone(), v)).ok_or_else(|| CmdError(format!("`values.{k}` must be a number"))))
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err("`values` must be an object of column names and numbers".into()),
+    };
+    s.edit(|d| d.table_add_row(&name, &values).map_err(CmdError))?;
+    Ok(table_json(s.document()))
+}
+
+fn table_remove_row(s: &mut Session, p: &Value) -> CmdResult {
+    let name = text(p, "name")?;
+    s.edit(|d| d.table_remove_row(&name).map_err(CmdError))?;
+    Ok(table_json(s.document()))
+}
+
+fn table_rename_row(s: &mut Session, p: &Value) -> CmdResult {
+    let (name, to) = (text(p, "name")?, text(p, "to")?);
+    s.edit(|d| d.table_rename_row(&name, &to).map_err(CmdError))?;
+    Ok(table_json(s.document()))
+}
+
+fn table_set(s: &mut Session, p: &Value) -> CmdResult {
+    let (row, column, value) = (text(p, "row")?, text(p, "column")?, num(p, "value")?);
+    s.edit(|d| d.table_set(&row, &column, value).map_err(CmdError))?;
+    Ok(table_json(s.document()))
+}
+
+fn table_add_column(s: &mut Session, p: &Value) -> CmdResult {
+    let name = text(p, "name")?;
+    s.edit(|d| d.table_add_column(&name).map_err(CmdError))?;
+    Ok(table_json(s.document()))
+}
+
+fn table_remove_column(s: &mut Session, p: &Value) -> CmdResult {
+    let name = text(p, "name")?;
+    s.edit(|d| d.table_remove_column(&name).map_err(CmdError))?;
+    Ok(table_json(s.document()))
+}
+
+fn table_activate(s: &mut Session, p: &Value) -> CmdResult {
+    let row = text(p, "row")?;
+    s.edit(|d| d.table_activate(&row).map_err(CmdError))?;
+    Ok(table_json(s.document()))
+}
+
 /// `face: <face reference>` or `plane: "xy" | "yz" | "xz"` (default xy).
 fn plane_param(p: &Value) -> Result<PlaneRef, CmdError> {
     if p.get("work_plane").is_some() {
@@ -1319,15 +1468,23 @@ fn model_regenerate(s: &mut Session, k: &mut dyn Kernel, _: &Value) -> CmdResult
 }
 
 fn model_mass(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
-    let density = opt_num(p, "density")?.unwrap_or(1.0);
+    // Grams per cubic centimetre: as asked, else the part's material's (water's without one).
+    let density = opt_num(p, "density")?.unwrap_or_else(|| s.document().density());
+    if !(density.is_finite() && density > 0.0) {
+        return Err("`density` must be more than 0 (g/cm^3)".into());
+    }
+    let material = s.document().material().map(|m| m.name.clone());
     let shapes = body_shapes(s.regen(k));
     let mut out = Vec::new();
+    let mut total = 0.0;
     for (i, b) in shapes.iter().enumerate() {
-        let m = k.mass_properties(*b, density).map_err(|e| CmdError(e.to_string()))?;
+        // (A cubic centimetre is a thousand cubic millimetres.)
+        let m = k.mass_properties(*b, density / 1000.0).map_err(|e| CmdError(e.to_string()))?;
         let c = m.center_of_mass;
+        total += m.mass;
         out.push(json!({ "body": i, "volume": m.volume, "area": m.area, "mass": m.mass, "center_of_mass": [c.x, c.y, c.z], "inertia": m.inertia }));
     }
-    Ok(json!({ "bodies": out }))
+    Ok(json!({ "bodies": out, "mass": total, "density": density, "material": material }))
 }
 
 fn model_topology(s: &mut Session, k: &mut dyn Kernel, _: &Value) -> CmdResult {
@@ -1514,6 +1671,55 @@ macro_rules! geo_cmd {
 static COMMANDS: &[CommandSpec] = &[
     doc_cmd!("document.rename", "Rename Part", "name: text", true, document_rename),
     doc_cmd!(
+        "document.material",
+        "Material",
+        "name: a material of the library (see document.materials), or null for none; density (g/cm^3) and color (\"#rrggbb\") to change them or to describe a material of one's own",
+        true,
+        document_material
+    ),
+    doc_cmd!(
+        "document.appearance",
+        "Appearance",
+        "color: \"#rrggbb\", the part's own colour in place of its material's; or null to go back to the material's",
+        true,
+        document_appearance
+    ),
+    doc_cmd!(
+        "document.materials",
+        "Materials",
+        "the material library (name, density in g/cm^3, colour) and the part's material, appearance, density and colour",
+        false,
+        document_materials
+    ),
+    doc_cmd!(
+        "table.show",
+        "Design Table",
+        "the part's design table: its parameters (columns), its rows and the active one; null without one",
+        false,
+        table_show
+    ),
+    doc_cmd!(
+        "table.create",
+        "Create Design Table",
+        "columns: [parameter names] (plain values, not ones worked out by an equation); row: the name of the first row, which is the part as it stands (default \"Size 1\")",
+        true,
+        table_create
+    ),
+    doc_cmd!("table.delete", "Delete Design Table", "the part keeps the active row's values", true, table_delete),
+    doc_cmd!(
+        "table.add_row",
+        "Add Row",
+        "name; values: {\"parameter\": number, ...} (the rest as the active row; lengths in mm, angles in degrees)",
+        true,
+        table_add_row
+    ),
+    doc_cmd!("table.remove_row", "Remove Row", "name (not the active row)", true, table_remove_row),
+    doc_cmd!("table.rename_row", "Rename Row", "name, to", true, table_rename_row),
+    doc_cmd!("table.set", "Set Table Value", "row, column (a parameter name), value; in the active row this changes the part", true, table_set),
+    doc_cmd!("table.add_column", "Add Table Column", "name: a parameter; every row gets its present value", true, table_add_column),
+    doc_cmd!("table.remove_column", "Remove Table Column", "name; the parameter keeps its value", true, table_remove_column),
+    doc_cmd!("table.activate", "Activate Row", "row: the part takes that row's values", true, table_activate),
+    doc_cmd!(
         "sketch.create",
         "New Sketch",
         "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref; project_origin (default true: a fixed point at the part origin, returned as `origin`)",
@@ -1567,7 +1773,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.extrude",
         "Extrude",
-        "sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join | cut | new_body | intersect; regions: [[curve ids]]",
+        "sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join | cut | new_body | intersect; regions: [[curve ids]]; taper (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through_all only)",
         true,
         model_extrude
     ),
@@ -1744,7 +1950,12 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!("edit.redo", "Redo", "", false, edit_redo),
     doc_cmd!("model.tree", "Model Tree", "", false, model_tree),
     geo_cmd!("model.regenerate", "Regenerate", "", model_regenerate),
-    geo_cmd!("model.mass", "Mass Properties", "density (mass per mm^3, default 1)", model_mass),
+    geo_cmd!(
+        "model.mass",
+        "Mass Properties",
+        "density (g/cm^3; default: the part's material's, or 1 without one). Per body: volume (mm^3), area (mm^2), mass (g), centre of mass (mm), inertia about it (g mm^2); and the total mass, the density used and the material",
+        model_mass
+    ),
     geo_cmd!(
         "model.threads",
         "Threads",

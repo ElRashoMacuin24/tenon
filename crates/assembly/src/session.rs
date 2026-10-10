@@ -290,6 +290,10 @@ pub struct BomRow {
     /// The part document's name.
     pub name: String,
     pub quantity: usize,
+    /// What the part is made of, when it has a material.
+    pub material: Option<String>,
+    /// Of one part (grams), at its material's density, when its geometry is known.
+    pub mass: Option<f64>,
     /// Of one part (mm^3), when its geometry is known.
     pub volume: Option<f64>,
     pub components: Vec<String>,
@@ -297,11 +301,18 @@ pub struct BomRow {
 
 /// The parts list, in the order parts were first placed.
 pub fn bom(asm: &Assembly, parts: &Parts) -> Vec<BomRow> {
-    bom_with(
+    let mut rows = bom_with(
         asm,
         |key| parts.get(key).filter(|p| p.missing.is_none()).map(|p| p.session.document().name.clone()),
         |c| scene_of(parts, c).map(|s| s.bodies.iter().map(|b| b.volume).sum()),
-    )
+    );
+    // What each part is made of and what one of it weighs (a cubic centimetre is 1000 mm^3).
+    for r in &mut rows {
+        let Some(doc) = parts.get(&r.key).filter(|p| p.missing.is_none()).map(|p| p.session.document()) else { continue };
+        r.material = doc.material().map(|m| m.name.clone());
+        r.mass = r.volume.map(|v| v * doc.density() / 1000.0);
+    }
+    rows
 }
 
 /// The parts list from what is known of the parts: `name` gives a part's document name (none:
@@ -324,6 +335,8 @@ pub fn bom_with(asm: &Assembly, name: impl Fn(&str) -> Option<String>, volume: i
             key: c.part.clone(),
             name,
             quantity: 1,
+            material: None,
+            mass: None,
             volume: volume(c),
             components: vec![c.name.clone()],
         });

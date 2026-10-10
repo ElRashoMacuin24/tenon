@@ -20,7 +20,7 @@ usage:
   tenon-cli render PROJECT.tenon OUT.png [--view iso|front|top|...] [--size WIDTHxHEIGHT]
                                               render a project to PNG without a GPU
   tenon-cli mcp [PROJECT.tenon]               Model Context Protocol server on stdin/stdout
-  tenon-cli demo m0|m1|m2|m2-mount|m3|m4 [--out DIR] [--json]
+  tenon-cli demo m0|m1|m2|m2-mount|m3|m4|m6 [--out DIR] [--json]
                                               build a milestone demo into DIR (default: out)
   tenon-cli diff A B [--json]                 what changed from document A to B (parts, assemblies or
                                               drawings, any format version); exit code 0 same,
@@ -105,6 +105,7 @@ fn main() -> ExitCode {
         ["demo", "m2-mount"] => tenon_cli::demo_m2_mount(kernel(), &demo_dir()),
         ["demo", "m3"] => tenon_cli::demo_m3(kernel(), &demo_dir()),
         ["demo", "m4"] => tenon_cli::demo_m4(kernel(), &demo_dir()),
+        ["demo", "m6"] => tenon_cli::demo_m6(kernel(), &demo_dir()),
         ["info", file] => tenon_cli::info(&mut OcctKernel::new(), Path::new(file)),
         ["convert", input, output] => tenon_cli::convert(&mut OcctKernel::new(), Path::new(input), Path::new(output)),
         _ => return fail(&format!("unrecognised command\n\n{USAGE}")),

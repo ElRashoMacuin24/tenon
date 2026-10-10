@@ -338,6 +338,8 @@ impl Document {
                 env.insert(name, v);
             }
         }
+        // The design table's active row is the part as it now stands.
+        self.table_follow();
         Ok(())
     }
 
@@ -419,7 +421,12 @@ impl Document {
             }
             u.equation = rename_in(&u.equation, from, to);
         }
-        if found { Ok(()) } else { Err(format!("there is no parameter `{from}`")) }
+        if found {
+            self.table_renamed(from, to);
+            Ok(())
+        } else {
+            Err(format!("there is no parameter `{from}`"))
+        }
     }
 
     /// Deletes a user parameter that no equation uses.
