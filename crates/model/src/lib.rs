@@ -16,14 +16,15 @@ pub mod naming;
 pub mod params;
 pub mod regen;
 pub mod repair;
+pub mod threads;
 pub mod worker;
 
 pub use cmd::{CmdError, CmdResult, CommandSpec, Run, Session};
 pub use document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Document, Draft, Extrude, ExtrudeExtent, Feature,
     FeatureId, FeatureKind, Fillet, Hole, HoleExtent, HoleType, Loft, MAX_COPIES, MAX_DRAFT_ANGLE, MAX_FEATURES, Mirror, Operation, OriginAxis,
-    OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, WorkAxis,
-    WorkPlane, WorkPoint, hole_centres, open_lines,
+    OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Thread,
+    ThreadLength, WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
 };
 pub use naming::{CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace};
 pub use params::{ModelParam, ParamUnit, Parameters, UserParam, ValuePath};

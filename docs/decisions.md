@@ -552,3 +552,73 @@ plain words if asked to); the path is the last other sketch of lines and arcs, p
 with no closed profile of its own. A new Coil takes a construction line of the profile's sketch
 for its axis, else the origin axis lying in the sketch plane. A new Loft takes every sketch
 with a closed profile that nothing uses yet, in order.
+
+## DEC-038 Threads: cosmetic by default, sized from the face, cut only when asked (2026-10-10)
+
+A Thread feature goes on a round shaft or hole. By default it is **cosmetic**: the face is on
+record as threaded (`model.threads`), drawn in its own colour, and the part stays a plain
+cylinder. That is instant, and enough for drawings and for parts that are tapped or bought.
+Ticking **Modelled** cuts the groove as real geometry, for threads that are printed.
+
+- **Size follows the face.** Without a pitch, the thread takes the ISO coarse pitch for the
+  face's diameter and is named from it ("M8x1.25"), and both follow when the diameter changes.
+  A shaft is its thread's major diameter; a hole is taken as drilled for tapping (between the
+  minor diameter and the usual tap drill), so a 6.8 mm hole is M8. A pitch or a name of one's
+  own can be given.
+- **The sizes** are the 21 first-choice coarse sizes of ISO 261, M1 to M64, and the basic 60
+  degree profile's proportions: facts of the standard, typed into `crates/model/src/threads.rs`.
+  No dataset is copied (ATTRIBUTION.md). Fine pitches, inch and pipe threads are entered by
+  hand for now; a library belongs to M7.
+- **Where it starts.** At its face's open end (a bolt's tip, a hole's mouth), found by testing
+  for material beyond each end. With both ends open, or neither, at the upper one. This does
+  not depend on how the kernel happens to hold the cylinder's axis.
+- **The groove** is the basic profile's (7/8 of the pitch wide at a shaft's surface, 1/4 at its
+  root, 0.5413 of the pitch deep; in a hole 3/4 and 1/8), wound as a helical solid and cut away.
+  It runs out past an open end and stops just short of a closed one (a shoulder, a blind
+  hole's bottom).
+- **Every cut is checked** by the volume it removed, against the turns asked for. OCCT returned
+  nothing, or the part unchanged, for some thread lengths without reporting an error; the cause
+  was a helix built as one long edge (see below), but a wrong solid must never pass silently
+  (DEC-032), so the check stays, with two retries at other run-out lengths.
+
+Two kernel fixes came out of this, and both also fix Coil:
+
+- **A helix is built one turn per edge.** As a single edge, a 60-turn coil came out at half its
+  volume, and booleans with the swept faces (each winding several times round the axis) cut
+  nothing or everything depending on the length.
+- **A round face says which side its material is on** (`FaceInfo::reversed` now accounts for
+  the surface's handedness), so a shaft is told from a hole however the solid was made.
+
+## DEC-039 Revolve: a profile across its axis, and an axis worth offering (2026-10-10)
+
+The owner could not turn a circle into a sphere, or revolve at all on some planes. Four faults:
+
+- **A profile lying across the axis was refused.** A whole turn of it has a clear meaning: the
+  turn of what is on one side together with the turn of what is on the other. The kernel now
+  divides the profile along the axis, turns each side and joins them, so a circle about a line
+  through its centre is a sphere and a rectangle about its middle is a cylinder. Faces keep the
+  names of the sketch curves they come from. Part of a turn of such a profile is still refused,
+  in plain words: each side would sweep a different sector.
+- **The axis offered was always the origin Y axis**, even when it was square to the sketch (an
+  XZ sketch) or a line had been drawn to turn about. A new revolution now takes: a centre line
+  of the sketch (construction); else the one line in the sketch that bounds no profile; else an
+  origin axis lying in the sketch's plane, the upright one first, and one the profile is beside
+  before one that runs through it.
+- **An axis square to the sketch made an empty part without a word.** It is refused, saying
+  what to choose; and any revolution with no volume is an error.
+- **The axis could only be chosen from a list.** With the Revolve (or Coil) panel open, the
+  sketch's lines show over the part and a click on one makes it the axis, as does a click on a
+  work axis or on an origin axis in the browser. The axis is drawn as a centre line.
+
+Still missing: a line drawn across a profile does not divide it into regions that can be picked
+separately (Inventor does this); it is listed in the roadmap.
+
+## DEC-040 A tapered extrusion is an extrusion and a draft (2026-10-10)
+
+Extrude's Advanced Properties had promised Taper for M6. The kernel has no tapered prism, but
+it has Draft: a tapered extrusion is built straight and its sides are then tilted about the
+sketch plane, where they stay put. The faces keep the names a straight extrusion gives them.
+The taper is optional in the file (`taper`, absent for straight extrusions, so existing files
+are unchanged) and is a parameter in degrees. It works for one distance and Through All; a
+symmetric or two-distance extrusion would need a different angle each side of the sketch and is
+refused, saying so.

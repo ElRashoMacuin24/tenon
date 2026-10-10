@@ -40,6 +40,10 @@ pub(crate) struct ExtrudePanel {
     pub distance_b: f64,
     pub operation: Operation,
     pub regions: RegionSel,
+    /// The extrusion being edited has a taper already (zero or not): its parameter stays.
+    pub keep_taper: bool,
+    /// Degrees the sides lean in as they leave the sketch (negative: out); zero is straight.
+    pub taper: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -434,6 +438,7 @@ pub(crate) enum Panel {
     Draft(crate::bodies::DraftPanel),
     Split(crate::bodies::SplitPanel),
     Combine(crate::bodies::CombinePanel),
+    Thread(crate::bodies::ThreadPanel),
     Value(ValuePanel),
     EditDimension {
         sketch: FeatureId,
@@ -469,6 +474,7 @@ impl Panel {
             Panel::Draft(p) => p.editing,
             Panel::Split(p) => p.editing,
             Panel::Combine(p) => p.editing,
+            Panel::Thread(p) => p.editing,
             _ => None,
         }
     }
@@ -478,10 +484,10 @@ impl Panel {
     pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
         match self {
             Panel::Extrude(p) => match (p.extent, p.direction) {
-                (ExtentChoice::ThroughAll, _) => vec![],
+                (ExtentChoice::ThroughAll, _) => vec![("taper", "/taper")],
                 (_, Direction::Symmetric) => vec![("distance", "/extent/symmetric")],
                 (_, Direction::Asymmetric) => vec![("distance", "/extent/two_sided/forward"), ("distance_b", "/extent/two_sided/backward")],
-                _ => vec![("distance", "/extent/distance")],
+                _ => vec![("distance", "/extent/distance"), ("taper", "/taper")],
             },
             Panel::Revolve(p) if p.full => vec![],
             Panel::Revolve(p) => vec![("degrees", if p.symmetric { "/angle/symmetric" } else { "/angle/angle" })],
@@ -522,6 +528,16 @@ impl Panel {
             Panel::Rib(_) => vec![("thickness", "/thickness"), ("distance", "/extent/distance")],
             Panel::Coil(_) => vec![("pitch", "/pitch"), ("turns", "/turns")],
             Panel::Draft(_) => vec![("degrees", "/angle")],
+            Panel::Thread(p) => {
+                let mut v = Vec::new();
+                if p.custom_pitch {
+                    v.push(("pitch", "/pitch"));
+                }
+                if !p.full {
+                    v.push(("length", "/length/distance"));
+                }
+                v
+            }
             Panel::Work(w) => match w.method {
                 crate::work::WorkMethod::Offset => vec![("distance", "/distance")],
                 crate::work::WorkMethod::Angle => vec![("degrees", "/angle")],
@@ -582,7 +598,10 @@ impl ExtrudePanel {
             (ExtentChoice::Distance, _) => ExtrudeExtent::Distance(self.distance),
         };
         let reverse = self.direction == Direction::Flipped;
-        FeatureKind::Extrude(Extrude { sketch: self.sketch, regions: self.regions.clone(), extent, reverse, operation: self.operation })
+        // A taper goes one way from the sketch: the two-way extents are straight.
+        let one_way = matches!(extent, ExtrudeExtent::Distance(_) | ExtrudeExtent::ThroughAll);
+        let taper = (one_way && (self.taper != 0.0 || self.keep_taper)).then(|| self.taper.to_radians());
+        FeatureKind::Extrude(Extrude { sketch: self.sketch, regions: self.regions.clone(), extent, reverse, operation: self.operation, taper })
     }
 }
 
@@ -654,6 +673,10 @@ impl Workbench {
             },
             // The bodies as they are before, so each can be clicked.
             Some(Panel::Combine(p)) => rolled(p.editing),
+            Some(Panel::Thread(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind),
+                None => rolled(p.editing),
+            },
             Some(Panel::Fillet(p)) => rolled(p.editing),
             Some(Panel::Chamfer(p)) => rolled(p.editing),
             Some(Panel::Shell(p)) => rolled(p.editing),
@@ -770,6 +793,8 @@ impl Workbench {
                         distance_b,
                         operation: e.operation,
                         regions: e.regions.clone(),
+                        taper: e.taper.unwrap_or(0.0).to_degrees(),
+                        keep_taper: e.taper.is_some(),
                     }
                 }
                 _ => return Err("not an extrusion".into()),
@@ -786,6 +811,8 @@ impl Workbench {
                     distance_b: 10.0,
                     operation: Operation::Join,
                     regions: RegionSel::Default,
+                    taper: 0.0,
+                    keep_taper: false,
                 }
             }
         };
@@ -815,12 +842,7 @@ impl Workbench {
             },
             None => {
                 let sketch = self.default_sketch()?;
-                // Default axis: a construction line of the sketch if there is one.
-                let axis = self
-                    .document()
-                    .sketch(sketch)
-                    .and_then(|s| s.entities().find(|(id, e)| e.construction && s.is_line(*id)).map(|(id, _)| AxisChoice::Line(id)))
-                    .unwrap_or(AxisChoice::Origin(OriginAxis::Y));
+                let axis = self.default_revolve_axis(sketch);
                 RevolvePanel {
                     editing: None,
                     sketch,
@@ -1007,6 +1029,9 @@ impl Workbench {
                             }
                             ExtrudeExtent::ThroughAll => p["through_all"] = json!(true),
                         }
+                        if let Some(taper) = e.taper {
+                            p["taper"] = json!(taper);
+                        }
                         ("model.extrude", p)
                     }
                     FeatureKind::Revolve(r) => {
@@ -1127,7 +1152,8 @@ impl Workbench {
                     | FeatureKind::Loft(_)
                     | FeatureKind::Draft(_)
                     | FeatureKind::Split(_)
-                    | FeatureKind::Combine(_) => ("feature.add", json!({ "kind": kind_json })),
+                    | FeatureKind::Combine(_)
+                    | FeatureKind::Thread(_) => ("feature.add", json!({ "kind": kind_json })),
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
@@ -1294,6 +1320,19 @@ impl Workbench {
                             keep = !self.commit_panel(&ptrs, p.editing, kind);
                             if !keep && again {
                                 reopen = Some("model.combine");
+                            }
+                        }
+                    }
+                }
+            }
+            Panel::Thread(p) => {
+                if commit {
+                    match p.kind() {
+                        None => self.set_error("Thread: click a round shaft or hole".to_string()),
+                        Some(kind) => {
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("model.thread");
                             }
                         }
                     }

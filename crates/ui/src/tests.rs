@@ -68,7 +68,6 @@ fn every_available_command_has_a_handler() {
             assert!(!e.contains("unknown command"), "{id}: {e}");
         }
     }
-    assert!(Workbench::without_kernel().run_ui("model.thread").unwrap_err().contains("milestone M6"));
     assert!(Workbench::without_kernel().run_ui("sketch.stretch").unwrap_err().contains("not in the current plan"));
     assert!(Workbench::without_kernel().run_ui("model.fillet").unwrap_err().contains("no solid"));
     assert!(Workbench::without_kernel().run_ui("nonsense.cmd").unwrap_err().contains("unknown"));
@@ -190,6 +189,17 @@ impl Driver {
             walk(&c.shape, &mut out);
         }
         out
+    }
+    /// The middle of the piece of text `text` the last frame drew, to click it as a user would.
+    pub(crate) fn text_pos(&self, text: &str) -> Option<Pos2> {
+        fn walk(s: &egui::Shape, text: &str) -> Option<Pos2> {
+            match s {
+                egui::Shape::Text(t) if t.galley.text() == text => Some(t.pos + t.galley.size() / 2.0),
+                egui::Shape::Vec(v) => v.iter().find_map(|x| walk(x, text)),
+                _ => None,
+            }
+        }
+        self.shapes.iter().find_map(|c| walk(&c.shape, text))
     }
     /// Holds (or releases) modifier keys from the next frame on.
     pub(crate) fn modifiers(&mut self, wb: &mut Workbench, m: egui::Modifiers) {
@@ -1556,4 +1566,183 @@ fn draft_split_and_combine_pick_faces_planes_and_bodies() {
     // With one solid there is nothing to combine.
     let e = wb.run_ui("model.combine").unwrap_err();
     assert!(e.contains("two or more solid bodies"), "{e}");
+}
+
+#[test]
+fn a_thread_is_put_on_a_shaft_by_clicking_it_and_cut_when_modelled() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": 0, "cy": 0, "r": 4 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 20 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    let plain = PI * 16.0 * 20.0;
+
+    // Thread, then a click on the shaft: sized from the face, shown on it, the part unchanged.
+    wb.run_ui("model.thread").unwrap();
+    let Some(Panel::Thread(p)) = wb.panel.clone() else { panic!("no thread panel") };
+    assert!(p.face.is_none() && !p.modelled);
+    let wall = on_screen(&wb, Vec3::new(8f64.sqrt(), -(8f64.sqrt()), 10.0));
+    d.click(&mut wb, wall);
+    d.settle(&mut wb);
+    let Some(Panel::Thread(p)) = wb.panel.clone() else { panic!("no thread panel") };
+    assert!(p.face.is_some(), "the round face is taken");
+    assert_eq!(wb.scene().threads.len(), 1, "preview");
+    assert_eq!(wb.scene().threads[0].mark.designation, "M8x1.25");
+    assert_eq!(wb.thread_faces().len(), 1, "the threaded face is drawn in its own colour");
+    assert!((volume(&wb) - plain).abs() < 1e-6);
+    // The flat end is not a face a thread goes on.
+    let top = on_screen(&wb, Vec3::new(0.0, 0.0, 20.0));
+    d.click(&mut wb, top);
+    let Some(Panel::Thread(q)) = wb.panel.clone() else { panic!("no thread panel") };
+    assert_eq!(q.face, p.face);
+    // A name of its own for drawings, typed; Enter is OK.
+    type_into(&mut d, &mut wb, "tn_props_thread_name", "M8 special");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(wb.document().features().last().unwrap().name, "Thread1");
+    assert_eq!(wb.scene().threads[0].mark.designation, "M8 special");
+    assert!((volume(&wb) - plain).abs() < 1e-6, "cosmetic: {}", volume(&wb));
+
+    // Edited and ticked Modelled: the groove is cut, sixteen turns of it.
+    let thread = wb.document().features().last().unwrap().id;
+    wb.edit_feature(thread).unwrap();
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    let tick = pressable(&d, "tn_props_thread_modelled");
+    d.click(&mut wb, tick);
+    d.settle(&mut wb);
+    let Some(Panel::Thread(p)) = wb.panel.clone() else { panic!("no thread panel") };
+    assert!(p.modelled);
+    let (pitch, depth) = (1.25, 0.625 * 0.866_025_403_784_438_6 * 1.25);
+    let per_turn = (0.875 + 0.25) / 2.0 * pitch * depth * 2.0 * PI * (4.0 - depth * (0.875 + 0.5) / (3.0 * 1.125));
+    let turns = (plain - volume(&wb)) / per_turn;
+    assert!((turns - 16.0).abs() < 0.5, "preview: {turns} turns' worth cut");
+    assert!(wb.thread_faces().is_empty(), "a modelled thread shows as what it is");
+    wb.panel_request = Some(crate::panels::PanelRequest::Ok);
+    d.frame(&mut wb, vec![]);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!(((plain - volume(&wb)) / per_turn - 16.0).abs() < 0.5);
+    assert!(!wb.status_error, "{}", wb.status());
+}
+
+#[test]
+fn an_extrusion_is_tapered_from_its_advanced_properties() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": -10, "y1": -10, "x2": 10, "y2": 10 })).unwrap();
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::E);
+    d.settle(&mut wb);
+    assert!((volume(&wb) - 4000.0).abs() < 1e-6);
+    // Advanced Properties is folded away until it is opened; Taper is in it.
+    assert!(d.ctx.read_response(egui::Id::new("tn_props_taper")).is_none());
+    let header = d.text_pos("Advanced Properties").expect("the Advanced Properties header");
+    d.click(&mut wb, header);
+    d.frame(&mut wb, vec![]);
+    type_into(&mut d, &mut wb, "tn_props_taper", "5");
+    d.frame(&mut wb, vec![]);
+    d.settle(&mut wb);
+    let frustum = |deg: f64| {
+        let top = 20.0 - 2.0 * 10.0 * f64::to_radians(deg).tan();
+        10.0 / 3.0 * (400.0 + top * top + 20.0 * top)
+    };
+    assert!((volume(&wb) - frustum(5.0)).abs() < 1e-6, "the preview narrows: {}", volume(&wb));
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - frustum(5.0)).abs() < 1e-6);
+    // Edited again, the section is open on its value.
+    let ext = wb.document().features().last().unwrap().id;
+    wb.edit_feature(ext).unwrap();
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel") };
+    assert!((p.taper - 5.0).abs() < 1e-9);
+    assert!(d.ctx.read_response(egui::Id::new("tn_props_taper")).is_some());
+    type_into(&mut d, &mut wb, "tn_props_taper", "-5");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.settle(&mut wb);
+    assert!((volume(&wb) - frustum(-5.0)).abs() < 1e-6, "leaning out: {}", volume(&wb));
+}
+
+#[test]
+fn revolve_turns_a_circle_into_a_sphere_and_takes_a_clicked_line_for_its_axis() {
+    use crate::panels::AxisChoice;
+    use tenon_geom::Vec3;
+    use tenon_model::OriginAxis;
+    let ball = 4.0 / 3.0 * PI * 1000.0;
+    // A circle on any origin plane, and Revolve: an origin axis in the sketch's plane is offered
+    // (never one square to it), and the preview is a sphere.
+    for (plane, axis) in [("xy", OriginAxis::Y), ("xz", OriginAxis::Z), ("yz", OriginAxis::Z)] {
+        let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+        let mut d = Driver::new(vec2(1400.0, 860.0));
+        wb.create_sketch(json!({ "plane": plane })).unwrap();
+        let f = sketching(&wb);
+        wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": 0, "cy": 0, "r": 10 })).unwrap();
+        d.settle(&mut wb);
+        d.tap(&mut wb, egui::Key::R);
+        d.settle(&mut wb);
+        let Some(Panel::Revolve(p)) = wb.panel.clone() else { panic!("no revolve panel: {}", wb.status()) };
+        assert_eq!(p.axis, AxisChoice::Origin(axis), "{plane}");
+        assert!((volume(&wb) - ball).abs() < 1e-6, "{plane}: {} ({})", volume(&wb), wb.status());
+        d.tap(&mut wb, egui::Key::Enter);
+        d.frame(&mut wb, vec![]);
+        d.settle(&mut wb);
+        assert!(wb.panel.is_none() && !wb.status_error, "{}", wb.status());
+        assert!((volume(&wb) - ball).abs() < 1e-6);
+    }
+
+    // A line drawn through the circle is what it turns about, without being asked.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": 30, "cy": 5, "r": 10 })).unwrap();
+    let through = wb.exec("sketch.line", json!({ "sketch": f.0, "x1": 15, "y1": 5, "x2": 45, "y2": 5 })).unwrap()["line"].as_u64().unwrap();
+    wb.run_ui("model.revolve").unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Revolve(p)) = wb.panel.clone() else { panic!("no revolve panel") };
+    assert_eq!(p.axis, AxisChoice::Line(tenon_sketch::EntityId(u32::try_from(through).unwrap())));
+    assert!((volume(&wb) - ball).abs() < 1e-6, "{} ({})", volume(&wb), wb.status());
+    wb.panel = None;
+
+    // Two lines to choose from: the profile is turned about an origin axis until one is clicked
+    // in the viewport.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 10, "y1": 0, "x2": 20, "y2": 10 })).unwrap();
+    wb.exec("sketch.line", json!({ "sketch": f.0, "x1": 5, "y1": -5, "x2": 5, "y2": 15 })).unwrap();
+    let below = wb.exec("sketch.line", json!({ "sketch": f.0, "x1": 0, "y1": -10, "x2": 30, "y2": -10 })).unwrap()["line"].as_u64().unwrap();
+    wb.run_ui("model.revolve").unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Revolve(p)) = wb.panel.clone() else { panic!("no revolve panel") };
+    assert_eq!(p.axis, AxisChoice::Origin(OriginAxis::Y), "the origin axis the profile is beside");
+    // (Pappus: the square's area times the way its middle goes round.)
+    assert!((volume(&wb) - 100.0 * 2.0 * PI * 15.0).abs() < 1e-6, "{}", volume(&wb));
+    assert!(wb.shown_sketches().contains(&(f, true)), "the sketch's lines show, to be clicked");
+    let on_line = on_screen(&wb, Vec3::new(15.0, -10.0, 0.0));
+    d.click(&mut wb, on_line);
+    d.settle(&mut wb);
+    let Some(Panel::Revolve(p)) = wb.panel.clone() else { panic!("no revolve panel") };
+    assert_eq!(p.axis, AxisChoice::Line(tenon_sketch::EntityId(u32::try_from(below).unwrap())));
+    assert!((volume(&wb) - 100.0 * 2.0 * PI * 15.0).abs() < 1e-6, "its middle is 15 from this line too: {}", volume(&wb));
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none() && !wb.status_error, "{}", wb.status());
+    assert_eq!(wb.document().features().last().unwrap().name, "Revolution1");
 }

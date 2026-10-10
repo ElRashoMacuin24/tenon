@@ -398,6 +398,8 @@ impl Workbench {
         let chosen: Vec<FeatureId> = match &self.panel {
             Some(Panel::Sweep(p)) => std::iter::once(p.sketch).chain(p.path.as_ref().map(|c| c.sketch)).collect(),
             Some(Panel::Coil(p)) => vec![p.sketch],
+            // (Its lines can be clicked to turn about.)
+            Some(Panel::Revolve(p)) => vec![p.sketch],
             Some(Panel::Loft(p)) => p.sections.clone(),
             _ => vec![],
         };
@@ -435,6 +437,143 @@ impl Workbench {
                     painter.add(egui::Shape::line(pts, stroke));
                 }
             }
+        }
+    }
+}
+
+/// The axis of a revolution or coil: choosing a sensible one, picking it in the viewport, and
+/// showing it.
+impl Workbench {
+    /// The sketch and axis of the open Revolve or Coil panel.
+    fn axis_panel(&self) -> Option<(FeatureId, AxisChoice)> {
+        match &self.panel {
+            Some(Panel::Revolve(p)) => Some((p.sketch, p.axis)),
+            Some(Panel::Coil(p)) => Some((p.sketch, p.axis)),
+            _ => None,
+        }
+    }
+
+    /// Puts an axis into the open Revolve or Coil panel. Returns false when neither is open.
+    pub(crate) fn set_panel_axis(&mut self, axis: AxisChoice) -> bool {
+        match &mut self.panel {
+            Some(Panel::Revolve(p)) => p.axis = axis,
+            Some(Panel::Coil(p)) => p.axis = axis,
+            _ => return false,
+        }
+        true
+    }
+
+    /// The axis a new revolution of `sketch` starts with:
+    /// - a centre line of the sketch (a construction line), if it has one;
+    /// - else the one line drawn in the sketch that bounds no profile (it was drawn to turn about);
+    /// - else an origin axis lying in the sketch's plane, the upright one first, and one the
+    ///   profile is beside before one that runs through it.
+    pub(crate) fn default_revolve_axis(&self, sketch: FeatureId) -> AxisChoice {
+        let doc = self.document();
+        let Some(sk) = doc.sketch(sketch) else { return AxisChoice::Origin(OriginAxis::Y) };
+        let lines: Vec<(tenon_sketch::EntityId, bool)> =
+            sk.entities().filter(|(id, _)| sk.is_line(*id)).map(|(id, e)| (id, e.construction)).collect();
+        if let Some((id, _)) = lines.iter().find(|l| l.1) {
+            return AxisChoice::Line(*id);
+        }
+        let regions = tenon_sketch::regions(sk);
+        let bounding: std::collections::BTreeSet<tenon_sketch::EntityId> =
+            regions.iter().flat_map(|r| r.outer.iter().chain(r.holes.iter().flatten())).copied().collect();
+        let loose: Vec<tenon_sketch::EntityId> = lines.iter().filter(|l| !bounding.contains(&l.0)).map(|l| l.0).collect();
+        if let [only] = loose.as_slice() {
+            return AxisChoice::Line(*only);
+        }
+        let Some(frame) = self.sketch_frame(sketch) else { return AxisChoice::Origin(OriginAxis::Y) };
+        let in_plane: Vec<OriginAxis> =
+            [OriginAxis::Z, OriginAxis::Y, OriginAxis::X].into_iter().filter(|a| a.axis().dir().dot(frame.z()).abs() < 1e-6).collect();
+        // Across an axis: profile points both sides of it.
+        let across = |a: &OriginAxis| {
+            let axis = a.axis();
+            let side = frame.z().cross(axis.dir());
+            let s: Vec<f64> = regions.iter().flat_map(|r| r.outline.iter()).map(|q| (frame.plane_point(*q) - axis.origin()).dot(side)).collect();
+            s.iter().any(|x| *x > 1e-6) && s.iter().any(|x| *x < -1e-6)
+        };
+        let axis = in_plane.iter().find(|a| !across(a)).or(in_plane.first()).copied().unwrap_or(OriginAxis::Y);
+        AxisChoice::Origin(axis)
+    }
+
+    /// The line of the open Revolve or Coil panel's sketch under `pos`: a click makes it the axis.
+    pub(crate) fn axis_line_at(&self, pos: Option<egui::Pos2>, rect: egui::Rect) -> Option<tenon_sketch::EntityId> {
+        let pos = pos?;
+        let (sketch, _) = self.axis_panel()?;
+        let (sk, frame) = (self.document().sketch(sketch)?, self.sketch_frame(sketch)?);
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let screen =
+            |q: tenon_geom::Vec2| self.view.camera.project(frame.plane_point(q), w, h).map(|(x, y, _)| rect.min + egui::vec2(x as f32, y as f32));
+        sk.entities()
+            .filter_map(|(id, _)| {
+                let (a, b) = sk.line(id)?;
+                let (a, b) = (screen(a)?, screen(b)?);
+                // Distance from the pointer to the segment on screen.
+                let ab = b - a;
+                let t = if ab.length_sq() > 0.0 { ((pos - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0) } else { 0.0 };
+                Some((id, (a + ab * t).distance(pos)))
+            })
+            .filter(|(_, d)| *d <= 6.0)
+            .min_by(|x, y| x.1.total_cmp(&y.1))
+            .map(|(id, _)| id)
+    }
+
+    /// The open Revolve or Coil panel's axis in space: a point on it and its direction.
+    fn panel_axis_line(&self) -> Option<(tenon_geom::Vec3, tenon_geom::Vec3)> {
+        let (sketch, axis) = self.axis_panel()?;
+        match axis {
+            AxisChoice::Origin(o) => Some((o.axis().origin(), o.axis().dir())),
+            AxisChoice::Line(l) => {
+                let (sk, frame) = (self.document().sketch(sketch)?, self.sketch_frame(sketch)?);
+                let (a, b) = sk.line(l)?;
+                let (a, b) = (frame.plane_point(a), frame.plane_point(b));
+                Some((a, (b - a).normalized())).filter(|x| x.1.len() > 0.0)
+            }
+            AxisChoice::Work(w) => self.scene.work.iter().find(|x| x.0 == w).and_then(|x| match x.1 {
+                tenon_model::WorkGeom::Axis(a) => Some((a.origin(), a.dir())),
+                _ => None,
+            }),
+        }
+    }
+
+    /// While a Revolve or Coil panel is open: its axis as a centre line through the part, and
+    /// the sketch line under the pointer lit up (a click makes it the axis).
+    pub(crate) fn axis_overlay(&self, ui: &Ui, rect: egui::Rect, t: &Tokens) {
+        let Some((sketch, _)) = self.axis_panel() else { return };
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let screen = |p: tenon_geom::Vec3| self.view.camera.project(p, w, h).map(|(x, y, _)| rect.min + egui::vec2(x as f32, y as f32));
+        let painter = ui.painter().with_clip_rect(rect);
+        if let Some((origin, dir)) = self.panel_axis_line() {
+            // As long as the part and the sketch reach along it, and a little more.
+            let mut along: Vec<f64> = Vec::new();
+            if let Some(b) = self.scene.bbox() {
+                for x in [b.min.x, b.max.x] {
+                    for y in [b.min.y, b.max.y] {
+                        for z in [b.min.z, b.max.z] {
+                            along.push((tenon_geom::Vec3::new(x, y, z) - origin).dot(dir));
+                        }
+                    }
+                }
+            }
+            if let (Some(sk), Some(frame)) = (self.document().sketch(sketch), self.sketch_frame(sketch)) {
+                along.extend(sk.entities().filter_map(|(id, _)| sk.point(id)).map(|q| (frame.plane_point(q) - origin).dot(dir)));
+            }
+            let (lo, hi) = along.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+            let (lo, hi) = if lo.is_finite() { (lo, hi) } else { (-10.0, 10.0) };
+            let margin = ((hi - lo) * 0.15).max(5.0);
+            if let (Some(a), Some(b)) = (screen(origin + dir * (lo - margin)), screen(origin + dir * (hi + margin))) {
+                // Long dash, short dash: a centre line.
+                painter.extend(egui::Shape::dashed_line_with_offset(&[a, b], egui::Stroke::new(1.5, t.tint_work), &[16.0, 4.0], &[4.0, 4.0], 0.0));
+            }
+        }
+        let hover = self.axis_line_at(ui.input(|i| i.pointer.hover_pos()).filter(|q| rect.contains(*q)), rect);
+        if let Some(id) = hover
+            && let (Some(sk), Some(frame)) = (self.document().sketch(sketch), self.sketch_frame(sketch))
+            && let Some((a, b)) = sk.line(id)
+            && let (Some(a), Some(b)) = (screen(frame.plane_point(a)), screen(frame.plane_point(b)))
+        {
+            painter.line_segment([a, b], egui::Stroke::new(3.0, t.tint_work));
         }
     }
 }

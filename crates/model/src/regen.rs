@@ -14,7 +14,8 @@ use tenon_sketch::{EntityId, Sketch, SketchRegion, default_regions, profile, reg
 use crate::FeatureId;
 use crate::document::{
     AxisRef, AxisSel, ChamferSize, Coil, Combine, DirectionRef, Document, Draft, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent,
-    HoleType, Loft, Operation, PlaneRef, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Split, SplitKeep, Sweep, WorkAxis, WorkPlane, WorkPoint,
+    HoleType, Loft, Operation, PlaneRef, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Split, SplitKeep, Sweep, Thread, ThreadLength, WorkAxis,
+    WorkPlane, WorkPoint,
 };
 use crate::naming::{
     CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
@@ -55,9 +56,33 @@ pub struct Regen {
     pub tools: BTreeMap<FeatureId, Vec<Tool>>,
     /// Work planes, axes and points.
     pub work: BTreeMap<FeatureId, WorkGeom>,
+    /// The threads on the part, cosmetic and modelled.
+    pub threads: Vec<ThreadMark>,
     pub cancelled: bool,
     /// Wall time of the regeneration in milliseconds.
     pub millis: f64,
+}
+
+/// A thread on the part: what a Thread feature made of its face.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ThreadMark {
+    pub feature: FeatureId,
+    /// The threaded face (for a modelled thread, what the groove left of it).
+    pub face: FaceRef,
+    /// "M8x1.25".
+    pub designation: String,
+    pub pitch: f64,
+    /// The major diameter: a shaft's own, a hole's plus the thread's depth both sides.
+    pub diameter: f64,
+    /// In a hole.
+    pub internal: bool,
+    pub length: f64,
+    /// Where on the axis the thread starts, and which way it runs.
+    pub start: Vec3,
+    pub direction: Vec3,
+    pub left: bool,
+    /// The groove is cut into the part.
+    pub modelled: bool,
 }
 
 /// Where a work feature is.
@@ -421,6 +446,7 @@ impl<'a> Ctx<'a> {
             FeatureKind::Draft(d) => self.draft(f.id, d),
             FeatureKind::Split(s) => self.split(f.id, s),
             FeatureKind::Combine(c) => self.combine_bodies(c),
+            FeatureKind::Thread(t) => self.thread(f.id, t),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };
@@ -949,7 +975,31 @@ impl<'a> Ctx<'a> {
         let op = self.k.extrude(&profile, &extent, None)?;
         let faces = self.k.topology(op.shape)?.faces;
         let names = names_of_sweep(&op.history, id, faces);
-        self.combine(id, vec![(op.shape, names)], e.operation)
+        let taper = e.taper.unwrap_or(0.0);
+        if taper == 0.0 {
+            return self.combine(id, vec![(op.shape, names)], e.operation);
+        }
+        // Tapered: the straight solid's sides are tilted about the sketch plane, where they stay
+        // put. Leaning in narrows the solid as it leaves the sketch.
+        e.check()?;
+        let tapered = (|| -> Result<(ShapeHandle, Vec<Option<FaceOrigin>>), Stop> {
+            let topo = self.k.topology(op.shape)?;
+            let sides: Vec<_> =
+                (0..topo.faces).filter(|i| matches!(names.get(*i as usize), Some(Some(FaceOrigin::Side { .. })))).map(|i| op.shape.face(i)).collect();
+            let away = frame.z() * sign;
+            let pull = if taper > 0.0 { away } else { -away };
+            let drafted = self.k.draft(op.shape, &sides, pull, taper.abs(), &frame)?;
+            match self.k.topology(drafted.shape) {
+                Ok(new) => Ok((drafted.shape, names_of_modify(&drafted.history, &names, &topo, id, new.faces))),
+                Err(err) => {
+                    self.k.release(drafted.shape);
+                    Err(err.into())
+                }
+            }
+        })();
+        self.k.release(op.shape);
+        let (shape, names) = tapered?;
+        self.combine(id, vec![(shape, names)], e.operation)
     }
 
     fn revolve(&mut self, id: FeatureId, r: &Revolve) -> Result<(), Stop> {
@@ -963,6 +1013,11 @@ impl<'a> Ctx<'a> {
             }
             AxisRef::Work(w) => self.work_axis(*w)?,
         };
+        // A flat profile turned about a line square to it sweeps no solid, and a kernel may say
+        // nothing about that.
+        if axis.dir().dot(frame.z()).abs() > 1.0 - 1e-9 {
+            return Err("The axis is square to the sketch, so turning the profile about it makes no solid. Choose an axis that lies in the sketch's plane: a line of the sketch, or an origin axis in that plane.".into());
+        }
         let all = regions(sketch);
         let profile = profile(sketch, frame, &select(&all, &r.regions)?);
         let angle = match r.angle {
@@ -971,6 +1026,17 @@ impl<'a> Ctx<'a> {
             RevolveAngle::Symmetric(a) => AngleExtent::Symmetric(a),
         };
         let op = self.k.revolve(&profile, &axis, &angle)?;
+        match self.k.mass_properties(op.shape, 1.0) {
+            Ok(m) if m.volume.abs() > tenon_geom::tol::MIN_SIZE => {}
+            Ok(_) => {
+                self.k.release(op.shape);
+                return Err("The revolution has no volume: the axis is probably not in the sketch's plane, or the whole profile lies on it. Choose an axis in the sketch's plane, beside the profile or through it.".into());
+            }
+            Err(e) => {
+                self.k.release(op.shape);
+                return Err(e.into());
+            }
+        }
         let faces = self.k.topology(op.shape)?.faces;
         let names = names_of_sweep(&op.history, id, faces);
         self.combine(id, vec![(op.shape, names)], r.operation)
@@ -1009,13 +1075,6 @@ impl<'a> Ctx<'a> {
         };
         let all = regions(sketch);
         let profile = profile(sketch, frame, &select(&all, &c.regions)?);
-        // The helix runs through the middle of the profile, round the axis.
-        let centre = profile_centre(&profile);
-        let foot = axis.origin() + axis.dir() * (centre - axis.origin()).dot(axis.dir());
-        let radius = centre.dist(foot);
-        if radius <= tenon_geom::tol::MIN_SIZE {
-            return Err("the coil profile is on its axis: move it off the axis".into());
-        }
         // Turns closer together than the profile is tall run into each other, and a kernel may
         // build that without complaint: refuse it here.
         let along: Vec<f64> = profile_points(&profile).iter().map(|q| (*q - axis.origin()).dot(axis.dir())).collect();
@@ -1028,10 +1087,7 @@ impl<'a> Ctx<'a> {
             )
             .into());
         }
-        let helix_frame = Frame::new(foot, axis.dir(), centre - foot).ok_or("the coil axis has no direction")?;
-        let helix = Curve3::Helix { frame: helix_frame, radius, pitch: c.pitch, turns: c.turns, left: c.left };
-        let opts = SweepOpts { orientation: SweepOrientation::Binormal(axis.dir()), solid: true };
-        let op = self.k.sweep(&profile, &Path3 { curves: vec![helix] }, &opts)?;
+        let op = self.wind(&profile, &axis, c.pitch, c.turns, c.left)?;
         let faces = self.k.topology(op.shape)?.faces;
         let names = names_of_sweep(&op.history, id, faces);
         self.combine(id, vec![(op.shape, names)], c.operation)
@@ -1233,6 +1289,205 @@ impl<'a> Ctx<'a> {
         Ok(())
     }
 
+    /// `profile` wound round `axis` in `turns` turns of `pitch`: the helix runs through the middle
+    /// of the profile, which must be off the axis.
+    fn wind(&mut self, profile: &Profile, axis: &Axis, pitch: f64, turns: f64, left: bool) -> Result<tenon_kernel::Op, Stop> {
+        let centre = profile_centre(profile);
+        let foot = axis.origin() + axis.dir() * (centre - axis.origin()).dot(axis.dir());
+        let radius = centre.dist(foot);
+        if radius <= tenon_geom::tol::MIN_SIZE {
+            return Err("the coil profile is on its axis: move it off the axis".into());
+        }
+        let helix_frame = Frame::new(foot, axis.dir(), centre - foot).ok_or("the coil axis has no direction")?;
+        let helix = Curve3::Helix { frame: helix_frame, radius, pitch, turns, left };
+        let opts = SweepOpts { orientation: SweepOrientation::Binormal(axis.dir()), solid: true };
+        Ok(self.k.sweep(profile, &Path3 { curves: vec![helix] }, &opts)?)
+    }
+
+    /// True when `body` has no material in the ring between the radii `between`, from just past
+    /// `at` to one `pitch` further along `dir`: a thread's groove can run out there.
+    fn free_beyond(&mut self, body: ShapeHandle, at: Vec3, dir: Vec3, radial: Vec3, between: (f64, f64), pitch: f64) -> Result<bool, Stop> {
+        let frame = Frame::new(at, radial.cross(dir), radial).ok_or("the thread's axis has no direction")?;
+        let (lo, hi) = between;
+        let quad = [Vec2::new(lo, 0.05 * pitch), Vec2::new(hi, 0.05 * pitch), Vec2::new(hi, pitch), Vec2::new(lo, pitch)];
+        let curves = (0..4).map(|i| TaggedCurve2 { tag: i as u64 + 1, curve: Curve2::Line { start: quad[i], end: quad[(i + 1) % 4] } }).collect();
+        let profile = Profile { frame, regions: vec![Region { outer: Loop { curves }, holes: vec![] }] };
+        let axis = Axis::new(at, dir).ok_or("the thread's axis has no direction")?;
+        let ring = self.k.revolve(&profile, &axis, &AngleExtent::Full)?;
+        let common = self.k.boolean(BoolOp::Intersect, body, &[ring.shape]);
+        self.k.release(ring.shape);
+        match common {
+            Ok(op) => {
+                let volume = self.k.mass_properties(op.shape, 1.0).map(|m| m.volume);
+                self.k.release(op.shape);
+                Ok(volume?.abs() <= tenon_geom::tol::MIN_SIZE)
+            }
+            // Nothing in common.
+            Err(e) if e.to_string().contains("empty shape") => Ok(true),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn thread(&mut self, id: FeatureId, t: &Thread) -> Result<(), Stop> {
+        use crate::explain::mm;
+        t.check()?;
+        let (bi, face) = self.regen.resolve(&t.face, &*self.k).map_err(|e| self.describe_ref(&t.face, &e))?;
+        let shape = self.body_shape(bi)?;
+        let info = self.k.face_info(shape.face(face))?;
+        let SurfaceKind::Cylinder { axis, radius } = info.surface else {
+            return Err("A thread goes on a cylindrical face: a round shaft or a round hole. Pick one of those.".into());
+        };
+        // A face turned against its surface's own normal has its material outside: a hole.
+        let internal = info.reversed;
+        let pitch = t.pitch.unwrap_or_else(|| crate::threads::default_pitch(2.0 * radius, internal));
+        let depth = crate::threads::DEPTH * pitch;
+        let major = crate::threads::nominal(2.0 * radius, pitch, internal);
+        // The face's ends along its axis: a whole cylinder's area is its circumference times its
+        // length, about its centroid. The axis is taken the way its largest part is positive
+        // (up, for an upright part), whichever way the kernel happens to hold it.
+        let up = {
+            let d = axis.dir();
+            let largest = [d.x, d.y, d.z].into_iter().fold(0.0f64, |a, b| if b.abs() > a.abs() { b } else { a });
+            if largest < 0.0 { -d } else { d }
+        };
+        let whole = info.area / (std::f64::consts::TAU * radius);
+        let mid = (info.centroid - axis.origin()).dot(up);
+        let (low, high) = (axis.origin() + up * (mid - whole / 2.0), axis.origin() + up * (mid + whole / 2.0));
+        // Which ends are open: nothing of the part where the thread's groove would run on past
+        // them (a bolt's tip, a hole's mouth; not a shoulder or a blind hole's bottom).
+        let radial = Frame::from_normal(high, up).ok_or("the thread's axis has no direction")?.x();
+        let ring = if internal { (radius - 0.05 * pitch, radius + depth) } else { (radius - depth, radius + 0.05 * pitch) };
+        let open_high = self.free_beyond(shape, high, up, radial, ring, pitch)?;
+        let open_low = self.free_beyond(shape, low, -up, radial, ring, pitch)?;
+        // A thread starts at its open end. With both ends open, or neither, at the high one.
+        let from_high = (open_high || !open_low) != t.reverse;
+        let (start, dir, free_start, free_far) = if from_high { (high, -up, open_high, open_low) } else { (low, up, open_low, open_high) };
+        let length = match t.length {
+            ThreadLength::Full => whole,
+            ThreadLength::Distance(d) if d > whole + tenon_geom::tol::LINEAR => {
+                return Err(format!(
+                    "The thread is {} mm long but its face is only {} mm long: make it shorter, or let it run the full length.",
+                    mm(d),
+                    mm(whole)
+                )
+                .into());
+            }
+            ThreadLength::Distance(d) => d,
+        };
+        if length < pitch {
+            return Err(format!(
+                "The thread is {} mm long, less than one turn of its {} mm pitch: use a finer pitch or a longer thread.",
+                mm(length),
+                mm(pitch)
+            )
+            .into());
+        }
+        if !internal && depth >= 0.8 * radius {
+            return Err(format!(
+                "A {} mm pitch is too coarse for a {} mm shaft: the thread would cut most of it away. Use a finer pitch.",
+                mm(pitch),
+                mm(2.0 * radius)
+            )
+            .into());
+        }
+        if t.modelled {
+            // The groove between two turns, in a plane through the axis (x away from the axis,
+            // y along the thread): flanks at 30 degrees from square to the axis. It reaches a
+            // little past the face so the cut is clean.
+            let tan30 = 1.0 / 3f64.sqrt();
+            let over = pitch / 32.0 / tan30;
+            let (at_face, at_root) = if internal { (0.75 * pitch, 0.125 * pitch) } else { (0.875 * pitch, 0.25 * pitch) };
+            let wide = at_face + 2.0 * over * tan30;
+            let (r_wide, r_root) = if internal { (radius - over, radius + depth) } else { (radius + over, radius - depth) };
+            let quad =
+                [Vec2::new(r_wide, -wide / 2.0), Vec2::new(r_wide, wide / 2.0), Vec2::new(r_root, at_root / 2.0), Vec2::new(r_root, -at_root / 2.0)];
+            let body = self.regen.bodies.get(bi).cloned().ok_or("no such body")?;
+            // Past an end that is free (a shaft's end, a hole's mouth) the groove runs on, so the
+            // thread runs out cleanly: a whole turn before the start, and most of one after the
+            // end. Where the face ends at a shoulder or a blind hole's bottom, the groove stops
+            // at the end of the face instead.
+            let free_end = t.length == ThreadLength::Full && free_far;
+            // (Short of a closed end by a little: a groove that only touches the end face is a case
+            // booleans get wrong.)
+            let closed = -(wide / 2.0 + 0.05 * pitch);
+            let lead_in = if free_start { pitch } else { closed };
+            // What each turn takes out of the part: the groove's section inside the face, times
+            // the way its middle goes round (Pappus).
+            let section = (at_face + at_root) / 2.0 * depth;
+            let off = depth * (at_face + 2.0 * at_root) / (3.0 * (at_face + at_root));
+            let per_turn = section * std::f64::consts::TAU * if internal { radius + off } else { radius - off };
+            let before = self.k.mass_properties(body.shape, 1.0)?.volume;
+            // A kernel can return a wrong solid for a groove that passes clean through both ends
+            // (OCCT returns nothing at all for some lengths, without an error). So every cut is
+            // checked by the volume it took, and a wrong one is tried again with the groove
+            // running out a little less far.
+            let run_outs: &[f64] = if free_end { &[0.5, 0.72, 0.31] } else { &[0.0] };
+            let mut cut = None;
+            for out in run_outs {
+                let lead_out = if free_end { out * pitch } else { closed };
+                let run = length + lead_in + lead_out;
+                if run < pitch / 2.0 {
+                    return Err("The thread has no room between the ends of its face: use a finer pitch or a longer face.".into());
+                }
+                let origin = start - dir * lead_in;
+                let frame = Frame::new(origin, radial.cross(dir), radial).ok_or("the thread's axis has no direction")?;
+                let curves =
+                    (0..4).map(|i| TaggedCurve2 { tag: i as u64 + 1, curve: Curve2::Line { start: quad[i], end: quad[(i + 1) % 4] } }).collect();
+                let profile = Profile { frame, regions: vec![Region { outer: Loop { curves }, holes: vec![] }] };
+                let helix_axis = Axis::new(origin, dir).ok_or("the thread's axis has no direction")?;
+                let tool = self.wind(&profile, &helix_axis, pitch, run / pitch, t.left)?;
+                let made = (|| -> Result<Option<(ShapeHandle, Vec<Option<FaceOrigin>>)>, Stop> {
+                    let tool_names = names_of_sweep(&tool.history, id, self.k.topology(tool.shape)?.faces);
+                    let op = self.k.boolean(BoolOp::Cut, body.shape, &[tool.shape])?;
+                    let checked = self.k.mass_properties(op.shape, 1.0).map(|m| m.volume).and_then(|v| Ok((v, self.k.topology(op.shape)?.faces)));
+                    match checked {
+                        Ok((after, faces)) => {
+                            // Within a turn and a half of the turns asked for.
+                            let turns = (before - after) / per_turn;
+                            if after > 0.0 && (turns - length / pitch).abs() <= 1.5 {
+                                Ok(Some((op.shape, names_of_boolean(&op.history, &[body.names.as_slice(), tool_names.as_slice()], faces))))
+                            } else {
+                                self.k.release(op.shape);
+                                Ok(None)
+                            }
+                        }
+                        Err(e) => {
+                            self.k.release(op.shape);
+                            Err(e.into())
+                        }
+                    }
+                })();
+                self.k.release(tool.shape);
+                cut = made?;
+                if cut.is_some() {
+                    break;
+                }
+            }
+            let Some((cut_shape, names)) = cut else {
+                return Err("The thread could not be cut into the part: the geometry kernel gave a wrong solid for it. Try a slightly different length or pitch, or leave the thread cosmetic.".into());
+            };
+            self.k.release(body.shape);
+            if let Some(slot) = self.regen.bodies.get_mut(bi) {
+                slot.shape = cut_shape;
+                slot.names = names;
+            }
+        }
+        self.regen.threads.push(ThreadMark {
+            feature: id,
+            face: t.face.clone(),
+            designation: t.designation.clone().unwrap_or_else(|| crate::threads::designation(major, pitch)),
+            pitch,
+            diameter: major,
+            internal,
+            length,
+            start,
+            direction: dir,
+            left: t.left,
+            modelled: t.modelled,
+        });
+        Ok(())
+    }
+
     /// Adds a feature's tool solids to the part according to `operation`.
     fn combine(&mut self, id: FeatureId, tools: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>, operation: Operation) -> Result<(), Stop> {
         let kind = match operation {
@@ -1393,6 +1648,14 @@ impl BodyView {
     }
 }
 
+/// A thread and where its face is among the bodies shown: (body, face), when the face is still
+/// there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadView {
+    pub mark: ThreadMark,
+    pub at: Option<(usize, u32)>,
+}
+
 /// Everything the UI needs to draw a regeneration result (no kernel handles).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Scene {
@@ -1401,6 +1664,8 @@ pub struct Scene {
     pub sketch_frames: BTreeMap<FeatureId, Frame>,
     /// Work planes, axes and points, to draw.
     pub work: Vec<(FeatureId, WorkGeom)>,
+    /// The threads on the part.
+    pub threads: Vec<ThreadView>,
     pub regen_ms: f64,
     pub mesh_ms: f64,
 }
@@ -1439,6 +1704,7 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
         status: regen.status.clone(),
         sketch_frames: regen.sketch_frames.clone(),
         work: regen.work.iter().map(|(id, g)| (*id, *g)).collect(),
+        threads: regen.threads.iter().map(|m| ThreadView { at: regen.resolve(&m.face, &*k).ok(), mark: m.clone() }).collect(),
         regen_ms: regen.millis,
         mesh_ms: t0.elapsed().as_secs_f64() * 1000.0,
     })

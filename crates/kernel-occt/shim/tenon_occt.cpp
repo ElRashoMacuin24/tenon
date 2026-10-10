@@ -7,11 +7,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
@@ -40,6 +42,7 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRep_Builder.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx>
@@ -433,6 +436,10 @@ namespace {
 constexpr std::uint8_t ROLE_START_CAP = 9;
 constexpr std::uint8_t ROLE_END_CAP = 10;
 constexpr double kTwoPi = 6.283185307179586;
+// Most turns of a helix built as one edge. A swept face that winds round its axis more than once
+// is approximated coarsely (a 60-turn coil came out at half its volume) and booleans with it are
+// unreliable (a thread's groove cut nothing, or everything, depending on its length).
+constexpr double kHelixTurnsPerEdge = 1.0;
 /// Distance within which an edge lies on the profile curve it was built from (mm).
 constexpr double kTagTolerance = 1e-5;
 
@@ -666,6 +673,43 @@ std::unique_ptr<Shape> extrude(const ProfileIn& profile, double start, double le
   });
 }
 
+namespace {
+
+// How far across the axis a profile reaches: the least and greatest distance of its boundary from
+// the axis, measured in the profile's plane along `across` (positive one side, negative the
+// other).
+std::pair<double, double> reach_across(const TopoDS_Shape& faces, const gp_Pnt& origin, const gp_Dir& across) {
+  double lo = std::numeric_limits<double>::infinity();
+  double hi = -std::numeric_limits<double>::infinity();
+  for (TopExp_Explorer ex(faces, TopAbs_EDGE); ex.More(); ex.Next()) {
+    const BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));
+    const double a = curve.FirstParameter();
+    const double b = curve.LastParameter();
+    for (int i = 0; i <= 32; ++i) {
+      const double s = gp_Vec(origin, curve.Value(a + (b - a) * i / 32.0)).Dot(gp_Vec(across));
+      lo = std::min(lo, s);
+      hi = std::max(hi, s);
+    }
+  }
+  return {lo, hi};
+}
+
+// What `s` became in `algo`: its modified pieces, itself when untouched, nothing when deleted.
+std::vector<TopoDS_Shape> images_of(BRepBuilderAPI_MakeShape& algo, const TopoDS_Shape& s) {
+  std::vector<TopoDS_Shape> out;
+  if (algo.IsDeleted(s)) {
+    return out;
+  }
+  for (const TopoDS_Shape& m : algo.Modified(s)) {
+    out.push_back(m);
+  }
+  if (out.empty()) {
+    out.push_back(s);
+  }
+  return out;
+}
+} // namespace
+
 std::unique_ptr<Shape> revolve(const ProfileIn& profile, const V3& origin, const V3& axis_dir, double start, double sweep, bool full,
                                HistoryOut& hist) {
   return guarded("revolve", [&] {
@@ -673,6 +717,102 @@ std::unique_ptr<Shape> revolve(const ProfileIn& profile, const V3& origin, const
     const TopoDS_Shape base = profile_faces(profile, 0.0, curves);
     const TaggedEdges tags = tag_edges(base, curves);
     const gp_Ax1 axis(pnt(origin), dir(axis_dir));
+    // Square to the axis, in the profile's plane.
+    const gp_Vec square = gp_Vec(dir(profile.frame.z_dir)).Crossed(gp_Vec(axis.Direction()));
+    const double tol = 1e-7;
+    std::pair<double, double> reach{0.0, 0.0};
+    if (square.Magnitude() > 1e-9) {
+      reach = reach_across(base, axis.Location(), gp_Dir(square));
+    }
+    if (reach.first < -tol && reach.second > tol) {
+      // The profile lies across the axis. A whole turn of it is the turn of what is on one side
+      // together with the turn of what is on the other: each side is cut off, turned, and the two
+      // joined (a circle about its diameter is a sphere twice over).
+      if (!full) {
+        throw std::invalid_argument("for part of a turn the profile must be on one side of the axis, and it lies across it");
+      }
+      const gp_Dir across(square);
+      const TopoDS_Face divide = BRepBuilderAPI_MakeFace(gp_Pln(axis.Location(), across)).Face();
+      std::vector<TopoDS_Shape> turned;
+      // Per side: each tagged profile edge's faces in that side's solid.
+      std::vector<std::vector<std::pair<TopoDS_Shape, std::uint64_t>>> made;
+      for (const double side : {1.0, -1.0}) {
+        const gp_Pnt inside = axis.Location().Translated(gp_Vec(across) * side);
+        const TopoDS_Solid half = BRepPrimAPI_MakeHalfSpace(divide, inside).Solid();
+        BRepAlgoAPI_Common cut;
+        NCollection_List<TopoDS_Shape> args;
+        args.Append(base);
+        NCollection_List<TopoDS_Shape> tools;
+        tools.Append(half);
+        cut.SetArguments(args);
+        cut.SetTools(tools);
+        cut.SetRunParallel(false);
+        cut.Build();
+        if (cut.HasErrors() || !cut.IsDone()) {
+          throw std::runtime_error("the profile could not be divided along the axis");
+        }
+        if (!TopExp_Explorer(cut.Shape(), TopAbs_FACE).More()) {
+          continue;
+        }
+        BRepPrimAPI_MakeRevol mk(cut.Shape(), axis, false);
+        mk.Build();
+        if (!mk.IsDone()) {
+          throw std::runtime_error("the revolution did not complete");
+        }
+        std::vector<std::pair<TopoDS_Shape, std::uint64_t>> faces;
+        for (const auto& entry : tags) {
+          for (const TopoDS_Shape& piece : images_of(cut, entry.first)) {
+            for (const TopoDS_Shape& g : mk.Generated(piece)) {
+              faces.emplace_back(g, entry.second);
+            }
+          }
+        }
+        turned.push_back(mk.Shape());
+        made.push_back(std::move(faces));
+      }
+      if (turned.empty()) {
+        throw std::runtime_error("the revolution did not complete");
+      }
+      TopoDS_Shape result = single_solid(turned.front());
+      std::unique_ptr<BRepAlgoAPI_Fuse> fuse;
+      if (turned.size() == 2) {
+        fuse = std::make_unique<BRepAlgoAPI_Fuse>();
+        NCollection_List<TopoDS_Shape> args;
+        args.Append(turned[0]);
+        NCollection_List<TopoDS_Shape> tools;
+        tools.Append(turned[1]);
+        fuse->SetArguments(args);
+        fuse->SetTools(tools);
+        fuse->SetRunParallel(false);
+        fuse->Build();
+        if (fuse->HasErrors() || !fuse->IsDone()) {
+          throw std::runtime_error("the two sides of the profile could not be joined after turning");
+        }
+        result = single_solid(fuse->Shape());
+      }
+      BRepCheck_Analyzer check(result);
+      if (!check.IsValid()) {
+        throw std::runtime_error("the revolution is not a valid solid (does the profile cross itself?)");
+      }
+      auto out = wrap(result);
+      for (const auto& side : made) {
+        for (const auto& entry : side) {
+          std::vector<TopoDS_Shape> finals;
+          if (fuse) {
+            finals = images_of(*fuse, entry.first);
+          } else {
+            finals.push_back(entry.first);
+          }
+          for (const TopoDS_Shape& f : finals) {
+            TagGen gen{entry.second, 0, 0};
+            if (locate(*out, f, gen.gen_kind, gen.gen_index)) {
+              hist.tagged.push_back(gen);
+            }
+          }
+        }
+      }
+      return out;
+    }
     std::unique_ptr<BRepPrimAPI_MakeRevol> mk =
         full ? std::make_unique<BRepPrimAPI_MakeRevol>(base, axis, false) : std::make_unique<BRepPrimAPI_MakeRevol>(base, axis, sweep, false);
     mk->Build();
@@ -836,14 +976,25 @@ TopoDS_Wire helix_wire(const HelixIn& h) {
   const double du = h.left ? -kTwoPi : kTwoPi;
   const gp_Dir2d d(du, h.pitch);
   occ::handle<Geom2d_Line> line = new Geom2d_Line(gp_Pnt2d(0.0, 0.0), d);
-  const double length = h.turns * std::sqrt(du * du + h.pitch * h.pitch);
-  BRepBuilderAPI_MakeEdge mk(line, cyl, 0.0, length);
-  if (!mk.IsDone()) {
-    throw std::runtime_error("could not build the helix");
+  const double per_turn = std::sqrt(du * du + h.pitch * h.pitch);
+  // A chain of edges, each at most kHelixTurnsPerEdge turns.
+  const int pieces = std::max(1, static_cast<int>(std::ceil(h.turns / kHelixTurnsPerEdge - 1e-9)));
+  BRepBuilderAPI_MakeWire wire;
+  for (int i = 0; i < pieces; ++i) {
+    const double from = h.turns * i / pieces * per_turn;
+    const double to = h.turns * (i + 1) / pieces * per_turn;
+    BRepBuilderAPI_MakeEdge mk(line, cyl, from, to);
+    if (!mk.IsDone()) {
+      throw std::runtime_error("could not build the helix");
+    }
+    TopoDS_Edge e = mk.Edge();
+    BRepLib::BuildCurves3d(e);
+    wire.Add(e);
+    if (!wire.IsDone()) {
+      throw std::runtime_error("could not join the helix's turns");
+    }
   }
-  TopoDS_Edge e = mk.Edge();
-  BRepLib::BuildCurves3d(e);
-  return BRepBuilderAPI_MakeWire(e).Wire();
+  return wire.Wire();
 }
 
 /// The spine of a sweep: lines and arcs end to end, or a helix.
@@ -1118,6 +1269,8 @@ void face_info(const Shape& s, std::uint32_t index, FaceOut& out) {
     }
     case GeomAbs_Cylinder: {
       const gp_Cylinder c = surf.Cylinder();
+      // A left-handed surface has its own normal pointing at the axis.
+      out.reversed = out.reversed != !c.Direct();
       out.kind = 1;
       out.origin = v3(c.Location());
       out.dir = v3(c.Axis().Direction());
@@ -1126,6 +1279,7 @@ void face_info(const Shape& s, std::uint32_t index, FaceOut& out) {
     }
     case GeomAbs_Cone: {
       const gp_Cone c = surf.Cone();
+      out.reversed = out.reversed != !c.Direct();
       out.kind = 2;
       out.origin = v3(c.Location());
       out.dir = v3(c.Axis().Direction());
@@ -1135,6 +1289,7 @@ void face_info(const Shape& s, std::uint32_t index, FaceOut& out) {
     }
     case GeomAbs_Sphere: {
       const gp_Sphere sp = surf.Sphere();
+      out.reversed = out.reversed != !sp.Direct();
       out.kind = 3;
       out.origin = v3(sp.Location());
       out.radius = sp.Radius();
@@ -1142,6 +1297,7 @@ void face_info(const Shape& s, std::uint32_t index, FaceOut& out) {
     }
     case GeomAbs_Torus: {
       const gp_Torus t = surf.Torus();
+      out.reversed = out.reversed != !t.Direct();
       out.kind = 4;
       out.origin = v3(t.Location());
       out.dir = v3(t.Axis().Direction());

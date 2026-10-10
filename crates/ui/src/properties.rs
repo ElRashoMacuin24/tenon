@@ -411,6 +411,7 @@ impl Workbench {
                     | Panel::Draft(_)
                     | Panel::Split(_)
                     | Panel::Combine(_)
+                    | Panel::Thread(_)
                     | Panel::Asm(_)
             )
         )
@@ -467,6 +468,7 @@ impl Workbench {
             Panel::Draft(p) => ("Draft", p.editing.map(|f| self.feature_name(f))),
             Panel::Split(p) => ("Split", p.editing.map(|f| self.feature_name(f))),
             Panel::Combine(p) => ("Combine", p.editing.map(|f| self.feature_name(f))),
+            Panel::Thread(p) => ("Thread", p.editing.map(|f| self.feature_name(f))),
             Panel::Asm(p) => {
                 (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
             }
@@ -578,8 +580,29 @@ impl Workbench {
                                 ui.end_row();
                             });
                         });
-                        section(ui, "Advanced Properties", false, |ui| {
-                            ui.add_enabled(false, egui::Label::new("Taper (milestone M6)"));
+                        section(ui, "Advanced Properties", p.taper != 0.0, |ui| {
+                            if matches!(p.direction, Direction::Symmetric | Direction::Asymmetric) && p.extent == ExtentChoice::Distance {
+                                ui.add_enabled(false, egui::Label::new("Taper: for one direction only")).on_disabled_hover_text(
+                                    "A tapered extrusion goes one way from its sketch. Taper each side as an extrusion of its own.",
+                                );
+                            } else {
+                                egui::Grid::new("tn_props_advanced").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                    ui.label("Taper").on_hover_text("How far the sides lean in as they leave the sketch. Negative leans them out.");
+                                    enter |= eq_value_field(
+                                        ui,
+                                        egui::Id::new("tn_props_taper"),
+                                        &mut p.taper,
+                                        &mut eqs,
+                                        "taper",
+                                        "deg",
+                                        -85.0..=85.0,
+                                        110.0,
+                                        t,
+                                    )
+                                    .entered;
+                                    ui.end_row();
+                                });
+                            }
                         });
                     }
                     Panel::Revolve(p) => {
@@ -1226,7 +1249,7 @@ impl Workbench {
                     p @ (Panel::Sweep(_) | Panel::Coil(_) | Panel::Loft(_)) => {
                         enter |= self.sweeps_properties(ui, p, &mut eqs, &sketches, &work_names, t);
                     }
-                    p @ (Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_)) => {
+                    p @ (Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => {
                         let (entered, cleared) = self.bodies_properties(ui, p, &mut eqs, &work_names, t);
                         enter |= entered;
                         clear |= cleared;
@@ -1455,7 +1478,7 @@ impl Workbench {
             Some(Panel::Sweep(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Coil(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Loft(p)) => p.sections.first().and_then(|s| self.profile_anchor(*s)).map(|a| a.0),
-            Some(Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_) | Panel::Draft(_)) => {
+            Some(Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_) | Panel::Draft(_) | Panel::Thread(_)) => {
                 self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center()))
             }
             Some(Panel::Hole(p)) => p

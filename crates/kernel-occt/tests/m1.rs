@@ -198,11 +198,16 @@ fn revolve_full_partial_symmetric() {
 }
 
 #[test]
-fn revolve_through_the_axis_is_rejected() {
+fn a_whole_turn_through_the_axis_joins_both_sides_and_part_of_one_is_rejected() {
     let mut k = OcctKernel::new();
     let p = profile(Frame::WORLD, one(rect(1, -5.0, 0.0, 5.0, 10.0)));
-    let r = k.revolve(&p, &Axis::new(Vec3::ZERO, Vec3::Y).unwrap(), &AngleExtent::Full);
-    assert!(r.is_err(), "a profile crossing the axis must not produce a solid");
+    let axis = Axis::new(Vec3::ZERO, Vec3::Y).unwrap();
+    // A whole turn of a rectangle about its middle line is a cylinder (it used to be refused).
+    let can = k.revolve(&p, &axis, &AngleExtent::Full).unwrap();
+    assert!(approx(volume(&k, can.shape), std::f64::consts::PI * 25.0 * 10.0), "{}", volume(&k, can.shape));
+    // Part of a turn has each side sweep a different sector: no solid of revolution.
+    let r = k.revolve(&p, &axis, &AngleExtent::Angle(FRAC_PI_2));
+    assert!(r.is_err(), "part of a turn of a profile crossing the axis must not produce a solid");
 }
 
 #[test]

@@ -74,7 +74,9 @@ pub struct FaceInfo {
     pub surface: SurfaceKind,
     pub area: f64,
     pub centroid: Vec3,
-    /// The face is oriented opposite to its surface's natural normal.
+    /// The face looks the other way from its surface's outward normal. For a cylinder, cone,
+    /// sphere or torus that means the material is outside it: the wall of a hole, not of a shaft.
+    /// (A plane's `normal` has the orientation applied already.)
     pub reversed: bool,
 }
 

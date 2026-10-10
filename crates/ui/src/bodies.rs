@@ -3,7 +3,7 @@
 
 use egui::Ui;
 use tenon_kernel::SurfaceKind;
-use tenon_model::{Combine, Draft, FaceRef, FeatureId, FeatureKind, Operation, OriginPlane, PlaneRef, Split, SplitKeep};
+use tenon_model::{Combine, Draft, FaceRef, FeatureId, FeatureKind, Operation, OriginPlane, PlaneRef, Split, SplitKeep, Thread, ThreadLength};
 
 use crate::Workbench;
 use crate::modify::find_face;
@@ -75,6 +75,40 @@ impl CombinePanel {
         let base = self.base.clone()?;
         (!self.tools.is_empty())
             .then(|| FeatureKind::Combine(Combine { base, tools: self.tools.clone(), operation: self.operation, keep_tools: self.keep_tools }))
+    }
+}
+
+/// A thread being made or edited.
+#[derive(Clone, Debug)]
+pub(crate) struct ThreadPanel {
+    pub editing: Option<FeatureId>,
+    /// The round face; None until one is clicked.
+    pub face: Option<FaceRef>,
+    /// The pitch typed in; the standard pitch for the face's size is used while `custom_pitch`
+    /// is off.
+    pub custom_pitch: bool,
+    pub pitch: f64,
+    /// What drawings call it; empty for the name made from its size.
+    pub designation: String,
+    pub full: bool,
+    pub length: f64,
+    pub reverse: bool,
+    pub left: bool,
+    pub modelled: bool,
+}
+
+impl ThreadPanel {
+    pub(crate) fn kind(&self) -> Option<FeatureKind> {
+        let name = self.designation.trim();
+        Some(FeatureKind::Thread(Thread {
+            face: self.face.clone()?,
+            pitch: self.custom_pitch.then_some(self.pitch),
+            designation: (!name.is_empty()).then(|| name.to_owned()),
+            length: if self.full { ThreadLength::Full } else { ThreadLength::Distance(self.length) },
+            reverse: self.reverse,
+            left: self.left,
+            modelled: self.modelled,
+        }))
     }
 }
 
@@ -181,6 +215,73 @@ impl Workbench {
         Ok(())
     }
 
+    pub(crate) fn open_thread(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::Thread(t) => {
+                    let (full, length) = match t.length {
+                        ThreadLength::Full => (true, 10.0),
+                        ThreadLength::Distance(d) => (false, d),
+                    };
+                    ThreadPanel {
+                        editing,
+                        face: Some(t.face.clone()),
+                        custom_pitch: t.pitch.is_some(),
+                        pitch: t.pitch.unwrap_or(1.0),
+                        designation: t.designation.clone().unwrap_or_default(),
+                        full,
+                        length,
+                        reverse: t.reverse,
+                        left: t.left,
+                        modelled: t.modelled,
+                    }
+                }
+                _ => return Err("not a thread".into()),
+            },
+            None => {
+                if !self.has_solid() {
+                    return Err("there is nothing to thread yet: make a round shaft or a hole first".into());
+                }
+                // A round face selected beforehand is the one to thread.
+                let face = self.view.selection.iter().find_map(|p| match p {
+                    Pick::Face { body, face }
+                        if matches!(self.scene.bodies.get(*body)?.faces.get(*face as usize)?.1.surface, SurfaceKind::Cylinder { .. }) =>
+                    {
+                        self.face_ref_of(*body, *face)
+                    }
+                    _ => None,
+                });
+                ThreadPanel {
+                    editing: None,
+                    face,
+                    custom_pitch: false,
+                    pitch: 1.0,
+                    designation: String::new(),
+                    full: true,
+                    length: 10.0,
+                    reverse: false,
+                    left: false,
+                    modelled: false,
+                }
+            }
+        };
+        self.panel = Some(Panel::Thread(panel));
+        self.start_equations();
+        self.view.selection.clear();
+        self.set_status("Thread: click a round shaft or hole. It is sized from the face; tick Modelled to cut the groove.");
+        Ok(())
+    }
+
+    /// The diameter of the round face `r` as shown, and whether it is a hole.
+    fn round_face(&self, r: &FaceRef) -> Option<(f64, bool)> {
+        let (body, face) = find_face(&self.scene, r)?;
+        let info = &self.scene.bodies.get(body)?.faces.get(face as usize)?.1;
+        match info.surface {
+            SurfaceKind::Cylinder { radius, .. } => Some((2.0 * radius, info.reversed)),
+            _ => None,
+        }
+    }
+
     /// The body a face reference is on, in the part as shown.
     fn body_of(&self, r: &FaceRef) -> Option<usize> {
         find_face(&self.scene, r).map(|f| f.0)
@@ -188,13 +289,15 @@ impl Workbench {
 
     /// True when the face may go into the open Draft, Split or Combine panel's active selector.
     pub(crate) fn bodies_referable(&self, body: usize, face: u32) -> bool {
-        let planar =
-            || matches!(self.scene.bodies.get(body).and_then(|b| b.faces.get(face as usize)).map(|f| &f.1.surface), Some(SurfaceKind::Plane { .. }));
+        let surface = || self.scene.bodies.get(body).and_then(|b| b.faces.get(face as usize)).map(|f| &f.1.surface);
+        let planar = || matches!(surface(), Some(SurfaceKind::Plane { .. }));
+        let round = || matches!(surface(), Some(SurfaceKind::Cylinder { .. }));
         self.face_ref_of(body, face).is_some()
             && match &self.panel {
                 Some(Panel::Draft(d)) => d.slot == DraftSlot::Faces || planar(),
                 Some(Panel::Split(_)) => planar(),
                 Some(Panel::Combine(_)) => true,
+                Some(Panel::Thread(_)) => round(),
                 _ => false,
             }
     }
@@ -235,6 +338,7 @@ impl Workbench {
                 None => d.faces.push(r),
             },
             Some(Panel::Split(s)) => s.plane = Some(PlaneRef::Face(r)),
+            Some(Panel::Thread(t)) => t.face = Some(r),
             Some(Panel::Combine(c)) if c.slot == CombineSlot::Base => {
                 // The body that stays cannot also be one of the others.
                 if let Some(i) = held_tool {
@@ -274,6 +378,7 @@ impl Workbench {
                 Some(PlaneRef::Face(f)) => face(f).into_iter().collect(),
                 _ => Vec::new(),
             },
+            Some(Panel::Thread(t)) => t.face.as_ref().and_then(face).into_iter().collect(),
             // Every face of each chosen body: a body is what is picked.
             Some(Panel::Combine(c)) => {
                 let bodies: Vec<usize> = c.base.iter().chain(&c.tools).filter_map(|r| self.body_of(r)).collect();
@@ -410,6 +515,123 @@ impl Workbench {
                         ui.end_row();
                     });
                     ui.checkbox(&mut p.keep_tools, "Keep Toolbody");
+                });
+            }
+            Panel::Thread(p) => {
+                // The size the part will use as the panel stands: from the face, and the pitch
+                // typed or the standard one for it.
+                let size = p.face.as_ref().and_then(|f| self.round_face(f));
+                let standard = size.map(|(d, internal)| tenon_model::threads::default_pitch(d, internal));
+                let pitch = if p.custom_pitch { Some(p.pitch) } else { standard };
+                let auto_name = size
+                    .zip(pitch)
+                    .map(|((d, internal), pitch)| tenon_model::threads::designation(tenon_model::threads::nominal(d, pitch, internal), pitch));
+                section(ui, "Input Geometry", true, |ui| {
+                    egui::Grid::new("tn_props_thread_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Face");
+                        let label = match (size, &p.face) {
+                            (Some((d, true)), _) => format!("Hole, {} mm", crate::properties::fmt_value(d)),
+                            (Some((d, false)), _) => format!("Shaft, {} mm", crate::properties::fmt_value(d)),
+                            (None, Some(_)) => "1 face".to_string(),
+                            (None, None) => "click a round face".to_string(),
+                        };
+                        slot_button(ui, true, &label, t);
+                        ui.end_row();
+                    });
+                });
+                section(ui, "Threads", true, |ui| {
+                    egui::Grid::new("tn_props_thread_spec").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Size");
+                        let shown = if p.designation.trim().is_empty() {
+                            auto_name.clone().unwrap_or_else(|| "-".into())
+                        } else {
+                            p.designation.trim().to_owned()
+                        };
+                        ui.label(egui::RichText::new(shown).strong());
+                        ui.end_row();
+                        ui.label("Pitch");
+                        let coarse =
+                            standard.map_or_else(|| "ISO coarse".to_string(), |s| format!("ISO coarse ({} mm)", crate::properties::fmt_value(s)));
+                        egui::ComboBox::from_id_salt("tn_props_thread_pitch_kind")
+                            .selected_text(if p.custom_pitch { "Custom" } else { coarse.as_str() })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut p.custom_pitch, false, coarse.as_str());
+                                if ui.selectable_value(&mut p.custom_pitch, true, "Custom").clicked()
+                                    && let Some(s) = standard
+                                {
+                                    // Start from the standard pitch.
+                                    p.pitch = s;
+                                }
+                            });
+                        ui.end_row();
+                        if p.custom_pitch {
+                            ui.label("");
+                            enter |=
+                                eq_value_field(ui, egui::Id::new("tn_props_thread_pitch"), &mut p.pitch, eqs, "pitch", "mm", 0.05..=50.0, 110.0, t)
+                                    .entered;
+                            ui.end_row();
+                        }
+                        ui.label("Designation");
+                        let name = egui::TextEdit::singleline(&mut p.designation)
+                            .id(egui::Id::new("tn_props_thread_name"))
+                            .hint_text(auto_name.unwrap_or_default())
+                            .char_limit(64)
+                            .desired_width(110.0);
+                        let r = ui.add(name).on_hover_text("What drawings call the thread. Leave empty to name it from its size.");
+                        enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        ui.end_row();
+                        ui.label("Hand");
+                        egui::ComboBox::from_id_salt("tn_props_thread_hand").selected_text(if p.left { "Left hand" } else { "Right hand" }).show_ui(
+                            ui,
+                            |ui| {
+                                ui.selectable_value(&mut p.left, false, "Right hand");
+                                ui.selectable_value(&mut p.left, true, "Left hand");
+                            },
+                        );
+                        ui.end_row();
+                    });
+                });
+                section(ui, "Behavior", true, |ui| {
+                    egui::Grid::new("tn_props_thread_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Depth");
+                        egui::ComboBox::from_id_salt("tn_props_thread_depth").selected_text(if p.full { "Full Length" } else { "Distance" }).show_ui(
+                            ui,
+                            |ui| {
+                                ui.selectable_value(&mut p.full, true, "Full Length");
+                                ui.selectable_value(&mut p.full, false, "Distance");
+                            },
+                        );
+                        ui.end_row();
+                        if !p.full {
+                            ui.label("Length");
+                            enter |= eq_value_field(
+                                ui,
+                                egui::Id::new("tn_props_thread_length"),
+                                &mut p.length,
+                                eqs,
+                                "length",
+                                "mm",
+                                0.01..=100_000.0,
+                                110.0,
+                                t,
+                            )
+                            .entered;
+                            ui.end_row();
+                        }
+                        ui.label("Direction");
+                        flip_button(ui, &mut p.reverse, t);
+                        ui.end_row();
+                    });
+                });
+                section(ui, "Output", true, |ui| {
+                    let tick = ui.checkbox(&mut p.modelled, "Modelled: cut the thread into the part");
+                    crate::drawing::remember(ui, "tn_props_thread_modelled", tick.rect);
+                    let note = if p.modelled {
+                        "The groove is cut as real geometry: right for printing a thread, slower to rebuild."
+                    } else {
+                        "Cosmetic: the face is recorded and shown as threaded, the part stays a plain cylinder. Quick, and enough for drawings and tapped or bought parts."
+                    };
+                    ui.label(egui::RichText::new(note).small().color(t.text_dim));
                 });
             }
             _ => {}

@@ -18,6 +18,12 @@ fails if an asset file is missing from this table.
 Generated-in-code assets are original and have no file to list:
 - the UI icon set (`crates/ui/src/icons.rs`, from M0's layout shell onward).
 
+Standard sizes held in code:
+- the ISO metric coarse thread series, M1 to M64 (`crates/model/src/threads.rs`): 21 pairs of
+  nominal diameter and pitch, the first-choice coarse sizes of ISO 261, with the proportions of
+  the basic 60 degree profile (ISO 68-1). These are facts of the standard, typed in; no dataset,
+  table or text of the standard is copied (DEC-038).
+
 | Asset | Author | Source | Licence | Notes |
 |---|---|---|---|---|
 | `docs/images/m0-shell.png` | Tenon contributors | screenshot of Tenon itself: `tenon --screenshot docs/images/m0-shell.png` | MIT OR Apache-2.0 | Original; no third-party UI |

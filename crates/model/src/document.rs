@@ -129,6 +129,26 @@ pub struct Extrude {
     pub reverse: bool,
     #[serde(default)]
     pub operation: Operation,
+    /// Radians the sides lean in as they leave the sketch (negative: lean out). Without it, or at
+    /// zero, the sides are straight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taper: Option<f64>,
+}
+
+impl Extrude {
+    pub fn check(&self) -> Result<(), String> {
+        let taper = self.taper.unwrap_or(0.0);
+        if !(taper.is_finite() && taper.abs() <= MAX_DRAFT_ANGLE) {
+            return Err("the taper must be at most 85 degrees either way".into());
+        }
+        if taper != 0.0 && !matches!(self.extent, ExtrudeExtent::Distance(_) | ExtrudeExtent::ThroughAll) {
+            return Err(
+                "A tapered extrusion goes one way from its sketch: use one distance or Through All, or taper each side as an extrusion of its own."
+                    .into(),
+            );
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -503,6 +523,66 @@ impl Combine {
     }
 }
 
+/// How far a thread runs along its face.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadLength {
+    /// The whole face.
+    #[default]
+    Full,
+    /// This far from the end it starts at.
+    Distance(f64),
+}
+
+/// A screw thread on a cylindrical face: a shaft (an external thread) or a hole (an internal
+/// one).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Thread {
+    pub face: FaceRef,
+    /// Millimetres from one turn to the next. Without it, the ISO coarse pitch for the face's
+    /// diameter, which follows the face when its size changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<f64>,
+    /// What the thread is called on drawings ("M8x1.25", "G1/4"). Without it, named from its
+    /// diameter and pitch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub designation: Option<String>,
+    #[serde(default)]
+    pub length: ThreadLength,
+    /// Start from the other end of the face. (A thread starts at its face's open end: a bolt's
+    /// tip, a hole's mouth. With both ends open, or neither, it starts at the end further along
+    /// the axis taken with its largest part positive: the top, for an upright part.)
+    #[serde(default)]
+    pub reverse: bool,
+    /// Left-handed.
+    #[serde(default)]
+    pub left: bool,
+    /// Cut the thread's groove into the part. Otherwise the thread is cosmetic: the face is
+    /// recorded and shown as threaded and stays a plain cylinder, which is quick and is enough
+    /// for drawings and for parts that are tapped or bought.
+    #[serde(default)]
+    pub modelled: bool,
+}
+
+impl Thread {
+    pub fn check(&self) -> Result<(), String> {
+        if let Some(p) = self.pitch
+            && !(p.is_finite() && (0.05..=50.0).contains(&p))
+        {
+            return Err("the thread pitch must be from 0.05 to 50 mm".into());
+        }
+        if let ThreadLength::Distance(d) = self.length
+            && !(d.is_finite() && d > 0.0)
+        {
+            return Err("the thread length must be more than 0".into());
+        }
+        if self.designation.as_ref().is_some_and(|d| d.trim().is_empty() || d.chars().count() > 64) {
+            return Err("the thread designation must be 1 to 64 characters".into());
+        }
+        Ok(())
+    }
+}
+
 /// A direction for a pattern: an origin axis or a straight edge of the part.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -686,6 +766,7 @@ pub enum FeatureKind {
     Draft(Draft),
     Split(Split),
     Combine(Combine),
+    Thread(Thread),
 }
 
 impl FeatureKind {
@@ -739,6 +820,7 @@ impl FeatureKind {
             FeatureKind::Draft(_) => "Draft",
             FeatureKind::Split(_) => "Split",
             FeatureKind::Combine(_) => "Combine",
+            FeatureKind::Thread(_) => "Thread",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -764,6 +846,7 @@ impl FeatureKind {
             FeatureKind::Draft(_) => "Draft",
             FeatureKind::Split(_) => "Split",
             FeatureKind::Combine(_) => "Combine",
+            FeatureKind::Thread(_) => "Thread",
         }
     }
     /// Features this one depends on.
@@ -795,6 +878,7 @@ impl FeatureKind {
             FeatureKind::Draft(d) => d.faces.iter().filter_map(FaceRef::feature).chain(d.plane.feature()).collect(),
             FeatureKind::Split(s) => s.plane.feature().into_iter().chain(s.body.as_ref().and_then(FaceRef::feature)).collect(),
             FeatureKind::Combine(c) => std::iter::once(&c.base).chain(&c.tools).filter_map(FaceRef::feature).collect(),
+            FeatureKind::Thread(t) => t.face.feature().into_iter().collect(),
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -1056,6 +1140,7 @@ impl Document {
             match &f.kind {
                 FeatureKind::Sketch { sketch, .. } => sketch.validate().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Extrude(e) if self.sketch(e.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, e.sketch)),
+                FeatureKind::Extrude(e) => e.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Revolve(r) if self.sketch(r.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, r.sketch)),
                 FeatureKind::Hole(h) if self.sketch(h.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, h.sketch)),
                 // Sizes are checked here too: a file must not hold a hole that cannot be built
@@ -1075,6 +1160,7 @@ impl Document {
                 FeatureKind::Loft(l) => l.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Draft(d) => d.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Combine(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Thread(t) => t.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

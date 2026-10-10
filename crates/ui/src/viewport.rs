@@ -184,6 +184,8 @@ pub(crate) const HOVER: Color32 = Color32::from_rgb(0x8f, 0xdc, 0xd6);
 pub(crate) const SELECTED: Color32 = Color32::from_rgb(0xf0, 0xa0, 0x3c);
 /// Other components while a part is edited in place.
 const CONTEXT: Color32 = Color32::from_rgb(0x6c, 0x76, 0x82);
+/// A face with a cosmetic thread: darker and warmer than the body, so it reads as threaded.
+const THREAD: Color32 = Color32::from_rgb(0x96, 0x88, 0x6c);
 
 impl Workbench {
     /// Glides the camera to `to`, remembering the current view for "Previous View".
@@ -397,6 +399,7 @@ impl Workbench {
         }
         if self.has_properties() {
             self.hole_markers(ui, rect, t);
+            self.axis_overlay(ui, rect, t);
             self.measure_overlay(ui, rect, t);
             self.manipulator(ui, rect, t);
             self.mini_toolbar(ui, rect, t);
@@ -723,6 +726,12 @@ impl Workbench {
         v
     }
 
+    /// The faces carrying a cosmetic thread, as (body, face): drawn in their own colour. (A
+    /// modelled thread shows as what it is.)
+    pub(crate) fn thread_faces(&self) -> Vec<(usize, u32)> {
+        self.scene.threads.iter().filter(|t| !t.mark.modelled).filter_map(|t| t.at).collect()
+    }
+
     fn colors(&self) -> Vec<BodyColors> {
         let dim = matches!(self.mode, Mode::Sketch(_));
         let lit = self.highlights();
@@ -731,6 +740,8 @@ impl Workbench {
                 // In wireframe the edges are all there is, so they take the body colour.
                 let edge = if self.view.style == VisualStyle::Wireframe { BODY } else { EDGE };
                 let mut c = BodyColors { face: srgb(if dim { BODY_DIM } else { BODY }), edge: srgb(edge), ..Default::default() };
+                // Cosmetic threads first: a highlight on the same face goes over the tint.
+                c.faces.extend(self.thread_faces().into_iter().filter(|(body, _)| *body == bi).map(|(_, face)| (face, srgb(THREAD))));
                 for (p, color) in lit.iter().map(|(p, c)| (p, *c)) {
                     match p {
                         Pick::Face { body, face } if *body == bi => c.faces.push((*face, srgb(color))),
@@ -832,6 +843,8 @@ impl Workbench {
                             Pick::Face { body, face } => Some((body, face, to8(c))),
                             Pick::Edge { .. } => None,
                         })
+                        // (The first colour listed for a face is the one used here.)
+                        .chain(self.thread_faces().into_iter().map(|(body, face)| (body, face, to8(THREAD))))
                         .collect();
                     let style = Style {
                         body: to8(BODY),

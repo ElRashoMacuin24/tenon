@@ -115,6 +115,7 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::Draft(_) => Icon::Draft,
         FeatureKind::Split(_) => Icon::Split,
         FeatureKind::Combine(_) => Icon::Combine,
+        FeatureKind::Thread(_) => Icon::Thread,
     }
 }
 

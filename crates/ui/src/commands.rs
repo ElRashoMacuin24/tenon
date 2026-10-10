@@ -120,7 +120,7 @@ pub const RIBBON: &[RibbonTab] = &[
                     small("model.chamfer", "Chamfer", "Bevel edges", Icon::Chamfer, 0),
                     small("model.shell", "Shell", "Hollow a solid, removing faces", Icon::Shell, 0),
                     small("model.draft", "Draft", "Taper faces for moulding", Icon::Draft, 0),
-                    small("model.thread", "Thread", "Cosmetic thread on a cylinder", Icon::Thread, 6),
+                    small("model.thread", "Thread", "A screw thread on a round shaft or hole: cosmetic, or cut into the part", Icon::Thread, 0),
                     small("model.combine", "Combine", "Join, cut or intersect bodies", Icon::Combine, 0),
                     small("model.split", "Split", "Cut solids in two along a plane, or keep one side", Icon::Split, 0),
                 ],

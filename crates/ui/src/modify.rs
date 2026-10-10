@@ -62,7 +62,9 @@ impl Workbench {
         match &self.panel {
             Some(Panel::Fillet(_)) => Some(Wants { edges: true, faces: false }),
             Some(Panel::Chamfer(p)) => Some(Wants { edges: true, faces: p.method != ChamferMethod::Distance }),
-            Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_)) => Some(Wants { edges: false, faces: true }),
+            Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => {
+                Some(Wants { edges: false, faces: true })
+            }
             Some(Panel::Pattern(p)) => Some(match p.slot {
                 Slot::Features | Slot::Plane => Wants { edges: false, faces: true },
                 Slot::Dir1 | Slot::Dir2 => Wants { edges: true, faces: false },
@@ -123,7 +125,7 @@ impl Workbench {
                 v
             }
             Some(Panel::Shell(p)) => p.faces.iter().filter_map(face).collect(),
-            Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_)) => self.bodies_picks(),
+            Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => self.bodies_picks(),
             Some(Panel::Measure(m)) => m.a.into_iter().chain(m.b).collect(),
             Some(Panel::Pattern(p)) => {
                 // The faces of the features being copied, and the picked direction, axis or plane.
@@ -193,7 +195,9 @@ impl Workbench {
                         WorkSlot::Edge => false,
                     }
             }
-            (Pick::Face { body, face }, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_))) => self.bodies_referable(body, face),
+            (Pick::Face { body, face }, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) => {
+                self.bodies_referable(body, face)
+            }
             (Pick::Edge { body, edge }, _) => wants.edges && self.edge_ref_of(body, edge).is_some(),
             (Pick::Face { body, face }, _) => wants.faces && self.face_ref_of(body, face).is_some(),
         }
@@ -205,7 +209,7 @@ impl Workbench {
         if matches!(self.panel, Some(Panel::Work(_))) {
             return self.work_pick(p);
         }
-        if matches!(self.panel, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_))) {
+        if matches!(self.panel, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) {
             return self.bodies_pick(p, toggle);
         }
         if let Some(Panel::Pattern(pp)) = &self.panel {
@@ -387,6 +391,27 @@ impl Workbench {
                 }
             }
             return true;
+        }
+        if matches!(self.panel, Some(Panel::Revolve(_) | Panel::Coil(_))) {
+            // A work axis, or a line of the profile's sketch, clicked: the axis to turn about.
+            if let Some(pos) = resp.hover_pos()
+                && let Some((id, _)) = self.work_at(pos, rect, false, true)
+            {
+                self.view.hover = None;
+                self.view.work_hover = Some(id);
+                if resp.clicked() {
+                    self.pick_reference(Reference::Work(id));
+                }
+                return true;
+            }
+            if let Some(line) = self.axis_line_at(resp.hover_pos(), rect) {
+                self.view.hover = None;
+                if resp.clicked() {
+                    self.set_panel_axis(crate::panels::AxisChoice::Line(line));
+                }
+                return true;
+            }
+            return false;
         }
         let Some(wants) = self.panel_wants() else { return false };
         // Work planes and axes are drawn over the part, so they are picked first.

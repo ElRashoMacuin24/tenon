@@ -159,7 +159,7 @@ may refer only to features before them.
 | `type` | Fields |
 |---|---|
 | `sketch` | `plane`, `next_entity`, `next_constraint`, `entities`, `constraints` (below) |
-| `extrude` | `sketch`, `regions`, `extent`, `reverse`, `operation` |
+| `extrude` | `sketch`, `regions`, `extent`, `reverse`, `operation`; optional `taper` (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through-all only) |
 | `revolve` | `sketch`, `regions`, `axis` (revolve axis), `angle`, `operation` |
 | `fillet` | `edges` (edge references), `radius` |
 | `chamfer` | `edges`, `size` |
@@ -178,6 +178,7 @@ may refer only to features before them.
 | `draft` | `faces` (face references, on one body), `plane` (the neutral plane: faces stay put where it crosses them, and the part is pulled along its normal), `angle` (radians), `reverse` |
 | `split` | `plane` (the cutting plane), `keep`: `"both"` (two bodies), `"front"` (the side the plane's normal points to) or `"back"`; optional `body` (a face reference on the one body to split; without it, every body the plane passes through) |
 | `combine` | `base` (a face reference on the body that stays), `tools` (a face reference on each other body), `operation` (`"join"`, `"cut"` or `"intersect"`), `keep_tools` |
+| `thread` | `face` (a face reference on a round shaft or hole); optional `pitch` (mm; without it, the ISO coarse pitch for the face's diameter); optional `designation` (text for drawings; without it, `M<diameter>x<pitch>`); `length`: `"full"` or `{ distance = mm }` from the end it starts at; `reverse` (start from the other end); `left` (left-handed); `modelled` (the groove is cut into the part; otherwise the thread is cosmetic) |
 
 Field values:
 
@@ -574,7 +575,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
 - **Until a version has shipped in a release,** new feature types and new optional fields join
   it without a bump (DEC-029, DEC-035): files without them are unchanged, and a build that does
   not know a type refuses the file naming the record. Version 2 has gained the M6 feature types
-  this way: `sweep`, `coil`, `loft`, `draft`, `split` and `combine`.
+  this way (`sweep`, `coil`, `loft`, `draft`, `split`, `combine`, `thread`) and the optional
+  `taper` of an extrusion.
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

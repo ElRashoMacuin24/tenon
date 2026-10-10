@@ -40,6 +40,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `model.draft` | Draft | faces: [face references] (the faces to tilt, on one body); the neutral plane, where the faces stay put: plane ("xy" \| "yz" \| "xz"), face (a planar face reference) or work_plane (id); angle (radians from the plane's normal, the pull direction); reverse (tilt the other way) | yes |
 | `model.split` | Split | the cutting plane: plane ("xy" \| "yz" \| "xz"), face (a planar face reference) or work_plane (id); keep: "both" (two bodies, default) \| "front" (the side the plane's normal points to) \| "back"; body: a face reference on the one body to split (default: every body the plane passes through) | yes |
 | `model.combine` | Combine | base: a face reference on the body that stays; tools: [face references], one on each other body; operation: "join" (default) \| "cut" \| "intersect"; keep_tools (default false: the other bodies are used up) | yes |
+| `model.thread` | Thread | face: a face reference on a round shaft or hole; pitch (mm; default: the ISO coarse pitch for the face's diameter, following it); designation (text for drawings; default "M<diameter>x<pitch>"); length (mm from the start end; default the whole face); reverse (start from the other end); left (left-handed); modelled (cut the groove into the part; default false: cosmetic) | yes |
 | `model.pattern.rect` | Rectangular Pattern | features: [feature ids]; direction: "x" \| "y" \| "z" or an edge reference (straight edge); count; spacing; reverse; optional direction2, count2, spacing2, reverse2 | yes |
 | `model.pattern.circular` | Circular Pattern | features: [feature ids]; axis: "x" \| "y" \| "z", an edge reference (straight or circular edge) or a face reference (cylinder or cone); count; angle (rad, default a full turn: copies spread evenly); reverse | yes |
 | `model.mirror` | Mirror | features: [feature ids]; plane: "xy" \| "yz" \| "xz", or face: a planar face reference | yes |
@@ -63,6 +64,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `model.tree` | Model Tree | none | no |
 | `model.regenerate` | Regenerate | none | no |
 | `model.mass` | Mass Properties | density (mass per mm^3, default 1) | no |
+| `model.threads` | Threads | every thread on the part: its feature, designation, pitch, major diameter, internal (in a hole), length, left, modelled, and where on its axis it starts and which way it runs | no |
 | `model.topology` | Topology | none | no |
 | `model.faces` | Faces | body (default 0) | no |
 | `model.edges` | Edges | body (default 0): every edge with the names of its two faces | no |

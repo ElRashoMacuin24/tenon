@@ -196,3 +196,116 @@ fn a_long_coil_meshes_without_excess_triangles() {
     let m = k.tessellate(op.shape, &tenon_kernel::MeshTol::default()).unwrap();
     assert!(m.triangle_count() < 150_000, "{} triangles", m.triangle_count());
 }
+
+/// Threads need to know a shaft from a hole: a round face says which side its material is on.
+#[test]
+fn a_round_face_says_whether_it_is_a_shaft_or_a_hole() {
+    let mut k = OcctKernel::new();
+    let up = Path3 { curves: vec![Curve3::Line { start: Vec3::ZERO, end: Vec3::new(0.0, 0.0, 10.0) }] };
+    let round = |k: &OcctKernel, s: ShapeHandle| {
+        let n = k.topology(s).unwrap().faces;
+        let walls: Vec<bool> = (0..n)
+            .filter_map(|i| k.face_info(s.face(i)).ok())
+            .filter(|f| matches!(f.surface, tenon_kernel::SurfaceKind::Cylinder { .. }))
+            .map(|f| f.reversed)
+            .collect();
+        assert_eq!(walls.len(), 1, "one round face");
+        walls[0]
+    };
+    // An extruded circle, a revolved rectangle and a primitive cylinder are all shafts.
+    let shaft = k.sweep(&circle(Frame::WORLD, 4.0), &up, &solid()).unwrap();
+    assert!(!round(&k, shaft.shape));
+    let axis = tenon_geom::Axis::new(Vec3::ZERO, Vec3::Z).unwrap();
+    let primitive = k.make_cylinder(&axis, 4.0, 10.0).unwrap();
+    assert!(!round(&k, primitive.shape));
+    // Drilled through a block, the same circle is a hole; so is its mirror image.
+    let block = k.sweep(&square(Frame::WORLD, 20.0), &up, &solid()).unwrap();
+    let hole = k.boolean(tenon_kernel::BoolOp::Cut, block.shape, &[shaft.shape]).unwrap();
+    assert!(round(&k, hole.shape));
+    let plane = Frame::new(Vec3::new(30.0, 0.0, 0.0), Vec3::X, Vec3::Y).unwrap();
+    let mirrored = k.transform(hole.shape, &tenon_kernel::Transform::Mirror { plane }).unwrap();
+    assert!(round(&k, mirrored.shape));
+    let mirrored_shaft = k.transform(shaft.shape, &tenon_kernel::Transform::Mirror { plane }).unwrap();
+    assert!(!round(&k, mirrored_shaft.shape));
+}
+
+/// A helix is built a few turns at a time: as one edge, sixty turns came out at half their volume.
+#[test]
+fn a_coil_of_many_turns_keeps_its_volume() {
+    let mut k = OcctKernel::new();
+    let at = Frame::new(Vec3::new(10.0, 0.0, 0.0), Vec3::Y, Vec3::X).unwrap();
+    for turns in [4.5, 60.0] {
+        let helix = Path3 { curves: vec![Curve3::Helix { frame: Frame::WORLD, radius: 10.0, pitch: 5.0, turns, left: false }] };
+        let op = k.sweep(&circle(at, 1.0), &helix, &solid()).unwrap();
+        let expected = PI * 1.0 * TAU * 10.0 * turns;
+        assert!(near(volume(&k, op.shape), expected, 1e-5), "{turns} turns: {} vs {expected}", volume(&k, op.shape));
+        assert!(k.is_valid(op.shape).unwrap());
+        let bb = k.bounding_box(op.shape).unwrap().unwrap();
+        assert!(near(bb.max.z - bb.min.z, 5.0 * turns + 2.0, 1e-6));
+    }
+}
+
+/// A modelled thread is a helical groove cut from a shaft. With the helix as one long edge, the
+/// cut removed nothing or everything for some lengths (a whole number of turns passing through
+/// both ends), without an error.
+#[test]
+fn a_groove_wound_round_a_shaft_is_cut_whatever_its_length() {
+    let mut k = OcctKernel::new();
+    let (p, r) = (1.25f64, 4.0f64);
+    let depth = 0.625 * 0.866_025_403_784_438_6 * p;
+    // The groove's section in the XZ plane (x away from the axis, y along it), starting one
+    // pitch below the shaft.
+    let frame = Frame::new(Vec3::new(0.0, 0.0, -p), Vec3::new(0.0, -1.0, 0.0), Vec3::X).unwrap();
+    let q = [Vec2::new(r + 0.07, -0.47 * p), Vec2::new(r + 0.07, 0.47 * p), Vec2::new(r - depth, 0.125 * p), Vec2::new(r - depth, -0.125 * p)];
+    // Inside the shaft it is 7/8 of the pitch wide at the surface and 1/4 at its root.
+    let per_turn = (0.875 + 0.25) / 2.0 * p * depth * TAU * (r - depth * (0.875 + 0.5) / (3.0 * 1.125));
+    for (h, turns) in [(10.0, 10.0), (20.0, 18.0), (10.0, 9.5)] {
+        let up = Path3 { curves: vec![Curve3::Line { start: Vec3::ZERO, end: Vec3::new(0.0, 0.0, h) }] };
+        let shaft = k.sweep(&circle(Frame::WORLD, r), &up, &solid()).unwrap();
+        let curves = (0..4).map(|i| TaggedCurve2 { tag: i as u64 + 1, curve: Curve2::Line { start: q[i], end: q[(i + 1) % 4] } }).collect();
+        let profile = Profile { frame, regions: vec![tenon_kernel::Region { outer: tenon_kernel::Loop { curves }, holes: vec![] }] };
+        let centre = (q[0] + q[1] + q[2] + q[3]) * 0.25;
+        let start = Frame::new(Vec3::new(0.0, 0.0, -p + centre.y), Vec3::Z, Vec3::X).unwrap();
+        let helix = Path3 { curves: vec![Curve3::Helix { frame: start, radius: centre.x, pitch: p, turns, left: false }] };
+        let tool = k.sweep(&profile, &helix, &SweepOpts { orientation: SweepOrientation::Binormal(Vec3::Z), solid: true }).unwrap();
+        let cut = k.boolean(tenon_kernel::BoolOp::Cut, shaft.shape, &[tool.shape]).unwrap();
+        assert!(k.is_valid(cut.shape).unwrap());
+        let removed = volume(&k, shaft.shape) - volume(&k, cut.shape);
+        // The groove runs the whole shaft: its length over the pitch in turns, to within the
+        // run-in and run-out at the ends.
+        assert!((removed / per_turn - h / p).abs() < 0.2, "{h} mm, {turns} turns: {} turns' worth removed", removed / per_turn);
+    }
+}
+
+/// A whole turn of a profile that lies across its axis is the turn of each side, joined: a circle
+/// about its diameter is a sphere. It used to be refused.
+#[test]
+fn a_profile_across_its_axis_turns_into_the_solid_of_both_sides() {
+    let mut k = OcctKernel::new();
+    let y = tenon_geom::Axis::new(Vec3::ZERO, Vec3::Y).unwrap();
+    let full = tenon_kernel::AngleExtent::Full;
+    // A circle about its diameter.
+    let ball = k.revolve(&circle(Frame::WORLD, 10.0), &y, &full).unwrap();
+    assert!(near(volume(&k, ball.shape), 4.0 / 3.0 * PI * 1000.0, 1e-9), "{}", volume(&k, ball.shape));
+    assert!(k.is_valid(ball.shape).unwrap());
+    assert_eq!(tags(&ball), [7], "its face is still the circle's");
+    // A square about its middle line: a cylinder.
+    let can = k.revolve(&square(Frame::WORLD, 20.0), &y, &full).unwrap();
+    assert!(near(volume(&k, can.shape), PI * 100.0 * 20.0, 1e-9), "{}", volume(&k, can.shape));
+    assert!(k.is_valid(can.shape).unwrap());
+    // Sides that differ: 4 wide and 12 tall on the left of the axis, 10 wide and 5 tall on the
+    // right. The turn of each, together.
+    let pts = [(-4.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0), (0.0, 12.0), (-4.0, 12.0)];
+    let outer = Loop { curves: (0..6).map(|i| line(i as u64 + 1, pts[i], pts[(i + 1) % 6])).collect() };
+    let step = Profile { frame: Frame::WORLD, regions: vec![Region { outer, holes: vec![] }] };
+    let op = k.revolve(&step, &y, &full).unwrap();
+    assert!(near(volume(&k, op.shape), PI * (100.0 * 5.0 + 16.0 * 7.0), 1e-9), "{}", volume(&k, op.shape));
+    assert!(k.is_valid(op.shape).unwrap());
+    // Part of a turn has no such meaning: refused, saying so.
+    let e = k.revolve(&circle(Frame::WORLD, 10.0), &y, &tenon_kernel::AngleExtent::Angle(1.0)).unwrap_err();
+    assert!(e.to_string().contains("lies across it"), "{e}");
+    // A profile wholly on one side is turned as before.
+    let off = Frame::new(Vec3::new(30.0, 0.0, 0.0), Vec3::Z, Vec3::X).unwrap();
+    let ring = k.revolve(&circle(off, 10.0), &y, &full).unwrap();
+    assert!(near(volume(&k, ring.shape), PI * 100.0 * TAU * 30.0, 1e-9));
+}

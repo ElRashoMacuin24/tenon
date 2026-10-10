@@ -13,7 +13,7 @@ use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions
 use crate::document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Extrude, ExtrudeExtent, FeatureKind,
     Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle,
-    Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
+    Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Thread, ThreadLength, WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
@@ -788,7 +788,10 @@ fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
         ExtrudeExtent::Distance(num(p, "distance")?)
     };
     let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);
-    add_feature(s, FeatureKind::Extrude(Extrude { sketch, regions: region_sel(p)?, extent, reverse, operation: operation(p)? }), p)
+    let extrude =
+        Extrude { sketch, regions: region_sel(p)?, extent, reverse, operation: operation(p)?, taper: opt_num(p, "taper")?.filter(|t| *t != 0.0) };
+    extrude.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Extrude(extrude), p)
 }
 
 fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
@@ -1053,6 +1056,50 @@ fn model_combine(s: &mut Session, p: &Value) -> CmdResult {
     };
     combine.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::Combine(combine), p)
+}
+
+fn model_thread(s: &mut Session, p: &Value) -> CmdResult {
+    let length = match p.get("length") {
+        None | Some(Value::Null) => ThreadLength::Full,
+        Some(_) => ThreadLength::Distance(num(p, "length")?),
+    };
+    let thread = Thread {
+        face: parse(p, "face")?,
+        pitch: if p.get("pitch").is_some_and(|v| !v.is_null()) { Some(num(p, "pitch")?) } else { None },
+        designation: p.get("designation").and_then(Value::as_str).map(str::to_owned),
+        length,
+        reverse: p.get("reverse").and_then(Value::as_bool).unwrap_or(false),
+        left: p.get("left").and_then(Value::as_bool).unwrap_or(false),
+        modelled: p.get("modelled").and_then(Value::as_bool).unwrap_or(false),
+    };
+    thread.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Thread(thread), p)
+}
+
+/// The threads on the part as it regenerates.
+fn model_threads(s: &mut Session, k: &mut dyn Kernel, _p: &Value) -> CmdResult {
+    let doc = s.document().clone();
+    let threads: Vec<Value> = s
+        .regen(k)
+        .threads
+        .iter()
+        .map(|t| {
+            json!({
+                "feature": t.feature.0,
+                "name": doc.feature(t.feature).map(|f| f.name.clone()),
+                "designation": t.designation,
+                "pitch": t.pitch,
+                "diameter": t.diameter,
+                "internal": t.internal,
+                "length": t.length,
+                "left": t.left,
+                "modelled": t.modelled,
+                "start": [t.start.x, t.start.y, t.start.z],
+                "direction": [t.direction.x, t.direction.y, t.direction.z],
+            })
+        })
+        .collect();
+    Ok(json!({ "threads": threads }))
 }
 
 fn feature_update(s: &mut Session, p: &Value) -> CmdResult {
@@ -1584,6 +1631,13 @@ static COMMANDS: &[CommandSpec] = &[
         model_combine
     ),
     doc_cmd!(
+        "model.thread",
+        "Thread",
+        "face: a face reference on a round shaft or hole; pitch (mm; default: the ISO coarse pitch for the face's diameter, following it); designation (text for drawings; default \"M<diameter>x<pitch>\"); length (mm from the start end; default the whole face); reverse (start from the other end); left (left-handed); modelled (cut the groove into the part; default false: cosmetic)",
+        true,
+        model_thread
+    ),
+    doc_cmd!(
         "model.pattern.rect",
         "Rectangular Pattern",
         "features: [feature ids]; direction: \"x\" | \"y\" | \"z\" or an edge reference (straight edge); count; spacing; reverse; optional direction2, count2, spacing2, reverse2",
@@ -1672,6 +1726,12 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!("model.tree", "Model Tree", "", false, model_tree),
     geo_cmd!("model.regenerate", "Regenerate", "", model_regenerate),
     geo_cmd!("model.mass", "Mass Properties", "density (mass per mm^3, default 1)", model_mass),
+    geo_cmd!(
+        "model.threads",
+        "Threads",
+        "every thread on the part: its feature, designation, pitch, major diameter, internal (in a hole), length, left, modelled, and where on its axis it starts and which way it runs",
+        model_threads
+    ),
     geo_cmd!("model.topology", "Topology", "", model_topology),
     geo_cmd!("model.faces", "Faces", "body (default 0)", model_faces),
     geo_cmd!("model.edges", "Edges", "body (default 0): every edge with the names of its two faces", model_edges),

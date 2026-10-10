@@ -82,9 +82,13 @@ pub const MAX_USER_PARAMS: usize = 10_000;
 fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
     use ParamUnit::*;
     match kind {
-        FeatureKind::Extrude(_) => {
-            &[("/extent/distance", Mm), ("/extent/symmetric", Mm), ("/extent/two_sided/forward", Mm), ("/extent/two_sided/backward", Mm)]
-        }
+        FeatureKind::Extrude(_) => &[
+            ("/extent/distance", Mm),
+            ("/extent/symmetric", Mm),
+            ("/extent/two_sided/forward", Mm),
+            ("/extent/two_sided/backward", Mm),
+            ("/taper", Deg),
+        ],
         FeatureKind::Revolve(_) => &[("/angle/angle", Deg), ("/angle/symmetric", Deg)],
         FeatureKind::Fillet(_) => &[("/radius", Mm)],
         FeatureKind::Chamfer(_) => &[
@@ -110,6 +114,7 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         FeatureKind::Rib(_) => &[("/thickness", Mm), ("/extent/distance", Mm)],
         FeatureKind::Coil(_) => &[("/pitch", Mm), ("/turns", Ul)],
         FeatureKind::Draft(_) => &[("/angle", Deg)],
+        FeatureKind::Thread(_) => &[("/pitch", Mm), ("/length/distance", Mm)],
         FeatureKind::Sketch { .. }
         | FeatureKind::Mirror(_)
         | FeatureKind::WorkAxis(_)

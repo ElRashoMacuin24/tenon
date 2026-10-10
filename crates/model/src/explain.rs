@@ -12,6 +12,9 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
     let emptied = words.contains("empty shape");
     let plain = match (kind, e) {
         (_, KernelError::Cancelled) => return "Stopped.".into(),
+        (FeatureKind::Revolve(_), _) if words.contains("lies across it") => {
+            return "For part of a turn the profile must be on one side of the axis, and this one lies across it. Use a full turn, or put the axis on the profile's edge or outside it.".into();
+        }
         (_, KernelError::InvalidInput(_)) => return words,
         (_, KernelError::Unsupported(op)) => return format!("This geometry kernel cannot do {op} yet."),
         (FeatureKind::Fillet(f), _) => format!(
@@ -26,6 +29,10 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::Shell(s), _) => format!(
             "The part could not be hollowed out with {} mm walls. The walls are probably too thick for its rounds or thin places: try thinner walls, or remove other faces.",
             mm(s.thickness)
+        ),
+        (FeatureKind::Extrude(x), KernelError::OperationFailed { op: "draft", .. }) => format!(
+            "The extrusion could not be tapered by {} degrees. The taper is probably too steep for its height, so that the sides would cross: try a smaller angle or a shorter distance.",
+            mm(x.taper.unwrap_or(0.0).abs().to_degrees())
         ),
         (FeatureKind::Extrude(x), _) => match (x.operation, emptied) {
             (Operation::Cut, true) => "The cut removes the whole part: try a shorter distance, or the other direction.".into(),
@@ -44,7 +51,7 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
             "The revolution could not be combined with the part. It may only touch the part along a face or an edge: try a slightly different angle or profile.".into()
         }
         (FeatureKind::Revolve(_), _) => {
-            "The revolution could not be made. The axis may cross the profile, or the profile may cross itself: put the axis on the profile's edge or outside it.".into()
+            "The revolution could not be made. The profile may cross itself, or the axis may not lie in the sketch's plane: check the sketch, and choose an axis in its plane.".into()
         }
         (FeatureKind::Hole(h), _) if emptied => format!("The {} cut away the whole part: check the hole sizes.", count(h.points.len(), "hole", "holes")),
         (FeatureKind::Hole(h), _) => format!(
@@ -76,6 +83,9 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         }
         (FeatureKind::Combine(_), _) => {
             "The bodies could not be combined. They may only touch along a face or an edge: move one slightly, or check which bodies are picked.".into()
+        }
+        (FeatureKind::Thread(_), _) => {
+            "The thread could not be cut into the part. The pitch may be too coarse for the diameter, or the thread may run into other features: try a finer pitch or a shorter length, or leave the thread cosmetic.".into()
         }
         (FeatureKind::PatternRect(_) | FeatureKind::PatternCircular(_) | FeatureKind::Mirror(_), _) => {
             "The copies could not be joined to the part. A copy may touch the part only along an edge or at a point: change the spacing, count or plane.".into()
