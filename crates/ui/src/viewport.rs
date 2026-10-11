@@ -761,7 +761,7 @@ impl Workbench {
     }
 
     /// Highlighted picks and their colours: the selection, an open panel's references, the hover.
-    fn highlights(&self) -> Vec<(Pick, Color32)> {
+    pub(crate) fn highlights(&self) -> Vec<(Pick, Color32)> {
         if self.in_assembly() {
             if matches!(self.panel, Some(crate::panels::Panel::Asm(_))) {
                 let mut v: Vec<(Pick, Color32)> = self.asm_panel_picks().into_iter().map(|p| (p, SELECTED)).collect();
@@ -770,7 +770,8 @@ impl Workbench {
             }
             return self.asm_highlights();
         }
-        let mut v: Vec<(Pick, Color32)> = self.view.selection.iter().map(|p| (*p, SELECTED)).collect();
+        let mut v: Vec<(Pick, Color32)> = self.print_flags();
+        v.extend(self.view.selection.iter().map(|p| (*p, SELECTED)));
         v.extend(self.panel_picks().into_iter().map(|p| (p, SELECTED)));
         v.extend(self.repair_candidates().into_iter().map(|p| (p, crate::repair_ui::CANDIDATE)));
         v.extend(self.view.hover.map(|p| (p, HOVER)));

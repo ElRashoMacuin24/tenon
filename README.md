@@ -4,7 +4,7 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestones M0 to M6 are done; M7 (standard parts and the maker workflow) is next.**
+**Status: milestones M0 to M7 are done (M7, standard parts and the maker workflow, awaits the owner's confirmation); M8 (sheet metal) is next.**
 CI runs on Linux, macOS and Windows.
 
 Tenon is for makers, students and small shops. It aims to win on reliability, coherence and speed
@@ -59,6 +59,8 @@ server for AI agents. What works, with the test that proves each item, is in
 
 ![The M6 demo parts in the Tenon workbench, each in its material's colour](examples/m6-fittings/workbench.png)
 
+![The M7 demo: the 3D Print Check window on a printed end cap](examples/m7-end-cap/print-check.png)
+
 ## Design
 
 - **Kernel behind a trait.** All geometry goes through the backend-neutral `Kernel` trait
@@ -93,6 +95,7 @@ pixi run app examples/m2-enclosure/enclosure.tenon
 pixi run app examples/m3-pivot/pivot.tenonasm
 pixi run app examples/m4-plate/plate.tenondrw
 pixi run app examples/m6-fittings/fittings.tenonasm
+pixi run app examples/m7-end-cap/capped-bar.tenonasm
 pixi run cargo test --workspace    # build and test
 pixi run ci                        # the full gate CI runs
 pixi run cargo run -p tenon-cli -- run examples/m2-enclosure/enclosure.json --out out

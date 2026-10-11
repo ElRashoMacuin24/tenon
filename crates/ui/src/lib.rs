@@ -20,10 +20,12 @@ mod cube;
 mod dims;
 mod drawing;
 pub mod icons;
+mod library_dialog;
 mod modify;
 mod panels;
 mod params_dialog;
 mod part_dialogs;
+mod print_dialog;
 mod properties;
 mod radial;
 mod recovery;
@@ -42,6 +44,8 @@ pub use workbench::{Services, Workbench};
 mod asm_tests;
 #[cfg(test)]
 mod drw_tests;
+#[cfg(test)]
+mod print_tests;
 #[cfg(test)]
 mod recovery_tests;
 #[cfg(test)]

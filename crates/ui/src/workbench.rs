@@ -15,6 +15,7 @@ use tenon_model::{Document, FeatureId, FeatureKind, FeatureStatus, PlaneRef, Sce
 use crate::chrome::{Chrome, DOC_TABS_H, RIBBON_H, STATUS_H, TABS_H, TITLE_H};
 use crate::commands;
 use crate::panels::Panel;
+use crate::print_dialog::MeshFile;
 use crate::sketcher::SketchMode;
 use crate::theme::{self, Tokens};
 use crate::viewport::{View, VisualStyle};
@@ -46,7 +47,8 @@ pub(crate) enum Mode {
 }
 
 /// Commands that replace the open document (or close the app), so ask to save it first.
-const REPLACE_DOCUMENT: &[&str] = &["file.new", "file.new_assembly", "file.new_drawing", "file.new_drawing_template", "file.open", "app.exit"];
+const REPLACE_DOCUMENT: &[&str] =
+    &["file.new", "file.new_assembly", "file.new_drawing", "file.new_drawing_template", "file.open", "library.new", "app.exit"];
 
 /// The part workbench.
 pub struct Workbench {
@@ -84,6 +86,8 @@ pub struct Workbench {
     exit: bool,
     pub(crate) step_seq: u64,
     step_export: Option<(u64, PathBuf)>,
+    /// Mesh exports and print checks sent to the worker, by request.
+    pub(crate) part_jobs: std::collections::BTreeMap<u64, crate::print_dialog::PartJob>,
     /// The last modelling or sketch command (for "Repeat").
     pub(crate) last_command: Option<&'static str>,
     /// OK, Cancel or Apply asked for from outside the open panel (properties, radial menu).
@@ -140,6 +144,7 @@ impl Workbench {
             exit: false,
             step_seq: 0,
             step_export: None,
+            part_jobs: Default::default(),
             last_command: None,
             panel_request: None,
             pending_tool: None,
@@ -206,6 +211,7 @@ impl Workbench {
     pub fn is_busy(&self) -> bool {
         self.waiting
             || self.step_export.is_some()
+            || !self.part_jobs.is_empty()
             || self.asm.as_ref().is_some_and(|a| !a.jobs.is_empty())
             || self.drw.as_ref().is_some_and(|d| !d.jobs.is_empty())
     }
@@ -319,8 +325,18 @@ impl Workbench {
                     return Ok(());
                 }
                 _ if ["sketch.", "model.", "work.", "asm.", "export."].iter().any(|p| id.starts_with(p))
-                    || ["inspect.measure", "inspect.mass", "tools.parameters", "tools.table", "view.style", "view.look_at", "view.previous"]
-                        .contains(&id) =>
+                    || [
+                        "inspect.measure",
+                        "inspect.mass",
+                        "inspect.print",
+                        "tools.parameters",
+                        "tools.table",
+                        "tools.library",
+                        "view.style",
+                        "view.look_at",
+                        "view.previous",
+                    ]
+                    .contains(&id) =>
                 {
                     return Err("that works on a part or an assembly: select a view and use Open Model to edit its model".into());
                 }
@@ -348,9 +364,17 @@ impl Workbench {
                     let path = self.services.pick_save.as_ref().and_then(|f| f(&name, "step")).ok_or("no file chosen")?;
                     return self.export_assembly_step(&path);
                 }
+                "export.stl" | "export.3mf" => {
+                    let kind = if id == "export.stl" { MeshFile::Stl } else { MeshFile::Mf3 };
+                    let name =
+                        format!("{}.{}", self.asm.as_ref().map_or("Assembly1".into(), |a| a.session.assembly().name.clone()), kind.extension());
+                    let path = self.services.pick_save.as_ref().and_then(|f| f(&name, kind.extension())).ok_or("no file chosen")?;
+                    return self.export_assembly_mesh(&path, kind);
+                }
                 "model.rebuild" => return self.run_asm_ui("asm.update"),
                 _ if ["sketch.", "model.", "work."].iter().any(|p| id.starts_with(p))
                     || id == "inspect.measure"
+                    || id == "inspect.print"
                     || id == "tools.parameters"
                     || id == "tools.table" =>
                 {
@@ -426,10 +450,11 @@ impl Workbench {
                 let path = self.services.pick_save.as_ref().and_then(|f| f(&name, "step")).ok_or("no file chosen")?;
                 self.export_step(&path)?;
             }
-            "export.stl" => {
-                let name = format!("{}.stl", self.document().name);
-                let path = self.services.pick_save.as_ref().and_then(|f| f(&name, "stl")).ok_or("no file chosen")?;
-                self.export_stl(&path)?;
+            "export.stl" | "export.3mf" => {
+                let kind = if id == "export.stl" { MeshFile::Stl } else { MeshFile::Mf3 };
+                let name = format!("{}.{}", self.document().name, kind.extension());
+                let path = self.services.pick_save.as_ref().and_then(|f| f(&name, kind.extension())).ok_or("no file chosen")?;
+                self.export_mesh(&path, kind)?;
             }
             "edit.undo" => {
                 if !self.session.undo() {
@@ -464,6 +489,23 @@ impl Workbench {
             "model.mirror" => self.open_pattern(crate::panels::CopyKind::Mirror, None)?,
             "tools.parameters" => self.chrome.params = !self.chrome.params,
             "tools.table" => self.chrome.table = !self.chrome.table,
+            "tools.library" => self.chrome.library = !self.chrome.library,
+            "inspect.print" => self.chrome.print.open = !self.chrome.print.open,
+            // A new part from the standard part picked in the Standard Parts dialog.
+            "library.new" => {
+                let (part, size) = self.chrome.library_pick.clone();
+                let doc = tenon_io::cmd::standard_part(&part, Some(size.as_str()).filter(|s| !s.is_empty())).map_err(|e| e.0)?;
+                self.leave_drawing();
+                self.leave_assembly();
+                let name = doc.name.clone();
+                self.session.replace_document(doc, None);
+                self.path = None;
+                self.mode = Mode::Model;
+                self.panel = None;
+                self.view = View::default();
+                self.chrome.library = false;
+                self.set_status(format!("New part from {name}, {size}: save it under a name of its own."));
+            }
             "inspect.measure" => {
                 self.panel = Some(Panel::Measure(Box::default()));
                 self.set_status("Measure: click a face or edge, then another for the distance and angle.");
@@ -585,22 +627,6 @@ impl Workbench {
         }
     }
 
-    fn export_stl(&mut self, path: &Path) -> Result<(), String> {
-        if self.scene.bodies.is_empty() {
-            return Err("there is no solid to export".into());
-        }
-        let mut all = tenon_kernel::Mesh::default();
-        for b in &self.scene.bodies {
-            let base = u32::try_from(all.positions.len()).map_err(|_| "mesh too large")?;
-            all.positions.extend_from_slice(&b.mesh.positions);
-            all.indices.extend(b.mesh.indices.iter().map(|i| i.saturating_add(base)));
-        }
-        let data = tenon_io::stl::write_binary(&all, &format!("Tenon {} (mm)", self.document().name));
-        std::fs::write(path, data).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-        self.set_status(format!("Exported {}", path.display()));
-        Ok(())
-    }
-
     /// Sends the shown document (or the assembly's parts) for regeneration when it changed;
     /// takes finished results.
     fn sync_geometry(&mut self) {
@@ -653,7 +679,7 @@ impl Workbench {
                 Response::Job { request, result } => {
                     if self.owns_drw_job(request) {
                         self.drw_job(request, result);
-                    } else {
+                    } else if let Err(result) = self.part_job_done(request, result) {
                         self.asm_job(request, result);
                     }
                 }

@@ -1,0 +1,61 @@
+# Tenon assembly file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon-assembly"
+version = 2
+name = "Capped Bar"
+next_component = 4
+next_relationship = 4
+explode = []
+
+[[component]]
+id = 1
+name = "bar:1"
+part = "bar.tenon"
+placement = { origin = { x = 0.0, y = 0.0, z = 0.0 }, x = { x = 1.0, y = 0.0, z = 0.0 }, y = { x = 0.0, y = 1.0, z = 0.0 }, z = { x = 0.0, y = 0.0, z = 1.0 } }
+grounded = true
+visible = true
+
+[[component]]
+id = 2
+name = "end-cap:1"
+part = "end-cap.tenon"
+placement = { origin = { x = 0.0, y = 0.0, z = 150.0 }, x = { x = 1.0, y = 0.0, z = 0.0 }, y = { x = 0.0, y = 1.0, z = 0.0 }, z = { x = 0.0, y = 0.0, z = 1.0 } }
+grounded = false
+visible = true
+
+[[component]]
+id = 3
+name = "socket-screw-iso-4762:1"
+part = "standard/socket-screw-iso-4762.tenon"
+placement = { origin = { x = 0.0, y = 0.0, z = 154.0 }, x = { x = 1.0, y = 0.0, z = 0.0 }, y = { x = 0.0, y = 1.0, z = 0.0 }, z = { x = 0.0, y = 0.0, z = 1.0 } }
+grounded = false
+row = "M5x16"
+visible = true
+
+[[relationship]]
+id = 1
+name = "Insert:1"
+suppressed = false
+type = "insert"
+a = { component = 1, geom = { type = "edge", edge = { faces = [{ type = "cap", feature = 2, end = "end" }, { type = "side", feature = 7, curve = 2 }], fingerprint = { mid = { x = 2.1, y = 0.0, z = 150.0 }, length = 13.194689145 } } } }
+b = { component = 2, geom = { type = "edge", edge = { faces = [{ type = "cap", feature = 2, end = "start" }, { type = "side", feature = 6, curve = 3 }], fingerprint = { mid = { x = 2.75, y = 0.0, z = 0.0 }, length = 17.278759595 } } } }
+offset = 0.0
+aligned = false
+
+[[relationship]]
+id = 2
+name = "Insert:2"
+suppressed = false
+type = "insert"
+a = { component = 2, geom = { type = "edge", edge = { faces = [{ type = "cap", feature = 9, end = "end" }, { type = "side", feature = 6, curve = 3 }], fingerprint = { mid = { x = 2.75, y = 0.0, z = 4.0 }, length = 17.278759595 } } } }
+b = { component = 3, geom = { type = "edge", edge = { faces = [{ type = "side", feature = 7, curve = 2 }, { type = "cap", feature = 2, end = "start" }], fingerprint = { mid = { x = 2.5, y = 0.0, z = 0.0 }, length = 15.707963268 } } } }
+offset = 0.0
+aligned = false
+
+[[relationship]]
+id = 3
+name = "Flush:1"
+suppressed = false
+type = "flush"
+a = { component = 1, geom = { type = "plane", plane = "XZ" } }
+b = { component = 2, geom = { type = "plane", plane = "XZ" } }
+offset = 0.0

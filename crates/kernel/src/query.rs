@@ -127,11 +127,28 @@ pub struct MeshTol {
     pub linear: f64,
     /// Maximum angle between adjacent facet normals (radians).
     pub angular: f64,
+    /// Whether the inside of a freeform face (a sweep, loft or blend) may deviate further than
+    /// its edges do: five times `linear`, and no finer than 0.5 rad. Right for the display,
+    /// which shades with the exact normals and wants few triangles; wrong for a mesh that is
+    /// itself the result, such as an STL or 3MF file ([`MeshTol::exact`]).
+    #[serde(default = "relaxed")]
+    pub relaxed: bool,
+}
+
+fn relaxed() -> bool {
+    true
+}
+
+impl MeshTol {
+    /// The usual tolerances, kept everywhere on the surface: for meshes that are written out.
+    pub fn exact() -> Self {
+        MeshTol { relaxed: false, ..MeshTol::default() }
+    }
 }
 
 impl Default for MeshTol {
     fn default() -> Self {
-        MeshTol { linear: tol::MESH_LINEAR, angular: tol::MESH_ANGULAR }
+        MeshTol { linear: tol::MESH_LINEAR, angular: tol::MESH_ANGULAR, relaxed: true }
     }
 }
 

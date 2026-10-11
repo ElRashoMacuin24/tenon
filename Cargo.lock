@@ -2980,6 +2980,7 @@ dependencies = [
  "tenon-model",
  "tenon-render",
  "tenon-sketch",
+ "zip",
 ]
 
 [[package]]

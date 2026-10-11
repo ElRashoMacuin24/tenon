@@ -108,6 +108,8 @@ pub enum Icon {
     Explode,
     Interference,
     Bom,
+    StandardPart,
+    Print3d,
     Dof,
     Return,
     // drawings
@@ -712,6 +714,24 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.closed(&[(0.08, 0.3), (0.6, 0.3), (0.6, 0.85), (0.08, 0.85)]);
             pen.closed(&[(0.4, 0.12), (0.92, 0.12), (0.92, 0.66), (0.4, 0.66)]);
             pen.fill(&[(0.4, 0.3), (0.6, 0.3), (0.6, 0.66), (0.4, 0.66)], red);
+        }
+        // A screw from the side: head, shank and a few turns of thread.
+        Icon::StandardPart => {
+            pen.closed(&[(0.1, 0.28), (0.34, 0.28), (0.34, 0.72), (0.1, 0.72)]);
+            pen.closed(&[(0.34, 0.39), (0.92, 0.39), (0.92, 0.61), (0.34, 0.61)]);
+            for x in [0.56, 0.67, 0.78] {
+                pen.line(&[(x, 0.39), (x + 0.06, 0.61)]);
+            }
+        }
+        // A part going up in layers on a bed, under a nozzle on its rail.
+        Icon::Print3d => {
+            pen.line(&[(0.08, 0.9), (0.92, 0.9)]);
+            pen.closed(&[(0.24, 0.9), (0.76, 0.9), (0.76, 0.54), (0.24, 0.54)]);
+            for y in [0.66, 0.78] {
+                pen.line(&[(0.24, y), (0.76, y)]);
+            }
+            pen.line(&[(0.08, 0.14), (0.92, 0.14)]);
+            pen.closed(&[(0.4, 0.14), (0.6, 0.14), (0.6, 0.28), (0.5, 0.42), (0.4, 0.28)]);
         }
         Icon::Bom => {
             pen.closed(&[(0.12, 0.08), (0.88, 0.08), (0.88, 0.92), (0.12, 0.92)]);

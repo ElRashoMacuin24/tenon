@@ -237,6 +237,31 @@ impl Document {
         }
     }
 
+    /// Sets several values at once (as shown: degrees for angles). The dimensions of one sketch
+    /// are changed together and the sketch solved once, so it does not have to pass through
+    /// sizes it cannot have on the way; `names` (one per value) are for the message when it
+    /// cannot be done.
+    pub fn set_values_at(&mut self, values: &[(ValuePath, f64)], names: &[String]) -> Result<(), String> {
+        let label = |i: usize, v: f64| match names.get(i) {
+            Some(n) => format!("{n} = {v}"),
+            None => format!("{v}"),
+        };
+        let mut by_sketch: BTreeMap<FeatureId, Vec<(usize, ConstraintId, f64)>> = BTreeMap::new();
+        for (i, (path, v)) in values.iter().enumerate() {
+            match path {
+                ValuePath::Dimension { sketch, constraint } => by_sketch.entry(*sketch).or_default().push((i, *constraint, *v)),
+                ValuePath::Feature { .. } => self.set_value_at(path, *v).map_err(|e| format!("{}: {e}", label(i, *v)))?,
+            }
+        }
+        for (sketch, dims) in by_sketch {
+            let sk = self.sketch_mut(sketch).ok_or("the sketch no longer exists")?;
+            let stored: Vec<(ConstraintId, f64)> =
+                dims.iter().map(|(_, c, v)| (*c, if sk.constraint(*c).is_some_and(|x| x.is_angular()) { v.to_radians() } else { *v })).collect();
+            sk.set_dimensions(&stored).map_err(|e| format!("{}: {e}", dims.iter().map(|(i, _, v)| label(*i, *v)).collect::<Vec<_>>().join(", ")))?;
+        }
+        Ok(())
+    }
+
     /// The sketch a driven dimension belongs to, when `path` is one: a value the document works
     /// out, which nothing can set.
     pub fn driven_in(&self, path: &ValuePath) -> Option<FeatureId> {
@@ -321,8 +346,25 @@ impl Document {
             let parsed = expr::parse(&u.equation).map_err(|err| format!("{}: {err}", u.name))?;
             eqs.insert(u.name.clone(), (parsed, None));
         }
+        // Dimensions worked out and not yet written: a sketch's are written together (see below).
+        let mut pending: Vec<(String, ValuePath, f64)> = Vec::new();
         // Evaluate whatever is ready until nothing is left; what remains is a cycle or unknown.
         loop {
+            // A sketch gets its new dimensions all at once, when no equation is left that sets
+            // one of them: written one at a time it could pass through a size it cannot have.
+            let set_later = |path: &ValuePath, eqs: &BTreeMap<String, (expr::Expr, Option<ValuePath>)>| match path {
+                ValuePath::Dimension { sketch, .. } => {
+                    eqs.values().any(|(_, t)| matches!(t, Some(ValuePath::Dimension { sketch: s, .. }) if s == sketch))
+                }
+                ValuePath::Feature { .. } => false,
+            };
+            let (wait, write): (Vec<_>, Vec<_>) = std::mem::take(&mut pending).into_iter().partition(|(_, path, _)| set_later(path, &eqs));
+            pending = wait;
+            if !write.is_empty() {
+                let names: Vec<String> = write.iter().map(|w| w.0.clone()).collect();
+                let values: Vec<(ValuePath, f64)> = write.into_iter().map(|w| (w.1, w.2)).collect();
+                self.set_values_at(&values, &names)?;
+            }
             // A driven dimension can be read when no equation is left to write into its sketch.
             let mut released = false;
             waiting.retain(|(name, path, sketch)| {
@@ -371,7 +413,10 @@ impl Document {
                 if let Some(path) = target
                     && self.value_at(&path).is_none_or(|(old, _)| (old - v).abs() > 1e-12 * (1.0 + v.abs()))
                 {
-                    self.set_value_at(&path, v).map_err(|err| format!("{name} = {v}: {err}"))?;
+                    match path {
+                        ValuePath::Dimension { .. } => pending.push((name.clone(), path, v)),
+                        ValuePath::Feature { .. } => self.set_value_at(&path, v).map_err(|err| format!("{name} = {v}: {err}"))?,
+                    }
                 }
                 env.insert(name, v);
             }

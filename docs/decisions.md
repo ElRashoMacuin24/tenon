@@ -837,3 +837,128 @@ file has it, then changed); a file per size, for sending one size to someone.
 Rejected: a copy of the part file per size (Inventor's members: the copies must be kept in
 step, and a maker's folder fills with files); storing the row's values in the assembly (they
 would go stale when the table changes).
+
+## DEC-049 Standard parts are ordinary parts, built by commands from sizes typed in as facts (2026-10-11)
+
+M7 asks for a standard parts library "generated parametrically or from open-licensed data
+only", with no scraped catalogues. Tenon's library is ten families built into the program
+(`tenon_model::library`): hex head screws (ISO 4017), socket head cap screws (ISO 4762), hex
+nuts (ISO 4032), plain washers (ISO 7089), deep groove ball bearings by their ISO 15 boundary
+dimensions, square and rectangular tube, round tube, angle, flat bar, and a T-slot profile.
+
+- **A standard part is a part.** Each family is built by the ordinary commands (parameters, a
+  fully dimensioned sketch, extrusions, a cosmetic thread) and carries a design table (DEC-044)
+  with a row for each size. Nothing about it is special afterwards: it opens, edits, saves,
+  diffs and goes into drawings like any part, and every size is checked against its analytic
+  volume (`every_size_of_every_standard_part_is_one_solid_of_the_right_volume`).
+- **The sizes are facts, typed in.** A standard's dimensions (an M8 hexagon is 13 across its
+  flats; a 608 bearing is 8 x 22 x 7) are facts, widely published and not anyone's property;
+  the standards' text, drawings and tables are, and none of them is in the repository. No
+  dataset was downloaded or copied, so there is no third-party licence to carry; ATTRIBUTION.md
+  says where the numbers stand. A few are spot-checked in `the_sizes_are_the_standards`.
+- **What is simplified says so.** Threads are cosmetic; heads have no chamfer or washer face;
+  a bearing is one solid by its boundary dimensions; sections have square corners. Each
+  family's description in the dialog says what was left out.
+- **The T-slot profile is Tenon's own.** Makers' profiles are their makers' designs. Tenon's is
+  a generic section with one slot a side and a centre bore, in three sizes, described as such:
+  good for laying out a frame, not for relying on a fit.
+- **In an assembly** a standard part is placed in a size (`asm.insert_standard`, Assemble >
+  Standard Parts). Its file is written once into a folder named `standard` beside the assembly
+  and every size comes from that file by its row (DEC-048), so a project carries its standard
+  parts with it and opens anywhere. **In a part**, Manage > Standard Parts starts a new part
+  from a family (`library.new`), to change and save as one's own.
+
+Not done: other standards (DIN, ANSI inch sizes), fine threads, more families; a way to add a
+family without writing code; a fastener that sizes itself from the hole it is dropped on; a
+length asked for when a section is placed (it is the parameter `L` of the part).
+
+Rejected: bundling an open parts dataset (none found whose licence and provenance were clear
+enough to carry, and the families above need a few hundred numbers, not a database); writing a
+file per size (DEC-048); a library on a server.
+
+## DEC-050 Dimensions of one sketch that change together are set together (2026-10-11)
+
+Found while building the library. A design table row, or one parameter that several
+dimensions follow, changes several dimensions of a sketch at once. They were written one at a
+time, each followed by a solve: after the first, the sketch held one new size and the rest old,
+which is often a sketch that cannot be drawn (a slot wider than the bar it is in), and the
+change was refused as a conflict though the row as a whole was fine.
+
+Dimensions of one sketch that change in one step are now written together and the sketch is
+solved once (`Sketch::set_dimensions`, `Document::set_values_at`). Equations are still
+evaluated in dependency order; a sketch's values are held back until no equation still to be
+evaluated writes into that sketch. `one_parameter_scales_three_dimensions_of_a_sketch_at_once`,
+`a_design_table_row_sets_the_dimensions_of_a_sketch_at_once`.
+
+## DEC-051 The 3D print check reads the part as triangles (2026-10-11)
+
+`print.check` and Inspect > 3D Print Check answer a maker's first questions before a slicer is
+opened: is the surface closed, what overhangs, how thin is the thinnest wall, does it fit the
+printer.
+
+- **It reads the mesh, as a slicer will.** The part is tessellated and its triangles welded
+  (`tenon_io::meshcheck`). Watertight means every edge joins exactly two triangles that face
+  the same way; open, crowded and flipped edges are counted apart. Each finding is given by
+  kernel face, so the app tints the faces and a command can act on them.
+- **Overhangs** are faces leaning out past a limit measured from vertical (45 degrees unless
+  said), given a direction that is up (one of the six axis directions). What lies on the bed,
+  at the part's lowest point, is not an overhang.
+- **Wall thickness** is measured through the material: from the middle of each triangle
+  straight in to the far side. The least found is reported, and the faces under the minimum
+  asked for (0.8 mm unless said, two passes of the commonest nozzle).
+- **The bed** is three sizes; the part fits if its footprint does either way round and it is
+  not too high. It is only checked when given.
+- **It is an aid, not a verdict.** It says what it found ("wants support") and does not know
+  the printer, the material or the slicer's settings.
+
+In the app the check runs again whenever the part or its settings change, on the geometry
+thread, and never while a sketch is open. Not done: support volume or print time; the build
+space drawn round the part; turning the part freely; a list of printers; small features
+(holes and gaps that close up), which need the nozzle's width; checking an assembly.
+
+Rejected: checking the exact solid (a wall's thickness between curved faces is a hard exact
+problem and the answer wanted is what the printer will get, which is the mesh); calling a
+slicer (a dependency and a licence for a first answer).
+
+## DEC-052 3MF beside STL, and files that are written keep their tolerance everywhere (2026-10-11)
+
+- **3MF** (`export.3mf`, `asm.export_3mf`, File > Export 3MF) is the core specification only:
+  millimetres, one object per solid with its triangles, a base material carrying the part's
+  material name and colour, and for an assembly an item per component with its placement, the
+  components of one part in one size sharing an object. It is a zip package (the `zip` crate
+  Tenon already used) written with fixed dates, so the same model is the same file. No
+  extensions (no slicer settings, no beam lattices, no textures).
+- **STL** (`export.stl`, new `asm.export_stl`) leaves out triangles with no area or a corner
+  that is not a number, refuses more triangles than the format can count, and says whether what
+  it wrote is closed. An assembly's STL holds every solid where it is.
+- **Watertight is judged solid by solid.** Two parts that touch share corners, and a welded
+  mesh of both would call their common edges crowded; each is a closed solid and prints.
+- **A written mesh keeps its tolerance inside freeform faces.** DEC-036 lets the inside of a
+  swept, lofted or blended face deviate five times as far as its edges, which is right for the
+  screen (shading uses exact normals) and wrong for a file that is the result: a 2 mm spring
+  wire came out 1.7 % under volume. `MeshTol` now says which is wanted (`relaxed`, true for the
+  display); exports mesh exactly (`MeshTol::exact()`), from scratch, and leave no triangles
+  behind for the display to pick up. The spring is then 0.7 % under, which is what 0.2 rad
+  chords round a wire lose, and `linear` and `angular` on the export commands mean what they
+  say (`an_exact_mesh_keeps_the_tolerance_inside_freeform_faces`,
+  `stl_and_3mf_files_hold_closed_solids_of_the_right_volume`).
+- **In the app** both exports run on the geometry thread from the saved part, not from the
+  triangles on screen (which may be showing a preview or an open sketch).
+
+Not done: an options dialog for the tolerance in the app; units other than millimetres;
+colour per face; reading 3MF or STL back in as a body.
+
+## DEC-053 Smaller things settled in M7 (2026-10-11)
+
+- **A screenshot run starts clean and leaves nothing.** `tenon --screenshot` was reading and
+  writing where dialogs were last left (egui's memory, kept beside the user's settings), so a
+  picture depended on who took it, and one bad layout was remembered. Such a run now starts
+  with no remembered dialog positions and saves none.
+- **A parameter cannot be named after a unit.** The nut's height is `m` in its standard and
+  `height` in Tenon: `m` is metres in an equation.
+- **The print check's result rows are laid out by hand,** not in a grid: a wrapped label in a
+  grid column is measured a letter wide on a window's first frame.
+- **The M7 example** is a printed end cap on a T-slot bar (examples/m7-end-cap): one part worth
+  checking for printing both ways up, one section from the library with its length set, one
+  screw placed from the library and changed for a longer one, and an interference that is
+  wanted (the screw's thread in the bar's bore), checked against its analytic volume.

@@ -231,10 +231,22 @@ impl Document {
         let r = t.row(row).cloned().ok_or_else(|| format!("the table has no row `{row}`"))?;
         let columns = t.columns.clone();
         t.active = r.name.clone();
+        // The row's values go in together: a sketch whose dimensions are several of them is
+        // solved once, at the new size, not once for each on the way there.
+        let (mut values, mut names) = (Vec::new(), Vec::new());
         for (c, v) in columns.iter().zip(&r.values) {
-            self.table_apply(c, *v)?;
+            if !v.is_finite() {
+                return Err(format!("{c}: not a number"));
+            }
+            match self.params.model.iter().find(|m| &m.name == c).map(|m| m.target.clone()) {
+                Some(target) => {
+                    values.push((target, *v));
+                    names.push(c.clone());
+                }
+                None => self.table_apply(c, *v)?,
+            }
         }
-        Ok(())
+        self.set_values_at(&values, &names)
     }
 
     /// Keeps the table true to the part after an edit: a parameter that was renamed keeps its

@@ -1,0 +1,174 @@
+# Tenon part file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon"
+version = 2
+name = "End Cap"
+next_feature = 9
+
+[material]
+name = "PLA"
+density = 1.24
+color = "#4f9fd8"
+
+[parameters]
+next = 5
+user = []
+model = [
+  { name = "d0", target = { kind = "feature", feature = 2, field = "/extent/distance" } },
+  { name = "d1", target = { kind = "feature", feature = 4, field = "/extent/distance" } },
+  { name = "d2", target = { kind = "feature", feature = 6, field = "/extent/distance" } },
+  { name = "d3", target = { kind = "feature", feature = 7, field = "/distance" } },
+  { name = "d4", target = { kind = "feature", feature = 9, field = "/extent/distance" } },
+]
+
+[[feature]]
+id = 1
+name = "Sketch1"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 9
+next_constraint = 5
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = -12.0, y = -12.0 }, construction = false },
+  { id = 3, type = "point", pos = { x = 12.0, y = -12.0 }, construction = false },
+  { id = 4, type = "point", pos = { x = 12.0, y = 12.0 }, construction = false },
+  { id = 5, type = "point", pos = { x = -12.0, y = 12.0 }, construction = false },
+  { id = 6, type = "line", start = 2, end = 3, construction = false },
+  { id = 7, type = "line", start = 3, end = 4, construction = false },
+  { id = 8, type = "line", start = 4, end = 5, construction = false },
+  { id = 9, type = "line", start = 5, end = 2, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+  { id = 2, type = "horizontal", line = 6 },
+  { id = 3, type = "vertical", line = 7 },
+  { id = 4, type = "horizontal", line = 8 },
+  { id = 5, type = "vertical", line = 9 },
+]
+
+[[feature]]
+id = 2
+name = "Extrusion1"
+suppressed = false
+type = "extrude"
+sketch = 1
+regions = "default"
+extent = { distance = 10.0 }
+reverse = false
+operation = "join"
+
+[[feature]]
+id = 3
+name = "Sketch2"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 17
+next_constraint = 9
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = -12.0, y = -12.0 }, construction = false },
+  { id = 3, type = "point", pos = { x = 12.0, y = -12.0 }, construction = false },
+  { id = 4, type = "point", pos = { x = 12.0, y = 12.0 }, construction = false },
+  { id = 5, type = "point", pos = { x = -12.0, y = 12.0 }, construction = false },
+  { id = 6, type = "line", start = 2, end = 3, construction = false },
+  { id = 7, type = "line", start = 3, end = 4, construction = false },
+  { id = 8, type = "line", start = 4, end = 5, construction = false },
+  { id = 9, type = "line", start = 5, end = 2, construction = false },
+  { id = 10, type = "point", pos = { x = -10.2, y = -10.2 }, construction = false },
+  { id = 11, type = "point", pos = { x = 10.2, y = -10.2 }, construction = false },
+  { id = 12, type = "point", pos = { x = 10.2, y = 10.2 }, construction = false },
+  { id = 13, type = "point", pos = { x = -10.2, y = 10.2 }, construction = false },
+  { id = 14, type = "line", start = 10, end = 11, construction = false },
+  { id = 15, type = "line", start = 11, end = 12, construction = false },
+  { id = 16, type = "line", start = 12, end = 13, construction = false },
+  { id = 17, type = "line", start = 13, end = 10, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+  { id = 2, type = "horizontal", line = 6 },
+  { id = 3, type = "vertical", line = 7 },
+  { id = 4, type = "horizontal", line = 8 },
+  { id = 5, type = "vertical", line = 9 },
+  { id = 6, type = "horizontal", line = 14 },
+  { id = 7, type = "vertical", line = 15 },
+  { id = 8, type = "horizontal", line = 16 },
+  { id = 9, type = "vertical", line = 17 },
+]
+
+[[feature]]
+id = 4
+name = "Extrusion2"
+suppressed = false
+type = "extrude"
+sketch = 3
+regions = "default"
+extent = { distance = 5.0 }
+reverse = true
+operation = "join"
+
+[[feature]]
+id = 5
+name = "Sketch3"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 3
+next_constraint = 1
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0 }, construction = false },
+  { id = 3, type = "circle", center = 2, radius = 2.75, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+]
+
+[[feature]]
+id = 6
+name = "Extrusion3"
+suppressed = false
+type = "extrude"
+sketch = 5
+regions = "default"
+extent = { distance = 10.0 }
+reverse = false
+operation = "cut"
+
+[[feature]]
+id = 7
+name = "Work Plane1"
+suppressed = false
+type = "work_plane"
+by = "offset"
+base = { origin = "XY" }
+distance = 10.0
+
+[[feature]]
+id = 8
+name = "Sketch4"
+suppressed = false
+type = "sketch"
+plane = { work = 7 }
+next_entity = 3
+next_constraint = 1
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0 }, construction = false },
+  { id = 3, type = "circle", center = 2, radius = 5.0, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+]
+
+[[feature]]
+id = 9
+name = "Extrusion4"
+suppressed = false
+type = "extrude"
+sketch = 8
+regions = "default"
+extent = { distance = 6.0 }
+reverse = true
+operation = "cut"

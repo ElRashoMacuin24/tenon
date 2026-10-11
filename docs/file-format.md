@@ -402,6 +402,9 @@ Implemented in `crates/io/src/asm.rs` and `crates/assembly/src/model.rs`; tested
   part in that size, whatever row the part file itself is at. Components of one part file may
   name different rows. Nothing is written for a size: it is worked out from the part file each
   time. A row the part no longer has is reported and the component shown as missing.
+  A standard part placed from the library (DEC-049) is this and nothing more: an ordinary part
+  file, written by Tenon into a folder beside the assembly (`standard/hex-screw-iso-4017.tenon`),
+  and a component that names it and a row. The folder travels with the assembly.
 - **Relationship `type`:**
   - `mate`, `flush` (`offset`);
   - `angle` (`angle` in radians, `reference`: a unit vector in A's part coordinates);

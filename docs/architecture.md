@@ -16,7 +16,7 @@ rules are enforced by `cargo xtask layers` (table in `xtask/src/layers.rs`) and
 | L3 | `model` | feature tree, regeneration (incremental), face and edge naming, parameters and equations, measuring, command registry and undo, regeneration worker | M2 |
 | L4 | `assembly` | assemblies: components, constraints and joints, the rigid-body solver, degrees of freedom, parts list, interference, exploded view, `asm.*` commands | M3 |
 | L5 | `drawing` | drawings: sheets, views through hidden-line removal (projected, section, detail, isometric), associative dimensions, centrelines, hole tables, balloons, parts lists, title blocks, PDF/SVG/DXF, `drw.*` commands | M4 |
-| L6 | `io` | `.tenon` part, `.tenonasm` assembly and `.tenondrw` drawing files, file and export commands, STL; STEP via the kernel | M4 (3MF: later) |
+| L6 | `io` | `.tenon` part, `.tenonasm` assembly and `.tenondrw` drawing files, file and export commands, STL and 3MF, the mesh checks behind the 3D print check; STEP via the kernel | M7 |
 | L7 | `render` | camera, picking, software rasteriser, wgpu viewport renderer, drawing sheets to images (no UI toolkit) | M4 |
 | L8 | `ui` | egui workbench: ribbon, browser, sketcher, feature panels, properties panel, viewport, dialogs; the assembly environment and editing parts in place; the drawing environment | M4 |
 | exempt | `apps/tenon` | desktop binary (eframe + wgpu, OCCT, native file dialogs) | M1 |

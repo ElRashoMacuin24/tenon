@@ -595,6 +595,26 @@ impl Sketch {
         Ok(())
     }
 
+    /// Changes several dimensions and solves once; unchanged on failure. (Changed one at a time,
+    /// a sketch can pass through sizes it cannot have on its way to one it can.)
+    pub fn set_dimensions(&mut self, values: &[(ConstraintId, f64)]) -> SketchResult<()> {
+        let mut trial = self.clone();
+        for (id, value) in values {
+            if trial.is_driven(*id) {
+                return Err(SketchError::Invalid(format!("{id} is a driven dimension: it follows the sketch, so it cannot be given a value")));
+            }
+            let c = trial.constraint_mut(*id).ok_or(SketchError::NoConstraint(*id))?;
+            if !c.set_value(*value) {
+                return Err(SketchError::Invalid(format!("{id} is not a dimension")));
+            }
+            let c = c.clone();
+            trial.check_constraint(&c)?;
+        }
+        GaussNewton.solve(&mut trial, &SolveOptions::default())?;
+        *self = trial;
+        Ok(())
+    }
+
     /// Makes dimension `id` driven (from now on it follows the sketch) or driving again (it
     /// holds the sketch at the value it shows). Making it driving is refused, with the sketch
     /// unchanged, when the sketch is already held without it: the dimension would be redundant.

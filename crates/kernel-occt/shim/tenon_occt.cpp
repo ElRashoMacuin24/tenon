@@ -1393,18 +1393,37 @@ void edge_info(const Shape& s, std::uint32_t index, EdgeOut& out) {
   });
 }
 
-void tessellate(const Shape& s, double linear, double angular, MeshOut& out) {
+void tessellate(const Shape& s, double linear, double angular, bool relaxed, MeshOut& out) {
   guarded("tessellate", [&] {
-    // Faces are meshed in parallel (OCCT's own thread pool). Edges keep the full tolerance; the
-    // inside of a freeform face (a sweep, loft or blend) may deviate five times as far. Refining
-    // it to the edge tolerance made a 5-turn coil take 7.6 s and half a million triangles; this
-    // takes 1.3 s and looks the same, since shading uses the exact surface normals.
+    // Faces are meshed in parallel (OCCT's own thread pool). Edges keep the full tolerance; for
+    // the display (`relaxed`) the inside of a freeform face (a sweep, loft or blend) may deviate
+    // five times as far. Refining it to the edge tolerance made a 5-turn coil take 7.6 s and
+    // half a million triangles; this takes 1.3 s and looks the same, since shading uses the
+    // exact surface normals. A mesh that is written out is the result itself, so it keeps the
+    // tolerance everywhere.
     IMeshTools_Parameters mp;
     mp.Deflection = linear;
     mp.Angle = angular;
-    mp.DeflectionInterior = 5.0 * linear;
-    mp.AngleInterior = std::max(angular, 0.5);
+    mp.DeflectionInterior = relaxed ? 5.0 * linear : linear;
+    mp.AngleInterior = relaxed ? std::max(angular, 0.5) : angular;
     mp.InParallel = true;
+    // The mesher keeps a face's triangles when its edges already meet the tolerance, whatever
+    // the inside was meshed to: an exact mesh starts clean, and leaves nothing behind for the
+    // display to pick up in its place.
+    struct Fresh {
+      const TopoDS_Shape& shape;
+      bool on;
+      Fresh(const TopoDS_Shape& sh, bool o) : shape(sh), on(o) {
+        if (on) {
+          BRepTools::Clean(shape);
+        }
+      }
+      ~Fresh() {
+        if (on) {
+          BRepTools::Clean(shape);
+        }
+      }
+    } fresh(s.shape, !relaxed);
     BRepMesh_IncrementalMesh mesher(s.shape, mp);
     if (!mesher.IsDone()) {
       throw std::runtime_error("meshing did not complete");

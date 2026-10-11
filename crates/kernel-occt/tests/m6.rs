@@ -197,6 +197,25 @@ fn a_long_coil_meshes_without_excess_triangles() {
     assert!(m.triangle_count() < 150_000, "{} triangles", m.triangle_count());
 }
 
+/// A mesh that is written out (STL, 3MF) is the result itself: it keeps the tolerance inside
+/// freeform faces too, and does not leave its triangles behind for the display to show.
+#[test]
+fn an_exact_mesh_keeps_the_tolerance_inside_freeform_faces() {
+    let mut k = OcctKernel::new();
+    let at = Frame::new(Vec3::new(10.0, 0.0, 0.0), Vec3::Y, Vec3::X).unwrap();
+    let helix = Path3 { curves: vec![Curve3::Helix { frame: Frame::WORLD, radius: 10.0, pitch: 4.0, turns: 2.0, left: false }] };
+    let wire = k.sweep(&circle(at, 1.0), &helix, &solid()).unwrap().shape;
+    let exact = k.mass_properties(wire, 1.0).unwrap().volume;
+    let shown = k.tessellate(wire, &tenon_kernel::MeshTol::default()).unwrap();
+    let written = k.tessellate(wire, &tenon_kernel::MeshTol::exact()).unwrap();
+    let lost = |m: &tenon_kernel::Mesh| (exact - m.signed_volume()) / exact;
+    // Chords of 0.2 rad around a round wire lose 0.7 % of its section; the display loses more.
+    assert!(lost(&written) > 0.0 && lost(&written) < 0.01, "{} of {exact}", written.signed_volume());
+    assert!(lost(&shown) > lost(&written) && written.triangle_count() > shown.triangle_count(), "{} {}", lost(&shown), lost(&written));
+    let again = k.tessellate(wire, &tenon_kernel::MeshTol::default()).unwrap();
+    assert_eq!(again.triangle_count(), shown.triangle_count());
+}
+
 /// Threads need to know a shaft from a hole: a round face says which side its material is on.
 #[test]
 fn a_round_face_says_whether_it_is_a_shaft_or_a_hole() {

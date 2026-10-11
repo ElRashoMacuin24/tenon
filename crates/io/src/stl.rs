@@ -11,9 +11,24 @@ const HEADER_LEN: usize = 80;
 /// Bytes per binary STL facet: normal + 3 vertices (12 f32) + attribute count (u16).
 const FACET_LEN: usize = 50;
 
+/// The mesh's triangles that are a surface: corners that are numbers, and an area. (A triangle
+/// with none has no normal to give, and slicers stumble on them.)
 fn triangles(mesh: &Mesh) -> impl Iterator<Item = [[f32; 3]; 3]> + '_ {
     let (tris, _) = mesh.indices.as_chunks::<3>();
-    tris.iter().filter_map(|&[a, b, c]| Some([*mesh.positions.get(a as usize)?, *mesh.positions.get(b as usize)?, *mesh.positions.get(c as usize)?]))
+    tris.iter()
+        .filter_map(|&[a, b, c]| Some([*mesh.positions.get(a as usize)?, *mesh.positions.get(b as usize)?, *mesh.positions.get(c as usize)?]))
+        .filter(|t| t.iter().flatten().all(|c| c.is_finite()) && has_area(t))
+}
+
+fn has_area(t: &[[f32; 3]; 3]) -> bool {
+    let p = t.map(|v| Vec3::new(f64::from(v[0]), f64::from(v[1]), f64::from(v[2])));
+    let n = (p[1] - p[0]).cross(p[2] - p[0]);
+    n.dot(n) > 0.0
+}
+
+/// How many triangles of the mesh an STL file will hold.
+pub fn triangle_count(mesh: &Mesh) -> usize {
+    triangles(mesh).count()
 }
 
 fn facet_normal(t: &[[f32; 3]; 3]) -> [f32; 3] {
@@ -126,5 +141,21 @@ mod tests {
         let mut m = cube();
         m.indices.extend_from_slice(&[0, 1, 99]);
         assert_eq!(binary_triangle_count(&write_binary(&m, "")), Some(12));
+    }
+
+    /// Triangles with no area, or with a corner that is not a number, are no surface: they are
+    /// left out of both forms, and of the count the binary header gives.
+    #[test]
+    fn triangles_that_are_no_surface_are_left_out() {
+        let mut m = cube();
+        // A point three times, three corners in a line, and a corner that is not a number.
+        m.positions.extend_from_slice(&[[0.5, 0.5, 2.0], [0.0, 0.0, 2.0], [1.0, 1.0, 2.0], [f32::NAN, 0.0, 0.0], [f32::INFINITY, 0.0, 0.0]]);
+        m.indices.extend_from_slice(&[8, 8, 8, 9, 8, 10, 0, 1, 11, 0, 12, 1]);
+        assert_eq!(triangle_count(&m), 12);
+        let data = write_binary(&m, "");
+        assert_eq!((binary_triangle_count(&data), data.len()), (Some(12), 80 + 4 + 12 * 50));
+        let text = write_ascii(&m, "cube");
+        assert_eq!(text.matches("facet normal").count(), 12);
+        assert!(!text.contains("NaN") && !text.contains("inf"), "{text}");
     }
 }

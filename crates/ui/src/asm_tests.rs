@@ -16,7 +16,7 @@ use tenon_model::Session;
 use crate::Workbench;
 use crate::asm_panel::{AsmTool, ConstraintType};
 use crate::panels::Panel;
-use crate::tests::{Driver, browser_row, on_screen};
+use crate::tests::{Driver, browser_row, on_screen, pressable};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("tenon-ui-asm-{}-{name}", std::process::id()));
@@ -514,5 +514,78 @@ fn a_component_is_shown_in_its_size_and_changes_size_from_the_browser() {
     assert!(wb.status().contains("1 part file"), "{}", wb.status());
     let files = std::fs::read_dir(path.parent().unwrap()).unwrap().count();
     assert_eq!(files, 2);
+    assert!(!wb.status_error, "{}", wb.status());
+}
+
+#[test]
+fn standard_parts_are_placed_from_the_library_in_the_size_picked() {
+    let dir = scratch("library");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("file.new_assembly").unwrap();
+    d.settle(&mut wb);
+    // Standard Parts on the ribbon opens the library, on a screw at a middling size.
+    wb.run_ui("tools.library").unwrap();
+    for _ in 0..5 {
+        d.frame(&mut wb, vec![]);
+    }
+    let texts = d.texts();
+    for shown in ["Fasteners", "Bearings", "Sections", "Hex Head Screw", "Deep Groove Ball Bearing", "T-Slot Profile", "Sizes to ISO 4017", "M8x30"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    assert_eq!(wb.chrome.library_pick, ("hex-screw-iso-4017".to_owned(), "M8x30".to_owned()));
+
+    // Place, in an assembly that has no folder yet: refused, saying what to do.
+    d.click(&mut wb, pressable(&d, "tn_library_place"));
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status_error && wb.status().starts_with("Save the assembly first"), "{}", wb.status());
+    assert!(wb.assembly().unwrap().assembly().components.is_empty());
+    let file = dir.join("stack.tenonasm");
+    let to = file.clone();
+    wb.services.pick_save = Some(Box::new(move |_: &str, _: &str| Some(to.clone())));
+    wb.run_ui("file.save").unwrap();
+    d.frame(&mut wb, vec![]);
+
+    // The washer for it: its row in the list, the M8 size, Place.
+    d.click(&mut wb, pressable(&d, "tn_library_part_washer-iso-7089"));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "Sizes to ISO 7089"), "{:?}", d.texts());
+    assert_eq!(wb.chrome.library_pick, ("washer-iso-7089".to_owned(), "M8".to_owned()));
+    d.click(&mut wb, pressable(&d, "tn_library_place"));
+    d.settle(&mut wb);
+    assert!(!wb.status_error && wb.status().starts_with("Placed Plain Washer, M8"), "{}", wb.status());
+    // Then the screw, in M8x30 and again in M8x16 (picked from the list of sizes).
+    d.click(&mut wb, pressable(&d, "tn_library_part_hex-screw-iso-4017"));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_library_place"));
+    d.settle(&mut wb);
+    d.click(&mut wb, pressable(&d, "tn_library_size_M8x16"));
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t.contains("l 16")), "the size's dimensions show: {:?}", d.texts());
+    d.click(&mut wb, pressable(&d, "tn_library_place"));
+    d.settle(&mut wb);
+    assert!(!wb.status_error, "{}", wb.status());
+
+    // Three components from two files in the folder beside the assembly; each in its size.
+    let rows: Vec<(String, Option<String>)> =
+        wb.assembly().unwrap().assembly().components.iter().map(|c| (c.part.replace('\\', "/"), c.row.clone())).collect();
+    assert_eq!(rows.len(), 3);
+    assert!(rows[0].0.ends_with("standard/washer-iso-7089.tenon") && rows[0].1.as_deref() == Some("M8"), "{rows:?}");
+    assert!(rows[1].0.ends_with("standard/hex-screw-iso-4017.tenon") && rows[1].1.as_deref() == Some("M8x30"), "{rows:?}");
+    assert_eq!(rows[2].1.as_deref(), Some("M8x16"));
+    assert_eq!(std::fs::read_dir(dir.join("standard")).unwrap().count(), 2);
+    let hexagon = 3f64.sqrt() / 2.0 * 169.0;
+    let want = (PI * (256.0 - 70.56) / 4.0) * 1.6 + 2.0 * hexagon * 5.3 + PI * 16.0 * (30.0 + 16.0);
+    let got: f64 = wb.scene().bodies.iter().map(|b| b.volume).sum();
+    assert!((got - want).abs() < 1e-6 * want, "{got} vs {want}");
+    browser_row(&d, "hex-screw-iso-4017:2 (M8x16)");
+    // They do not land on one another: each is placed beside what is there.
+    let xs: Vec<f64> = wb.assembly().unwrap().assembly().components.iter().map(|c| c.placement.origin().x).collect();
+    assert!(xs[0] < xs[1] && xs[1] < xs[2], "{xs:?}");
+    // Saving writes the assembly; the standard files were written when they were first used.
+    wb.run_ui("file.save").unwrap();
+    assert!(std::fs::read_to_string(&file).unwrap().contains("row = \"M8x16\""));
     assert!(!wb.status_error, "{}", wb.status());
 }

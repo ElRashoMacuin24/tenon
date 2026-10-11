@@ -28,6 +28,16 @@ Standard sizes and physical constants held in code:
   values, facts typed in one by one; the names are generic and the colours were chosen for
   Tenon. No material database, library file or vendor data is copied (DEC-043). A density is a
   typical figure, not a specification: a part's own density can be typed over it.
+- the standard parts library (`crates/model/src/library.rs`, DEC-049): the dimensions of ISO
+  metric fasteners M3 to M20 (hexagon across flats and head height of ISO 4017, head and socket
+  sizes of ISO 4762, nut height of ISO 4032, the normal series of plain washers of ISO 7089,
+  with the coarse pitches of ISO 261), the boundary dimensions (bore, outside diameter, width)
+  of seventeen deep groove ball bearings as ISO 15 gives them, and common sizes of tube, angle
+  and flat bar. These are facts of the standards, typed in one by one; no dataset, catalogue,
+  table, drawing or text of a standard or of a supplier is copied. The lengths offered for each
+  screw are a choice of preferred lengths made for Tenon. The T-slot profile is Tenon's own
+  simplified section and no maker's design. The parts are built from these numbers by Tenon's
+  own commands, with the simplifications each family's description states.
 
 | Asset | Author | Source | Licence | Notes |
 |---|---|---|---|---|
@@ -98,6 +108,22 @@ Standard sizes and physical constants held in code:
 | `examples/m6-fittings/workbench.png` | Tenon contributors | generated: `tenon examples/m6-fittings/fittings.tenonasm --screenshot examples/m6-fittings/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m6-fittings/properties.png` | Tenon contributors | generated: `tenon examples/m6-fittings/nozzle.tenon --run inspect.mass --screenshot examples/m6-fittings/properties.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m6-fittings/design-table.png` | Tenon contributors | generated: `tenon examples/m6-fittings/spring.tenon --run tools.table --screenshot examples/m6-fittings/design-table.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m7-end-cap/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/end-cap.json` | Tenon contributors | written for this repository (the M7 demo command script) | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/end-cap.tenon` | Tenon contributors | generated: `tenon-cli run examples/m7-end-cap/end-cap.json --out examples/m7-end-cap` | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/bar.tenon` | Tenon contributors | generated: same command (the library's T-slot profile, Tenon's own section, at a length of 150) | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/standard/socket-screw-iso-4762.tenon` | Tenon contributors | generated: same command (the library's socket head cap screw, written beside the assembly that uses it; sizes typed in as facts, see above) | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/capped-bar.tenonasm` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/capped-bar-bom.csv` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/end-cap.3mf` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/end-cap.stl` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/capped-bar.3mf` | Tenon contributors | generated: same command (the assembly, an object for each part) | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/bar.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/end-cap.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/capped-bar.png` | Tenon contributors | generated: same command (software render of the assembly) | MIT OR Apache-2.0 | Original |
+| `examples/m7-end-cap/workbench.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/capped-bar.tenonasm --screenshot examples/m7-end-cap/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m7-end-cap/print-check.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/end-cap.tenon --run inspect.print --screenshot examples/m7-end-cap/print-check.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m7-end-cap/library.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/capped-bar.tenonasm --run tools.library --screenshot examples/m7-end-cap/library.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m2-mount/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.json` | Tenon contributors | written for this repository (a second M2 example script) | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.tenon` | Tenon contributors | generated: `tenon-cli run examples/m2-mount/mount.json --out examples/m2-mount` | MIT OR Apache-2.0 | Original |

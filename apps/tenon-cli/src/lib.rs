@@ -33,6 +33,8 @@ pub const M4_PLATE_SCRIPT: &str = include_str!("../../../examples/m4-plate/plate
 
 /// The M6 demo script, four fittings and their assembly (also in examples/m6-fittings).
 pub const M6_FITTINGS_SCRIPT: &str = include_str!("../../../examples/m6-fittings/fittings.json");
+/// The M7 demo script, a printed end cap on a T-slot bar (also in examples/m7-end-cap).
+pub const M7_END_CAP_SCRIPT: &str = include_str!("../../../examples/m7-end-cap/end-cap.json");
 
 /// Output of a command.
 #[derive(Debug, Clone)]
@@ -272,6 +274,12 @@ pub fn demo_m4(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String
 /// Builds the M6 demo (a spring, a bolt, a handle, a nozzle and their assembly) into `out_dir`.
 pub fn demo_m6(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
     run_script(kernel, M6_FITTINGS_SCRIPT, out_dir)
+}
+
+/// Builds the M7 demo (a printed end cap, checked for printing and written out for a slicer, on
+/// a T-slot bar with a screw from the standard parts library) into `out_dir`.
+pub fn demo_m7(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
+    run_script(kernel, M7_END_CAP_SCRIPT, out_dir)
 }
 
 /// Opens a project and renders it to PNG.

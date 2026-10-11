@@ -54,8 +54,8 @@ mod tests {
         assert!(density(7.85e-6).is_ok() && density(0.0).is_ok());
         assert!(density(-1.0).is_err() && density(f64::NAN).is_err());
         assert!(mesh_tol(&MeshTol::default()).is_ok());
-        assert!(mesh_tol(&MeshTol { linear: 0.01, angular: 0.0 }).is_err());
-        assert!(mesh_tol(&MeshTol { linear: 0.0, angular: 0.3 }).is_err());
-        assert!(mesh_tol(&MeshTol { linear: 0.01, angular: 4.0 }).is_err());
+        assert!(mesh_tol(&MeshTol { linear: 0.01, angular: 0.0, relaxed: true }).is_err());
+        assert!(mesh_tol(&MeshTol { linear: 0.0, angular: 0.3, relaxed: true }).is_err());
+        assert!(mesh_tol(&MeshTol { linear: 0.01, angular: 4.0, relaxed: false }).is_err());
     }
 }

@@ -42,6 +42,13 @@ pub(crate) struct Chrome {
     /// The Design Table dialog is open, and the parameters ticked in it for a new table.
     pub table: bool,
     pub table_pick: std::collections::BTreeSet<String>,
+    /// The Standard Parts dialog is open, and the part and size picked in it.
+    pub library: bool,
+    pub library_pick: (String, String),
+    /// Frames for which the dialog still brings the picked size into view.
+    pub library_scroll: u8,
+    /// The 3D Print Check window: what it checks against and what it last found.
+    pub print: crate::print_dialog::PrintState,
     /// The Parameters dialog is open.
     pub params: bool,
     /// A browser row being dragged.
@@ -88,6 +95,10 @@ impl Default for Chrome {
             params: false,
             table: false,
             table_pick: Default::default(),
+            library: false,
+            library_pick: Default::default(),
+            library_scroll: 0,
+            print: Default::default(),
             browser_drag: None,
             radial: None,
             theme: ThemeName::default(),
@@ -837,6 +848,8 @@ impl Workbench {
         self.parameters_window(ui, &t);
         self.part_properties_window(ui, &t);
         self.design_table_window(ui, &t);
+        self.library_window(ui, &t);
+        self.print_window(ui, &t);
     }
 }
 

@@ -494,7 +494,7 @@ impl Workbench {
 
     /// Where each component is shown: while dragging, as dragged; with a relationship being set
     /// up, as it would place them; in the exploded view, exploded.
-    fn display_frames(&self) -> BTreeMap<ComponentId, Frame> {
+    pub(crate) fn display_frames(&self) -> BTreeMap<ComponentId, Frame> {
         let Some(a) = self.asm.as_ref() else { return BTreeMap::new() };
         let asm = a.shown_assembly();
         let mut frames: BTreeMap<ComponentId, Frame> =
@@ -1294,7 +1294,7 @@ impl Workbench {
 }
 
 /// What a worker job needs to find each component's solids: component, slot, placement, box.
-type SlotItem = (ComponentId, u64, Frame, Option<Aabb3>);
+pub(crate) type SlotItem = (ComponentId, u64, Frame, Option<Aabb3>);
 
 fn slot_items(a: &AsmDoc) -> Vec<SlotItem> {
     a.session
@@ -1306,11 +1306,22 @@ fn slot_items(a: &AsmDoc) -> Vec<SlotItem> {
         .collect()
 }
 
-fn placed_from_slots(items: &[SlotItem], slots: &BTreeMap<u64, tenon_model::Regen>) -> Vec<Placed> {
+pub(crate) fn placed_from_slots(items: &[SlotItem], slots: &BTreeMap<u64, tenon_model::Regen>) -> Vec<Placed> {
     items
         .iter()
         .filter_map(|(c, slot, frame, bbox)| {
             slots.get(slot).map(|r| Placed { component: *c, shapes: r.bodies.iter().map(|b| b.shape).collect(), frame: *frame, bbox: *bbox })
         })
         .collect()
+}
+
+/// As [`slot_items`], each component where `frames` has it (as shown: exploded, or mid-preview).
+pub(crate) fn slot_items_at(a: &AsmDoc, frames: &BTreeMap<ComponentId, Frame>) -> Vec<SlotItem> {
+    let mut items = slot_items(a);
+    for it in &mut items {
+        if let Some(f) = frames.get(&it.0) {
+            it.2 = *f;
+        }
+    }
+    items
 }

@@ -644,7 +644,7 @@ impl Kernel for OcctKernel {
         self.not_cancelled()?;
         check::mesh_tol(mesh_tol)?;
         let mut o = sys::MeshOut::default();
-        sys::tessellate(self.get(shape)?, mesh_tol.linear, mesh_tol.angular, &mut o).map_err(failed("tessellate"))?;
+        sys::tessellate(self.get(shape)?, mesh_tol.linear, mesh_tol.angular, mesh_tol.relaxed, &mut o).map_err(failed("tessellate"))?;
         let triples = |v: &[f32]| v.as_chunks::<3>().0.to_vec();
         let faces = o.face_ranges.as_chunks::<3>().0.iter().map(|&[face, first, count]| FaceRange { face, first, count }).collect();
         let edge_points = triples(&o.edge_points);

@@ -234,6 +234,47 @@ fn asm_insert(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> 
     Ok(json!({ "component": id.0, "name": c.name, "grounded": c.grounded, "row": c.row }))
 }
 
+/// The file a standard part is kept in, in `folder`: "hex-screw-iso-4017.tenon".
+pub fn standard_file(folder: &Path, part: &str) -> PathBuf {
+    folder.join(format!("{part}.tenon"))
+}
+
+/// Places a standard part in one of its sizes. The part is one file for all its sizes, kept in
+/// a folder (`path`) beside the assembly and written there the first time it is used; the
+/// component names the size.
+fn asm_insert_standard(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let folder = path(p)?;
+    let part = p.get("part").and_then(Value::as_str).ok_or("missing parameter `part`: a standard part's id (see library.list)")?;
+    let family = tenon_model::library::family(part).ok_or_else(|| {
+        CmdError(format!(
+            "there is no standard part `{part}`: there are {}",
+            tenon_model::library::families().iter().map(|f| f.id).collect::<Vec<_>>().join(", ")
+        ))
+    })?;
+    let size = match p.get("size").and_then(Value::as_str) {
+        Some(size) if family.sizes().iter().any(|x| x == size) => size.to_owned(),
+        Some(size) => return Err(CmdError(format!("{} does not come in `{size}`: it comes in {}", family.name, family.sizes().join(", ")))),
+        None => return Err(CmdError(format!("missing parameter `size`: {} comes in {}", family.name, family.sizes().join(", ")))),
+    };
+    let file = standard_file(&folder, part);
+    let written = !file.exists();
+    if written {
+        let doc = tenon_model::library::build(part).map_err(CmdError)?;
+        std::fs::create_dir_all(&folder).map_err(|e| CmdError(format!("cannot make the folder {}: {e}", folder.display())))?;
+        project::save(&file, &doc, &Map::new()).map_err(|e| CmdError(format!("cannot write {}: {e}", file.display())))?;
+    }
+    let mut place = json!({ "path": file.to_string_lossy(), "row": size });
+    for key in ["at", "grounded"] {
+        if let Some(v) = p.get(key) {
+            place[key] = v.clone();
+        }
+    }
+    let mut out = asm_insert(s, k, &place)?;
+    out["file"] = json!(file.display().to_string());
+    out["written"] = json!(written);
+    Ok(out)
+}
+
 fn asm_export_step(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let k = k.ok_or("asm.export_step needs the geometry kernel")?;
     let path = path(p)?;
@@ -243,6 +284,137 @@ fn asm_export_step(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) ->
     let data = tenon_assembly::interfere::export_step(k, &asm, &mut s.parts, frames.as_ref()).map_err(CmdError)?;
     std::fs::write(&path, &data).map_err(|e| CmdError(format!("cannot write {}: {e}", path.display())))?;
     Ok(json!({ "path": path.display().to_string(), "bytes": data.len() }))
+}
+
+/// What a component's object in the assembly's 3MF model is: its part (and size), name,
+/// material and colour. Components of the same part in the same size share one object.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObjectInfo {
+    pub key: String,
+    pub name: String,
+    pub material: String,
+    pub color: [u8; 3],
+}
+
+/// The object of every visible component.
+pub fn object_infos(asm: &Assembly, parts: &Parts) -> std::collections::BTreeMap<tenon_assembly::ComponentId, ObjectInfo> {
+    asm.components
+        .iter()
+        .filter(|c| c.visible)
+        .filter_map(|c| {
+            let key = c.key();
+            let doc = parts.get(&key)?.session.document();
+            let name = match &c.row {
+                Some(row) => format!("{}, {row}", doc.name),
+                None => doc.name.clone(),
+            };
+            let material = doc.material().map_or_else(|| "Generic".to_owned(), |m| m.name.clone());
+            Some((c.id, ObjectInfo { key, name, material, color: doc.color().unwrap_or(crate::cmd::PLAIN) }))
+        })
+        .collect()
+}
+
+/// Placed solids as a 3MF file: an object for each part (each size of one, when it comes in
+/// several) and an item for each component, where it is. The solids are meshed afresh to `tol`:
+/// a written mesh is the result itself, and the one on screen is coarser inside freeform faces.
+pub fn placed_3mf(
+    k: &mut dyn Kernel,
+    title: &str,
+    placed: &[tenon_assembly::interfere::Placed],
+    infos: &std::collections::BTreeMap<tenon_assembly::ComponentId, ObjectInfo>,
+    tol: &tenon_kernel::MeshTol,
+) -> Result<crate::cmd::Written, String> {
+    use crate::meshcheck::Welded;
+    use crate::threemf::{Item, Model, Object};
+    let mut model = Model { title: title.to_owned(), ..Default::default() };
+    let mut object_of: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for p in placed {
+        let info = infos.get(&p.component).ok_or("internal: a component without its part")?;
+        let object = match object_of.get(info.key.as_str()) {
+            Some(i) => *i,
+            None => {
+                if p.shapes.is_empty() {
+                    return Err(format!("{} has no solid to export", info.name));
+                }
+                let mut meshes = Vec::with_capacity(p.shapes.len());
+                for shape in &p.shapes {
+                    meshes.push(k.tessellate(*shape, tol).map_err(|e| format!("{}: {e}", info.name))?);
+                }
+                model.objects.push(Object {
+                    name: info.name.clone(),
+                    mesh: Welded::of_all(&meshes.iter().collect::<Vec<_>>()),
+                    material: info.material.clone(),
+                    color: info.color,
+                });
+                object_of.insert(&info.key, model.objects.len() - 1);
+                model.objects.len() - 1
+            }
+        };
+        model.items.push(Item { object, frame: Some(p.frame) });
+    }
+    if model.items.is_empty() {
+        return Err("there is no solid to export".into());
+    }
+    crate::cmd::written_3mf(&model)
+}
+
+fn asm_export_3mf(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let k = k.ok_or("asm.export_3mf needs the geometry kernel")?;
+    let path = path(p)?;
+    s.sync_variants();
+    let exploded = p.get("exploded").and_then(Value::as_bool).unwrap_or(false);
+    let asm = s.assembly().clone();
+    let frames = exploded.then(|| tenon_assembly::session::exploded(&asm));
+    let placed = tenon_assembly::interfere::placed_parts(k, &asm, &mut s.parts, frames.as_ref()).map_err(CmdError)?;
+    let w = placed_3mf(k, &asm.name, &placed, &object_infos(&asm, &s.parts), &crate::cmd::mesh_tol(p)).map_err(CmdError)?;
+    std::fs::write(&path, &w.data).map_err(|e| CmdError(format!("cannot write {}: {e}", path.display())))?;
+    let items = placed.len();
+    Ok(
+        json!({ "path": path.display().to_string(), "objects": w.objects, "items": items, "triangles": w.triangles, "watertight": w.watertight, "bytes": w.data.len() }),
+    )
+}
+
+/// Placed solids as one STL file, each where it is: the assembly as it would be printed in one
+/// piece, or laid out on one bed.
+pub fn placed_stl(
+    k: &mut dyn Kernel,
+    name: &str,
+    placed: &[tenon_assembly::interfere::Placed],
+    tol: &tenon_kernel::MeshTol,
+    ascii: bool,
+) -> Result<crate::cmd::Written, String> {
+    let mut all = tenon_kernel::Mesh::default();
+    let (mut solids, mut watertight) = (0, true);
+    for p in placed {
+        for shape in &p.shapes {
+            let m = k.tessellate(*shape, tol).map_err(|e| e.to_string())?;
+            watertight &= crate::meshcheck::Welded::of(&m).closure().watertight();
+            crate::cmd::append(&mut all, &m, |q| {
+                let w = p.frame.to_world(tenon_geom::Vec3::new(f64::from(q[0]), f64::from(q[1]), f64::from(q[2])));
+                [w.x as f32, w.y as f32, w.z as f32]
+            })
+            .map_err(|e| e.0)?;
+            solids += 1;
+        }
+    }
+    if solids == 0 {
+        return Err("there is no solid to export".into());
+    }
+    crate::cmd::stl_of(&all, name, solids, watertight, ascii).map_err(|e| e.0)
+}
+
+fn asm_export_stl(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let k = k.ok_or("asm.export_stl needs the geometry kernel")?;
+    let path = path(p)?;
+    s.sync_variants();
+    let exploded = p.get("exploded").and_then(Value::as_bool).unwrap_or(false);
+    let asm = s.assembly().clone();
+    let frames = exploded.then(|| tenon_assembly::session::exploded(&asm));
+    let placed = tenon_assembly::interfere::placed_parts(k, &asm, &mut s.parts, frames.as_ref()).map_err(CmdError)?;
+    let ascii = p.get("ascii").and_then(Value::as_bool).unwrap_or(false);
+    let w = placed_stl(k, &asm.name, &placed, &crate::cmd::mesh_tol(p), ascii).map_err(CmdError)?;
+    std::fs::write(&path, &w.data).map_err(|e| CmdError(format!("cannot write {}: {e}", path.display())))?;
+    Ok(json!({ "path": path.display().to_string(), "solids": w.objects, "triangles": w.triangles, "watertight": w.watertight }))
 }
 
 /// A CSV field, quoted when it needs to be.
@@ -288,7 +460,31 @@ static COMMANDS: &[AsmCommand] = &[
         false,
         asm_insert
     ),
+    cmd!(
+        "asm.insert_standard",
+        "Place Standard Part",
+        "part: a standard part's id (see library.list); size: one of its sizes; path: the folder its file is kept in, beside the assembly (the file is written there the first time the part is used; every size comes from the one file); at, grounded: as asm.insert",
+        true,
+        false,
+        asm_insert_standard
+    ),
     cmd!("asm.export_step", "Export Assembly STEP", "path (.step); exploded (default false)", false, true, asm_export_step),
+    cmd!(
+        "asm.export_stl",
+        "Export Assembly STL",
+        "path (.stl); exploded (default false); linear (mm), angular (rad) deflection; ascii (default binary). Every visible component's solids in one file, each where it is. Returns the solid and triangle counts and whether the surface is closed (watertight)",
+        false,
+        true,
+        asm_export_stl
+    ),
+    cmd!(
+        "asm.export_3mf",
+        "Export Assembly 3MF",
+        "path (.3mf); exploded (default false); linear (mm), angular (rad) deflection. An object for each part (each size of one), an item for each visible component where it is, with materials and colours. Returns the counts and whether every surface is closed (watertight)",
+        false,
+        true,
+        asm_export_3mf
+    ),
     cmd!("asm.export_bom", "Export Bill of Materials", "path (.csv)", false, false, asm_export_bom),
 ];
 

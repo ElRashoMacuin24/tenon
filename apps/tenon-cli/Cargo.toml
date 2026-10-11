@@ -35,3 +35,4 @@ serde_json = { workspace = true }
 [dev-dependencies]
 tenon-dxf = { workspace = true }
 quick-xml = { workspace = true }
+zip = { workspace = true }

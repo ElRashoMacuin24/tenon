@@ -45,6 +45,12 @@ impl eframe::App for App {
         }
     }
 
+    // Where a dialog was left is one of the user's settings too: a screenshot run does not
+    // keep its own (see `main` for the other half: it does not start from theirs either).
+    fn persist_egui_memory(&self) -> bool {
+        self.screenshot.is_none()
+    }
+
     // Closing properly: the copies kept against a crash are not needed (DEC-033).
     fn on_exit(&mut self) {
         self.wb.shutdown();
@@ -177,6 +183,13 @@ fn main() -> eframe::Result {
         "Tenon",
         options,
         Box::new(move |cc| {
+            // A screenshot shows the app as it starts, not where this user last left a dialog.
+            if screenshot.is_some() {
+                cc.egui_ctx.memory_mut(|m| {
+                    m.reset_areas();
+                    m.data.clear();
+                });
+            }
             tenon_ui::theme::apply(&cc.egui_ctx);
             let ctx = cc.egui_ctx.clone();
             let waker: Box<dyn Fn() + Send> = Box::new(move || ctx.request_repaint());

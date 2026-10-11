@@ -92,14 +92,21 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `file.new` | New Part | name (default Part1); clears undo history | no |
 | `file.save` | Save | path (.tenon) | no |
 | `file.open` | Open | path (.tenon); clears undo history | no |
+| `library.list` | Standard Parts | the standard parts there are (fasteners, bearings, sections), each with its id, what it is and its sizes; category: only that one | no |
+| `library.new` | New Standard Part | part: a standard part's id (see library.list); size: one of its sizes (default: the one it is drawn at, such as M8x30 for a screw). Starts a part from it, with every size in its design table; clears undo history | no |
 | `file.diff` | Compare Files | a, b: two parts, assemblies or drawings (any format version). Returns what changed from a to b: each change's section, op (added, removed, changed, moved), item and detail; same; and the text tenon-cli diff prints | no |
 | `export.step` | Export STEP | path (.step) | no |
-| `export.stl` | Export STL | path (.stl); linear (mm), angular (rad) deflection; ascii (default binary) | no |
+| `export.stl` | Export STL | path (.stl); linear (mm, default 0.01), angular (rad, default 0.2) deflection, kept everywhere on the surface; ascii (default binary). Returns the triangle count and whether the surface is closed (watertight) | no |
+| `export.3mf` | Export 3MF | path (.3mf); linear (mm, default 0.01), angular (rad, default 0.2) deflection, kept everywhere on the surface. One object per solid, in millimetres, with the part's material name and colour. Returns the object and triangle counts and whether every surface is closed (watertight) | no |
+| `print.check` | 3D Print Check | how the part would print. min_wall (mm, default 0.8); overhang (degrees from vertical a face may lean out, default 45); up: x \| y \| z \| -x \| -y \| -z (which way is up on the printer, default z); bed: [x, y, height] in mm (default: not checked). Returns ok and, each with its own ok: watertight (open, crowded and flipped edges), overhangs (area and the faces, each with its steepest angle), walls (the thinnest found and the faces under min_wall), size (the part's extents, its height standing that way, and whether it fits the bed) | no |
 | `asm.new` | New Assembly | name (default Assembly1); clears undo history | no |
 | `asm.open` | Open Assembly | path (.tenonasm); reads every part file it uses; clears undo history | no |
 | `asm.save` | Save Assembly | path (.tenonasm); parts changed in place are saved to their own files first | no |
 | `asm.insert` | Place Component | path (.tenon part file); at: [x, y, z] (default: grounded at the origin for the first, beside the others after); grounded; row: a row of the part's design table (the component is the part in that size) | yes |
+| `asm.insert_standard` | Place Standard Part | part: a standard part's id (see library.list); size: one of its sizes; path: the folder its file is kept in, beside the assembly (the file is written there the first time the part is used; every size comes from the one file); at, grounded: as asm.insert | yes |
 | `asm.export_step` | Export Assembly STEP | path (.step); exploded (default false) | no |
+| `asm.export_stl` | Export Assembly STL | path (.stl); exploded (default false); linear (mm), angular (rad) deflection; ascii (default binary). Every visible component's solids in one file, each where it is. Returns the solid and triangle counts and whether the surface is closed (watertight) | no |
+| `asm.export_3mf` | Export Assembly 3MF | path (.3mf); exploded (default false); linear (mm), angular (rad) deflection. An object for each part (each size of one), an item for each visible component where it is, with materials and colours. Returns the counts and whether every surface is closed (watertight) | no |
 | `asm.export_bom` | Export Bill of Materials | path (.csv) | no |
 | `asm.tree` | Assembly Tree | none | no |
 | `asm.geom` | Assembly Geometry | component; and face: a face origin or {"body", "index"} \| edge: [face origin, face origin] or {"body", "index"} \| plane: "xy" \| "yz" \| "xz" \| axis: "x" \| "y" \| "z" \| origin: true \| work: feature id. Without component: the assembly's own origin planes, axes and point. Returns a target for asm.constrain and asm.joint | no |

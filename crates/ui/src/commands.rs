@@ -223,13 +223,25 @@ pub const RIBBON: &[RibbonTab] = &[
     },
     RibbonTab {
         name: "Inspect",
-        panels: &[RibbonPanel {
-            title: "Measure",
-            commands: &[
-                large("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 0),
-                large("inspect.mass", "Properties", "Material, appearance, mass, volume and centre of gravity", Icon::MassProps, 0),
-            ],
-        }],
+        panels: &[
+            RibbonPanel {
+                title: "Measure",
+                commands: &[
+                    large("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 0),
+                    large("inspect.mass", "Properties", "Material, appearance, mass, volume and centre of gravity", Icon::MassProps, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "3D Print",
+                commands: &[large(
+                    "inspect.print",
+                    "3D Print\nCheck",
+                    "How the part would print: a closed surface, overhangs, thin walls, and whether it fits the bed",
+                    Icon::Print3d,
+                    0,
+                )],
+            },
+        ],
     },
     RibbonTab {
         name: "Tools",
@@ -256,6 +268,16 @@ pub const RIBBON: &[RibbonTab] = &[
                         0,
                     ),
                 ],
+            },
+            RibbonPanel {
+                title: "Library",
+                commands: &[large(
+                    "tools.library",
+                    "Standard\nParts",
+                    "Start a part from a standard one: a screw, nut, washer, bearing or section in its sizes",
+                    Icon::StandardPart,
+                    0,
+                )],
             },
             RibbonPanel {
                 title: "Update",
@@ -309,6 +331,13 @@ pub const ASM_RIBBON: &[RibbonTab] = &[
                 commands: &[
                     large("asm.place", "Place", "Place a part file in the assembly", Icon::Place, 0).key("P"),
                     large("asm.create", "Create", "A new part file, placed and edited in place", Icon::CreateComponent, 0),
+                    large(
+                        "tools.library",
+                        "Standard\nParts",
+                        "Place a screw, nut, washer, bearing or section from the library, in the size you pick",
+                        Icon::StandardPart,
+                        0,
+                    ),
                 ],
             },
             RibbonPanel {
@@ -641,6 +670,7 @@ pub const FILE_MENU: &[(&str, &str)] = &[
     ("Save As...", "file.save_as"),
     ("Export STEP...", "export.step"),
     ("Export STL...", "export.stl"),
+    ("Export 3MF...", "export.3mf"),
 ];
 
 /// File menu entries in a drawing.

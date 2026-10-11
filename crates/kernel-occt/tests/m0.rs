@@ -258,7 +258,7 @@ fn tessellation_is_closed_outward_and_grouped_by_face() {
 
     let c = cylinder_z(&mut k, Vec3::new(10.0, 10.0, -1.0), 4.0, 12.0);
     let cut = k.boolean(BoolOp::Cut, b, &[c]).unwrap().shape;
-    let tol = MeshTol { linear: 0.001, angular: 0.1 };
+    let tol = MeshTol { linear: 0.001, angular: 0.1, relaxed: true };
     let m = k.tessellate(cut, &tol).unwrap();
     let exact = 4000.0 - PI * 160.0;
     // The hole wall is approximated by chords, so the mesh volume is close but not exact.
@@ -293,7 +293,7 @@ fn hostile_input_is_rejected_not_panicking() {
     assert!(matches!(k.face_info(b.face(6)), Err(KernelError::InvalidInput(_))));
     assert!(matches!(k.edge_info(b.edge(u32::MAX)), Err(KernelError::InvalidInput(_))));
     assert!(matches!(k.mass_properties(b, -1.0), Err(KernelError::InvalidInput(_))));
-    assert!(matches!(k.tessellate(b, &MeshTol { linear: 0.0, angular: 0.5 }), Err(KernelError::InvalidInput(_))));
+    assert!(matches!(k.tessellate(b, &MeshTol { linear: 0.0, angular: 0.5, relaxed: true }), Err(KernelError::InvalidInput(_))));
     assert!(matches!(k.export_step(&[]), Err(KernelError::InvalidInput(_))));
     assert!(matches!(k.import_step(b""), Err(KernelError::InvalidInput(_))));
     assert!(matches!(k.import_step(b"this is not a STEP file\n"), Err(KernelError::Exchange(_))));

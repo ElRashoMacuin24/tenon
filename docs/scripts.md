@@ -137,3 +137,40 @@ size.
 In an assembly, `asm.bom` lists each part's material and the mass of one of it, and `asm.mass`
 weighs the assembly with each component at its part's density.
 `examples/m6-fittings/fittings.json` uses all of this, and every M6 feature.
+
+## Standard parts, the print check and files for a slicer
+
+`library.list` names the standard parts built into Tenon and the sizes of each.
+`library.new` starts a part from one (an ordinary part: its sizes are the rows of its design
+table, and a section's length is its parameter `L`). In an assembly, `asm.insert_standard`
+places one in a size: the part's file is written once into the folder given by `path`, beside
+the assembly, and every size comes from that file. `asm.set_row` changes a component's size.
+
+```json
+{ "run": "library.new", "with": { "part": "t-slot", "size": "20x20 slot 6" } },
+{ "run": "param.set", "with": { "name": "L", "equation": "150 mm" } },
+{ "run": "file.save", "with": { "path": "bar.tenon" } },
+{ "run": "asm.new", "with": { "name": "Capped Bar" } },
+{ "run": "asm.insert", "with": { "path": "bar.tenon" } },
+{ "run": "asm.insert_standard", "with": { "part": "socket-screw-iso-4762", "size": "M5x12", "path": "standard", "at": [80, 0, 150] }, "as": "screw" },
+{ "run": "asm.set_row", "with": { "component": "$screw.component", "row": "M5x16" } }
+```
+
+`print.check` reads the open part as a printer would: whether its surface is closed, what
+overhangs past a limit (`overhang`, degrees from vertical, 45 unless given) with `up` one of
+`x`, `y`, `z`, `-x`, `-y`, `-z`, how thin its thinnest wall is against `min_wall` (0.8 mm unless
+given), and whether it fits a `bed` of `[x, y, height]`. Each finding has its own `ok` and names
+the faces. Areas are of the part's triangles, so a round one is a little under its exact value:
+give such a step a `within`.
+
+```json
+{ "run": "print.check", "expect": { "watertight.ok": true, "overhangs.area": 392.4, "walls.thinnest": 1.8 }, "within": 0.001 },
+{ "run": "print.check", "with": { "up": "-z", "min_wall": 2, "bed": [220, 220, 250] }, "expect": { "walls.ok": false, "size.ok": true } },
+{ "run": "export.3mf", "with": { "path": "end-cap.3mf" }, "expect": { "objects": 1, "watertight": true } },
+{ "run": "export.stl", "with": { "path": "end-cap.stl" }, "expect": { "watertight": true } },
+{ "run": "asm.export_3mf", "with": { "path": "capped-bar.3mf" }, "expect": { "objects": 3, "items": 3 } }
+```
+
+The exports take `linear` (mm) and `angular` (rad), the furthest and the sharpest a triangle may
+depart from the surface; they are kept over the whole surface. `examples/m7-end-cap/end-cap.json`
+uses all of this.

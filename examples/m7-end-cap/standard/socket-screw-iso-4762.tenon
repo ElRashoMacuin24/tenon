@@ -1,0 +1,237 @@
+# Tenon part file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon"
+version = 2
+name = "Socket Head Cap Screw"
+next_feature = 8
+
+[material]
+name = "Steel, mild"
+density = 7.85
+color = "#8a9199"
+
+[table]
+active = "M8x30"
+columns = ["d", "dk", "s", "t", "l"]
+rows = [
+  { name = "M3x6", values = [3.0, 5.5, 2.5, 1.3, 6.0] },
+  { name = "M3x8", values = [3.0, 5.5, 2.5, 1.3, 8.0] },
+  { name = "M3x10", values = [3.0, 5.5, 2.5, 1.3, 10.0] },
+  { name = "M3x12", values = [3.0, 5.5, 2.5, 1.3, 12.0] },
+  { name = "M3x16", values = [3.0, 5.5, 2.5, 1.3, 16.0] },
+  { name = "M3x20", values = [3.0, 5.5, 2.5, 1.3, 20.0] },
+  { name = "M3x25", values = [3.0, 5.5, 2.5, 1.3, 25.0] },
+  { name = "M3x30", values = [3.0, 5.5, 2.5, 1.3, 30.0] },
+  { name = "M4x8", values = [4.0, 7.0, 3.0, 2.0, 8.0] },
+  { name = "M4x10", values = [4.0, 7.0, 3.0, 2.0, 10.0] },
+  { name = "M4x12", values = [4.0, 7.0, 3.0, 2.0, 12.0] },
+  { name = "M4x16", values = [4.0, 7.0, 3.0, 2.0, 16.0] },
+  { name = "M4x20", values = [4.0, 7.0, 3.0, 2.0, 20.0] },
+  { name = "M4x25", values = [4.0, 7.0, 3.0, 2.0, 25.0] },
+  { name = "M4x30", values = [4.0, 7.0, 3.0, 2.0, 30.0] },
+  { name = "M4x40", values = [4.0, 7.0, 3.0, 2.0, 40.0] },
+  { name = "M5x10", values = [5.0, 8.5, 4.0, 2.5, 10.0] },
+  { name = "M5x12", values = [5.0, 8.5, 4.0, 2.5, 12.0] },
+  { name = "M5x16", values = [5.0, 8.5, 4.0, 2.5, 16.0] },
+  { name = "M5x20", values = [5.0, 8.5, 4.0, 2.5, 20.0] },
+  { name = "M5x25", values = [5.0, 8.5, 4.0, 2.5, 25.0] },
+  { name = "M5x30", values = [5.0, 8.5, 4.0, 2.5, 30.0] },
+  { name = "M5x40", values = [5.0, 8.5, 4.0, 2.5, 40.0] },
+  { name = "M5x50", values = [5.0, 8.5, 4.0, 2.5, 50.0] },
+  { name = "M6x12", values = [6.0, 10.0, 5.0, 3.0, 12.0] },
+  { name = "M6x16", values = [6.0, 10.0, 5.0, 3.0, 16.0] },
+  { name = "M6x20", values = [6.0, 10.0, 5.0, 3.0, 20.0] },
+  { name = "M6x25", values = [6.0, 10.0, 5.0, 3.0, 25.0] },
+  { name = "M6x30", values = [6.0, 10.0, 5.0, 3.0, 30.0] },
+  { name = "M6x40", values = [6.0, 10.0, 5.0, 3.0, 40.0] },
+  { name = "M6x50", values = [6.0, 10.0, 5.0, 3.0, 50.0] },
+  { name = "M6x60", values = [6.0, 10.0, 5.0, 3.0, 60.0] },
+  { name = "M8x16", values = [8.0, 13.0, 6.0, 4.0, 16.0] },
+  { name = "M8x20", values = [8.0, 13.0, 6.0, 4.0, 20.0] },
+  { name = "M8x25", values = [8.0, 13.0, 6.0, 4.0, 25.0] },
+  { name = "M8x30", values = [8.0, 13.0, 6.0, 4.0, 30.0] },
+  { name = "M8x40", values = [8.0, 13.0, 6.0, 4.0, 40.0] },
+  { name = "M8x50", values = [8.0, 13.0, 6.0, 4.0, 50.0] },
+  { name = "M8x60", values = [8.0, 13.0, 6.0, 4.0, 60.0] },
+  { name = "M8x80", values = [8.0, 13.0, 6.0, 4.0, 80.0] },
+  { name = "M10x20", values = [10.0, 16.0, 8.0, 5.0, 20.0] },
+  { name = "M10x25", values = [10.0, 16.0, 8.0, 5.0, 25.0] },
+  { name = "M10x30", values = [10.0, 16.0, 8.0, 5.0, 30.0] },
+  { name = "M10x40", values = [10.0, 16.0, 8.0, 5.0, 40.0] },
+  { name = "M10x50", values = [10.0, 16.0, 8.0, 5.0, 50.0] },
+  { name = "M10x60", values = [10.0, 16.0, 8.0, 5.0, 60.0] },
+  { name = "M10x80", values = [10.0, 16.0, 8.0, 5.0, 80.0] },
+  { name = "M10x100", values = [10.0, 16.0, 8.0, 5.0, 100.0] },
+  { name = "M12x25", values = [12.0, 18.0, 10.0, 6.0, 25.0] },
+  { name = "M12x30", values = [12.0, 18.0, 10.0, 6.0, 30.0] },
+  { name = "M12x40", values = [12.0, 18.0, 10.0, 6.0, 40.0] },
+  { name = "M12x50", values = [12.0, 18.0, 10.0, 6.0, 50.0] },
+  { name = "M12x60", values = [12.0, 18.0, 10.0, 6.0, 60.0] },
+  { name = "M12x80", values = [12.0, 18.0, 10.0, 6.0, 80.0] },
+  { name = "M12x100", values = [12.0, 18.0, 10.0, 6.0, 100.0] },
+  { name = "M12x120", values = [12.0, 18.0, 10.0, 6.0, 120.0] },
+  { name = "M16x40", values = [16.0, 24.0, 14.0, 8.0, 40.0] },
+  { name = "M16x50", values = [16.0, 24.0, 14.0, 8.0, 50.0] },
+  { name = "M16x60", values = [16.0, 24.0, 14.0, 8.0, 60.0] },
+  { name = "M16x80", values = [16.0, 24.0, 14.0, 8.0, 80.0] },
+  { name = "M16x100", values = [16.0, 24.0, 14.0, 8.0, 100.0] },
+  { name = "M16x120", values = [16.0, 24.0, 14.0, 8.0, 120.0] },
+  { name = "M16x150", values = [16.0, 24.0, 14.0, 8.0, 150.0] },
+  { name = "M16x200", values = [16.0, 24.0, 14.0, 8.0, 200.0] },
+  { name = "M20x40", values = [20.0, 30.0, 17.0, 10.0, 40.0] },
+  { name = "M20x50", values = [20.0, 30.0, 17.0, 10.0, 50.0] },
+  { name = "M20x60", values = [20.0, 30.0, 17.0, 10.0, 60.0] },
+  { name = "M20x80", values = [20.0, 30.0, 17.0, 10.0, 80.0] },
+  { name = "M20x100", values = [20.0, 30.0, 17.0, 10.0, 100.0] },
+  { name = "M20x120", values = [20.0, 30.0, 17.0, 10.0, 120.0] },
+  { name = "M20x150", values = [20.0, 30.0, 17.0, 10.0, 150.0] },
+  { name = "M20x200", values = [20.0, 30.0, 17.0, 10.0, 200.0] },
+]
+
+[parameters]
+next = 7
+user = [
+  { name = "d", equation = "8 mm", unit = "mm", comment = "thread diameter" },
+  { name = "dk", equation = "13 mm", unit = "mm", comment = "head diameter" },
+  { name = "s", equation = "6 mm", unit = "mm", comment = "across the socket's flats" },
+  { name = "t", equation = "4 mm", unit = "mm", comment = "socket depth" },
+  { name = "l", equation = "30 mm", unit = "mm", comment = "length under the head" },
+]
+model = [
+  { name = "d0", target = { kind = "dimension", sketch = 1, constraint = 2 }, equation = "dk" },
+  { name = "d1", target = { kind = "feature", feature = 2, field = "/extent/distance" }, equation = "d" },
+  { name = "d2", target = { kind = "feature", feature = 3, field = "/distance" }, equation = "d" },
+  { name = "d3", target = { kind = "dimension", sketch = 4, constraint = 15 }, equation = "(s) * 2 / sqrt(3)" },
+  { name = "d4", target = { kind = "feature", feature = 5, field = "/extent/distance" }, equation = "t" },
+  { name = "d5", target = { kind = "dimension", sketch = 6, constraint = 2 }, equation = "d" },
+  { name = "d6", target = { kind = "feature", feature = 7, field = "/extent/distance" }, equation = "l" },
+]
+
+[[feature]]
+id = 1
+name = "Sketch1"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 2
+next_constraint = 2
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "circle", center = 1, radius = 6.5, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+  { id = 2, type = "diameter", curve = 2, value = 13.0 },
+]
+
+[[feature]]
+id = 2
+name = "Extrusion1"
+suppressed = false
+type = "extrude"
+sketch = 1
+regions = "default"
+extent = { distance = 8.0 }
+reverse = false
+operation = "join"
+
+[[feature]]
+id = 3
+name = "Work Plane1"
+suppressed = false
+type = "work_plane"
+by = "offset"
+base = { origin = "XY" }
+distance = 8.0
+
+[[feature]]
+id = 4
+name = "Sketch2"
+suppressed = false
+type = "sketch"
+plane = { work = 3 }
+next_entity = 15
+next_constraint = 15
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0 }, construction = false },
+  { id = 3, type = "circle", center = 2, radius = 3.464101615, construction = true },
+  { id = 4, type = "point", pos = { x = 3.464101615, y = 0.0 }, construction = false },
+  { id = 5, type = "point", pos = { x = 1.732050808, y = 3.0 }, construction = false },
+  { id = 6, type = "point", pos = { x = -1.732050808, y = 3.0 }, construction = false },
+  { id = 7, type = "point", pos = { x = -3.464101615, y = 0.0 }, construction = false },
+  { id = 8, type = "point", pos = { x = -1.732050808, y = -3.0 }, construction = false },
+  { id = 9, type = "point", pos = { x = 1.732050808, y = -3.0 }, construction = false },
+  { id = 10, type = "line", start = 4, end = 5, construction = false },
+  { id = 11, type = "line", start = 5, end = 6, construction = false },
+  { id = 12, type = "line", start = 6, end = 7, construction = false },
+  { id = 13, type = "line", start = 7, end = 8, construction = false },
+  { id = 14, type = "line", start = 8, end = 9, construction = false },
+  { id = 15, type = "line", start = 9, end = 4, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+  { id = 2, type = "point_on_curve", point = 4, curve = 3 },
+  { id = 3, type = "point_on_curve", point = 5, curve = 3 },
+  { id = 4, type = "point_on_curve", point = 6, curve = 3 },
+  { id = 5, type = "point_on_curve", point = 7, curve = 3 },
+  { id = 6, type = "point_on_curve", point = 8, curve = 3 },
+  { id = 7, type = "point_on_curve", point = 9, curve = 3 },
+  { id = 8, type = "equal", a = 10, b = 11 },
+  { id = 9, type = "equal", a = 11, b = 12 },
+  { id = 10, type = "equal", a = 12, b = 13 },
+  { id = 11, type = "equal", a = 13, b = 14 },
+  { id = 12, type = "equal", a = 14, b = 15 },
+  { id = 13, type = "coincident", a = 2, b = 1 },
+  { id = 14, type = "horizontal", line = 11 },
+  { id = 15, type = "diameter", curve = 3, value = 6.92820323027551 },
+]
+
+[[feature]]
+id = 5
+name = "Extrusion2"
+suppressed = false
+type = "extrude"
+sketch = 4
+regions = "default"
+extent = { distance = 4.0 }
+reverse = true
+operation = "cut"
+
+[[feature]]
+id = 6
+name = "Sketch3"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 2
+next_constraint = 2
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "circle", center = 1, radius = 4.0, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+  { id = 2, type = "diameter", curve = 2, value = 8.0 },
+]
+
+[[feature]]
+id = 7
+name = "Extrusion3"
+suppressed = false
+type = "extrude"
+sketch = 6
+regions = "default"
+extent = { distance = 30.0 }
+reverse = true
+operation = "join"
+
+[[feature]]
+id = 8
+name = "Thread1"
+suppressed = false
+type = "thread"
+face = { origin = { type = "side", feature = 7, curve = 2 }, fingerprint = { surface = "cylinder", direction = { x = 0.0, y = 0.0, z = 1.0 }, centroid = { x = 0.0, y = 0.0, z = 0.0 }, area = 0.0 } }
+length = "full"
+reverse = false
+left = false
+modelled = false

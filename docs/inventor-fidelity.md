@@ -60,8 +60,11 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 3. A Centerline format, with diameter dimensions measured from it.
 4. Constraint symbols as pictures that can be selected and deleted.
 5. Dimension text turned along its line; tolerances on dimensions.
-6. For the part as a whole (the table below): an appearance for one body or face; design table
+6. For the part as a whole (the first table below): an appearance for one body or face; design table
    rows that suppress features or set the material; choosing the size while placing a part.
+7. Standard parts and printing (the second table below): a length asked for when a section is
+   placed; a fastener that takes its size from the hole it is dropped on; the printer's build
+   space drawn round the part.
 
 ## The part as a whole: physical properties and sizes
 
@@ -79,6 +82,22 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 | Each member is generated as a file of its own | not planned | Tenon works a size out from the one part file each time, so there is nothing to keep in step (DEC-048). A copy of one size can be had by saving the part at that row |
 | Key columns order how members are listed; the table can be edited as a spreadsheet | missing | |
 
+## Standard parts and 3D printing
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| Place from Content Center is on the Assemble tab's Component panel | done | Assemble > Component > Standard Parts: `standard_parts_are_placed_from_the_library_in_the_size_picked` |
+| The dialog lists categories (fasteners, shaft parts, structural shapes) that open to families; a family is picked, then its member in the Family dialog's Select or Table View tab | done, in one window | DEC-049: the families by kind on the left, the picked family's sizes on the right with what the size comes to. Gap: no search, history or favourites (there are ten families); sizes are one list, not a thread and a length picked apart |
+| As Standard keeps the member's file in the project's Content Center Files folder; As Custom makes a file of one's own that can be edited | done differently | a placed standard part's file goes into a folder named `standard` beside the assembly, one file for all its sizes (DEC-048, DEC-049). The custom kind is Manage > Standard Parts in a part: a new part started from the family, to edit and save as one's own (`a_part_is_started_from_a_standard_one_in_the_library`) |
+| The placed part is positioned with constraints like any other | done | `standard_parts_are_placed_in_sizes_held_together_and_changed` (a screw inserted in a washer, both changed size, still held) |
+| Change Size on a placed part's right-click menu | done | the Size menu of DEC-048: `a_component_is_shown_in_its_size_and_changes_size_from_the_browser` |
+| AutoDrop: a bolt, nut, washer or bearing dragged to a hole or shaft takes its size from it and is constrained there | missing | the size is picked from the list and the part constrained by hand |
+| Structural shapes are placed at a length typed in | partial | a section's length is its parameter `L`: set in a part started from the library. A section placed straight into an assembly is at the length its file has. Gap: no length asked for on placing; two lengths need two part files |
+| Libraries hold many standards (ISO, DIN, ANSI, JIS) and can be added to and published | missing | ISO metric fasteners M3 to M20, seventeen bearings, five kinds of section. No way to add a family without writing code |
+| The 3D Print environment (Environments tab, parts only) shows the part in the printer's build space, Z up; the part is turned and moved in it, a printer is chosen, an oversized part is partitioned | partial | Inspect > 3D Print Check (DEC-051): which way is up is one of six directions, the bed is three sizes typed in, and the part is said to fit or not. `the_print_check_window_reads_the_part_and_marks_what_it_finds`. Gap: the build space is not drawn; no list of printers; no free turning; no partitioning |
+| (Inventor's environment does not check the part) | Tenon adds | whether the surface is closed, what overhangs past a limit and how thin the thinnest wall is, with the faces tinted in the model. A maker's first three questions, answered before the slicer is opened |
+| The part is sent on as STL; resolution is set in the export's options | done | File > Export STL and Export 3MF, for parts and assemblies (DEC-052): `files_for_the_slicer_come_from_the_file_menu_for_parts_and_assemblies`. Gap: no options dialog in the app (the tolerance is the usual one; the commands take `linear` and `angular`); nothing is sent to a printer or a slicer directly |
+
 ## Sources
 
 Behaviour described above is from Autodesk's help for Inventor:
@@ -91,3 +110,5 @@ Behaviour described above is from Autodesk's help for Inventor:
 - [iProperties, Physical tab](https://help.autodesk.com/cloudhelp/2022/ENU/Inventor-Help/files/GUID-877564AC-78CE-4216-9913-003A2DE8D698.htm) and [About Mass Properties](https://help.autodesk.com/cloudhelp/2022/ENU/Inventor-Help/files/GUID-2D7AC6B0-7B1E-4F1A-900F-C98A0705D47A.htm) (material and density, mass, area, volume, centre of gravity, Update)
 - [To Set Physical Properties and Appearances of Part Bodies and Faces](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-549F82A0-E151-4995-8C60-1E602E5128CA.htm)
 - [iParts](https://help.autodesk.com/cloudhelp/2022/ENU/Inventor-Help/files/GUID-60919937-2247-4C32-B9C9-6045D751FFF9.htm) and the [iPart Author dialog box](https://help.autodesk.com/cloudhelp/2015/ENU/Inventor-Help/files/GUID-B7820955-D0F8-478A-8965-64ACD5CA0B54.htm) (rows are members, columns the values that differ, keys, the default row)
+- [To Insert a Content Center Part Manually](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-97683B08-1AEC-4371-9199-F14C9A932A6C.htm), [About Inserting Content Center Components in Assemblies](https://help.autodesk.com/cloudhelp/2019/ENU/Inventor-Help/files/GUID-0BBBD2A4-9628-4B14-854C-4C95155E9FF0.htm) and [To Insert Parts Using AutoDrop](https://help.autodesk.com/cloudhelp/2022/ENU/Inventor-Help/files/GUID-0018159B-2D2D-4816-9BC0-3973DE755AE1.htm) (the Component panel, categories and families, the Family dialog, As Standard and As Custom, AutoDrop)
+- [To Access the 3D Print Environment](https://help.autodesk.com/cloudhelp/2017/ENU/Inventor-Help/files/GUID-72511A09-F17C-4A93-8274-B953FA0139B6.htm) (parts only, Z up, orientation, position, partitioning, printers)

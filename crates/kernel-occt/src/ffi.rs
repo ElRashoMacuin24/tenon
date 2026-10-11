@@ -272,7 +272,7 @@ pub(crate) mod bridge {
         fn topology(shape: &Shape, out: &mut TopoOut) -> Result<()>;
         fn face_info(shape: &Shape, index: u32, out: &mut FaceOut) -> Result<()>;
         fn edge_info(shape: &Shape, index: u32, out: &mut EdgeOut) -> Result<()>;
-        fn tessellate(shape: &Shape, linear: f64, angular: f64, out: &mut MeshOut) -> Result<()>;
+        fn tessellate(shape: &Shape, linear: f64, angular: f64, relaxed: bool, out: &mut MeshOut) -> Result<()>;
         fn mass_properties(shape: &Shape, out: &mut MassOut) -> Result<()>;
         fn bounding_box(shape: &Shape, out: &mut BoxOut) -> Result<()>;
         fn is_valid(shape: &Shape) -> Result<bool>;

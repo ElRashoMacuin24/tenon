@@ -520,7 +520,7 @@ fn properties_panel_and_drag_arrow_drive_the_extrusion() {
 }
 
 /// Selects all of a value field and types a new value (Enter is left to the caller).
-fn type_into(d: &mut Driver, wb: &mut Workbench, field: &str, text: &str) {
+pub(crate) fn type_into(d: &mut Driver, wb: &mut Workbench, field: &str, text: &str) {
     // Grids size rows from the previous frame: let the layout settle before reading where the
     // field is.
     d.frame(wb, vec![]);
@@ -2324,4 +2324,51 @@ fn a_dimension_too_many_is_put_down_driven_and_a_click_changes_driven_and_drivin
     assert!(shows(&d, "driven"), "{:?}", d.texts());
     assert!(d.ctx.read_response(egui::Id::new(("tn_param_eq", "d2"))).is_none(), "no equation cell for the driven d2");
     assert!(d.ctx.read_response(egui::Id::new(("tn_param_eq", "d0"))).is_some());
+}
+
+#[test]
+fn a_part_is_started_from_a_standard_one_in_the_library() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("tools.library").unwrap();
+    for _ in 0..5 {
+        d.frame(&mut wb, vec![]);
+    }
+    // In a part the button starts a new part; the bearing, in the size of a skateboard's.
+    assert!(d.texts().iter().any(|t| t == "New Part") && !d.texts().iter().any(|t| t == "Place"), "{:?}", d.texts());
+    d.click(&mut wb, pressable(&d, "tn_library_part_ball-bearing-iso-15"));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.chrome.library_pick.1, "608");
+    assert!(d.texts().iter().any(|t| t == "d 8   D 22   B 7"), "{:?}", d.texts());
+    d.click(&mut wb, pressable(&d, "tn_library_new"));
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.status_error && wb.status().starts_with("New part from Deep Groove Ball Bearing, 608"), "{}", wb.status());
+    assert!(!wb.chrome.library, "the dialog closes: the part is there");
+    assert_eq!(wb.document().name, "Deep Groove Ball Bearing");
+    assert_eq!(wb.document().table().map(|t| (t.active.as_str(), t.rows.len())), Some(("608", 17)));
+    let disc = |x: f64| PI * x * x / 4.0;
+    let want = (disc(22.0) - disc(8.0)) * 7.0 - 2.0 * (disc(22.0 - 4.2) - disc(8.0 + 4.2)) * 0.56;
+    assert!((volume(&wb) - want).abs() < 1e-6 * want, "{} vs {want}", volume(&wb));
+    browser_row(&d, "Extrusion1");
+    // Another size from its design table, as for any part with one.
+    wb.exec("table.activate", json!({ "row": "6204" })).unwrap();
+    d.frame(&mut wb, vec![]);
+    let want = (disc(47.0) - disc(20.0)) * 14.0 - 2.0 * (disc(47.0 - 8.1) - disc(20.0 + 8.1)) * 1.12;
+    assert!((volume(&wb) - want).abs() < 1e-6 * want, "{} vs {want}", volume(&wb));
+
+    // With unsaved work in the part, starting another asks first.
+    wb.run_ui("tools.library").unwrap();
+    for _ in 0..5 {
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, pressable(&d, "tn_library_part_flat-bar"));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_library_new"));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.document().name, "Deep Groove Ball Bearing", "not replaced until the question is answered");
+    assert!(d.texts().iter().any(|t| t.contains("Save")), "{:?}", d.texts());
 }
