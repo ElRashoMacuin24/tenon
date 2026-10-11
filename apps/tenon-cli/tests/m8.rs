@@ -183,10 +183,11 @@ fn the_m8_demo_script_folds_a_tray_and_lays_it_flat_for_a_cutter() {
 }
 
 /// The numbers and the words of a text, apart: files written on different machines may differ
-/// in the last digit of a number that was rounded to be written.
+/// in the last digit of a number that was rounded to be written, and a checkout may have
+/// changed the ends of the lines.
 fn tokens(text: &str) -> (Vec<f64>, String) {
     let (mut numbers, mut words) = (Vec::new(), String::new());
-    for token in text.split(|c: char| c.is_whitespace() || c == ',' || c == '"') {
+    for token in text.split(|c: char| c.is_whitespace() || c == ',' || c == '"').filter(|t| !t.is_empty()) {
         match token.parse::<f64>() {
             Ok(n) => numbers.push(n),
             Err(_) => {
