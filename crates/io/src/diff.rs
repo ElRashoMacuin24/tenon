@@ -352,6 +352,14 @@ fn feature_detail(a: &Value, b: &Value, params: &Value, changed: &BTreeSet<Strin
         if !plane.is_empty() {
             out.push(format!("plane {} -> {}", show(&ka["plane"]), show(&kb["plane"])));
         }
+        // Edges of the part shown in the sketch, by the entity that stands for each.
+        let shown = |k: &Value| -> BTreeSet<u64> { k["projections"].as_array().into_iter().flatten().filter_map(|p| p["entity"].as_u64()).collect() };
+        let (pa, pb) = (shown(ka), shown(kb));
+        for (n, how) in [(pb.difference(&pa).count(), "projected"), (pa.difference(&pb).count(), "no longer projected")] {
+            if n > 0 {
+                out.push(format!("{} {how}", count(n, "edge", "edges")));
+            }
+        }
         out.extend(sketch_detail(&ka["sketch"], &kb["sketch"], id, params, changed));
         return out;
     }

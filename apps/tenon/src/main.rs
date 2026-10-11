@@ -1,9 +1,10 @@
 //! Tenon desktop application.
 //!
-//! Usage: `tenon [FILE] [--theme light|dark] [--run COMMAND]... [--screenshot OUT.png] [--size WIDTHxHEIGHT] [--version]`
+//! Usage: `tenon [FILE] [--theme light|dark] [--edit-sketch NAME] [--run COMMAND]... [--tab NAME] [--screenshot OUT.png] [--size WIDTHxHEIGHT] [--version]`
 //!
 //! FILE is a part (`.tenon`), an assembly (`.tenonasm`) or a drawing (`.tenondrw`). `--run` runs a
-//! ribbon command (e.g. `model.extrude`) after it opens.
+//! ribbon command (e.g. `model.extrude`) after it opens; `--edit-sketch` opens one of the part's
+//! sketches for editing first, and `--tab` shows a ribbon tab (e.g. `Inspect`) last.
 //!
 //! `--screenshot` renders the window (after the model has regenerated), saves it as PNG and exits,
 //! so agents and CI can check the UI without screen capture. It never stops to ask about unsaved
@@ -86,7 +87,7 @@ impl eframe::App for App {
         // Let layout settle and the model regenerate, then ask for the next frame's pixels.
         self.frames += 1;
         // Half a second lets window fade-ins and view glides finish.
-        let ready = self.frames >= 3 && !self.wb.is_busy() && ctx.input(|i| i.time) >= 0.5;
+        let ready = self.frames >= 3 && self.wb.is_settled() && ctx.input(|i| i.time) >= 0.5;
         if (ready || self.frames >= SCREENSHOT_MAX_FRAMES) && !self.requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             self.requested = true;
@@ -149,6 +150,7 @@ fn main() -> eframe::Result {
     let mut project = None;
     let mut theme = None;
     let mut run: Vec<String> = Vec::new();
+    let (mut edit_sketch, mut tab): (Option<String>, Option<String>) = (None, None);
     let mut size = [1440.0, 900.0];
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -158,6 +160,8 @@ fn main() -> eframe::Result {
                 return Ok(());
             }
             "--screenshot" => screenshot = args.next().map(PathBuf::from),
+            "--edit-sketch" => edit_sketch = args.next(),
+            "--tab" => tab = args.next(),
             "--run" => match args.next() {
                 Some(id) => run.push(id),
                 None => eprintln!("warning: --run expects a command id, e.g. model.extrude"),
@@ -212,11 +216,23 @@ fn main() -> eframe::Result {
                 eprintln!("error: {e}");
                 wb.report_error(e);
             }
+            if let Some(name) = &edit_sketch
+                && let Err(e) = wb.edit_sketch_named(name)
+            {
+                eprintln!("error: --edit-sketch: {e}");
+                wb.report_error(e);
+            }
             for id in &run {
                 if let Err(e) = wb.run_ui(id) {
                     eprintln!("error: {id}: {e}");
                     wb.report_error(e);
                 }
+            }
+            if let Some(name) = &tab
+                && let Err(e) = wb.show_tab(name)
+            {
+                eprintln!("error: --tab: {e}");
+                wb.report_error(e);
             }
             Ok(Box::new(App { wb, screenshot, frames: 0, requested: false }))
         }),

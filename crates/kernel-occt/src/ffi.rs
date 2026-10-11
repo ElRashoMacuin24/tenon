@@ -155,6 +155,7 @@ pub(crate) mod bridge {
         length: f64,
         start: V3,
         end: V3,
+        mid: V3,
         origin: V3,
         dir: V3,
         radius: f64,

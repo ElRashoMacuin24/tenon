@@ -129,6 +129,8 @@ pub(crate) struct View {
     pub previous: Vec<Camera>,
     /// The view to return to when the sketch being edited is finished.
     pub sketch_return: Option<Camera>,
+    /// A sketch entered before its plane was known: the view turns to it when it is.
+    pub aim_at: Option<tenon_model::FeatureId>,
     /// Input time of the current frame (seconds).
     pub now: f64,
     gpu: Option<Gpu>,
@@ -162,6 +164,7 @@ impl Default for View {
             home: (c.yaw, c.pitch, c.roll),
             previous: Vec::new(),
             sketch_return: None,
+            aim_at: None,
             now: 0.0,
             gpu: None,
             uploaded: None,

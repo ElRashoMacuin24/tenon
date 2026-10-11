@@ -33,6 +33,9 @@ pub(crate) struct DimShape {
     pub arrows: Vec<(Pos2, egui::Vec2)>,
     /// The middle of the value's text.
     pub text: Pos2,
+    /// How the value's text is turned to lie along its line, in radians (0: level). It reads
+    /// from the left or from below, never upside down.
+    pub angle: f32,
 }
 
 impl DimShape {
@@ -52,6 +55,22 @@ impl DimShape {
     }
 }
 
+impl DimShape {
+    /// Draws the value's text, turned to lie along its line with its middle at `self.text`.
+    pub(crate) fn paint_text(&self, p: &egui::Painter, text: &str, color: egui::Color32) {
+        let galley = p.layout_no_wrap(text.to_owned(), crate::theme::small(), color);
+        let half = galley.size() / 2.0;
+        let (s, c) = self.angle.sin_cos();
+        let corner = self.text - vec2(c * half.x - s * half.y, s * half.x + c * half.y);
+        p.add(egui::epaint::TextShape::new(corner, galley, color).with_angle(self.angle));
+    }
+    /// The size of the upright box round text of size `text` turned as this dimension's is.
+    pub(crate) fn text_box(&self, text: egui::Vec2) -> egui::Vec2 {
+        let (s, c) = self.angle.sin_cos();
+        vec2(c.abs() * text.x + s.abs() * text.y, s.abs() * text.x + c.abs() * text.y)
+    }
+}
+
 /// The two points a straight dimension measures between and the direction it measures along.
 fn measured(s: &Sketch, c: &Constraint) -> Option<(Vec2, Vec2, Vec2)> {
     // A point's place, or (for a line given where a point is expected) its middle.
@@ -63,6 +82,15 @@ fn measured(s: &Sketch, c: &Constraint) -> Option<(Vec2, Vec2, Vec2)> {
         }
         Constraint::HorizontalDistance { a, b, .. } => Some((at(*a)?, at(*b)?, Vec2::new(1.0, 0.0))),
         Constraint::VerticalDistance { a, b, .. } => Some((at(*a)?, at(*b)?, Vec2::new(0.0, 1.0))),
+        // Across a centre line: from the point to its mirror image on the other side.
+        Constraint::LinearDiameter { point, axis, .. } => {
+            let (pa, (p, q)) = (s.point(*point)?, s.line(*axis)?);
+            let along = (q - p).normalized();
+            let foot = p + along * (pa - p).dot(along);
+            let other = foot * 2.0 - pa;
+            let d = if other.dist(pa) > 1e-9 { (other - pa).normalized() } else { along.perp() };
+            Some((pa, other, d))
+        }
         Constraint::Distance { a, b, .. } => {
             let pa = at(*a)?;
             match s.line(*b) {
@@ -149,9 +177,25 @@ pub(crate) fn shape(s: &Sketch, c: &Constraint, place: Vec2, text: egui::Vec2, p
     }
 }
 
-/// Half the room the value's text takes along a line in direction `u` (the text is level).
-fn text_half(text: egui::Vec2, u: egui::Vec2) -> f32 {
-    (u.x.abs() * text.x + u.y.abs() * text.y) / 2.0 + TEXT_PAD
+/// The angle text takes to lie along the screen direction `u` and still read from the left or
+/// from below.
+pub(crate) fn text_angle(u: egui::Vec2) -> f32 {
+    let a = u.y.atan2(u.x);
+    // Screen y runs down: between -90 (reading upwards) and 90 degrees exclusive of the latter.
+    if a > std::f32::consts::FRAC_PI_2 + 1e-4 {
+        a - std::f32::consts::PI
+    } else if a <= -std::f32::consts::FRAC_PI_2 - 1e-4 {
+        a + std::f32::consts::PI
+    } else if (a - std::f32::consts::FRAC_PI_2).abs() <= 1e-4 {
+        -std::f32::consts::FRAC_PI_2
+    } else {
+        a
+    }
+}
+
+/// Half the room the value's text takes along its own line (the text lies along it).
+fn text_half(text: egui::Vec2, _u: egui::Vec2) -> f32 {
+    text.x / 2.0 + TEXT_PAD
 }
 
 /// The line from `a` to `b` with a gap of `half` each side of `at` (a parameter along it, in
@@ -191,6 +235,7 @@ fn straight(p1: Vec2, p2: Vec2, d: Vec2, place: Vec2, text: egui::Vec2, project:
     }
     let u = (e2 - e1) / span;
     let half = text_half(text, u);
+    out.angle = text_angle(u);
     let at = (t - e1).dot(u);
     // Arrowheads go between the extension lines when they and the value fit there, pointing
     // outwards; else outside, pointing in.
@@ -244,6 +289,7 @@ fn round(
     }
     let u = (end - start) / len;
     let half = text_half(text, u);
+    out.angle = text_angle(u);
     gapped(start, end, (t - start).dot(u), half, &mut out.lines);
     // Arrowheads touch the curve from inside it, pointing outwards.
     let n_len = n.distance(c);
@@ -361,6 +407,19 @@ pub(crate) fn pending(s: &Sketch, picks: &[EntityId], cursor: Vec2) -> Option<Co
             Some(Geometry::Arc { .. }) => Some(Constraint::Radius { curve: *one, value: 0.0 }),
             _ => None,
         },
+        // To a centre line: the diameter of what is turned about it.
+        [a, b] if is_point(*a) && s.is_centerline(*b) => Some(Constraint::LinearDiameter { point: *a, axis: *b, value: 0.0 }),
+        [a, b] if s.is_centerline(*a) && is_point(*b) => Some(Constraint::LinearDiameter { point: *b, axis: *a, value: 0.0 }),
+        [a, b]
+            if is_line(*a) && is_line(*b) && (s.is_centerline(*a) != s.is_centerline(*b)) && {
+                let ((p, q), (r, t)) = (s.line(*a)?, s.line(*b)?);
+                (q - p).normalized().cross((t - r).normalized()).abs() < 1e-6
+            } =>
+        {
+            let (axis, other) = if s.is_centerline(*a) { (*a, *b) } else { (*b, *a) };
+            let (start, _) = ends(other)?;
+            Some(Constraint::LinearDiameter { point: start, axis, value: 0.0 })
+        }
         [a, b] if is_point(*a) && is_point(*b) => between(*a, *b, Constraint::Distance { a: *a, b: *b, value: 0.0 }),
         [a, b] if is_point(*a) && is_line(*b) => Some(Constraint::Distance { a: *a, b: *b, value: 0.0 }),
         [a, b] if is_line(*a) && is_point(*b) => Some(Constraint::Distance { a: *b, b: *a, value: 0.0 }),
@@ -428,6 +487,61 @@ mod tests {
         assert_eq!(d.arrows, vec![(pos2(0.0, 20.0), vec2(-1.0, 0.0)), (pos2(100.0, 20.0), vec2(1.0, 0.0))]);
     }
 
+    #[test]
+    fn a_value_lies_along_its_dimension_line_and_reads_from_the_left_or_from_below() {
+        let (s, lines) = rectangle();
+        // A level dimension reads level; an upright one reads upwards, whichever side it is on.
+        let level = shape(&s, &Constraint::Length { line: lines[0], value: 100.0 }, Vec2::new(50.0, -20.0), vec2(30.0, 12.0), &flat).unwrap();
+        assert_eq!(level.angle, 0.0);
+        let mut tall = Sketch::new();
+        let side = tall.add_line(Vec2::new(0.0, 0.0), Vec2::new(0.0, 100.0)).unwrap();
+        for x in [30.0, -30.0] {
+            let upright = shape(&tall, &Constraint::Length { line: side, value: 100.0 }, Vec2::new(x, 50.0), vec2(30.0, 12.0), &flat).unwrap();
+            assert!((upright.angle + std::f32::consts::FRAC_PI_2).abs() < 1e-5, "{}", upright.angle);
+            // The gap in its line is as long as the text is wide, not as it is high.
+            let gaps: Vec<f32> = upright
+                .lines
+                .iter()
+                .filter(|l| (l[0].x - l[1].x).abs() < 1e-3 && (l[0].x - x as f32).abs() < 1e-3)
+                .map(|l| (l[0].y - l[1].y).abs())
+                .collect();
+            assert!((gaps.iter().sum::<f32>() - (100.0 - 30.0 - 2.0 * TEXT_PAD)).abs() < 1e-3, "{gaps:?}");
+            let around = upright.text_box(vec2(30.0, 12.0));
+            assert!((around.x - 12.0).abs() < 1e-3 && (around.y - 30.0).abs() < 1e-3, "{around:?}");
+        }
+        // Whatever way a line runs, its text is never upside down: within a quarter turn of level.
+        for deg in (0..360).step_by(15) {
+            let a = (deg as f32).to_radians();
+            let t = text_angle(vec2(a.cos(), a.sin()));
+            assert!(t > -std::f32::consts::FRAC_PI_2 - 1e-4 && t < std::f32::consts::FRAC_PI_2, "{deg}: {t}");
+            // And along the line: the same direction, or the opposite one.
+            assert!(((t - a).rem_euclid(std::f32::consts::PI)).min((a - t).rem_euclid(std::f32::consts::PI)) < 1e-3, "{deg}: {t}");
+        }
+    }
+
+    #[test]
+    fn a_diameter_to_a_centre_line_spans_the_axis_from_the_point_to_its_mirror_image() {
+        // An axis along X and a point 10 above it: the dimension runs from (30, 10) straight
+        // across to (30, -10).
+        let mut s = Sketch::new();
+        let axis = s.add_line(Vec2::new(0.0, 0.0), Vec2::new(60.0, 0.0)).unwrap();
+        s.set_centerline(axis, true).unwrap();
+        let p = s.add_point(Vec2::new(30.0, 10.0)).unwrap();
+        let c = Constraint::LinearDiameter { point: p, axis, value: 20.0 };
+        let d = shape(&s, &c, Vec2::new(70.0, 0.0), vec2(30.0, 12.0), &flat).unwrap();
+        let mut tips: Vec<f32> = d.arrows.iter().map(|a| a.0.y).collect();
+        tips.sort_by(f32::total_cmp);
+        assert_eq!(tips, vec![-10.0, 10.0], "arrowheads level with the point and its mirror image");
+        assert!(d.arrows.iter().all(|a| (a.0.x - 70.0).abs() < 1e-3));
+        // The Dimension tool offers it when one of the two picked is a centre line, either way
+        // round, and for a line parallel to the centre line; an ordinary line gives a distance.
+        assert_eq!(pending(&s, &[p, axis], Vec2::ZERO), Some(Constraint::LinearDiameter { point: p, axis, value: 0.0 }));
+        assert_eq!(pending(&s, &[axis, p], Vec2::ZERO), Some(Constraint::LinearDiameter { point: p, axis, value: 0.0 }));
+        let side = s.add_line(Vec2::new(0.0, 8.0), Vec2::new(40.0, 8.0)).unwrap();
+        assert!(matches!(pending(&s, &[side, axis], Vec2::ZERO), Some(Constraint::LinearDiameter { axis: a, .. }) if a == axis));
+        s.set_centerline(axis, false).unwrap();
+        assert!(matches!(pending(&s, &[p, axis], Vec2::ZERO), Some(Constraint::Distance { .. })));
+    }
     #[test]
     fn a_short_dimension_puts_its_arrowheads_outside_and_reaches_a_value_placed_beyond() {
         let mut s = Sketch::new();

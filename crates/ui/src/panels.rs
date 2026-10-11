@@ -442,6 +442,8 @@ pub(crate) enum Panel {
     Combine(crate::bodies::CombinePanel),
     Thread(crate::bodies::ThreadPanel),
     Value(ValuePanel),
+    /// A rectangular or circular pattern of sketch geometry.
+    SketchPattern(crate::sketch_tools::SketchPatternPanel),
     EditDimension {
         sketch: FeatureId,
         constraint: ConstraintId,
@@ -1478,6 +1480,9 @@ impl Workbench {
                     };
                     keep = done.is_none();
                 }
+            }
+            Panel::SketchPattern(p) => {
+                keep = self.sketch_pattern_window(&ctx, p, commit) && keep;
             }
             Panel::Rename { feature, name } => {
                 let mut ok = commit;

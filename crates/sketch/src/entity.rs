@@ -88,6 +88,20 @@ pub struct Entity {
     /// Construction geometry guides other geometry but never forms profiles.
     #[serde(default)]
     pub construction: bool,
+    /// A line marked as a centre line: the axis a revolution turns about unless told otherwise,
+    /// and the line a dimension to it measures across (a diameter). It still bounds profiles.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub centerline: bool,
+    /// Reference geometry: it is where something outside the sketch puts it (an edge of the part
+    /// projected onto the sketch plane) and the solver never moves it. Other geometry can be
+    /// constrained and dimensioned to it, and it bounds profiles like any curve.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reference: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Where a new curve's point comes from: an existing point (shared, so the curves join) or a new

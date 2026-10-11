@@ -18,7 +18,7 @@ const PARAM_EPS: f64 = 1e-9;
 
 /// A curve that trim and offset understand.
 #[derive(Clone, Copy, Debug)]
-enum Carrier {
+pub(crate) enum Carrier {
     Line(Vec2, Vec2),
     Circle(Vec2, f64),
 }
@@ -36,6 +36,9 @@ impl Sketch {
             return Err(invalid("a fillet needs exactly two lines meeting at the point"));
         };
         let (l1, l2) = (*l1, *l2);
+        if self.is_held_outside(l1) || self.is_held_outside(l2) {
+            return Err(invalid("projected geometry follows the part and cannot be filleted: break its link first"));
+        }
         let other = |s: &Sketch, l: EntityId| -> Option<Vec2> {
             match s.geometry(l)? {
                 Geometry::Line { start, end } => s.point(if *start == corner { *end } else { *start }),
@@ -73,7 +76,7 @@ impl Sketch {
         Ok(arc)
     }
 
-    fn carrier(&self, id: EntityId) -> Option<Carrier> {
+    pub(crate) fn carrier(&self, id: EntityId) -> Option<Carrier> {
         if let Some((a, b)) = self.line(id) {
             return Some(Carrier::Line(a, b));
         }
@@ -81,7 +84,7 @@ impl Sketch {
     }
 
     /// Points where `other` crosses `target`'s carrier, restricted to `other`'s extent.
-    fn crossings(&self, target: Carrier, other: EntityId) -> Vec<Vec2> {
+    pub(crate) fn crossings(&self, target: Carrier, other: EntityId) -> Vec<Vec2> {
         let Some(oc) = self.carrier(other) else { return vec![] };
         let on_other = |p: Vec2| -> bool {
             match self.geometry(other) {
@@ -110,6 +113,9 @@ impl Sketch {
     /// that cut them (point-on-curve constraints).
     pub fn trim(&mut self, curve: EntityId, pick: Vec2) -> SketchResult<()> {
         let target = self.carrier(curve).ok_or_else(|| invalid("only lines, arcs and circles can be trimmed"))?;
+        if self.is_held_outside(curve) {
+            return Err(invalid("projected geometry follows the part and cannot be trimmed: break its link first"));
+        }
         // Parameter of a point along the target: line 0..1, arc 0..sweep from its start, circle angle.
         let arc = self.arc(curve);
         let param = |p: Vec2| -> f64 {

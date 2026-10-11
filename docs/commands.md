@@ -20,10 +20,10 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `table.add_column` | Add Table Column | name: a parameter; every row gets its present value | yes |
 | `table.remove_column` | Remove Table Column | name; the parameter keeps its value | yes |
 | `table.activate` | Activate Row | row: the part takes that row's values | yes |
-| `sketch.create` | New Sketch | plane: "xy" \| "yz" \| "xz" (default xy), or face: a face reference from model.face_ref; project_origin (default true: a fixed point at the part origin, returned as `origin`) | yes |
+| `sketch.create` | New Sketch | plane: "xy" \| "yz" \| "xz" (default xy), or face: a face reference from model.face_ref; project_origin (default true: a fixed point at the part origin, returned as `origin`); project_edges (default false): on a face, the face's edges are shown in the sketch as reference geometry, as sketch.project does (or give `edges` and `geometry` as for sketch.project). Returns the feature, and the entities `projected` | yes |
 | `sketch.point` | Point | sketch, x, y | yes |
 | `sketch.line` | Line | sketch; start (point id) or x1, y1; end (point id) or x2, y2 | yes |
-| `sketch.circle` | Circle | sketch; center (point id) or cx, cy; r | yes |
+| `sketch.circle` | Circle | sketch; center (point id) or cx, cy; r. Returns the circle and its centre point (`center`) | yes |
 | `sketch.arc` | Arc | sketch; center or cx, cy; start or x1, y1; end or x2, y2 (counter-clockwise) | yes |
 | `sketch.arc3` | Three-Point Arc | sketch, x1, y1, x2, y2 (a point on the arc), x3, y3 | yes |
 | `sketch.rectangle` | Rectangle | sketch, x1, y1, x2, y2 (opposite corners); returns lines and corners (the first at x1, y1) | yes |
@@ -37,13 +37,27 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.drag` | Drag Point | sketch, point (id), x, y | yes |
 | `sketch.delete` | Delete | sketch, entities: [ids] | yes |
 | `sketch.construction` | Construction | sketch, entity (id), on (default true) | yes |
+| `sketch.centerline` | Centerline | sketch, entity (a line's id), on (default true). A centre line is the axis a revolution turns about unless told otherwise, and a dimension to it is a diameter; it still bounds profiles | yes |
+| `sketch.project` | Project Geometry | sketch; edge or edges: edge references (model.edge_ref), or face: a face reference whose edges are all projected. The edges are shown in the sketch as reference geometry: it follows the part, other geometry is constrained and dimensioned to it, and it bounds profiles. Only edges made before the sketch; straight and circular ones. geometry: what each of `edges` is on the sketch plane (for callers without a kernel). Returns the entities, and why any edge of a face was left out | yes |
+| `sketch.break_link` | Break Link | sketch, entities: [ids of projected curves or points]. They stay where they are, become the sketch's own geometry and no longer follow the part | yes |
 | `sketch.fillet` | Sketch Fillet | sketch, point (corner id), radius | yes |
 | `sketch.trim` | Trim | sketch, curve (id), x, y (the piece to remove) | yes |
 | `sketch.offset` | Offset | sketch, curves: [ids], distance (positive: outward / left) | yes |
 | `sketch.mirror` | Mirror | sketch, entities: [ids], axis (line id) | yes |
+| `sketch.move` | Move | sketch, entities: [ids], dx, dy; copy (default false: with it the geometry stays and a copy is made). What is joined or constrained to the geometry follows; what holds it where it is refuses the move. Returns the entities moved, or the copies | yes |
+| `sketch.rotate` | Rotate | sketch, entities: [ids], cx, cy (the point to turn about), angle (rad, counter-clockwise); copy. Level and upright constraints within what turns are dropped (swapped by quarter turns) | yes |
+| `sketch.scale` | Scale | sketch, entities: [ids], cx, cy (the point that stays), factor; copy. Dimensions within what is scaled are scaled with it | yes |
+| `sketch.extend` | Extend | sketch, curve (a line or an arc), x, y (near the end to extend). The end goes on along the curve to the nearest curve in its way and is held on it | yes |
+| `sketch.split` | Split | sketch, curve (a line, an arc or a circle), x, y (near the crossing to split at). The curve becomes two that share a point held on the curve crossing there; returns the new one | yes |
+| `sketch.pattern.rect` | Rectangular Sketch Pattern | sketch, entities: [ids]; along (a line's id) or dx, dy: the direction; count (the original counted), spacing; and for a second direction count2, spacing2 and along2 or dx2, dy2 (default: square to the first). Returns the copies, which are geometry of their own (they do not follow the original afterwards) | yes |
+| `sketch.pattern.circular` | Circular Sketch Pattern | sketch, entities: [ids]; center (a point's id) or cx, cy; count (the original counted); angle (rad, default a whole turn, divided evenly; less reaches from the first to the last). Returns the copies | yes |
+| `sketch.slot` | Slot | sketch, x1, y1, x2, y2, width; by: centers (default: the two points are the centres of the round ends) \| overall (they are the ends of the slot) \| center (the middle of the slot and one centre). Returns its lines, arcs and the centre points of its ends | yes |
+| `sketch.rectangle_center` | Rectangle from Centre | sketch, cx, cy (its centre), x, y (a corner); returns its lines and the centre point, which stays its centre | yes |
+| `sketch.rectangle3` | Three-Point Rectangle | sketch, x1, y1, x2, y2 (one side), x3, y3 (a point on the opposite side): a rectangle at any angle | yes |
+| `sketch.arc_tangent` | Tangent Arc | sketch, from (the free end point of a line or an arc), x, y (where the arc ends): an arc that carries on from the curve, tangent to it | yes |
 | `sketch.info` | Sketch Info | sketch | no |
 | `model.extrude` | Extrude | sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join \| cut \| new_body \| intersect; regions: the closed regions to use (default: every outer one), each as sketch.info lists it under `select`: [curve ids] for what those curves enclose, or {left: [ids], right: [ids], nth} for one region of a divided sketch; taper (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through_all only) | yes |
-| `model.revolve` | Revolve | sketch; axis: line id or "x" \| "y" \| "z"; angle (rad, default full); symmetric; operation; regions | yes |
+| `model.revolve` | Revolve | sketch; axis: line id or "x" \| "y" \| "z" (default: the sketch's centre line, when it has one); angle (rad, default full); symmetric; operation; regions | yes |
 | `model.fillet` | Fillet | edges: [edge references from model.edge_ref], radius | yes |
 | `model.chamfer` | Chamfer | edges: [edge references]; distance; and either distance2 or angle (rad) with reference: a face reference for the first distance | yes |
 | `model.shell` | Shell | thickness; remove: [face references] (faces to open, default none); outside (default false: walls grow inwards) | yes |
@@ -197,3 +211,4 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 - `{"type":"angle","a":1,"b":2,"value":0.5}`
 - `{"type":"radius","curve":1,"value":5.0}`
 - `{"type":"diameter","curve":1,"value":10.0}`
+- `{"type":"linear_diameter","point":1,"axis":2,"value":10.0}`

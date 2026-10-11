@@ -51,6 +51,12 @@ pub struct Regen {
     pub bodies: Vec<Body>,
     pub status: Vec<(FeatureId, FeatureStatus)>,
     pub sketch_frames: BTreeMap<FeatureId, Frame>,
+    /// Sketches with projected geometry, as this regeneration has them: the reference geometry
+    /// where the part now is and the sketch solved again (DEC-055).
+    pub sketches: BTreeMap<FeatureId, std::sync::Arc<Sketch>>,
+    /// Projected geometry whose edge was not found again: per sketch, the entity and why. It
+    /// stays where it was.
+    pub lost: BTreeMap<FeatureId, Vec<(EntityId, String)>>,
     /// The solids of features that a later pattern or mirror copies, each with how it combined
     /// with the part.
     pub tools: BTreeMap<FeatureId, Vec<Tool>>,
@@ -249,6 +255,15 @@ impl Regen {
     }
 }
 
+/// The sketch plane on a flat face: the face's plane, with the part origin projected onto it as
+/// the sketch's origin. None for a face that is not flat.
+pub fn frame_on_face(surface: &SurfaceKind) -> Option<Frame> {
+    match surface {
+        SurfaceKind::Plane { origin, normal } => Frame::from_normal(*normal * origin.dot(*normal), *normal),
+        _ => None,
+    }
+}
+
 /// Rebuilds the part. Never panics; failures are reported per feature.
 pub fn regenerate(doc: &Document, k: &mut dyn Kernel) -> Regen {
     regenerate_with(doc, k, None)
@@ -323,6 +338,23 @@ pub fn regenerate_with(doc: &Document, k: &mut dyn Kernel, mut cache: Option<&mu
     regen
 }
 
+/// A sketch as a regeneration uses it: the document's own, or a copy with its projected
+/// geometry put where the part now has it.
+enum SketchNow<'a> {
+    Doc(&'a Sketch),
+    Resolved(std::sync::Arc<Sketch>),
+}
+
+impl std::ops::Deref for SketchNow<'_> {
+    type Target = Sketch;
+    fn deref(&self) -> &Sketch {
+        match self {
+            SketchNow::Doc(s) => s,
+            SketchNow::Resolved(s) => s,
+        }
+    }
+}
+
 enum Stop {
     Cancelled,
     /// A message already in plain words.
@@ -352,7 +384,7 @@ impl From<KernelError> for Stop {
 
 fn select<'r>(sketch: &Sketch, all: &'r [SketchRegion], sel: &RegionSel) -> Result<Vec<&'r SketchRegion>, String> {
     let chosen: Vec<&SketchRegion> = match sel {
-        RegionSel::Default => default_regions(all),
+        RegionSel::Default => default_regions(sketch, all),
         RegionSel::Keys(keys) => {
             let mut out: Vec<&SketchRegion> = Vec::new();
             for key in keys {
@@ -378,9 +410,12 @@ fn select<'r>(sketch: &Sketch, all: &'r [SketchRegion], sel: &RegionSel) -> Resu
 impl<'a> Ctx<'a> {
     fn step(&mut self, f: &Feature) -> Result<(), Stop> {
         match &f.kind {
-            FeatureKind::Sketch { plane, .. } => {
+            FeatureKind::Sketch { plane, sketch, projections } => {
                 let frame = self.plane_frame(plane)?;
                 self.regen.sketch_frames.insert(f.id, frame);
+                if !projections.is_empty() {
+                    self.project_into(f.id, sketch, projections, &frame)?;
+                }
                 Ok(())
             }
             FeatureKind::Extrude(e) => self.extrude(f.id, e),
@@ -571,7 +606,8 @@ impl<'a> Ctx<'a> {
     /// when flipped, if it meets the part there too). Then the pieces join the part.
     fn rib(&mut self, id: FeatureId, r: &Rib) -> Result<(), Stop> {
         r.check()?;
-        let (sketch, frame) = self.sketch_and_frame(r.sketch)?;
+        let (held, frame) = self.sketch_and_frame(r.sketch)?;
+        let sketch: &Sketch = &held;
         let bbox = self.target_bbox().ok_or("there is no part for the rib to meet")?;
         let centre = frame.to_local(bbox.center());
         let mut pieces: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)> = Vec::new();
@@ -803,7 +839,8 @@ impl<'a> Ctx<'a> {
     /// Each hole is its half cross-section revolved about the hole axis; all are cut at once.
     fn hole(&mut self, id: FeatureId, h: &Hole) -> Result<(), Stop> {
         h.check()?;
-        let (sketch, frame) = self.sketch_and_frame(h.sketch)?;
+        let (held, frame) = self.sketch_and_frame(h.sketch)?;
+        let sketch: &Sketch = &held;
         let dir = if h.reverse { frame.z() } else { -frame.z() };
         let bbox = self.target_bbox().ok_or("there is no body to drill")?;
         let mut tools: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)> = Vec::new();
@@ -924,12 +961,11 @@ impl<'a> Ctx<'a> {
                 let name = fref.origin.describe(&label(self.doc, fref.origin.feature()));
                 let (b, face) = self.regen.resolve(fref, &*self.k).map_err(|e| format!("{e} ({name})"))?;
                 let shape = self.regen.bodies.get(b).ok_or("no such body")?.shape;
-                match self.k.face_info(shape.face(face))?.surface {
-                    SurfaceKind::Plane { origin, normal } => {
-                        // The sketch origin is the part origin projected onto the face's plane.
-                        let o = normal * origin.dot(normal);
-                        Ok(Frame::from_normal(o, normal).ok_or("the face has no valid normal")?)
-                    }
+                let info = self.k.face_info(shape.face(face))?;
+                // The sketch origin is the part origin projected onto the face's plane.
+                match (&info.surface, frame_on_face(&info.surface)) {
+                    (_, Some(frame)) => Ok(frame),
+                    (SurfaceKind::Plane { .. }, None) => Err("the face has no valid normal".into()),
                     _ => Err(format!("{name} is not planar").into()),
                 }
             }
@@ -940,9 +976,35 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn sketch_and_frame(&self, id: FeatureId) -> Result<(&'a Sketch, Frame), Stop> {
+    /// Puts a sketch's projected geometry where the part now has those edges and solves the
+    /// sketch again; the features after it use that. An edge that is not found leaves its
+    /// geometry where it was.
+    fn project_into(&mut self, id: FeatureId, sketch: &Sketch, projections: &[crate::project::Projection], frame: &Frame) -> Result<(), Stop> {
+        let views = self.regen.views();
+        let (regen, k) = (&self.regen, &*self.k);
+        let resolved = crate::project::resolve(sketch, projections, |edge| {
+            let (b, e) = resolve_edge(edge, &views, k)?;
+            let shape = regen.bodies.get(b).ok_or("no such body")?.shape;
+            let info = k.edge_info(shape.edge(e)).map_err(kerr)?;
+            crate::project::project(&crate::project::EdgeGeom { curve: &info.curve, ends: [info.start, info.end], mid: info.mid }, frame)
+        })?;
+        if !resolved.lost.is_empty() {
+            self.regen.lost.insert(id, resolved.lost);
+        }
+        if resolved.moved {
+            self.regen.sketches.insert(id, std::sync::Arc::new(resolved.sketch));
+        }
+        Ok(())
+    }
+
+    /// A sketch as this regeneration has it (its projected geometry where the part now is), and
+    /// its plane.
+    fn sketch_and_frame(&self, id: FeatureId) -> Result<(SketchNow<'a>, Frame), Stop> {
         let doc: &'a Document = self.doc;
-        let sketch = doc.sketch(id).ok_or_else(|| format!("{} is not a sketch", label(doc, id)))?;
+        let sketch = match self.regen.sketches.get(&id) {
+            Some(resolved) => SketchNow::Resolved(resolved.clone()),
+            None => SketchNow::Doc(doc.sketch(id).ok_or_else(|| format!("{} is not a sketch", label(doc, id)))?),
+        };
         let frame = *self.regen.sketch_frames.get(&id).ok_or_else(|| format!("{} is suppressed or failed", label(self.doc, id)))?;
         Ok((sketch, frame))
     }
@@ -952,7 +1014,8 @@ impl<'a> Ctx<'a> {
     }
 
     fn extrude(&mut self, id: FeatureId, e: &Extrude) -> Result<(), Stop> {
-        let (sketch, frame) = self.sketch_and_frame(e.sketch)?;
+        let (held, frame) = self.sketch_and_frame(e.sketch)?;
+        let sketch: &Sketch = &held;
         let all = regions(sketch);
         let profile = profile(sketch, frame, &select(sketch, &all, &e.regions)?);
         let sign = if e.reverse { -1.0 } else { 1.0 };
@@ -1007,7 +1070,8 @@ impl<'a> Ctx<'a> {
     }
 
     fn revolve(&mut self, id: FeatureId, r: &Revolve) -> Result<(), Stop> {
-        let (sketch, frame) = self.sketch_and_frame(r.sketch)?;
+        let (held, frame) = self.sketch_and_frame(r.sketch)?;
+        let sketch: &Sketch = &held;
         let axis = match &r.axis {
             AxisRef::Origin(a) => a.axis(),
             AxisRef::SketchLine(line) => {
@@ -1047,10 +1111,12 @@ impl<'a> Ctx<'a> {
     }
 
     fn sweep(&mut self, id: FeatureId, s: &Sweep) -> Result<(), Stop> {
-        let (sketch, frame) = self.sketch_and_frame(s.sketch)?;
+        let (held, frame) = self.sketch_and_frame(s.sketch)?;
+        let sketch: &Sketch = &held;
         let all = regions(sketch);
         let profile = profile(sketch, frame, &select(sketch, &all, &s.regions)?);
-        let (path_sketch, path_frame) = self.sketch_and_frame(s.path.sketch)?;
+        let (held_path, path_frame) = self.sketch_and_frame(s.path.sketch)?;
+        let path_sketch: &Sketch = &held_path;
         let path = path_of(path_sketch, &path_frame, &s.path.curves, profile_centre(&profile))?;
         // A profile whose plane holds the path's direction sweeps into a sheet with no thickness,
         // which a kernel may build without complaint.
@@ -1067,7 +1133,8 @@ impl<'a> Ctx<'a> {
     }
 
     fn coil(&mut self, id: FeatureId, c: &Coil) -> Result<(), Stop> {
-        let (sketch, frame) = self.sketch_and_frame(c.sketch)?;
+        let (held, frame) = self.sketch_and_frame(c.sketch)?;
+        let sketch: &Sketch = &held;
         let axis = match &c.axis {
             AxisRef::Origin(a) => a.axis(),
             AxisRef::SketchLine(line) => {
@@ -1100,7 +1167,8 @@ impl<'a> Ctx<'a> {
     fn loft(&mut self, id: FeatureId, l: &Loft) -> Result<(), Stop> {
         let mut sections = Vec::new();
         for (i, s) in l.sections.iter().enumerate() {
-            let (sketch, frame) = self.sketch_and_frame(*s)?;
+            let (held, frame) = self.sketch_and_frame(*s)?;
+            let sketch: &Sketch = &held;
             let all = regions(sketch);
             if all.is_empty() {
                 return Err(format!("loft section {} ({}) has no closed profile", i + 1, label(self.doc, *s)).into());
@@ -1641,6 +1709,8 @@ pub struct BodyView {
     pub curves: Vec<CurveKind>,
     /// Per edge: its start and end points (the same point for a closed edge such as a circle).
     pub ends: Vec<[Vec3; 2]>,
+    /// Per edge: a point on it halfway along (which way round an arc goes).
+    pub mids: Vec<Vec3>,
 }
 
 impl BodyView {
@@ -1666,6 +1736,11 @@ pub struct Scene {
     pub bodies: Vec<BodyView>,
     pub status: Vec<(FeatureId, FeatureStatus)>,
     pub sketch_frames: BTreeMap<FeatureId, Frame>,
+    /// Sketches whose projected geometry moved with the part, as regeneration left them: the
+    /// document's sketches follow these (DEC-055).
+    pub sketches: BTreeMap<FeatureId, std::sync::Arc<Sketch>>,
+    /// Projected geometry whose edge was not found again, per sketch, with why.
+    pub lost: BTreeMap<FeatureId, Vec<(EntityId, String)>>,
     /// Work planes, axes and points, to draw.
     pub work: Vec<(FeatureId, WorkGeom)>,
     /// The threads on the part.
@@ -1694,19 +1769,23 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
         let mut edges = Vec::with_capacity(topo.edges as usize);
         let mut curves = Vec::with_capacity(topo.edges as usize);
         let mut ends = Vec::with_capacity(topo.edges as usize);
+        let mut mids = Vec::with_capacity(topo.edges as usize);
         for (i, adj) in topo.edge_faces.iter().enumerate() {
             let info = k.edge_info(b.shape.edge(u32::try_from(i).map_err(|_| "too many edges")?)).map_err(kerr)?;
             edges.push((edge_names(&b.names, adj), EdgeFingerprint::of(&info)));
             ends.push([info.start, info.end]);
+            mids.push(info.mid);
             curves.push(info.curve);
         }
         let mass = k.mass_properties(b.shape, 1.0).map_err(kerr)?;
-        bodies.push(BodyView { mesh, faces, edges, curves, ends, volume: mass.volume, mass, bbox: k.bounding_box(b.shape).map_err(kerr)? });
+        bodies.push(BodyView { mesh, faces, edges, curves, ends, mids, volume: mass.volume, mass, bbox: k.bounding_box(b.shape).map_err(kerr)? });
     }
     Ok(Scene {
         bodies,
         status: regen.status.clone(),
         sketch_frames: regen.sketch_frames.clone(),
+        sketches: regen.sketches.clone(),
+        lost: regen.lost.clone(),
         work: regen.work.iter().map(|(id, g)| (*id, *g)).collect(),
         threads: regen.threads.iter().map(|m| ThreadView { at: regen.resolve(&m.face, &*k).ok(), mark: m.clone() }).collect(),
         regen_ms: regen.millis,

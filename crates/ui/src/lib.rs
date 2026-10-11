@@ -30,6 +30,7 @@ mod properties;
 mod radial;
 mod recovery;
 mod repair_ui;
+mod sketch_tools;
 mod sketcher;
 mod sweeps;
 pub mod theme;
@@ -50,5 +51,7 @@ mod print_tests;
 mod recovery_tests;
 #[cfg(test)]
 mod save_tests;
+#[cfg(test)]
+mod sketch_tests;
 #[cfg(test)]
 mod tests;

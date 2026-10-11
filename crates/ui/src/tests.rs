@@ -194,7 +194,11 @@ impl Driver {
     pub(crate) fn text_pos(&self, text: &str) -> Option<Pos2> {
         fn walk(s: &egui::Shape, text: &str) -> Option<Pos2> {
             match s {
-                egui::Shape::Text(t) if t.galley.text() == text => Some(t.pos + t.galley.size() / 2.0),
+                egui::Shape::Text(t) if t.galley.text() == text => {
+                    // (Its middle, however it is turned: a dimension's value lies along its line.)
+                    let (half, (s, c)) = (t.galley.size() / 2.0, t.angle.sin_cos());
+                    Some(t.pos + vec2(c * half.x - s * half.y, s * half.x + c * half.y))
+                }
                 egui::Shape::Vec(v) => v.iter().find_map(|x| walk(x, text)),
                 _ => None,
             }
@@ -1936,20 +1940,24 @@ fn the_status_bar_changes_how_dimensions_read_and_hides_constraint_symbols() {
 
     // The rectangle's sides carry their constraint symbols until F9; F8 brings them back, and
     // so does the status bar's Constraints button.
-    assert!(drawn(&d, "H") && drawn(&d, "V"), "{:?}", d.texts());
+    let symbols = |wb: &Workbench| match &wb.mode {
+        Mode::Sketch(sm) => sm.badges.len(),
+        Mode::Model => 0,
+    };
+    assert_eq!(symbols(&wb), 4, "two level sides and two upright ones");
     d.tap(&mut wb, egui::Key::F9);
     d.frame(&mut wb, vec![]);
-    assert!(!drawn(&d, "H") && !drawn(&d, "V") && drawn(&d, "40"), "symbols hidden, dimensions not: {:?}", d.texts());
+    assert!(symbols(&wb) == 0 && drawn(&d, "40"), "symbols hidden, dimensions not: {:?}", d.texts());
     d.tap(&mut wb, egui::Key::F8);
     d.frame(&mut wb, vec![]);
-    assert!(drawn(&d, "H"));
+    assert_eq!(symbols(&wb), 4);
     let button = pressable(&d, "tn_status_constraints");
     for _ in 0..45 {
         d.frame(&mut wb, vec![]);
     }
     d.click(&mut wb, button);
     d.frame(&mut wb, vec![]);
-    assert!(!drawn(&d, "H"), "{:?}", d.texts());
+    assert_eq!(symbols(&wb), 0, "{:?}", d.texts());
     assert!(d.texts().iter().any(|t| t == "Constraints: hidden"));
 }
 

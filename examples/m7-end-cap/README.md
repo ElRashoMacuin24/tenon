@@ -29,7 +29,7 @@ section's area (400 less four slots and a 4.2 mm bore) times the length is 37 04
 
 ![The 3D Print Check window on the end cap](print-check.png)
 
-**Will it print?** `print.check` (Inspect > 3D Print Check in the app) reads the part as
+**Will it print?** `print.check` (Environments > 3D Print Check in the app) reads the part as
 triangles, as a slicer will:
 
 | Checked | Standing as drawn (skirt down) | Turned over (`up: "-z"`) |

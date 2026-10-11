@@ -761,10 +761,27 @@ pub fn regions(sketch: &Sketch) -> Vec<SketchRegion> {
     arrangement(sketch, None)
 }
 
-/// The regions extruded when the user picks nothing: every region at even nesting depth (a
-/// plate with holes, but not the discs filling the holes).
-pub fn default_regions(all: &[SketchRegion]) -> Vec<&SketchRegion> {
-    all.iter().filter(|r| r.depth % 2 == 0).collect()
+/// The regions a feature uses when the user picks nothing: every region at even nesting depth
+/// (a plate with holes, but not the discs filling the holes).
+///
+/// What the sketch draws itself comes before what it only shows of the part: when the sketch
+/// has closed geometry of its own, the default is that, as if the reference geometry (edges of
+/// the part projected into it) were not there. A circle drawn on a face is the circle, not the
+/// face with a hole in it. With no closed geometry of its own, it is everything in the sketch.
+pub fn default_regions<'r>(sketch: &Sketch, all: &'r [SketchRegion]) -> Vec<&'r SketchRegion> {
+    let even = |list: &'r [SketchRegion]| -> Vec<&'r SketchRegion> { list.iter().filter(|r| r.depth % 2 == 0).collect() };
+    let curves = || sketch.entities().filter(|(_, e)| !e.construction && e.geometry.is_curve());
+    if !curves().any(|(_, e)| e.reference) {
+        return even(all);
+    }
+    let own: BTreeSet<EntityId> = curves().filter(|(id, _)| !sketch.is_held_outside(*id)).map(|(id, _)| id).collect();
+    let own_regions = arrangement(sketch, Some(&own));
+    let chosen: Vec<&SketchRegion> = own_regions.iter().filter(|r| r.depth % 2 == 0).collect();
+    if chosen.is_empty() {
+        return even(all);
+    }
+    // (Reference curves may cut an own region in pieces: all its pieces are meant.)
+    all.iter().filter(|r| chosen.iter().any(|o| o.contains(r.inside))).collect()
 }
 
 /// The regions of `all` (every region of `sketch`) that `key` names: none when the sketch no

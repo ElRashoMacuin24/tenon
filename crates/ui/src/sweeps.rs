@@ -466,13 +466,17 @@ impl Workbench {
     }
 
     /// The axis a new revolution of `sketch` starts with:
-    /// - a centre line of the sketch (a construction line), if it has one;
+    /// - the sketch's centre line (a line with the Centerline format), if it has one;
+    /// - else a construction line, if it has one;
     /// - else the one line drawn in the sketch that bounds no profile (it was drawn to turn about);
     /// - else an origin axis lying in the sketch's plane, the upright one first, and one the
     ///   profile is beside before one that runs through it.
     pub(crate) fn default_revolve_axis(&self, sketch: FeatureId) -> AxisChoice {
         let doc = self.document();
         let Some(sk) = doc.sketch(sketch) else { return AxisChoice::Origin(OriginAxis::Y) };
+        if let Some((id, _)) = sk.entities().find(|(_, e)| e.centerline) {
+            return AxisChoice::Line(id);
+        }
         let lines: Vec<(tenon_sketch::EntityId, bool)> =
             sk.entities().filter(|(id, _)| sk.is_line(*id)).map(|(id, e)| (id, e.construction)).collect();
         if let Some((id, _)) = lines.iter().find(|l| l.1) {
@@ -480,7 +484,7 @@ impl Workbench {
         }
         let regions = tenon_sketch::regions(sk);
         // What bounds the profile as a whole: a line drawn through it divides it, but is inside.
-        let whole = tenon_sketch::profile(sk, tenon_geom::Frame::WORLD, &tenon_sketch::default_regions(&regions));
+        let whole = tenon_sketch::profile(sk, tenon_geom::Frame::WORLD, &tenon_sketch::default_regions(sk, &regions));
         let bounding: std::collections::BTreeSet<u64> =
             whole.regions.iter().flat_map(|r| std::iter::once(&r.outer).chain(&r.holes)).flat_map(|l| l.curves.iter().map(|c| c.tag)).collect();
         let loose: Vec<tenon_sketch::EntityId> = lines.iter().filter(|l| !bounding.contains(&u64::from(l.0.0))).map(|l| l.0).collect();
@@ -692,7 +696,7 @@ pub(crate) fn regions_of<'r>(
     sel: &RegionSel,
 ) -> Vec<&'r tenon_sketch::SketchRegion> {
     match sel {
-        RegionSel::Default => tenon_sketch::default_regions(all),
+        RegionSel::Default => tenon_sketch::default_regions(sk, all),
         RegionSel::Keys(keys) => {
             let mut out: Vec<&tenon_sketch::SketchRegion> = Vec::new();
             for r in keys.iter().flat_map(|k| tenon_sketch::find(sk, all, k)) {

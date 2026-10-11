@@ -315,6 +315,7 @@ fn constraint_examples() -> Vec<tenon_sketch::Constraint> {
         Angle { a, b, value: 0.5 },
         Radius { curve: a, value: 5.0 },
         Diameter { curve: a, value: 10.0 },
+        LinearDiameter { point: a, axis: b, value: 10.0 },
     ];
     // Fails to compile when a constraint kind is added, so this list stays complete.
     for x in &all {
@@ -338,7 +339,8 @@ fn constraint_examples() -> Vec<tenon_sketch::Constraint> {
             | Length { .. }
             | Angle { .. }
             | Radius { .. }
-            | Diameter { .. } => {}
+            | Diameter { .. }
+            | LinearDiameter { .. } => {}
         }
     }
     all

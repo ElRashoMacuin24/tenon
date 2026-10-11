@@ -34,6 +34,17 @@ pub enum SketchError {
 
 pub type SketchResult<T> = Result<T, SketchError>;
 
+/// A slot as [`Sketch::add_slot`] makes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Slot {
+    /// The two straight sides.
+    pub lines: [EntityId; 2],
+    /// The round ends: the one about the first centre, then the other.
+    pub arcs: [EntityId; 2],
+    /// The centre points of the ends.
+    pub centers: [EntityId; 2],
+}
+
 fn invalid(msg: impl Into<String>) -> SketchError {
     SketchError::Invalid(msg.into())
 }
@@ -268,7 +279,7 @@ impl Sketch {
         }
         self.next_entity = self.next_entity.checked_add(1).ok_or(SketchError::TooMany)?;
         let id = EntityId(self.next_entity);
-        self.entities.insert(id, Entity { geometry, construction: false });
+        self.entities.insert(id, Entity { geometry, construction: false, centerline: false, reference: false });
         Ok(id)
     }
 
@@ -362,6 +373,37 @@ impl Sketch {
         Ok(())
     }
 
+    /// Marks a line as a centre line, or as an ordinary line again.
+    pub fn set_centerline(&mut self, id: EntityId, centerline: bool) -> SketchResult<()> {
+        if !self.is_line(id) {
+            return Err(if self.entity(id).is_some() {
+                invalid(format!("{id} is not a line: only a line can be a centre line"))
+            } else {
+                SketchError::NoEntity(id)
+            });
+        }
+        self.entities.get_mut(&id).ok_or(SketchError::NoEntity(id))?.centerline = centerline;
+        Ok(())
+    }
+    pub fn is_centerline(&self, id: EntityId) -> bool {
+        self.entity(id).is_some_and(|e| e.centerline)
+    }
+
+    /// Marks an entity as reference geometry (or as the sketch's own again). A reference curve's
+    /// points are reference too: mark them as well.
+    pub fn set_reference(&mut self, id: EntityId, reference: bool) -> SketchResult<()> {
+        self.entities.get_mut(&id).ok_or(SketchError::NoEntity(id))?.reference = reference;
+        Ok(())
+    }
+    pub fn is_reference(&self, id: EntityId) -> bool {
+        self.entity(id).is_some_and(|e| e.reference)
+    }
+    /// A curve or point that may not be reshaped by the sketch's own tools: reference geometry,
+    /// or a curve standing on a reference point.
+    pub fn is_held_outside(&self, id: EntityId) -> bool {
+        self.is_reference(id) || self.geometry(id).is_some_and(|g| g.points().iter().any(|p| self.is_reference(*p)))
+    }
+
     /// Moves a point without solving.
     pub fn set_point(&mut self, id: EntityId, pos: Vec2) -> SketchResult<()> {
         if !valid_pos(pos) {
@@ -404,6 +446,78 @@ impl Sketch {
             self.push_constraint(c)?;
         }
         Ok(l)
+    }
+
+    /// A rectangle about its centre: `center` and one `corner`. Four lines as
+    /// [`Sketch::add_rectangle`] makes them, a construction diagonal, and the centre point held
+    /// at the diagonal's middle, so the rectangle stays about the point it was drawn round.
+    /// Returns the lines and the centre point.
+    pub fn add_rectangle_center(&mut self, center: Vec2, corner: Vec2) -> SketchResult<([EntityId; 4], EntityId)> {
+        let mut s = self.clone();
+        let l = s.add_rectangle(center * 2.0 - corner, corner)?;
+        let (Some(Geometry::Line { start: lo, .. }), Some(Geometry::Line { end: hi, .. })) = (s.geometry(l[0]).cloned(), s.geometry(l[1]).cloned())
+        else {
+            return Err(invalid("internal: a rectangle without corners"));
+        };
+        let diagonal = s.add_line(lo, hi)?;
+        s.set_construction(diagonal, true)?;
+        let c = s.add_point(center)?;
+        s.push_constraint(Constraint::Midpoint { point: c, line: diagonal })?;
+        *self = s;
+        Ok((l, c))
+    }
+
+    /// A rectangle at any angle from three points: one side from `a` to `b`, and `c` on (or
+    /// level with) the opposite side. Four lines joined at shared corners (the first from `a` to
+    /// `b`), the second square to the first and the others parallel to those two.
+    pub fn add_rectangle_3(&mut self, a: Vec2, b: Vec2, c: Vec2) -> SketchResult<[EntityId; 4]> {
+        let along = b - a;
+        if along.len() <= tol::MIN_SIZE {
+            return Err(invalid("a rectangle needs a first side of some length"));
+        }
+        let n = along.normalized().perp();
+        let depth = (c - a).dot(n);
+        if depth.abs() <= tol::MIN_SIZE {
+            return Err(invalid("a rectangle needs a non-zero width and height"));
+        }
+        let mut s = self.clone();
+        let p = [s.add_point(a)?, s.add_point(b)?, s.add_point(b + n * depth)?, s.add_point(a + n * depth)?];
+        let l = [s.add_line(p[0], p[1])?, s.add_line(p[1], p[2])?, s.add_line(p[2], p[3])?, s.add_line(p[3], p[0])?];
+        s.push_constraint(Constraint::Perpendicular { a: l[0], b: l[1] })?;
+        s.push_constraint(Constraint::Parallel { a: l[0], b: l[2] })?;
+        s.push_constraint(Constraint::Parallel { a: l[1], b: l[3] })?;
+        *self = s;
+        Ok(l)
+    }
+
+    /// A straight slot: two parallel lines joined by a half circle at each end, about the
+    /// centres `a` and `b`, `width` across. The lines are tangent to the arcs and the arcs equal,
+    /// so it stays a slot whatever is done to it: its length is the distance between the two
+    /// centre points and its width a radius or diameter of either end.
+    /// Returns the two lines, the two arcs (the one about `a` first) and the two centre points.
+    pub fn add_slot(&mut self, a: Vec2, b: Vec2, width: f64) -> SketchResult<Slot> {
+        if a.dist(b) <= tol::MIN_SIZE {
+            return Err(invalid("a slot needs two centres apart from one another"));
+        }
+        if !tol::is_valid_size(width) {
+            return Err(invalid(format!("slot width {width} is out of range")));
+        }
+        let (u, r) = ((b - a).normalized(), width / 2.0);
+        let n = u.perp();
+        let mut s = self.clone();
+        let (ca, cb) = (s.add_point(a)?, s.add_point(b)?);
+        // Round the outside, counter-clockwise: along one side from a to b, round b, back, round a.
+        let (a_lo, b_lo, b_hi, a_hi) = (s.add_point(a - n * r)?, s.add_point(b - n * r)?, s.add_point(b + n * r)?, s.add_point(a + n * r)?);
+        let lower = s.add_line(a_lo, b_lo)?;
+        let round_b = s.add_arc(cb, b_lo, b_hi)?;
+        let upper = s.add_line(b_hi, a_hi)?;
+        let round_a = s.add_arc(ca, a_hi, a_lo)?;
+        for (line, arc) in [(lower, round_a), (lower, round_b), (upper, round_a), (upper, round_b)] {
+            s.push_constraint(Constraint::Tangent { a: line, b: arc })?;
+        }
+        s.push_constraint(Constraint::Equal { a: round_a, b: round_b })?;
+        *self = s;
+        Ok(Slot { lines: [lower, upper], arcs: [round_a, round_b], centers: [ca, cb] })
     }
 
     /// Regular polygon with `sides` corners, one at `vertex`: the sides plus a construction
@@ -480,6 +594,7 @@ impl Sketch {
             Length { line, .. } => ln(*line),
             Angle { a, b, .. } => ln(*a) && ln(*b) && a != b,
             Radius { curve, .. } | Diameter { curve, .. } => rd(*curve),
+            LinearDiameter { point, axis, .. } => pt(*point) && ln(*axis),
         };
         if !ok {
             return Err(invalid(format!("{} cannot apply to these entities", c.name())));
@@ -547,6 +662,34 @@ impl Sketch {
         let id = ConstraintId(self.next_constraint);
         self.constraints.insert(id, c);
         Ok(id)
+    }
+
+    /// Changes a dimension's value without solving (a tool that moves geometry solves once at
+    /// its end).
+    pub(crate) fn set_value_unsolved(&mut self, id: ConstraintId, value: f64) -> SketchResult<()> {
+        match self.constraints.get_mut(&id) {
+            Some(c) => {
+                if c.set_value(value) {
+                    Ok(())
+                } else {
+                    Err(invalid(format!("{id} is not a dimension")))
+                }
+            }
+            None => Err(invalid(format!("no constraint {id}"))),
+        }
+    }
+
+    /// Puts `c` in place of constraint `id`, which keeps its id (and so a dimension its name and
+    /// where its value is shown).
+    pub(crate) fn replace_constraint(&mut self, id: ConstraintId, c: Constraint) -> SketchResult<()> {
+        self.check_constraint(&c)?;
+        match self.constraints.get_mut(&id) {
+            Some(slot) => {
+                *slot = c;
+                Ok(())
+            }
+            None => Err(invalid(format!("no constraint {id}"))),
+        }
     }
 
     pub fn remove_constraint(&mut self, id: ConstraintId) -> SketchResult<Constraint> {

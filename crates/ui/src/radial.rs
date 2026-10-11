@@ -89,7 +89,16 @@ impl Workbench {
                     entry("sketch.trim"),
                     entry("view.look_at"),
                 ],
-                vec!["edit.undo", "edit.redo", "view.fit", "view.previous"],
+                vec![
+                    "sketch.project",
+                    "sketch.construction",
+                    "sketch.centerline",
+                    "sketch.break_link",
+                    "edit.undo",
+                    "edit.redo",
+                    "view.fit",
+                    "view.previous",
+                ],
             )
         } else {
             (

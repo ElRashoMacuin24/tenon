@@ -215,6 +215,10 @@ impl Workbench {
             || self.asm.as_ref().is_some_and(|a| !a.jobs.is_empty())
             || self.drw.as_ref().is_some_and(|d| !d.jobs.is_empty())
     }
+    /// Nothing is being computed and the view is at rest (for taking a picture of it).
+    pub fn is_settled(&self) -> bool {
+        !self.is_busy() && self.view.anim.is_none() && self.view.aim_at.is_none()
+    }
     pub fn is_sketching(&self) -> bool {
         matches!(self.mode, Mode::Sketch(_))
     }
@@ -262,6 +266,34 @@ impl Workbench {
             }
             Err(e) => self.set_error(e),
         }
+    }
+
+    /// Opens sketch `name` of the open part for editing (the app's `--edit-sketch`).
+    pub fn edit_sketch_named(&mut self, name: &str) -> Result<(), String> {
+        let id = self
+            .document()
+            .features()
+            .iter()
+            .find(|f| f.name == name && matches!(f.kind, FeatureKind::Sketch { .. }))
+            .map(|f| f.id)
+            .ok_or_else(|| format!("the part has no sketch named `{name}`"))?;
+        self.enter_sketch(id)
+    }
+
+    /// Shows the ribbon tab called `name` (the app's `--tab`).
+    pub fn show_tab(&mut self, name: &str) -> Result<(), String> {
+        let tabs = if self.in_drawing() {
+            commands::DRW_RIBBON
+        } else if self.in_assembly() {
+            commands::ASM_RIBBON
+        } else {
+            commands::RIBBON
+        };
+        self.chrome.tab = tabs
+            .iter()
+            .position(|t| t.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("there is no ribbon tab `{name}` here: {}", tabs.iter().map(|t| t.name).collect::<Vec<_>>().join(", ")))?;
+        Ok(())
     }
 
     /// Ribbon, menu and toolbar commands. New, Open and Exit ask first when they would lose unsaved
@@ -755,6 +787,12 @@ impl Workbench {
     }
 
     fn set_scene(&mut self, s: Scene) {
+        // Projected geometry follows the part: the sketches take up where this regeneration
+        // found their edges (DEC-055). When that moves more than the sketches, the revision
+        // says so and the part is sent again.
+        if !self.in_assembly() && !self.in_drawing() {
+            self.session.follow_projections(&s.sketches);
+        }
         self.scene = s;
         self.scene_seq += 1;
         self.regen_note = None;
@@ -956,7 +994,17 @@ impl Workbench {
     }
 
     /// Creates a sketch with `params` (plane or face) and starts editing it.
-    pub(crate) fn create_sketch(&mut self, params: Value) -> Result<(), String> {
+    pub(crate) fn create_sketch(&mut self, mut params: Value) -> Result<(), String> {
+        // On a face, the face's edges are shown in the new sketch (Application Options).
+        if self.chrome.autoproject
+            && params.get("geometry").is_none()
+            && let Some(face) = params.get("face").and_then(|f| serde_json::from_value::<tenon_model::FaceRef>(f.clone()).ok())
+            && let Some((edges, geometry)) = self.face_outline(&face)
+            && !edges.is_empty()
+        {
+            params["edges"] = json!(edges);
+            params["geometry"] = json!(geometry);
+        }
         let r = self.exec("sketch.create", params)?;
         let id = r["feature"].as_u64().and_then(|v| u32::try_from(v).ok()).ok_or("internal: no feature id")?;
         self.panel = None;

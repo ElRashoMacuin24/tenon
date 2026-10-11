@@ -892,7 +892,7 @@ evaluated writes into that sketch. `one_parameter_scales_three_dimensions_of_a_s
 
 ## DEC-051 The 3D print check reads the part as triangles (2026-10-11)
 
-`print.check` and Inspect > 3D Print Check answer a maker's first questions before a slicer is
+`print.check` and Environments > 3D Print Check (where Inventor has its 3D Print environment) answer a maker's first questions before a slicer is
 opened: is the surface closed, what overhangs, how thin is the thinnest wall, does it fit the
 printer.
 
@@ -962,3 +962,105 @@ colour per face; reading 3MF or STL back in as a body.
   checking for printing both ways up, one section from the library with its length set, one
   screw placed from the library and changed for a longer one, and an interference that is
   wanted (the screw's thread in the bar's bore), checked against its analytic volume.
+
+## DEC-054 The owner confirms M7; the sketch environment comes before M8 (2026-10-11)
+
+Shown the M7 report, the owner answered "Look great let's keep going keep trying to make the UI
+more and more like inventors". M7 is confirmed, with the three points put to them standing as
+decided (sizes typed in as facts, DEC-049; a section's length is its part's parameter; what was
+left out). M8 (sheet metal) is next in the plan.
+
+The second half of the answer is the standing direction of DEC-042 again, so before M8 the place
+an Inventor user spends most time in, the sketch, was gone through against Inventor's Sketch tab
+button by button. A dozen buttons were on the ribbon and did nothing; the tool used most after
+Line and Dimension, Project Geometry, was not there at all, and a sketch on a face could not be
+dimensioned to the face's edges. DEC-055 and DEC-056 are what was done about it;
+[inventor-fidelity.md](inventor-fidelity.md) has the tables.
+
+## DEC-055 Edges of the part shown in a sketch: projected geometry (2026-10-11)
+
+A sketch on a face had only the part's origin to hold on to. Now edges of the part are shown in
+a sketch as **reference geometry**, as Inventor's Project Geometry does and as its sketches on
+faces start out.
+
+- **In the sketch** it is ordinary lines, circles and arcs marked `reference`: the solver never
+  moves them (their points and radii are not unknowns), and the sketch's own geometry is
+  constrained and dimensioned to them. They bound profiles like any curve. The sketch's own
+  tools leave them alone (no trim, fillet, move); deleting one, or **Break Link**, ends it.
+- **In the document** a sketch feature lists its projections: the entity and the edge, by the
+  names of the edge's two faces (the same reference a fillet uses). The sketch depends on the
+  features that made those faces.
+- **At every regeneration** each edge is found again, what it is on the sketch plane is worked
+  out (a line; a circle or an arc seen square on; a line for one seen edge on; a point for a
+  straight edge seen end on), the reference geometry is put there and the sketch solved; the
+  features after it use that. An edge that is gone leaves its geometry where it was, drawn in
+  magenta, and the sketch says which (`sketch.info`); nothing fails for it.
+- **The document follows.** The sketches of the document take up what regeneration found
+  (`Session::follow_projections`), so the file, the sketch on screen and the next edit all have
+  the edges where they are. It is not an edit: there is no undo step, and undoing whatever
+  moved the part puts the sketch back with it. When following changes more than the sketch (an
+  equation reading a driven dimension to a projected edge), the part is rebuilt once more.
+- **A kernel is not needed to add one.** The app's kernel is on another thread, and it has the
+  part's edges on screen: `sketch.project` and `sketch.create` take what each edge is on the
+  plane from the caller (`geometry`), or work it out with the kernel when there is one. Either
+  way regeneration is what decides where it is from then on. To tell which way round an arc
+  goes, the kernel reports a point halfway along each edge.
+- **A new sketch on a face shows the face's edges** when Application Options has "Autoproject
+  edges for sketch creation and edit" ticked, which it is at first, as in Inventor. Scripts say
+  so (`project_edges`); without it `sketch.create` is as it was.
+- **What a feature uses when no profile is picked** is the sketch's own closed geometry before
+  what it only shows of the part: a circle drawn on a face is the circle, not the face with a
+  hole in it. (Inventor would have the user click; this is one click fewer, and the click is
+  still there to take.) A sketch with nothing closed of its own gives the outline.
+- **In the file** the additions are `reference = true` on an entity and `projections` on the
+  sketch feature, written only where there are any. Format version 2 stands (DEC-035).
+
+Not done: edges that would be ellipses or splines on the plane; vertices, work features and
+other sketches' curves; edges projected while a curve is drawn over them; cut edges of a
+section; the broken ones offered for repair by the dialog of DEC-034.
+
+Rejected: copying the edge once and warning when the part moves (it is the part following that
+makes it worth having); keeping the true positions only in the regeneration result (every edit
+of the sketch would solve against stale ones).
+
+## DEC-056 The rest of the sketch environment's second round (2026-10-11)
+
+- **Centre lines.** A line can have the Centerline format (`centerline = true`): Revolve takes
+  it for its axis without being told, and a dimension from it to a point or a parallel line is
+  a diameter (the new `linear_diameter` dimension, drawn across the axis and read with Ø). It
+  still bounds profiles, as Inventor's does, so a half section is closed along its own axis.
+- **Constraint symbols are pictures** beside what they hold, one at each of two lines made
+  parallel. Pointing at one lights it and its geometry; a click selects it; Delete removes the
+  constraint. The part origin shown in a sketch is held without a symbol.
+- **A dimension's value lies along its line** and reads from the left or from below.
+- **Move, Copy, Rotate, Scale** work on what is selected: clicks for from and to, or values
+  typed beside the pointer. What is joined to the selection follows through the solver; a
+  fixed point or a dimension to the rest of the sketch refuses the motion and says so. Within
+  what turns, level and upright constraints are dropped (by quarter turns, swapped); within
+  what is scaled, dimensions scale. A copy keeps its shape (geometric constraints within it)
+  and not its sizes. Inventor asks whether to relax constraints; Tenon does what that dialog's
+  usual answer does and refuses the rest.
+- **Extend and Split** go to the nearest curve in the way and the nearest crossing. A split
+  line's length becomes the distance between its ends, and its pieces stay in line.
+- **Sketch patterns are copies.** Rectangular and Circular make geometry of its own that does
+  not follow the original afterwards. Inventor's are associative; that needs a pattern
+  constraint the solver does not have, and is noted as a gap rather than faked.
+- **Slots** (centre to centre, overall, centre point), **rectangles** about their centre and at
+  an angle, **arcs** by centre and tangent to the end of a curve, in the drop-downs where
+  Inventor has them. A slot is two lines tangent to two equal arcs, so it stays a slot.
+- **Tangency at a shared end point** has an equation of its own in the solver. The general one
+  (distance from centre equals radius) is at its turning point when the curves already meet,
+  so the degrees of freedom of a fillet or a slot were counted two too many.
+- **The Environments tab** holds 3D Print Check, where Inventor has its 3D Print environment.
+- **The ribbon lists a panel's buttons in order,** so a large button can end a panel (Project
+  Geometry ends Create, as in Inventor).
+- **A sketch entered before its plane is known** (on a face, before the part is rebuilt) turns
+  the view to it when the plane arrives; it used to stay as it was.
+- **The app** takes `--edit-sketch NAME` and `--tab NAME`, for pictures of the sketch
+  environment and of any ribbon tab.
+- **`sketch.circle` returns its centre point** beside the circle, so a script can dimension a
+  hole from a projected edge without asking the sketch what it holds.
+
+Not done: Stretch; sketch text; ellipses; the Center Point format (every point of the sketch's
+own that is on no curve is a hole centre, as before); automatic dimensions; polygons with other
+than six sides from the ribbon.

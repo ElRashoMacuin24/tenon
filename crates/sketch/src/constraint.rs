@@ -105,6 +105,13 @@ pub enum Constraint {
         curve: EntityId,
         value: f64,
     },
+    /// A diameter measured from a centre line: `point` is `value / 2` from the line `axis`.
+    /// (The size of something turned about that line, dimensioned on its half section.)
+    LinearDiameter {
+        point: EntityId,
+        axis: EntityId,
+        value: f64,
+    },
 }
 
 impl Constraint {
@@ -124,6 +131,7 @@ impl Constraint {
             | VerticalDistance { a, b, .. }
             | Angle { a, b, .. } => vec![*a, *b],
             PointOnCurve { point, curve } => vec![*point, *curve],
+            LinearDiameter { point, axis, .. } => vec![*point, *axis],
             Horizontal { line } | Vertical { line } | Length { line, .. } => vec![*line],
             Symmetric { a, b, axis } => vec![*a, *b, *axis],
             Midpoint { point, line } => vec![*point, *line],
@@ -142,7 +150,8 @@ impl Constraint {
             | Length { value, .. }
             | Angle { value, .. }
             | Radius { value, .. }
-            | Diameter { value, .. } => Some(*value),
+            | Diameter { value, .. }
+            | LinearDiameter { value, .. } => Some(*value),
             _ => None,
         }
     }
@@ -157,7 +166,8 @@ impl Constraint {
             | Length { value, .. }
             | Angle { value, .. }
             | Radius { value, .. }
-            | Diameter { value, .. } => {
+            | Diameter { value, .. }
+            | LinearDiameter { value, .. } => {
                 *value = v;
                 true
             }
@@ -197,6 +207,7 @@ impl Constraint {
             Angle { .. } => "angle",
             Radius { .. } => "radius",
             Diameter { .. } => "diameter",
+            LinearDiameter { .. } => "linear_diameter",
         }
     }
 
@@ -225,6 +236,7 @@ impl Constraint {
             Angle { a, b, value } => Angle { a: f(a), b: f(b), value },
             Radius { curve, value } => Radius { curve: f(curve), value },
             Diameter { curve, value } => Diameter { curve: f(curve), value },
+            LinearDiameter { point, axis, value } => LinearDiameter { point: f(point), axis: f(axis), value },
         }
     }
 }

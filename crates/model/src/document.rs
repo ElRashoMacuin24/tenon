@@ -258,10 +258,13 @@ pub struct Hole {
     pub reverse: bool,
 }
 
-/// The points of a sketch a hole goes at by default: centre points, i.e. points that are not
+/// The points of a sketch a hole goes at by default: centre points, i.e. the sketch's own points that are not
 /// construction and not on any curve.
 pub fn hole_centres(sk: &Sketch) -> Vec<EntityId> {
-    sk.entities().filter(|(id, e)| !e.construction && sk.point(*id).is_some() && sk.curves_at(*id).is_empty()).map(|(id, _)| id).collect()
+    sk.entities()
+        .filter(|(id, e)| !e.construction && !e.reference && sk.point(*id).is_some() && sk.curves_at(*id).is_empty())
+        .map(|(id, _)| id)
+        .collect()
 }
 
 /// The usual drill point angle, 118 degrees.
@@ -747,7 +750,13 @@ fn check_sources(features: &[FeatureId]) -> Result<(), String> {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FeatureKind {
-    Sketch { plane: PlaneRef, sketch: Sketch },
+    Sketch {
+        plane: PlaneRef,
+        sketch: Sketch,
+        /// Edges of the part shown in the sketch as reference geometry (DEC-055).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        projections: Vec<crate::project::Projection>,
+    },
     Extrude(Extrude),
     Revolve(Revolve),
     Fillet(Fillet),
@@ -853,7 +862,9 @@ impl FeatureKind {
     /// Features this one depends on.
     pub fn depends_on(&self) -> Vec<FeatureId> {
         let mut v = match self {
-            FeatureKind::Sketch { plane, .. } => plane.feature().into_iter().collect(),
+            FeatureKind::Sketch { plane, projections, .. } => {
+                plane.feature().into_iter().chain(projections.iter().flat_map(|p| p.edge.features())).collect()
+            }
             FeatureKind::Extrude(e) => vec![e.sketch],
             FeatureKind::Revolve(r) => match r.axis {
                 AxisRef::Work(a) => vec![r.sketch, a],
@@ -1045,6 +1056,29 @@ impl Document {
         }
     }
 
+    /// The edges of the part shown in sketch `id` as reference geometry.
+    pub fn projections(&self, id: FeatureId) -> &[crate::project::Projection] {
+        match self.feature(id).map(|f| &f.kind) {
+            Some(FeatureKind::Sketch { projections, .. }) => projections,
+            _ => &[],
+        }
+    }
+    pub fn projections_mut(&mut self, id: FeatureId) -> Option<&mut Vec<crate::project::Projection>> {
+        match &mut self.feature_mut(id)?.kind {
+            FeatureKind::Sketch { projections, .. } => Some(projections),
+            _ => None,
+        }
+    }
+    /// Forgets projections whose geometry is gone from its sketch or is the sketch's own again
+    /// (deleted, or its link broken).
+    pub fn tidy_projections(&mut self) {
+        for f in &mut self.features {
+            if let FeatureKind::Sketch { sketch, projections, .. } = &mut f.kind {
+                projections.retain(|p| sketch.is_reference(p.entity));
+            }
+        }
+    }
+
     /// Appends a feature with a generated name ("Extrusion2"). Returns its id.
     pub fn add(&mut self, kind: FeatureKind) -> Result<FeatureId, String> {
         if self.features.len() >= MAX_FEATURES {
@@ -1204,7 +1238,18 @@ impl Document {
                 }
             }
             match &f.kind {
-                FeatureKind::Sketch { sketch, .. } => sketch.validate().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Sketch { sketch, projections, .. } => {
+                    sketch.validate().map_err(|e| format!("{}: {e}", f.name))?;
+                    let mut shown = std::collections::BTreeSet::new();
+                    for p in projections {
+                        if !sketch.is_reference(p.entity) {
+                            return Err(format!("{}: {} is said to be a projected edge but is not reference geometry", f.name, p.entity));
+                        }
+                        if !shown.insert(p.entity) {
+                            return Err(format!("{}: {} is projected from two edges", f.name, p.entity));
+                        }
+                    }
+                }
                 FeatureKind::Extrude(e) if self.sketch(e.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, e.sketch)),
                 FeatureKind::Extrude(e) => e.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Revolve(r) if self.sketch(r.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, r.sketch)),

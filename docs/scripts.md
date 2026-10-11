@@ -118,6 +118,7 @@ convert). `drw.dimension` places the dimension at `at`, or `by` an offset from t
 it measures. `drw.info` reports every view and every dimension's value and hole table's rows as
 they are now; after a model file changes, `drw.update` reads it again and the values follow.
 `examples/m4-plate/plate.json` uses all of this.
+
 ## Materials and design tables
 
 `document.material` gives the part a material of the library by name (`document.materials`
@@ -174,3 +175,34 @@ give such a step a `within`.
 The exports take `linear` (mm) and `angular` (rad), the furthest and the sharpest a triangle may
 depart from the surface; they are kept over the whole surface. `examples/m7-end-cap/end-cap.json`
 uses all of this.
+
+## Sketches on the part: projected edges, centre lines and the sketch tools
+
+A sketch on a face can show the face's edges (`project_edges`), and `sketch.project` shows any
+edge made before the sketch, or every edge of a face. What is shown is reference geometry: it
+is found again each time the part is rebuilt, the sketch's own geometry is dimensioned to it,
+and it bounds profiles. `sketch.info` marks it `reference` and lists the sketch's
+`projections`, each with `lost` when its edge is gone. `sketch.break_link` makes it the
+sketch's own.
+
+```json
+{ "run": "model.face_ref", "with": { "origin": { "type": "cap", "feature": "$block.feature", "end": "end" } }, "as": "top" },
+{ "run": "sketch.create", "with": { "face": "$top", "project_edges": true }, "as": "s" },
+{ "run": "sketch.circle", "with": { "sketch": "$s.feature", "cx": 5, "cy": 5, "r": 3 }, "as": "hole" },
+{ "run": "sketch.constrain", "with": { "sketch": "$s.feature", "constraint": { "type": "distance", "a": "$hole.center", "b": "$s.projected.0", "value": 8 } } },
+{ "run": "model.extrude", "with": { "sketch": "$s.feature", "through_all": true, "reverse": true, "operation": "cut" } }
+```
+
+`projected` lists the new reference curves in the order of the face's edges. The cut takes the
+circle, not the face round it: with no `regions` given, a sketch's own closed geometry comes
+before the outline it only shows.
+
+`sketch.centerline` gives a line the Centerline format: `model.revolve` turns about it when no
+axis is given, and a `linear_diameter` dimension (`point`, `axis`, `value`) is a diameter across
+it.
+
+The Modify and Pattern tools are commands too: `sketch.move`, `sketch.rotate` and
+`sketch.scale` (each with `copy`), `sketch.extend`, `sketch.split`, `sketch.pattern.rect` and
+`sketch.pattern.circular`; and so are the shapes of the drop-downs: `sketch.slot`,
+`sketch.rectangle_center`, `sketch.rectangle3`, `sketch.arc_tangent`. Angles given to sketch
+commands are in radians. [commands.md](commands.md) lists what each takes.

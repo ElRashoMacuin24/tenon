@@ -43,12 +43,16 @@ impl From<tenon_sketch::SketchError> for CmdError {
 pub type CmdResult = Result<Value, CmdError>;
 pub type DocFn = fn(&mut Session, &Value) -> CmdResult;
 pub type GeoFn = fn(&mut Session, &mut dyn Kernel, &Value) -> CmdResult;
+pub type OptFn = fn(&mut Session, Option<&mut dyn Kernel>, &Value) -> CmdResult;
 
 /// How a command runs.
 #[derive(Clone, Copy)]
 pub enum Run {
     /// Edits or reads the document only.
     Doc(DocFn),
+    /// Uses the geometry kernel when there is one; without it (the app, whose kernel is on
+    /// another thread) it needs what the kernel would have worked out given in its parameters.
+    Opt(OptFn),
     /// Needs the geometry kernel.
     Geo(GeoFn),
 }
@@ -74,6 +78,9 @@ impl std::fmt::Debug for CommandSpec {
 
 /// Undo depth.
 const MAX_UNDO: usize = 200;
+/// Most times a part is regenerated again because projected geometry that moved with it changed
+/// something else.
+const MAX_FOLLOW: usize = 4;
 
 /// A document with undo/redo and a cached regeneration.
 pub struct Session {
@@ -142,7 +149,12 @@ impl Session {
         let before = self.doc.clone();
         // Equations follow every change, in the same undo step; a change they cannot follow
         // is refused.
-        match f(&mut self.doc).and_then(|v| if self.doc != before { self.doc.sync_parameters().map(|()| v).map_err(CmdError) } else { Ok(v) }) {
+        let follow = |doc: &mut Document| {
+            // (A projected edge deleted from its sketch, or made the sketch's own, is forgotten.)
+            doc.tidy_projections();
+            doc.sync_parameters()
+        };
+        match f(&mut self.doc).and_then(|v| if self.doc != before { follow(&mut self.doc).map(|()| v).map_err(CmdError) } else { Ok(v) }) {
             Ok(v) => {
                 if self.doc != before {
                     self.undo.push(before);
@@ -189,13 +201,49 @@ impl Session {
             if let Some((_, mut old)) = self.regen.take() {
                 old.release(k);
             }
-            let r = regenerate(&self.doc, k);
+            let mut r = regenerate(&self.doc, k);
+            // Projected geometry follows the part; when that moves something else (an equation
+            // reading a dimension to a projected edge), the part is rebuilt with it.
+            for _ in 0..MAX_FOLLOW {
+                if !self.follow_projections(&r.sketches) {
+                    break;
+                }
+                r.release(k);
+                r = regenerate(&self.doc, k);
+            }
             self.regen = Some((self.revision, r));
         }
         match &self.regen {
             Some((_, r)) => r,
             None => unreachable_regen(),
         }
+    }
+
+    /// The document's sketches take up where a regeneration found their projected geometry
+    /// (`Regen::sketches`, `Scene::sketches`). It is not an edit: there is no undo step, and
+    /// undoing whatever moved the part puts the sketches back with it. True when more than those
+    /// sketches changed (an equation follows a dimension to a projected edge): the part is then
+    /// to be regenerated again, and the revision says so.
+    pub fn follow_projections(&mut self, sketches: &std::collections::BTreeMap<FeatureId, std::sync::Arc<Sketch>>) -> bool {
+        let mut moved = false;
+        for (id, resolved) in sketches {
+            if let Some(sk) = self.doc.sketch_mut(*id) {
+                moved |= crate::project::follow(sk, resolved).unwrap_or(false);
+            }
+        }
+        if !moved {
+            return false;
+        }
+        let followed = self.doc.clone();
+        if self.doc.sync_parameters().is_err() {
+            self.doc = followed;
+            return false;
+        }
+        let more = self.doc != followed;
+        if more {
+            self.revision += 1;
+        }
+        more
     }
 
     /// Runs a command. `kernel` is required for geometry commands.
@@ -206,6 +254,7 @@ impl Session {
         }
         match spec.run {
             Run::Doc(f) => f(self, params),
+            Run::Opt(f) => f(self, kernel, params),
             Run::Geo(f) => {
                 let k = kernel.ok_or_else(|| CmdError(format!("{} needs the geometry kernel", spec.id)))?;
                 f(self, k, params)
@@ -655,7 +704,7 @@ fn model_mirror(s: &mut Session, p: &Value) -> CmdResult {
     add_copy(s, FeatureKind::Mirror(Mirror { features, plane: plane_param(p)? }), p)
 }
 
-fn sketch_create(s: &mut Session, p: &Value) -> CmdResult {
+fn sketch_create(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let plane = plane_param(p)?;
     if let PlaneRef::Work(id) = plane
         && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
@@ -673,9 +722,32 @@ fn sketch_create(s: &mut Session, p: &Value) -> CmdResult {
     } else {
         None
     };
-    let id = s.edit(|d| d.add(FeatureKind::Sketch { plane, sketch }).map_err(CmdError))?;
+    // A sketch on a face may show the face's edges from the start (DEC-055): looked up by the
+    // kernel, or as the caller says they are.
+    let project = p.get("project_edges").and_then(Value::as_bool).unwrap_or(false);
+    let found: Vec<Found> = match (&plane, k, p.get("geometry")) {
+        (_, _, Some(_)) => said(p, parse(p, "edges")?)?,
+        (PlaneRef::Face(f), Some(k), None) if project => {
+            let r = s.regen(k).clone();
+            let (b, fi) = r.resolve(f, k).map_err(CmdError)?;
+            let shape = r.bodies.get(b).ok_or("no such body")?.shape;
+            let info = k.face_info(shape.face(fi)).map_err(|e| CmdError(e.to_string()))?;
+            let frame = crate::regen::frame_on_face(&info.surface).ok_or("a sketch needs a flat face")?;
+            edges_round(&r, k, f)?.into_iter().map(|e| (e.clone(), edge_on_plane(&r, k, &e, &frame))).collect()
+        }
+        (PlaneRef::Face(_), None, None) if project => {
+            return Err("sketch.create with project_edges needs the geometry kernel, or `edges` and `geometry` as for sketch.project".into());
+        }
+        _ => Vec::new(),
+    };
+    let (id, projected) = s.edit(|d| {
+        let id = d.add(FeatureKind::Sketch { plane, sketch, projections: Vec::new() }).map_err(CmdError)?;
+        let index = d.index_of(id).unwrap_or(usize::MAX);
+        let (entities, _) = put_projections(d, id, index, found, true)?;
+        Ok((id, entities))
+    })?;
     let name = s.document().feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    Ok(json!({ "feature": id.0, "name": name, "origin": origin }))
+    Ok(json!({ "feature": id.0, "name": name, "origin": origin, "projected": projected }))
 }
 
 fn sketch_point(s: &mut Session, p: &Value) -> CmdResult {
@@ -699,8 +771,12 @@ fn sketch_line(s: &mut Session, p: &Value) -> CmdResult {
 fn sketch_circle(s: &mut Session, p: &Value) -> CmdResult {
     let c = point_ref(p, "center", "cx", "cy")?;
     let r = num(p, "r")?;
-    let id = on_sketch(s, p, |sk| Ok(sk.add_circle(c, r)?))?;
-    Ok(json!({ "circle": id.0 }))
+    let (id, center) = on_sketch(s, p, |sk| {
+        let id = sk.add_circle(c, r)?;
+        let center = sk.entity(id).and_then(|e| e.geometry.points().first().copied());
+        Ok((id, center))
+    })?;
+    Ok(json!({ "circle": id.0, "center": center.map(|c| c.0) }))
 }
 
 fn sketch_arc(s: &mut Session, p: &Value) -> CmdResult {
@@ -922,6 +998,255 @@ fn sketch_mirror(s: &mut Session, p: &Value) -> CmdResult {
     Ok(json!({ "entities": new.iter().map(|e| e.0).collect::<Vec<_>>() }))
 }
 
+fn entity_ids(list: &[EntityId]) -> Vec<u32> {
+    list.iter().map(|e| e.0).collect()
+}
+
+/// Moves, turns or scales sketch geometry, or copies it so (`copy`).
+fn sketch_transform(s: &mut Session, p: &Value, motion: tenon_sketch::Motion) -> CmdResult {
+    let list = ids(p, "entities")?;
+    let copy = p.get("copy").and_then(Value::as_bool).unwrap_or(false);
+    let out = on_sketch(s, p, |sk| Ok(sk.transform(&list, motion, copy)?))?;
+    Ok(json!({ "entities": entity_ids(&out) }))
+}
+
+fn sketch_move(s: &mut Session, p: &Value) -> CmdResult {
+    sketch_transform(s, p, tenon_sketch::Motion::Shift(pos(p, "dx", "dy")?))
+}
+
+fn sketch_rotate(s: &mut Session, p: &Value) -> CmdResult {
+    sketch_transform(s, p, tenon_sketch::Motion::Turn { about: pos(p, "cx", "cy")?, angle: num(p, "angle")? })
+}
+
+fn sketch_scale(s: &mut Session, p: &Value) -> CmdResult {
+    sketch_transform(s, p, tenon_sketch::Motion::Scale { about: pos(p, "cx", "cy")?, factor: num(p, "factor")? })
+}
+
+fn sketch_extend(s: &mut Session, p: &Value) -> CmdResult {
+    let (c, at) = (EntityId(id_u32(p, "curve")?), pos(p, "x", "y")?);
+    on_sketch(s, p, |sk| Ok(sk.extend(c, at)?))?;
+    Ok(json!({}))
+}
+
+fn sketch_split(s: &mut Session, p: &Value) -> CmdResult {
+    let (c, at) = (EntityId(id_u32(p, "curve")?), pos(p, "x", "y")?);
+    let new = on_sketch(s, p, |sk| Ok(sk.split(c, at)?))?;
+    Ok(json!({ "curve": new.0 }))
+}
+
+/// A direction for a sketch pattern: along a line of the sketch (`along`), or as `dx`, `dy`.
+fn direction(sk: &Sketch, p: &Value, along: &str, dx: &str, dy: &str) -> Result<Option<Vec2>, CmdError> {
+    if let Some(line) = opt_id(p, along)? {
+        let (a, b) = sk.line(EntityId(line)).ok_or_else(|| CmdError(format!("`{along}` must be a line of the sketch")))?;
+        return Ok(Some(b - a));
+    }
+    match (opt_num(p, dx)?, opt_num(p, dy)?) {
+        (None, None) => Ok(None),
+        (x, y) => Ok(Some(Vec2::new(x.unwrap_or(0.0), y.unwrap_or(0.0)))),
+    }
+}
+
+fn sketch_pattern_rect(s: &mut Session, p: &Value) -> CmdResult {
+    let list = ids(p, "entities")?;
+    let (n1, s1) = (count(p, "count", None)?, num(p, "spacing")?);
+    let n2 = count(p, "count2", Some(1))?;
+    let s2 = opt_num(p, "spacing2")?;
+    let out = on_sketch(s, p, |sk| {
+        let d1 = direction(sk, p, "along", "dx", "dy")?.ok_or("give the direction of the pattern: `along` (a line of the sketch) or `dx`, `dy`")?;
+        let second = match (n2, direction(sk, p, "along2", "dx2", "dy2")?) {
+            (1, _) => None,
+            // Square to the first, to its left, unless told otherwise.
+            (n, d) => Some((d.unwrap_or_else(|| d1.perp()), n, s2.ok_or("a second direction needs `spacing2`")?)),
+        };
+        Ok(sk.pattern_rect(&list, d1, n1, s1, second)?)
+    })?;
+    Ok(json!({ "entities": entity_ids(&out) }))
+}
+
+fn sketch_pattern_circular(s: &mut Session, p: &Value) -> CmdResult {
+    let list = ids(p, "entities")?;
+    let n = count(p, "count", None)?;
+    let angle = opt_num(p, "angle")?.unwrap_or(std::f64::consts::TAU);
+    let out = on_sketch(s, p, |sk| {
+        let about = match opt_id(p, "center")? {
+            Some(c) => sk.point(EntityId(c)).ok_or("`center` must be a point of the sketch")?,
+            None => pos(p, "cx", "cy")?,
+        };
+        Ok(sk.pattern_circular(&list, about, n, angle)?)
+    })?;
+    Ok(json!({ "entities": entity_ids(&out) }))
+}
+
+fn sketch_slot(s: &mut Session, p: &Value) -> CmdResult {
+    let (a, b, width) = (pos(p, "x1", "y1")?, pos(p, "x2", "y2")?, num(p, "width")?);
+    // The two points are the centres of the ends, the ends themselves, or the middle and one
+    // centre.
+    let (a, b) = match p.get("by").and_then(Value::as_str).unwrap_or("centers") {
+        "centers" => (a, b),
+        "overall" => {
+            let (d, len) = ((b - a).normalized(), a.dist(b));
+            if len <= width {
+                return Err("an overall slot is longer than it is wide".into());
+            }
+            (a + d * (width / 2.0), b - d * (width / 2.0))
+        }
+        "center" => (a * 2.0 - b, b),
+        other => return Err(CmdError(format!("`by` is `{other}`: it must be centers, overall or center"))),
+    };
+    let slot = on_sketch(s, p, |sk| Ok(sk.add_slot(a, b, width)?))?;
+    Ok(json!({ "lines": entity_ids(&slot.lines), "arcs": entity_ids(&slot.arcs), "centers": entity_ids(&slot.centers) }))
+}
+
+fn sketch_rectangle_center(s: &mut Session, p: &Value) -> CmdResult {
+    let (c, corner) = (pos(p, "cx", "cy")?, pos(p, "x", "y")?);
+    let (lines, center) = on_sketch(s, p, |sk| Ok(sk.add_rectangle_center(c, corner)?))?;
+    Ok(json!({ "lines": entity_ids(&lines), "center": center.0 }))
+}
+
+fn sketch_rectangle3(s: &mut Session, p: &Value) -> CmdResult {
+    let (a, b, c) = (pos(p, "x1", "y1")?, pos(p, "x2", "y2")?, pos(p, "x3", "y3")?);
+    let lines = on_sketch(s, p, |sk| Ok(sk.add_rectangle_3(a, b, c)?))?;
+    Ok(json!({ "lines": entity_ids(&lines) }))
+}
+
+fn sketch_arc_tangent(s: &mut Session, p: &Value) -> CmdResult {
+    let (from, to) = (EntityId(id_u32(p, "from")?), pos(p, "x", "y")?);
+    let arc = on_sketch(s, p, |sk| Ok(sk.add_arc_tangent(from, to)?))?;
+    Ok(json!({ "arc": arc.0 }))
+}
+
+/// An edge of the part and what it is on a sketch plane, or why it cannot be shown there.
+type Found = (EdgeRef, Result<crate::project::Projected, String>);
+
+/// What edge `e` of the part regenerated as `r` is on the plane of `frame`.
+fn edge_on_plane(r: &Regen, k: &dyn Kernel, e: &EdgeRef, frame: &tenon_geom::Frame) -> Result<crate::project::Projected, String> {
+    let (b, ei) = r.resolve_edge(e, k)?;
+    let shape = r.bodies.get(b).ok_or("no such body")?.shape;
+    let info = k.edge_info(shape.edge(ei)).map_err(|e| e.to_string())?;
+    crate::project::project(&crate::project::EdgeGeom { curve: &info.curve, ends: [info.start, info.end], mid: info.mid }, frame)
+}
+
+/// The edges round face `f` that can be found again (both their faces have names).
+fn edges_round(r: &Regen, k: &dyn Kernel, f: &FaceRef) -> Result<Vec<EdgeRef>, CmdError> {
+    let (b, fi) = r.resolve(f, k).map_err(CmdError)?;
+    let shape = r.bodies.get(b).ok_or("no such body")?.shape;
+    let topo = k.topology(shape).map_err(|e| CmdError(e.to_string()))?;
+    Ok(topo.face_edges.get(fi as usize).into_iter().flatten().filter_map(|e| r.edge_ref(b, *e, k).ok()).collect())
+}
+
+/// `edges` with what the caller says each is on the sketch plane (`geometry`, one for one).
+fn said(p: &Value, edges: Vec<EdgeRef>) -> Result<Vec<Found>, CmdError> {
+    let given: Vec<crate::project::Projected> = parse(p, "geometry")?;
+    if given.len() != edges.len() {
+        return Err("`geometry` says what each of `edges` is on the sketch plane, one for one".into());
+    }
+    Ok(edges.into_iter().zip(given.into_iter().map(Ok)).collect())
+}
+
+/// Puts `found` into sketch `id` (the feature at `index`) as reference geometry. With `lenient`,
+/// edges that cannot be shown are left out and why is returned; otherwise the first is an error.
+fn put_projections(doc: &mut Document, id: FeatureId, index: usize, found: Vec<Found>, lenient: bool) -> Result<(Vec<u32>, Vec<String>), CmdError> {
+    let (mut entities, mut skipped) = (Vec::new(), Vec::new());
+    for (edge, at) in found {
+        if let Some(later) = edge.features().into_iter().find(|f| doc.index_of(*f).is_none_or(|i| i >= index)) {
+            let name = doc.feature(later).map_or_else(|| later.to_string(), |f| f.name.clone());
+            return Err(CmdError(format!(
+                "that edge is made by {name}, which comes after the sketch: only what is there before a sketch can be projected into it"
+            )));
+        }
+        let at = match at {
+            Ok(at) => at,
+            Err(why) if lenient => {
+                skipped.push(why);
+                continue;
+            }
+            Err(why) => return Err(CmdError(format!("that edge cannot be projected: {why}"))),
+        };
+        // (Projected already: the same geometry is not put in twice.)
+        if let Some(there) = doc.projections(id).iter().find(|p| p.edge.faces == edge.faces && p.edge.fingerprint.distance(&edge.fingerprint) < 1e-6)
+        {
+            entities.push(there.entity.0);
+            continue;
+        }
+        let sk = doc.sketch_mut(id).ok_or_else(|| CmdError(format!("{id} is not a sketch")))?;
+        let entity = crate::project::add(sk, &at).map_err(CmdError)?;
+        if let Some(list) = doc.projections_mut(id) {
+            list.push(crate::project::Projection { entity, edge });
+        }
+        entities.push(entity.0);
+    }
+    Ok((entities, skipped))
+}
+
+/// Projects edges of the part into a sketch as reference geometry: other geometry is
+/// constrained and dimensioned to it, it bounds profiles, and it follows the part (DEC-055).
+fn sketch_project(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let id = sketch_id(p)?;
+    let index = s.document().index_of(id).filter(|_| s.document().sketch(id).is_some()).ok_or_else(|| CmdError(format!("{id} is not a sketch")))?;
+    let mut edges: Vec<EdgeRef> = match (p.get("edge"), p.get("edges")) {
+        (Some(_), _) => vec![parse(p, "edge")?],
+        (None, Some(_)) => parse(p, "edges")?,
+        _ => Vec::new(),
+    };
+    let face: Option<FaceRef> = if p.get("face").is_some() { Some(parse(p, "face")?) } else { None };
+    if edges.is_empty() && face.is_none() {
+        return Err("give `edge` or `edges` (from model.edge_ref), or `face`: a face whose edges are all projected".into());
+    }
+    // An edge asked for by itself must be had; of a face's edges those that cannot be shown
+    // (a curve sketches do not have) are left out, and said.
+    let lenient = face.is_some();
+    let found: Vec<Found> = match (k, p.get("geometry")) {
+        (_, Some(_)) if face.is_some() => return Err("with `geometry`, name the edges themselves: `face` is for the kernel to look up".into()),
+        (_, Some(_)) => said(p, edges)?,
+        (Some(k), None) => {
+            // The part as it stands when the sketch is reached: later features may have cut
+            // the edge short.
+            let mut upto = s.document().clone();
+            let next = upto.features().get(index + 1).map(|f| f.id);
+            upto.set_end_of_part(next).map_err(CmdError)?;
+            let mut r = regenerate(&upto, k);
+            let out = (|| -> Result<Vec<Found>, CmdError> {
+                let frame = *r.sketch_frames.get(&id).ok_or("the sketch's plane is not there: a feature before it fails")?;
+                if let Some(f) = &face {
+                    edges.extend(edges_round(&r, k, f)?);
+                }
+                Ok(edges.into_iter().map(|e| (e.clone(), edge_on_plane(&r, k, &e, &frame))).collect())
+            })();
+            r.release(k);
+            out?
+        }
+        (None, None) => return Err("sketch.project needs the geometry kernel, or `geometry`: what each edge is on the sketch plane".into()),
+    };
+    let (entities, skipped) = s.edit(|doc| put_projections(doc, id, index, found, lenient))?;
+    Ok(json!({ "entities": entities, "skipped": skipped }))
+}
+
+/// Makes projected geometry the sketch's own: it stays where it is and no longer follows the
+/// part.
+fn sketch_break_link(s: &mut Session, p: &Value) -> CmdResult {
+    let list = ids(p, "entities")?;
+    on_sketch(s, p, |sk| {
+        for e in &list {
+            if !sk.is_reference(*e) {
+                return Err(CmdError(format!("{e} is not projected geometry")));
+            }
+            let points = sk.geometry(*e).map(tenon_sketch::Geometry::points).unwrap_or_default();
+            for id in points.into_iter().chain([*e]) {
+                sk.set_reference(id, false)?;
+            }
+        }
+        Ok(())
+    })?;
+    Ok(json!({}))
+}
+
+fn sketch_centerline(s: &mut Session, p: &Value) -> CmdResult {
+    let e = EntityId(id_u32(p, "entity")?);
+    let on = p.get("on").and_then(Value::as_bool).unwrap_or(true);
+    on_sketch(s, p, |sk| Ok(sk.set_centerline(e, on)?))?;
+    Ok(json!({}))
+}
+
 /// Entities, constraints, degrees of freedom and closed regions of a sketch.
 pub fn sketch_info_value(sk: &Sketch) -> Value {
     let dof = sk.dof();
@@ -932,6 +1257,12 @@ pub fn sketch_info_value(sk: &Sketch) -> Value {
             if let Some(o) = v.as_object_mut() {
                 o.insert("id".into(), json!(id.0));
                 o.insert("construction".into(), json!(e.construction));
+                if e.centerline {
+                    o.insert("centerline".into(), json!(true));
+                }
+                if e.reference {
+                    o.insert("reference".into(), json!(true));
+                }
                 o.insert("fully_constrained".into(), json!(dof.as_ref().is_ok_and(|d| d.fully_constrained.contains(&id))));
             }
             v
@@ -977,7 +1308,22 @@ pub fn sketch_info_value(sk: &Sketch) -> Value {
 fn sketch_info(s: &mut Session, p: &Value) -> CmdResult {
     let id = sketch_id(p)?;
     let sk = s.document().sketch(id).ok_or_else(|| CmdError(format!("{id} is not a sketch")))?;
-    Ok(sketch_info_value(sk))
+    let mut info = sketch_info_value(sk);
+    // The edges of the part shown in it; `lost` when the last regeneration did not find one.
+    let lost = s.regen.as_ref().filter(|(rev, _)| *rev == s.revision).and_then(|(_, r)| r.lost.get(&id));
+    let shown: Vec<Value> = s
+        .document()
+        .projections(id)
+        .iter()
+        .map(|p| {
+            let why = lost.and_then(|l| l.iter().find(|(e, _)| *e == p.entity)).map(|(_, why)| why.as_str());
+            json!({ "entity": p.entity.0, "edge": p.edge, "lost": why })
+        })
+        .collect();
+    if !shown.is_empty() {
+        info["projections"] = Value::Array(shown);
+    }
+    Ok(info)
 }
 
 fn operation(p: &Value) -> Result<Operation, CmdError> {
@@ -1030,7 +1376,19 @@ fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
 
 fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
-    let axis = axis_ref(s, p)?;
+    let axis = match p.get("axis") {
+        // Without an axis, the sketch's centre line is it.
+        None | Some(Value::Null) => {
+            let sk = s.document().sketch(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
+            let lines: Vec<EntityId> = sk.entities().filter(|(_, e)| e.centerline).map(|(id, _)| id).collect();
+            match lines.as_slice() {
+                [one] => AxisRef::SketchLine(*one),
+                [] => return Err("give `axis`: a sketch line's id or \"x\", \"y\" or \"z\" (the sketch has no centre line to turn about)".into()),
+                _ => return Err("give `axis`: the sketch has more than one centre line".into()),
+            }
+        }
+        Some(_) => axis_ref(s, p)?,
+    };
     let angle = match opt_num(p, "angle")? {
         None => RevolveAngle::Full,
         Some(a) if p.get("symmetric").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::Symmetric(a),
@@ -1792,16 +2150,22 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!("table.add_column", "Add Table Column", "name: a parameter; every row gets its present value", true, table_add_column),
     doc_cmd!("table.remove_column", "Remove Table Column", "name; the parameter keeps its value", true, table_remove_column),
     doc_cmd!("table.activate", "Activate Row", "row: the part takes that row's values", true, table_activate),
-    doc_cmd!(
-        "sketch.create",
-        "New Sketch",
-        "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref; project_origin (default true: a fixed point at the part origin, returned as `origin`)",
-        true,
-        sketch_create
-    ),
+    CommandSpec {
+        id: "sketch.create",
+        label: "New Sketch",
+        help: "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref; project_origin (default true: a fixed point at the part origin, returned as `origin`); project_edges (default false): on a face, the face's edges are shown in the sketch as reference geometry, as sketch.project does (or give `edges` and `geometry` as for sketch.project). Returns the feature, and the entities `projected`",
+        mutates: true,
+        run: Run::Opt(sketch_create),
+    },
     doc_cmd!("sketch.point", "Point", "sketch, x, y", true, sketch_point),
     doc_cmd!("sketch.line", "Line", "sketch; start (point id) or x1, y1; end (point id) or x2, y2", true, sketch_line),
-    doc_cmd!("sketch.circle", "Circle", "sketch; center (point id) or cx, cy; r", true, sketch_circle),
+    doc_cmd!(
+        "sketch.circle",
+        "Circle",
+        "sketch; center (point id) or cx, cy; r. Returns the circle and its centre point (`center`)",
+        true,
+        sketch_circle
+    ),
     doc_cmd!("sketch.arc", "Arc", "sketch; center or cx, cy; start or x1, y1; end or x2, y2 (counter-clockwise)", true, sketch_arc),
     doc_cmd!("sketch.arc3", "Three-Point Arc", "sketch, x1, y1, x2, y2 (a point on the arc), x3, y3", true, sketch_arc3),
     doc_cmd!(
@@ -1845,10 +2209,108 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!("sketch.drag", "Drag Point", "sketch, point (id), x, y", true, sketch_drag),
     doc_cmd!("sketch.delete", "Delete", "sketch, entities: [ids]", true, sketch_delete),
     doc_cmd!("sketch.construction", "Construction", "sketch, entity (id), on (default true)", true, sketch_construction),
+    doc_cmd!(
+        "sketch.centerline",
+        "Centerline",
+        "sketch, entity (a line's id), on (default true). A centre line is the axis a revolution turns about unless told otherwise, and a dimension to it is a diameter; it still bounds profiles",
+        true,
+        sketch_centerline
+    ),
+    CommandSpec {
+        id: "sketch.project",
+        label: "Project Geometry",
+        help: "sketch; edge or edges: edge references (model.edge_ref), or face: a face reference whose edges are all projected. The edges are shown in the sketch as reference geometry: it follows the part, other geometry is constrained and dimensioned to it, and it bounds profiles. Only edges made before the sketch; straight and circular ones. geometry: what each of `edges` is on the sketch plane (for callers without a kernel). Returns the entities, and why any edge of a face was left out",
+        mutates: true,
+        run: Run::Opt(sketch_project),
+    },
+    doc_cmd!(
+        "sketch.break_link",
+        "Break Link",
+        "sketch, entities: [ids of projected curves or points]. They stay where they are, become the sketch's own geometry and no longer follow the part",
+        true,
+        sketch_break_link
+    ),
     doc_cmd!("sketch.fillet", "Sketch Fillet", "sketch, point (corner id), radius", true, sketch_fillet),
     doc_cmd!("sketch.trim", "Trim", "sketch, curve (id), x, y (the piece to remove)", true, sketch_trim),
     doc_cmd!("sketch.offset", "Offset", "sketch, curves: [ids], distance (positive: outward / left)", true, sketch_offset),
     doc_cmd!("sketch.mirror", "Mirror", "sketch, entities: [ids], axis (line id)", true, sketch_mirror),
+    doc_cmd!(
+        "sketch.move",
+        "Move",
+        "sketch, entities: [ids], dx, dy; copy (default false: with it the geometry stays and a copy is made). What is joined or constrained to the geometry follows; what holds it where it is refuses the move. Returns the entities moved, or the copies",
+        true,
+        sketch_move
+    ),
+    doc_cmd!(
+        "sketch.rotate",
+        "Rotate",
+        "sketch, entities: [ids], cx, cy (the point to turn about), angle (rad, counter-clockwise); copy. Level and upright constraints within what turns are dropped (swapped by quarter turns)",
+        true,
+        sketch_rotate
+    ),
+    doc_cmd!(
+        "sketch.scale",
+        "Scale",
+        "sketch, entities: [ids], cx, cy (the point that stays), factor; copy. Dimensions within what is scaled are scaled with it",
+        true,
+        sketch_scale
+    ),
+    doc_cmd!(
+        "sketch.extend",
+        "Extend",
+        "sketch, curve (a line or an arc), x, y (near the end to extend). The end goes on along the curve to the nearest curve in its way and is held on it",
+        true,
+        sketch_extend
+    ),
+    doc_cmd!(
+        "sketch.split",
+        "Split",
+        "sketch, curve (a line, an arc or a circle), x, y (near the crossing to split at). The curve becomes two that share a point held on the curve crossing there; returns the new one",
+        true,
+        sketch_split
+    ),
+    doc_cmd!(
+        "sketch.pattern.rect",
+        "Rectangular Sketch Pattern",
+        "sketch, entities: [ids]; along (a line's id) or dx, dy: the direction; count (the original counted), spacing; and for a second direction count2, spacing2 and along2 or dx2, dy2 (default: square to the first). Returns the copies, which are geometry of their own (they do not follow the original afterwards)",
+        true,
+        sketch_pattern_rect
+    ),
+    doc_cmd!(
+        "sketch.pattern.circular",
+        "Circular Sketch Pattern",
+        "sketch, entities: [ids]; center (a point's id) or cx, cy; count (the original counted); angle (rad, default a whole turn, divided evenly; less reaches from the first to the last). Returns the copies",
+        true,
+        sketch_pattern_circular
+    ),
+    doc_cmd!(
+        "sketch.slot",
+        "Slot",
+        "sketch, x1, y1, x2, y2, width; by: centers (default: the two points are the centres of the round ends) | overall (they are the ends of the slot) | center (the middle of the slot and one centre). Returns its lines, arcs and the centre points of its ends",
+        true,
+        sketch_slot
+    ),
+    doc_cmd!(
+        "sketch.rectangle_center",
+        "Rectangle from Centre",
+        "sketch, cx, cy (its centre), x, y (a corner); returns its lines and the centre point, which stays its centre",
+        true,
+        sketch_rectangle_center
+    ),
+    doc_cmd!(
+        "sketch.rectangle3",
+        "Three-Point Rectangle",
+        "sketch, x1, y1, x2, y2 (one side), x3, y3 (a point on the opposite side): a rectangle at any angle",
+        true,
+        sketch_rectangle3
+    ),
+    doc_cmd!(
+        "sketch.arc_tangent",
+        "Tangent Arc",
+        "sketch, from (the free end point of a line or an arc), x, y (where the arc ends): an arc that carries on from the curve, tangent to it",
+        true,
+        sketch_arc_tangent
+    ),
     doc_cmd!("sketch.info", "Sketch Info", "sketch", false, sketch_info),
     doc_cmd!(
         "model.extrude",
@@ -1860,7 +2322,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.revolve",
         "Revolve",
-        "sketch; axis: line id or \"x\" | \"y\" | \"z\"; angle (rad, default full); symmetric; operation; regions",
+        "sketch; axis: line id or \"x\" | \"y\" | \"z\" (default: the sketch's centre line, when it has one); angle (rad, default full); symmetric; operation; regions",
         true,
         model_revolve
     ),

@@ -39,6 +39,8 @@ pub(crate) struct Chrome {
     pub about: bool,
     pub mass: bool,
     pub options: bool,
+    /// Application Options: a new sketch on a face shows the face's edges as reference geometry.
+    pub autoproject: bool,
     /// The Design Table dialog is open, and the parameters ticked in it for a new table.
     pub table: bool,
     pub table_pick: std::collections::BTreeSet<String>,
@@ -92,6 +94,7 @@ impl Default for Chrome {
             about: false,
             mass: false,
             options: false,
+            autoproject: true,
             params: false,
             table: false,
             table_pick: Default::default(),
@@ -606,33 +609,50 @@ impl Workbench {
                 Hit::Arrow(at) => clicked = Some((id, Some(at))),
                 Hit::None => {}
             };
-            for cmd in panel.commands.iter().filter(|c| c.size == Size::Large) {
-                let w = cmd.label.split('\n').map(|l| text_width(ui, l, theme::small())).fold(0.0, f32::max)
-                    + if cmd.more.is_empty() { 12.0 } else { 20.0 };
-                let w = w.max(44.0);
-                hit(ribbon_button(ui, Rect::from_min_size(pos2(x, top), vec2(w, content_h)), cmd, active_tool == Some(cmd.id), t), cmd.id);
-                x += w + 2.0;
-            }
+            // Buttons in the order the panel lists them, in runs of one size: large ones side
+            // by side, small ones and icon-only ones three to a column.
             let row_h = content_h / 3.0;
-            let smalls: Vec<&UiCommand> = panel.commands.iter().filter(|c| c.size == Size::Small).collect();
-            for column in smalls.chunks(3) {
-                let w = column
-                    .iter()
-                    .map(|c| text_width(ui, &c.name(), theme::small()) + if c.more.is_empty() { 30.0 } else { 42.0 })
-                    .fold(0.0, f32::max);
-                for (row, cmd) in column.iter().enumerate() {
-                    let br = Rect::from_min_size(pos2(x, top + row as f32 * row_h), vec2(w, row_h - 1.0));
-                    hit(ribbon_button(ui, br, cmd, active_tool == Some(cmd.id), t), cmd.id);
+            let mut rest: &[UiCommand] = panel.commands;
+            while let Some(first) = rest.first() {
+                let n = rest.iter().take_while(|c| c.size == first.size).count();
+                let (run, after) = rest.split_at(n);
+                rest = after;
+                match first.size {
+                    Size::Large => {
+                        for cmd in run {
+                            let w = cmd.label.split('\n').map(|l| text_width(ui, l, theme::small())).fold(0.0, f32::max)
+                                + if cmd.more.is_empty() { 12.0 } else { 20.0 };
+                            let w = w.max(44.0);
+                            hit(
+                                ribbon_button(ui, Rect::from_min_size(pos2(x, top), vec2(w, content_h)), cmd, active_tool == Some(cmd.id), t),
+                                cmd.id,
+                            );
+                            x += w + 2.0;
+                        }
+                    }
+                    Size::Small => {
+                        for column in run.chunks(3) {
+                            let w = column
+                                .iter()
+                                .map(|c| text_width(ui, &c.name(), theme::small()) + if c.more.is_empty() { 30.0 } else { 42.0 })
+                                .fold(0.0, f32::max);
+                            for (row, cmd) in column.iter().enumerate() {
+                                let br = Rect::from_min_size(pos2(x, top + row as f32 * row_h), vec2(w, row_h - 1.0));
+                                hit(ribbon_button(ui, br, cmd, active_tool == Some(cmd.id), t), cmd.id);
+                            }
+                            x += w + 3.0;
+                        }
+                    }
+                    Size::Icon => {
+                        for column in run.chunks(3) {
+                            for (row, cmd) in column.iter().enumerate() {
+                                let br = Rect::from_min_size(pos2(x, top + row as f32 * row_h + (row_h - 22.0) / 2.0), vec2(22.0, 22.0));
+                                hit(ribbon_button(ui, br, cmd, active_tool == Some(cmd.id), t), cmd.id);
+                            }
+                            x += 24.0;
+                        }
+                    }
                 }
-                x += w + 3.0;
-            }
-            let glyphs: Vec<&UiCommand> = panel.commands.iter().filter(|c| c.size == Size::Icon).collect();
-            for column in glyphs.chunks(3) {
-                for (row, cmd) in column.iter().enumerate() {
-                    let br = Rect::from_min_size(pos2(x, top + row as f32 * row_h + (row_h - 22.0) / 2.0), vec2(22.0, 22.0));
-                    hit(ribbon_button(ui, br, cmd, active_tool == Some(cmd.id), t), cmd.id);
-                }
-                x += 24.0;
             }
             let title = Rect::from_min_max(pos2(start, r.bottom() - title_h - 1.0), pos2(x, r.bottom() - 1.0));
             ui.painter().text(title.center(), Align2::CENTER_CENTER, panel.title, theme::small(), t.text_dim);
@@ -841,6 +861,13 @@ impl Workbench {
             ui.checkbox(&mut self.chrome.show_cube, "Orientation cube");
             ui.checkbox(&mut self.chrome.show_navbar, "Navigation bar");
             ui.checkbox(&mut self.chrome.show_browser, "Model browser");
+            ui.add_space(6.0);
+            ui.strong("Sketch");
+            let r = ui.checkbox(&mut self.chrome.autoproject, "Autoproject edges for sketch creation and edit");
+            crate::drawing::remember(ui, "tn_options_autoproject", r.rect);
+            r.on_hover_text(
+                "A new sketch on a face shows the face's edges as reference geometry: dimension and constrain to them, or use them as a profile",
+            );
         });
         self.chrome.options = options;
 

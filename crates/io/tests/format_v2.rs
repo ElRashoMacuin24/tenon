@@ -534,3 +534,75 @@ fn a_driven_dimension_says_so_on_its_own_record() {
     let d = diff::diff_documents("part", &before, &serde_json::to_value(s.document()).unwrap()).text();
     assert!(d.contains("Sketch1") && d.contains("dimension d0 now driven"), "{d}");
 }
+
+#[test]
+fn projected_edges_centre_lines_and_diameters_to_them_are_written_and_read_back() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let r = run(&mut s, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 40, "y2": 20 }));
+    let x = run(&mut s, "model.extrude", json!({ "sketch": sk, "distance": 10 }))["feature"].as_u64().unwrap();
+    let top = json!({ "origin": { "type": "cap", "feature": x, "end": "end" }, "fingerprint": { "surface": "plane", "direction": { "x": 0.0, "y": 0.0, "z": 1.0 }, "centroid": { "x": 20.0, "y": 10.0, "z": 10.0 }, "area": 800.0 } });
+    let on = run(&mut s, "sketch.create", json!({ "face": top, "project_origin": false }))["feature"].as_u64().unwrap();
+    let extra = Map::new();
+    let plain = String::from_utf8(project::to_bytes(s.document(), &extra).unwrap()).unwrap();
+    assert!(
+        !plain.contains("projections") && !plain.contains("reference") && !plain.contains("centerline"),
+        "nothing of them where there is none: {plain}"
+    );
+
+    // The top's front edge shown in the sketch (said by the caller: there is no kernel here), a
+    // centre line of the sketch's own, and a diameter from the line to a point.
+    let edge = json!({
+        "faces": [{ "type": "cap", "feature": x, "end": "end" }, { "type": "side", "feature": x, "curve": r["lines"][0] }],
+        "fingerprint": { "mid": { "x": 20.0, "y": 0.0, "z": 10.0 }, "length": 40.0 },
+    });
+    let said = json!([{ "type": "line", "start": { "x": 0.0, "y": 0.0 }, "end": { "x": 40.0, "y": 0.0 } }]);
+    let shown = run(&mut s, "sketch.project", json!({ "sketch": on, "edges": [edge], "geometry": said }));
+    let front = shown["entities"][0].as_u64().unwrap();
+    let axis = run(&mut s, "sketch.line", json!({ "sketch": on, "x1": 0, "y1": 10, "x2": 40, "y2": 10 }));
+    run(&mut s, "sketch.centerline", json!({ "sketch": on, "entity": axis["line"] }));
+    let pt = run(&mut s, "sketch.point", json!({ "sketch": on, "x": 12, "y": 14 }))["point"].as_u64().unwrap();
+    let across = run(
+        &mut s,
+        "sketch.constrain",
+        json!({ "sketch": on, "constraint": { "type": "linear_diameter", "point": pt, "axis": axis["line"], "value": 6.0 } }),
+    );
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    // The line and its two ends say they are reference geometry; the centre line says so; the
+    // diameter is a dimension of its own kind; and the sketch lists what it shows of the part.
+    assert_eq!(text.matches("reference = true").count(), 3, "{text}");
+    assert_eq!(text.matches("centerline = true").count(), 1, "{text}");
+    assert!(text.contains(&format!("{{ id = {front}, type = \"line\", start = ")), "{text}");
+    let record = format!("{{ id = {}, type = \"linear_diameter\", point = {pt}, axis = {}, value = 6.0 }}", across["constraint"], axis["line"]);
+    assert!(text.contains(&record), "{text}");
+    assert!(text.contains("projections = [") && text.contains(&format!("entity = {front}")), "{text}");
+    // (Solved coordinates are written to nine decimals, so the sketch read back is compared by
+    // what was put in, and by saving the same again.)
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    let on_id = tenon_model::FeatureId(on as u32);
+    assert_eq!(back.projections(on_id), s.document().projections(on_id));
+    let (was, now) = (s.document().sketch(on_id).unwrap(), back.sketch(on_id).unwrap());
+    for (id, e) in was.entities() {
+        let read = now.entity(id).unwrap();
+        assert_eq!((read.reference, read.centerline, read.construction), (e.reference, e.centerline, e.construction), "{id}");
+    }
+    assert_eq!(now.constraints().collect::<Vec<_>>(), was.constraints().collect::<Vec<_>>());
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+    back.validate().unwrap();
+
+    // The diff says an edge was projected, and when it no longer is.
+    let before = serde_json::to_value(s.document()).unwrap();
+    run(&mut s, "sketch.break_link", json!({ "sketch": on, "entities": [front] }));
+    let after = serde_json::to_value(s.document()).unwrap();
+    assert!(
+        diff::diff_documents("part", &before, &after).text().contains("1 edge no longer projected"),
+        "{}",
+        diff::diff_documents("part", &before, &after).text()
+    );
+    assert!(diff::diff_documents("part", &after, &before).text().contains("1 edge projected"));
+    // A file that says an edge is shown by an entity that is not reference geometry is refused.
+    let broken = text.replacen("reference = true", "reference = false", 3);
+    let e = project::from_bytes(broken.as_bytes()).unwrap_err().to_string();
+    assert!(e.contains("is said to be a projected edge but is not reference geometry"), "{e}");
+}

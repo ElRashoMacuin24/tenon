@@ -201,7 +201,7 @@ may refer only to features before them.
 
 | `type` | Fields |
 |---|---|
-| `sketch` | `plane`, `next_entity`, `next_constraint`, `entities`, `constraints` (below) |
+| `sketch` | `plane`, `next_entity`, `next_constraint`, `entities`, `constraints`; optional `projections` (all below) |
 | `extrude` | `sketch`, `regions`, `extent`, `reverse`, `operation`; optional `taper` (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through-all only) |
 | `revolve` | `sketch`, `regions`, `axis` (revolve axis), `angle`, `operation` |
 | `fillet` | `edges` (edge references), `radius` |
@@ -286,7 +286,14 @@ constraints = [
 | `arc` | `center`, `start`, `end` (point ids; counter-clockwise; the radius is \|start − center\|) |
 | `spline` | `poles` (point ids), `degree` (a clamped uniform B-spline) |
 
-Every entity also has `construction`.
+Every entity also has `construction`, and two optional marks written only when true:
+
+- `centerline = true` on a line: a centre line (DEC-056). It bounds profiles like any line,
+  is the axis a revolution takes when none is named, and is what a `linear_diameter` is
+  measured to.
+- `reference = true`: reference geometry, shown in the sketch from an edge of the part
+  (DEC-055). The solver never moves it; the sketch's `projections` (below) say which edge each
+  piece shows. A point, line, circle or arc can be reference geometry; a spline cannot.
 
 **Constraint types:**
 
@@ -302,6 +309,9 @@ Every entity also has `construction`.
   - `distance`, `horizontal_distance`, `vertical_distance`, `angle` (`a`, `b`)
   - `length` (`line`)
   - `radius`, `diameter` (`curve`)
+  - `linear_diameter` (`point`, `axis`): a diameter measured across a line. `axis` is a line
+    (the app offers this dimension for a centre line); the `value` is twice the distance from
+    the point to it.
 
   A dimension placed by hand also has `at = { x, y }`: where its value is shown in the sketch
   (its dimension line runs through there). Without it, the dimension is drawn beside its
@@ -310,6 +320,21 @@ Every entity also has `construction`.
   A driven dimension has `driven = true` (DEC-047). It follows the sketch instead of setting
   it: the solver leaves it out, and its `value` is what the sketch measures, written like any
   computed number. It has a parameter name, which equations may read but nothing may set.
+
+**Projected edges.** A sketch that shows edges of the part lists them, after its constraints:
+
+```toml
+projections = [
+  { entity = 4, edge = { faces = [{ type = "cap", feature = 2, end = "end" }, { type = "side", feature = 2, curve = 6 }], fingerprint = { mid = { x = 30.0, y = 0.0, z = 12.0 }, length = 60.0 } } },
+]
+```
+
+`entity` is a line, circle, arc or point of this sketch with `reference = true`, and `edge` an
+[edge reference](#references-to-faces-and-edges) to an edge made by features before the sketch.
+Each entity is listed once at most. At every regeneration the edge is found again and the
+entity, with its points, is put where the edge then is on the sketch's plane; the positions in
+the file are those of the last regeneration. An edge that cannot be found leaves its entity
+where it is. A sketch with no projected edges has no `projections` field.
 
 Point positions are where the solver left them; they are rounded on writing (see
 [Text files](#text-files)).
@@ -651,8 +676,9 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   this way (`sweep`, `coil`, `loft`, `draft`, `split`, `combine`, `thread`), the optional
   `taper` of an extrusion, the optional `at` and `driven` of a sketch dimension, region keys by
   side (`{ left, right, nth }`) beside the lists of curves they were, the optional `row` of an
-  assembly component, and a part's optional
-  `appearance`, `[material]` and `[table]`.
+  assembly component, a part's optional `appearance`, `[material]` and `[table]`, and for
+  sketches the optional `centerline` and `reference` of an entity, the `linear_diameter`
+  dimension and a sketch feature's optional `projections` (DEC-055, DEC-056).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

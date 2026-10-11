@@ -16,6 +16,7 @@ pub mod materials;
 pub mod measure;
 pub mod naming;
 pub mod params;
+pub mod project;
 pub mod regen;
 pub mod repair;
 pub mod table;
@@ -31,4 +32,4 @@ pub use document::{
 };
 pub use naming::{CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace};
 pub use params::{ModelParam, ParamUnit, Parameters, UserParam, ValuePath};
-pub use regen::{Body, BodyView, FeatureStatus, Regen, RegenCache, Scene, Tool, WorkGeom, regenerate, regenerate_with, scene};
+pub use regen::{Body, BodyView, FeatureStatus, Regen, RegenCache, Scene, Tool, WorkGeom, frame_on_face, regenerate, regenerate_with, scene};

@@ -39,6 +39,23 @@ pub(crate) enum Tool {
     Fix,
     Collinear,
     Symmetric,
+    Move,
+    Copy,
+    Rotate,
+    Scale,
+    Extend,
+    Split,
+    PatternRect,
+    PatternCircular,
+    Slot,
+    SlotOverall,
+    SlotCenter,
+    RectCenter,
+    Rect3,
+    ArcCenter,
+    ArcTangent,
+    /// Project Geometry: clicks are on the part, not the sketch.
+    Project,
 }
 
 const TOOLS: &[(&str, Tool)] = &[
@@ -65,6 +82,22 @@ const TOOLS: &[(&str, Tool)] = &[
     ("sketch.equal", Tool::Equal),
     ("sketch.concentric", Tool::Concentric),
     ("sketch.fix", Tool::Fix),
+    ("sketch.project", Tool::Project),
+    ("sketch.move", Tool::Move),
+    ("sketch.copy", Tool::Copy),
+    ("sketch.rotate", Tool::Rotate),
+    ("sketch.scale", Tool::Scale),
+    ("sketch.extend", Tool::Extend),
+    ("sketch.split", Tool::Split),
+    ("sketch.pattern.rect", Tool::PatternRect),
+    ("sketch.pattern.circular", Tool::PatternCircular),
+    ("sketch.slot", Tool::Slot),
+    ("sketch.slot_overall", Tool::SlotOverall),
+    ("sketch.slot_center", Tool::SlotCenter),
+    ("sketch.rectangle_center", Tool::RectCenter),
+    ("sketch.rectangle3", Tool::Rect3),
+    ("sketch.arc_center", Tool::ArcCenter),
+    ("sketch.arc_tangent", Tool::ArcTangent),
 ];
 
 impl Tool {
@@ -95,6 +128,22 @@ impl Tool {
             Tool::Fix => "Click a point.",
             Tool::Collinear => "Click two lines.",
             Tool::Symmetric => "Click two points, then the line of symmetry.",
+            Tool::Project => "Click edges of the part to show them in the sketch (a face: all its edges). Esc ends.",
+            Tool::Move => "Click the point to move from, then where it goes (or type X and Y).",
+            Tool::Copy => "Click the point to copy from, then where each copy goes. Esc ends.",
+            Tool::Rotate => "Click the point to turn about, then a point to turn from and one to turn to (or type the angle).",
+            Tool::Scale => "Click the point that stays, then a point to scale from and one to scale to (or type the factor).",
+            Tool::Extend => "Click a line or an arc near the end to make longer.",
+            Tool::Split => "Click a curve near where another crosses it.",
+            Tool::PatternRect => "Click a line for the direction of the pattern.",
+            Tool::PatternCircular => "Click the point to pattern round.",
+            Tool::Slot => "Click the centre of each end, then how wide.",
+            Tool::SlotOverall => "Click each end of the slot, then how wide.",
+            Tool::SlotCenter => "Click the middle of the slot, the centre of one end, then how wide.",
+            Tool::RectCenter => "Click the centre, then a corner.",
+            Tool::Rect3 => "Click two corners of one side, then how deep.",
+            Tool::ArcCenter => "Click the centre, the start, then the end of the arc.",
+            Tool::ArcTangent => "Click the end of a line or an arc, then where the arc ends.",
         }
     }
 }
@@ -124,7 +173,7 @@ pub(crate) struct Hud {
 }
 
 impl Hud {
-    fn typed(&self, i: usize) -> Option<f64> {
+    pub(crate) fn typed(&self, i: usize) -> Option<f64> {
         self.fields.get(i).and_then(|s| s.parse::<f64>().ok()).filter(|v| v.is_finite())
     }
     fn is_empty(&self) -> bool {
@@ -139,6 +188,12 @@ pub(crate) struct SketchMode {
     pub clicks: Vec<Click>,
     pub picks: Vec<EntityId>,
     pub selection: Vec<EntityId>,
+    /// Constraints selected by clicking their symbols (Delete removes them).
+    pub constraints: Vec<ConstraintId>,
+    /// The constraint whose symbol the pointer is on: it and what it holds light up.
+    pub constraint_hover: Option<ConstraintId>,
+    /// The constraint symbols the last frame drew, and where.
+    pub badges: Vec<(ConstraintId, Rect)>,
     pub hover: Option<EntityId>,
     pub drag: Option<(EntityId, Sketch)>,
     /// The dimension whose value is being dragged: where the value is now, and how far from the
@@ -159,6 +214,9 @@ impl SketchMode {
             clicks: Vec::new(),
             picks: Vec::new(),
             selection: Vec::new(),
+            constraints: Vec::new(),
+            constraint_hover: None,
+            badges: Vec::new(),
             hover: None,
             drag: None,
             dim_drag: None,
@@ -175,6 +233,9 @@ fn hud_fields(tool: Tool) -> &'static [(&'static str, &'static str)] {
         Tool::Line => &[("Length", "mm"), ("Angle", "deg")],
         Tool::Circle => &[("Diameter", "mm")],
         Tool::Rectangle => &[("Width", "mm"), ("Height", "mm")],
+        Tool::Move | Tool::Copy => &[("X", "mm"), ("Y", "mm")],
+        Tool::Rotate => &[("Angle", "deg")],
+        Tool::Scale => &[("Factor", "")],
         _ => &[],
     }
 }
@@ -223,7 +284,7 @@ fn kind(s: &Sketch, id: EntityId) -> Kind {
 }
 
 /// Point parameter of a command: an existing point id, else coordinates.
-fn put_point(m: &mut Map<String, Value>, id_key: &str, x: &str, y: &str, c: &Click) {
+pub(crate) fn put_point(m: &mut Map<String, Value>, id_key: &str, x: &str, y: &str, c: &Click) {
     match c.point {
         Some(id) => {
             m.insert(id_key.into(), json!(id.0));
@@ -242,14 +303,14 @@ pub(crate) fn fmt_len(v: f64) -> String {
 
 /// Screen mapping of the sketch plane.
 #[derive(Clone, Copy)]
-struct Plane {
+pub(crate) struct Plane {
     frame: Frame,
     cam: tenon_render::Camera,
     rect: Rect,
 }
 
 impl Plane {
-    fn project(self, p: Vec2) -> Option<Pos2> {
+    pub(crate) fn project(self, p: Vec2) -> Option<Pos2> {
         self.cam
             .project(self.frame.plane_point(p), f64::from(self.rect.width()), f64::from(self.rect.height()))
             .map(|(x, y, _)| pos2(self.rect.left() + x as f32, self.rect.top() + y as f32))
@@ -340,7 +401,7 @@ fn draw_grid(ui: &Ui, plane: &Plane, rect: Rect, t: &Tokens) {
 fn dimension_text(c: &Constraint) -> Option<String> {
     let value = c.value()?;
     Some(match c {
-        Constraint::Diameter { .. } => format!("Ø{}", fmt_len(value.abs())),
+        Constraint::Diameter { .. } | Constraint::LinearDiameter { .. } => format!("Ø{}", fmt_len(value.abs())),
         Constraint::Radius { .. } => format!("R{}", fmt_len(value.abs())),
         _ if c.is_angular() => format!("{}°", fmt_len(value.to_degrees())),
         _ => fmt_len(value.abs()),
@@ -372,27 +433,70 @@ impl Plane {
         };
         let size = ui.painter().layout_no_wrap(text.clone(), theme::small(), Color32::WHITE).size();
         let shape = crate::dims::shape(s, c, place, size, &project)?;
-        let rect = Rect::from_center_size(shape.text, size + vec2(8.0, 4.0));
+        let rect = Rect::from_center_size(shape.text, shape.text_box(size + vec2(8.0, 4.0)));
         Some(DimLabel { id, constraint: c.clone(), shape, text, rect })
     }
 }
 
-fn glyph(c: &Constraint) -> Option<(&'static str, EntityId)> {
+/// The picture a geometric constraint is shown as, and the entities it is shown beside (one
+/// symbol at each).
+fn glyph(c: &Constraint) -> Option<(crate::icons::Icon, Vec<EntityId>)> {
     use Constraint::*;
+
+    use crate::icons::Icon;
     Some(match c {
-        Horizontal { line } => ("H", *line),
-        Vertical { line } => ("V", *line),
-        Parallel { a, .. } => ("//", *a),
-        Perpendicular { a, .. } => ("L", *a),
-        Tangent { a, .. } => ("T", *a),
-        Equal { a, .. } => ("=", *a),
-        Concentric { a, .. } => ("O", *a),
-        Collinear { a, .. } => ("C", *a),
-        Fix { point } => ("F", *point),
-        Midpoint { point, .. } => ("M", *point),
-        Symmetric { a, .. } => ("S", *a),
+        Horizontal { line } => (Icon::Horizontal, vec![*line]),
+        Vertical { line } => (Icon::Vertical, vec![*line]),
+        Parallel { a, b } => (Icon::Parallel, vec![*a, *b]),
+        Perpendicular { a, b } => (Icon::Perpendicular, vec![*a, *b]),
+        Tangent { a, b } => (Icon::Tangent, vec![*a, *b]),
+        Equal { a, b } => (Icon::Equal, vec![*a, *b]),
+        Concentric { a, b } => (Icon::Concentric, vec![*a, *b]),
+        Collinear { a, b } => (Icon::Collinear, vec![*a, *b]),
+        Fix { point } => (Icon::Fix, vec![*point]),
+        Symmetric { a, b, .. } => (Icon::Symmetric, vec![*a, *b]),
+        Coincident { a, .. } => (Icon::Coincident, vec![*a]),
+        PointOnCurve { point, .. } | Midpoint { point, .. } => (Icon::Coincident, vec![*point]),
         _ => return None,
     })
+}
+
+/// A constraint's symbol as drawn: which constraint, its picture, and where it is on screen.
+struct Badge {
+    id: ConstraintId,
+    icon: crate::icons::Icon,
+    rect: Rect,
+}
+
+/// Side of a constraint symbol, in pixels.
+const BADGE: f32 = 16.0;
+
+/// The symbols of every geometric constraint of `s`: beside the middle of a line, the top of a
+/// circle, the middle of an arc or the point itself, in a row when one entity has several.
+fn badges(s: &Sketch, plane: &Plane) -> Vec<Badge> {
+    let mut out = Vec::new();
+    let mut taken: std::collections::HashMap<EntityId, usize> = std::collections::HashMap::new();
+    for (id, c) in s.constraints() {
+        let Some((icon, beside)) = glyph(c) else { continue };
+        // (The part origin shown in the sketch is held without saying so: like any reference.)
+        if matches!(c, Constraint::Fix { point } if s.entity(*point).is_some_and(|e| e.construction)) {
+            continue;
+        }
+        for on in beside {
+            let anchor = s
+                .line(on)
+                .map(|(a, b)| a.mid(b))
+                .or_else(|| s.arc(on).map(|a| a.mid_point()))
+                .or_else(|| s.circle(on).map(|(c, r)| c + Vec2::new(0.0, r)))
+                .or_else(|| s.point(on));
+            let Some(q) = anchor.and_then(|a| plane.project(a)) else { continue };
+            let slot = taken.entry(on).or_insert(0);
+            let rect = Rect::from_center_size(q + vec2(13.0 + (BADGE + 2.0) * *slot as f32, -13.0), vec2(BADGE, BADGE));
+            *slot += 1;
+            out.push(Badge { id, icon, rect });
+        }
+    }
+    out
 }
 
 impl Workbench {
@@ -406,20 +510,28 @@ impl Workbench {
         self.mode = Mode::Sketch(Box::new(SketchMode::new(feature, base)));
         self.chrome.tab = crate::commands::SKETCH_TAB;
         let before = self.view.anim.map_or(self.view.camera, |a| a.to);
-        if let Some(f) = self.sketch_frame(feature) {
-            // Look square at the sketch plane, X to the right, framing what is drawn.
-            let mut to = self.square_to(&f);
-            match self.sketch_box() {
-                Some(b) if b.diagonal() > 1e-6 => to.fit(&b),
-                _ => to.target = f.origin(),
-            }
-            self.animate_to(to);
+        // Look square at the sketch plane, X to the right, framing what is drawn. A sketch on a
+        // face has no plane until the part has been regenerated with it: the view turns then.
+        match self.sketch_frame(feature) {
+            Some(f) => self.aim_at_sketch(&f),
+            None => self.view.aim_at = Some(feature),
         }
         if !was_sketching {
             self.view.sketch_return = Some(before);
         }
         self.set_status(format!("Editing {}. {}", self.feature_name(feature), Tool::Select.hint()));
         Ok(())
+    }
+
+    /// Turns the view square on to the plane of the open sketch, framing what is drawn in it.
+    fn aim_at_sketch(&mut self, f: &Frame) {
+        let mut to = self.square_to(f);
+        match self.sketch_box() {
+            Some(b) if b.diagonal() > 1e-6 => to.fit(&b),
+            _ => to.target = f.origin(),
+        }
+        self.animate_to(to);
+        self.view.aim_at = None;
     }
 
     pub(crate) fn finish_sketch(&mut self) {
@@ -465,6 +577,43 @@ impl Workbench {
             self.set_status(if on { "Construction geometry (not part of profiles)." } else { "Normal geometry." });
             return Ok(());
         }
+        if id == "sketch.centerline" {
+            let (feature, picked) = (s.feature, s.selection.clone());
+            let sk = self.document().sketch(feature).ok_or("the sketch is gone")?;
+            let lines: Vec<EntityId> = picked.into_iter().filter(|e| sk.is_line(*e)).collect();
+            if lines.is_empty() {
+                return Err("select the line that is to be a centre line first".into());
+            }
+            let on = !lines.iter().all(|e| sk.is_centerline(*e));
+            for e in lines {
+                self.exec("sketch.centerline", json!({ "sketch": feature.0, "entity": e.0, "on": on }))?;
+            }
+            self.set_status(if on {
+                "Centre line: a revolution turns about it, and a dimension to it is a diameter."
+            } else {
+                "An ordinary line again."
+            });
+            return Ok(());
+        }
+        if id == "sketch.break_link" {
+            let (feature, picked) = (s.feature, s.selection.clone());
+            let sk = self.document().sketch(feature).ok_or("the sketch is gone")?;
+            // (A projected curve, or one of its end points, stands for the curve.)
+            let linked: Vec<u32> = sk
+                .entities()
+                .filter(|(id, e)| {
+                    e.reference && e.geometry.is_curve() && (picked.contains(id) || e.geometry.points().iter().any(|p| picked.contains(p)))
+                })
+                .map(|(id, _)| id.0)
+                .chain(picked.iter().filter(|p| sk.is_reference(**p) && sk.is_point(**p) && sk.curves_at(**p).is_empty()).map(|p| p.0))
+                .collect();
+            if linked.is_empty() {
+                return Err("select projected geometry (it is drawn in amber) to break its link to the part".into());
+            }
+            self.exec("sketch.break_link", json!({ "sketch": feature.0, "entities": linked }))?;
+            self.set_status("Link broken: it is the sketch's own geometry now, where it was, and no longer follows the part.");
+            return Ok(());
+        }
         if id == "sketch.offset" {
             if s.selection.is_empty() {
                 return Err("select the curves to offset first".into());
@@ -477,6 +626,11 @@ impl Workbench {
         let tool = TOOLS.iter().find(|(t, _)| *t == id).map(|(_, tool)| *tool).ok_or_else(|| format!("unknown command `{id}`"))?;
         if tool == Tool::Mirror && s.selection.is_empty() {
             return Err("select the geometry to mirror first".into());
+        }
+        if let Some(verb) = crate::sketch_tools::needs_selection(tool)
+            && s.selection.is_empty()
+        {
+            return Err(format!("select the geometry to {verb} first"));
         }
         s.tool = if s.tool == tool { Tool::Select } else { tool };
         s.clicks.clear();
@@ -525,6 +679,10 @@ impl Workbench {
             );
             return;
         };
+        // The plane has arrived for a sketch entered before it was known: turn to it now.
+        if self.view.aim_at == Some(feature) {
+            self.aim_at_sketch(&frame);
+        }
         let Some(doc_sketch) = self.document().sketch(feature).cloned() else {
             self.mode = Mode::Model;
             return;
@@ -650,6 +808,21 @@ impl Workbench {
             Mode::Sketch(sm) => sm.tool,
             Mode::Model => Tool::Select,
         };
+        // Project Geometry works on the part behind the sketch, not on the sketch.
+        if tool == Tool::Project {
+            self.project_tool(ui, resp, rect, feature);
+        } else {
+            self.view.hover = None;
+        }
+        // The constraint symbols, and the one under the pointer (with no tool running).
+        let marks = if self.view.show_constraints { badges(&doc_sketch, &plane) } else { Vec::new() };
+        let on_badge = pointer.filter(|_| tool == Tool::Select).and_then(|p| marks.iter().find(|b| b.rect.contains(p))).map(|b| b.id);
+        if let Mode::Sketch(sm) = &mut self.mode {
+            sm.constraint_hover = on_badge;
+            sm.badges = marks.iter().map(|b| (b.id, b.rect)).collect();
+            // (One removed some other way is no longer selected.)
+            sm.constraints.retain(|c| doc_sketch.constraint(*c).is_some());
+        }
         // The dimension under the pointer.
         let on_dimension = pointer.and_then(|p| labels.iter().find(|l| l.rect.contains(p))).and_then(|l| Some((l.id?, l.constraint.clone())));
         // With the Driven Dimension tool, a click on a dimension changes it from driving to
@@ -683,9 +856,29 @@ impl Workbench {
                 });
             }
         } else if resp.clicked_by(egui::PointerButton::Primary)
+            && let Some(cid) = on_badge
+            && let Mode::Sketch(sm) = &mut self.mode
+        {
+            // A constraint's symbol: selected like geometry (Delete removes the constraint).
+            let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+            match (sm.constraints.iter().position(|c| *c == cid), add) {
+                (Some(i), true) => {
+                    sm.constraints.remove(i);
+                }
+                (None, true) => sm.constraints.push(cid),
+                _ => {
+                    sm.constraints = vec![cid];
+                    sm.selection.clear();
+                }
+            }
+            let name = doc_sketch.constraint(cid).map_or("constraint", Constraint::name).replace('_', " ");
+            self.set_status(format!("Selected the {name} constraint. Delete removes it."));
+        } else if resp.clicked_by(egui::PointerButton::Primary)
             && let Some(at) = cursor
         {
             let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+            // (Snapped to a point, the click is exactly there, not a pixel off.)
+            let at = snap.and_then(|s| doc_sketch.point(s)).unwrap_or(at);
             self.sketch_click(feature, &doc_sketch, Click { at, point: snap, infer }, hover, add);
         }
         // Dragging a point (select tool): preview on a copy, one command on release.
@@ -756,11 +949,22 @@ impl Workbench {
         let done = Color32::from_rgb(0xe8, 0xec, 0xf0);
         let picked = Color32::from_rgb(0xf0, 0xa0, 0x3c);
         let hot = Color32::from_rgb(0xff, 0xe0, 0x80);
+        // The part's own geometry shown in the sketch: amber; magenta when its edge is gone.
+        let reference = Color32::from_rgb(0xd9, 0xb6, 0x52);
+        let orphan = Color32::from_rgb(0xd6, 0x4f, 0xb0);
+        let lost: BTreeSet<EntityId> = self.scene.lost.get(&feature).map(|l| l.iter().map(|(e, _)| *e).collect()).unwrap_or_default();
+        // What the constraint under the pointer, and the selected ones, hold.
+        let lit: BTreeSet<EntityId> =
+            sm.constraint_hover.iter().chain(&sm.constraints).filter_map(|c| shown.constraint(*c)).flat_map(|c| c.refs()).collect();
         let color_of = |id: EntityId| {
             if sm.selection.contains(&id) || sm.picks.contains(&id) {
                 picked
-            } else if sm.hover == Some(id) {
+            } else if sm.hover == Some(id) || lit.contains(&id) {
                 hot
+            } else if lost.contains(&id) {
+                orphan
+            } else if shown.is_reference(id) {
+                reference
             } else if fully.contains(&id) {
                 done
             } else {
@@ -778,6 +982,9 @@ impl Workbench {
             }
             if e.construction {
                 p.extend(Shape::dashed_line(&pts, Stroke::new(1.0, t.text_dim), 6.0, 4.0));
+            } else if e.centerline {
+                // A long dash and a short one, as a centre line is drawn.
+                p.extend(Shape::dashed_line_with_offset(&pts, Stroke::new(1.4, color_of(id)), &[14.0, 3.0], &[4.0, 4.0], 0.0));
             } else {
                 p.add(Shape::line(pts, Stroke::new(if sm.hover == Some(id) { 2.5 } else { 1.8 }, color_of(id))));
             }
@@ -790,26 +997,29 @@ impl Workbench {
                 if e.construction {
                     // Projected geometry (the part origin): a round amber dot.
                     p.circle_filled(q, s + 1.0, if sm.hover == Some(id) { hot } else { t.tint_work });
+                } else if e.reference {
+                    // An end of a projected edge: a small round dot in the edge's colour.
+                    p.circle_filled(q, s, color_of(id));
                 } else {
                     p.rect_filled(Rect::from_center_size(q, vec2(s * 2.0, s * 2.0)), 1.0, color_of(id));
                 }
             }
         }
-        // Constraint glyphs next to their first entity.
-        // (F8 shows them all, F9 hides them all.)
-        for (_, c) in shown.constraints().filter(|_| self.view.show_constraints) {
-            if let Some((g, on)) = glyph(c) {
-                let anchor = shown
-                    .line(on)
-                    .map(|(a, b)| a.mid(b))
-                    .or_else(|| shown.circle(on).map(|(c, r)| c + Vec2::new(0.0, r)))
-                    .or_else(|| shown.point(on));
-                if let Some(q) = anchor.and_then(|a| plane.project(a)) {
-                    let r = Rect::from_center_size(q + vec2(10.0, -10.0), vec2(16.0, 13.0));
-                    p.rect_filled(r, 2.0, t.panel.gamma_multiply(0.9));
-                    p.text(r.center(), Align2::CENTER_CENTER, g, theme::small(), t.text_dim);
-                }
-            }
+        // Constraint symbols beside what they hold (F8 shows them all, F9 hides them all). The
+        // one under the pointer and the selected ones stand out, with their geometry.
+        for b in badges(shown, &plane).into_iter().filter(|_| self.view.show_constraints) {
+            let (over, chosen) = (sm.constraint_hover == Some(b.id), sm.constraints.contains(&b.id));
+            let fill = if chosen { picked.gamma_multiply(0.35) } else { t.panel.gamma_multiply(0.92) };
+            p.rect_filled(b.rect, 3.0, fill);
+            let edge = if chosen {
+                picked
+            } else if over {
+                hot
+            } else {
+                t.border
+            };
+            p.rect_stroke(b.rect, 3.0, Stroke::new(1.0, edge), egui::StrokeKind::Inside);
+            crate::icons::paint(p, b.rect.shrink(2.5), b.icon, if over || chosen { hot } else { t.text_dim });
         }
         // Dimensions: extension lines, a dimension line with arrowheads, and the value on it. The
         // one under the pointer, or being dragged, lights up (it can be dragged, or
@@ -820,7 +1030,7 @@ impl Workbench {
             let lit = moved.is_some_and(|m| Some(m.0) == l.id)
                 || (moved.is_none() && sm.tool == Tool::Select && pointer.is_some_and(|q| l.rect.contains(q)));
             l.shape.paint(p, if lit { hot } else { dim_line });
-            p.text(l.shape.text, Align2::CENTER_CENTER, &l.text, theme::small(), if lit { hot } else { done });
+            l.shape.paint_text(p, &l.text, if lit { hot } else { done });
         }
         // The dimension being placed: it follows the pointer until a click puts it down, and
         // stays where it was put while its value is typed.
@@ -840,7 +1050,7 @@ impl Workbench {
             let text = if with_value { dimension_text(&c).unwrap_or_default() } else { String::new() };
             if let Some(l) = plane.dimension(ui, shown, None, &c, Some(at), text) {
                 l.shape.paint(p, under);
-                p.text(l.shape.text, Align2::CENTER_CENTER, &l.text, theme::small(), under);
+                l.shape.paint_text(p, &l.text, under);
             }
         }
         // Tool preview from the pending clicks to the pointer.
@@ -879,6 +1089,18 @@ impl Workbench {
                 _ => {}
             }
         }
+        // What a Modify or Pattern tool, or one of the further shapes, would make.
+        let faint = Stroke::new(1.2, under.gamma_multiply(0.8));
+        let mut ghosts = cursor.map(|cur| self.tool_ghost(shown, sm, cur)).unwrap_or_default();
+        if let Some(Panel::SketchPattern(pattern)) = &self.panel {
+            ghosts.extend(self.pattern_ghost(pattern));
+        }
+        for line in ghosts {
+            let pts: Vec<Pos2> = line.into_iter().filter_map(|q| plane.project(q)).collect();
+            if pts.len() > 1 {
+                p.add(Shape::line(pts, faint));
+            }
+        }
         if let Some(q) = snap.and_then(|s| shown.point(s)).and_then(|v| plane.project(v)) {
             p.circle_stroke(q, 7.0, Stroke::new(1.5, hot));
         }
@@ -902,6 +1124,7 @@ impl Workbench {
             let live = match sm.tool {
                 Tool::Line => [d.len(), d.y.atan2(d.x).to_degrees()],
                 Tool::Circle => [2.0 * d.len(), 0.0],
+                t if crate::sketch_tools::is_tool(t) => crate::sketch_tools::tool_live(t, &sm.clicks, cur),
                 _ => [d.x.abs(), d.y.abs()],
             };
             let mut at = q + vec2(18.0, 14.0);
@@ -1058,6 +1281,7 @@ impl Workbench {
                     sm.clicks.clear();
                 }
             }
+            t if crate::sketch_tools::is_tool(t) => self.modify_hud_commit(feature, t, &hud, cursor),
             _ => {}
         }
     }
@@ -1072,6 +1296,7 @@ impl Workbench {
                 self.set_status(Tool::Select.hint());
             } else {
                 sm.selection.clear();
+                sm.constraints.clear();
             }
         }
     }
@@ -1089,10 +1314,15 @@ impl Workbench {
 
     fn delete_selection(&mut self, feature: FeatureId) {
         let Mode::Sketch(sm) = &mut self.mode else { return };
-        if sm.selection.is_empty() {
+        // Selected constraints first (deleting geometry takes its own constraints with it).
+        let constraints: Vec<ConstraintId> = std::mem::take(&mut sm.constraints);
+        let ids: Vec<u32> = sm.selection.drain(..).map(|e| e.0).collect();
+        for c in constraints {
+            let _ = self.exec_status("sketch.remove_constraint", json!({ "sketch": feature.0, "constraint": c.0 }));
+        }
+        if ids.is_empty() {
             return;
         }
-        let ids: Vec<u32> = sm.selection.drain(..).map(|e| e.0).collect();
         let _ = self.exec_status("sketch.delete", json!({ "sketch": feature.0, "entities": ids }));
     }
 
@@ -1108,8 +1338,14 @@ impl Workbench {
                         sm.selection.push(h);
                     }
                 }
-                Some(h) => sm.selection = vec![h],
-                None => sm.selection.clear(),
+                Some(h) => {
+                    sm.selection = vec![h];
+                    sm.constraints.clear();
+                }
+                None => {
+                    sm.selection.clear();
+                    sm.constraints.clear();
+                }
             },
             Tool::Point => {
                 let _ = self.exec_status("sketch.point", json!({ "sketch": f, "x": click.at.x, "y": click.at.y }));
@@ -1213,6 +1449,9 @@ impl Workbench {
             Tool::Dimension => self.dimension_click(feature, sketch, hover, click.at),
             // (Its clicks are on dimensions, which are handled where they are drawn.)
             Tool::Driven => self.set_status(Tool::Driven.hint()),
+            // (Its clicks are on the part: see `project_tool`.)
+            Tool::Project => {}
+            t if crate::sketch_tools::is_tool(t) => self.modify_click(feature, sketch, click, hover),
             t => self.constraint_click(feature, sketch, t, hover),
         }
     }

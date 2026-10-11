@@ -1,6 +1,6 @@
-use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
-use tenon_geom::{Frame, Vec2};
+use tenon_geom::{Frame, Vec2, norm_angle};
 
 use crate::*;
 
@@ -269,7 +269,7 @@ fn regions_with_holes_splits_and_nesting() {
     assert!((ring.area - (1600.0 - 25.0 * PI)).abs() < 0.5, "{}", ring.area);
     assert!((disk.area - 25.0 * PI).abs() < 0.5);
     assert!(ring.contains(v(2.0, 2.0)) && !ring.contains(v(20.0, 20.0)) && disk.contains(v(20.0, 20.0)));
-    let d = default_regions(&r);
+    let d = default_regions(&s, &r);
     assert_eq!(d.len(), 1);
     assert_eq!(d[0].key, ring.key);
 
@@ -432,7 +432,7 @@ fn a_line_through_a_circle_gives_two_halves_and_both_together_the_circle() {
     let Curve2::Line { start, end } = chord.curve else { panic!("{chord:?}") };
     assert!(start.near(v(-10.0, 0.0), 1e-9) && end.near(v(10.0, 0.0), 1e-9), "{chord:?}");
     // Both halves, or what is used when nothing is picked: the circle whole, and no line.
-    for both in [vec![upper, lower], vec![lower, upper], default_regions(&all)] {
+    for both in [vec![upper, lower], vec![lower, upper], default_regions(&s, &all)] {
         let p = profile(&s, Frame::WORLD, &both);
         assert_eq!(p.regions.len(), 1);
         assert!(p.regions[0].holes.is_empty());
@@ -506,7 +506,7 @@ fn overlapping_circles_give_a_lens_and_two_crescents() {
         assert_eq!(find(&s, &all, &key_of(&s, &all, r)), vec![r]);
     }
     // Everything together is the outline of both: the far arc of each circle, nothing between.
-    let p = profile(&s, Frame::WORLD, &default_regions(&all));
+    let p = profile(&s, Frame::WORLD, &default_regions(&s, &all));
     assert_eq!(p.regions.len(), 1);
     assert_eq!(p.regions[0].outer.curves.len(), 2, "{:?}", p.regions[0].outer);
     // The lens and one crescent are that circle whole.
@@ -699,4 +699,494 @@ fn a_driven_dimension_follows_the_sketch_and_holds_nothing() {
         let broken: Sketch = serde_json::from_value(v).unwrap();
         assert!(broken.validate().unwrap_err().to_string().contains("marked driven"), "{bad}");
     }
+}
+
+#[test]
+fn reference_geometry_stays_where_it_is_put_and_the_rest_follows_it() {
+    // A reference line along y = 10 (an edge of the part, say) and a reference circle; the
+    // sketch's own point is dimensioned 4 from the line and its circle made equal to the other.
+    let mut s = Sketch::new();
+    let edge = s.add_line(v(0.0, 10.0), v(30.0, 10.0)).unwrap();
+    let Geometry::Line { start, end } = s.geometry(edge).cloned().unwrap() else { panic!() };
+    let hole = s.add_circle(v(50.0, 0.0), 6.0).unwrap();
+    let Geometry::Circle { center, .. } = s.geometry(hole).cloned().unwrap() else { panic!() };
+    for e in [edge, start, end, hole, center] {
+        s.set_reference(e, true).unwrap();
+    }
+    assert!(s.is_reference(edge) && s.is_held_outside(edge));
+    // On its own it has no freedom at all: nothing in it is the sketch's to move.
+    assert_eq!(s.dof().unwrap().dof, 0);
+    let own = s.add_circle(v(5.0, 3.0), 2.0).unwrap();
+    let Geometry::Circle { center: c, .. } = s.geometry(own).cloned().unwrap() else { panic!() };
+    assert_eq!(s.dof().unwrap().dof, 3);
+    s.add_constraint(Constraint::Distance { a: c, b: edge, value: 4.0 }).unwrap();
+    s.add_constraint(Constraint::Equal { a: own, b: hole }).unwrap();
+    assert_eq!(s.dof().unwrap().dof, 1, "it may still slide along the edge");
+    assert!(close(s.point(c).unwrap().y, 6.0) && close(s.circle(own).unwrap().1, 6.0), "{:?}", s.circle(own));
+    assert!(s.line(edge).unwrap().0.near(v(0.0, 10.0), 1e-12) && close(s.circle(hole).unwrap().1, 6.0));
+    // Dragging a reference point moves nothing; dragging the sketch's own keeps to the edge.
+    s.drag(end, v(60.0, 40.0)).unwrap();
+    assert!(s.line(edge).unwrap().1.near(v(30.0, 10.0), 1e-12));
+    s.drag(c, v(20.0, -8.0)).unwrap();
+    assert!(close(s.point(c).unwrap().x, 20.0) && close(s.point(c).unwrap().y, 6.0), "{:?}", s.point(c));
+    // The part changes: the edge is put elsewhere and the radius is another; the rest follows.
+    s.set_point(start, v(0.0, 25.0)).unwrap();
+    s.set_point(end, v(30.0, 25.0)).unwrap();
+    s.set_radius(hole, 9.0).unwrap();
+    s.solve().unwrap();
+    assert!(close(s.point(c).unwrap().y, 21.0) && close(s.circle(own).unwrap().1, 9.0), "{:?}", s.circle(own));
+    // The sketch's own tools leave it alone.
+    let cross = s.add_line(v(10.0, 0.0), v(10.0, 40.0)).unwrap();
+    let e = s.trim(edge, v(20.0, 25.0)).unwrap_err().to_string();
+    assert!(e.contains("projected geometry") && e.contains("break its link"), "{e}");
+    s.trim(cross, v(10.0, 30.0)).unwrap();
+    // It is written only where it is so, and read back.
+    let json = serde_json::to_string(&s).unwrap();
+    assert_eq!(json.matches("\"reference\":true").count(), 5, "{json}");
+    assert!(!json.contains("\"reference\":false") && !json.contains("centerline"));
+    let back: Sketch = serde_json::from_str(&json).unwrap();
+    back.validate().unwrap();
+    assert_eq!(back, s);
+    // Its link broken, it is the sketch's own: free to move, and to trim.
+    for e in [edge, start, end] {
+        s.set_reference(e, false).unwrap();
+    }
+    assert!(!s.is_held_outside(edge));
+    assert!(s.dof().unwrap().dof >= 3);
+}
+
+#[test]
+fn a_dimension_to_a_centre_line_is_a_diameter() {
+    // Half the section of a stepped shaft, drawn above its axis.
+    let mut s = Sketch::new();
+    let axis = s.add_line(v(0.0, 0.0), v(60.0, 0.0)).unwrap();
+    let Geometry::Line { start: o, end: far } = s.geometry(axis).cloned().unwrap() else { panic!() };
+    s.add_constraint(Constraint::Fix { point: o }).unwrap();
+    s.add_constraint(Constraint::Horizontal { line: axis }).unwrap();
+    s.add_constraint(Constraint::Length { line: axis, value: 60.0 }).unwrap();
+    s.set_centerline(axis, true).unwrap();
+    assert!(s.is_centerline(axis) && !s.entity(axis).unwrap().construction);
+    let top = s.add_line(v(0.0, 9.0), v(60.0, 9.0)).unwrap();
+    let Geometry::Line { start: a, end: b } = s.geometry(top).cloned().unwrap() else { panic!() };
+    s.add_constraint(Constraint::Horizontal { line: top }).unwrap();
+    let d = s.add_constraint(Constraint::LinearDiameter { point: a, axis, value: 20.0 }).unwrap();
+    assert!(close(s.point(a).unwrap().y, 10.0) && close(s.point(b).unwrap().y, 10.0), "{:?}", s.line(top));
+    s.set_dimension(d, 32.0).unwrap();
+    assert!(close(s.point(a).unwrap().y, 16.0), "{:?}", s.point(a));
+    // It stays on its side of the axis, and reads twice the distance.
+    assert!(close(s.measure(s.constraint(d).unwrap()).unwrap(), 32.0));
+    assert_eq!(s.constraint(d).unwrap().name(), "linear_diameter");
+    assert!(s.constraint(d).unwrap().is_dimensional() && !s.constraint(d).unwrap().is_angular());
+    // A second one on the same point is one too many; as a driven dimension it reads the size.
+    let again = Constraint::LinearDiameter { point: b, axis, value: 32.0 };
+    assert!(matches!(s.add_constraint(again.clone()), Err(SketchError::Redundant(_))));
+    let read = s.add_driven(again).unwrap();
+    assert!(close(s.constraint(read).unwrap().value().unwrap(), 32.0));
+    // Only a line is a centre line, and a diameter is from a point to a line.
+    let round = s.add_circle(v(5.0, 5.0), 1.0).unwrap();
+    assert!(s.set_centerline(round, true).unwrap_err().to_string().contains("only a line"));
+    assert!(s.add_constraint(Constraint::LinearDiameter { point: a, axis: round, value: 4.0 }).is_err());
+    assert!(s.add_constraint(Constraint::LinearDiameter { point: a, axis, value: -4.0 }).is_err());
+    // The centre line still bounds a profile (a half section closed along its axis).
+    let json = serde_json::to_string(&s).unwrap();
+    assert_eq!(json.matches("\"centerline\":true").count(), 1, "{json}");
+    let back: Sketch = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, s);
+    let _ = far;
+}
+
+#[test]
+fn what_the_sketch_draws_itself_is_the_default_profile_before_what_it_shows_of_the_part() {
+    // The outline of a 40 x 20 face shown as reference geometry, and a circle drawn on it.
+    let mut s = Sketch::new();
+    let outline = s.add_rectangle(v(0.0, 0.0), v(40.0, 20.0)).unwrap();
+    for l in outline {
+        let Geometry::Line { start, end } = s.geometry(l).cloned().unwrap() else { panic!() };
+        for e in [l, start, end] {
+            s.set_reference(e, true).unwrap();
+        }
+    }
+    // Nothing of its own: the default is the outline, the face itself.
+    let all = regions(&s);
+    let d = default_regions(&s, &all);
+    assert!(d.len() == 1 && close(d[0].area, 800.0), "{d:?}");
+    // A circle of its own: that is the default, not the face with a hole in it.
+    let hole = s.add_circle(v(10.0, 10.0), 3.0).unwrap();
+    let all = regions(&s);
+    assert_eq!(all.len(), 2);
+    let d = default_regions(&s, &all);
+    assert!(d.len() == 1 && d[0].key == vec![hole], "{d:?}");
+    // A second circle inside the first: a ring of its own, as in any sketch.
+    let inner = s.add_circle(v(10.0, 10.0), 1.0).unwrap();
+    let all = regions(&s);
+    let d = default_regions(&s, &all);
+    assert!(d.len() == 1 && d[0].key == vec![hole] && d[0].holes.len() == 1, "{d:?}");
+    s.delete(&[inner]);
+    // A circle that crosses the outline is cut in two by it; both pieces are meant.
+    let over = s.add_circle(v(40.0, 10.0), 4.0).unwrap();
+    let all = regions(&s);
+    let d = default_regions(&s, &all);
+    let areas: f64 = d.iter().filter(|r| r.key.contains(&over)).map(|r| r.area).sum();
+    assert!((areas - PI * 16.0).abs() < 0.3, "the whole circle, both sides of the edge (areas are of outlines drawn in chords): {areas}");
+    assert!(d.iter().all(|r| r.key.contains(&hole) || r.key.contains(&over)), "{d:?}");
+    // A line of its own from edge to edge closes nothing by itself: everything, then.
+    s.delete(&[hole, over]);
+    s.add_line(v(30.0, 0.0), v(40.0, 10.0)).unwrap();
+    let all = regions(&s);
+    assert_eq!(all.len(), 2);
+    let d = default_regions(&s, &all);
+    assert!(close(d.iter().map(|r| r.area).sum::<f64>(), 800.0), "{d:?}");
+}
+
+/// A w x h rectangle with its lower left corner at `at`, its width and height dimensioned.
+/// Returns its lines (bottom, right, top, left) and the two dimensions.
+fn sized_rect(s: &mut Sketch, at: Vec2, w: f64, h: f64) -> ([EntityId; 4], ConstraintId, ConstraintId) {
+    let l = s.add_rectangle(at, at + v(w, h)).unwrap();
+    let width = s.add_constraint(Constraint::Length { line: l[0], value: w }).unwrap();
+    let height = s.add_constraint(Constraint::Length { line: l[1], value: h }).unwrap();
+    (l, width, height)
+}
+
+fn count(s: &Sketch, f: impl Fn(&Constraint) -> bool) -> usize {
+    s.constraints().filter(|(_, c)| f(c)).count()
+}
+
+#[test]
+fn geometry_is_moved_turned_and_scaled_and_what_is_joined_to_it_follows() {
+    let mut s = Sketch::new();
+    let (l, width, height) = sized_rect(&mut s, v(0.0, 0.0), 10.0, 6.0);
+    // A line of its own from the rectangle's far corner out to a point held in place.
+    let Geometry::Line { end: far, .. } = s.geometry(l[1]).cloned().unwrap() else { panic!() };
+    let stay = s.add_line(far, v(30.0, 20.0)).unwrap();
+    let Geometry::Line { end: anchor, .. } = s.geometry(stay).cloned().unwrap() else { panic!() };
+    s.add_constraint(Constraint::Fix { point: anchor }).unwrap();
+
+    // Shifted by (5, 3): every corner goes with it, its sizes hold, and the joined line
+    // stretches to follow while its held end stays.
+    let before = corners(&s, &l);
+    assert_eq!(s.transform(&l, Motion::Shift(v(5.0, 3.0)), false).unwrap(), l.to_vec());
+    for (was, now) in before.iter().zip(corners(&s, &l)) {
+        assert!(now.near(*was + v(5.0, 3.0), 1e-9), "{was:?} -> {now:?}");
+    }
+    assert!(s.point(anchor).unwrap().near(v(30.0, 20.0), 1e-12) && s.point(far).unwrap().near(v(15.0, 9.0), 1e-9));
+    assert!(close(s.constraint(width).unwrap().value().unwrap(), 10.0));
+
+    // A quarter turn about its lower left corner: the level sides are upright now and the
+    // upright ones level, and it is still 10 by 6.
+    let about = corners(&s, &l)[0];
+    s.transform(&l, Motion::Turn { about, angle: FRAC_PI_2 }, false).unwrap();
+    assert!(matches!(s.line(l[0]), Some((a, b)) if close(a.x, b.x) && close((b.y - a.y).abs(), 10.0)), "{:?}", s.line(l[0]));
+    assert_eq!((count(&s, |c| matches!(c, Constraint::Horizontal { .. })), count(&s, |c| matches!(c, Constraint::Vertical { .. }))), (2, 2));
+    assert!(count(&s, |c| matches!(c, Constraint::Vertical { line } if *line == l[0])) == 1, "the bottom side is the upright one now");
+    // Turned 30 degrees it is neither: those constraints go, the sizes stay.
+    s.transform(&l, Motion::Turn { about, angle: PI / 6.0 }, false).unwrap();
+    assert_eq!(count(&s, |c| matches!(c, Constraint::Horizontal { .. } | Constraint::Vertical { .. })), 0);
+    let (a, b) = s.line(l[0]).unwrap();
+    assert!(close(a.dist(b), 10.0) && close((b - a).angle(), FRAC_PI_2 + PI / 6.0), "{a:?} {b:?}");
+
+    // Twice the size about that corner: 20 by 12, and the dimensions say so.
+    s.transform(&l, Motion::Scale { about, factor: 2.0 }, false).unwrap();
+    let (a, b) = s.line(l[0]).unwrap();
+    assert!(close(a.dist(b), 20.0), "{a:?} {b:?}");
+    assert!(close(s.constraint(width).unwrap().value().unwrap(), 20.0) && close(s.constraint(height).unwrap().value().unwrap(), 12.0));
+    assert!(s.point(anchor).unwrap().near(v(30.0, 20.0), 1e-12));
+
+    // What is held where it is cannot be moved, and says so; the sketch is as it was.
+    let held = s.clone();
+    let e = s.transform(&[stay], Motion::Shift(v(1.0, 0.0)), false).unwrap_err().to_string();
+    assert!(e.contains("holds the selection where it is"), "{e}");
+    assert_eq!(s, held);
+    // Nor what does not exist, nothing at all, or by what is no number.
+    assert!(s.transform(&[], Motion::Shift(v(1.0, 0.0)), false).unwrap_err().to_string().contains("nothing to move"));
+    assert!(matches!(s.transform(&[EntityId(999)], Motion::Shift(v(1.0, 0.0)), false), Err(SketchError::NoEntity(_))));
+    assert!(s.transform(&l, Motion::Scale { about, factor: 0.0 }, false).is_err());
+    assert!(s.transform(&l, Motion::Shift(v(f64::NAN, 0.0)), false).is_err());
+    assert_eq!(s, held);
+
+    // A width measured level cannot be turned out of level; by half a turn it can.
+    let mut t = Sketch::new();
+    let r = t.add_rectangle(v(0.0, 0.0), v(10.0, 6.0)).unwrap();
+    let Geometry::Line { start: p0, end: p1 } = t.geometry(r[0]).cloned().unwrap() else { panic!() };
+    let across = t.add_constraint(Constraint::HorizontalDistance { a: p0, b: p1, value: 10.0 }).unwrap();
+    let e = t.transform(&r, Motion::Turn { about: v(0.0, 0.0), angle: 0.3 }, false).unwrap_err().to_string();
+    assert!(e.contains("measured level or upright"), "{e}");
+    t.transform(&r, Motion::Turn { about: v(0.0, 0.0), angle: PI }, false).unwrap();
+    assert!(close(t.constraint(across).unwrap().value().unwrap(), -10.0) && t.point(p1).unwrap().near(v(-10.0, 0.0), 1e-9));
+    // Reference geometry is the part's to move.
+    t.set_reference(r[0], true).unwrap();
+    assert!(t.transform(&[r[0]], Motion::Shift(v(1.0, 0.0)), false).unwrap_err().to_string().contains("projected geometry"));
+}
+
+#[test]
+fn a_copy_keeps_its_shape_and_not_its_sizes() {
+    let mut s = Sketch::new();
+    let (l, ..) = sized_rect(&mut s, v(0.0, 0.0), 10.0, 6.0);
+    let hole = s.add_circle(v(5.0, 3.0), 2.0).unwrap();
+    s.set_construction(hole, true).unwrap();
+    let (entities, constraints) = (s.entity_count(), s.constraint_count());
+    let original = s.clone();
+    // A copy 20 to the right: four new lines on four new corners, a new circle on a new centre.
+    let made = s.transform(&[l[0], l[1], l[2], l[3], hole], Motion::Shift(v(20.0, 0.0)), true).unwrap();
+    assert_eq!(made.len(), 5);
+    assert_eq!(s.entity_count(), entities + 4 + 4 + 2);
+    assert!(made.iter().all(|m| !l.contains(m) && *m != hole));
+    let at: Vec<Vec2> = made[..4].iter().map(|m| s.line(*m).unwrap().0).collect();
+    for (was, now) in corners(&original, &l).iter().zip(&at) {
+        assert!(now.near(*was + v(20.0, 0.0), 1e-12));
+    }
+    assert!(s.circle(made[4]).unwrap().0.near(v(25.0, 3.0), 1e-12) && s.entity(made[4]).unwrap().construction);
+    // It is level and upright like the original (four more such constraints) and its corners
+    // are shared; but its width and height are its own to give.
+    assert_eq!(s.constraint_count(), constraints + 4);
+    assert_eq!(count(&s, |c| c.is_dimensional()), 2);
+    assert_eq!(s.dof().unwrap().dof, original.dof().unwrap().dof + 4 + 3);
+    // The original is as it was.
+    for (id, e) in original.entities() {
+        assert_eq!(s.entity(id), Some(e));
+    }
+    // A copy turned 45 degrees is neither level nor upright: its lines carry no such constraint.
+    let turned = s.transform(&l, Motion::Turn { about: v(0.0, 0.0), angle: FRAC_PI_4 }, true).unwrap();
+    assert_eq!(count(&s, |c| matches!(c, Constraint::Horizontal { line } | Constraint::Vertical { line } if turned.contains(line))), 0);
+    let (a, b) = s.line(turned[0]).unwrap();
+    assert!(close((b - a).angle(), FRAC_PI_4) && close(a.dist(b), 10.0));
+    // A copy at twice the size.
+    let big = s.transform(&[hole], Motion::Scale { about: v(5.0, 3.0), factor: 2.0 }, true).unwrap();
+    assert!(close(s.circle(big[0]).unwrap().1, 4.0));
+    s.validate().unwrap();
+}
+
+#[test]
+fn a_curve_is_extended_to_the_next_one_in_its_way() {
+    let mut s = Sketch::new();
+    let wall = s.add_line(v(20.0, -10.0), v(20.0, 10.0)).unwrap();
+    let far = s.add_line(v(40.0, -10.0), v(40.0, 10.0)).unwrap();
+    let short = s.add_line(v(0.0, 0.0), v(8.0, 2.0)).unwrap();
+    let Geometry::Line { start, end } = s.geometry(short).cloned().unwrap() else { panic!() };
+    // Clicked near its right-hand end: that end goes on along the line to the first wall, not
+    // the one behind it, and is held there.
+    s.extend(short, v(7.0, 2.0)).unwrap();
+    assert!(s.point(end).unwrap().near(v(20.0, 5.0), 1e-9), "{:?}", s.point(end));
+    assert!(s.point(start).unwrap().near(v(0.0, 0.0), 1e-9));
+    assert_eq!(count(&s, |c| matches!(c, Constraint::PointOnCurve { point, curve } if *point == end && *curve == wall)), 1);
+    // Nothing lies beyond its other end.
+    let e = s.extend(short, v(1.0, 0.0)).unwrap_err().to_string();
+    assert!(e.contains("no curve beyond that end"), "{e}");
+    // An arc goes on round its circle: a quarter circle about (60, 0) from 3 o'clock to
+    // 12 o'clock reaches the line x = 54 at (54, 8).
+    let arc = s.add_arc(v(60.0, 0.0), v(70.0, 0.0), v(60.0, 10.0)).unwrap();
+    let Geometry::Arc { end: arc_end, .. } = s.geometry(arc).cloned().unwrap() else { panic!() };
+    let stop = s.add_line(v(54.0, -20.0), v(54.0, 20.0)).unwrap();
+    s.extend(arc, v(60.0, 10.0)).unwrap();
+    assert!(s.point(arc_end).unwrap().near(v(54.0, 8.0), 1e-9), "{:?}", s.point(arc_end));
+    assert!(close(s.arc(arc).unwrap().radius, 10.0));
+    // A line whose length is given cannot be made longer, and says why; a circle has no end;
+    // an end joined to another curve is not one to extend.
+    let fixed = s.add_line(v(0.0, 30.0), v(5.0, 30.0)).unwrap();
+    s.add_constraint(Constraint::Length { line: fixed, value: 5.0 }).unwrap();
+    let Geometry::Line { start: f0, .. } = s.geometry(fixed).cloned().unwrap() else { panic!() };
+    s.add_constraint(Constraint::Fix { point: f0 }).unwrap();
+    let roof = s.add_line(v(15.0, 25.0), v(15.0, 35.0)).unwrap();
+    let before = s.clone();
+    assert!(s.extend(fixed, v(5.0, 30.0)).unwrap_err().to_string().contains("holds it as it is"));
+    assert_eq!(s, before);
+    let ring = s.add_circle(v(0.0, -40.0), 3.0).unwrap();
+    assert!(s.extend(ring, v(3.0, -40.0)).unwrap_err().to_string().contains("only a line or an arc"));
+    let joined = s.add_line(end, v(25.0, 30.0)).unwrap();
+    assert!(s.extend(joined, v(20.0, 5.0)).unwrap_err().to_string().contains("joined to another curve"));
+    let _ = (far, stop, roof);
+}
+
+#[test]
+fn curves_are_split_where_another_crosses_them() {
+    let mut s = Sketch::new();
+    let long = s.add_line(v(0.0, 0.0), v(30.0, 0.0)).unwrap();
+    s.add_constraint(Constraint::Horizontal { line: long }).unwrap();
+    let length = s.add_constraint(Constraint::Length { line: long, value: 30.0 }).unwrap();
+    let cut = s.add_line(v(10.0, -5.0), v(10.0, 5.0)).unwrap();
+    let Geometry::Line { start, end } = s.geometry(long).cloned().unwrap() else { panic!() };
+    // Split near the crossing: two lines in a row sharing a point held on the crossing line.
+    let rest = s.split(long, v(12.0, 0.0)).unwrap();
+    let ((a, b), (c, d)) = (s.line(long).unwrap(), s.line(rest).unwrap());
+    assert!(a.near(v(0.0, 0.0), 1e-9) && b.near(v(10.0, 0.0), 1e-9) && c.near(v(10.0, 0.0), 1e-9) && d.near(v(30.0, 0.0), 1e-9));
+    let Geometry::Line { start: shared, .. } = s.geometry(rest).cloned().unwrap() else { panic!() };
+    assert_eq!(s.curves_at(shared).len(), 2);
+    assert_eq!(count(&s, |c| matches!(c, Constraint::PointOnCurve { point, curve } if *point == shared && *curve == cut)), 1);
+    // Both pieces are level, and the 30 it was long is now from end to end.
+    assert_eq!(count(&s, |c| matches!(c, Constraint::Horizontal { .. })), 2);
+    assert_eq!(s.constraint(length), Some(&Constraint::Distance { a: start, b: end, value: 30.0 }));
+    s.solve().unwrap();
+    s.set_dimension(length, 40.0).unwrap();
+    assert!(close(s.point(start).unwrap().dist(s.point(end).unwrap()), 40.0));
+
+    // A sloping line's pieces stay in line by being parallel.
+    let slope = s.add_line(v(0.0, 20.0), v(20.0, 30.0)).unwrap();
+    let cross = s.add_line(v(10.0, 15.0), v(10.0, 40.0)).unwrap();
+    let rest = s.split(slope, v(10.0, 25.0)).unwrap();
+    assert_eq!(count(&s, |c| matches!(c, Constraint::Parallel { a, b } if *a == slope && *b == rest)), 1);
+    assert!(s.line(rest).unwrap().0.near(v(10.0, 25.0), 1e-9));
+    // An arc is split into two arcs about one centre.
+    let arc = s.add_arc(v(60.0, 0.0), v(70.0, 0.0), v(50.0, 0.0)).unwrap();
+    let up = s.add_line(v(60.0, 0.0), v(60.0, 20.0)).unwrap();
+    let other = s.split(arc, v(60.0, 10.0)).unwrap();
+    let (first, second) = (s.arc(arc).unwrap(), s.arc(other).unwrap());
+    assert!(close(first.sweep(), FRAC_PI_2) && close(second.sweep(), FRAC_PI_2) && first.center.near(second.center, 1e-12));
+    // A circle becomes two arcs where a line crosses it twice; crossed once it cannot be split.
+    let ring = s.add_circle(v(100.0, 0.0), 5.0).unwrap();
+    let through = s.add_line(v(90.0, 0.0), v(110.0, 0.0)).unwrap();
+    let half = s.split(ring, v(105.0, 0.5)).unwrap();
+    assert!(close(s.arc(ring).unwrap().sweep(), PI) && close(s.arc(half).unwrap().sweep(), PI));
+    let lone = s.add_circle(v(100.0, 50.0), 5.0).unwrap();
+    let tangent = s.add_line(v(90.0, 55.0), v(110.0, 55.0)).unwrap();
+    let before = s.clone();
+    assert!(s.split(lone, v(100.0, 55.0)).unwrap_err().to_string().contains("only one crossing"));
+    // Nothing crosses a line off on its own.
+    let free = s.add_line(v(200.0, 0.0), v(210.0, 0.0)).unwrap();
+    assert!(s.split(free, v(205.0, 0.0)).unwrap_err().to_string().contains("nothing crosses it"));
+    s.delete(&[free]);
+    assert_eq!(s.entity_count(), before.entity_count());
+    s.validate().unwrap();
+    let _ = (cross, up, through, tangent);
+}
+
+#[test]
+fn sketch_patterns_make_rows_and_rings_of_copies() {
+    let mut s = Sketch::new();
+    let hole = s.add_circle(v(5.0, 5.0), 2.0).unwrap();
+    // Three across, 10 apart, in two rows 8 apart: five copies.
+    let made = s.pattern_rect(&[hole], v(1.0, 0.0), 3, 10.0, Some((v(0.0, 1.0), 2, 8.0))).unwrap();
+    assert_eq!(made.len(), 5);
+    let mut at: Vec<(i64, i64)> = made.iter().map(|c| s.circle(*c).unwrap().0).map(|p| (p.x.round() as i64, p.y.round() as i64)).collect();
+    at.sort_unstable();
+    assert_eq!(at, [(5, 13), (15, 5), (15, 13), (25, 5), (25, 13)]);
+    assert!(made.iter().all(|c| close(s.circle(*c).unwrap().1, 2.0)));
+    // The direction is only a direction: its length does not matter; along a slope too.
+    let row = s.pattern_rect(&[hole], v(3.0, 4.0), 2, 10.0, None).unwrap();
+    assert!(s.circle(row[0]).unwrap().0.near(v(11.0, 13.0), 1e-9));
+    // Six round the origin: 60 degrees apart, all 5 sqrt 2 from it. Four over 90 degrees are
+    // 30 apart, the last a quarter turn from the first.
+    let ring = s.pattern_circular(&[hole], v(0.0, 0.0), 6, TAU).unwrap();
+    assert_eq!(ring.len(), 5);
+    for (i, c) in ring.iter().enumerate() {
+        let p = s.circle(*c).unwrap().0;
+        assert!(close(p.len(), 50f64.sqrt()) && close(norm_angle(p.angle() - FRAC_PI_4), (i + 1) as f64 * PI / 3.0), "{i}: {p:?}");
+    }
+    let fan = s.pattern_circular(&[hole], v(0.0, 0.0), 4, FRAC_PI_2).unwrap();
+    assert!(s.circle(fan[2]).unwrap().0.near(v(-5.0, 5.0), 1e-9), "{:?}", s.circle(fan[2]));
+    // A rectangle's copies are rectangles: level, upright and joined at their corners.
+    let l = s.add_rectangle(v(40.0, 0.0), v(46.0, 4.0)).unwrap();
+    let before = s.constraint_count();
+    let copies = s.pattern_rect(&l, v(1.0, 0.0), 3, 10.0, None).unwrap();
+    assert_eq!((copies.len(), s.constraint_count()), (8, before + 8));
+    // What is no pattern is refused, and nothing is made.
+    let n = s.entity_count();
+    for bad in [
+        s.clone().pattern_rect(&[hole], v(1.0, 0.0), 1, 10.0, None),
+        s.clone().pattern_rect(&[hole], v(0.0, 0.0), 3, 10.0, None),
+        s.clone().pattern_rect(&[hole], v(1.0, 0.0), 3, 0.0, None),
+        s.clone().pattern_rect(&[hole], v(1.0, 0.0), 100, 1.0, Some((v(0.0, 1.0), 100, 1.0))),
+        s.clone().pattern_circular(&[hole], v(0.0, 0.0), 1, TAU),
+        s.clone().pattern_circular(&[hole], v(0.0, 0.0), 4, 0.0),
+        s.clone().pattern_circular(&[hole], v(0.0, 0.0), 4, 7.0),
+    ] {
+        assert!(bad.is_err());
+    }
+    assert_eq!(s.entity_count(), n);
+    s.validate().unwrap();
+}
+
+#[test]
+fn slots_and_rectangles_about_a_centre_or_at_an_angle_hold_their_shape() {
+    // A slot 30 between centres and 8 across, level.
+    let mut s = Sketch::new();
+    let slot = s.add_slot(v(0.0, 0.0), v(30.0, 0.0), 8.0).unwrap();
+    s.solve().unwrap();
+    assert_eq!(s.dof().unwrap().dof, 5, "where it is, which way it lies, how long and how wide");
+    let all = regions(&s);
+    let area = 30.0 * 8.0 + PI * 16.0;
+    assert!(all.len() == 1 && (all[0].area - area).abs() < 0.3, "{:?}", all.iter().map(|r| r.area).collect::<Vec<_>>());
+    // Held by one end, the distance between its centres and a diameter, with one side level:
+    // nothing is left to move. Made 40 long and 12 wide it is still a slot.
+    s.add_constraint(Constraint::Fix { point: slot.centers[0] }).unwrap();
+    let length = s.add_constraint(Constraint::Distance { a: slot.centers[0], b: slot.centers[1], value: 30.0 }).unwrap();
+    let width = s.add_constraint(Constraint::Diameter { curve: slot.arcs[0], value: 8.0 }).unwrap();
+    s.add_constraint(Constraint::Horizontal { line: slot.lines[0] }).unwrap();
+    assert_eq!(s.dof().unwrap().dof, 0);
+    s.set_dimension(length, 40.0).unwrap();
+    s.set_dimension(width, 12.0).unwrap();
+    let (a, b) = s.line(slot.lines[1]).unwrap();
+    assert!(close(a.dist(b), 40.0) && close(a.y, 6.0) && close(b.y, 6.0), "{a:?} {b:?}");
+    assert!(close(s.arc(slot.arcs[1]).unwrap().radius, 6.0) && close(s.arc(slot.arcs[1]).unwrap().sweep(), PI));
+    assert!(s.add_slot(v(0.0, 0.0), v(0.0, 0.0), 8.0).is_err() && s.add_slot(v(0.0, 0.0), v(9.0, 0.0), 0.0).is_err());
+    // A slot at an angle is as good.
+    let mut t = Sketch::new();
+    let tilted = t.add_slot(v(0.0, 0.0), v(30.0, 40.0), 10.0).unwrap();
+    t.solve().unwrap();
+    let (a, b) = t.line(tilted.lines[0]).unwrap();
+    assert!(close(a.dist(b), 50.0) && close((b - a).angle(), (4.0f64).atan2(3.0)), "{a:?} {b:?}");
+
+    // A rectangle about its centre: sized from the middle, its centre stays the centre.
+    let mut r = Sketch::new();
+    let (l, centre) = r.add_rectangle_center(v(10.0, 5.0), v(16.0, 9.0)).unwrap();
+    r.solve().unwrap();
+    assert!(corners(&r, &l)[0].near(v(4.0, 1.0), 1e-9) && r.point(centre).unwrap().near(v(10.0, 5.0), 1e-9));
+    r.add_constraint(Constraint::Fix { point: centre }).unwrap();
+    let w = r.add_constraint(Constraint::Length { line: l[0], value: 12.0 }).unwrap();
+    r.add_constraint(Constraint::Length { line: l[1], value: 8.0 }).unwrap();
+    assert_eq!(r.dof().unwrap().dof, 0);
+    r.set_dimension(w, 20.0).unwrap();
+    let c = corners(&r, &l);
+    assert!(c[0].near(v(0.0, 1.0), 1e-7) && c[2].near(v(20.0, 9.0), 1e-7), "it grows both ways from its centre: {c:?}");
+    let outline = regions(&r);
+    assert!(outline.len() == 1 && close(outline[0].area, 160.0), "the diagonal is construction: one profile");
+
+    // A rectangle at an angle: its first side from (0, 0) to (30, 40), 10 deep to the left.
+    let mut q = Sketch::new();
+    let l = q.add_rectangle_3(v(0.0, 0.0), v(30.0, 40.0), v(-8.0, 6.0)).unwrap();
+    q.solve().unwrap();
+    assert_eq!(q.dof().unwrap().dof, 5);
+    let c = corners(&q, &l);
+    assert!(
+        c[0].near(v(0.0, 0.0), 1e-9) && c[1].near(v(30.0, 40.0), 1e-9) && c[2].near(v(22.0, 46.0), 1e-9) && c[3].near(v(-8.0, 6.0), 1e-9),
+        "{c:?}"
+    );
+    // Dragged by a corner it stays square.
+    let Geometry::Line { end: far, .. } = q.geometry(l[1]).cloned().unwrap() else { panic!() };
+    q.drag(far, v(40.0, 60.0)).unwrap();
+    let c = corners(&q, &l);
+    assert!(close((c[1] - c[0]).dot(c[2] - c[1]), 0.0) && close((c[3] - c[0]).dot(c[1] - c[0]), 0.0), "{c:?}");
+    assert!(q.add_rectangle_3(v(0.0, 0.0), v(0.0, 0.0), v(1.0, 1.0)).is_err() && q.add_rectangle_3(v(0.0, 0.0), v(5.0, 0.0), v(9.0, 0.0)).is_err());
+}
+
+#[test]
+fn a_tangent_arc_carries_on_from_the_end_of_a_line_or_an_arc() {
+    let mut s = Sketch::new();
+    let line = s.add_line(v(0.0, 0.0), v(10.0, 0.0)).unwrap();
+    let Geometry::Line { start, end } = s.geometry(line).cloned().unwrap() else { panic!() };
+    // From the right-hand end, round to a point up and to the right: a quarter circle of
+    // radius 5 about (10, 5), turning left.
+    let up = s.add_arc_tangent(end, v(15.0, 5.0)).unwrap();
+    let a = s.arc(up).unwrap();
+    assert!(a.center.near(v(10.0, 5.0), 1e-9) && close(a.radius, 5.0) && close(a.sweep(), FRAC_PI_2), "{a:?}");
+    assert!(a.start_point().near(v(10.0, 0.0), 1e-9) && s.curves_at(end).len() == 2);
+    // Turning right from the other end (it heads left there) it runs clockwise: about (0, 4).
+    let down = s.add_arc_tangent(start, v(-4.0, 4.0)).unwrap();
+    let b = s.arc(down).unwrap();
+    assert!(b.center.near(v(0.0, 4.0), 1e-9) && close(b.sweep(), FRAC_PI_2) && b.end_point().near(v(0.0, 0.0), 1e-9), "{b:?}");
+    // It stays tangent when the line is turned: the line's end dragged, the arc's centre is
+    // still square to the line through the shared point.
+    s.solve().unwrap();
+    s.drag(start, v(0.0, 3.0)).unwrap();
+    let ((p, q), a) = (s.line(line).unwrap(), s.arc(up).unwrap());
+    assert!(close((q - p).normalized().dot((a.center - q).normalized()), 0.0), "{p:?} {q:?} {a:?}");
+    // And on from the arc's own free end, the same way round.
+    let Geometry::Arc { end: tip, .. } = s.geometry(up).cloned().unwrap() else { panic!() };
+    let on = s.add_arc_tangent(tip, s.point(tip).unwrap() + v(-3.0, 6.0)).unwrap();
+    assert!(s.arc(on).is_some());
+    // Straight ahead is a line, and a point that ends nothing starts no arc.
+    let mut t = Sketch::new();
+    let l = t.add_line(v(0.0, 0.0), v(10.0, 0.0)).unwrap();
+    let Geometry::Line { end, .. } = t.geometry(l).cloned().unwrap() else { panic!() };
+    assert!(t.add_arc_tangent(end, v(20.0, 0.0)).unwrap_err().to_string().contains("that is a line"));
+    let lone = t.add_point(v(5.0, 5.0)).unwrap();
+    assert!(t.add_arc_tangent(lone, v(9.0, 9.0)).unwrap_err().to_string().contains("end point of a line or an arc"));
 }

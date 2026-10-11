@@ -80,6 +80,9 @@ pub enum Icon {
     Concentric,
     Construction,
     Driven,
+    /// Project Geometry: an edge of the part dropped onto the sketch plane.
+    Project,
+    Slot,
     Text,
     Move,
     Copy,
@@ -566,6 +569,23 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.line(&[(0.3, 0.5), (0.7, 0.5)]);
             pen.arrow_head((0.3, 0.5), (0.5, 0.5));
             pen.arrow_head((0.7, 0.5), (0.5, 0.5));
+        }
+        // An edge above, its image on the sketch plane below, and the two lines dropping it there.
+        Icon::Project => {
+            pen.line(&[(0.14, 0.34), (0.62, 0.12)]);
+            pen.line(&[(0.14, 0.34), (0.14, 0.62)]);
+            pen.line(&[(0.62, 0.12), (0.62, 0.4)]);
+            pen.closed(&[(0.04, 0.72), (0.56, 0.48), (0.96, 0.66), (0.44, 0.92)]);
+            pen.line(&[(0.18, 0.7), (0.6, 0.5)]);
+            pen.arrow_head((0.14, 0.62), (0.14, 0.34));
+            pen.arrow_head((0.62, 0.4), (0.62, 0.12));
+        }
+        // A slot: two sides and two round ends.
+        Icon::Slot => {
+            pen.line(&[(0.28, 0.32), (0.72, 0.32)]);
+            pen.line(&[(0.28, 0.68), (0.72, 0.68)]);
+            pen.arc((0.72, 0.5), 0.18, 0.18, -PI / 2.0, PI / 2.0);
+            pen.arc((0.28, 0.5), 0.18, 0.18, PI / 2.0, PI * 1.5);
         }
         Icon::Construction => {
             for i in 0..4 {

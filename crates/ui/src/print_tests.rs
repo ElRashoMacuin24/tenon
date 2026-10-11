@@ -73,7 +73,7 @@ fn the_print_check_window_reads_the_part_and_marks_what_it_finds() {
     d.settle(&mut wb);
     assert!(wb.highlights().is_empty());
 
-    // Inspect > 3D Print Check: the part is read at once. Standing on its leg, the underside of
+    // Environments > 3D Print Check: the part is read at once. Standing on its leg, the underside of
     // the top hangs over air, all but where the leg is.
     wb.run_ui("inspect.print").unwrap();
     frames(&mut d, &mut wb);

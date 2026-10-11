@@ -154,24 +154,48 @@ pub const RIBBON: &[RibbonTab] = &[
                         .key("L")
                         .more(&["sketch.line", "sketch.spline"]),
                     small("sketch.circle", "Circle", "Click the centre, then a point on the circle", Icon::Circle, 0).key("C"),
-                    small("sketch.arc", "Arc", "Click the start, the end, then a point on the arc", Icon::Arc, 0).key("A"),
-                    small("sketch.rectangle", "Rectangle", "Click two opposite corners", Icon::Rectangle, 0)
-                        .more(&["sketch.rectangle", "sketch.polygon"]),
+                    small("sketch.arc", "Arc", "Three points: click the start, the end, then a point on the arc", Icon::Arc, 0).key("A").more(&[
+                        "sketch.arc",
+                        "sketch.arc_tangent",
+                        "sketch.arc_center",
+                    ]),
+                    small("sketch.rectangle", "Rectangle", "Click two opposite corners", Icon::Rectangle, 0).more(&[
+                        "sketch.rectangle",
+                        "sketch.rectangle3",
+                        "sketch.rectangle_center",
+                        "sketch.slot",
+                        "sketch.slot_overall",
+                        "sketch.slot_center",
+                        "sketch.polygon",
+                    ]),
                     small("sketch.fillet", "Fillet", "Click a corner where two lines meet", Icon::Fillet, 0),
                     small("sketch.text", "Text", "Text in a sketch", Icon::Text, LATER),
                     small("sketch.point", "Point", "Click to place a point (e.g. a hole centre)", Icon::Point, 0),
+                    large(
+                        "sketch.project",
+                        "Project\nGeometry",
+                        "Show edges of the part in the sketch as reference geometry: it follows the part, and the sketch is dimensioned and constrained to it",
+                        Icon::Project,
+                        0,
+                    ),
                 ],
             },
             RibbonPanel {
                 title: "Modify",
                 commands: &[
-                    small("sketch.move", "Move", "Move sketch geometry", Icon::Move, LATER),
-                    small("sketch.copy", "Copy", "Copy sketch geometry", Icon::Copy, LATER),
-                    small("sketch.rotate", "Rotate", "Rotate sketch geometry", Icon::Rotate, LATER),
+                    small("sketch.move", "Move", "Move the selected geometry: click where from and where to, or type the distance", Icon::Move, 0),
+                    small("sketch.copy", "Copy", "Copy the selected geometry: click where from, then where each copy goes", Icon::Copy, 0),
+                    small(
+                        "sketch.rotate",
+                        "Rotate",
+                        "Turn the selected geometry about a point: click it, then from and to, or type the angle",
+                        Icon::Rotate,
+                        0,
+                    ),
                     small("sketch.trim", "Trim", "Click the piece of a curve to remove", Icon::Trim, 0).key("X"),
-                    small("sketch.extend", "Extend", "Extend a curve to the next one", Icon::Extend, LATER),
-                    small("sketch.split", "Split", "Split a curve where it meets another", Icon::Split, LATER),
-                    small("sketch.scale", "Scale", "Scale sketch geometry", Icon::Scale, LATER),
+                    small("sketch.extend", "Extend", "Click a line or an arc near an end: it goes on to the next curve in its way", Icon::Extend, 0),
+                    small("sketch.split", "Split", "Click a curve near where another crosses it: it becomes two", Icon::Split, 0),
+                    small("sketch.scale", "Scale", "Make the selected geometry larger or smaller about a point", Icon::Scale, 0),
                     small("sketch.stretch", "Stretch", "Stretch sketch geometry", Icon::Stretch, LATER),
                     small("sketch.offset", "Offset", "Select curves, then choose a distance", Icon::Offset, 0).key("O"),
                 ],
@@ -179,8 +203,14 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Pattern",
                 commands: &[
-                    small("sketch.pattern.rect", "Rectangular", "Repeat sketch geometry in rows and columns", Icon::PatternRect, LATER),
-                    small("sketch.pattern.circular", "Circular", "Repeat sketch geometry around a point", Icon::PatternCircular, LATER),
+                    small(
+                        "sketch.pattern.rect",
+                        "Rectangular",
+                        "Repeat the selected geometry in rows: click a line for the direction",
+                        Icon::PatternRect,
+                        0,
+                    ),
+                    small("sketch.pattern.circular", "Circular", "Repeat the selected geometry round a point", Icon::PatternCircular, 0),
                     small("sketch.mirror", "Mirror", "Select geometry, then click the mirror line", Icon::Mirror, 0),
                 ],
             },
@@ -210,6 +240,13 @@ pub const RIBBON: &[RibbonTab] = &[
                 commands: &[
                     small("sketch.construction", "Construction", "Make the selected geometry construction (or normal again)", Icon::Construction, 0),
                     small(
+                        "sketch.centerline",
+                        "Centerline",
+                        "Make the selected line a centre line (or an ordinary line again): a revolution turns about it, and a dimension to it is a diameter",
+                        Icon::Centerline,
+                        0,
+                    ),
+                    small(
                         "sketch.driven",
                         "Driven Dimension",
                         "Click a dimension to make it driven (it follows the sketch, in parentheses) or driving again",
@@ -223,25 +260,13 @@ pub const RIBBON: &[RibbonTab] = &[
     },
     RibbonTab {
         name: "Inspect",
-        panels: &[
-            RibbonPanel {
-                title: "Measure",
-                commands: &[
-                    large("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 0),
-                    large("inspect.mass", "Properties", "Material, appearance, mass, volume and centre of gravity", Icon::MassProps, 0),
-                ],
-            },
-            RibbonPanel {
-                title: "3D Print",
-                commands: &[large(
-                    "inspect.print",
-                    "3D Print\nCheck",
-                    "How the part would print: a closed surface, overhangs, thin walls, and whether it fits the bed",
-                    Icon::Print3d,
-                    0,
-                )],
-            },
-        ],
+        panels: &[RibbonPanel {
+            title: "Measure",
+            commands: &[
+                large("inspect.measure", "Measure", "Distances, angles, lengths and areas", Icon::Measure, 0),
+                large("inspect.mass", "Properties", "Material, appearance, mass, volume and centre of gravity", Icon::MassProps, 0),
+            ],
+        }],
     },
     RibbonTab {
         name: "Tools",
@@ -318,6 +343,19 @@ pub const RIBBON: &[RibbonTab] = &[
                 ],
             },
         ],
+    },
+    RibbonTab {
+        name: "Environments",
+        panels: &[RibbonPanel {
+            title: "3D Print",
+            commands: &[large(
+                "inspect.print",
+                "3D Print\nCheck",
+                "How the part would print: a closed surface, overhangs, thin walls, and whether it fits the bed",
+                Icon::Print3d,
+                0,
+            )],
+        }],
     },
 ];
 
@@ -601,6 +639,26 @@ pub const DRW_RETURN: UiCommand = large("drw.return", "Return", "Finish editing 
 pub const EXTRA: &[UiCommand] = &[
     small("sketch.spline", "Spline", "Click control points; Enter finishes", Icon::Spline, 0),
     small("sketch.polygon", "Polygon", "Click the centre, then a corner (6 sides)", Icon::Polygon, 0),
+    small(
+        "sketch.break_link",
+        "Break Link",
+        "Make the selected projected geometry the sketch's own: it stays where it is and no longer follows the part",
+        Icon::Project,
+        0,
+    ),
+    small(
+        "sketch.arc_tangent",
+        "Arc Tangent",
+        "An arc that carries on from the end of a line or an arc: click that end, then where the arc ends",
+        Icon::Arc,
+        0,
+    ),
+    small("sketch.arc_center", "Arc Center Point", "Click the centre, the start, then the end of the arc", Icon::Arc, 0),
+    small("sketch.rectangle3", "Rectangle Three Point", "A rectangle at any angle: click two corners of one side, then how deep", Icon::Rectangle, 0),
+    small("sketch.rectangle_center", "Rectangle Two Point Center", "Click the centre, then a corner", Icon::Rectangle, 0),
+    small("sketch.slot", "Slot Center to Center", "Click the centre of each round end, then how wide", Icon::Slot, 0),
+    small("sketch.slot_overall", "Slot Overall", "Click each end of the slot, then how wide", Icon::Slot, 0),
+    small("sketch.slot_center", "Slot Center Point", "Click the middle of the slot, the centre of one end, then how wide", Icon::Slot, 0),
     small("sketch.new_3d", "Start 3D Sketch", "A sketch of 3D curves", Icon::NewSketch, LATER),
     small("view.style.shaded_edges", "Shaded with Edges", "Shaded faces with their edges", Icon::VisualStyle, 0),
     small("view.style.shaded", "Shaded", "Shaded faces only", Icon::VisualStyle, 0),
@@ -792,7 +850,7 @@ mod tests {
     #[test]
     fn ribbon_has_the_planned_tabs() {
         let names: Vec<_> = RIBBON.iter().map(|t| t.name).collect();
-        assert_eq!(names, ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View"]);
+        assert_eq!(names, ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View", "Environments"]);
         assert_eq!(RIBBON[MODEL_TAB].name, "3D Model");
         assert_eq!(RIBBON[SKETCH_TAB].name, "Sketch");
         assert!(RIBBON.iter().all(|t| !t.panels.is_empty() && t.panels.iter().all(|p| !p.commands.is_empty())));

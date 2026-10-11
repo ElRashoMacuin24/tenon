@@ -251,6 +251,7 @@ fn placed_body(b: &BodyView, x: &Rigid) -> BodyView {
         bbox: b.bbox.and_then(|bb| Aabb3::from_points(corners(&bb).map(|p| x.point(p)))),
         edges: b.edges.iter().map(|(n, fp)| (*n, EdgeFingerprint { mid: x.point(fp.mid), length: fp.length })).collect(),
         ends: b.ends.iter().map(|[s, e]| [x.point(*s), x.point(*e)]).collect(),
+        mids: b.mids.iter().map(|m| x.point(*m)).collect(),
         curves: b
             .curves
             .iter()

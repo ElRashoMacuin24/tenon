@@ -25,6 +25,9 @@ const DRAG_WEIGHT: f64 = 1e4;
 pub struct SolveOptions {
     /// Move this point to this position and keep it as close to it as the constraints allow.
     pub drag: Option<(EntityId, Vec2)>,
+    /// Points (and circles) that stay exactly as they are for this solve: what was just moved
+    /// by a tool, which the rest of the sketch is to follow.
+    pub pin: Vec<EntityId>,
     /// Points (or circles) to move as little as possible.
     pub keep: Vec<EntityId>,
 }
@@ -74,6 +77,11 @@ struct Built {
     id: ConstraintId,
     c: Constraint,
     rows: usize,
+    /// For a tangency between curves that meet at a shared end point: that point. The curves
+    /// touch there already, so being tangent is a matter of direction at it (the general
+    /// equation, distance equals radius, is at its turning point there and says nothing to first
+    /// order).
+    joint: Option<EntityId>,
     /// Orientation (+-1) or, for circle tangency, +1 external / -1 internal.
     sign: f64,
 }
@@ -115,6 +123,20 @@ impl<'s> System<'s> {
             }
         }
         sys.locked = vec![false; sys.x0.len()];
+        // Reference geometry is where something outside the sketch put it: its points and radii
+        // are not unknowns.
+        for (id, e) in sketch.entities().filter(|(_, e)| e.reference) {
+            let at = match &e.geometry {
+                Geometry::Point { .. } => sys.point_at.get(&id).map(|o| vec![*o, o + 1]),
+                Geometry::Circle { .. } => sys.radius_at.get(&id).map(|o| vec![*o]),
+                _ => None,
+            };
+            for j in at.into_iter().flatten() {
+                if let Some(l) = sys.locked.get_mut(j) {
+                    *l = true;
+                }
+            }
+        }
         for (id, c) in sketch.constraints() {
             // A driven dimension follows the sketch: it is no equation.
             if sketch.is_driven(id) {
@@ -171,6 +193,18 @@ impl<'s> System<'s> {
         }
     }
 
+    /// The end point two curves share, if they do: a line's start or end, an arc's start or end.
+    fn joint(&self, a: EntityId, b: EntityId) -> Option<EntityId> {
+        let ends = |id: EntityId| -> Vec<EntityId> {
+            match self.sketch.geometry(id) {
+                Some(Geometry::Line { start, end }) | Some(Geometry::Arc { start, end, .. }) => vec![*start, *end],
+                _ => Vec::new(),
+            }
+        };
+        let of_b = ends(b);
+        ends(a).into_iter().find(|p| of_b.contains(p))
+    }
+
     fn build(&self, id: ConstraintId, c: Constraint) -> Built {
         use Constraint::*;
         let x = &self.x0;
@@ -197,6 +231,11 @@ impl<'s> System<'s> {
                     sign = sgn(dir_n(la, lb).cross(p - la));
                 }
             }
+            LinearDiameter { point, axis, .. } => {
+                if let (Some(p), Some((la, lb))) = (self.pt(x, *point), self.line(x, *axis)) {
+                    sign = sgn(dir_n(la, lb).cross(p - la));
+                }
+            }
             Angle { a, b, .. } => {
                 if let (Some((a1, b1)), Some((a2, b2))) = (self.line(x, *a), self.line(x, *b)) {
                     let (d1, d2) = (dir_n(a1, b1), dir_n(a2, b2));
@@ -205,7 +244,11 @@ impl<'s> System<'s> {
             }
             _ => {}
         }
-        Built { id, c, rows, sign }
+        let joint = match &c {
+            Tangent { a, b } => self.joint(*a, *b),
+            _ => None,
+        };
+        Built { id, c, rows, sign, joint }
     }
 
     /// Appends exactly `b.rows` residuals.
@@ -256,7 +299,15 @@ impl<'s> System<'s> {
                 out.extend([d.cross(a2 - a1), d.cross(b2 - a1)]);
             }
             Tangent { a, b: bb } => {
-                if let (Some((p, q)), Some((c, r))) = (ln(*a), ci(*bb)) {
+                // Meeting at a shared end point: the line is square to the radius there, or the
+                // two centres are in line with it.
+                if let Some(at) = b.joint.and_then(pt) {
+                    match (ln(*a), ln(*bb), ci(*a), ci(*bb)) {
+                        (Some((p, q)), _, _, Some((c, _))) | (_, Some((p, q)), Some((c, _)), _) => out.push(dir_n(p, q).dot(dir_n(c, at))),
+                        (_, _, Some((c1, _)), Some((c2, _))) => out.push(dir_n(c1, at).cross(dir_n(c2, at))),
+                        _ => return None,
+                    }
+                } else if let (Some((p, q)), Some((c, r))) = (ln(*a), ci(*bb)) {
                     out.push(b.sign * dir_n(p, q).cross(c - p) - r);
                 } else if let (Some((c, r)), Some((p, q))) = (ci(*a), ln(*bb)) {
                     out.push(b.sign * dir_n(p, q).cross(c - p) - r);
@@ -312,6 +363,10 @@ impl<'s> System<'s> {
             }
             Radius { curve, value } => out.push(ci(*curve)?.1 - value),
             Diameter { curve, value } => out.push(2.0 * ci(*curve)?.1 - value),
+            LinearDiameter { point, axis, value } => {
+                let (p, (la, lb)) = (pt(*point)?, ln(*axis)?);
+                out.push(b.sign * dir_n(la, lb).cross(p - la) - value / 2.0);
+            }
         }
         Some(())
     }
@@ -450,12 +505,26 @@ fn write_back(sketch: &mut Sketch, sys_point_at: &HashMap<EntityId, usize>, sys_
 impl SketchSolver for GaussNewton {
     fn solve(&self, sketch: &mut Sketch, opts: &SolveOptions) -> SketchResult<()> {
         let (point_at, radius_at, x) = {
-            let sys = System::new(sketch)?;
+            let mut sys = System::new(sketch)?;
+            for id in &opts.pin {
+                let at = [sys.point_at.get(id).map(|o| (*o, 2)), sys.radius_at.get(id).map(|o| (*o, 1))];
+                for (o, n) in at.into_iter().flatten() {
+                    for j in o..o + n {
+                        if let Some(l) = sys.locked.get_mut(j) {
+                            *l = true;
+                        }
+                    }
+                }
+            }
             let mut x0 = sys.x0.clone();
             if let Some((id, target)) = opts.drag {
                 let o = *sys.point_at.get(&id).ok_or_else(|| SketchError::Invalid(format!("{id} is not a point")))?;
                 if !(target.x.is_finite() && target.y.is_finite()) {
                     return Err(SketchError::Invalid("drag target must be finite".into()));
+                }
+                // A point that is held (fixed, or reference geometry) is not for dragging.
+                if sys.locked.get(o).copied().unwrap_or(false) {
+                    return Ok(());
                 }
                 x0[o] = target.x;
                 x0[o + 1] = target.y;
@@ -642,7 +711,7 @@ impl Sketch {
 
     /// Drags a point towards `target` while keeping every constraint; unchanged on failure.
     pub fn drag(&mut self, point: EntityId, target: Vec2) -> SketchResult<()> {
-        GaussNewton.solve(self, &SolveOptions { drag: Some((point, target)), keep: vec![] })
+        GaussNewton.solve(self, &SolveOptions { drag: Some((point, target)), ..Default::default() })
     }
 
     /// The current value of a dimensional constraint's measured quantity (radians for angles).
@@ -668,6 +737,10 @@ impl Sketch {
             }
             Radius { curve, .. } => self.circle(*curve)?.1,
             Diameter { curve, .. } => 2.0 * self.circle(*curve)?.1,
+            LinearDiameter { point, axis, .. } => {
+                let (la, lb) = self.line(*axis)?;
+                2.0 * dir_n(la, lb).cross(pt(*point)? - la).abs()
+            }
             _ => return None,
         })
     }

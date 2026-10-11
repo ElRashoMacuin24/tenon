@@ -101,6 +101,10 @@ pub struct EdgeInfo {
     pub length: f64,
     pub start: Vec3,
     pub end: Vec3,
+    /// A point on the edge halfway along it (by parameter). With the ends it says which way
+    /// round a circular edge goes.
+    #[serde(default)]
+    pub mid: Vec3,
     /// A collapsed edge (for example at a cone apex); `curve` is `Other` and `length` 0.
     pub degenerate: bool,
 }

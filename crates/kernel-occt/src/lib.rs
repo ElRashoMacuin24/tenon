@@ -637,7 +637,7 @@ impl Kernel for OcctKernel {
             7 => CurveKind::Offset,
             _ => CurveKind::Other,
         };
-        Ok(EdgeInfo { curve, length: o.length, start: vec3(&o.start), end: vec3(&o.end), degenerate: o.degenerate })
+        Ok(EdgeInfo { curve, length: o.length, start: vec3(&o.start), end: vec3(&o.end), mid: vec3(&o.mid), degenerate: o.degenerate })
     }
 
     fn tessellate(&mut self, shape: ShapeHandle, mesh_tol: &MeshTol) -> KResult<Mesh> {

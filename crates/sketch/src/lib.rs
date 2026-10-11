@@ -13,6 +13,7 @@
 mod constraint;
 mod entity;
 pub mod lm;
+mod modify;
 mod profile;
 mod sketch;
 mod solve;
@@ -20,8 +21,9 @@ mod tools;
 
 pub use constraint::Constraint;
 pub use entity::{ConstraintId, Entity, EntityId, Geometry, PointRef};
+pub use modify::{MAX_PATTERN, Motion};
 pub use profile::{Piece, RegionKey, SketchRegion, default_regions, find, key_of, outlines, profile, regions};
-pub use sketch::{MAX_CONSTRAINTS, MAX_ENTITIES, Sketch, SketchError, SketchResult};
+pub use sketch::{MAX_CONSTRAINTS, MAX_ENTITIES, Sketch, SketchError, SketchResult, Slot};
 pub use solve::{Dof, GaussNewton, SketchSolver, SolveOptions};
 
 #[cfg(test)]

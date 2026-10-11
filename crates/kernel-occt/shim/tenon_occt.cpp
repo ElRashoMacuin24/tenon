@@ -1346,12 +1346,16 @@ void edge_info(const Shape& s, std::uint32_t index, EdgeOut& out) {
     if (out.degenerate) {
       out.kind = 8;
       out.length = 0.0;
+      out.mid = out.start;
       return;
     }
     GProp_GProps props;
     BRepGProp::LinearProperties(edge, props);
     out.length = props.Mass();
     BRepAdaptor_Curve curve(edge);
+    // A point on the edge halfway along its parameter range: with the ends it says which way
+    // round an arc goes, whatever the edge's orientation.
+    out.mid = v3(curve.Value(0.5 * (curve.FirstParameter() + curve.LastParameter())));
     switch (curve.GetType()) {
     case GeomAbs_Line: {
       const gp_Lin l = curve.Line();

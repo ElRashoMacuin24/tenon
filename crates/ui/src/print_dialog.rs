@@ -163,7 +163,7 @@ impl Workbench {
                     Ok(w) if w.watertight => self.set_status(format!("Exported {} ({} triangles)", path.display(), w.triangles)),
                     // Written all the same: the file is what was asked for, and says what is wrong with the part.
                     Ok(_) => self.set_error(format!(
-                        "Exported {}, but its surface is not closed: a slicer may refuse it. See Inspect > 3D Print Check.",
+                        "Exported {}, but its surface is not closed: a slicer may refuse it. See Environments > 3D Print Check.",
                         path.display()
                     )),
                     Err(e) => self.set_error(format!("{} export failed: {e}", kind.name())),
