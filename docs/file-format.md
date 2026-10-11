@@ -174,6 +174,30 @@ rows = [
   values, so a reader that ignores the table still gets the right part. Should a file edited by
   hand disagree with itself, the part's own values stand and the active row takes them.
 
+### Sheet metal (`[sheet_metal]`)
+
+A sheet metal part (DEC-057) has this table; a part that is not one has none.
+
+```toml
+[sheet_metal]
+relief = "straight"
+corner = "round"
+flat = true
+```
+
+| Field | |
+|---|---|
+| `relief` | the cut beside a bend that is narrower than its edge: `"straight"` or `"round"` |
+| `corner` | the cut where two bends meet at a corner: `"round"`, `"square"` or `"trim"` (none) |
+| `a_side` | optional: a [face reference](#references-to-faces-and-edges), the side that is up when the flat pattern lies on the table. Without it, the largest flat face |
+| `flat` | optional, written when true: the part has a flat pattern (it is shown in the browser). The pattern itself is not in the file: it is worked out from the solid |
+
+The rule's sizes are user parameters with fixed names, each with its equation like any other:
+`Thickness`, `BendRadius`, `BendReliefWidth`, `BendReliefDepth`, `MinimumRemnant`,
+`CornerReliefSize` (millimetres) and `KFactor` (a plain number from 0 to 1). A sheet metal part
+without one of them, or with one out of range, opens, and its sheet metal features say what is
+missing when the part is rebuilt.
+
 ### Parameters (`[parameters]`)
 
 - **`next`:** the number the next automatic name (`d18`) gets.
@@ -222,6 +246,8 @@ may refer only to features before them.
 | `split` | `plane` (the cutting plane), `keep`: `"both"` (two bodies), `"front"` (the side the plane's normal points to) or `"back"`; optional `body` (a face reference on the one body to split; without it, every body the plane passes through) |
 | `combine` | `base` (a face reference on the body that stays), `tools` (a face reference on each other body), `operation` (`"join"`, `"cut"` or `"intersect"`), `keep_tools` |
 | `thread` | `face` (a face reference on a round shaft or hole); optional `pitch` (mm; without it, the ISO coarse pitch for the face's diameter); optional `designation` (text for drawings; without it, `M<diameter>x<pitch>`); `length`: `"full"` or `{ distance = mm }` from the end it starts at; `reverse` (start from the other end); `left` (left-handed); `modelled` (the groove is cut into the part; otherwise the thread is cosmetic) |
+| `sheet_face` | `sketch`, `regions`, `flip` (the thickness goes behind the sketch plane), `operation` (`"join"` or `"new_body"`): a profile made one `Thickness` thick |
+| `flange` | `edges` (edge references: straight edges of the sheet's rim), `angle` (radians the sheet turns, 1 to 179 degrees), `height`, `datum` (`"outer"`, `"inner"` or `"tangent"`: what the height is measured from), `position` (`"inside"`, `"adjacent"`, `"outside"` or `"tangent"`: where the bend lies relative to the edge), `flip` (bend to the other side); optional `radius` (the bend's inside radius; without it the part's `BendRadius`); `width` (`"edge"`, `{ centered = { width = w } }` or `{ offset = { start = a, end = b } }`) |
 
 Field values:
 
@@ -678,7 +704,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   side (`{ left, right, nth }`) beside the lists of curves they were, the optional `row` of an
   assembly component, a part's optional `appearance`, `[material]` and `[table]`, and for
   sketches the optional `centerline` and `reference` of an entity, the `linear_diameter`
-  dimension and a sketch feature's optional `projections` (DEC-055, DEC-056).
+  dimension and a sketch feature's optional `projections` (DEC-055, DEC-056), and for sheet
+  metal the `[sheet_metal]` table and the feature types `sheet_face` and `flange` (DEC-057).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

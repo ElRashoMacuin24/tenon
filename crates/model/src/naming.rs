@@ -89,6 +89,17 @@ pub fn edge_key(a: &FaceOrigin, b: &FaceOrigin) -> u64 {
     Fnv::new(4).u64(x).u64(y).0
 }
 
+/// A key derived from another: the `part`-th thing made from what `base` names (the faces of
+/// one flange on one edge, say). The same on every run.
+pub fn sub_key(base: u64, part: u32) -> u64 {
+    Fnv::new(6).u64(base).u32(part).0
+}
+
+/// A key for what two named things make together, whichever is given first.
+pub fn pair_key(a: u64, b: u64) -> u64 {
+    Fnv::new(7).u64(a.min(b)).u64(a.max(b)).0
+}
+
 /// Key of a vertex: the names of the faces meeting there, in any order.
 pub fn vertex_key(faces: &[FaceOrigin]) -> u64 {
     let mut keys: Vec<u64> = faces.iter().map(FaceOrigin::key).collect();

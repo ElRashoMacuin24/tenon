@@ -19,6 +19,7 @@ pub mod params;
 pub mod project;
 pub mod regen;
 pub mod repair;
+pub mod sheet;
 pub mod table;
 pub mod threads;
 pub mod worker;

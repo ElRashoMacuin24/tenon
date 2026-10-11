@@ -96,7 +96,7 @@ fn has_profile(doc: &Document, sketch: FeatureId) -> bool {
 impl Workbench {
     /// The sketch a new sweep or coil takes its profile from: the one being edited when it has a
     /// closed profile (else it is likely the path), otherwise the last that has one.
-    fn profile_sketch(&mut self) -> Result<FeatureId, String> {
+    pub(crate) fn profile_sketch(&mut self) -> Result<FeatureId, String> {
         if let Mode::Sketch(s) = &self.mode {
             let id = s.feature;
             self.finish_sketch();
@@ -402,6 +402,7 @@ impl Workbench {
             Some(Panel::Revolve(p)) => vec![p.sketch],
             // (Its closed regions can be clicked to choose what is extruded.)
             Some(Panel::Extrude(p)) => vec![p.sketch],
+            Some(Panel::SheetFace(p)) => vec![p.sketch],
             Some(Panel::Loft(p)) => p.sections.clone(),
             _ => vec![],
         };
@@ -596,6 +597,7 @@ impl Workbench {
             Some(Panel::Revolve(p)) => Some((p.sketch, &p.regions)),
             Some(Panel::Sweep(p)) => Some((p.sketch, &p.regions)),
             Some(Panel::Coil(p)) => Some((p.sketch, &p.regions)),
+            Some(Panel::SheetFace(p)) => Some((p.sketch, &p.regions)),
             _ => None,
         }
     }
@@ -638,6 +640,7 @@ impl Workbench {
             Some(Panel::Revolve(p)) => &mut p.regions,
             Some(Panel::Sweep(p)) => &mut p.regions,
             Some(Panel::Coil(p)) => &mut p.regions,
+            Some(Panel::SheetFace(p)) => &mut p.regions,
             _ => return false,
         };
         *regions = RegionSel::Keys(keys);

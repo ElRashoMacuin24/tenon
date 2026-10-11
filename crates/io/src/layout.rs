@@ -37,6 +37,7 @@ pub(crate) const PART: Shape = Shape {
         ("appearance", "appearance"),
         ("material", "material"),
         ("table", "table"),
+        ("sheet", "sheet_metal"),
         ("params", "parameters"),
         ("features", "feature"),
     ],

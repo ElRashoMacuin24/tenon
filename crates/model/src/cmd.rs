@@ -2050,6 +2050,53 @@ fn model_repair(s: &mut Session, p: &Value) -> CmdResult {
     s.edit(|d| crate::repair::replace(d, id, &path, with).map(|()| json!({})).map_err(CmdError))
 }
 
+/// How close a point given with `at` must be to the edge or face meant (mm).
+const AT_TOLERANCE: f64 = 1e-3;
+
+/// The one edge (`edges`) or face of the part that passes through the point `at` of a command:
+/// `(body, index)`. Fails, saying how far off the nearest is, when none does; and when several
+/// do (a corner, for an edge; an edge, for a face), since then the point does not say which.
+fn sub_shape_at(r: &Regen, k: &mut dyn Kernel, p: &Value, edges: bool) -> Result<(usize, u32), CmdError> {
+    let [x, y, z]: [f64; 3] = parse(p, "at").map_err(|e| CmdError(format!("`at` is a point [x, y, z]: {}", e.0)))?;
+    let at = tenon_geom::Vec3::new(x, y, z);
+    if !at.is_finite() {
+        return Err("`at` must be a point [x, y, z]".into());
+    }
+    let what = if edges { "edge" } else { "face" };
+    // A speck at the point, to measure to: the kernel measures between shapes.
+    let speck = 1e-5;
+    let frame = tenon_geom::Frame::WORLD.with_origin(at - tenon_geom::Vec3::new(speck, speck, speck) * 0.5).ok_or("`at` is out of range")?;
+    let probe = k.make_box(&frame, tenon_geom::Vec3::new(speck, speck, speck)).map_err(|e| CmdError(e.to_string()))?.shape;
+    let found = (|| -> Result<Vec<(f64, usize, u32)>, CmdError> {
+        let mut found = Vec::new();
+        for (bi, body) in r.bodies.iter().enumerate() {
+            let topo = k.topology(body.shape).map_err(|e| CmdError(e.to_string()))?;
+            for i in 0..if edges { topo.edges } else { topo.faces } {
+                let sub = if edges { tenon_kernel::SubShape::Edge(body.shape.edge(i)) } else { tenon_kernel::SubShape::Face(body.shape.face(i)) };
+                let d = k.min_distance(sub, tenon_kernel::SubShape::Shape(probe)).map_err(|e| CmdError(e.to_string()))?.value;
+                found.push((d, bi, i));
+            }
+        }
+        Ok(found)
+    })();
+    k.release(probe);
+    let mut found = found?;
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    match found.as_slice() {
+        [] => Err(format!("the part has no {what}s yet").into()),
+        [(d, ..), ..] if *d > AT_TOLERANCE => {
+            Err(format!("no {what} passes through ({x}, {y}, {z}): the nearest is {} mm away", crate::explain::mm(*d)).into())
+        }
+        [_, (d, ..), ..] if *d <= AT_TOLERANCE => Err(format!(
+            "{} {what}s meet at ({x}, {y}, {z}): give a point {}",
+            found.iter().take_while(|f| f.0 <= AT_TOLERANCE).count(),
+            if edges { "along the edge, away from its ends" } else { "inside the face, away from its edges" }
+        )
+        .into()),
+        [(_, b, i), ..] => Ok((*b, *i)),
+    }
+}
+
 fn model_edge_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let r = s.regen(k).clone();
     let er = if let Some(faces) = p.get("faces") {
@@ -2071,7 +2118,13 @@ fn model_edge_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
             _ => Err("several edges join those two faces; choose one with `body` and `edge`".into()),
         }
     } else {
-        r.edge_ref(opt_id(p, "body")?.unwrap_or(0) as usize, id_u32(p, "edge")?, k)
+        match p.get("at") {
+            Some(v) if !v.is_null() => {
+                let (body, edge) = sub_shape_at(&r, k, p, true)?;
+                r.edge_ref(body, edge, k)
+            }
+            _ => r.edge_ref(opt_id(p, "body")?.unwrap_or(0) as usize, id_u32(p, "edge")?, k),
+        }
     }
     .map_err(CmdError)?;
     Ok(serde_json::to_value(er).unwrap_or(Value::Null))
@@ -2082,10 +2135,210 @@ fn model_face_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let fr = if p.get("origin").is_some() {
         r.face_ref_by_origin(parse(p, "origin")?, k)
     } else {
-        r.face_ref(opt_id(p, "body")?.unwrap_or(0) as usize, id_u32(p, "face")?, k)
+        match p.get("at") {
+            Some(v) if !v.is_null() => {
+                let (body, face) = sub_shape_at(&r, k, p, false)?;
+                r.face_ref(body, face, k)
+            }
+            _ => r.face_ref(opt_id(p, "body")?.unwrap_or(0) as usize, id_u32(p, "face")?, k),
+        }
     }
     .map_err(CmdError)?;
     Ok(serde_json::to_value(fr).unwrap_or(Value::Null))
+}
+
+// ---- sheet metal --------------------------------------------------------------------------------
+
+fn sheet_value(d: &Document) -> Value {
+    let Some(rule) = d.sheet_metal() else { return json!({ "sheet_metal": false }) };
+    let mut v = json!({ "sheet_metal": true, "relief": rule.relief, "corner": rule.corner, "flat_pattern": rule.flat, "a_side": rule.a_side });
+    match d.sheet_sizes() {
+        Ok(s) => {
+            v["thickness"] = json!(s.thickness);
+            v["bend_radius"] = json!(s.bend_radius);
+            v["relief_width"] = json!(s.relief_width);
+            v["relief_depth"] = json!(s.relief_depth);
+            v["min_remnant"] = json!(s.min_remnant);
+            v["corner_size"] = json!(s.corner_size);
+            v["k_factor"] = json!(s.k_factor);
+        }
+        Err(e) => v["error"] = json!(e),
+    }
+    v
+}
+
+fn sheet_info(s: &mut Session, _: &Value) -> CmdResult {
+    Ok(sheet_value(s.document()))
+}
+
+/// The sizes of the rule a command may set: its key and the parameter it is.
+const SHEET_KEYS: [(&str, &str); 7] = [
+    ("thickness", crate::sheet::THICKNESS),
+    ("bend_radius", crate::sheet::BEND_RADIUS),
+    ("relief_width", crate::sheet::RELIEF_WIDTH),
+    ("relief_depth", crate::sheet::RELIEF_DEPTH),
+    ("min_remnant", crate::sheet::MIN_REMNANT),
+    ("corner_size", crate::sheet::CORNER_SIZE),
+    ("k_factor", crate::sheet::K_FACTOR),
+];
+
+fn sheet_defaults(s: &mut Session, p: &Value) -> CmdResult {
+    let mut rule = s.document().sheet_metal().cloned().unwrap_or_default();
+    if p.get("relief").is_some_and(|v| !v.is_null()) {
+        rule.relief = parse(p, "relief")?;
+    }
+    if p.get("corner").is_some_and(|v| !v.is_null()) {
+        rule.corner = parse(p, "corner")?;
+    }
+    // Each size: a number (mm; the K factor a plain number) or an equation.
+    let mut equations: Vec<(&str, String)> = Vec::new();
+    for (key, name) in SHEET_KEYS {
+        match p.get(key) {
+            None | Some(Value::Null) => {}
+            Some(Value::String(e)) => equations.push((name, e.clone())),
+            Some(v) => {
+                let n = v.as_f64().filter(|n| n.is_finite()).ok_or_else(|| CmdError(format!("`{key}` must be a number or an equation")))?;
+                equations.push((name, if name == crate::sheet::K_FACTOR { format!("{n}") } else { format!("{n} mm") }));
+            }
+        }
+    }
+    s.edit(|d| {
+        d.set_sheet_metal(rule).map_err(CmdError)?;
+        for (name, equation) in &equations {
+            d.set_equation(name, Some(equation)).map_err(CmdError)?;
+        }
+        d.sync_parameters().map_err(CmdError)?;
+        d.sheet_sizes().map_err(CmdError)?;
+        Ok(())
+    })?;
+    Ok(sheet_value(s.document()))
+}
+
+fn flag(p: &Value, key: &str) -> bool {
+    p.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn sheet_face(s: &mut Session, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let operation = match p.get("operation").and_then(Value::as_str).unwrap_or("join") {
+        "join" => Operation::Join,
+        "new_body" => Operation::NewBody,
+        other => return Err(CmdError(format!("unknown operation `{other}` for a sheet metal face (join, new_body)"))),
+    };
+    let face = crate::sheet::Face { sketch: sketch_id(p)?, regions: region_sel(p)?, flip: flag(p, "flip"), operation };
+    add_feature(s, FeatureKind::SheetFace(face), p)
+}
+
+fn sheet_flange(s: &mut Session, p: &Value) -> CmdResult {
+    use crate::sheet::{BendPosition, Flange, FlangeWidth, HeightDatum};
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let width = match (opt_num(p, "width")?, p.get("offsets")) {
+        (Some(_), Some(o)) if !o.is_null() => return Err("give `width` (in the middle of the edge) or `offsets`, not both".into()),
+        (Some(width), _) => FlangeWidth::Centered { width },
+        (None, Some(o)) if !o.is_null() => {
+            let [start, end]: [f64; 2] =
+                serde_json::from_value(o.clone()).map_err(|e| CmdError(format!("`offsets` is [from the start, from the end]: {e}")))?;
+            FlangeWidth::Offset { start, end }
+        }
+        _ => FlangeWidth::Edge,
+    };
+    let named = |key: &str| p.get(key).filter(|v| !v.is_null());
+    let flange = Flange {
+        edges: edge_refs(p)?,
+        angle: opt_num(p, "angle")?.unwrap_or(std::f64::consts::FRAC_PI_2),
+        height: num(p, "height")?,
+        datum: match named("datum") {
+            Some(_) => parse(p, "datum")?,
+            None => HeightDatum::default(),
+        },
+        position: match named("position") {
+            Some(_) => parse(p, "position")?,
+            None => BendPosition::default(),
+        },
+        flip: flag(p, "flip"),
+        radius: opt_num(p, "radius")?,
+        width,
+    };
+    flange.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Flange(flange), p)
+}
+
+fn sheet_a_side(s: &mut Session, p: &Value) -> CmdResult {
+    let face: Option<FaceRef> = match p.get("face") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(parse(p, "face")?),
+    };
+    s.edit(|d| {
+        let rule = d.sheet_metal_mut().ok_or("This is not a sheet metal part: there is no flat pattern to lay out.")?;
+        rule.a_side = face;
+        Ok(())
+    })?;
+    Ok(sheet_value(s.document()))
+}
+
+fn sheet_flat_pattern(s: &mut Session, p: &Value) -> CmdResult {
+    let on = p.get("on").and_then(Value::as_bool).unwrap_or(true);
+    s.edit(|d| {
+        let rule = d.sheet_metal_mut().ok_or("This is not a sheet metal part yet: set its thickness in Sheet Metal Defaults first.")?;
+        rule.flat = on;
+        Ok(())
+    })?;
+    Ok(sheet_value(s.document()))
+}
+
+/// The flat pattern of the part as it now regenerates.
+pub fn flat_pattern(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> Result<crate::sheet::FlatPattern, CmdError> {
+    let face: Option<FaceRef> = match p.get("face") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(parse(p, "face")?),
+    };
+    let body = opt_id(p, "body")?.map(|b| b as usize);
+    let doc = s.document().clone();
+    let r = s.regen(k).clone();
+    crate::sheet::pattern_of(&doc, &r, k, body, face.as_ref()).map_err(CmdError)
+}
+
+/// A flat pattern as JSON: its sizes and bends, and with `curves` its outlines.
+pub fn flat_value(f: &crate::sheet::FlatPattern, curves: bool) -> Value {
+    let seg = |l: &[Vec2; 2]| json!([[l[0].x, l[0].y], [l[1].x, l[1].y]]);
+    let bends: Vec<Value> = f
+        .bends
+        .iter()
+        .map(|b| {
+            json!({
+                "angle": b.angle,
+                "radius": b.radius,
+                "up": b.up,
+                "allowance": b.allowance,
+                "lines": b.lines.iter().map(seg).collect::<Vec<_>>(),
+                "extents": b.extents.iter().map(seg).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let mut v = json!({
+        "length": f.length,
+        "width": f.width,
+        "area": f.area,
+        "cut_length": f.cut_length,
+        "thickness": f.thickness,
+        "k_factor": f.k_factor,
+        "holes": f.inner.len(),
+        "bends": bends,
+    });
+    if curves {
+        v["outer"] = serde_json::to_value(&f.outer.curves).unwrap_or(Value::Null);
+        v["inner"] = serde_json::to_value(f.inner.iter().map(|l| &l.curves).collect::<Vec<_>>()).unwrap_or(Value::Null);
+    }
+    v
+}
+
+fn sheet_flat(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
+    let f = flat_pattern(s, k, p)?;
+    Ok(flat_value(&f, flag(p, "curves")))
 }
 
 macro_rules! doc_cmd {
@@ -2527,16 +2780,58 @@ static COMMANDS: &[CommandSpec] = &[
         true,
         model_repair
     ),
+    doc_cmd!(
+        "sheet.defaults",
+        "Sheet Metal Defaults",
+        "Makes the part a sheet metal part and sets its rule. Sizes, each a number (mm) or an equation: thickness, bend_radius, relief_width, relief_depth, min_remnant, corner_size, and k_factor (0 to 1); they are the parameters Thickness, BendRadius, BendReliefWidth, BendReliefDepth, MinimumRemnant, CornerReliefSize and KFactor. relief: \"straight\" | \"round\" (the cut beside a bend narrower than its edge); corner: \"round\" | \"square\" | \"trim\" (the relief where two bends meet at a corner). Returns the rule as it now is",
+        true,
+        sheet_defaults
+    ),
+    doc_cmd!("sheet.info", "Sheet Metal Rule", "the part's sheet metal rule and sizes, or sheet_metal: false", false, sheet_info),
+    doc_cmd!(
+        "sheet.face",
+        "Face",
+        "sketch; regions; flip (the thickness goes behind the sketch plane); operation: \"join\" (default) | \"new_body\". A closed profile made one Thickness thick",
+        true,
+        sheet_face
+    ),
+    doc_cmd!(
+        "sheet.flange",
+        "Flange",
+        "edges: [edge references] (straight edges of the sheet's rim; the flange bends towards the side each is on); height; angle (rad, default a quarter turn); datum: \"outer\" (default: the height is overall) | \"inner\" | \"tangent\"; position: \"inside\" (default: the flange's outer face goes through the edge) | \"adjacent\" (the bend starts at the edge) | \"outside\" | \"tangent\"; flip (bend to the other side); radius (default BendRadius); width (in the middle of the edge) or offsets: [from the start, from the end] (default: the whole edge). Edges that meet at a corner get the rule's corner relief",
+        true,
+        sheet_flange
+    ),
+    doc_cmd!(
+        "sheet.a_side",
+        "Define A-Side",
+        "face: a flat face reference, the side that is up when the flat pattern lies on the table; without it, the largest flat face",
+        true,
+        sheet_a_side
+    ),
+    doc_cmd!(
+        "sheet.flat_pattern",
+        "Create Flat Pattern",
+        "on (default true): the part has a flat pattern, shown in the browser; false deletes it. (sheet.flat works it out either way.)",
+        true,
+        sheet_flat_pattern
+    ),
+    geo_cmd!(
+        "sheet.flat",
+        "Flat Pattern",
+        "The part laid flat: length and width (the sheet it is cut from), area, cut_length (round the outline and every hole), holes, and each bend's angle (rad), inside radius, allowance (its width in the flat), up (bent towards the A side) and centre lines. face: the A side (default: the part's, else the largest flat face); body (default: the only one); curves: true adds the outlines (outer, inner) as lines, arcs, circles and polylines",
+        sheet_flat
+    ),
     geo_cmd!(
         "model.edge_ref",
         "Edge Reference",
-        "faces: [face origin, face origin] (the two faces the edge joins); or body (default 0) and edge (index from model.edges)",
+        "faces: [face origin, face origin] (the two faces the edge joins); or at: [x, y, z], a point on the edge away from its ends; or body (default 0) and edge (index from model.edges)",
         model_edge_ref
     ),
     geo_cmd!(
         "model.face_ref",
         "Face Reference",
-        "origin: {\"type\": \"cap\", \"feature\": id, \"end\": \"start\" | \"end\"} or {\"type\": \"side\", \"feature\": id, \"curve\": id}; or body (default 0) and face (index from model.faces)",
+        "origin: {\"type\": \"cap\", \"feature\": id, \"end\": \"start\" | \"end\"} or {\"type\": \"side\", \"feature\": id, \"curve\": id}; or at: [x, y, z], a point inside the face; or body (default 0) and face (index from model.faces)",
         model_face_ref
     ),
 ];

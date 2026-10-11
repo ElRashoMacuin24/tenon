@@ -25,11 +25,13 @@ mod modify;
 mod panels;
 mod params_dialog;
 mod part_dialogs;
+mod polyfill;
 mod print_dialog;
 mod properties;
 mod radial;
 mod recovery;
 mod repair_ui;
+mod sheet;
 mod sketch_tools;
 mod sketcher;
 mod sweeps;
@@ -51,6 +53,8 @@ mod print_tests;
 mod recovery_tests;
 #[cfg(test)]
 mod save_tests;
+#[cfg(test)]
+mod sheet_tests;
 #[cfg(test)]
 mod sketch_tests;
 #[cfg(test)]

@@ -273,6 +273,8 @@ pub(crate) mod bridge {
         fn topology(shape: &Shape, out: &mut TopoOut) -> Result<()>;
         fn face_info(shape: &Shape, index: u32, out: &mut FaceOut) -> Result<()>;
         fn edge_info(shape: &Shape, index: u32, out: &mut EdgeOut) -> Result<()>;
+        /// Points along an edge from its start to its end, x, y, z each, within `deflection` of it.
+        fn edge_points(shape: &Shape, index: u32, deflection: f64, out: &mut Vec<f64>) -> Result<()>;
         fn tessellate(shape: &Shape, linear: f64, angular: f64, relaxed: bool, out: &mut MeshOut) -> Result<()>;
         fn mass_properties(shape: &Shape, out: &mut MassOut) -> Result<()>;
         fn bounding_box(shape: &Shape, out: &mut BoxOut) -> Result<()>;

@@ -49,8 +49,18 @@ impl MeshFile {
 
 /// What a job about the open part (or assembly) is for.
 pub(crate) enum PartJob {
-    File { path: PathBuf, kind: MeshFile },
-    Print { revision: u64, setup: Setup },
+    File {
+        path: PathBuf,
+        kind: MeshFile,
+    },
+    Print {
+        revision: u64,
+        setup: Setup,
+    },
+    /// The flat pattern of a sheet metal part, of this revision of it.
+    Flat {
+        revision: u64,
+    },
 }
 
 /// What the window keeps.
@@ -169,6 +179,7 @@ impl Workbench {
                     Err(e) => self.set_error(format!("{} export failed: {e}", kind.name())),
                 }
             }
+            PartJob::Flat { revision } => self.flat_done(revision, result),
             PartJob::Print { revision, setup } => {
                 let report = result.downcast::<Result<Report, String>>().map_or_else(|_| unexpected(), |b| *b);
                 let print = &mut self.chrome.print;

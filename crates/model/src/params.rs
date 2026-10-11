@@ -115,6 +115,14 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         FeatureKind::Coil(_) => &[("/pitch", Mm), ("/turns", Ul)],
         FeatureKind::Draft(_) => &[("/angle", Deg)],
         FeatureKind::Thread(_) => &[("/pitch", Mm), ("/length/distance", Mm)],
+        FeatureKind::Flange(_) => &[
+            ("/angle", Deg),
+            ("/height", Mm),
+            ("/radius", Mm),
+            ("/width/centered/width", Mm),
+            ("/width/offset/start", Mm),
+            ("/width/offset/end", Mm),
+        ],
         FeatureKind::Sketch { .. }
         | FeatureKind::Mirror(_)
         | FeatureKind::WorkAxis(_)
@@ -122,7 +130,8 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         | FeatureKind::Sweep(_)
         | FeatureKind::Loft(_)
         | FeatureKind::Split(_)
-        | FeatureKind::Combine(_) => &[],
+        | FeatureKind::Combine(_)
+        | FeatureKind::SheetFace(_) => &[],
     }
 }
 
@@ -484,6 +493,9 @@ impl Document {
 
     /// Renames a parameter and every use of it in equations.
     pub fn rename_parameter(&mut self, from: &str, to: &str) -> Result<(), String> {
+        if from != to && self.is_sheet_parameter(from) {
+            return Err(format!("{from} is one of the part's sheet metal sizes and keeps its name"));
+        }
         if !expr::valid_name(to) {
             return Err(format!("`{to}` cannot be a parameter name: use letters, digits and _, starting with a letter"));
         }
@@ -517,6 +529,9 @@ impl Document {
 
     /// Deletes a user parameter that no equation uses.
     pub fn delete_user_parameter(&mut self, name: &str) -> Result<(), String> {
+        if self.is_sheet_parameter(name) {
+            return Err(format!("{name} is one of the part's sheet metal sizes: it stays as long as the part is sheet metal"));
+        }
         let users: Vec<&str> = self
             .params
             .model

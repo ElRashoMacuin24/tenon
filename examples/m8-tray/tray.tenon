@@ -1,0 +1,183 @@
+# Tenon part file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon"
+version = 2
+name = "Tray"
+next_feature = 8
+
+[material]
+name = "Aluminium 5052"
+density = 2.68
+color = "#c9cdd2"
+
+[sheet_metal]
+relief = "straight"
+corner = "round"
+flat = true
+
+[parameters]
+next = 11
+user = [
+  { name = "Thickness", equation = "1.5 mm", unit = "mm", comment = "Thickness of the sheet" },
+  { name = "BendRadius", equation = "Thickness", unit = "mm", comment = "Radius of the inside of a bend" },
+  { name = "BendReliefWidth", equation = "Thickness", unit = "mm", comment = "Width of the relief cut beside a bend" },
+  { name = "BendReliefDepth", equation = "Thickness * 0.5", unit = "mm", comment = "How far a bend relief goes past the bend" },
+  { name = "MinimumRemnant", equation = "Thickness * 2", unit = "mm", comment = "A strip left beside a bend relief narrower than this is cut away" },
+  { name = "CornerReliefSize", equation = "Thickness * 4", unit = "mm", comment = "Size of the relief where two bends meet at a corner" },
+  { name = "KFactor", equation = "0.44", unit = "ul", comment = "Where the neutral surface lies in the thickness: 0 inside of the bend, 1 outside" },
+]
+model = [
+  { name = "d0", target = { kind = "dimension", sketch = 1, constraint = 7 } },
+  { name = "d1", target = { kind = "dimension", sketch = 1, constraint = 8 } },
+  { name = "d2", target = { kind = "feature", feature = 3, field = "/angle" } },
+  { name = "d3", target = { kind = "feature", feature = 3, field = "/height" } },
+  { name = "d4", target = { kind = "feature", feature = 4, field = "/angle" } },
+  { name = "d5", target = { kind = "feature", feature = 4, field = "/height" } },
+  { name = "d6", target = { kind = "feature", feature = 4, field = "/width/centered/width" } },
+  { name = "d7", target = { kind = "feature", feature = 6, field = "/diameter" } },
+  { name = "d8", target = { kind = "feature", feature = 6, field = "/tip_angle" } },
+  { name = "d9", target = { kind = "feature", feature = 8, field = "/extent/two_sided/forward" }, equation = "Thickness" },
+  { name = "d10", target = { kind = "feature", feature = 8, field = "/extent/two_sided/backward" }, equation = "Thickness" },
+]
+
+[[feature]]
+id = 1
+name = "Sketch1"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 9
+next_constraint = 8
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0 }, construction = false },
+  { id = 3, type = "point", pos = { x = 120.0, y = 0.0 }, construction = false },
+  { id = 4, type = "point", pos = { x = 120.0, y = 80.0 }, construction = false },
+  { id = 5, type = "point", pos = { x = 0.0, y = 80.0 }, construction = false },
+  { id = 6, type = "line", start = 2, end = 3, construction = false },
+  { id = 7, type = "line", start = 3, end = 4, construction = false },
+  { id = 8, type = "line", start = 4, end = 5, construction = false },
+  { id = 9, type = "line", start = 5, end = 2, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+  { id = 2, type = "horizontal", line = 6 },
+  { id = 3, type = "vertical", line = 7 },
+  { id = 4, type = "horizontal", line = 8 },
+  { id = 5, type = "vertical", line = 9 },
+  { id = 6, type = "coincident", a = 2, b = 1 },
+  { id = 7, type = "length", line = 6, value = 120.0 },
+  { id = 8, type = "length", line = 7, value = 80.0 },
+]
+
+[[feature]]
+id = 2
+name = "Face1"
+suppressed = false
+type = "sheet_face"
+sketch = 1
+regions = "default"
+flip = false
+operation = "join"
+
+[[feature]]
+id = 3
+name = "Flange1"
+suppressed = false
+type = "flange"
+edges = [
+  { faces = [{ type = "cap", feature = 2, end = "end" }, { type = "side", feature = 2, curve = 6 }], fingerprint = { mid = { x = 60.0, y = 0.0, z = 1.5 }, length = 120.0 } },
+  { faces = [{ type = "cap", feature = 2, end = "end" }, { type = "side", feature = 2, curve = 7 }], fingerprint = { mid = { x = 120.0, y = 40.0, z = 1.5 }, length = 80.0 } },
+  { faces = [{ type = "cap", feature = 2, end = "end" }, { type = "side", feature = 2, curve = 8 }], fingerprint = { mid = { x = 60.0, y = 80.0, z = 1.5 }, length = 120.0 } },
+  { faces = [{ type = "cap", feature = 2, end = "end" }, { type = "side", feature = 2, curve = 9 }], fingerprint = { mid = { x = 0.0, y = 40.0, z = 1.5 }, length = 80.0 } },
+]
+angle = 1.5707963267948966
+height = 25.0
+datum = "outer"
+position = "inside"
+flip = false
+width = "edge"
+
+[[feature]]
+id = 4
+name = "Flange2"
+suppressed = false
+type = "flange"
+edges = [
+  { faces = [{ type = "from", feature = 3, source = -8733478315968415533, ordinal = 0 }, { type = "from", feature = 3, source = -1814449590273147838, ordinal = 0 }], fingerprint = { mid = { x = 60.0, y = 0.0, z = 25.0 }, length = 114.0 } },
+]
+angle = 1.5707963267948966
+height = 12.0
+datum = "outer"
+position = "inside"
+flip = false
+width = { centered = { width = 40.0 } }
+
+[[feature]]
+id = 5
+name = "Sketch2"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 5
+next_constraint = 1
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 15.0, y = 15.0 }, construction = false },
+  { id = 3, type = "point", pos = { x = 105.0, y = 15.0 }, construction = false },
+  { id = 4, type = "point", pos = { x = 105.0, y = 65.0 }, construction = false },
+  { id = 5, type = "point", pos = { x = 15.0, y = 65.0 }, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+]
+
+[[feature]]
+id = 6
+name = "Hole1"
+suppressed = false
+type = "hole"
+sketch = 5
+points = [2, 3, 4, 5]
+diameter = 4.0
+kind = "simple"
+extent = "through_all"
+tip_angle = 2.0594885173533086
+reverse = true
+
+[[feature]]
+id = 7
+name = "Sketch3"
+suppressed = false
+type = "sketch"
+plane = { origin = "XZ" }
+next_entity = 9
+next_constraint = 5
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 45.0, y = 8.0 }, construction = false },
+  { id = 3, type = "point", pos = { x = 75.0, y = 8.0 }, construction = false },
+  { id = 4, type = "point", pos = { x = 75.0, y = 16.0 }, construction = false },
+  { id = 5, type = "point", pos = { x = 45.0, y = 16.0 }, construction = false },
+  { id = 6, type = "line", start = 2, end = 3, construction = false },
+  { id = 7, type = "line", start = 3, end = 4, construction = false },
+  { id = 8, type = "line", start = 4, end = 5, construction = false },
+  { id = 9, type = "line", start = 5, end = 2, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+  { id = 2, type = "horizontal", line = 6 },
+  { id = 3, type = "vertical", line = 7 },
+  { id = 4, type = "horizontal", line = 8 },
+  { id = 5, type = "vertical", line = 9 },
+]
+
+[[feature]]
+id = 8
+name = "Extrusion1"
+suppressed = false
+type = "extrude"
+sketch = 7
+regions = "default"
+extent = { two_sided = { forward = 1.5, backward = 1.5 } }
+reverse = false
+operation = "cut"

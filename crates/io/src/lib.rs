@@ -16,6 +16,7 @@ pub mod asm;
 pub mod cmd;
 pub mod diff;
 pub mod drw;
+pub mod flat;
 mod layout;
 pub mod meshcheck;
 pub mod print;

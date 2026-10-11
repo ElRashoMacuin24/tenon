@@ -60,7 +60,7 @@ impl Workbench {
     /// What the open panel picks in the viewport, if it picks anything.
     pub(crate) fn panel_wants(&self) -> Option<Wants> {
         match &self.panel {
-            Some(Panel::Fillet(_)) => Some(Wants { edges: true, faces: false }),
+            Some(Panel::Fillet(_) | Panel::Flange(_)) => Some(Wants { edges: true, faces: false }),
             Some(Panel::Chamfer(p)) => Some(Wants { edges: true, faces: p.method != ChamferMethod::Distance }),
             Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => {
                 Some(Wants { edges: false, faces: true })
@@ -119,6 +119,7 @@ impl Workbench {
         let face = |r: &FaceRef| find_face(&self.scene, r).map(|(body, face)| Pick::Face { body, face });
         match &self.panel {
             Some(Panel::Fillet(p)) => edges(&p.edges),
+            Some(Panel::Flange(p)) => edges(&p.edges),
             Some(Panel::Chamfer(p)) => {
                 let mut v = edges(&p.edges);
                 v.extend(p.reference.as_ref().and_then(face));
@@ -266,6 +267,7 @@ impl Workbench {
         let same_face = |r: &FaceRef| matches!(p, Pick::Face { body, face } if find_face(scene, r) == Some((body, face)));
         match (&mut self.panel, eref, fref) {
             (Some(Panel::Fillet(f)), Some(r), _) => edit_list(&mut f.edges, r, present, toggle, same_edge),
+            (Some(Panel::Flange(f)), Some(r), _) => edit_list(&mut f.edges, r, present, toggle, same_edge),
             (Some(Panel::Chamfer(c)), Some(r), _) => edit_list(&mut c.edges, r, present, toggle, same_edge),
             (Some(Panel::Chamfer(c)), None, Some(r)) if c.method != ChamferMethod::Distance => {
                 if present && toggle {
@@ -412,7 +414,7 @@ impl Workbench {
                 return true;
             }
         }
-        if matches!(self.panel, Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Sweep(_) | Panel::Coil(_))) {
+        if matches!(self.panel, Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Sweep(_) | Panel::Coil(_) | Panel::SheetFace(_))) {
             // A click inside a closed region of the profile's sketch: that region joins the
             // feature, or leaves it.
             if resp.clicked()
@@ -480,6 +482,7 @@ impl Workbench {
     pub(crate) fn clear_panel_picks(&mut self) {
         match &mut self.panel {
             Some(Panel::Fillet(f)) => f.edges.clear(),
+            Some(Panel::Flange(f)) => f.edges.clear(),
             Some(Panel::Chamfer(c)) => c.edges.clear(),
             Some(Panel::Shell(s)) => s.faces.clear(),
             Some(Panel::Hole(h)) => h.points.clear(),

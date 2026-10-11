@@ -606,3 +606,63 @@ fn projected_edges_centre_lines_and_diameters_to_them_are_written_and_read_back(
     let e = project::from_bytes(broken.as_bytes()).unwrap_err().to_string();
     assert!(e.contains("is said to be a projected edge but is not reference geometry"), "{e}");
 }
+
+#[test]
+fn a_sheet_metal_part_is_written_as_text_and_read_back() {
+    let mut s = Session::default();
+    let extra = Map::new();
+    let plain = String::from_utf8(project::to_bytes(s.document(), &extra).unwrap()).unwrap();
+    assert!(!plain.contains("sheet_metal") && !plain.contains("Thickness"), "nothing of it in a part that is not sheet metal: {plain}");
+
+    // The rule, a face, and a flange on one edge of it (named by its two faces: there is no
+    // kernel here).
+    run(&mut s, "sheet.defaults", json!({ "thickness": 1.5, "bend_radius": "Thickness * 2", "corner": "square" }));
+    let before = serde_json::to_value(s.document()).unwrap();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let r = run(&mut s, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 40, "y2": 30 }));
+    let face = run(&mut s, "sheet.face", json!({ "sketch": sk }))["feature"].as_u64().unwrap();
+    let edge = json!({
+        "faces": [{ "type": "cap", "feature": face, "end": "end" }, { "type": "side", "feature": face, "curve": r["lines"][1] }],
+        "fingerprint": { "mid": { "x": 40.0, "y": 15.0, "z": 1.5 }, "length": 30.0 },
+    });
+    run(&mut s, "sheet.flange", json!({ "edges": [edge], "height": 12, "angle": 1.25, "position": "adjacent", "width": 20, "radius": 2 }));
+    run(&mut s, "sheet.flat_pattern", json!({}));
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    // The rule is a table of its own; its sizes are parameters, each with its equation; the
+    // features are records like any others, with only what is not the usual written out.
+    assert!(text.contains("[sheet_metal]\nrelief = \"straight\"\ncorner = \"square\"\nflat = true\n"), "{text}");
+    for (name, equation) in [("Thickness", "1.5 mm"), ("BendRadius", "Thickness * 2"), ("BendReliefDepth", "Thickness * 0.5"), ("KFactor", "0.44")] {
+        assert!(text.contains(&format!("name = \"{name}\", equation = \"{equation}\"")), "{name}: {text}");
+    }
+    assert!(text.contains("type = \"sheet_face\"") && text.contains("type = \"flange\""), "{text}");
+    let flange = text.split("type = \"flange\"").nth(1).unwrap();
+    for field in ["angle = 1.25", "height = 12.0", "position = \"adjacent\"", "radius = 2.0", "width = { centered = { width = 20.0 } }"] {
+        assert!(flange.contains(field), "{field}: {flange}");
+    }
+    // Read back, it is the same part, and saves as the same bytes.
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(back.sheet_metal(), s.document().sheet_metal());
+    assert_eq!(back.sheet_sizes().unwrap(), s.document().sheet_sizes().unwrap());
+    assert_eq!(back.sheet_sizes().unwrap().bend_radius, 3.0);
+    assert_eq!(back.features().len(), 3);
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+    back.validate().unwrap();
+
+    // The diff says the part became sheet metal and what the rule's changes are.
+    let empty = serde_json::to_value(Document::default()).unwrap();
+    let made = diff::diff_documents("part", &empty, &before).text();
+    assert!(made.contains("now a sheet metal part (bend relief straight, corner relief square)") && made.contains("Thickness"), "{made}");
+    let after = serde_json::to_value(s.document()).unwrap();
+    run(&mut s, "sheet.defaults", json!({ "corner": "round", "relief": "round", "thickness": 2 }));
+    run(&mut s, "sheet.flat_pattern", json!({ "on": false }));
+    let changed = diff::diff_documents("part", &after, &serde_json::to_value(s.document()).unwrap()).text();
+    for line in ["sheet metal bend relief straight -> round", "sheet metal corner relief square -> round", "flat pattern deleted", "Thickness"] {
+        assert!(changed.contains(line), "{line}: {changed}");
+    }
+    // A file edited into something that cannot be is refused as damaged, saying what is wrong.
+    let e = project::from_bytes(text.replace("angle = 1.25", "angle = 4.0").as_bytes()).unwrap_err().to_string();
+    assert!(e.contains("the flange angle must be from 1 to 179 degrees"), "{e}");
+    let e = project::from_bytes(text.replace("corner = \"square\"", "corner = \"wavy\"").as_bytes()).unwrap_err().to_string();
+    assert!(e.contains("wavy"), "{e}");
+}

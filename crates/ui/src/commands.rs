@@ -88,6 +88,10 @@ const fn glyph(id: &'static str, label: &'static str, tip: &'static str, icon: I
 
 pub const MODEL_TAB: usize = 0;
 pub const SKETCH_TAB: usize = 1;
+/// The home tab of a sheet metal part; shown only for one.
+pub const SHEET_TAB: usize = 7;
+/// The tab of the flat pattern; shown only while the pattern is.
+pub const FLAT_TAB: usize = 8;
 
 pub const RIBBON: &[RibbonTab] = &[
     RibbonTab {
@@ -141,6 +145,16 @@ pub const RIBBON: &[RibbonTab] = &[
                     small("model.pattern.circular", "Circular", "Repeat features around an axis", Icon::PatternCircular, 0),
                     small("model.mirror", "Mirror", "Mirror features across a plane", Icon::Mirror, 0),
                 ],
+            },
+            RibbonPanel {
+                title: "Convert",
+                commands: &[large(
+                    "sheet.convert",
+                    "Convert to\nSheet Metal",
+                    "Make this part a sheet metal part: say how thick its sheet is, and it can be laid flat",
+                    Icon::ConvertSheet,
+                    0,
+                )],
             },
         ],
     },
@@ -356,6 +370,125 @@ pub const RIBBON: &[RibbonTab] = &[
                 0,
             )],
         }],
+    },
+    RibbonTab {
+        name: "Sheet Metal",
+        panels: &[
+            RibbonPanel {
+                title: "Sketch",
+                commands: &[large("sketch.new", "Start\n2D Sketch", "Pick an origin plane or a planar face to sketch on", Icon::NewSketch, 0)
+                    .key("S")
+                    .more(&["sketch.new_3d"])],
+            },
+            RibbonPanel {
+                title: "Create",
+                commands: &[
+                    large("sheet.face", "Face", "A flat piece of sheet from a closed profile, one thickness thick", Icon::SheetFace, 0),
+                    large(
+                        "sheet.flange",
+                        "Flange",
+                        "A wall bent up from an edge of the sheet: click edges, set the height and the angle",
+                        Icon::Flange,
+                        0,
+                    ),
+                    large("sheet.contour_flange", "Contour\nFlange", "A sheet from an open profile, bent at its corners", Icon::ContourFlange, LATER),
+                    small("sheet.lofted_flange", "Lofted Flange", "A sheet blended between two profiles", Icon::Loft, LATER),
+                    small("sheet.contour_roll", "Contour Roll", "A profile rolled about an axis", Icon::Revolve, LATER),
+                    small("sheet.hem", "Hem", "An edge folded back on itself", Icon::Hem, LATER),
+                    small("sheet.bend", "Bend", "Join two faces with a bend", Icon::Bend, LATER),
+                    small("sheet.fold", "Fold", "Fold a face along a sketched line", Icon::Bend, LATER),
+                ],
+            },
+            RibbonPanel {
+                title: "Modify",
+                commands: &[
+                    large("sheet.cut", "Cut", "Cut a profile through the sheet", Icon::SheetCut, 0),
+                    small("model.hole", "Hole", "Simple, counterbore or countersink holes", Icon::Hole, 0).key("H"),
+                    small("sheet.corner_round", "Corner Round", "Round the corners of the sheet's outline", Icon::CornerRound, 0),
+                    small("sheet.corner_chamfer", "Corner Chamfer", "Cut the corners of the sheet's outline off", Icon::CornerChamfer, 0),
+                    small("sheet.corner_seam", "Corner Seam", "Close or open the gap where two flanges meet", Icon::CornerSeam, LATER),
+                    small("sheet.punch", "Punch Tool", "Stamp a shape from a library", Icon::SheetCut, LATER),
+                    small("sheet.rip", "Rip", "Open a seam so that a closed shape can be laid flat", Icon::Split, LATER),
+                    small("sheet.unfold", "Unfold", "Flatten chosen bends to work across them", Icon::FlatPattern, LATER),
+                    small("sheet.refold", "Refold", "Fold flattened bends again", Icon::FoldedPart, LATER),
+                ],
+            },
+            RibbonPanel {
+                title: "Work Features",
+                commands: &[
+                    large("work.plane", "Plane", "Construction plane: offset, angled or mid-plane", Icon::Plane, 0),
+                    small("work.axis", "Axis", "Construction axis: on an edge or cylinder, or where two planes meet", Icon::Axis, 0),
+                    small("work.point", "Point", "Construction point: a circle centre, or where an axis meets a plane", Icon::Point, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Pattern",
+                commands: &[
+                    small("model.pattern.rect", "Rectangular", "Repeat features in rows and columns", Icon::PatternRect, 0),
+                    small("model.pattern.circular", "Circular", "Repeat features around an axis", Icon::PatternCircular, 0),
+                    small("model.mirror", "Mirror", "Mirror features across a plane", Icon::Mirror, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Setup",
+                commands: &[large(
+                    "sheet.defaults",
+                    "Sheet Metal\nDefaults",
+                    "The sheet's thickness, its bend radius and reliefs, and the K factor its flat pattern is worked out with",
+                    Icon::SheetDefaults,
+                    0,
+                )],
+            },
+            RibbonPanel {
+                title: "Flat Pattern",
+                commands: &[
+                    large(
+                        "sheet.flat_view",
+                        "Create\nFlat Pattern",
+                        "Lay the part flat: its outline for cutting, with its bend lines. Made the first time, shown after that",
+                        Icon::FlatPattern,
+                        0,
+                    ),
+                    small(
+                        "sheet.a_side",
+                        "Define A-Side",
+                        "Click the face that is up when the pattern lies on the table (the selected face, when one is)",
+                        Icon::ASide,
+                        0,
+                    ),
+                ],
+            },
+        ],
+    },
+    RibbonTab {
+        name: "Flat Pattern",
+        panels: &[
+            RibbonPanel {
+                title: "Export",
+                commands: &[
+                    large(
+                        "sheet.export_dxf",
+                        "Export\nDXF",
+                        "The flat pattern for a laser, plasma or waterjet cutter: outline, holes and bend lines on their own layers",
+                        Icon::Save,
+                        0,
+                    ),
+                    small("sheet.export_svg", "Export SVG", "The flat pattern as a picture at full size", Icon::Save, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Show",
+                commands: &[
+                    small("sheet.show_bends", "Bend Lines", "Show or hide the centre line of each bend", Icon::Centerline, 0),
+                    small("sheet.show_extents", "Bend Extents", "Show or hide where each bend begins and ends", Icon::Parallel, 0),
+                    small("view.fit", "Zoom All", "Fit the model in the window", Icon::ZoomFit, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Folded Part",
+                commands: &[large("sheet.folded", "Go to\nFolded Part", "Back to the part as it is folded", Icon::FoldedPart, 0)],
+            },
+        ],
     },
 ];
 
@@ -663,6 +796,7 @@ pub const EXTRA: &[UiCommand] = &[
     small("view.style.shaded_edges", "Shaded with Edges", "Shaded faces with their edges", Icon::VisualStyle, 0),
     small("view.style.shaded", "Shaded", "Shaded faces only", Icon::VisualStyle, 0),
     small("view.style.wireframe", "Wireframe", "Edges only", Icon::VisualStyle, 0),
+    small("file.new_sheet_metal", "New Sheet Metal Part", "A new part that is cut from sheet and folded", Icon::SheetFace, 0),
     small("file.new_assembly", "New Assembly", "A new assembly of part files", Icon::Assembly, 0),
     small("asm.edit", "Edit", "Edit the selected component's part in place", Icon::Part, 0),
     RETURN,
@@ -720,6 +854,7 @@ pub const QUICK_ACCESS: &[&[UiCommand]] = &[
 /// File menu entries (label, command id).
 pub const FILE_MENU: &[(&str, &str)] = &[
     ("New Part", "file.new"),
+    ("New Sheet Metal Part", "file.new_sheet_metal"),
     ("New Assembly", "file.new_assembly"),
     ("New Drawing", "file.new_drawing"),
     ("New Drawing from Template...", "file.new_drawing_template"),
@@ -729,6 +864,7 @@ pub const FILE_MENU: &[(&str, &str)] = &[
     ("Export STEP...", "export.step"),
     ("Export STL...", "export.stl"),
     ("Export 3MF...", "export.3mf"),
+    ("Export Flat Pattern DXF...", "sheet.export_dxf"),
 ];
 
 /// File menu entries in a drawing.
@@ -850,7 +986,8 @@ mod tests {
     #[test]
     fn ribbon_has_the_planned_tabs() {
         let names: Vec<_> = RIBBON.iter().map(|t| t.name).collect();
-        assert_eq!(names, ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View", "Environments"]);
+        assert_eq!(names, ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View", "Environments", "Sheet Metal", "Flat Pattern"]);
+        assert_eq!((RIBBON[SHEET_TAB].name, RIBBON[FLAT_TAB].name), ("Sheet Metal", "Flat Pattern"));
         assert_eq!(RIBBON[MODEL_TAB].name, "3D Model");
         assert_eq!(RIBBON[SKETCH_TAB].name, "Sketch");
         assert!(RIBBON.iter().all(|t| !t.panels.is_empty() && t.panels.iter().all(|p| !p.commands.is_empty())));

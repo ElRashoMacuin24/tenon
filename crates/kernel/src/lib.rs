@@ -202,6 +202,12 @@ pub trait Kernel: Send {
         let _ = edge;
         unsupported!("edge_info")
     }
+    /// Points along an edge from its start to its end (as [`EdgeInfo`] has them), close enough
+    /// together that the straight lines between them stay within `deflection` (mm) of the edge.
+    fn edge_points(&self, edge: EdgeId, deflection: f64) -> KResult<Vec<Vec3>> {
+        let _ = (edge, deflection);
+        unsupported!("edge_points")
+    }
     /// Display mesh. Takes `&mut self` because backends may cache the triangulation.
     fn tessellate(&mut self, shape: ShapeHandle, tol: &MeshTol) -> KResult<Mesh> {
         let _ = (shape, tol);

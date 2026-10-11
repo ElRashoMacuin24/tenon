@@ -87,6 +87,7 @@ std::unique_ptr<Shape> draft(const Shape& body, rust::Slice<const std::uint32_t>
 void topology(const Shape& shape, TopoOut& out);
 void face_info(const Shape& shape, std::uint32_t index, FaceOut& out);
 void edge_info(const Shape& shape, std::uint32_t index, EdgeOut& out);
+void edge_points(const Shape& shape, std::uint32_t index, double deflection, rust::Vec<double>& out);
 void tessellate(const Shape& shape, double linear, double angular, bool relaxed, MeshOut& out);
 void mass_properties(const Shape& shape, MassOut& out);
 void bounding_box(const Shape& shape, BoxOut& out);

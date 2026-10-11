@@ -116,6 +116,8 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::Split(_) => Icon::Split,
         FeatureKind::Combine(_) => Icon::Combine,
         FeatureKind::Thread(_) => Icon::Thread,
+        FeatureKind::SheetFace(_) => Icon::SheetFace,
+        FeatureKind::Flange(_) => Icon::Flange,
     }
 }
 
@@ -193,9 +195,35 @@ impl Workbench {
         }
 
         let mut action: Option<BrowserAction> = None;
+        // Folded Model or Flat Pattern double-clicked.
+        let mut go: Option<&'static str> = None;
         egui::ScrollArea::vertical().id_salt("tn_browser_scroll").auto_shrink([false, false]).show(ui, |ui| {
             let name = self.document().name.clone();
             row(ui, t, 0, Icon::Part, &name, None, RowStyle::Normal);
+            // A sheet metal part with a flat pattern has two states: folded and flat.
+            if self.document().sheet_metal().is_some_and(|r| r.flat) {
+                let flat = self.flat_shown();
+                let style = |on: bool| if on { RowStyle::Active } else { RowStyle::Normal };
+                let (resp, _) = row(ui, t, 1, Icon::FoldedPart, "Folded Model", None, style(!flat));
+                if resp.on_hover_text("Double-click to go to the folded part").double_clicked() {
+                    go = Some("sheet.folded");
+                }
+                let (resp, _) = row(ui, t, 1, Icon::FlatPattern, "Flat Pattern", None, style(flat));
+                let resp = resp.on_hover_text("Double-click to go to the flat pattern; right-click to export or delete it");
+                if resp.double_clicked() {
+                    go = Some("sheet.flat_view");
+                }
+                resp.context_menu(|ui| {
+                    for (label, id) in
+                        [("Export DXF...", "sheet.export_dxf"), ("Export SVG...", "sheet.export_svg"), ("Delete Flat Pattern", "sheet.delete_flat")]
+                    {
+                        if ui.button(label).clicked() {
+                            go = Some(id);
+                            ui.close();
+                        }
+                    }
+                });
+            }
             let bodies = self.scene.bodies.len();
             let (resp, toggled) = row(ui, t, 1, Icon::Folder, &format!("Solid Bodies({bodies})"), Some(self.chrome.bodies_open), RowStyle::Normal);
             if toggled || resp.double_clicked() {
@@ -364,6 +392,9 @@ impl Workbench {
             }
             self.chrome.browser_drag = drag;
         });
+        if let Some(id) = go {
+            self.command(id);
+        }
         if let Some(a) = action {
             self.browser_action(a);
         }

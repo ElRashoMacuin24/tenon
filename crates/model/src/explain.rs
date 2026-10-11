@@ -87,6 +87,12 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::Thread(_), _) => {
             "The thread could not be cut into the part. The pitch may be too coarse for the diameter, or the thread may run into other features: try a finer pitch or a shorter length, or leave the thread cosmetic.".into()
         }
+        (FeatureKind::SheetFace(_), _) => {
+            "The face could not be made from this profile. Its outline may cross itself, or it may only touch the sheet along an edge: check the sketch.".into()
+        }
+        (FeatureKind::Flange(_), _) => {
+            "The flange could not be built on the sheet. It may run into another flange, or the bend may be too large for the edge: try a smaller bend radius, a lower flange, or offsets from the ends of the edge.".into()
+        }
         (FeatureKind::PatternRect(_) | FeatureKind::PatternCircular(_) | FeatureKind::Mirror(_), _) => {
             "The copies could not be joined to the part. A copy may touch the part only along an edge or at a point: change the spacing, count or plane.".into()
         }

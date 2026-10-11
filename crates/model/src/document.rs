@@ -777,6 +777,10 @@ pub enum FeatureKind {
     Split(Split),
     Combine(Combine),
     Thread(Thread),
+    /// A flat piece of sheet metal (see `sheet.rs`).
+    SheetFace(crate::sheet::Face),
+    /// Walls bent up from edges of the sheet.
+    Flange(crate::sheet::Flange),
 }
 
 impl FeatureKind {
@@ -800,6 +804,7 @@ impl FeatureKind {
                 | FeatureKind::Sweep(_)
                 | FeatureKind::Coil(_)
                 | FeatureKind::Loft(_)
+                | FeatureKind::SheetFace(_)
                 | FeatureKind::PatternRect(_)
                 | FeatureKind::PatternCircular(_)
                 | FeatureKind::Mirror(_)
@@ -831,6 +836,8 @@ impl FeatureKind {
             FeatureKind::Split(_) => "Split",
             FeatureKind::Combine(_) => "Combine",
             FeatureKind::Thread(_) => "Thread",
+            FeatureKind::SheetFace(_) => "Face",
+            FeatureKind::Flange(_) => "Flange",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -857,6 +864,8 @@ impl FeatureKind {
             FeatureKind::Split(_) => "Split",
             FeatureKind::Combine(_) => "Combine",
             FeatureKind::Thread(_) => "Thread",
+            FeatureKind::SheetFace(_) => "Face",
+            FeatureKind::Flange(_) => "Flange",
         }
     }
     /// Features this one depends on.
@@ -891,6 +900,8 @@ impl FeatureKind {
             FeatureKind::Split(s) => s.plane.feature().into_iter().chain(s.body.as_ref().and_then(FaceRef::feature)).collect(),
             FeatureKind::Combine(c) => std::iter::once(&c.base).chain(&c.tools).filter_map(FaceRef::feature).collect(),
             FeatureKind::Thread(t) => t.face.feature().into_iter().collect(),
+            FeatureKind::SheetFace(f) => vec![f.sketch],
+            FeatureKind::Flange(f) => f.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -967,6 +978,9 @@ pub struct Document {
     /// The part's sizes, when it comes in several (see `table.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) table: Option<crate::table::DesignTable>,
+    /// The sheet metal rule, when the part is a sheet metal part (see `sheet.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sheet: Option<Box<crate::sheet::SheetMetal>>,
 }
 
 impl Default for Document {
@@ -980,6 +994,7 @@ impl Default for Document {
             material: None,
             appearance: None,
             table: None,
+            sheet: None,
         }
     }
 }
@@ -1112,6 +1127,7 @@ impl Document {
             material: self.material.clone(),
             appearance: self.appearance.clone(),
             table: self.table.clone(),
+            sheet: self.sheet.clone(),
         }
     }
 
@@ -1272,6 +1288,9 @@ impl Document {
                 FeatureKind::Draft(d) => d.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Combine(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Thread(t) => t.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::SheetFace(s) if self.sketch(s.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, s.sketch)),
+                FeatureKind::SheetFace(s) => s.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Flange(fl) => fl.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

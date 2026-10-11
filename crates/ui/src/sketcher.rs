@@ -538,7 +538,7 @@ impl Workbench {
         if let Mode::Sketch(s) = &self.mode {
             let name = self.feature_name(s.feature);
             self.mode = Mode::Model;
-            self.chrome.tab = crate::commands::MODEL_TAB;
+            self.chrome.tab = self.home_tab();
             self.set_status(format!("Finished {name}. Extrude or revolve it from the 3D Model tab."));
             // Back to the view from before the sketch.
             if let Some(c) = self.view.sketch_return.take() {

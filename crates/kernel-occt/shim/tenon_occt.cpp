@@ -1397,6 +1397,29 @@ void edge_info(const Shape& s, std::uint32_t index, EdgeOut& out) {
   });
 }
 
+void edge_points(const Shape& s, std::uint32_t index, double deflection, rust::Vec<double>& out) {
+  guarded("edge_points", [&] {
+    if (index >= static_cast<std::uint32_t>(s.edges.Extent())) {
+      throw std::out_of_range("edge index out of range");
+    }
+    const TopoDS_Edge& edge = TopoDS::Edge(s.edges(static_cast<int>(index) + 1));
+    if (BRep_Tool::Degenerated(edge)) {
+      return;
+    }
+    // From the start vertex to the end vertex, as edge_info reports them.
+    BRepAdaptor_Curve curve(edge);
+    GCPnts_TangentialDeflection points(curve, 0.05, deflection);
+    const int n = points.NbPoints();
+    const bool reversed = edge.Orientation() == TopAbs_REVERSED;
+    for (int i = 1; i <= n; ++i) {
+      const gp_Pnt p = points.Value(reversed ? n + 1 - i : i);
+      out.push_back(p.X());
+      out.push_back(p.Y());
+      out.push_back(p.Z());
+    }
+  });
+}
+
 void tessellate(const Shape& s, double linear, double angular, bool relaxed, MeshOut& out) {
   guarded("tessellate", [&] {
     // Faces are meshed in parallel (OCCT's own thread pool). Edges keep the full tolerance; for

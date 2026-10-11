@@ -115,6 +115,25 @@ pub enum Icon {
     Print3d,
     Dof,
     Return,
+    // sheet metal
+    /// A flat piece of sheet.
+    SheetFace,
+    /// A wall bent up from the edge of a sheet.
+    Flange,
+    ContourFlange,
+    Hem,
+    Bend,
+    SheetCut,
+    CornerSeam,
+    CornerRound,
+    CornerChamfer,
+    /// The sheet metal rule: a sheet seen edge on, with its thickness marked.
+    SheetDefaults,
+    /// The part laid flat, with its bend lines.
+    FlatPattern,
+    FoldedPart,
+    ASide,
+    ConvertSheet,
     // drawings
     Drawing,
     BaseView,
@@ -135,7 +154,7 @@ fn category(icon: Icon) -> Option<Category> {
     Some(match icon {
         Extrude | Revolve | Sweep | Loft | Coil | Fillet | Chamfer | Shell | Hole | Rib | Draft | Thread | Combine | Split | Part | Body | Cube
         | MassProps | PatternRect | PatternCircular | Mirror | Assembly | Place | CreateComponent | Explode | BaseView | ProjectedView
-        | DetailView => Category::Solid,
+        | DetailView | SheetFace | Flange | SheetCut | FlatPattern | FoldedPart | ASide | SheetDefaults | ConvertSheet => Category::Solid,
         Plane | Axis | Point | Ucs | LookAt => Category::Work,
         NewSketch | FinishSketch => Category::Sketch,
         _ => return None,
@@ -846,6 +865,123 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
                 pen.line(&[(a, 0.5), (b, 0.5)]);
                 pen.line(&[(0.5, a), (0.5, b)]);
             }
+        }
+        // A sheet lying flat, seen from above and to one side, with its edge showing.
+        Icon::SheetFace => {
+            pen.fill(&[(0.06, 0.66), (0.62, 0.66), (0.94, 0.3), (0.38, 0.3)], soft);
+            pen.closed(&[(0.06, 0.66), (0.62, 0.66), (0.94, 0.3), (0.38, 0.3)]);
+            pen.line(&[(0.06, 0.66), (0.06, 0.76), (0.62, 0.76), (0.94, 0.4), (0.94, 0.3)]);
+            pen.line(&[(0.62, 0.66), (0.62, 0.76)]);
+        }
+        // The sheet edge on, with a wall bent up at its end.
+        Icon::Flange => {
+            pen.fill(&[(0.06, 0.72), (0.6, 0.72), (0.6, 0.84), (0.06, 0.84)], soft);
+            pen.line(&[(0.06, 0.72), (0.6, 0.72)]);
+            pen.arc((0.6, 0.6), 0.12, 0.12, PI / 2.0, 0.0);
+            pen.line(&[(0.72, 0.6), (0.72, 0.1), (0.84, 0.1), (0.84, 0.6)]);
+            pen.arc((0.6, 0.6), 0.24, 0.24, 0.0, PI / 2.0);
+            pen.line(&[(0.6, 0.84), (0.06, 0.84), (0.06, 0.72)]);
+        }
+        // A profile bent twice: a channel edge on.
+        Icon::ContourFlange => {
+            pen.line(&[(0.14, 0.2), (0.14, 0.7)]);
+            pen.arc((0.26, 0.7), 0.12, 0.12, PI, PI / 2.0);
+            pen.line(&[(0.26, 0.82), (0.74, 0.82)]);
+            pen.arc((0.74, 0.7), 0.12, 0.12, PI / 2.0, 0.0);
+            pen.line(&[(0.86, 0.7), (0.86, 0.2)]);
+        }
+        // An edge folded back flat on itself.
+        Icon::Hem => {
+            pen.line(&[(0.08, 0.7), (0.78, 0.7)]);
+            pen.arc((0.78, 0.6), 0.1, 0.1, PI / 2.0, -PI / 2.0);
+            pen.line(&[(0.78, 0.5), (0.4, 0.5)]);
+        }
+        // Two faces joined by a bend.
+        Icon::Bend => {
+            pen.line(&[(0.06, 0.8), (0.5, 0.8)]);
+            pen.arc((0.5, 0.56), 0.24, 0.24, PI / 2.0, 0.0);
+            pen.line(&[(0.74, 0.56), (0.74, 0.1)]);
+            pen.dot((0.5, 0.56), 0.05);
+        }
+        // A sheet with a piece cut out of it.
+        Icon::SheetCut => {
+            pen.fill(&[(0.08, 0.2), (0.92, 0.2), (0.92, 0.8), (0.08, 0.8)], soft);
+            pen.closed(&[(0.08, 0.2), (0.92, 0.2), (0.92, 0.8), (0.08, 0.8)]);
+            pen.closed(&[(0.32, 0.38), (0.68, 0.38), (0.68, 0.62), (0.32, 0.62)]);
+        }
+        // Two walls meeting at a corner, with the gap between them.
+        Icon::CornerSeam => {
+            pen.line(&[(0.1, 0.9), (0.1, 0.3), (0.44, 0.12), (0.44, 0.72), (0.1, 0.9)]);
+            pen.line(&[(0.9, 0.9), (0.9, 0.3), (0.56, 0.12), (0.56, 0.72), (0.9, 0.9)]);
+        }
+        // The corner of a sheet, rounded or cut off.
+        Icon::CornerRound => {
+            pen.line(&[(0.12, 0.88), (0.12, 0.5)]);
+            pen.arc((0.5, 0.5), 0.38, 0.38, PI, 1.5 * PI);
+            pen.line(&[(0.5, 0.12), (0.88, 0.12)]);
+        }
+        Icon::CornerChamfer => {
+            pen.line(&[(0.12, 0.88), (0.12, 0.5), (0.5, 0.12), (0.88, 0.12)]);
+        }
+        // A sheet edge on between two arrows that measure its thickness.
+        Icon::SheetDefaults => {
+            pen.fill(&[(0.06, 0.42), (0.94, 0.42), (0.94, 0.58), (0.06, 0.58)], soft);
+            pen.closed(&[(0.06, 0.42), (0.94, 0.42), (0.94, 0.58), (0.06, 0.58)]);
+            pen.line(&[(0.5, 0.08), (0.5, 0.36)]);
+            pen.arrow_head((0.5, 0.4), (0.5, 0.2));
+            pen.line(&[(0.5, 0.92), (0.5, 0.64)]);
+            pen.arrow_head((0.5, 0.6), (0.5, 0.8));
+        }
+        // A tray laid flat: a cross, with a bend line across each arm.
+        Icon::FlatPattern => {
+            let cross = [
+                (0.34, 0.06),
+                (0.66, 0.06),
+                (0.66, 0.34),
+                (0.94, 0.34),
+                (0.94, 0.66),
+                (0.66, 0.66),
+                (0.66, 0.94),
+                (0.34, 0.94),
+                (0.34, 0.66),
+                (0.06, 0.66),
+                (0.06, 0.34),
+                (0.34, 0.34),
+            ];
+            pen.fill(&[(0.34, 0.06), (0.66, 0.06), (0.66, 0.94), (0.34, 0.94)], soft);
+            pen.fill(&[(0.06, 0.34), (0.94, 0.34), (0.94, 0.66), (0.06, 0.66)], soft);
+            pen.closed(&cross);
+            let thin = Pen { p: painter, r: rect, s: Stroke::new(1.0, color) };
+            for (a, b) in [((0.34, 0.34), (0.66, 0.34)), ((0.66, 0.34), (0.66, 0.66)), ((0.66, 0.66), (0.34, 0.66)), ((0.34, 0.66), (0.34, 0.34))] {
+                // Dashes: a third, a gap, a third.
+                let at = |t: f32| (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+                thin.line(&[at(0.0), at(0.36)]);
+                thin.line(&[at(0.64), at(1.0)]);
+            }
+        }
+        // The same tray folded up.
+        Icon::FoldedPart => {
+            pen.fill(&[(0.1, 0.62), (0.58, 0.62), (0.9, 0.44), (0.42, 0.44)], soft);
+            pen.closed(&[(0.1, 0.62), (0.58, 0.62), (0.9, 0.44), (0.42, 0.44)]);
+            pen.line(&[(0.1, 0.62), (0.1, 0.3), (0.42, 0.12), (0.42, 0.44)]);
+            pen.line(&[(0.42, 0.12), (0.9, 0.12), (0.9, 0.44)]);
+            pen.line(&[(0.1, 0.62), (0.1, 0.84), (0.58, 0.84), (0.58, 0.62)]);
+            pen.line(&[(0.58, 0.84), (0.9, 0.66), (0.9, 0.44)]);
+        }
+        // A sheet with an arrow standing on the side that is up.
+        Icon::ASide => {
+            pen.fill(&[(0.06, 0.8), (0.62, 0.8), (0.94, 0.5), (0.38, 0.5)], soft);
+            pen.closed(&[(0.06, 0.8), (0.62, 0.8), (0.94, 0.5), (0.38, 0.5)]);
+            pen.line(&[(0.5, 0.64), (0.5, 0.12)]);
+            pen.arrow_head((0.5, 0.08), (0.5, 0.3));
+        }
+        // A block becoming a sheet.
+        Icon::ConvertSheet => {
+            pen.closed(&[(0.06, 0.2), (0.4, 0.2), (0.4, 0.8), (0.06, 0.8)]);
+            pen.line(&[(0.46, 0.5), (0.66, 0.5)]);
+            pen.arrow_head((0.7, 0.5), (0.5, 0.5));
+            pen.fill(&[(0.78, 0.2), (0.9, 0.2), (0.9, 0.8), (0.78, 0.8)], soft);
+            pen.closed(&[(0.78, 0.2), (0.9, 0.2), (0.9, 0.8), (0.78, 0.8)]);
         }
         Icon::Centerline => {
             pen.circle((0.24, 0.76), 0.17);

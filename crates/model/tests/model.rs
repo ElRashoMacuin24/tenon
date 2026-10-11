@@ -228,20 +228,53 @@ fn a_stream_of_previews_shows_results_while_it_lasts() {
         s.exec("model.hole", &json!({ "sketch": sk, "diameter": 1.5, "through_all": true }), None).unwrap();
     }
     let doc = s.document().clone();
+    let mut seen = Vec::new();
     w.preview(1, doc.clone());
-    // The first is running by now; the rest arrive while it does.
-    std::thread::sleep(Duration::from_millis(20));
+    // The rest arrive once the first is being worked on (on a machine fast enough, after it).
+    let begun = std::time::Instant::now();
+    while w.regenerating().is_none() && seen.is_empty() {
+        assert!(begun.elapsed() < Duration::from_secs(60), "the first preview was never started");
+        if let Some(Response::Scene { revision, .. }) = w.try_recv() {
+            seen.push(revision);
+        }
+        std::thread::yield_now();
+    }
     for rev in 2..=10 {
         w.preview(rev, doc.clone());
     }
-    let mut seen = Vec::new();
     while seen.last() != Some(&10) {
         match w.recv_timeout(Duration::from_secs(60)) {
             Some(Response::Scene { revision, .. }) => seen.push(revision),
             other => panic!("{other:?}"),
         }
     }
-    assert_eq!(seen, [1, 10], "the first finished, the ones in between were skipped");
+    // How many of those in between are shown depends on the machine; that the one being worked
+    // on is, and that none is shown out of turn, does not.
+    assert_eq!(seen.first(), Some(&1), "the one being worked on finished and was shown: {seen:?}");
+    assert!(seen.windows(2).all(|w| w[0] < w[1]), "{seen:?}");
+
+    // What arrives while the thread is busy is skipped, but for the newest: here it is held in
+    // a job until a whole stream has been sent.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    w.job(
+        11,
+        Box::new(move |_, _| {
+            let _ = held.recv();
+            Box::new(())
+        }),
+    );
+    for rev in 12..=20 {
+        w.preview(rev, doc.clone());
+    }
+    release.send(()).unwrap();
+    let mut after = Vec::new();
+    while after.last().map(String::as_str) != Some("Scene(slot 0, revision 20)") {
+        match w.recv_timeout(Duration::from_secs(60)) {
+            Some(r) => after.push(format!("{r:?}")),
+            None => panic!("{after:?}"),
+        }
+    }
+    assert_eq!(after, ["Job(11)", "Scene(slot 0, revision 20)"], "the ones in between were skipped");
 }
 
 #[test]

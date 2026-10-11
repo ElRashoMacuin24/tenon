@@ -124,6 +124,17 @@ Standard sizes and physical constants held in code:
 | `examples/m7-end-cap/workbench.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/capped-bar.tenonasm --screenshot examples/m7-end-cap/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m7-end-cap/print-check.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/end-cap.tenon --run inspect.print --screenshot examples/m7-end-cap/print-check.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m7-end-cap/library.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/capped-bar.tenonasm --run tools.library --screenshot examples/m7-end-cap/library.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m8-tray/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
+| `examples/m8-tray/tray.json` | Tenon contributors | written for this repository (the M8 demo command script) | MIT OR Apache-2.0 | Original |
+| `examples/m8-tray/tray.tenon` | Tenon contributors | generated: `tenon-cli run examples/m8-tray/tray.json --out examples/m8-tray` | MIT OR Apache-2.0 | Original |
+| `examples/m8-tray/tray-flat.dxf` | Tenon contributors | generated: same command (the tray's flat pattern) | MIT OR Apache-2.0 | Original |
+| `examples/m8-tray/tray-flat.svg` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m8-tray/tray.step` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
+| `examples/m8-tray/tray.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
+| `examples/m8-tray/workbench.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --screenshot examples/m8-tray/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m8-tray/flat-pattern.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.flat_view --screenshot examples/m8-tray/flat-pattern.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m8-tray/flange.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.flange --screenshot examples/m8-tray/flange.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m8-tray/defaults.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.defaults --screenshot examples/m8-tray/defaults.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m2-mount/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.json` | Tenon contributors | written for this repository (a second M2 example script) | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.tenon` | Tenon contributors | generated: `tenon-cli run examples/m2-mount/mount.json --out examples/m2-mount` | MIT OR Apache-2.0 | Original |

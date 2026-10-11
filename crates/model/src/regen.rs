@@ -11,6 +11,8 @@ use tenon_kernel::{
 };
 use tenon_sketch::{EntityId, Sketch, SketchRegion, default_regions, profile, regions};
 
+mod sheet;
+
 use crate::FeatureId;
 use crate::document::{
     AxisRef, AxisSel, ChamferSize, Coil, Combine, DirectionRef, Document, Draft, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent,
@@ -221,9 +223,15 @@ fn prefix_hashes(doc: &Document, copied: &std::collections::BTreeSet<FeatureId>)
     let end = doc.end_of_part();
     let mut h = std::collections::hash_map::DefaultHasher::new();
     let mut out = Vec::with_capacity(doc.features().len() + 1);
+    // Sheet metal features are built to the part's rule (its thickness, its radii, its reliefs),
+    // which is no part of their own definition: a change of it is a change of each of them.
+    let rule = format!("{:?} {:?}", doc.sheet_metal().map(|r| (r.relief, r.corner)), doc.sheet_sizes());
     out.push(h.finish());
     for (i, f) in doc.features().iter().enumerate() {
         serde_json::to_string(f).unwrap_or_default().hash(&mut h);
+        if matches!(f.kind, FeatureKind::SheetFace(_) | FeatureKind::Flange(_)) {
+            rule.hash(&mut h);
+        }
         (i >= end).hash(&mut h);
         copied.contains(&f.id).hash(&mut h);
         out.push(h.finish());
@@ -486,6 +494,8 @@ impl<'a> Ctx<'a> {
             FeatureKind::Split(s) => self.split(f.id, s),
             FeatureKind::Combine(c) => self.combine_bodies(c),
             FeatureKind::Thread(t) => self.thread(f.id, t),
+            FeatureKind::SheetFace(s) => self.sheet_face(f.id, s),
+            FeatureKind::Flange(fl) => self.flange(f.id, fl),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };

@@ -397,6 +397,10 @@ impl Workbench {
             self.drw_canvas(ui, t);
             return;
         }
+        if self.flat_shown() {
+            self.flat_canvas(ui, t);
+            return;
+        }
         let rect = ui.max_rect();
         self.view.rect = rect;
         if self.step_view_anim() {
@@ -713,6 +717,30 @@ impl Workbench {
                     Pick::Edge { .. } => (f, e + 1),
                 });
                 self.set_status(format!("{faces} faces and {edges} edges selected"));
+            }
+            return;
+        }
+        if self.chrome.sheet.pick_a_side {
+            // Define A-Side: a flat face that can be referred to.
+            let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+            let hover = resp.hover_pos().and_then(|p| {
+                let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+                let (o, d) = self.view.camera.ray(x, y, w, h);
+                pick_face(&meshes, o, d).filter(|f| {
+                    self.scene
+                        .bodies
+                        .get(f.body)
+                        .and_then(|b| b.faces.get(f.face as usize))
+                        .is_some_and(|(name, info)| name.is_some() && matches!(info.surface, tenon_kernel::SurfaceKind::Plane { .. }))
+                })
+            });
+            self.view.hover = hover.as_ref().map(|f| Pick::Face { body: f.body, face: f.face });
+            if resp.clicked()
+                && let Some(f) = hover
+                && let Some(face) = self.face_ref_of(f.body, f.face)
+                && let Err(e) = self.set_a_side(&face)
+            {
+                self.set_error(e);
             }
             return;
         }

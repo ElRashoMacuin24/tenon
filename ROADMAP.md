@@ -9,10 +9,24 @@ tools and find the free ones rough. It wins on reliability, coherence and speed,
 count: when two tasks compete, the one that makes existing features more dependable and pleasant
 goes first.
 
-Current milestone: **M8 sheet metal basics**. M7 (standard parts and maker workflow) was
-confirmed by the owner on 2026-10-11 (DEC-054), who asked again for the interface to come
-closer to Inventor's; the sketch environment was gone through first (the section after M7
-below), and M8 is built round Inventor's Sheet Metal tab.
+Current milestone: **M8 sheet metal basics**, started 2026-10-11 and reported to the owner the
+same day; it waits for the owner's confirmation. Next is M9 performance.
+
+**M8** brought:
+- sheet metal parts: a rule whose sizes (thickness, bend radius, reliefs, K factor) are
+  parameters of the part (DEC-057);
+- Face and Flange: walls bent up from edges of the sheet at any angle, with bend reliefs beside
+  narrow ones and corner reliefs where they meet (DEC-059);
+- the flat pattern, worked out from the folded solid with each bend as wide as its neutral
+  surface is long, checked against hand-computed bend allowances (DEC-058);
+- DXF and SVG of the flat pattern for a cutter (DEC-060);
+- a Sheet Metal tab laid out as Inventor's, Sheet Metal Defaults, and the flat pattern shown in
+  place of the folded part (DEC-061);
+- the example [examples/m8-tray](examples/m8-tray).
+
+M7 (standard parts and maker workflow) was confirmed by the owner on 2026-10-11 (DEC-054), who
+asked again for the interface to come closer to Inventor's; the sketch environment was gone
+through first (the section after M7 below).
 
 **The sketch environment's second round** (DEC-055, DEC-056) brought:
 - Project Geometry: edges of the part shown in a sketch, followed when the part changes, and a
@@ -300,10 +314,29 @@ rest). The tables of what Inventor does and what Tenon does are in
 
 ## M8 sheet metal basics
 
+Scope: `docs/plan.md` section 10. Started 2026-10-11, after the owner confirmed M7 and the
+sketch environment's second round; reported to the owner the same day. Decisions: DEC-057 to
+DEC-062. In files a sheet metal part has a `[sheet_metal]` table and the feature types
+`sheet_face` and `flange`; a part that is not sheet metal is written as before, and format
+version 2 stands.
+
 | Feature | Status | Proof / gap |
 |---|---|---|
-| Base and edge flanges, bends with K-factor, corner relief | missing | |
-| Flat pattern with DXF export, checked against hand-computed bend allowances | missing | |
+| A sheet metal part: a rule whose sizes are parameters (thickness, bend radius, reliefs, K factor) | done | DEC-057. `Thickness`, `BendRadius`, `BendReliefWidth`, `BendReliefDepth`, `MinimumRemnant`, `CornerReliefSize` and `KFactor` are parameters of the part: `a_part_becomes_sheet_metal_by_getting_the_rules_parameters` (the radius follows the thickness by its equation; a radius of its own stays when the rule is set again; a K factor of 1.5 is refused). They keep their names while the part is sheet metal, and a change of one rebuilds every face and flange, through the regeneration cache too: `a_change_of_the_rule_rebuilds_the_part_from_its_first_sheet_metal_feature`. Any solid of one thickness can be made a sheet metal part. Gap: one rule to a part, typed in (no library of rules or materials with their own K factors); no bend tables |
+| Base flange (Face): a sketch profile one thickness thick | done | `a_bracket_is_folded_and_laid_flat_to_its_bend_allowance` (the face is `Thickness` thick and follows it; a part that is not sheet metal is told how to become one). In the app, with the profile clicked like Extrude's and a live preview: `a_face_and_a_flange_are_made_from_their_panels_by_clicks`. Gap: a face drawn against an edge of the sheet is not joined to it by a bend (Inventor's Face does that) |
+| Edge flange: a bend and a wall on edges of the sheet | done | DEC-059. Geometry: `the_bend_is_placed_and_the_height_measured_as_asked`, `the_cross_section_is_the_bend_and_the_wall`, `a_flange_takes_its_stretch_of_the_edge`. Against the kernel, volumes and flat lengths by hand: `a_bracket_is_folded_and_laid_flat_to_its_bend_allowance`; every bend position and height datum at 45, 60, 90, 120 and 135 degrees: `bends_at_any_angle_are_placed_and_measured_as_asked`; bent the other way, and a flange on a flange that is found again by the names of its faces when the radius changes: `flanges_bend_up_and_down_and_grow_from_one_another`. Its height, angle, radius and width are parameters. Refusals in plain words: a flange lower than its own bend, 180 degrees, a curved edge, an edge that is not on the rim, wider than its edge, two that meet in an inside corner (`flanges_say_what_they_cannot_be` and the tests above). Gap: one height and angle for every edge of a flange; no height to a point; straight edges only |
+| Bend relief beside a flange narrower than its edge | done | Straight or round slots `BendReliefWidth` wide and `BendReliefDepth` past the bend, and a strip narrower than `MinimumRemnant` cut away with them: `reliefs_are_cut_beside_a_flange_narrower_than_its_edge`, `a_flange_narrower_than_its_edge_gets_reliefs_beside_it` (volumes and flat areas by hand for both shapes; round slots are arcs in the outline). Gap: no tear relief |
+| Corner relief where two bends meet | done | Round (a hole that touches both bend lines, opened to the corner), square, or trim to bend, sized by `CornerReliefSize`: `corner_reliefs_are_round_square_or_none`, `a_tray_has_its_corners_relieved_and_lies_flat_as_a_cross` (a tray of four walls in one flange, all three reliefs: volume, flat size and area by hand; the outline a cross of twelve lines and each relief a cut-out that touches it at the corner). Gap: the round relief is not centred on the crossing of the bend lines as Inventor's default is (DEC-059); the gap between two walls at a corner is not closed (no Corner Seam, no mitre) |
+| Bends unfolded by K factor | done | DEC-058. A bend is angle x (inside radius + K x thickness) wide in the flat, whichever side the pattern is laid out from: `a_bracket_is_folded_and_laid_flat_to_its_bend_allowance` (40 + 20 outside, less the bend deduction; K from 0 to 1; a thicker sheet), `bends_at_any_angle_are_placed_and_measured_as_asked`. Gap: K factor only, one for the part |
+| Flat pattern, worked out from the folded solid | done | DEC-058. Outline, cut-outs and bend lines; the size of the sheet, its area and the length to cut. Holes where they are, a hole in a wall as far along the sheet as it is up the wall, a cut across a bend followed as it is with the bend's centre line in two pieces: `holes_and_cuts_come_out_where_they_are_in_the_flat`. Which side is up: `the_side_that_is_up_is_chosen_and_kept`. Refused in plain words: a solid that is not one thickness (by volume), nothing to lay flat, a pattern that overlaps itself: `what_cannot_be_laid_flat_is_refused_in_plain_words`. The 2D side: `curves_in_any_order_and_direction_are_chained_into_an_outline_and_its_holes`, `arcs_measure_their_area_length_and_reach_exactly`, `outlines_that_cross_are_found_and_ones_that_touch_are_not`, `pieces_of_one_line_or_circle_are_one_curve_and_touching_outlines_are_told_apart`. Kernel: `points_along_an_edge_run_from_its_start_to_its_end_and_stay_on_it`. Gap: one solid; the pattern cannot be turned on the sheet or edited; no bend order |
+| DXF export of the flat pattern | done | DEC-060. R12, millimetres, lower left corner at the origin; `OUTER`, `INTERIOR`, `BEND_UP`, `BEND_DOWN`, `BEND_EXTENT`. Read back and put together again it encloses the sheet's area: `the_dxf_holds_the_outline_holes_and_bend_lines_on_their_layers`, `the_m8_demo_script_folds_a_tray_and_lays_it_flat_for_a_cutter` (the tray's file: one outline, nine cut-outs, lines, arcs and circles only, every bend line where it is by hand). SVG too: `the_svg_is_the_sheet_at_full_size_with_its_bend_lines`. Gap: no options (version, layer names); no bend notes as text |
+| Sheet metal in files | done | `a_sheet_metal_part_is_written_as_text_and_read_back` (`[sheet_metal]`, the rule's parameters with their equations, `sheet_face` and `flange` records with only what is not usual written; the diff says a part became sheet metal and what of its rule changed; a flange angle of 4 rad and an unknown relief shape are refused as damaged) |
+| The Sheet Metal tab, Sheet Metal Defaults | done | DEC-061, by real input: `a_sheet_metal_part_has_its_own_tab_and_its_defaults_are_typed_into_a_window` (an ordinary part has no Sheet Metal tab and a Convert panel; thickness typed, a corner relief clicked, OK: the tab comes first and is open; undo takes it away again; equations show what they come to; a K factor of 1.4 is refused and the window stays; Cancel; File > New Sheet Metal Part) |
+| Face and Flange panels | done | `a_face_and_a_flange_are_made_from_their_panels_by_clicks` (Face from an open sketch, Enter is OK; Flange: an edge clicked in the part and the wall shows; height typed, bend position and width chosen from their lists, a radius of its own; edited again by a double-click in the browser; Cut is an extrusion one `Thickness` each way that still goes through a thicker sheet) |
+| The flat pattern in the app | done | `the_flat_pattern_is_shown_in_place_of_the_part_and_written_as_dxf` (Create Flat Pattern shows it with a tab of its own; sizes, bends up and down and the sheet's size drawn; Folded Model and Flat Pattern in the browser; Export DXF with and without extent lines, SVG; it follows a change of the rule; Go to Folded Part and back by a double-click; Define A-Side by a click on the underside; what cannot be laid flat says why in the window), `the_flat_pattern_is_worked_out_on_the_geometry_thread` (an export asked for while the folded part is shown waits for the pattern). Filled as a sheet: `outlines_with_holes_are_filled_exactly`, `holes_that_touch_the_outline_or_each_other_are_left_open`. Gap: the pattern is drawn, not a solid that can be worked on |
+| An example of the round trip | done | [examples/m8-tray](examples/m8-tray): a tray for a circuit board in 1.5 mm aluminium (a face, four walls in one flange with round corner reliefs, a tab that is a flange on a flange with bend reliefs, holes, a window), its flat pattern as DXF and SVG, every number worked out by hand in its README. `the_m8_demo_script_folds_a_tray_and_lays_it_flat_for_a_cutter`, `the_checked_in_m8_example_is_what_the_script_writes` |
+| Scripts name an edge or face by a point on it | done | DEC-062: `an_edge_or_a_face_is_named_by_a_point_on_it` (a flange's faces have names a script cannot spell; a point on nothing says how far the nearest is, one where several meet asks for another) |
+| Contour flange, hem, bend between faces, fold, corner seam, rip, punch, unfold and refold | missing | on the Sheet Metal tab as buttons that say they are not there yet (DEC-057) |
 
 ## M9 performance
 

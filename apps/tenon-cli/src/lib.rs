@@ -35,6 +35,8 @@ pub const M4_PLATE_SCRIPT: &str = include_str!("../../../examples/m4-plate/plate
 pub const M6_FITTINGS_SCRIPT: &str = include_str!("../../../examples/m6-fittings/fittings.json");
 /// The M7 demo script, a printed end cap on a T-slot bar (also in examples/m7-end-cap).
 pub const M7_END_CAP_SCRIPT: &str = include_str!("../../../examples/m7-end-cap/end-cap.json");
+/// The M8 demo script, a sheet metal tray folded and laid flat (also in examples/m8-tray).
+pub const M8_TRAY_SCRIPT: &str = include_str!("../../../examples/m8-tray/tray.json");
 
 /// Output of a command.
 #[derive(Debug, Clone)]
@@ -280,6 +282,12 @@ pub fn demo_m6(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String
 /// a T-slot bar with a screw from the standard parts library) into `out_dir`.
 pub fn demo_m7(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
     run_script(kernel, M7_END_CAP_SCRIPT, out_dir)
+}
+
+/// Builds the M8 demo (a sheet metal tray with a mounting tab, laid flat and written as the DXF
+/// a cutter takes) into `out_dir`.
+pub fn demo_m8(kernel: Box<dyn Kernel>, out_dir: &Path) -> Result<Report, String> {
+    run_script(kernel, M8_TRAY_SCRIPT, out_dir)
 }
 
 /// Opens a project and renders it to PNG.

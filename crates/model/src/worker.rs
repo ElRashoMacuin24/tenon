@@ -285,6 +285,12 @@ impl Worker {
         let _ = self.tx.send(Request::Regenerate { slot: 0, revision, doc: Box::new(doc), fresh: false });
     }
 
+    /// The slot being regenerated at this moment, if one is.
+    pub fn regenerating(&self) -> Option<u64> {
+        let slot = self.running.load(Ordering::SeqCst);
+        (slot != IDLE).then_some(slot)
+    }
+
     /// Forgets what a slot holds.
     pub fn drop_slot(&self, slot: u64) {
         let _ = self.tx.send(Request::Drop { slot });

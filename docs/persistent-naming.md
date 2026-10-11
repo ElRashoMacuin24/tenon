@@ -28,7 +28,12 @@ kept for the parts not built (neighbour origins, split ordinals, vertex referenc
   - holes: from the centre point and the segment of the hole's cross-section (`HoleFace`:
     wall, bottom, drill point, counterbore wall and floor, countersink);
   - ribs: from the rib line;
-  - pattern and mirror copies: from the copied face's name, `ordinal` = copy number.
+  - pattern and mirror copies: from the copied face's name, `ordinal` = copy number;
+  - flanges: from the edge the flange is on (the key of its two face names) and the part of
+    the flange the face is: the wall's inner and outer faces, its tip, its two ends, the
+    inside and outside of the bend, and what the cuts for the bend and the corner reliefs
+    leave in the sheet (`sub_key`, `pair_key`). A sheet metal face is named as an extrusion
+    is.
 
 Booleans pass names on through `images` (`names_of_boolean`); modify operations through images
 and `generated` (`names_of_modify`).
@@ -149,3 +154,4 @@ must land, or that the part must break with a message naming what is gone:
 | Every result face of every operation gets an origin (no history gaps) | `every_face_of_m2_features_is_named` (fillets, countersunk holes, a pattern, a shell; a fixed set of models, not randomised) |
 | Faces of the M1 features | `bracket_with_holes_regenerates_after_an_upstream_edit`, `sketch_dimension_edit_moves_the_hole`, `a_lost_face_reference_breaks_the_feature_clearly`, `extrude_then_cut_keeps_tags_through_the_boolean` |
 | Edges of holes and of pattern copies | `a_hole_follows_its_point_and_keeps_its_edges`, `rectangular_pattern_of_a_hole_follows_the_hole` |
+| Faces and edges of flanges: a flange on a flange, found again when the sheet changes | `flanges_bend_up_and_down_and_grow_from_one_another` (the lip is on the first wall's top edge; the bend radius changes and it is still there), `an_edge_or_a_face_is_named_by_a_point_on_it` |

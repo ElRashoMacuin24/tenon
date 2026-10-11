@@ -47,8 +47,16 @@ pub(crate) enum Mode {
 }
 
 /// Commands that replace the open document (or close the app), so ask to save it first.
-const REPLACE_DOCUMENT: &[&str] =
-    &["file.new", "file.new_assembly", "file.new_drawing", "file.new_drawing_template", "file.open", "library.new", "app.exit"];
+const REPLACE_DOCUMENT: &[&str] = &[
+    "file.new",
+    "file.new_sheet_metal",
+    "file.new_assembly",
+    "file.new_drawing",
+    "file.new_drawing_template",
+    "file.open",
+    "library.new",
+    "app.exit",
+];
 
 /// The part workbench.
 pub struct Workbench {
@@ -415,6 +423,9 @@ impl Workbench {
                 _ => {}
             }
         }
+        if let Some(done) = self.sheet_command(id) {
+            return done;
+        }
         match id {
             "view.browser" => self.chrome.show_browser = !self.chrome.show_browser,
             "view.cube" => self.chrome.show_cube = !self.chrome.show_cube,
@@ -450,6 +461,7 @@ impl Workbench {
                 self.mode = Mode::Model;
                 self.panel = None;
                 self.view = View::default();
+                self.chrome.sheet = Default::default();
                 self.set_status("New part.");
             }
             "file.open" => {
@@ -535,6 +547,7 @@ impl Workbench {
                 self.mode = Mode::Model;
                 self.panel = None;
                 self.view = View::default();
+                self.chrome.sheet = Default::default();
                 self.chrome.library = false;
                 self.set_status(format!("New part from {name}, {size}: save it under a name of its own."));
             }
@@ -546,6 +559,10 @@ impl Workbench {
             "work.axis" => self.open_work(crate::work::WorkMethod::Along, None)?,
             "work.point" => self.open_work(crate::work::WorkMethod::Center, None)?,
             "ui.ok" | "ui.cancel" => {
+                if id == "ui.cancel" && std::mem::take(&mut self.chrome.sheet.pick_a_side) {
+                    self.set_status("Ready");
+                    return Ok(());
+                }
                 let ok = id == "ui.ok";
                 if self.panel.is_some() {
                     self.panel_request = Some(if ok { crate::panels::PanelRequest::Ok } else { crate::panels::PanelRequest::Cancel });
@@ -561,6 +578,7 @@ impl Workbench {
                 let last = self.last_command.ok_or("there is no command to repeat")?;
                 self.run_ui(last)?;
             }
+            "view.home" | "view.fit" if self.flat_shown() => self.fit_flat(),
             "view.home" => self.home_view(),
             "view.fit" => self.zoom_all(),
             "view.previous" => self.previous_view()?,
@@ -604,6 +622,8 @@ impl Workbench {
         self.mode = Mode::Model;
         self.panel = None;
         self.view = View::default();
+        self.chrome.sheet = Default::default();
+        self.chrome.tab = self.home_tab();
         self.set_status(format!("Opened {}", path.display()));
         Ok(())
     }
@@ -855,6 +875,7 @@ impl Workbench {
             self.param_env = (self.session.revision(), std::sync::Arc::new(self.document().parameter_values()));
         }
         crate::properties::set_param_env(ui.ctx(), self.param_env.1.clone());
+        self.keep_tab_shown();
         self.shortcuts(ui);
         let theme = self.chrome.theme;
         if self.chrome.applied_theme != Some(theme) {
@@ -983,6 +1004,8 @@ impl Workbench {
             Some(FeatureKind::Split(_)) => self.open_split(Some(id)),
             Some(FeatureKind::Combine(_)) => self.open_combine(Some(id)),
             Some(FeatureKind::Thread(_)) => self.open_thread(Some(id)),
+            Some(FeatureKind::SheetFace(_)) => self.open_sheet_face(Some(id)),
+            Some(FeatureKind::Flange(_)) => self.open_flange(Some(id)),
             Some(FeatureKind::PatternRect(_)) => self.open_pattern(crate::panels::CopyKind::Rect, Some(id)),
             Some(FeatureKind::PatternCircular(_)) => self.open_pattern(crate::panels::CopyKind::Circular, Some(id)),
             Some(FeatureKind::Mirror(_)) => self.open_pattern(crate::panels::CopyKind::Mirror, Some(id)),

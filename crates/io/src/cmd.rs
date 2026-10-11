@@ -9,7 +9,7 @@ use tenon_model::{CmdError, CmdResult, CommandSpec, Run, Session};
 use crate::meshcheck::Welded;
 use crate::{print, project, stl, threemf};
 
-fn path(p: &Value) -> Result<PathBuf, CmdError> {
+pub(crate) fn path(p: &Value) -> Result<PathBuf, CmdError> {
     path_in(p, "path")
 }
 
@@ -296,6 +296,20 @@ static COMMANDS: &[CommandSpec] = &[
         help: "how the part would print. min_wall (mm, default 0.8); overhang (degrees from vertical a face may lean out, default 45); up: x | y | z | -x | -y | -z (which way is up on the printer, default z); bed: [x, y, height] in mm (default: not checked). Returns ok and, each with its own ok: watertight (open, crowded and flipped edges), overhangs (area and the faces, each with its steepest angle), walls (the thinnest found and the faces under min_wall), size (the part's extents, its height standing that way, and whether it fits the bed)",
         mutates: false,
         run: Run::Geo(print_check),
+    },
+    CommandSpec {
+        id: "sheet.export_dxf",
+        label: "Export Flat Pattern DXF",
+        help: "path (.dxf): the flat pattern for a cutter, R12 in millimetres with its lower left corner at the origin. Layers: OUTER (the outline), INTERIOR (holes and cut-outs), BEND_UP and BEND_DOWN (bend centre lines), BEND_EXTENT (where bends begin and end). bends (default true), extents (default true): leave those lines out with false. face, body: as for sheet.flat. Returns the sheet's length, width, area and cut_length, and what was written of the outlines (entities)",
+        mutates: false,
+        run: Run::Geo(crate::flat::export_dxf),
+    },
+    CommandSpec {
+        id: "sheet.export_svg",
+        label: "Export Flat Pattern SVG",
+        help: "path (.svg): the flat pattern as a picture at full size; bends, extents, face, body as for sheet.export_dxf",
+        mutates: false,
+        run: Run::Geo(crate::flat::export_svg),
     },
 ];
 

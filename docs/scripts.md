@@ -206,3 +206,37 @@ The Modify and Pattern tools are commands too: `sketch.move`, `sketch.rotate` an
 `sketch.pattern.circular`; and so are the shapes of the drop-downs: `sketch.slot`,
 `sketch.rectangle_center`, `sketch.rectangle3`, `sketch.arc_tangent`. Angles given to sketch
 commands are in radians. [commands.md](commands.md) lists what each takes.
+
+## Sheet metal and the flat pattern
+
+`sheet.defaults` makes the part a sheet metal part and sets its rule. Each size is a number
+(millimetres) or an equation, and is a parameter of the part from then on (`Thickness`,
+`BendRadius`, ...), so `param.set` changes it and equations use it. `sheet.face` makes a sketch
+profile one thickness thick; `sheet.flange` bends walls up from edges of the sheet. Cuts and
+holes are the ordinary commands.
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 1.5, "corner": "round" }, "expect": { "bend_radius": 1.5, "k_factor": 0.44 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 120, "y2": 80 }, "as": "r" },
+{ "run": "sheet.face", "with": { "sketch": "$s.feature" }, "as": "face" },
+{ "run": "model.edge_ref", "with": { "faces": [{ "type": "cap", "feature": "$face.feature", "end": "end" }, { "type": "side", "feature": "$face.feature", "curve": "$r.lines.0" }] }, "as": "front" },
+{ "run": "sheet.flange", "with": { "edges": ["$front"], "height": 25 } },
+{ "run": "model.edge_ref", "with": { "at": [60, 0, 25] }, "as": "wall_top" },
+{ "run": "sheet.flange", "with": { "edges": ["$wall_top"], "height": 12, "width": 40 } },
+{ "run": "sheet.flat", "expect": { "bends.0.allowance": 3.39292006588 } },
+{ "run": "sheet.export_dxf", "with": { "path": "flat.dxf" } }
+```
+
+A flange bends towards the side its edge is on: an edge of the face's top bends up. Its `angle`
+is in radians (a quarter turn unless given), its `height` is overall unless `datum` says
+otherwise, and `position` says where the bend lies (`inside`, the default, keeps the part's
+outside size). The faces a flange makes have names a script cannot spell, so an edge or a face
+on one is named by a point on it: `model.edge_ref` and `model.face_ref` take `at: [x, y, z]`.
+
+`sheet.flat` lays the part flat and returns the size of the sheet (`length`, `width`), its
+`area`, the `cut_length`, the number of cut-outs (`holes`) and every bend's `angle`, `radius`,
+`allowance` and whether it is `up`; with `curves: true`, the outlines too. `sheet.export_dxf`
+and `sheet.export_svg` write it. `sheet.a_side` chooses the face that is up.
+`examples/m8-tray/tray.json` uses all of this, with every number worked out by hand in the
+README beside it.

@@ -409,6 +409,8 @@ impl Workbench {
                     | Panel::Split(_)
                     | Panel::Combine(_)
                     | Panel::Thread(_)
+                    | Panel::SheetFace(_)
+                    | Panel::Flange(_)
                     | Panel::Asm(_)
             )
         )
@@ -466,6 +468,8 @@ impl Workbench {
             Panel::Split(p) => ("Split", p.editing.map(|f| self.feature_name(f))),
             Panel::Combine(p) => ("Combine", p.editing.map(|f| self.feature_name(f))),
             Panel::Thread(p) => ("Thread", p.editing.map(|f| self.feature_name(f))),
+            Panel::SheetFace(p) => ("Face", p.editing.map(|f| self.feature_name(f))),
+            Panel::Flange(p) => ("Flange", p.editing.map(|f| self.feature_name(f))),
             Panel::Asm(p) => {
                 (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
             }
@@ -1251,6 +1255,11 @@ impl Workbench {
                         enter |= entered;
                         clear |= cleared;
                     }
+                    p @ (Panel::SheetFace(_) | Panel::Flange(_)) => {
+                        let (entered, cleared) = self.sheet_properties(ui, p, &mut eqs, &sketches, t);
+                        enter |= entered;
+                        clear |= cleared;
+                    }
                     Panel::Measure(m) => {
                         let label = |p: &crate::viewport::Pick| match p {
                             crate::viewport::Pick::Face { body, face } => self
@@ -1474,8 +1483,9 @@ impl Workbench {
             Some(Panel::Revolve(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Sweep(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Coil(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
+            Some(Panel::SheetFace(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Loft(p)) => p.sections.first().and_then(|s| self.profile_anchor(*s)).map(|a| a.0),
-            Some(Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_) | Panel::Draft(_) | Panel::Thread(_)) => {
+            Some(Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_) | Panel::Draft(_) | Panel::Thread(_) | Panel::Flange(_)) => {
                 self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center()))
             }
             Some(Panel::Hole(p)) => p

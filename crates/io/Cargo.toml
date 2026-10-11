@@ -14,6 +14,7 @@ tenon-kernel = { workspace = true }
 tenon-model = { workspace = true }
 tenon-assembly = { workspace = true }
 tenon-drawing = { workspace = true }
+tenon-dxf = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

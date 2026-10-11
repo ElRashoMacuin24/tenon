@@ -51,6 +51,8 @@ pub(crate) struct Chrome {
     pub library_scroll: u8,
     /// The 3D Print Check window: what it checks against and what it last found.
     pub print: crate::print_dialog::PrintState,
+    /// Sheet metal: its defaults dialog and the flat pattern view.
+    pub sheet: crate::sheet::SheetUi,
     /// The Parameters dialog is open.
     pub params: bool,
     /// A browser row being dragged.
@@ -102,6 +104,7 @@ impl Default for Chrome {
             library_pick: Default::default(),
             library_scroll: 0,
             print: Default::default(),
+            sheet: Default::default(),
             browser_drag: None,
             radial: None,
             theme: ThemeName::default(),
@@ -561,7 +564,11 @@ impl Workbench {
         }
         let mut x = file.right() + 6.0;
         let sketching = self.is_sketching();
-        for (i, tab) in self.ribbon_def().iter().enumerate() {
+        // A part shows the tabs that go with what it is (sheet metal or not, folded or flat).
+        let part = !self.in_assembly() && !self.in_drawing();
+        let order: Vec<usize> = if part { self.part_tabs() } else { (0..self.ribbon_def().len()).collect() };
+        for i in order {
+            let Some(tab) = self.ribbon_def().get(i) else { continue };
             let w = text_width(ui, tab.name, theme::body()) + 22.0;
             let tr = Rect::from_min_size(pos2(x, r.top() + 3.0), vec2(w, r.height() - 3.0));
             let resp = ui.interact(tr, ui.id().with(("tab", i)), Sense::CLICK);
@@ -620,6 +627,9 @@ impl Workbench {
                 match first.size {
                     Size::Large => {
                         for cmd in run {
+                            // (Some buttons read differently as the part changes.)
+                            let shown = UiCommand { label: self.ribbon_label(cmd.id, cmd.label), ..*cmd };
+                            let cmd = &shown;
                             let w = cmd.label.split('\n').map(|l| text_width(ui, l, theme::small())).fold(0.0, f32::max)
                                 + if cmd.more.is_empty() { 12.0 } else { 20.0 };
                             let w = w.max(44.0);
@@ -875,6 +885,7 @@ impl Workbench {
         self.parameters_window(ui, &t);
         self.part_properties_window(ui, &t);
         self.design_table_window(ui, &t);
+        self.sheet_defaults_window(ui, &t);
         self.library_window(ui, &t);
         self.print_window(ui, &t);
     }

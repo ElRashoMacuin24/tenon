@@ -1064,3 +1064,161 @@ of the sketch would solve against stale ones).
 Not done: Stretch; sketch text; ellipses; the Center Point format (every point of the sketch's
 own that is on no curve is a hole centre, as before); automatic dimensions; polygons with other
 than six sides from the ribbon.
+
+## DEC-057 Sheet metal: a part with a rule, built from faces and flanges (2026-10-11)
+
+M8 is sheet metal basics (docs/plan.md): base flange, edge flange, bends with K-factor, corner
+relief, a flat pattern with DXF export. It is built round Inventor's Sheet Metal tab (DEC-054).
+
+- **A sheet metal part is a part with a rule.** The rule says how reliefs are shaped; its sizes
+  are **parameters of the part with fixed names**: `Thickness`, `BendRadius`, `BendReliefWidth`,
+  `BendReliefDepth`, `MinimumRemnant`, `CornerReliefSize`, `KFactor`, as Inventor names its
+  sheet metal parameters. Being parameters they take equations (`BendRadius = Thickness`),
+  design table columns, and can be used anywhere a value is typed (a cut `Thickness` deep). They
+  cannot be renamed or deleted while the part is sheet metal.
+- **Features read the rule when the part is rebuilt**, so one thickness holds for the whole
+  part and a change of it is a change of every face, bend and relief. The regeneration cache
+  counts the rule as part of each sheet metal feature (`a_change_of_the_rule_rebuilds_the_part_from_its_first_sheet_metal_feature`).
+- **Face** (Inventor's Face): a sketch profile one thickness thick.
+- **Flange**: walls bent up from edges of the sheet's outline (DEC-059).
+- **Cuts, holes and rounded corners are the ordinary features.** The flat pattern is worked out
+  from the solid (DEC-058), so nothing sheet-metal-specific is needed of them. Cut on the Sheet
+  Metal tab is an extrusion that removes its profile one `Thickness` each way from its sketch.
+- **Any part can be a sheet metal part** (Convert to Sheet Metal is Sheet Metal Defaults): a
+  solid of one thickness made by other means is laid flat like any other.
+- **In the file** a sheet metal part has a `[sheet_metal]` table and the two feature types
+  `sheet_face` and `flange`; a part that is not sheet metal is written as before. Format
+  version 2 stands (DEC-035).
+
+Not done in M8, and on the ribbon as buttons that say so: Contour Flange, Lofted Flange,
+Contour Roll, Hem, Bend (between two faces), Fold, Corner Seam, Punch Tool, Rip, Unfold and
+Refold. A face is not yet joined to an edge of the sheet by a bend of its own.
+
+Rejected: a thickness on every feature (one part, one sheet); a separate kind of document for
+sheet metal (Inventor has a template, not a file type, and so does Tenon: File > New Sheet Metal
+Part is a part with the rule already given).
+
+## DEC-058 The flat pattern is unfolded from the solid (2026-10-11)
+
+There were two ways to a flat pattern: keep a tree of plates and bends beside the solid and
+lay that out, or read the solid. Tenon reads the solid, as Inventor does.
+
+- **How.** One side of the sheet (the A side) is followed from a flat face across every edge
+  where the next face runs on smoothly: a flat face in the same plane, or one side of a bend
+  (a round face with a partner about the same axis one thickness away, so the rounded rim of a
+  sheet and the wall of a hole are not bends). Each face is given its place in the plane: flat
+  faces by a rigid move, bends unrolled to the length of their **neutral surface**, angle x
+  (inside radius + K x thickness). The edges left on the rim are the outline.
+- **Why.** Whatever made the solid, what is cut is what the model shows: holes, cuts, rounded
+  corners and parts converted from ordinary solids need nothing of their own. A tree of plates
+  would have needed every later feature taught to it.
+- **It is checked, never trusted.** The faces of the side, each one thickness deep, must account
+  for the solid's volume to within 2 %; a solid that is something else is refused in plain
+  words. An outline that does not close, a sheet that closes on itself (a box section) and a
+  pattern that overlaps itself are each said as what they are
+  (`what_cannot_be_laid_flat_is_refused_in_plain_words`).
+- **Exact where the part is.** Lines stay lines and circles stay circles and arcs; pieces of
+  one line or one circle that the kernel split are one curve again. Only a cut that runs across
+  a bend is a run of points (the kernel's new `edge_points`).
+- **Outlines that touch.** A relief that reaches the corner between two bends touches the
+  outline at a point. It is a cut-out of its own, whichever way the curves are followed: at
+  such a point the way on is across a gap in the sheet, never through the point.
+- **Which side is up** is the part's choice (Define A-Side), kept as a reference to a face;
+  without one it is the largest flat face, and of two equal ones (the two sides of a plate) the
+  one that looks up. Bends towards whoever looks at the pattern are **up**, the others **down**.
+- **What it says:** the outline and cut-outs, each bend's centre line, extent lines, angle,
+  inside radius and allowance, the size of the sheet it is cut from, its area, and how far a
+  cutter travels.
+
+Not done: bend tables (K factor only, one for the part); a flat pattern that can be turned on
+the sheet or edited as a solid (cosmetic centre lines, bend order); more than one solid in a
+part.
+
+## DEC-059 Flanges: where the bend goes, and what is cut for it (2026-10-11)
+
+A flange is a bend and a wall along straight edges of the sheet's rim, built as one extruded
+cross-section per edge and joined to the sheet.
+
+- **It bends towards the side its edge is on** (the top edge of the rim: up), or the other way
+  when flipped, as in Inventor.
+- **Height** is measured from where the outer faces of the sheet and the flange would meet
+  (the overall height; the default), from where their inner faces would, or from the plane
+  that touches the outside of the bend.
+- **Bend position**: *inside* (the flange's outer face goes through the edge, so the part gets
+  no bigger and the sheet is cut back for the bend; the default), *from the edge* (the bend
+  starts at the edge and nothing is cut), *outside* (the inner face goes through the edge) or
+  *tangent* to the plane of the edge.
+- **Width**: the whole edge, a width in the middle of it, or offsets from its ends. An edge is
+  taken clockwise round the sheet, seen from the side the flange bends to.
+- **Bend relief**, where the flange is narrower than its edge and the bend is cut into the
+  sheet: a slot `BendReliefWidth` wide beside the bend, `BendReliefDepth` deeper than it,
+  straight or round ended. A strip left between a relief and the end of the edge narrower than
+  `MinimumRemnant` goes with it.
+- **Corners.** Edges of one flange that meet at a corner of the sheet each start where the
+  other's bend line crosses its own, so the bends never share space, and the corner gets the
+  rule's relief: *round* (a hole `CornerReliefSize` across that touches both bend lines, opened
+  to the corner), *square* (a notch that size along both), or *trim to bend* (none).
+- **Reliefs are cut in the flat of the sheet only.** A bend stays whole, so the flat pattern of
+  a tray is lines and arcs with nothing approximated. This is where Tenon's round relief
+  differs from Inventor's default, which is centred on the crossing of the bend lines and cuts
+  into both bends: reproducing that needs a cut wrapped round a bend, which the kernel does not
+  make exactly.
+- **Names.** The faces a flange makes are named after the edge it is on and the part they are
+  (wall, tip, bend, ends), so a flange on a flange, or a sketch on a wall, is found again when
+  the sheet changes. A script names such an edge or face by a point on it
+  (`model.edge_ref` and `model.face_ref` take `at`).
+- **What cannot be** is said: an edge that is not on the rim of the sheet, a curved edge, a
+  flange lower than its own bend, one wider than its edge, two that meet in an inside corner,
+  one that runs into the part.
+
+Not done: a tear relief (no slot at all); closing the gap between two walls at a corner (mitre,
+seam, overlap: Corner Seam); an angle or a height of its own for each edge of one flange;
+height to a point; flanges on curved edges.
+
+## DEC-060 The flat pattern as DXF and SVG (2026-10-11)
+
+- **DXF** is R12, the version every cutting program reads, in millimetres, with the pattern's
+  lower left corner at the origin (some machines want everything in the positive quadrant).
+  Lines, arcs, circles; a polyline only for a cut across a bend.
+- **Layers of Tenon's own naming**: `OUTER`, `INTERIOR`, `BEND_UP`, `BEND_DOWN`,
+  `BEND_EXTENT`, each with a colour, so that a cutter's software can treat them apart and bend
+  lines can be turned off or etched. The vendor's layer names are the vendor's.
+- **Numbers to a millionth**: more than a cutter can use, and the same file from every
+  machine.
+- **SVG** at full size (a millimetre is a millimetre), for a look or a paper template.
+
+Not done: an options dialog (other DXF versions, layer names, leaving layers out beyond the two
+switches); bend notes as text; nesting several parts on a sheet.
+
+## DEC-061 Sheet metal in the app (2026-10-11)
+
+- **The Sheet Metal tab is a sheet metal part's own.** It comes first and is the tab a finished
+  sketch returns to; an ordinary part does not show it, and has Convert to Sheet Metal on its
+  3D Model tab instead. Its panels are Inventor's: Sketch, Create, Modify, Work Features,
+  Pattern, Setup, Flat Pattern.
+- **Sheet Metal Defaults** is a window of the rule: each size a box that takes a number or an
+  equation and shows what it comes to. OK is one undo step.
+- **Face and Flange** are panels like Extrude's: sections, values that take equations, a live
+  preview, OK, Cancel and Apply. A flange's edges are clicked in the part.
+- **Create Flat Pattern** gives the part a flat pattern and shows it in place of the folded
+  part, with a tab of its own (export, what to show, Go to Folded Part); from then on the
+  button reads Go to Flat Pattern, and the browser has Folded Model and Flat Pattern at its
+  top, as Inventor's does. The pattern is worked out on the geometry thread and again whenever
+  the part changes.
+- **The flat pattern is drawn, not modelled**: the sheet filled in the part's colour, its
+  outline, bend lines (up green, down red, each with its angle and radius), and the size of
+  sheet it is cut from. Inventor shows a flat solid that can be worked on; Tenon's cannot be,
+  and what is cut is cut in the folded part.
+
+## DEC-062 Smaller things settled in M8 (2026-10-11)
+
+- **The kernel gives points along an edge** (`edge_points`), from its start to its end within
+  a deflection: for curves that are neither lines nor circles.
+- **An edge or a face is named by a point on it** (`at: [x, y, z]`), for scripts and agents:
+  faces made by fillets, flanges and the like have names a script cannot spell. A point where
+  several meet is refused, saying to give another.
+- **Filling a shape with holes** for the painter is done in level strips, each a row of
+  trapezia: holes that touch the outline or each other are no special case.
+- **The M8 example** is a tray for a circuit board (examples/m8-tray): a face, four walls in
+  one flange with round corner reliefs, a tab that is a flange on a flange with bend reliefs,
+  holes, a window, and its flat pattern as DXF, every number worked out by hand in its README.

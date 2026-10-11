@@ -67,7 +67,10 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
    space drawn round the part.
 8. The Sketch tab's remaining buttons (the tables below): Stretch, Text, ellipses, the Center
    Point format, sketch patterns that stay tied to their original, automatic dimensions.
-9. Sheet metal (M8): the Sheet Metal tab, its defaults, Face, Flange, Bend and the flat pattern.
+9. ~~Sheet metal (M8): the Sheet Metal tab, its defaults, Face, Flange and the flat pattern.~~ Done
+   (DEC-057 to DEC-061).
+10. The rest of the Sheet Metal tab (the table below): Contour Flange and Hem first, then Bend,
+    Corner Seam and mitred corners, a tear relief, bend tables.
 
 ## Geometry of the part in a sketch
 
@@ -159,6 +162,37 @@ Construction, Centerline and Driven Dimension; Center Point and Show Format are 
 | (Inventor's environment does not check the part) | Tenon adds | whether the surface is closed, what overhangs past a limit and how thin the thinnest wall is, with the faces tinted in the model. A maker's first three questions, answered before the slicer is opened |
 | The part is sent on as STL; resolution is set in the export's options | done | File > Export STL and Export 3MF, for parts and assemblies (DEC-052): `files_for_the_slicer_come_from_the_file_menu_for_parts_and_assemblies`. Gap: no options dialog in the app (the tolerance is the usual one; the commands take `linear` and `angular`); nothing is sent to a printer or a slicer directly |
 
+## Sheet metal
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| A sheet metal part is a part started from a sheet metal template, or a part converted (3D Model > Convert > Convert to Sheet Metal). It then has a Sheet Metal tab, first on the ribbon | done | File > New Sheet Metal Part, or 3D Model > Convert > Convert to Sheet Metal; the Sheet Metal tab comes first and shows only for such a part. `a_sheet_metal_part_has_its_own_tab_and_its_defaults_are_typed_into_a_window`. Gap: no Convert to Standard Part |
+| The Sheet Metal tab's panels: Sketch, Create, Modify, Work Features, Pattern, Setup, Flat Pattern | done | the same panels in the same order, with every button of Create and Modify in its place; those not there yet are greyed and say so (below) |
+| Sheet Metal Defaults (Setup): a Sheet Metal Rule, a thickness that may override the rule's, a material, an unfold rule | done differently | one window with the rule's own fields: Thickness; Bend Radius, Relief Shape, Width and Depth, Minimum Remnant; Corner Relief Shape and Size; K Factor. Each size takes an equation and shows what it comes to. Gap: no named rules kept in a library (Style and Standard Editor) and no material in the dialog (Inspect > Properties has it) |
+| The rule's sizes are model parameters: Thickness, BendRadius, BendReliefWidth, BendReliefDepth, MinimumRemnant, CornerReliefSize | done | the same names, in the Parameters dialog like any others, with `KFactor` beside them: `a_part_becomes_sheet_metal_by_getting_the_rules_parameters` |
+| Unfold rule: a linear K factor (unfolded length = (inside radius + K x thickness) x angle), a bend table, or a custom equation | partial | the K factor, one for the part, 0.44 at first as Inventor's is. `a_bracket_is_folded_and_laid_flat_to_its_bend_allowance`. Gap: bend tables, equations, a rule per bend |
+| Face: a closed profile made one thickness thick; direction Default, Flipped or Symmetric; Join or New Solid | partial | Sheet Metal > Create > Face, with the profile clicked as for Extrude and a live preview. `a_face_and_a_flange_are_made_from_their_panels_by_clicks`. Gap: Symmetric; a face drawn against an edge of the sheet is not joined to it by a bend, and so no Double Bend |
+| Flange: edges picked one by one or as a loop; several edge sets in one feature | partial | edges clicked one by one, all with one set of values. Gap: loop select; a set of values for each edge |
+| Flange height: Distance or To; measured Aligned or Orthogonal; from the outer faces, the inner faces, the selected edge, or the tangent plane | partial | Distance, aligned, from Outer Faces (the default there too), Inner Faces or Tangent Plane. `bends_at_any_angle_are_placed_and_measured_as_asked`. Gap: To a point, Orthogonal, from the selected edge |
+| Flange angle by value, or By Reference to a face | partial | by value, 1 to 179 degrees |
+| Bend position: the flange's outer face, or its inner face, through the selected edge, its partner edge, or tangent to the side face | done | Inside, From Edge, Outside, Tangent: the four that matter at one edge. The same test |
+| Width extents: Edge, Width (centred or offset), Offset, From To | partial | Edge, Width (centred), Offset from both ends. Gap: Width offset from one end, From To faces |
+| Direction: towards the side the selected edge is on, or flipped | done | `flanges_bend_up_and_down_and_grow_from_one_another` |
+| Bend relief: Straight, Round or Tear; width A, depth B, minimum remnant C | partial | Straight and Round, with all three sizes: `a_flange_narrower_than_its_edge_gets_reliefs_beside_it`. Gap: Tear |
+| Corner relief where two flanges of one feature meet: Round, Square, Tear, Trim to Bend, Linear Weld, Arc Weld; size CornerReliefSize | partial | Round, Square, Trim to Bend: `a_tray_has_its_corners_relieved_and_lies_flat_as_a_cross`. Different: Tenon's round relief touches both bend lines and opens to the corner, where Inventor's is centred on their crossing and cuts into both bends (DEC-059). Gap: Tear (walls run on to meet), the weld shapes |
+| Auto-mitering and the corner overrides (gap, overlap, no seam) | missing | the walls of a tray end at their bends, leaving the corners open by the bend's width |
+| Cut (Modify): a profile cut through the sheet, a distance of Thickness by default; Cut Across Bend | partial | Cut is an extrusion one `Thickness` each way from its sketch. Gap: Cut Across Bend (wrapping a sketch round a bend) |
+| Hole, Corner Round, Corner Chamfer on the Modify panel | done | the ordinary Hole, Fillet and Chamfer, started from there |
+| Contour Flange, Lofted Flange, Contour Roll, Hem, Bend, Fold; Corner Seam, Punch Tool, Rip, Unfold, Refold | missing | on the tab in their places, greyed. Derive is not on the tab |
+| Create Flat Pattern (Flat Pattern panel) makes the pattern and goes to it; the button then reads Go to Flat Pattern; Go to Folded Part returns | done | `the_flat_pattern_is_shown_in_place_of_the_part_and_written_as_dxf` |
+| The browser has Folded Model and Flat Pattern at its top; a double-click goes to either | done | the same test. Right-click on Flat Pattern: Export DXF, Export SVG, Delete Flat Pattern. Gap: Extents and Edit Flat Pattern Definition there |
+| Define A-Side: the face that is up; chosen before or while the pattern is made | done | a click on a flat face (or the selected one): the same test, `the_side_that_is_up_is_chosen_and_kept` |
+| The flat pattern is a flat solid with bend centre lines and bend extent lines, which can be turned on the sheet, annotated (bend order, cosmetic centre lines) and worked on | partial | drawn in place of the part: the sheet filled, its outline, centre lines (up green, down red, with angle and radius) and extent lines. Gap: it cannot be turned or worked on (DEC-061) |
+| Flat pattern extents: the length and width of the sheet it needs | done | on the pattern itself, with its area and the length to cut |
+| Save Copy As DXF or DWG from the Flat Pattern node, with options: version (R12 for most machines), layers, positive quadrant | partial | File > Export Flat Pattern DXF, the Flat Pattern tab and the browser's menu: R12, lines and arcs, layers `OUTER`, `INTERIOR`, `BEND_UP`, `BEND_DOWN`, `BEND_EXTENT`, in the positive quadrant (DEC-060). Bend lines and extent lines can be left out. Gap: no options dialog; no DWG or SAT |
+| One flat pattern to a part; more than one sheet metal body disables it | done | the same rule, said in words when there are two solids |
+| A flat pattern that could not be worked out shows a mark in the browser and is looked into with Design Doctor | done differently | the window says why in place of the pattern: a solid that is not one thickness, a sheet that closes on itself and a pattern that overlaps itself are each refused as what they are: `what_cannot_be_laid_flat_is_refused_in_plain_words` |
+
 ## Sources
 
 Behaviour described above is from Autodesk's help for Inventor:
@@ -173,6 +207,7 @@ Behaviour described above is from Autodesk's help for Inventor:
 - [iParts](https://help.autodesk.com/cloudhelp/2022/ENU/Inventor-Help/files/GUID-60919937-2247-4C32-B9C9-6045D751FFF9.htm) and the [iPart Author dialog box](https://help.autodesk.com/cloudhelp/2015/ENU/Inventor-Help/files/GUID-B7820955-D0F8-478A-8965-64ACD5CA0B54.htm) (rows are members, columns the values that differ, keys, the default row)
 - [To Insert a Content Center Part Manually](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-97683B08-1AEC-4371-9199-F14C9A932A6C.htm), [About Inserting Content Center Components in Assemblies](https://help.autodesk.com/cloudhelp/2019/ENU/Inventor-Help/files/GUID-0BBBD2A4-9628-4B14-854C-4C95155E9FF0.htm) and [To Insert Parts Using AutoDrop](https://help.autodesk.com/cloudhelp/2022/ENU/Inventor-Help/files/GUID-0018159B-2D2D-4816-9BC0-3973DE755AE1.htm) (the Component panel, categories and families, the Family dialog, As Standard and As Custom, AutoDrop)
 - [To Access the 3D Print Environment](https://help.autodesk.com/cloudhelp/2017/ENU/Inventor-Help/files/GUID-72511A09-F17C-4A93-8274-B953FA0139B6.htm) (parts only, Z up, orientation, position, partitioning, printers)
+- Sheet metal: the [Sheet Metal Rule reference](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-0189FA55-D9BF-4D01-844C-D7FF21247771.htm) (the rule's fields and parameter names), [To Change Default Rules for Sheet Metal Parts](https://help.autodesk.com/cloudhelp/2019/ENU/Inventor-Help/files/GUID-D1EBE010-86D3-49CC-88B3-522F9A0CCA3B.htm), the [Sheet Metal Unfold reference](https://help.autodesk.com/cloudhelp/2024/ENU/Inventor-Help/files/GUID-7B2525E4-8191-46F2-8CC3-FF422114EAE5.htm) (the K factor), [To Work with Faces in Sheet Metal](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-E59E4255-1802-49B1-92B8-9369582AECD2.htm), the [Flange Property Panel Reference](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-3191766B-75FA-4BFF-A112-62324BB828E8.htm), [To Work with Bend Features on Sheet Metal](https://help.autodesk.com/cloudhelp/2019/ENU/Inventor-Help/files/GUID-E56A1052-4527-4A2F-A9F0-68770B0871EE.htm), [To Work with Flat Pattern in Sheet Metal](https://help.autodesk.com/cloudhelp/2019/ENU/Inventor-Help/files/GUID-772414ED-A283-4A02-878E-AD0A114F5BA3.htm) and [Export flat pattern](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-35CE5947-6387-47AB-933C-ED9C92CFB778.htm)
 - The Sketch tab's panels (Create, Modify, Pattern, Constrain, Format), Project Geometry and the
   Sketch page of Application Options are from the same help's pages on sketch commands and
   options; they are not linked one by one here.

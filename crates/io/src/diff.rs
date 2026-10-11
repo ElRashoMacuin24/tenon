@@ -166,6 +166,7 @@ fn part(a: &Value, b: &Value, out: &mut Vec<Change>) {
         doc(out, format!("End of Part {} -> {}", at(a), at(b)));
     }
     part_material(a, b, out);
+    part_sheet(a, b, out);
     let changed = parameters(&a["params"], &b["params"], out);
     let params = &b["params"]["model"];
     let label = |f: &Value| label(f);
@@ -188,6 +189,42 @@ fn part_material(a: &Value, b: &Value, out: &mut Vec<Change>) {
     if a["appearance"] != b["appearance"] {
         let c = |v: &Value| v.as_str().map_or_else(|| "the material's".to_owned(), str::to_owned);
         doc(out, format!("appearance {} -> {}", c(&a["appearance"]), c(&b["appearance"])));
+    }
+}
+
+/// The sheet metal rule: given, taken away, and what of it changed. (Its sizes are parameters and
+/// are reported with them.)
+fn part_sheet(a: &Value, b: &Value, out: &mut Vec<Change>) {
+    let doc = |c: &mut Vec<Change>, detail: String| c.push(Change { section: "Document", op: '~', item: String::new(), detail });
+    let (was, now) = (&a["sheet"], &b["sheet"]);
+    let word = |v: &Value| v.as_str().unwrap_or("?").to_owned();
+    match (was.is_object(), now.is_object()) {
+        (false, true) => doc(out, format!("now a sheet metal part (bend relief {}, corner relief {})", word(&now["relief"]), word(&now["corner"]))),
+        (true, false) => doc(out, "no longer a sheet metal part".into()),
+        (true, true) => {
+            for (key, what) in [("relief", "bend relief"), ("corner", "corner relief")] {
+                if was[key] != now[key] {
+                    doc(out, format!("sheet metal {what} {} -> {}", word(&was[key]), word(&now[key])));
+                }
+            }
+            let flat = |v: &Value| v["flat"].as_bool().unwrap_or(false);
+            match (flat(was), flat(now)) {
+                (false, true) => doc(out, "flat pattern created".into()),
+                (true, false) => doc(out, "flat pattern deleted".into()),
+                _ => {}
+            }
+            if !same(&was["a_side"], &now["a_side"]) {
+                doc(
+                    out,
+                    if now["a_side"].is_object() {
+                        "flat pattern laid out from another face".into()
+                    } else {
+                        "flat pattern laid out from the largest face".into()
+                    },
+                );
+            }
+        }
+        (false, false) => {}
     }
 }
 

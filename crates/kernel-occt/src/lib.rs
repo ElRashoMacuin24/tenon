@@ -640,6 +640,18 @@ impl Kernel for OcctKernel {
         Ok(EdgeInfo { curve, length: o.length, start: vec3(&o.start), end: vec3(&o.end), mid: vec3(&o.mid), degenerate: o.degenerate })
     }
 
+    fn edge_points(&self, edge: EdgeId, deflection: f64) -> KResult<Vec<Vec3>> {
+        check::size("edge deflection", deflection)?;
+        let s = self.get(edge.shape)?;
+        let count = sys::edge_count(s);
+        if edge.index >= count {
+            return Err(KernelError::InvalidInput(format!("edge {} does not exist (the shape has {count} edges)", edge.index)));
+        }
+        let mut o: Vec<f64> = Vec::new();
+        sys::edge_points(s, edge.index, deflection, &mut o).map_err(failed("edge_points"))?;
+        Ok(o.as_chunks::<3>().0.iter().map(|&[x, y, z]| Vec3::new(x, y, z)).collect())
+    }
+
     fn tessellate(&mut self, shape: ShapeHandle, mesh_tol: &MeshTol) -> KResult<Mesh> {
         self.not_cancelled()?;
         check::mesh_tol(mesh_tol)?;
