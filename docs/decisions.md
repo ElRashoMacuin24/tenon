@@ -1706,3 +1706,51 @@ In files: `type = "corner_rip"` with `edges` and, where they are not the default
 Not done: bends on the sharp edges that are left; the Face/Edge gap; corners that are not
 square; Inventor's separate Rip command (a gap cut across a face, for lofted flanges and
 contour rolls).
+
+## DEC-075 Bend on a sharp edge (2026-10-12)
+
+Asked for by the owner on the report of the four: "do Bend on a sharp edge next". It is what
+lets a box that was shelled, and had its corners ripped (DEC-074), be laid flat.
+
+**What it is.** Inventor's Bend also goes on the edge between two faces that touch: on a
+part converted from a solid, bends are put "on the inside edges" once the corners are
+ripped, and the part can then be flattened. In Tenon that is a feature of its own,
+`sharp_bend` (Sheet Metal > Create > Bend, by a click on a sharp edge; `sheet.sharp_bend`),
+named Bend in the browser as the bend between two faces is (DEC-070).
+
+- **The edge** is the outside or the inside edge of a corner where two flat sides of the
+  sheet meet (each with the sheet's other side one thickness behind it), at any angle a
+  bend can turn: 1 to 179 degrees. Which side of the corner an edge is on is found as a
+  corner rip finds it.
+- **The corner is cleared, then bent.** Seen along the edge, everything from the outside of
+  the corner back to where the bend begins on either face goes (the radius and the
+  thickness, times the tangent of half the turn, from the outside of the corner), for the
+  length of the edge that was picked. The bend is then put in, tangent to both faces. The
+  outer faces stay where they are, so the part keeps its outside size, and the flat pattern
+  is what a flange of the same size would give.
+- **As far as both faces reach.** A bend is as long as the stretch of the edge where both of
+  its faces still come up to it once every corner of the feature has been cleared. So edges
+  that meet at a corner of the sheet, given in one feature, have their bends end where their
+  bend lines cross, the floor loses a square at the corner, and the walls hang on past the
+  bends to where the rip left them: the tray a flange makes on four edges, with its corners
+  trimmed to the bends and mitred to the rip's gap. The test compares the two, solid and
+  flat pattern.
+- **What is in the way is said.** A bend whose end would lie against sheet that runs on
+  beside it (a corner that was not ripped, or the next edge's corner when the edges are bent
+  one at a time) would be joined to that sheet sideways: it is refused, by looking at the
+  ends of the bend in the result, and the message says to open the corner or to bend the
+  edges together. Bends that would leave a piece of the sheet on its own (the floor's
+  corners, when the corners were ripped by their inside edges) are refused too.
+
+**In the panel** the first edge clicked says which bend it is, by what it is
+(`sheet::sharp_edge` reads it from the part as shown): a sharp edge between two faces makes
+it a bend on sharp edges, and more of them can be added; an edge of the rim makes it the
+bend between two faces. An edge of the other kind is refused in the status bar. Double Bend
+and Flip Fixed Edge have nothing to say on sharp edges and are not shown.
+
+In files: `type = "sharp_bend"` with `edges` and an optional `radius`; an addition to
+version 2 (DEC-046).
+
+Not done: a relief of the rule's shape where bends meet (the corner is trimmed to the bends,
+square); a bend relief cut beside a bend that is shorter than the sheet next to it (it is
+refused instead); Inventor's Bend Extension choice; curved edges.

@@ -213,7 +213,7 @@ commands are in radians. [commands.md](commands.md) lists what each takes.
 (millimetres) or an equation, and is a parameter of the part from then on (`Thickness`,
 `BendRadius`, ...), so `param.set` changes it and equations use it. `sheet.face` makes a sketch
 profile one thickness thick; `sheet.flange` bends walls up from edges of the sheet; `sheet.hem`
-and `sheet.contour_flange` are below, with the corner seam and rip, the bend, the fold and the
+and `sheet.contour_flange` are below, with the corner seam and rip, the bends, the fold and the
 cuts of the sheet. Other cuts and holes are the ordinary commands.
 
 ```json
@@ -409,8 +409,8 @@ corners of a box that was shelled, not folded. Each edge given is the outside or
 edge of such a corner, and the rip is as long as the edge. `seam`, `overlap` and `gap` are a
 corner seam's: `symmetric` cuts both walls back until their inner faces are the gap apart,
 `overlap` keeps one wall whole and stops the other the gap short of it (`reverse_overlap`
-the other way round). The edges where the walls meet the floor stay sharp, so the box is not
-laid flat yet:
+the other way round). The edges where the walls meet the floor stay sharp: `sheet.sharp_bend`,
+below, makes bends of them:
 
 ```json
 { "run": "sheet.defaults", "with": { "thickness": 2, "gap": 1 } },
@@ -426,6 +426,38 @@ laid flat yet:
 { "run": "sheet.corner_rip", "with": { "edges": ["$next"], "seam": "overlap" } },
 { "run": "model.mass", "expect": { "bodies.0.volume": 11534.4314575 } }
 ```
+
+`sheet.sharp_bend` makes bends of sharp edges: each edge given is where two faces of the sheet
+meet with no bend between them, its outside edge or its inside one. Every corner is cleared
+back to where a bend begins on either face and the bend put in, tangent to both, so the outer
+faces stay where they are. Edges that meet at a corner of the sheet are given together: their
+bends then end where their bend lines cross, and the walls hang on past them. With the
+corners ripped first, a shelled box becomes the tray a flange would make, and lays flat:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3, "gap": 1 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 60, "y2": 40 } },
+{ "run": "model.extrude", "with": { "sketch": "$s.feature", "distance": 20 } },
+{ "run": "model.face_ref", "with": { "at": [30, 20, 20] }, "as": "top" },
+{ "run": "model.shell", "with": { "remove": ["$top"], "thickness": 2 } },
+{ "run": "model.edge_ref", "with": { "at": [0, 0, 10] }, "as": "c1" },
+{ "run": "model.edge_ref", "with": { "at": [60, 0, 10] }, "as": "c2" },
+{ "run": "model.edge_ref", "with": { "at": [60, 40, 10] }, "as": "c3" },
+{ "run": "model.edge_ref", "with": { "at": [0, 40, 10] }, "as": "c4" },
+{ "run": "sheet.corner_rip", "with": { "edges": ["$c1", "$c2", "$c3", "$c4"] } },
+{ "run": "model.edge_ref", "with": { "at": [30, 0, 0] }, "as": "front" },
+{ "run": "model.edge_ref", "with": { "at": [60, 20, 0] }, "as": "right" },
+{ "run": "model.edge_ref", "with": { "at": [30, 40, 0] }, "as": "back" },
+{ "run": "model.edge_ref", "with": { "at": [0, 20, 0] }, "as": "left" },
+{ "run": "sheet.sharp_bend", "with": { "edges": ["$front", "$right", "$back", "$left"] } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 10360.9136708 } },
+{ "run": "sheet.flat", "expect": { "length": 92.1893794959, "width": 72.1893794959, "bends.3.angle": 1.57079632679 } }
+```
+
+A bend whose end would lie against sheet that runs on beside it is refused, saying so: a
+corner that was not ripped, or the corner of the next edge when the edges are bent one at a
+time. `radius` is the bends' own inside radius in place of the rule's.
 
 `sheet.flat` lays the part flat and returns the size of the sheet (`length`, `width`), its
 `area`, the `cut_length`, the number of cut-outs (`holes`) and every bend's `angle`, `radius`,

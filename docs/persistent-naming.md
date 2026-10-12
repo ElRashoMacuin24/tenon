@@ -53,7 +53,10 @@ kept for the parts not built (neighbour origins, split ordinals, vertex referenc
     normal is named as one of a cut across bends is; where one curve of the profile comes
     to the kernel in more than one piece on a face (a closed curve seen at an angle does,
     in two), the pieces after the first are told apart by their order. The faces a corner
-    rip leaves are named after the edge it opened. A sheet metal face is named
+    rip leaves are named after the edge it opened. A bend on a sharp edge names its faces
+    after that edge and the part they are (the inside and outside of the bend, its two
+    ends, what clearing the corner leaves in the faces); a second stretch of bend on one
+    edge, where a cut breaks it, is told from the first by its order. A sheet metal face is named
     as an extrusion is.
 
 Booleans pass names on through `images` (`names_of_boolean`); modify operations through images

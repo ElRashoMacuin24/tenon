@@ -108,6 +108,9 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::Bend(_), _) => {
             "The bend could not be built between the two faces. The edges picked may not face one another, or a face may be too short for what the bend takes of it: check the edges, or try a smaller bend radius.".into()
         }
+        (FeatureKind::SharpBend(_), _) => {
+            "The bend could not be put on the edge. The faces that meet there may be too short for what the bend takes of them, or the sheet may run on beside the bend's end: try a smaller bend radius, or open the corners beside it first.".into()
+        }
         (FeatureKind::CutAcrossBend(_), _) => {
             "The profile could not be cut out of the sheet round its bends. It may just touch an edge of the sheet or a bend line: move it a little, or draw it clear across.".into()
         }

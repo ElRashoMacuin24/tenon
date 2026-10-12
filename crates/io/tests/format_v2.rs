@@ -673,6 +673,9 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     run(&mut s, "sheet.cut_normal", json!({ "sketch": across, "distance": 0.5 }));
     run(&mut s, "sheet.corner_rip", json!({ "edges": [edge.clone()], "seam": "overlap", "overlap": 0.25, "gap": 0.6 }));
     run(&mut s, "sheet.corner_rip", json!({ "edges": [edge.clone(), other.clone()] }));
+    // A bend on sharp edges, by the rule and with a radius of its own.
+    run(&mut s, "sheet.sharp_bend", json!({ "edges": [edge.clone(), other.clone()] }));
+    run(&mut s, "sheet.sharp_bend", json!({ "edges": [edge.clone()], "radius": 1.25 }));
     run(&mut s, "sheet.flat_pattern", json!({}));
     let bytes = project::to_bytes(s.document(), &extra).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();
@@ -744,6 +747,12 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     for field in ["seam = \"overlap\"", "overlap = 0.25", "gap = 0.6"] {
         assert!(rips[0].contains(field) && !rips[1].contains(field.split(' ').next().unwrap()), "{field}: {rips:?}");
     }
+    // A bend on sharp edges is its edges, and its radius where it has one.
+    let sharp: Vec<&str> = text.split("type = \"sharp_bend\"").skip(1).map(|c| c.split("[[").next().unwrap()).collect();
+    assert!(
+        sharp.len() == 2 && sharp.iter().all(|b| b.contains("edges = ")) && !sharp[0].contains("radius") && sharp[1].contains("radius = 1.25"),
+        "{sharp:?}"
+    );
     // A cut across bends is its sketch, and its depth where it has one; an edge shown laid flat
     // says so (the rule's own `flat = true` is the flat pattern).
     let cuts: Vec<&str> = text.split("type = \"cut_across_bend\"").skip(1).map(|c| c.split("[[").next().unwrap()).collect();
@@ -754,7 +763,7 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     assert_eq!(back.sheet_metal(), s.document().sheet_metal());
     assert_eq!(back.sheet_sizes().unwrap(), s.document().sheet_sizes().unwrap());
     assert_eq!(back.sheet_sizes().unwrap().bend_radius, 3.0);
-    assert_eq!(back.features().len(), 22);
+    assert_eq!(back.features().len(), 24);
     assert_eq!(back.projections(tenon_model::FeatureId(across as u32)), s.document().projections(tenon_model::FeatureId(across as u32)));
     assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
     back.validate().unwrap();

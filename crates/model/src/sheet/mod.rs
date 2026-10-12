@@ -8,7 +8,8 @@
 //!   wall along edges of the sheet, mitred and relieved where two meet), [`Hem`] (an edge folded
 //!   back on itself), [`ContourFlange`] (sheet along an open profile, pushed out of its
 //!   sketch or run along edges), [`CornerSeam`] and [`CornerRip`] (a corner closed, or opened),
-//!   [`BendBetween`] (two faces made apart joined by a bend: [`join`]), [`Fold`] (a face
+//!   [`BendBetween`] (two faces made apart joined by a bend: [`join`]), [`SharpBend`] (the
+//!   sharp edge between two faces that touch made a bend where it is), [`Fold`] (a face
 //!   folded along a line), [`CutAcrossBend`] (a profile cut round the bends, as drawn on the
 //!   sheet laid flat) and [`CutNormal`] (one cut where it is seen on the sheet: both [`wrap`]).
 //!   Other cuts, holes and rounded corners are the ordinary features.
@@ -434,6 +435,64 @@ impl BendBetween {
             _ => Ok(()),
         }
     }
+}
+
+/// A bend put on sharp edges of the sheet: where two faces meet at a corner with no bend
+/// between them (a box that was shelled, not folded), the corner is cleared back to where a
+/// bend begins on either face and the bend put in, tangent to both. The outer faces stay
+/// where they are. Edges that meet at a corner of the sheet, given together, have their
+/// bends end where their bend lines cross (Bend on an edge between two faces).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SharpBend {
+    /// The edges to bend: each the outside or the inside edge of a sharp corner between two
+    /// faces of the sheet. The corner is cleared for as long as the edge is.
+    pub edges: Vec<EdgeRef>,
+    /// The inside radius of the bends; without it, the part's `BendRadius`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<f64>,
+}
+
+impl SharpBend {
+    pub fn check(&self) -> Result<(), String> {
+        if self.edges.is_empty() {
+            return Err("a bend on sharp edges needs at least one edge".into());
+        }
+        match self.radius {
+            Some(r) if !(r.is_finite() && (MIN_BEND_RADIUS..=1000.0).contains(&r)) => {
+                Err(format!("the bend radius must be from {MIN_BEND_RADIUS} to 1000 mm"))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Whether edge `edge` of a body, as it is shown, is a sharp edge between two faces of the
+/// sheet: a straight edge with a flat side of the sheet to either side of it (each with the
+/// sheet's other side one `thickness` behind it), the two not in one plane. That is the edge a
+/// bend is put on ([`SharpBend`]); an edge of the sheet's rim has the rim to one side of it.
+pub fn sharp_edge(body: &crate::BodyView, edge: u32, thickness: f64) -> bool {
+    use tenon_kernel::{CurveKind, SurfaceKind};
+    let e = edge as usize;
+    let (Some((Some(names), _)), Some(CurveKind::Line { .. }), Some([a, b])) = (body.edges.get(e), body.curves.get(e), body.ends.get(e)) else {
+        return false;
+    };
+    let slack = 1e-6 * (1.0 + thickness);
+    // The side of the sheet with this name that the edge lies in, when its other side is there:
+    // its normal.
+    let side = |name: &crate::naming::FaceOrigin| {
+        body.faces.iter().filter(|(n, _)| n.as_ref() == Some(name)).find_map(|(_, face)| {
+            let SurfaceKind::Plane { normal, .. } = &face.surface else { return None };
+            let n = normal.normalized();
+            if (*a - face.centroid).dot(n).abs() > slack || (*b - face.centroid).dot(n).abs() > slack {
+                return None;
+            }
+            body.faces
+                .iter()
+                .any(|(_, g)| matches!(&g.surface, SurfaceKind::Plane { normal: m, .. } if m.normalized().dot(n) < -1.0 + 1e-9 && ((g.centroid - face.centroid).dot(n) + thickness).abs() < slack))
+                .then_some(n)
+        })
+    };
+    matches!((side(&names[0]), side(&names[1])), (Some(m), Some(n)) if m.cross(n).len() > 1e-6)
 }
 
 /// Where the bend of a fold lies relative to the line it is folded along.

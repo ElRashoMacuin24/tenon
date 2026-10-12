@@ -256,6 +256,7 @@ may refer only to features before them.
 | `cut_across_bend` | `sketch` (on a side of the sheet: a face of it, or a plane that lies on one), `regions` (its profile: lines, arcs and circles, drawn as on the sheet laid flat from that face), optional `distance` (how deep from the side the sketch is on; without it, or at the thickness or more, through). The profile is cut out of every face and bend it lies on, so the cut goes round the bends and is the profile in the flat pattern (DEC-068) |
 | `cut_normal` | `sketch` (on any plane that looks at the sheet), `regions` (its profile: lines, arcs and circles), optional `distance` (how deep from the side of the sheet that looks at the sketch; without it, or at the thickness or more, through). The profile is cut out of every flat face and bend of that side it is seen on, looking along the sketch's normal, each cut square to itself (DEC-073) |
 | `bend` | `edges` (two edge references: a straight edge of the rim of each of two faces of the sheet that do not touch, running alongside one another); optional `radius` (the bend's inside radius; without it the part's `BendRadius`), `double` (how faces in parallel planes are joined: `"fix_edges"` when it is not written, `"45_degree"`, `"full_radius"` or `"90_degree"`) and `flip_fixed` (the second edge stays and the first face is trimmed or extended). The faces are trimmed or extended to the bend and joined by it (DEC-070) |
+| `sharp_bend` | `edges` (edge references: each the outside or the inside edge of a sharp corner where two faces of the sheet meet with no bend between them); optional `radius` (the bends' inside radius; without it the part's `BendRadius`). Each corner is cleared back to where a bend begins on either face, for the length of its edge, and the bend put in, tangent to both, as far along the edge as both faces still reach it: edges that meet at a corner of the sheet, given together, have their bends end where their bend lines cross (DEC-075) |
 | `fold` | `sketch` (on a side of the sheet, with a line from edge to edge of a face), optional `line` (the entity to fold along; without it, the sketch's one line), `angle` (radians the sheet turns, 1 to 179 degrees), optional `radius` (the bend's inside radius; without it the part's `BendRadius`), `location` (`"centerline"` when it is not written, `"start"` or `"end"`: where the line is in the bend's zone), `flip_side` (the sheet on the other side of the line folds) and `flip_direction` (it folds away from the side the sketch is on). The sheet beyond the line turns about a bend in the zone; nothing is added (DEC-071) |
 
 Field values:
@@ -723,7 +724,7 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   then `hem`, `contour_flange`, `corner_seam`, a flange's `miter` and corner options and the
   parameter `GapSize` (DEC-063, DEC-064, DEC-066), then `cut_across_bend` and a projection's
   `flat` (DEC-068), then `bend` (DEC-070), then `fold`, a contour flange's `edges` and
-  `width`, `cut_normal` and `corner_rip` (DEC-071 to DEC-074).
+  `width`, `cut_normal` and `corner_rip` (DEC-071 to DEC-074), then `sharp_bend` (DEC-075).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

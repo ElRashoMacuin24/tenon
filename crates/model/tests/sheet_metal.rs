@@ -2452,3 +2452,219 @@ fn a_corner_rip_lets_one_wall_keep_the_corner_and_says_what_is_no_corner() {
     let e = refused(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": [edge] }));
     assert!(e.contains("not a sheet metal part"), "{e}");
 }
+
+/// A solid drawn end on in the XY plane as a closed outline and pushed 40 along Z, in a sheet
+/// metal part of the usual rule: a bracket with sharp corners, not folded.
+fn drawn_end_on(points: &[(f64, f64)]) -> (Session, OcctKernel) {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": T, "bend_radius": R }));
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
+    let (mut first, mut last): (Option<u64>, Option<u64>) = (None, None);
+    for i in 0..points.len() {
+        let mut p = json!({ "sketch": sk });
+        match last {
+            Some(end) => p["start"] = json!(end),
+            None => (p["x1"], p["y1"]) = (json!(points[0].0), json!(points[0].1)),
+        }
+        if i + 1 == points.len() {
+            p["end"] = json!(first.unwrap());
+        } else {
+            (p["x2"], p["y2"]) = (json!(points[i + 1].0), json!(points[i + 1].1));
+        }
+        let l = run(&mut s, &mut k, "sketch.line", p);
+        first.get_or_insert(id(&l, "start"));
+        last = Some(id(&l, "end"));
+    }
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 40 }));
+    (s, k)
+}
+
+#[test]
+fn a_bend_on_a_sharp_edge_rounds_the_corner_between_two_faces_and_they_lay_flat() {
+    // An angle bracket drawn with a sharp corner: a floor 30 long and a wall 20 high, 2 thick
+    // and 40 wide. It is one thickness all over but has no bend, so it cannot be laid flat.
+    let bracket = [(0.0, 0.0), (30.0, 0.0), (30.0, 2.0), (2.0, 2.0), (2.0, 20.0), (0.0, 20.0)];
+    let (mut s, mut k) = drawn_end_on(&bracket);
+    assert!(near(volume(&mut s, &mut k), (30.0 + 18.0) * T * 40.0));
+    assert!(refused(&mut s, &mut k, "sheet.flat", json!({})).contains("not a sheet 2 mm thick all over"));
+    // A bend on its inside edge: floor and wall are cut back to 5 from the outside of the
+    // corner (the thickness and the radius), where a quarter turn of radius 3 joins them. The
+    // outer faces stay where they were.
+    let inside = edge_at(&mut s, &mut k, Vec3::new(2.0, 2.0, 20.0));
+    let bend = id(&run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": [inside] })), "feature");
+    assert_eq!(s.document().feature(tenon_model::FeatureId(bend as u32)).unwrap().name, "Bend1");
+    let bent = (25.0 + 15.0) * T * 40.0 + bend_volume(FRAC_PI_2, 40.0);
+    assert!(near(volume(&mut s, &mut k), bent), "{} {bent}", volume(&mut s, &mut k));
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    let (lo, hi) = bbox(&mut s, &mut k);
+    assert!(lo.near(Vec3::ZERO, 1e-6) && hi.near(Vec3::new(30.0, 20.0, 40.0), 1e-6), "{lo:?} {hi:?}");
+    // The inside of the bend is the bend's own face: half way round it, 3 from its axis.
+    let round = run(&mut s, &mut k, "model.face_ref", json!({ "at": [5.0 - 3.0 / 2f64.sqrt(), 5.0 - 3.0 / 2f64.sqrt(), 20] }));
+    assert!(round["origin"]["type"] == "from" && round["origin"]["feature"] == bend, "{round}");
+    // The ends of the bend are one face with the ends of the floor and the wall it joins.
+    let ends = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(Vec3::Z, 1e-9) || f.0.near(-Vec3::Z, 1e-9)).count();
+    assert_eq!(ends, 2);
+    // Laid flat: 25 of floor, a bend's allowance and 15 of wall, 40 wide, with the one bend.
+    let f = flat(&mut s, &mut k);
+    let long = 25.0 + allowance(FRAC_PI_2) + 15.0;
+    let sides = [num(&f, "length"), num(&f, "width")];
+    assert!(near(sides[0].max(sides[1]), long) && near(sides[0].min(sides[1]), 40.0), "{f}");
+    assert!(
+        f["bends"].as_array().unwrap().len() == 1 && near(num(&f["bends"][0], "angle"), FRAC_PI_2) && near(num(&f["bends"][0], "radius"), R),
+        "{f}"
+    );
+    // What a file says of it, and a radius of its own.
+    let kind = serde_json::to_value(&s.document().feature(tenon_model::FeatureId(bend as u32)).unwrap().kind).unwrap();
+    assert!(kind["type"] == "sharp_bend" && kind["edges"].as_array().unwrap().len() == 1 && kind.get("radius").is_none(), "{kind}");
+    update(&mut s, &mut k, bend, json!({ "radius": 1 }));
+    let tighter = (27.0 + 17.0) * T * 40.0 + FRAC_PI_2 / 2.0 * (9.0 - 1.0) * 40.0;
+    assert!(near(volume(&mut s, &mut k), tighter), "{} {tighter}", volume(&mut s, &mut k));
+
+    // By the outside edge of the corner it is the same bend.
+    let (mut s, mut k) = drawn_end_on(&bracket);
+    let outside = edge_at(&mut s, &mut k, Vec3::new(0.0, 0.0, 20.0));
+    run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": [outside] }));
+    assert!(near(volume(&mut s, &mut k), bent), "{} {bent}", volume(&mut s, &mut k));
+    assert!(near(num(&flat(&mut s, &mut k), "area"), long * 40.0));
+
+    // A corner that is not square: the wall leans back, 120 degrees from the floor, so the
+    // sheet turns 60. Each face is cut back to 5 tan 30 from the outside of the corner.
+    let (sin, cos) = 120f64.to_radians().sin_cos();
+    let lean =
+        [(0.0, 0.0), (30.0, 0.0), (30.0, 2.0), ((1.0 + cos) * T / sin, 2.0), (20.0 * cos + sin * T, 20.0 * sin - cos * T), (20.0 * cos, 20.0 * sin)];
+    let (mut s, mut k) = drawn_end_on(&lean);
+    let whole = volume(&mut s, &mut k);
+    let outside = edge_at(&mut s, &mut k, Vec3::new(0.0, 0.0, 20.0));
+    run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": [outside] }));
+    let turn = 60f64.to_radians();
+    let back = (R + T) * (turn / 2.0).tan();
+    let bent = (30.0 - back + 20.0 - back) * T * 40.0 + turn / 2.0 * ((R + T) * (R + T) - R * R) * 40.0;
+    assert!(near(volume(&mut s, &mut k), bent) && bent < whole, "{} {bent} {whole}", volume(&mut s, &mut k));
+    let f = flat(&mut s, &mut k);
+    let long = 30.0 - back + allowance(turn) + 20.0 - back;
+    assert!(near(num(&f, "area"), long * 40.0) && near(num(&f["bends"][0], "angle"), turn), "{f}");
+}
+
+#[test]
+fn bends_on_the_sharp_edges_of_a_ripped_box_make_it_the_tray_a_flange_makes() {
+    // A shelled box, its four corners ripped by their outside edges with a gap of 1: four
+    // walls on a floor, each wall clear of the next and the floor without its corners.
+    let (mut s, mut k, _) = shelled_box();
+    let corners: Vec<Value> =
+        [(0.0, 0.0), (60.0, 0.0), (60.0, 40.0), (0.0, 40.0)].iter().map(|(x, y)| edge_at(&mut s, &mut k, Vec3::new(*x, *y, 10.0))).collect();
+    run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": corners, "gap": 1 }));
+    assert!(refused(&mut s, &mut k, "sheet.flat", json!({})).contains("not a sheet 2 mm thick all over"));
+    // The four edges where the walls stand on the floor, in one bend: two by their outside
+    // edges (under the front and right walls) and two by their inside ones (back and left).
+    let feet: Vec<Value> = [Vec3::new(30.0, 0.0, 0.0), Vec3::new(60.0, 20.0, 0.0), Vec3::new(30.0, 38.0, 2.0), Vec3::new(2.0, 20.0, 2.0)]
+        .iter()
+        .map(|at| edge_at(&mut s, &mut k, *at))
+        .collect();
+    let bend = id(&run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": feet })), "feature");
+    // The floor is cut back by 5 all round, to 50 by 30, and has lost a square of 5 at each
+    // corner; each bend is as long as the floor's side, ending where the next bend's line
+    // crosses its own; the walls hang on past the bends to where the rip left them, 2 + 1 /
+    // sqrt 2 from the corners, from the top of the bends (5 up) to the rim.
+    let reach = T + 1.0 / 2f64.sqrt();
+    let by_hand = 50.0 * 30.0 * T + bend_volume(FRAC_PI_2, 2.0 * (50.0 + 30.0)) + 15.0 * T * 2.0 * ((60.0 - 2.0 * reach) + (40.0 - 2.0 * reach));
+    assert!(near(volume(&mut s, &mut k), by_hand), "{} {by_hand}", volume(&mut s, &mut k));
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    let (lo, hi) = bbox(&mut s, &mut k);
+    assert!(lo.near(Vec3::ZERO, 1e-6) && hi.near(Vec3::new(60.0, 40.0, 20.0), 1e-6), "{lo:?} {hi:?}");
+    let floor = flats(&mut s, &mut k).into_iter().find(|f| f.0.near(-Vec3::Z, 1e-9) && f.1.z.abs() < 1e-9).expect("the underside of the floor");
+    assert!(near(floor.2, 1500.0), "{floor:?}");
+    let ripped = flat(&mut s, &mut k);
+    assert_eq!(ripped["bends"].as_array().unwrap().len(), 4, "{ripped}");
+
+    // The same tray made the sheet metal way: a plate with a flange on its four edges, 20
+    // high over all, its corners mitred to the same gap and trimmed to the bends.
+    let (mut t, mut kt) = (Session::default(), OcctKernel::new());
+    let (face, lines) = plate(&mut t, &mut kt, 60.0, 40.0);
+    run(&mut t, &mut kt, "sheet.defaults", json!({ "corner": "trim", "gap": 1 }));
+    let edges: Vec<Value> = lines.iter().map(|l| rim(&mut t, &mut kt, face, "end", *l)).collect();
+    run(&mut t, &mut kt, "sheet.flange", json!({ "edges": edges, "height": 20 }));
+    assert!(near(volume(&mut t, &mut kt), by_hand), "{} {by_hand}", volume(&mut t, &mut kt));
+    let folded = flat(&mut t, &mut kt);
+    for key in ["area", "cut_length", "length", "width"] {
+        assert!(near(num(&ripped, key), num(&folded, key)), "{key}: {} {}", ripped[key], folded[key]);
+    }
+    // It follows the rule: a thicker radius, wider bends, both ways the same.
+    run(&mut s, &mut k, "sheet.defaults", json!({ "bend_radius": 4 }));
+    run(&mut t, &mut kt, "sheet.defaults", json!({ "bend_radius": 4 }));
+    assert!(near(volume(&mut s, &mut k), volume(&mut t, &mut kt)), "{} {}", volume(&mut s, &mut k), volume(&mut t, &mut kt));
+    let _ = bend;
+}
+
+#[test]
+fn a_bend_on_a_sharp_edge_says_what_is_in_its_way() {
+    // A box whose corners are still closed: a bend under one wall would end against the
+    // walls beside it.
+    let (mut s, mut k, _) = shelled_box();
+    let foot = edge_at(&mut s, &mut k, Vec3::new(30.0, 2.0, 2.0));
+    run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": [foot] }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("runs on beside the end of a bend") && e.contains("Corner Rip"), "{e}");
+    assert!(s.undo());
+    // Corners ripped by their outside edges, and the bends made one at a time: the first
+    // ends against what is left of the floor beside it, where the next bend is to go.
+    let corners: Vec<Value> =
+        [(0.0, 0.0), (60.0, 0.0), (60.0, 40.0), (0.0, 40.0)].iter().map(|(x, y)| edge_at(&mut s, &mut k, Vec3::new(*x, *y, 10.0))).collect();
+    run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": corners, "gap": 1 }));
+    let foot = edge_at(&mut s, &mut k, Vec3::new(30.0, 0.0, 0.0));
+    run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": [foot] }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("runs on beside the end of a bend") && e.contains("in one Bend"), "{e}");
+    assert!(s.undo());
+    // The outside and the inside edge of one corner are the one corner.
+    let (outer, inner) = (edge_at(&mut s, &mut k, Vec3::new(30.0, 0.0, 0.0)), edge_at(&mut s, &mut k, Vec3::new(30.0, 2.0, 2.0)));
+    run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": [outer, inner] }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("picked twice"), "{e}");
+    assert!(s.undo());
+    // An edge of the rim is no corner between two faces.
+    let rim_edge = edge_at(&mut s, &mut k, Vec3::new(30.0, 0.0, 20.0));
+    run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": [rim_edge] }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("not both flat sides of the sheet") && e.contains("flange"), "{e}");
+    assert!(s.undo());
+    // A radius that is no radius.
+    let all: Vec<Value> = [Vec3::new(30.0, 0.0, 0.0), Vec3::new(60.0, 20.0, 0.0), Vec3::new(30.0, 40.0, 0.0), Vec3::new(0.0, 20.0, 0.0)]
+        .iter()
+        .map(|at| edge_at(&mut s, &mut k, *at))
+        .collect();
+    let e = refused(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": all, "radius": 0 }));
+    assert!(e.contains("bend radius must be from"), "{e}");
+
+    // Corners ripped by their inside edges leave the floor its corners, and the bends would
+    // leave each of those on its own.
+    let (mut s, mut k, _) = shelled_box();
+    let corners: Vec<Value> =
+        [(2.0, 2.0), (58.0, 2.0), (58.0, 38.0), (2.0, 38.0)].iter().map(|(x, y)| edge_at(&mut s, &mut k, Vec3::new(*x, *y, 11.0))).collect();
+    run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": corners, "gap": 1 }));
+    let inner: Vec<Value> = [Vec3::new(30.0, 2.0, 2.0), Vec3::new(58.0, 20.0, 2.0), Vec3::new(30.0, 38.0, 2.0), Vec3::new(2.0, 20.0, 2.0)]
+        .iter()
+        .map(|at| edge_at(&mut s, &mut k, *at))
+        .collect();
+    run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": inner }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("a piece of the sheet on its own") && e.contains("outside edges"), "{e}");
+
+    // A radius a face is too short for: the wall of this bracket is 20 high, and a bend of
+    // radius 19 would begin 21 up it.
+    let (mut s, mut k) = drawn_end_on(&[(0.0, 0.0), (30.0, 0.0), (30.0, 2.0), (2.0, 2.0), (2.0, 20.0), (0.0, 20.0)]);
+    let corner = edge_at(&mut s, &mut k, Vec3::new(0.0, 0.0, 20.0));
+    run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": [corner], "radius": 19 }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("do not both reach the bend") && e.contains("smaller bend radius"), "{e}");
+
+    // A part that is not sheet metal.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 20 }));
+    let edge = edge_at(&mut s, &mut k, Vec3::new(0.0, 0.0, 10.0));
+    let e = refused(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": [edge] }));
+    assert!(e.contains("not a sheet metal part"), "{e}");
+}

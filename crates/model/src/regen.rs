@@ -240,6 +240,7 @@ fn prefix_hashes(doc: &Document, copied: &std::collections::BTreeSet<FeatureId>)
                 | FeatureKind::CutAcrossBend(_)
                 | FeatureKind::CutNormal(_)
                 | FeatureKind::Bend(_)
+                | FeatureKind::SharpBend(_)
                 | FeatureKind::Fold(_)
         ) {
             rule.hash(&mut h);
@@ -515,6 +516,7 @@ impl<'a> Ctx<'a> {
             FeatureKind::CutAcrossBend(c) => self.cut_across_bend(f.id, c),
             FeatureKind::CutNormal(c) => self.cut_normal(f.id, c),
             FeatureKind::Bend(b) => self.bend_between(f.id, b),
+            FeatureKind::SharpBend(b) => self.sharp_bend(f.id, b),
             FeatureKind::Fold(fo) => self.fold(f.id, fo),
             FeatureKind::PatternRect(p) => {
                 p.check()?;

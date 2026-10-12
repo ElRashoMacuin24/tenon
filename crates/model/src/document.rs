@@ -795,6 +795,8 @@ pub enum FeatureKind {
     CutNormal(crate::sheet::CutNormal),
     /// Two faces of the sheet that do not touch, joined by a bend.
     Bend(crate::sheet::BendBetween),
+    /// Sharp edges between faces of the sheet made bends.
+    SharpBend(crate::sheet::SharpBend),
     /// A face of the sheet folded along a line drawn across it.
     Fold(crate::sheet::Fold),
 }
@@ -859,7 +861,7 @@ impl FeatureKind {
             FeatureKind::CornerSeam(_) => "Corner Seam",
             FeatureKind::CornerRip(_) => "Corner Rip",
             FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => "Cut",
-            FeatureKind::Bend(_) => "Bend",
+            FeatureKind::Bend(_) | FeatureKind::SharpBend(_) => "Bend",
             FeatureKind::Fold(_) => "Fold",
         }
     }
@@ -894,7 +896,7 @@ impl FeatureKind {
             FeatureKind::CornerSeam(_) => "Corner Seam",
             FeatureKind::CornerRip(_) => "Corner Rip",
             FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => "Cut",
-            FeatureKind::Bend(_) => "Bend",
+            FeatureKind::Bend(_) | FeatureKind::SharpBend(_) => "Bend",
             FeatureKind::Fold(_) => "Fold",
         }
     }
@@ -939,6 +941,7 @@ impl FeatureKind {
             FeatureKind::CutAcrossBend(c) => vec![c.sketch],
             FeatureKind::CutNormal(c) => vec![c.sketch],
             FeatureKind::Bend(b) => b.edges.iter().flat_map(EdgeRef::features).collect(),
+            FeatureKind::SharpBend(b) => b.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::Fold(f) => vec![f.sketch],
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
@@ -1339,6 +1342,7 @@ impl Document {
                 FeatureKind::CutNormal(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
                 FeatureKind::CutNormal(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Bend(b) => b.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::SharpBend(b) => b.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Fold(fo) if self.sketch(fo.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, fo.sketch)),
                 FeatureKind::Fold(fo) => fo.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,

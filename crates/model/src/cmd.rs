@@ -2450,6 +2450,15 @@ fn sheet_bend(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::Bend(bend), p)
 }
 
+fn sheet_sharp_bend(s: &mut Session, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let bend = crate::sheet::SharpBend { edges: edge_refs(p)?, radius: opt_num(p, "radius")? };
+    bend.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::SharpBend(bend), p)
+}
+
 fn sheet_fold(s: &mut Session, p: &Value) -> CmdResult {
     if s.document().sheet_metal().is_none() {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
@@ -3054,9 +3063,16 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.bend",
         "Bend",
-        "edges: [two edge references]: a straight edge of the rim of each of two faces of the sheet that do not touch (a face made apart from the rest is one), running alongside one another. The faces are joined by a bend along as much of the edges as lie side by side, each face trimmed or extended to where the bend begins. radius (inside; default BendRadius). Faces in planes that cross take one bend, tangent to both. Faces in parallel planes take two, as double says: \"fix_edges\" (default: two equal bends between the edges as they are), \"45_degree\" or \"90_degree\" (two bends of that angle and a face between them: side by side an S, one over the other a U at 90), \"full_radius\" (one over the other: half a circle, as wide inside as the faces are apart); flip_fixed (the second edge stays where it is and the first face is trimmed or extended, not the other way round)",
+        "edges: [two edge references]: a straight edge of the rim of each of two faces of the sheet that do not touch (a face made apart from the rest is one), running alongside one another (for a sharp edge where two faces touch, see sheet.sharp_bend). The faces are joined by a bend along as much of the edges as lie side by side, each face trimmed or extended to where the bend begins. radius (inside; default BendRadius). Faces in planes that cross take one bend, tangent to both. Faces in parallel planes take two, as double says: \"fix_edges\" (default: two equal bends between the edges as they are), \"45_degree\" or \"90_degree\" (two bends of that angle and a face between them: side by side an S, one over the other a U at 90), \"full_radius\" (one over the other: half a circle, as wide inside as the faces are apart); flip_fixed (the second edge stays where it is and the first face is trimmed or extended, not the other way round)",
         true,
         sheet_bend
+    ),
+    doc_cmd!(
+        "sheet.sharp_bend",
+        "Bend on Sharp Edges",
+        "edges: [edge references]: each the edge of a sharp corner where two faces of the sheet meet with no bend between them (the edges of a shelled box, say), its outside edge or its inside one. Every corner is cleared back to where a bend begins on either face, for the length of its edge, and the bend is put in, tangent to both faces, as far along the edge as both faces still reach it: the outer faces stay where they are. radius (inside; default BendRadius). Edges that meet at a corner of the sheet are given together: their bends then end where their bend lines cross. A bend whose end would lie against sheet that runs on beside it is refused: open that corner first (sheet.corner_rip)",
+        true,
+        sheet_sharp_bend
     ),
     doc_cmd!(
         "sheet.fold",

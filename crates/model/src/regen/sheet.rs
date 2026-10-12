@@ -16,7 +16,9 @@ use crate::sheet::region;
 use crate::sheet::strip;
 use crate::sheet::unfold::Unfold;
 use crate::sheet::wrap::{self, Tool};
-use crate::sheet::{BendBetween, ContourFlange, CornerRip, CornerSeam, CutAcrossBend, CutNormal, Face, Flange, Fold, FoldLocation, Hem, Seam, Sides};
+use crate::sheet::{
+    BendBetween, ContourFlange, CornerRip, CornerSeam, CutAcrossBend, CutNormal, Face, Flange, Fold, FoldLocation, Hem, Seam, SharpBend, Sides,
+};
 
 /// A solid on its way into the part, and the names of its faces.
 type Named = (ShapeHandle, Vec<Option<FaceOrigin>>);
@@ -40,6 +42,36 @@ struct Corner {
     wall: usize,
     cutter: Cutter,
     key: u64,
+}
+
+/// A sharp corner between two faces of the sheet, seen along its edge: the first face runs
+/// off to the right, with its inner side (the side the corner closes on) up.
+struct Sharp {
+    /// The outside of the corner, at the end of its edge it is seen from.
+    origin: Vec3,
+    /// Along the edge, away from the eye.
+    axis: Vec3,
+    length: f64,
+    /// The way each face runs from the corner, and the way through it to its inner side.
+    d: [Vec3; 2],
+    inward: [Vec3; 2],
+    /// How far the sheet turns at the corner (radians).
+    turn: f64,
+    /// How far from the outside of the corner the bend begins, on the outer side of either face.
+    outer_back: f64,
+    /// The key of the edge, for the names of what the bend makes.
+    key: u64,
+}
+
+impl Sharp {
+    /// The way the second face runs, as it is seen.
+    fn across(&self) -> Vec2 {
+        Vec2::new(self.d[1].dot(self.d[0]), self.d[1].dot(self.inward[0]))
+    }
+    /// The way through the second face to its inner side, as it is seen.
+    fn up(&self) -> Vec2 {
+        Vec2::new(self.inward[1].dot(self.d[0]), self.inward[1].dot(self.inward[0]))
+    }
 }
 
 /// One of the two faces a corner seam brings together, as the solid has it: the face, the bend
@@ -1222,6 +1254,272 @@ impl Ctx<'_> {
         self.k.release(body);
         if let Some(b) = self.regen.bodies.get_mut(bi) {
             (b.shape, b.names) = (shape, names);
+        }
+        self.sheet_unify(bi, id);
+        Ok(())
+    }
+
+    /// A bend on sharp edges: each edge given is the outside or the inside edge of a corner
+    /// where two faces of the sheet meet with no bend between them. Every corner is first
+    /// cleared back to where its bend begins on either face, for the length of its edge;
+    /// then each gets its bend, tangent to both faces, as far along the edge as both faces
+    /// still reach it. So edges that meet at a corner of the sheet, bent in one feature, have
+    /// their bends end where their bend lines cross, and the walls hang on past them.
+    pub(super) fn sharp_bend(&mut self, id: FeatureId, b: &SharpBend) -> Result<(), Stop> {
+        b.check()?;
+        let sizes = self.doc.sheet_sizes()?;
+        let t = sizes.thickness;
+        let r = b.radius.unwrap_or(sizes.bend_radius);
+        let (bi, body, found) = self.sheet_edges(&b.edges, "bend")?;
+        let topo = self.k.topology(body)?;
+        let faces: Vec<tenon_kernel::FaceInfo> = (0..topo.faces).map(|i| self.k.face_info(body.face(i))).collect::<Result<_, _>>()?;
+        // A flat face of the sheet with its other side one thickness behind it: its normal.
+        let side = |f: u32| -> Option<Vec3> {
+            let face = faces.get(f as usize)?;
+            let SurfaceKind::Plane { normal, .. } = &face.surface else { return None };
+            let n = normal.normalized();
+            faces
+                .iter()
+                .any(|g| matches!(&g.surface, SurfaceKind::Plane { normal: m, .. } if m.normalized().dot(n) < -1.0 + 1e-9 && ((g.centroid - face.centroid).dot(n) + t).abs() < 1e-6 * (1.0 + t)))
+                .then_some(n)
+        };
+
+        // Each corner, seen along its edge.
+        let mut corners: Vec<Sharp> = Vec::with_capacity(found.len());
+        for (e, key) in &found {
+            let info = self.k.edge_info(body.edge(*e))?;
+            if !matches!(info.curve, CurveKind::Line { .. }) || info.length < 1e-6 {
+                return Err("A bend goes on a straight edge, and an edge picked for it is curved.".into());
+            }
+            let &[fa, fb] = topo.edge_faces.get(*e as usize).map_or(&[][..], Vec::as_slice) else {
+                return Err("A bend goes on an edge between two faces of the sheet.".into());
+            };
+            let (Some(na), Some(nb)) = (side(fa), side(fb)) else {
+                return Err(
+                    "A bend on one edge goes on a sharp edge where two faces of the sheet meet, and an edge picked is not one: the faces either side of it are not both flat sides of the sheet. (An edge of the sheet's rim takes a flange, or a bend to an edge of another face; a corner with a bend round it is bent already.)"
+                        .into(),
+                );
+            };
+            let along = (info.end - info.start).normalized();
+            if na.cross(nb).len() < 1e-6 {
+                return Err("The two faces at an edge picked lie in one plane: there is no corner there to bend.".into());
+            }
+            // The outside edge of the corner, or the inside one: beside the inside edge there
+            // is sheet a little way up either face, beside the outside edge none.
+            let middle = (info.start + info.end) * 0.5;
+            let mut inside = [false; 2];
+            for (slot, way) in inside.iter_mut().zip([na - nb, nb - na]) {
+                let probe = self.k.make_sphere(middle + way * (t / 2.0), t * 0.001)?.shape;
+                let near = self.k.min_distance(SubShape::Shape(body), SubShape::Shape(probe)).map(|d| d.value < 1e-6);
+                self.k.release(probe);
+                *slot = near?;
+            }
+            let outside = match inside {
+                [false, false] => true,
+                [true, true] => false,
+                _ => {
+                    return Err(
+                        "The faces at an edge picked are too short to tell which side of the corner it is on: a bend needs faces longer than they are thick.".into()
+                    );
+                }
+            };
+            // Each face runs away from the corner in its own plane, and has its inner side
+            // (the side the corner closes on) to one side of it.
+            let away = |n: Vec3, other: Vec3| {
+                let d = n.cross(along).normalized();
+                if (d.dot(other) < 0.0) == outside { d } else { -d }
+            };
+            let d = [away(na, nb), away(nb, na)];
+            let inward = if outside { [-na, -nb] } else { [na, nb] };
+            let turn = (-d[0].dot(d[1])).clamp(-1.0, 1.0).acos();
+            if !(1f64.to_radians()..=179f64.to_radians()).contains(&turn) {
+                return Err(
+                    "The two faces at an edge picked meet at too sharp or too flat an angle to bend: a bend turns the sheet by 1 to 179 degrees."
+                        .into(),
+                );
+            }
+            let outer_back = (r + t) * (turn / 2.0).tan();
+            // The outside of the corner, where the edge starts.
+            let start = if outside { info.start } else { info.start - (d[0] + d[1]) * (t / d[0].cross(d[1]).len()) };
+            // Seen with the first face running off to the right and its inner side up.
+            let axis = d[0].cross(inward[0]);
+            let origin = if axis.dot(along) > 0.0 { start } else { start + along * info.length };
+            if corners.iter().any(|c| c.axis.cross(axis).len() < 1e-9 && (c.origin - origin).cross(axis).len() < 1e-6 * (1.0 + t)) {
+                return Err("A corner is picked twice for the bend: its outside edge and its inside edge are the one corner.".into());
+            }
+            corners.push(Sharp { origin, axis, length: info.length, d, inward, turn, outer_back, key: *key });
+        }
+
+        // What each corner loses: all of it back to where the bend begins on either face.
+        let mut zones: Vec<Named> = Vec::with_capacity(corners.len());
+        let cleared = (|| -> Result<(), Stop> {
+            for c in &corners {
+                let tag = sub_key(c.key, Part::Cut as u32);
+                let (across, up) = (c.across(), c.up());
+                let at = |p: Vec2| (p, tag);
+                let outline = outline::polygon(&[
+                    at(Vec2::ZERO),
+                    at(Vec2::new(c.outer_back, 0.0)),
+                    at(Vec2::new(c.outer_back, t)),
+                    at(across * c.outer_back + up * t),
+                    at(across * c.outer_back),
+                ]);
+                let frame = Frame::new(c.origin, c.axis, c.d[0]).ok_or("the corner's edge has no direction")?;
+                let profile = Profile { frame, regions: vec![Region { outer: outline::to_loop(&outline), holes: vec![] }] };
+                zones.push(self.sheet_prism(id, &profile, c.length, Some([tag, tag]))?);
+            }
+            Ok(())
+        })();
+        if let Err(e) = cleared {
+            for (s, _) in zones {
+                self.k.release(s);
+            }
+            return Err(e);
+        }
+        let names = self.regen.bodies.get(bi).map(|b| b.names.clone()).unwrap_or_default();
+        let lumps = topo.solids.max(1);
+        let mut now = self.sheet_cut((body, names), true, zones, "bend")?;
+
+        // The bends, each as long as both of its faces reach it, joined on one at a time.
+        let mut pieces: Vec<Named> = Vec::new();
+        let joined = (|| -> Result<(), Stop> {
+            let cut = self.k.topology(now.0)?;
+            let ends: Vec<tenon_kernel::FaceInfo> = (0..cut.faces).map(|i| self.k.face_info(now.0.face(i))).collect::<Result<_, _>>()?;
+            // The ends of the bends, which must stay free: their names and their size.
+            let mut caps: Vec<(u64, f64)> = Vec::new();
+            for c in &corners {
+                // Where face `k` now ends at the bend: the stretches of the edge it reaches.
+                let reach = |k: usize| -> Result<Vec<(f64, f64)>, Stop> {
+                    let mut spans: Vec<(f64, f64)> = Vec::new();
+                    let at_end = c.origin + c.d[k] * c.outer_back;
+                    for (f, face) in ends.iter().enumerate() {
+                        let SurfaceKind::Plane { normal, .. } = &face.surface else { continue };
+                        if normal.normalized().dot(c.d[k]) > -1.0 + 1e-9 || (face.centroid - at_end).dot(c.d[k]).abs() > 1e-6 * (1.0 + t) {
+                            continue;
+                        }
+                        let (mut through, mut run) = ((f64::INFINITY, f64::NEG_INFINITY), (f64::INFINITY, f64::NEG_INFINITY));
+                        for &e in cut.face_edges.get(f).map_or(&[][..], Vec::as_slice) {
+                            let info = self.k.edge_info(now.0.edge(e))?;
+                            for p in [info.start, info.mid, info.end] {
+                                let (deep, far) = ((p - at_end).dot(c.inward[k]), (p - c.origin).dot(c.axis));
+                                through = (through.0.min(deep), through.1.max(deep));
+                                run = (run.0.min(far), run.1.max(far));
+                            }
+                        }
+                        // The face's whole thickness, within the corner's own length.
+                        let slack = 1e-6 * (1.0 + t);
+                        if through.0.abs() <= slack
+                            && (through.1 - t).abs() <= slack
+                            && run.0 >= -slack
+                            && run.1 <= c.length + slack
+                            && run.1 - run.0 > slack
+                        {
+                            spans.push(run);
+                        }
+                    }
+                    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+                    let mut merged: Vec<(f64, f64)> = Vec::new();
+                    for s in spans {
+                        match merged.last_mut() {
+                            Some(last) if s.0 <= last.1 + 1e-7 => last.1 = last.1.max(s.1),
+                            _ => merged.push(s),
+                        }
+                    }
+                    Ok(merged)
+                };
+                let (first, second) = (reach(0)?, reach(1)?);
+                let both: Vec<(f64, f64)> =
+                    first.iter().flat_map(|a| second.iter().map(move |b| (a.0.max(b.0), a.1.min(b.1)))).filter(|s| s.1 - s.0 > 1e-6).collect();
+                if both.is_empty() {
+                    return Err(
+                        "A bend could not be put on an edge: once the corner is cleared for it, the two faces do not both reach the bend anywhere along the edge. A face may be shorter than the bend takes of it: use a smaller bend radius."
+                            .into(),
+                    );
+                }
+                for (j, (from, to)) in both.iter().enumerate() {
+                    let base = if j == 0 { c.key } else { sub_key(c.key, 64 + u32::try_from(j).unwrap_or(u32::MAX - 64)) };
+                    let name = |part: Part| sub_key(base, part as u32);
+                    // From where the bend begins on the first face's inner side, towards the
+                    // corner and round to the right, with the sheet to the left of the way.
+                    let path = strip::walk(Vec2::new(c.outer_back, t), -Vec2::X, &[strip::Step::Bend { radius: r, angle: -c.turn }]);
+                    let region = strip::outline(
+                        &path,
+                        0.0,
+                        t,
+                        |_, left| name(if left { Part::BendOuter } else { Part::BendInner }),
+                        [name(Part::Root), name(Part::Tip)],
+                    )?;
+                    let frame = Frame::new(c.origin + c.axis * *from, c.axis, c.d[0]).ok_or("the corner's edge has no direction")?;
+                    let caps_of = [name(Part::Start), name(Part::End)];
+                    pieces.push(self.sheet_strip(id, &Profile { frame, regions: vec![region] }, &Extent::Distance(to - from), caps_of)?);
+                    let size = c.turn / 2.0 * ((r + t) * (r + t) - r * r);
+                    caps.extend(caps_of.map(|cap| (cap, size)));
+                }
+            }
+            let volume = |ctx: &Self, s: ShapeHandle| ctx.k.mass_properties(s, 1.0).map(|m| m.volume);
+            while let Some(piece) = pieces.pop() {
+                let step = (|| -> Result<Named, Stop> {
+                    let parts = volume(self, now.0)? + volume(self, piece.0)?;
+                    let op = self.k.boolean(BoolOp::Union, now.0, &[piece.0])?;
+                    let checked = self.k.topology(op.shape).map_err(Stop::from).and_then(|topo| {
+                        let whole = volume(self, op.shape)?;
+                        if (whole - parts).abs() > 1e-6 * (1.0 + parts) {
+                            return Err(format!(
+                                "A bend runs into the part: {} mm³ of it would be where the part already is. Use a smaller bend radius, or bend the edges that meet at a corner in one Bend.",
+                                crate::explain::mm((parts - whole).abs())
+                            )
+                            .into());
+                        }
+                        Ok(names_of_boolean(&op.history, &[&now.1, &piece.1], topo.faces))
+                    });
+                    match checked {
+                        Ok(names) => Ok((op.shape, names)),
+                        Err(e) => {
+                            self.k.release(op.shape);
+                            Err(e)
+                        }
+                    }
+                })();
+                self.k.release(piece.0);
+                let next = step?;
+                self.k.release(now.0);
+                now = next;
+            }
+            // A bend whose end lies against sheet that runs on beside it is joined to that
+            // sheet sideways, and the end is no longer all there.
+            let whole = self.k.topology(now.0)?;
+            for (cap, size) in caps {
+                let mut left = 0.0;
+                for (f, name) in now.1.iter().enumerate() {
+                    if matches!(name, Some(FaceOrigin::From { feature, source, .. }) if *feature == id && *source == cap) {
+                        left += self.k.face_info(now.0.face(u32::try_from(f).map_err(|_| "too many faces")?))?.area;
+                    }
+                }
+                if left < size * (1.0 - 1e-6) {
+                    return Err(
+                        "The sheet runs on beside the end of a bend, so the bend would be joined to it sideways. Open the corner there first (Corner Seam > Corner Rip), or cut the sheet back to the bend line beside it, or bend the edges that meet there in one Bend."
+                            .into(),
+                    );
+                }
+            }
+            if whole.solids > lumps {
+                return Err(
+                    "The bends would leave a piece of the sheet on its own, where two of them meet at a corner of it. Rip the corners by their outside edges, so that the floor's corners go with them, or cut the piece off first."
+                        .into(),
+                );
+            }
+            Ok(())
+        })();
+        if let Err(e) = joined {
+            for (s, _) in pieces {
+                self.k.release(s);
+            }
+            self.k.release(now.0);
+            return Err(e);
+        }
+        self.k.release(body);
+        if let Some(view) = self.regen.bodies.get_mut(bi) {
+            (view.shape, view.names) = now;
         }
         self.sheet_unify(bi, id);
         Ok(())

@@ -269,6 +269,11 @@ impl Workbench {
             Pick::Edge { body, edge } => (self.edge_ref_of(body, edge), None),
             Pick::Face { body, face } => (None, self.face_ref_of(body, face)),
         };
+        // What the edge is, for the panels that take it differently: a sharp edge between two
+        // faces of the sheet, or not.
+        let thickness = self.document().sheet_sizes().ok().map(|s| s.thickness);
+        let sharp = matches!((p, thickness), (Pick::Edge { body, edge }, Some(t)) if scene.bodies.get(body).is_some_and(|b| tenon_model::sheet::sharp_edge(b, edge, t)));
+        let mut refused: Option<&str> = None;
         let same_edge = |r: &EdgeRef| matches!(p, Pick::Edge { body, edge } if find_edge(scene, r) == Some((body, edge)));
         let same_face = |r: &FaceRef| matches!(p, Pick::Face { body, face } if find_face(scene, r) == Some((body, face)));
         match (&mut self.panel, eref, fref) {
@@ -277,10 +282,22 @@ impl Workbench {
             (Some(Panel::Hem(f)), Some(r), _) => edit_list(&mut f.edges, r, present, toggle, same_edge),
             (Some(Panel::ContourFlange(f)), Some(r), _) => edit_list(&mut f.edges, r, present, toggle, same_edge),
             (Some(Panel::Bend(f)), Some(r), _) => {
-                edit_list(&mut f.edges, r, present, toggle, same_edge);
-                // A bend is between two edges: a third takes the place of the second.
-                if f.edges.len() > 2 {
-                    f.edges.remove(1);
+                // The first edge says which bend it is: on sharp edges, as many as are picked, or
+                // between an edge of each of two faces (a third takes the place of the second).
+                if f.edges.is_empty() && f.editing.is_none() {
+                    f.sharp = sharp;
+                }
+                if f.sharp != sharp && !present {
+                    refused = Some(if f.sharp {
+                        "Bend: this bend is on sharp edges, and that edge is not one (it is on the rim of the sheet). Clear the edges to bend between two faces."
+                    } else {
+                        "Bend: this bend joins an edge of each of two faces, and that edge is a sharp edge between two. Clear the edges to bend sharp edges."
+                    });
+                } else {
+                    edit_list(&mut f.edges, r, present, toggle, same_edge);
+                    if !f.sharp && f.edges.len() > 2 {
+                        f.edges.remove(1);
+                    }
                 }
             }
             (Some(Panel::CornerSeam(f)), Some(r), _) => {
@@ -301,6 +318,9 @@ impl Workbench {
             }
             (Some(Panel::Shell(s)), None, Some(r)) => edit_list(&mut s.faces, r, present, toggle, same_face),
             _ => return false,
+        }
+        if let Some(why) = refused {
+            self.set_error(why.to_string());
         }
         true
     }

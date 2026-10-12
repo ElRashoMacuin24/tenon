@@ -970,7 +970,9 @@ fn a_bend_is_made_by_clicking_an_edge_of_each_of_two_faces() {
     frames(&mut d, &mut wb);
     assert!(matches!(&wb.panel, Some(Panel::Bend(p)) if p.edges.is_empty() && !p.own_radius && p.double == DoubleBend::FixEdges && !p.flip_fixed));
     let texts = d.texts();
-    for shown in ["Bend", "Edges", "click two edges", "Bend Radius", "By rule", "3 mm", "Double Bend", "Type", "Fix Edges", "Flip Fixed Edge"] {
+    for shown in
+        ["Bend", "Edges", "click a sharp edge, or two edges", "Bend Radius", "By rule", "3 mm", "Double Bend", "Type", "Fix Edges", "Flip Fixed Edge"]
+    {
         assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
     }
     let first = on_screen(&wb, Vec3::new(40.0, 15.0, 2.0));
@@ -1349,4 +1351,102 @@ fn a_square_corner_is_opened_by_the_corner_rip_of_corner_seam() {
     assert!(wb.panel.is_none() && near(volume(&wb), whole - 80.0), "{}: {}", volume(&wb), wb.status());
     let Some(FeatureKind::CornerRip(r)) = wb.document().feature(id).map(|f| f.kind.clone()) else { panic!() };
     assert_eq!(r.edges.len(), 2);
+}
+
+#[test]
+fn sharp_edges_are_made_bends_by_clicking_them_in_the_bend_panel() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1300.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3, "gap": 1 })).unwrap();
+    // A box 60 by 40 by 20, shelled to the sheet's thickness with its top open and its four
+    // corners ripped by their outside edges: four walls standing on a floor, all edges sharp.
+    let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].as_u64().unwrap();
+    wb.exec("sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 })).unwrap();
+    let block = wb.exec("model.extrude", json!({ "sketch": sk, "distance": 20 })).unwrap()["feature"].as_u64().unwrap();
+    let top = wb.exec("model.face_ref", json!({ "origin": { "type": "cap", "feature": block, "end": "end" } })).unwrap();
+    wb.exec("model.shell", json!({ "remove": [top], "thickness": 2 })).unwrap();
+    let corners: Vec<serde_json::Value> =
+        [[0, 0], [60, 0], [60, 40], [0, 40]].iter().map(|c| wb.exec("model.edge_ref", json!({ "at": [c[0], c[1], 10] })).unwrap()).collect();
+    wb.exec("sheet.corner_rip", json!({ "edges": corners })).unwrap();
+    wb.look_from(Vec3::new(-1.0, -1.0, 1.5));
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    let reach = 2.0 + 1.0 / 2f64.sqrt();
+    let ripped = 60.0 * 40.0 * 20.0 - 56.0 * 36.0 * 18.0 - 4.0 * ((reach * reach - (reach - 2.0) * (reach - 2.0)) * 18.0 + reach * reach * 2.0);
+    assert!(near(volume(&wb), ripped), "{} {ripped}", volume(&wb));
+    assert!(wb.exec("sheet.flat", json!({})).is_err(), "a box with sharp edges is not laid flat");
+
+    // Bend, from the Create panel: nothing picked yet, so it is neither kind of bend.
+    wb.run_ui("sheet.bend").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::Bend(p)) if p.edges.is_empty() && !p.sharp));
+    let texts = d.texts();
+    for shown in ["Bend", "Edges", "click a sharp edge, or two edges", "Double Bend"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    // A click on the edge where the front wall stands on the floor, seen from outside: it is
+    // a sharp edge between two faces, so the bend is one on sharp edges, and the panel has no
+    // double bend to offer. With the one edge the bend would end against the floor beside
+    // it, and the part stays as it is, saying why.
+    let front = on_screen(&wb, Vec3::new(30.0, 0.0, 0.0));
+    d.click(&mut wb, front);
+    frames(&mut d, &mut wb);
+    let Some(Panel::Bend(p)) = &wb.panel else { panic!("the bend panel") };
+    assert!(p.sharp && p.edges.len() == 1, "{}", wb.status());
+    let texts = d.texts();
+    for (shown, there) in [("1 selected", true), ("On sharp edges", true), ("Bend Radius", true), ("Double Bend", false), ("Flip Fixed Edge", false)]
+    {
+        assert_eq!(texts.iter().any(|t| t == shown), there, "{shown}: {texts:?}");
+    }
+    assert!(near(volume(&wb), ripped), "{}", volume(&wb));
+    // An edge of the rim is not for this bend: the click is refused, and says so.
+    let rim = on_screen(&wb, Vec3::new(30.0, 0.0, 20.0));
+    d.click(&mut wb, rim);
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::Bend(p)) if p.edges.len() == 1));
+    assert!(wb.status().contains("on sharp edges"), "{}", wb.status());
+    // The other three: under the left wall from outside, and under the back and right walls
+    // from inside the box. With all four the box is a tray: the floor 50 by 30, a bend along
+    // each side of it, and the walls from the top of the bends up.
+    for at in [Vec3::new(0.0, 20.0, 0.0), Vec3::new(30.0, 38.0, 2.0), Vec3::new(58.0, 20.0, 2.0)] {
+        let edge = on_screen(&wb, at);
+        d.click(&mut wb, edge);
+        frames(&mut d, &mut wb);
+    }
+    let Some(Panel::Bend(p)) = &wb.panel else { panic!("the bend panel") };
+    assert_eq!(p.edges.len(), 4, "{}", wb.status());
+    let tray = |r: f64| {
+        let ring = FRAC_PI_2 / 2.0 * ((r + 2.0) * (r + 2.0) - r * r);
+        let (long, wide, high) = (60.0 - 2.0 * (r + 2.0), 40.0 - 2.0 * (r + 2.0), 20.0 - (r + 2.0));
+        long * wide * 2.0 + ring * 2.0 * (long + wide) + high * 2.0 * 2.0 * ((60.0 - 2.0 * reach) + (40.0 - 2.0 * reach))
+    };
+    assert!(near(volume(&wb), tray(3.0)), "{} {}: {}", volume(&wb), tray(3.0), wb.status());
+    // OK: one Bend feature with the four edges and the rule's radius, and the part lays flat.
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let (id, name, kind) = wb.document().features().last().map(|f| (f.id, f.name.clone(), f.kind.clone())).unwrap();
+    let FeatureKind::SharpBend(b) = kind else { panic!("{kind:?}") };
+    assert_eq!((name.as_str(), b.edges.len(), b.radius), ("Bend1", 4, None));
+    assert!(near(volume(&wb), tray(3.0)), "{}", volume(&wb));
+    let flat = wb.exec("sheet.flat", json!({})).unwrap();
+    assert!(flat["bends"].as_array().is_some_and(|b| b.len() == 4), "{flat}");
+
+    // Edited from the browser it is a bend on sharp edges still, with its four; a radius of
+    // its own, typed in, makes the bends tighter.
+    let row = browser_row(&d, "Bend1");
+    double_click(&mut d, &mut wb, row.center());
+    frames(&mut d, &mut wb);
+    let Some(Panel::Bend(p)) = &wb.panel else { panic!("double-click edits the bend: {}", wb.status()) };
+    assert_eq!((p.editing, p.sharp, p.edges.len(), p.own_radius), (Some(id), true, 4, false));
+    d.click(&mut wb, pressable(&d, "tn_bend_by_rule"));
+    frames(&mut d, &mut wb);
+    type_into(&mut d, &mut wb, "tn_props_bend_r", "1");
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none() && near(volume(&wb), tray(1.0)), "{} {}: {}", volume(&wb), tray(1.0), wb.status());
+    let Some(FeatureKind::SharpBend(b)) = wb.document().feature(id).map(|f| f.kind.clone()) else { panic!() };
+    assert_eq!(b.radius, Some(1.0));
 }

@@ -359,7 +359,11 @@ impl SeamPanel {
 #[derive(Clone, Debug)]
 pub(crate) struct BendPanel {
     pub editing: Option<FeatureId>,
-    /// An edge of each of the two faces: the first, then the second.
+    /// On sharp edges: every edge is a corner between two faces that touch, to be made a bend
+    /// where it is. The first edge clicked says which, by what it is.
+    pub sharp: bool,
+    /// Between two faces: an edge of each, the first, then the second. On sharp edges: as
+    /// many of them as are picked.
     pub edges: Vec<EdgeRef>,
     /// A bend radius of this bend's own, in place of the rule's.
     pub own_radius: bool,
@@ -369,8 +373,13 @@ pub(crate) struct BendPanel {
 }
 
 impl BendPanel {
-    /// The feature, once both edges are picked.
+    /// The feature, once its edges are picked: one or more sharp edges, or an edge of each
+    /// of two faces.
     pub(crate) fn kind(&self) -> Option<FeatureKind> {
+        if self.sharp {
+            let bend = sheet::SharpBend { edges: self.edges.clone(), radius: self.own_radius.then_some(self.radius) };
+            return (!self.edges.is_empty()).then_some(FeatureKind::SharpBend(bend));
+        }
         let [a, b] = self.edges.as_slice() else { return None };
         Some(FeatureKind::Bend(sheet::BendBetween {
             edges: [a.clone(), b.clone()],
@@ -1071,17 +1080,36 @@ impl Workbench {
         Ok(())
     }
 
+    /// Whether an edge of the part, as it is shown, is a sharp edge between two faces of the
+    /// sheet: what Bend makes a bend of where it is.
+    pub(crate) fn is_sharp_edge(&self, r: &EdgeRef) -> bool {
+        let Ok(sizes) = self.document().sheet_sizes() else { return false };
+        crate::modify::find_edge(&self.scene, r)
+            .and_then(|(body, edge)| self.scene.bodies.get(body).map(|b| sheet::sharp_edge(b, edge, sizes.thickness)))
+            .unwrap_or(false)
+    }
+
     pub(crate) fn open_bend(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
         let sizes = self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
         let panel = match editing {
             Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
                 FeatureKind::Bend(b) => BendPanel {
                     editing,
+                    sharp: false,
                     edges: b.edges.to_vec(),
                     own_radius: b.radius.is_some(),
                     radius: b.radius.unwrap_or(sizes.bend_radius),
                     double: b.double,
                     flip_fixed: b.flip_fixed,
+                },
+                FeatureKind::SharpBend(b) => BendPanel {
+                    editing,
+                    sharp: true,
+                    edges: b.edges.clone(),
+                    own_radius: b.radius.is_some(),
+                    radius: b.radius.unwrap_or(sizes.bend_radius),
+                    double: DoubleBend::default(),
+                    flip_fixed: false,
                 },
                 _ => return Err("not a bend".into()),
             },
@@ -1089,9 +1117,15 @@ impl Workbench {
                 if !self.has_sheet() {
                     return Err(NO_SHEET.into());
                 }
+                // What is selected already says which bend it is, as the first click would.
+                let picked = self.picked_edges();
+                let sharp = picked.first().is_some_and(|e| self.is_sharp_edge(e));
+                let edges: Vec<EdgeRef> =
+                    if sharp { picked.into_iter().filter(|e| self.is_sharp_edge(e)).collect() } else { picked.into_iter().take(2).collect() };
                 BendPanel {
                     editing: None,
-                    edges: self.picked_edges().into_iter().take(2).collect(),
+                    sharp,
+                    edges,
                     own_radius: false,
                     radius: sizes.bend_radius,
                     double: DoubleBend::default(),
@@ -1102,7 +1136,9 @@ impl Workbench {
         self.panel = Some(Panel::Bend(panel));
         self.start_equations();
         self.view.selection.clear();
-        self.set_status("Bend: click an edge of each of the two faces to join (edges that run alongside one another), then OK.");
+        self.set_status(
+            "Bend: click the sharp edge where two faces meet to make it a bend (several, for edges that meet at a corner), or an edge of each of two faces that do not touch to join them, then OK.",
+        );
         Ok(())
     }
 
@@ -1487,9 +1523,18 @@ impl Workbench {
             Panel::Bend(p) => {
                 section(ui, "Input Geometry", true, |ui| {
                     egui::Grid::new("tn_props_bend_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                        ui.label("Edges").on_hover_text("An edge of each of the two faces, along which the bend joins them");
-                        clear |= picked_row(ui, p.edges.len(), "click two edges");
+                        ui.label("Edges").on_hover_text(if p.sharp {
+                            "The sharp edges to make bends of: each where two faces of the sheet meet, its inside edge or its outside one. Pick edges that meet at a corner together"
+                        } else {
+                            "The sharp edge where two faces meet, or an edge of each of two faces that do not touch, along which the bend joins them"
+                        });
+                        clear |= picked_row(ui, p.edges.len(), "click a sharp edge, or two edges");
                         ui.end_row();
+                        if p.sharp {
+                            ui.label("");
+                            ui.label(RichText::new("On sharp edges").color(t.text_dim)).on_hover_text("Each corner is cleared back to where its bend begins and the bend put in, tangent to both faces: the outer faces stay where they are");
+                            ui.end_row();
+                        }
                     });
                 });
                 section(ui, "Bend", true, |ui| {
@@ -1517,50 +1562,53 @@ impl Workbench {
                         ui.end_row();
                     });
                 });
-                section(ui, "Double Bend", true, |ui| {
-                    egui::Grid::new("tn_props_bend_double").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                        ui.label("Type").on_hover_text(
-                            "How two faces in parallel planes are joined: faces in planes that cross take one bend, whatever is chosen here",
-                        );
-                        choice(
-                            ui,
-                            "tn_bend_double",
-                            &mut p.double,
-                            &[
-                                (
-                                    DoubleBend::FixEdges,
-                                    "fix_edges",
-                                    "Fix Edges",
-                                    "Two equal bends between the edges as they are: neither face is trimmed or extended",
-                                ),
-                                (
-                                    DoubleBend::FortyFive,
-                                    "45",
-                                    "45 Degree",
-                                    "Two bends of 45 degrees and a face between them; one face is trimmed or extended",
-                                ),
-                                (
-                                    DoubleBend::FullRadius,
-                                    "full",
-                                    "Full Radius",
-                                    "For faces one over the other: half a circle, as wide inside as they are apart",
-                                ),
-                                (
-                                    DoubleBend::Ninety,
-                                    "90",
-                                    "90 Degree",
-                                    "Two bends of 90 degrees and a face between them; one face is trimmed or extended",
-                                ),
-                            ],
-                        );
-                        ui.end_row();
+                // (Faces that meet at a sharp edge are in planes that cross: one bend, and both stay.)
+                if !p.sharp {
+                    section(ui, "Double Bend", true, |ui| {
+                        egui::Grid::new("tn_props_bend_double").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                            ui.label("Type").on_hover_text(
+                                "How two faces in parallel planes are joined: faces in planes that cross take one bend, whatever is chosen here",
+                            );
+                            choice(
+                                ui,
+                                "tn_bend_double",
+                                &mut p.double,
+                                &[
+                                    (
+                                        DoubleBend::FixEdges,
+                                        "fix_edges",
+                                        "Fix Edges",
+                                        "Two equal bends between the edges as they are: neither face is trimmed or extended",
+                                    ),
+                                    (
+                                        DoubleBend::FortyFive,
+                                        "45",
+                                        "45 Degree",
+                                        "Two bends of 45 degrees and a face between them; one face is trimmed or extended",
+                                    ),
+                                    (
+                                        DoubleBend::FullRadius,
+                                        "full",
+                                        "Full Radius",
+                                        "For faces one over the other: half a circle, as wide inside as they are apart",
+                                    ),
+                                    (
+                                        DoubleBend::Ninety,
+                                        "90",
+                                        "90 Degree",
+                                        "Two bends of 90 degrees and a face between them; one face is trimmed or extended",
+                                    ),
+                                ],
+                            );
+                            ui.end_row();
+                        });
+                        let flip = ui
+                            .add_enabled(p.double != DoubleBend::FixEdges, egui::Checkbox::new(&mut p.flip_fixed, "Flip Fixed Edge"))
+                            .on_hover_text("The second edge stays where it is and the first face is trimmed or extended, not the other way round")
+                            .on_disabled_hover_text("With Fix Edges both edges stay where they are");
+                        crate::drawing::remember(ui, "tn_bend_flip", flip.rect);
                     });
-                    let flip = ui
-                        .add_enabled(p.double != DoubleBend::FixEdges, egui::Checkbox::new(&mut p.flip_fixed, "Flip Fixed Edge"))
-                        .on_hover_text("The second edge stays where it is and the first face is trimmed or extended, not the other way round")
-                        .on_disabled_hover_text("With Fix Edges both edges stay where they are");
-                    crate::drawing::remember(ui, "tn_bend_flip", flip.rect);
-                });
+                }
             }
             Panel::Fold(p) => {
                 section(ui, "Input Geometry", true, |ui| {

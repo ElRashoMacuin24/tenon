@@ -1221,6 +1221,7 @@ impl Workbench {
                     | FeatureKind::CornerSeam(_)
                     | FeatureKind::CornerRip(_)
                     | FeatureKind::Bend(_)
+                    | FeatureKind::SharpBend(_)
                     | FeatureKind::Fold(_)
                     | FeatureKind::CutAcrossBend(_)
                     | FeatureKind::CutNormal(_) => ("feature.add", json!({ "kind": kind_json })),
@@ -1313,7 +1314,7 @@ impl Workbench {
                                 reopen = Some("sheet.bend");
                             }
                         }
-                        None => self.set_error("Bend: click an edge of each of the two faces".to_string()),
+                        None => self.set_error("Bend: click a sharp edge between two faces, or an edge of each of two faces".to_string()),
                     }
                 }
             }
