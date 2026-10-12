@@ -37,7 +37,10 @@ kept for the parts not built (neighbour origins, split ordinals, vertex referenc
     relief leaves in each are named apart. A hem's faces are named after its edge, the step
     of the fold they are and the side of the sheet; a contour flange's after the curve of
     the sketch they follow (a bend made at a corner: the two lines it joins) and the side of
-    the sheet. A sheet metal face is named as an extrusion is.
+    the sheet. A corner seam's faces are named after the two edges it was given, which of
+    the two faces they are on and the part they are; what it adds in the plane of a face of
+    the part is made one with that face, which keeps its name. A sheet metal face is named
+    as an extrusion is.
 
 Booleans pass names on through `images` (`names_of_boolean`); modify operations through images
 and `generated` (`names_of_modify`).

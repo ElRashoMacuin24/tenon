@@ -2254,6 +2254,23 @@ fn sheet_face(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::SheetFace(face), p)
 }
 
+/// What a corner has of its own: `seam`, `overlap`, `gap`, `relief` and `relief_size`.
+fn corner_options(p: &Value) -> Result<crate::sheet::CornerOptions, CmdError> {
+    let given = |key: &str| p.get(key).is_some_and(|v| !v.is_null());
+    let mut c = crate::sheet::CornerOptions::default();
+    if given("seam") {
+        c.seam = parse(p, "seam")?;
+    }
+    if given("relief") {
+        c.relief = Some(parse(p, "relief")?);
+    }
+    c.overlap = opt_num(p, "overlap")?.unwrap_or(1.0);
+    c.gap = opt_num(p, "gap")?;
+    c.relief_size = opt_num(p, "relief_size")?;
+    c.check().map_err(CmdError)?;
+    Ok(c)
+}
+
 fn sheet_flange(s: &mut Session, p: &Value) -> CmdResult {
     use crate::sheet::{BendPosition, Flange, HeightDatum};
     if s.document().sheet_metal().is_none() {
@@ -2277,6 +2294,7 @@ fn sheet_flange(s: &mut Session, p: &Value) -> CmdResult {
         radius: opt_num(p, "radius")?,
         width,
         miter: p.get("miter").and_then(Value::as_bool).unwrap_or(true),
+        corner: corner_options(p)?,
     };
     flange.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::Flange(flange), p)
@@ -2347,6 +2365,17 @@ fn sheet_contour_flange(s: &mut Session, p: &Value) -> CmdResult {
     };
     flange.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::ContourFlange(flange), p)
+}
+
+fn sheet_corner_seam(s: &mut Session, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let edges: [crate::naming::EdgeRef; 2] =
+        edge_refs(p)?.try_into().map_err(|_| CmdError("a corner seam takes two edges: one at the end of each of the two faces".into()))?;
+    let seam = crate::sheet::CornerSeam { edges, corner: corner_options(p)? };
+    seam.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::CornerSeam(seam), p)
 }
 
 fn sheet_a_side(s: &mut Session, p: &Value) -> CmdResult {
@@ -2903,6 +2932,13 @@ static COMMANDS: &[CommandSpec] = &[
         "sketch (an open profile: lines and arcs end to end; corners between lines become bends, an arc is a bend as drawn); distance (how far the profile is pushed out of its plane); direction: \"default\" | \"flipped\" | \"symmetric\"; position: \"default\" (the sheet goes on the inside of the profile's first corner) | \"flipped\" | \"symmetric\"; radius (inside, of the bends made at corners; default BendRadius); operation: \"join\" (default) | \"new_body\"",
         true,
         sheet_contour_flange
+    ),
+    doc_cmd!(
+        "sheet.corner_seam",
+        "Corner Seam",
+        "edges: [two edge references]: the edge at the end of each of two faces that are bent up from one sheet and come together at a square corner (flanges made apart: edges of one flange close their own corners); the first face's, then the second's. Their bends are ended where the two bend lines cross, the faces brought together, and the corner relieved. seam: \"symmetric\" (default: both stop the gap apart) | \"overlap\" (the first runs across the end of the second) | \"reverse_overlap\"; overlap (how much of the other's thickness is covered, 0 to 1; default 1); gap (default GapSize); relief: \"round\" | \"square\" | \"trim\" and relief_size (default: the rule's)",
+        true,
+        sheet_corner_seam
     ),
     doc_cmd!(
         "sheet.a_side",

@@ -253,6 +253,9 @@ pub(crate) mod bridge {
         /// `kind`: 0 equal distance `a`; 1 distances `a` (on face `reference`) and `b`; 2 distance
         /// `a` on `reference` and angle `b` (radians).
         fn chamfer(body: &Shape, edges: &[u32], kind: u8, a: f64, b: f64, reference: u32, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// Faces of `shape` that lie in one surface made one face (and edges that then run on,
+        /// one edge), across the edges of `faces` only. The images say what each became.
+        fn unify(shape: &Shape, faces: &[u32], hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// Thick solid from `body` with `faces` removed; `offset` < 0 thickens inwards.
         fn shell(body: &Shape, faces: &[u32], offset: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// Sweeps the profile along `path`. `mode`: 0 corrected Frenet, 1 fixed, 2 the profile keeps

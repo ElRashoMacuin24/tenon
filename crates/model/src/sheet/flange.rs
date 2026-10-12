@@ -12,7 +12,7 @@ use tenon_geom::{Frame, Vec2, Vec3};
 use tenon_kernel::{Curve2, Loop, Profile, Region, TaggedCurve2};
 
 use super::outline::{self, Cutter, Piece};
-use super::{BendPosition, CornerShape, FlangeWidth, HeightDatum, ReliefShape, Sizes};
+use super::{BendPosition, CornerShape, FlangeWidth, HeightDatum, ReliefShape, Seam, Sizes};
 
 /// An edge of the sheet a flange grows from.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -301,15 +301,97 @@ impl Pen {
     }
 }
 
+/// How two walls that meet at a corner are brought together.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Joint {
+    pub seam: Seam,
+    /// The gap left between the two walls.
+    pub gap: f64,
+    /// In an overlap seam, how much of the other wall's thickness the wall that overlaps covers:
+    /// 1 runs it on to the other's outer face, 0 only to its inner one.
+    pub overlap: f64,
+}
+
 /// What the rule and the feature say of the corners where two flanges meet.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Corners {
     pub shape: CornerShape,
     /// The relief's size: the diameter of a round one, the side of a square one.
     pub size: f64,
-    /// The gap left between the two walls. Without one they are not mitred: each wall ends
-    /// where its bend does.
-    pub gap: Option<f64>,
+    /// How the two walls are brought together. Without it they are not: each wall ends where
+    /// its bend does.
+    pub joint: Option<Joint>,
+}
+
+/// An end of a flange where it meets another.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Meet {
+    /// The angle between the two edges at the corner (a quarter turn at a square one).
+    pub corner: f64,
+    /// This is the first of the two flanges: in an overlap seam, the one that overlaps.
+    pub first: bool,
+}
+
+/// How far a wall that meets another ends from where their two bend lines cross, measured along
+/// its own edge away from the corner (negative: it reaches on past that point), `h` up the wall
+/// from its bend. `other` is the wall it meets, across a corner of angle `corner`.
+///
+/// - **Symmetric:** the two walls stop either side of the plane that halves the angle between
+///   them, their inner faces `gap` apart all the way up.
+/// - **Overlap:** the first wall runs on across the end of the second, as far into its
+///   thickness as `overlap` says; the second stops `gap` short of the first's inner face. In a
+///   reverse overlap the second runs across the first.
+///
+/// Every end is cut square through the sheet, so where the walls are not square to one another
+/// a wall stops where the first of its two faces gets there. Walls that lean in draw back as
+/// they rise; walls that lean out reach on.
+pub fn seam_end(this: &Shape, other: &Shape, corner: f64, joint: &Joint, first: bool, h: f64) -> f64 {
+    let (sin_c, cos_c) = corner.sin_cos();
+    let (s1, c1) = this.angle.sin_cos();
+    let (s2, c2) = other.angle.sin_cos();
+    // Where this wall's inner face (`face` 0) or outer face (1) comes to the plane `depth` from
+    // the other wall's inner face, towards its outer one.
+    let reach = |face: f64, depth: f64| {
+        // Out from this wall's bend line, and up from the sheet.
+        let out = this.r * s1 + h * c1 + face * this.t * s1;
+        let up = this.r * (1.0 - c1) + h * s1 - face * this.t * c1;
+        (-out * cos_c * s2 - up * c2 - other.r * (1.0 - c2) - depth) / (sin_c * s2)
+    };
+    let stop = |depth: f64| reach(0.0, depth).max(reach(1.0, depth));
+    match (joint.seam, first) {
+        (Seam::Symmetric, _) => {
+            // The two inner faces look at one another across the corner: half the gap from the
+            // plane between them is this far from the other's face.
+            let apart = (2.0 - 2.0 * (c1 * c2 - s1 * s2 * cos_c)).max(0.0).sqrt();
+            reach(0.0, -joint.gap / 2.0 * apart)
+        }
+        (Seam::Overlap, true) | (Seam::ReverseOverlap, false) => stop(joint.overlap * other.t),
+        (Seam::Overlap, false) | (Seam::ReverseOverlap, true) => stop(-joint.gap),
+    }
+}
+
+/// What a corner relief takes out of the flat sheet, in the flat of one of the two flanges: `x`
+/// out from where its bend starts, `y` along its edge from where the two bend lines cross.
+/// `widths` are the widths in the flat of this flange's bend and of the other's. The relief is
+/// centred where the centre lines of the two bends cross:
+/// - round: a disc `size` across;
+/// - square: a square `size` along each bend line (a lozenge where the corner is not square);
+/// - trim: nothing more than the bends ending where their lines cross.
+pub fn relief(widths: [f64; 2], corner: f64, rule: &Corners) -> Option<Cutter> {
+    if rule.size < 1e-6 {
+        return None;
+    }
+    let (sin, cos) = corner.sin_cos();
+    let centre = Vec2::new(widths[0] / 2.0, -(widths[1] + widths[0] * cos) / (2.0 * sin));
+    match rule.shape {
+        CornerShape::Trim => None,
+        CornerShape::Round => Some(Cutter::Disc { center: centre, radius: rule.size / 2.0 }),
+        CornerShape::Square => {
+            // Half a side along this flange's bend line, and along the other's.
+            let (own, other) = (Vec2::new(0.0, rule.size / 2.0), Vec2::new(-sin, cos) * (rule.size / 2.0));
+            Some(Cutter::Polygon(vec![centre - own - other, centre + own - other, centre + own + other, centre - own + other]))
+        }
+    }
 }
 
 impl Shape {
@@ -324,40 +406,17 @@ impl Shape {
         self.setback / (corner / 2.0).tan()
     }
 
-    /// How far along its edge from the corner the wall ends, `h` up the wall from its bend.
-    ///
-    /// Mitred, the two walls stop either side of the plane that halves the corner, their inner
-    /// faces `gap` apart all the way up; each end is cut square through the sheet. Walls that
-    /// lean in draw back as they rise, walls that lean out reach on past the corner.
-    pub fn wall_end(&self, corner: f64, gap: Option<f64>, h: f64) -> f64 {
-        let Some(gap) = gap else { return self.back(corner) };
-        let (sin, cos) = self.angle.sin_cos();
-        // How far out of the sheet the wall's inner face is there.
-        let inner = -self.setback + self.r * sin + h * cos;
-        -inner / (corner / 2.0).tan() + gap / 2.0 / (corner / 2.0).sin()
+    /// How far along its edge from the corner the wall ends, `h` up the wall from its bend,
+    /// where this flange meets another like it ([`seam_end`]).
+    pub fn wall_end(&self, meet: &Meet, joint: Option<&Joint>, h: f64) -> f64 {
+        self.back(meet.corner) + joint.map_or(0.0, |j| seam_end(self, self, meet.corner, j, meet.first, h))
     }
 
-    /// What the corner relief takes out of the flat sheet, in this flange's own flat: `x` out
-    /// from where its bend starts, `y` along its edge from the corner. It is centred where the
-    /// centre lines of the two bends cross:
-    /// - round: a disc `size` across;
-    /// - square: a square `size` along each bend line (a lozenge where the corner is not square);
-    /// - trim: nothing more than the bends ending at the corner.
+    /// The corner relief where this flange meets another like it ([`relief`]), with `y` from the
+    /// corner of the sheet.
     pub fn relief(&self, rho: f64, corner: f64, rule: &Corners) -> Option<Cutter> {
-        if rule.size < 1e-6 {
-            return None;
-        }
-        let half = self.allowance(rho) / 2.0;
-        let centre = Vec2::new(half, self.back(corner) - half / (corner / 2.0).tan());
-        match rule.shape {
-            CornerShape::Trim => None,
-            CornerShape::Round => Some(Cutter::Disc { center: centre, radius: rule.size / 2.0 }),
-            CornerShape::Square => {
-                // Half a side along this flange's bend line, and along the other's.
-                let (own, other) = (Vec2::new(0.0, rule.size / 2.0), Vec2::new(-corner.sin(), corner.cos()) * (rule.size / 2.0));
-                Some(Cutter::Polygon(vec![centre - own - other, centre + own - other, centre + own + other, centre - own + other]))
-            }
-        }
+        let width = self.allowance(rho);
+        relief([width, width], corner, rule).map(|k| k.moved(Vec2::new(0.0, self.back(corner))))
     }
 }
 
@@ -380,18 +439,18 @@ pub struct Pieces {
 }
 
 /// The outlines of the bend and the wall of a flange whose bend takes `span` of an edge
-/// `length` long, and meets another flange at the ends that have a corner angle in `meets`.
+/// `length` long, and meets another flange at the ends that have something in `meets`.
 pub fn pieces(
     shape: &Shape,
     rho: f64,
     span: (f64, f64),
     length: f64,
-    meets: [Option<f64>; 2],
+    meets: [Option<Meet>; 2],
     rule: &Corners,
     tag: impl Fn(Part) -> u64,
 ) -> Result<Pieces, String> {
     let width = shape.allowance(rho);
-    let reliefs = [0, 1].map(|e| meets[e].and_then(|corner| shape.relief(rho, corner, rule)).map(|k| at_end(&k, e, length)));
+    let reliefs = [0, 1].map(|e| meets[e].and_then(|m| shape.relief(rho, m.corner, rule)).map(|k| at_end(&k, e, length)));
     let relieved = |mut outline: Vec<Piece>, parts: [Part; 2]| -> Result<Vec<Piece>, String> {
         for (relief, part) in reliefs.iter().zip(parts) {
             if let Some(cutter) = relief {
@@ -418,8 +477,8 @@ pub fn pieces(
     if high < 1e-9 {
         return Ok(Pieces { bend, wall: Vec::new() });
     }
-    let low_end = |h: f64| meets[0].map_or(span.0, |corner| shape.wall_end(corner, rule.gap, h));
-    let high_end = |h: f64| meets[1].map_or(span.1, |corner| length - shape.wall_end(corner, rule.gap, h));
+    let low_end = |h: f64| meets[0].map_or(span.0, |m| shape.wall_end(&m, rule.joint.as_ref(), h));
+    let high_end = |h: f64| meets[1].map_or(span.1, |m| length - shape.wall_end(&m, rule.joint.as_ref(), h));
     if high_end(0.0) - low_end(0.0) < 1e-6 || high_end(high) - low_end(high) < 1e-6 {
         return Err("The flanges on the edges beside it leave nothing of one of the walls: make the flange lower, or leave that edge out.".into());
     }
@@ -563,6 +622,10 @@ mod tests {
 
     #[test]
     fn where_two_flanges_meet_their_bends_end_and_their_walls_are_mitred() {
+        // The first of two flanges at a corner of angle `corner`, mitred with a gap of 2.
+        let meet = |corner: f64| Meet { corner, first: true };
+        let joint = |seam: Seam, overlap: f64| Joint { seam, gap: 2.0, overlap };
+        let mitred = joint(Seam::Symmetric, 1.0);
         let q = FRAC_PI_2;
         let s = Shape::new(&sizes(), None, q, 20.0, HeightDatum::Outer, BendPosition::Inside).unwrap();
         // The bend lines are 5 in from each edge: at a square corner they cross 5 along each,
@@ -572,17 +635,43 @@ mod tests {
         // Upright walls at a square corner: each inner face is 2 in from its edge, so the two
         // meet 2 along; a gap of 2 between them is root 2 more for each, all the way up.
         let end = 2.0 + 2f64.sqrt();
-        assert!((s.wall_end(q, Some(2.0), 0.0) - end).abs() < 1e-12 && (s.wall_end(q, Some(2.0), 15.0) - end).abs() < 1e-12);
+        assert!((s.wall_end(&meet(q), Some(&mitred), 0.0) - end).abs() < 1e-12 && (s.wall_end(&meet(q), Some(&mitred), 15.0) - end).abs() < 1e-12);
         // Not mitred, a wall ends where its bend does.
-        assert!((s.wall_end(q, None, 7.0) - 5.0).abs() < 1e-12);
+        assert!((s.wall_end(&meet(q), None, 7.0) - 5.0).abs() < 1e-12);
         // Walls that lean out 30 degrees (the sheet turns 60) reach on towards the corner as
         // they rise: half as far as they are high. Walls that lean in draw back as much.
         let out = Shape::new(&sizes(), None, PI / 3.0, 20.0, HeightDatum::Outer, BendPosition::Inside).unwrap();
-        assert!((out.wall_end(q, Some(2.0), 0.0) - out.wall_end(q, Some(2.0), 10.0) - 5.0).abs() < 1e-12);
+        assert!((out.wall_end(&meet(q), Some(&mitred), 0.0) - out.wall_end(&meet(q), Some(&mitred), 10.0) - 5.0).abs() < 1e-12);
         let lean_in = Shape::new(&sizes(), None, 2.0 * PI / 3.0, 20.0, HeightDatum::Outer, BendPosition::Inside).unwrap();
-        assert!((lean_in.wall_end(q, Some(2.0), 10.0) - lean_in.wall_end(q, Some(2.0), 0.0) - 5.0).abs() < 1e-12);
+        assert!((lean_in.wall_end(&meet(q), Some(&mitred), 10.0) - lean_in.wall_end(&meet(q), Some(&mitred), 0.0) - 5.0).abs() < 1e-12);
         // At a blunt corner the walls meet sooner: 2 / tan 60 along, and the gap takes 1 / sin 60.
-        assert!((s.wall_end(2.0 * PI / 3.0, Some(2.0), 3.0) - (2.0 / 3f64.sqrt() + 1.0 / (PI / 3.0).sin())).abs() < 1e-12);
+        assert!((s.wall_end(&meet(2.0 * PI / 3.0), Some(&mitred), 3.0) - (2.0 / 3f64.sqrt() + 1.0 / (PI / 3.0).sin())).abs() < 1e-12);
+        // An overlap. Upright walls at a square corner: the first runs right to the corner, flush
+        // with the other's outer face; the second stops 2 short of the first's inner face, 4
+        // from the corner. In a reverse overlap they change places.
+        let over = joint(Seam::Overlap, 1.0);
+        let second = Meet { corner: q, first: false };
+        assert!(s.wall_end(&meet(q), Some(&over), 6.0).abs() < 1e-12);
+        assert!((s.wall_end(&second, Some(&over), 6.0) - 4.0).abs() < 1e-12);
+        let reverse = joint(Seam::ReverseOverlap, 1.0);
+        assert!((s.wall_end(&meet(q), Some(&reverse), 6.0) - 4.0).abs() < 1e-12 && s.wall_end(&second, Some(&reverse), 6.0).abs() < 1e-12);
+        // Covering half the other's thickness, the first stops 1 from the corner; the second is
+        // where it was.
+        let half = joint(Seam::Overlap, 0.5);
+        assert!((s.wall_end(&meet(q), Some(&half), 0.0) - 1.0).abs() < 1e-12 && (s.wall_end(&second, Some(&half), 0.0) - 4.0).abs() < 1e-12);
+        // Two walls that are not alike (a corner seam between flanges made apart), measured from
+        // where their bend lines cross: a wall's end follows the other wall's bend. With upright
+        // bends of radius 3 and 1 each inner face is its own radius out from its bend line, so
+        // mitred with a gap of 2 each wall reaches on by the other's radius, less root 2.
+        let (big, small) =
+            (Shape { t: 2.0, r: 3.0, angle: q, setback: 0.0, straight: 10.0 }, Shape { t: 2.0, r: 1.0, angle: q, setback: 0.0, straight: 10.0 });
+        assert!((seam_end(&big, &small, q, &mitred, true, 4.0) - (2f64.sqrt() - 1.0)).abs() < 1e-12);
+        assert!((seam_end(&small, &big, q, &mitred, false, 4.0) - (2f64.sqrt() - 3.0)).abs() < 1e-12);
+        // Overlapped, the first runs on to the second's outer face (its radius and thickness
+        // out) and the second stops 2 short of the first's inner face.
+        assert!(
+            (seam_end(&big, &small, q, &over, true, 4.0) + 3.0).abs() < 1e-12 && (seam_end(&small, &big, q, &over, false, 4.0) + 1.0).abs() < 1e-12
+        );
     }
 
     #[test]
@@ -593,7 +682,7 @@ mod tests {
         let rho = 3.0 + 0.44 * 2.0;
         let width = s.allowance(rho);
         assert!((width - FRAC_PI_2 * 3.88).abs() < 1e-12);
-        let rule = |shape: CornerShape, size: f64| Corners { shape, size, gap: Some(2.0) };
+        let rule = |shape: CornerShape, size: f64| Corners { shape, size, joint: None };
         assert_eq!(s.relief(rho, q, &rule(CornerShape::Trim, 8.0)), None);
         assert_eq!(s.relief(rho, q, &rule(CornerShape::Round, 0.0)), None);
         // Half the bend's width out from where it starts, and as far short of where the bends
@@ -626,23 +715,24 @@ mod tests {
         let rho = 3.88;
         let width = s.allowance(rho);
         let tag = |p: Part| p as u64;
+        let first = Meet { corner: q, first: true };
         // Trimmed to the bends and not mitred: two rectangles, the bend from 5 along the edge
         // (where it meets the other flange's) to its end at 40, and the wall the same.
-        let plain = Corners { shape: CornerShape::Trim, size: 8.0, gap: None };
-        let p = pieces(&s, rho, (5.0, 40.0), 40.0, [Some(q), None], &plain, tag).unwrap();
+        let plain = Corners { shape: CornerShape::Trim, size: 8.0, joint: None };
+        let p = pieces(&s, rho, (5.0, 40.0), 40.0, [Some(first), None], &plain, tag).unwrap();
         assert!((outline::area(&p.bend) - width * 35.0).abs() < 1e-9 && p.bend.len() == 4);
         assert!((outline::area(&p.wall) - 15.0 * 35.0).abs() < 1e-9 && p.wall.len() == 4);
         assert_eq!(p.bend.iter().map(|k| k.tag).collect::<std::collections::BTreeSet<_>>().len(), 4, "every side its own name");
         // Mitred with a gap of 2: the wall reaches on past the end of its bend, to 2 + root 2
         // from the corner.
-        let mitred = Corners { gap: Some(2.0), ..plain };
-        let p = pieces(&s, rho, (5.0, 40.0), 40.0, [Some(q), None], &mitred, tag).unwrap();
+        let mitred = Corners { joint: Some(Joint { seam: Seam::Symmetric, gap: 2.0, overlap: 1.0 }), ..plain };
+        let p = pieces(&s, rho, (5.0, 40.0), 40.0, [Some(first), None], &mitred, tag).unwrap();
         assert!((outline::area(&p.wall) - 15.0 * (38.0 - 2f64.sqrt())).abs() < 1e-9);
         // A round relief 8 across is centred 3.05 out and 1.95 along: it bites the middle of
         // the bend's end (a segment of the disc past the chord 3.05 from its centre) and the
         // foot of the wall where it reaches past the bend.
         let round = Corners { shape: CornerShape::Round, ..mitred };
-        let p = pieces(&s, rho, (5.0, 40.0), 40.0, [Some(q), None], &round, tag).unwrap();
+        let p = pieces(&s, rho, (5.0, 40.0), 40.0, [Some(first), None], &round, tag).unwrap();
         let d = width / 2.0;
         let segment = 16.0 * (d / 4.0).acos() - d * (16.0 - d * d).sqrt();
         assert!((outline::area(&p.bend) - (width * 35.0 - segment)).abs() < 1e-9, "{}", outline::area(&p.bend));
@@ -660,18 +750,18 @@ mod tests {
         assert!((outline::area(&p.wall) - (15.0 * (38.0 - 2f64.sqrt()) - bite)).abs() < 1e-9, "{}", outline::area(&p.wall));
         assert_eq!(p.wall.iter().filter(|k| k.arc.is_some() && k.tag == Part::WallReliefStart as u64).count(), 1);
         // A corner at each end: a relief out of each, named apart.
-        let p = pieces(&s, rho, (5.0, 35.0), 40.0, [Some(q), Some(q)], &round, tag).unwrap();
+        let p = pieces(&s, rho, (5.0, 35.0), 40.0, [Some(first), Some(first)], &round, tag).unwrap();
         assert!((outline::area(&p.bend) - (width * 30.0 - 2.0 * segment)).abs() < 1e-9);
         assert_eq!(p.bend.iter().filter(|k| k.tag == Part::BendReliefEnd as u64).count(), 1);
         // No wall when the flange is only its bend.
         let bare = Shape::new(&sizes(), None, q, 5.0, HeightDatum::Outer, BendPosition::Inside).unwrap();
-        assert!(pieces(&bare, rho, (5.0, 40.0), 40.0, [Some(q), None], &round, tag).unwrap().wall.is_empty());
+        assert!(pieces(&bare, rho, (5.0, 40.0), 40.0, [Some(first), None], &round, tag).unwrap().wall.is_empty());
         // What cannot be: walls mitred at both ends of an edge too short for them, and a
         // relief larger than the flange.
-        let e = pieces(&s, rho, (3.0, 3.5), 6.5, [Some(q), Some(q)], &mitred, tag).unwrap_err();
+        let e = pieces(&s, rho, (3.0, 3.5), 6.5, [Some(first), Some(first)], &mitred, tag).unwrap_err();
         assert!(e.contains("leave nothing of one of the walls"), "{e}");
         let huge = Corners { size: 400.0, ..round };
-        let e = pieces(&s, rho, (5.0, 40.0), 40.0, [Some(q), None], &huge, tag).unwrap_err();
+        let e = pieces(&s, rho, (5.0, 40.0), 40.0, [Some(first), None], &huge, tag).unwrap_err();
         assert!(e.contains("larger than the flange"), "{e}");
     }
 }

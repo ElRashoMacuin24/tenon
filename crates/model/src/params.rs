@@ -122,6 +122,9 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
             ("/width/centered/width", Mm),
             ("/width/offset/start", Mm),
             ("/width/offset/end", Mm),
+            ("/gap", Mm),
+            ("/overlap", Ul),
+            ("/relief_size", Mm),
         ],
         FeatureKind::Hem(_) => &[
             ("/shape/single/gap", Mm),
@@ -137,6 +140,7 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
             ("/width/offset/end", Mm),
         ],
         FeatureKind::ContourFlange(_) => &[("/distance", Mm), ("/radius", Mm)],
+        FeatureKind::CornerSeam(_) => &[("/gap", Mm), ("/overlap", Ul), ("/relief_size", Mm)],
         FeatureKind::Sketch { .. }
         | FeatureKind::Mirror(_)
         | FeatureKind::WorkAxis(_)

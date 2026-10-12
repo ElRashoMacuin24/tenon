@@ -59,6 +59,8 @@ model / io / cli  ──>  dyn Kernel  ──>  OcctKernel (Rust arena of shapes
   bend of sheet metal with a relief cut out of it) makes its faces itself: the two round ones on
   cylinders from the outline as curves of their (angle, height) planes, flat sides where the
   outline runs along or round the axis, ruled ones elsewhere, sewn into a solid and checked.
+  `unify` makes faces that lie in one surface one face across the edges it is told of, with
+  the image of every face (OCCT's ShapeUpgrade_UnifySameDomain, every other edge kept).
 - **Threading.** `Kernel: Send`. A kernel is owned by one thread at a time (in the app, the
   regeneration worker); OCCT's STEP translator, which has global state, is serialised by a lock.
 - **Quiet.** OCCT's default message printers are removed so nothing writes to stdout.

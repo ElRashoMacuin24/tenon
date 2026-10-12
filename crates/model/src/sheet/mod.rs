@@ -216,6 +216,108 @@ pub enum BendPosition {
     Tangent,
 }
 
+/// How two walls that meet at a corner are brought together.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Seam {
+    /// Both stop the same way short of one another, with the gap between them.
+    #[default]
+    Symmetric,
+    /// The first runs on across the end of the second, which stops the gap short of it.
+    Overlap,
+    /// The second runs on across the end of the first.
+    ReverseOverlap,
+}
+
+fn one() -> f64 {
+    1.0
+}
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_one(v: &f64) -> bool {
+    *v == 1.0
+}
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_symmetric(s: &Seam) -> bool {
+    *s == Seam::Symmetric
+}
+
+/// What a corner may have of its own in place of the rule's: its seam, its gap and its relief.
+/// Shared by a flange (for all the corners it makes) and a corner seam (for the one it closes).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CornerOptions {
+    #[serde(default, skip_serializing_if = "is_symmetric")]
+    pub seam: Seam,
+    /// In an overlap seam, how much of the other wall's thickness is covered: 0 to 1.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub overlap: f64,
+    /// The gap between the walls; without it, the part's `GapSize`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f64>,
+    /// The relief's shape and size; without them, the rule's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relief: Option<CornerShape>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relief_size: Option<f64>,
+}
+
+impl Default for CornerOptions {
+    fn default() -> Self {
+        CornerOptions { seam: Seam::Symmetric, overlap: 1.0, gap: None, relief: None, relief_size: None }
+    }
+}
+
+impl CornerOptions {
+    /// Nothing of its own: everything is the rule's.
+    pub fn is_plain(&self) -> bool {
+        *self == CornerOptions::default()
+    }
+
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.overlap.is_finite() && (0.0..=1.0).contains(&self.overlap)) {
+            return Err("the overlap of a corner seam is a part of the thickness, from 0 to 1".into());
+        }
+        if let Some(g) = self.gap
+            && !(g.is_finite() && (0.0..=1000.0).contains(&g))
+        {
+            return Err("the gap of a corner seam must be from 0 to 1000 mm".into());
+        }
+        if let Some(s) = self.relief_size
+            && !(s.is_finite() && (0.0..=1000.0).contains(&s))
+        {
+            return Err("the size of a corner relief must be from 0 to 1000 mm".into());
+        }
+        Ok(())
+    }
+
+    /// The corner as it is to be made, with the rule's shape and sizes where it has none of its
+    /// own. `joined`: the walls are brought together at all.
+    pub fn corners(&self, rule: &SheetMetal, sizes: &Sizes, joined: bool) -> flange::Corners {
+        flange::Corners {
+            shape: self.relief.unwrap_or(rule.corner),
+            size: self.relief_size.unwrap_or(sizes.corner_size),
+            joint: joined.then_some(flange::Joint { seam: self.seam, gap: self.gap.unwrap_or(sizes.gap), overlap: self.overlap }),
+        }
+    }
+}
+
+/// The corner between two faces of the sheet closed: the two brought together to a seam, their
+/// bends ended where the two bend lines cross, and the corner relieved. For faces that were not
+/// made by one flange, which closes its own corners.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CornerSeam {
+    /// The edge at the end of each of the two faces, where they come together: the first face's,
+    /// then the second's.
+    pub edges: [EdgeRef; 2],
+    #[serde(flatten)]
+    pub corner: CornerOptions,
+}
+
+impl CornerSeam {
+    pub fn check(&self) -> Result<(), String> {
+        self.corner.check()
+    }
+}
+
 /// How much of its edge a flange takes up.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -253,6 +355,9 @@ pub struct Flange {
     /// brought together until the part's `GapSize` is left between them.
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
     pub miter: bool,
+    /// What its corners have of their own in place of the rule's: the seam, the gap, the relief.
+    #[serde(flatten)]
+    pub corner: CornerOptions,
 }
 
 fn yes() -> bool {
@@ -288,6 +393,7 @@ impl Flange {
         {
             return Err(format!("the bend radius must be from {MIN_BEND_RADIUS} to 1000 mm"));
         }
+        self.corner.check()?;
         match self.width {
             FlangeWidth::Edge => {}
             FlangeWidth::Centered { width } if !(width.is_finite() && width > 0.0) => return Err("the flange width must be more than 0".into()),
@@ -596,6 +702,7 @@ mod tests {
             radius: None,
             width: FlangeWidth::Edge,
             miter: true,
+            corner: CornerOptions::default(),
         };
         assert!(ok.check().unwrap_err().contains("at least one edge"));
         let face = crate::naming::FaceOrigin::Cap { feature: FeatureId(1), end: crate::naming::CapEnd::End };

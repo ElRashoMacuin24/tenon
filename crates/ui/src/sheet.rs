@@ -11,7 +11,7 @@ use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, pos2
 use serde_json::json;
 use tenon_geom::Vec2;
 use tenon_io::flat::Marks;
-use tenon_model::sheet::{self, BendPosition, CornerShape, FlangeWidth, FlatPattern, HeightDatum, HemShape, ReliefShape, Sides};
+use tenon_model::sheet::{self, BendPosition, CornerOptions, CornerShape, FlangeWidth, FlatPattern, HeightDatum, HemShape, ReliefShape, Seam, Sides};
 use tenon_model::{EdgeRef, FeatureId, FeatureKind, Operation, RegionSel};
 use tenon_sketch::Geometry;
 
@@ -66,6 +66,8 @@ pub(crate) struct FlangePanel {
     pub offset_b: f64,
     /// Bring the walls together where this flange meets another at a corner.
     pub miter: bool,
+    /// What its corners have of their own: the seam, the gap, the relief.
+    pub corner: CornerEdit,
 }
 
 impl FlangePanel {
@@ -85,6 +87,7 @@ impl FlangePanel {
             radius: self.own_radius.then_some(self.radius),
             width,
             miter: self.miter,
+            corner: self.corner.options(),
         })
     }
 
@@ -99,6 +102,7 @@ impl FlangePanel {
             WidthChoice::Centered => v.push(("width", "/width/centered/width")),
             WidthChoice::Offset => v.extend([("offset_a", "/width/offset/start"), ("offset_b", "/width/offset/end")]),
         }
+        self.corner.eq_pointers(&mut v);
         v
     }
 }
@@ -195,6 +199,82 @@ impl ContourPanel {
         if self.own_radius {
             v.push(("radius", "/radius"));
         }
+        v
+    }
+}
+
+/// What a corner has of its own in place of the rule's, as a panel holds it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CornerEdit {
+    pub seam: Seam,
+    /// An overlap seam: how much of the other wall's thickness is covered.
+    pub overlap: f64,
+    /// A gap of its own, in place of the rule's.
+    pub own_gap: bool,
+    pub gap: f64,
+    /// A relief of its own (none: the rule's), and a size of its own for it.
+    pub relief: Option<CornerShape>,
+    pub own_size: bool,
+    pub size: f64,
+}
+
+impl CornerEdit {
+    /// The options as a feature has them, with the rule's sizes shown where it has none.
+    pub(crate) fn of(o: &CornerOptions, sizes: Option<&sheet::Sizes>) -> CornerEdit {
+        CornerEdit {
+            seam: o.seam,
+            overlap: o.overlap,
+            own_gap: o.gap.is_some(),
+            gap: o.gap.or(sizes.map(|s| s.gap)).unwrap_or(1.0),
+            relief: o.relief,
+            own_size: o.relief_size.is_some(),
+            size: o.relief_size.or(sizes.map(|s| s.corner_size)).unwrap_or(4.0),
+        }
+    }
+
+    pub(crate) fn options(&self) -> CornerOptions {
+        CornerOptions {
+            seam: self.seam,
+            overlap: if self.seam == Seam::Symmetric { 1.0 } else { self.overlap },
+            gap: self.own_gap.then_some(self.gap),
+            relief: self.relief,
+            relief_size: self.own_size.then_some(self.size),
+        }
+    }
+
+    /// The value fields that take equations as it stands.
+    pub(crate) fn eq_pointers(&self, v: &mut Vec<(&'static str, &'static str)>) {
+        if self.seam != Seam::Symmetric {
+            v.push(("overlap", "/overlap"));
+        }
+        if self.own_gap {
+            v.push(("gap", "/gap"));
+        }
+        if self.own_size {
+            v.push(("relief_size", "/relief_size"));
+        }
+    }
+}
+
+/// The corner between two faces closed: Corner Seam.
+#[derive(Clone, Debug)]
+pub(crate) struct SeamPanel {
+    pub editing: Option<FeatureId>,
+    /// The end of each of the two faces: the first, then the second.
+    pub edges: Vec<EdgeRef>,
+    pub corner: CornerEdit,
+}
+
+impl SeamPanel {
+    /// The feature, once both edges are picked.
+    pub(crate) fn kind(&self) -> Option<FeatureKind> {
+        let [a, b] = self.edges.as_slice() else { return None };
+        Some(FeatureKind::CornerSeam(sheet::CornerSeam { edges: [a.clone(), b.clone()], corner: self.corner.options() }))
+    }
+
+    pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
+        let mut v = Vec::new();
+        self.corner.eq_pointers(&mut v);
         v
     }
 }
@@ -334,6 +414,121 @@ fn width_extents(
     enter
 }
 
+/// The rows of a corner's own settings: its seam and gap when the walls are brought together at
+/// all (`joined`), then its relief. `what` names the panel in the keys. Returns whether Enter
+/// was pressed in a value.
+#[allow(clippy::too_many_arguments)]
+fn corner_fields(
+    ui: &mut Ui,
+    what: &str,
+    c: &mut CornerEdit,
+    joined: bool,
+    sizes: Option<&sheet::Sizes>,
+    by_rule: CornerShape,
+    eqs: &mut Equations,
+    t: &Tokens,
+) -> bool {
+    let mut enter = false;
+    let dim = |ui: &mut Ui, text: String| {
+        ui.label(RichText::new(text).color(t.text_dim));
+    };
+    egui::Grid::new(format!("tn_props_{what}_corner")).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+        if joined {
+            ui.label("Seam").on_hover_text("How the two walls are brought together at the corner");
+            choice(
+                ui,
+                &format!("tn_{what}_seam"),
+                &mut c.seam,
+                &[
+                    (Seam::Symmetric, "symmetric", "Symmetric Gap", "Both walls stop the same way short of one another, the gap apart"),
+                    (Seam::Overlap, "overlap", "Overlap", "The first wall runs on across the end of the second, which stops the gap short of it"),
+                    (Seam::ReverseOverlap, "reverse", "Reverse Overlap", "The second wall runs on across the end of the first"),
+                ],
+            );
+            ui.end_row();
+            if c.seam != Seam::Symmetric {
+                ui.label("Overlap").on_hover_text("How much of the other wall's thickness is covered: 1 is all of it, 0 none");
+                enter |=
+                    eq_value_field(ui, egui::Id::new(format!("tn_props_{what}_overlap")), &mut c.overlap, eqs, "overlap", "", 0.0..=1.0, 110.0, t)
+                        .entered;
+                ui.end_row();
+            }
+            ui.label("Gap").on_hover_text("Left between the two walls");
+            let mut rule = !c.own_gap;
+            let r = ui.checkbox(&mut rule, "By rule");
+            crate::drawing::remember(ui, &format!("tn_{what}_gap_by_rule"), r.rect);
+            r.on_hover_text("The part's GapSize: Miter Gap in Sheet Metal Defaults");
+            if rule == c.own_gap {
+                c.own_gap = !rule;
+                if let (false, Some(s)) = (c.own_gap, sizes) {
+                    c.gap = s.gap;
+                }
+            }
+            ui.end_row();
+            ui.label("");
+            if c.own_gap {
+                enter |=
+                    eq_value_field(ui, egui::Id::new(format!("tn_props_{what}_gap")), &mut c.gap, eqs, "gap", "mm", 0.0..=1000.0, 110.0, t).entered;
+            } else {
+                dim(ui, sizes.map_or("?".into(), |s| format!("{} mm", fmt_value(s.gap))));
+            }
+            ui.end_row();
+        }
+        ui.label("Relief").on_hover_text("The cut where the two bends meet, centred where their centre lines cross");
+        let name = |s: CornerShape| match s {
+            CornerShape::Round => "Round",
+            CornerShape::Square => "Square",
+            CornerShape::Trim => "Trim to Bend",
+        };
+        let rule_text = format!("By rule ({})", name(by_rule));
+        choice(
+            ui,
+            &format!("tn_{what}_relief"),
+            &mut c.relief,
+            &[
+                (None, "rule", rule_text.as_str(), "The shape set in Sheet Metal Defaults"),
+                (Some(CornerShape::Round), "round", "Round", "A round hole"),
+                (Some(CornerShape::Square), "square", "Square", "A square hole, its sides along the two bend lines"),
+                (Some(CornerShape::Trim), "trim", "Trim to Bend", "None: the bends simply end where their lines cross"),
+            ],
+        );
+        ui.end_row();
+        if c.relief.unwrap_or(by_rule) != CornerShape::Trim {
+            ui.label("Relief Size");
+            let mut rule = !c.own_size;
+            let r = ui.checkbox(&mut rule, "By rule");
+            crate::drawing::remember(ui, &format!("tn_{what}_size_by_rule"), r.rect);
+            r.on_hover_text("The part's CornerReliefSize, from Sheet Metal Defaults");
+            if rule == c.own_size {
+                c.own_size = !rule;
+                if let (false, Some(s)) = (c.own_size, sizes) {
+                    c.size = s.corner_size;
+                }
+            }
+            ui.end_row();
+            ui.label("");
+            if c.own_size {
+                enter |= eq_value_field(
+                    ui,
+                    egui::Id::new(format!("tn_props_{what}_relief_size")),
+                    &mut c.size,
+                    eqs,
+                    "relief_size",
+                    "mm",
+                    0.0..=1000.0,
+                    110.0,
+                    t,
+                )
+                .entered;
+            } else {
+                dim(ui, sizes.map_or("?".into(), |s| format!("{} mm", fmt_value(s.corner_size))));
+            }
+            ui.end_row();
+        }
+    });
+    enter
+}
+
 /// Orange and blue enough to tell from the sheet in either theme: bends up and bends down.
 const BEND_UP: Color32 = Color32::from_rgb(0x1f, 0x9d, 0x4a);
 const BEND_DOWN: Color32 = Color32::from_rgb(0xd0, 0x45, 0x35);
@@ -436,6 +631,7 @@ impl Workbench {
             "sheet.flange" => self.open_flange(None)?,
             "sheet.hem" => self.open_hem(None)?,
             "sheet.contour_flange" => self.open_contour(None)?,
+            "sheet.corner_seam" => self.open_corner_seam(None)?,
             "sheet.cut" => self.open_sheet_cut()?,
             "sheet.corner_round" => {
                 self.open_modify("fillet", None)?;
@@ -562,6 +758,7 @@ impl Workbench {
                         offset_a,
                         offset_b,
                         miter: f.miter,
+                        corner: CornerEdit::of(&f.corner, self.document().sheet_sizes().ok().as_ref()),
                     }
                 }
                 _ => return Err("not a flange".into()),
@@ -589,6 +786,7 @@ impl Workbench {
                     offset_a: 0.0,
                     offset_b: 0.0,
                     miter: true,
+                    corner: CornerEdit::of(&CornerOptions::default(), Some(&sizes)),
                 }
             }
         };
@@ -702,6 +900,31 @@ impl Workbench {
         Ok(())
     }
 
+    pub(crate) fn open_corner_seam(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        let sizes = self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::CornerSeam(c) => SeamPanel { editing, edges: c.edges.to_vec(), corner: CornerEdit::of(&c.corner, Some(&sizes)) },
+                _ => return Err("not a corner seam".into()),
+            },
+            None => {
+                if !self.has_sheet() {
+                    return Err(NO_SHEET.into());
+                }
+                SeamPanel {
+                    editing: None,
+                    edges: self.picked_edges().into_iter().take(2).collect(),
+                    corner: CornerEdit::of(&CornerOptions::default(), Some(&sizes)),
+                }
+            }
+        };
+        self.panel = Some(Panel::CornerSeam(panel));
+        self.start_equations();
+        self.view.selection.clear();
+        self.set_status("Corner Seam: click the edge at the end of each of the two faces, where they come together (in an overlap, the first runs across the second), then OK.");
+        Ok(())
+    }
+
     /// The sketch a new contour flange follows: the one being drawn, otherwise the last that has
     /// lines or arcs and no closed profile.
     fn open_profile_sketch(&mut self) -> Result<FeatureId, String> {
@@ -775,6 +998,7 @@ impl Workbench {
     ) -> (bool, bool) {
         let (mut enter, mut clear) = (false, false);
         let sizes = self.document().sheet_sizes().ok();
+        let rule_relief = self.document().sheet_metal().map_or(CornerShape::default(), |r| r.corner);
         match panel {
             Panel::SheetFace(p) => {
                 section(ui, "Input Geometry", true, |ui| {
@@ -909,16 +1133,24 @@ impl Workbench {
                     });
                 });
                 section(ui, "Corner", true, |ui| {
-                    ui.horizontal(|ui| {
-                        let r = ui.checkbox(&mut p.miter, "Auto-Mitering");
-                        crate::drawing::remember(ui, "tn_flange_miter", r.rect);
-                        r.on_hover_text(
-                            "Where the flange's edges meet at a corner, its walls are brought together until the Miter Gap of Sheet Metal Defaults is left between them. Off, each wall ends where its bend does",
-                        );
-                        if let (true, Some(s)) = (p.miter, sizes) {
-                            ui.label(RichText::new(format!("gap {} mm", fmt_value(s.gap))).color(t.text_dim));
-                        }
+                    let r = ui.checkbox(&mut p.miter, "Auto-Mitering");
+                    crate::drawing::remember(ui, "tn_flange_miter", r.rect);
+                    r.on_hover_text(
+                        "Where the flange's edges meet at a corner, its walls are brought together to a seam. Off, each wall ends where its bend does",
+                    );
+                    enter |= corner_fields(ui, "flange", &mut p.corner, p.miter, sizes.as_ref(), rule_relief, eqs, t);
+                });
+            }
+            Panel::CornerSeam(p) => {
+                section(ui, "Input Geometry", true, |ui| {
+                    egui::Grid::new("tn_props_seam_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Edges").on_hover_text("The edge at the end of each of the two faces, where they come together");
+                        clear |= picked_row(ui, p.edges.len(), "click two edges");
+                        ui.end_row();
                     });
+                });
+                section(ui, "Seam", true, |ui| {
+                    enter |= corner_fields(ui, "seam", &mut p.corner, true, sizes.as_ref(), rule_relief, eqs, t);
                 });
             }
             Panel::Hem(p) => {

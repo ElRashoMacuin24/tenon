@@ -63,6 +63,7 @@
 #include <NCollection_Array1.hxx>
 #include <Precision.hxx>
 #include <ShapeFix_Face.hxx>
+#include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Wire.hxx>
@@ -1306,6 +1307,59 @@ std::unique_ptr<Shape> chamfer(const Shape& body, rust::Slice<const std::uint32_
     require_valid(mk.Shape(), "the chamfer gave an invalid solid (is the distance too large for the edges?)");
     auto out = wrap(single_solid(mk.Shape()));
     record_history(mk, 0, body.shape, *out, hist);
+    return out;
+  });
+}
+
+std::unique_ptr<Shape> unify(const Shape& shape, rust::Slice<const std::uint32_t> faces, HistoryOut& hist) {
+  return guarded("unify", [&] {
+    // Only across the edges of the faces given: every other edge stays as it is.
+    NCollection_Map<TopoDS_Shape, TopTools_ShapeMapHasher> open;
+    for (std::uint32_t f : faces) {
+      if (static_cast<int>(f) >= shape.faces.Extent()) {
+        throw std::out_of_range("face index out of range");
+      }
+      for (TopExp_Explorer ex(shape.faces(static_cast<int>(f) + 1), TopAbs_EDGE); ex.More(); ex.Next()) {
+        open.Add(ex.Current());
+      }
+    }
+    NCollection_Map<TopoDS_Shape, TopTools_ShapeMapHasher> keep;
+    for (int i = 1; i <= shape.edges.Extent(); ++i) {
+      if (!open.Contains(shape.edges(i))) {
+        keep.Add(shape.edges(i));
+      }
+    }
+    ShapeUpgrade_UnifySameDomain unifier(shape.shape, true, true, false);
+    unifier.KeepShapes(keep);
+    unifier.Build();
+    const TopoDS_Shape result = unifier.Shape();
+    require_valid(result, "joining faces that lie in one plane gave an invalid solid");
+    auto out = wrap(single_solid(result));
+    const occ::handle<BRepTools_History>& history = unifier.History();
+    const std::pair<std::uint8_t, const ShapeMap*> kinds[] = {{KIND_FACE, &shape.faces}, {KIND_EDGE, &shape.edges}};
+    for (const auto& kind : kinds) {
+      const ShapeMap& result_map = kind.first == KIND_FACE ? out->faces : out->edges;
+      for (int i = 1; i <= kind.second->Extent(); ++i) {
+        const TopoDS_Shape& s = (*kind.second)(i);
+        ImageEntry entry;
+        entry.input = 0;
+        entry.kind = kind.first;
+        entry.index = static_cast<std::uint32_t>(i - 1);
+        if (history.IsNull() || !history->IsRemoved(s)) {
+          bool moved = false;
+          if (!history.IsNull()) {
+            for (const TopoDS_Shape& m : history->Modified(s)) {
+              push_index(entry.images, result_map, m);
+              moved = true;
+            }
+          }
+          if (!moved) {
+            push_index(entry.images, result_map, s);
+          }
+        }
+        hist.images.push_back(std::move(entry));
+      }
+    }
     return out;
   });
 }

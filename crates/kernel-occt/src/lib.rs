@@ -485,6 +485,17 @@ impl Kernel for OcctKernel {
         self.finish(shape, hist)
     }
 
+    fn unify(&mut self, body: ShapeHandle, faces: &[FaceId]) -> KResult<Op> {
+        self.not_cancelled()?;
+        if faces.iter().any(|f| f.shape != body) {
+            return Err(bad("a face to join is not on the body"));
+        }
+        let idx: Vec<u32> = faces.iter().map(|f| f.index).collect();
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::unify(self.get(body)?, &idx, &mut hist).map_err(failed("unify"))?;
+        self.finish(shape, hist)
+    }
+
     fn shell(&mut self, body: ShapeHandle, open_faces: &[FaceId], thickness: f64) -> KResult<Op> {
         self.not_cancelled()?;
         let t = check::size("shell thickness", thickness.abs())?;

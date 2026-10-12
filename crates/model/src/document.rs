@@ -785,6 +785,8 @@ pub enum FeatureKind {
     Hem(crate::sheet::Hem),
     /// A strip of sheet along an open profile.
     ContourFlange(crate::sheet::ContourFlange),
+    /// The corner between two faces of the sheet closed.
+    CornerSeam(crate::sheet::CornerSeam),
 }
 
 impl FeatureKind {
@@ -844,6 +846,7 @@ impl FeatureKind {
             FeatureKind::Flange(_) => "Flange",
             FeatureKind::Hem(_) => "Hem",
             FeatureKind::ContourFlange(_) => "Contour Flange",
+            FeatureKind::CornerSeam(_) => "Corner Seam",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -874,6 +877,7 @@ impl FeatureKind {
             FeatureKind::Flange(_) => "Flange",
             FeatureKind::Hem(_) => "Hem",
             FeatureKind::ContourFlange(_) => "Contour Flange",
+            FeatureKind::CornerSeam(_) => "Corner Seam",
         }
     }
     /// Features this one depends on.
@@ -912,6 +916,7 @@ impl FeatureKind {
             FeatureKind::Flange(f) => f.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::Hem(h) => h.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::ContourFlange(c) => vec![c.sketch],
+            FeatureKind::CornerSeam(c) => c.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -1304,6 +1309,7 @@ impl Document {
                 FeatureKind::Hem(h) => h.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::ContourFlange(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
                 FeatureKind::ContourFlange(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::CornerSeam(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

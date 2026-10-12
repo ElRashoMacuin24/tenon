@@ -178,6 +178,13 @@ pub trait Kernel: Send {
         let _ = (body, edges, spec);
         unsupported!("chamfer")
     }
+    /// `body` with faces that lie in one surface made one face, and edges that then run on in one
+    /// line or circle made one edge. Only across the edges of `faces`: what touches none of them
+    /// stays as it is. The images say what every face and edge became.
+    fn unify(&mut self, body: ShapeHandle, faces: &[FaceId]) -> KResult<Op> {
+        let _ = (body, faces);
+        unsupported!("unify")
+    }
     /// Hollow out `body`, removing `open_faces`; positive `thickness` keeps the outer skin.
     fn shell(&mut self, body: ShapeHandle, open_faces: &[FaceId], thickness: f64) -> KResult<Op> {
         let _ = (body, open_faces, thickness);

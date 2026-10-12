@@ -120,7 +120,7 @@ fn normal_at(face: &FaceInfo, p: Vec3) -> Option<Vec3> {
 /// Whether round face `i` is one side of a bend: it has a partner about the same axis, one
 /// thickness larger (then `i` is the inside of the bend, `Some(true)`) or smaller. The rounded
 /// rim of a sheet and the wall of a hole have none.
-fn bend_side(i: usize, faces: &[FaceInfo], t: f64) -> Option<bool> {
+pub(crate) fn bend_side(i: usize, faces: &[FaceInfo], t: f64) -> Option<bool> {
     let SurfaceKind::Cylinder { axis, radius } = &faces.get(i)?.surface else { return None };
     let tol = 1e-6 * (1.0 + radius + t);
     for (j, f) in faces.iter().enumerate() {

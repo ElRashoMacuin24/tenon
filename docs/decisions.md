@@ -1315,3 +1315,58 @@ bends are true cylinders and the flat pattern needs nothing new.
   compares files without regard to line ends: both had failed on one CI platform only.
 - **The M8 example** gets the mitred corners and centred reliefs by being regenerated, and a
   hem along the top of its back wall; its README works the new numbers out by hand.
+
+## DEC-066 Corner Seam, and corners with a seam of their own (2026-10-11)
+
+Asked for by the owner after the second round: Corner Seam next.
+
+**Seams.** Two walls at a corner are brought together in one of three ways (`sheet::Seam`):
+*symmetric* (both stop the same way short of one another, the gap between their inner faces:
+what DEC-063 called mitred), *overlap* (the first runs on across the end of the second, as far
+into its thickness as `overlap` says, 1 by default; the second stops the gap short of the
+first's inner face) and *reverse overlap* (the second runs across the first). These are
+Inventor's Symmetric Gap, Overlap and Reverse Overlap, with its Percent Overlap. One function
+(`flange::seam_end`) places a wall's end for any pair of walls: unlike radii, heights and
+angles included, since each wall's end follows the other wall's faces.
+
+- The gap is measured between the walls themselves (Inventor's Maximum Gap Distance, its
+  default); the older Face/Edge Distance is not offered.
+- Ends are cut square through the sheet. Where two walls are not square to one another a wall
+  stops where the first of its two faces reaches the other, so nothing ever passes into the
+  other wall.
+
+**A flange's own corners** (`flange` gains `seam`, `overlap`, `gap`, `relief`, `relief_size`;
+the Corner section of its panel). They apply to every corner the feature makes; the first of
+two walls is the one whose edge comes first in the feature. Without them a corner has the
+rule's gap and relief and a symmetric seam, as before; Auto-Mitering off still leaves each wall
+ending where its bend does. Inventor has these per corner in a table; a corner of its own in
+Tenon is a Corner Seam on it.
+
+**Corner Seam** (`corner_seam`; Sheet Metal > Modify > Corner Seam) closes the corner between
+two flanges that were made apart. One after the other, the first flange runs the whole length
+of its edge, bend and all, and the second starts where that bend left its own edge: the corner
+is open by a bend's radius, with the end of the first bend through it. Given the edge at the
+end of each of the two walls, the feature
+
+1. reads from the solid what each wall is: the bend along its foot (a round face with a
+   partner one thickness away), the flat that bend comes up from, the bend's radius and
+   angle, the wall's height;
+2. finds where the two bend lines cross, and cuts away what of either flange runs on past it;
+3. brings the walls to the seam, adding to a wall or cutting it back;
+4. cuts the relief, laid out in the flat as a flange's is, out of the flat, both bends (as a
+   rolled outline: `Kernel::roll` makes the cutting tool here) and both walls.
+
+So it works on what is there, whatever made it, and the corner it leaves is the corner one
+flange makes of the same two edges: the same solid and the same flat pattern (the test
+compares them, for every seam and relief).
+
+- **The piece put on a wall is the wall.** `Kernel::unify` (new) makes faces that lie in one
+  plane one face, across the edges of the faces a feature added and nowhere else; such a face
+  keeps the name the part had for it. A sketch or a flange on the wall still finds it.
+- **Square corners only**, between two faces bent up from one flat, at an outside corner. At
+  any other angle the bends of two flanges made apart already share space; edges of one
+  flange close their own corners at any angle (DEC-063).
+- Not done: Corner Rip (opening the corner of a solid made some other way), the mitre
+  between two faces in one plane, Extend Corner (aligned or perpendicular), the Face/Edge
+  gap, No Seam as a choice in the feature (a corner without a seam is one without the
+  feature).

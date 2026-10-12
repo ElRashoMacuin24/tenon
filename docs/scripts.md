@@ -260,6 +260,32 @@ The profile's curves must join end to end: start each where the last one ended (
 profile's first corner unless `position` is `flipped` or `symmetric`, so the profile above is
 the outside of the channel. A hem's `length` is over all, from the outside of its fold.
 
+Flanges made one after the other leave the corner between them open: the first runs the whole
+length of its edge, and the second starts where the first one's bend left its own.
+`sheet.corner_seam` closes it, given the edge at the end of each of the two walls (the first
+wall's, then the second's), and makes of it the corner one flange makes of both edges:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3, "corner": "round" } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 60, "y2": 40 }, "as": "r" },
+{ "run": "sheet.face", "with": { "sketch": "$s.feature" }, "as": "face" },
+{ "run": "model.edge_ref", "with": { "faces": [{ "type": "cap", "feature": "$face.feature", "end": "end" }, { "type": "side", "feature": "$face.feature", "curve": "$r.lines.0" }] }, "as": "front" },
+{ "run": "sheet.flange", "with": { "edges": ["$front"], "height": 15 } },
+{ "run": "model.edge_ref", "with": { "faces": [{ "type": "cap", "feature": "$face.feature", "end": "end" }, { "type": "side", "feature": "$face.feature", "curve": "$r.lines.1" }] }, "as": "right" },
+{ "run": "sheet.flange", "with": { "edges": ["$right"], "height": 15 } },
+{ "run": "model.edge_ref", "with": { "at": [60, 0, 10] }, "as": "front_end" },
+{ "run": "model.edge_ref", "with": { "at": [60, 5, 10] }, "as": "right_end" },
+{ "run": "sheet.corner_seam", "with": { "edges": ["$front_end", "$right_end"], "seam": "overlap" } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 6880.36303831 } }
+```
+
+`seam` is `symmetric` (the default: both walls stop the gap apart), `overlap` (the first wall
+runs across the end of the second) or `reverse_overlap`; `overlap` says how much of the other
+wall's thickness is covered (1 unless given), `gap` and `relief`, `relief_size` stand in for
+the rule's. `sheet.flange` takes the same five for the corners it makes itself, where the
+first wall is the one whose edge comes first in `edges`.
+
 `sheet.flat` lays the part flat and returns the size of the sheet (`length`, `width`), its
 `area`, the `cut_length`, the number of cut-outs (`holes`) and every bend's `angle`, `radius`,
 `allowance` and whether it is `up`; with `curves: true`, the outlines too. `sheet.export_dxf`

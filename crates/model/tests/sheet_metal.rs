@@ -1113,3 +1113,182 @@ fn a_six_sided_tray_is_mitred_and_relieved_at_its_blunt_corners() {
     assert!(body["valid"] == true && body["solids"] == 1, "{body}");
     assert_eq!(flat(&mut s, &mut k)["bends"].as_array().unwrap().len(), 6);
 }
+
+/// A 60 x 40 plate with a wall 15 high on its front edge and on its right edge: as one flange
+/// (which closes its own corner as `options` say) or, `apart`, as two flanges made one after the
+/// other. Returns the plate's face feature as well.
+fn two_walls(apart: bool, rule: Value, options: Value) -> (Session, OcctKernel, u64) {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (face, lines) = plate(&mut s, &mut k, 60.0, 40.0);
+    run(&mut s, &mut k, "sheet.defaults", rule);
+    let (front, right) = (rim(&mut s, &mut k, face, "end", lines[0]), rim(&mut s, &mut k, face, "end", lines[1]));
+    if apart {
+        run(&mut s, &mut k, "sheet.flange", json!({ "edges": [front], "height": 15 }));
+        let mut p = json!({ "edges": [right], "height": 15 });
+        for (key, v) in options.as_object().unwrap() {
+            p[key] = v.clone();
+        }
+        run(&mut s, &mut k, "sheet.flange", p);
+    } else {
+        let mut p = json!({ "edges": [front, right], "height": 15 });
+        for (key, v) in options.as_object().unwrap() {
+            p[key] = v.clone();
+        }
+        run(&mut s, &mut k, "sheet.flange", p);
+    }
+    (s, k, face)
+}
+
+/// A corner seam between the two walls of [`two_walls`] made apart: the front wall first.
+fn seam(s: &mut Session, k: &mut OcctKernel, options: Value) -> u64 {
+    // The upright edges at the ends of the two walls, where they come together.
+    let front = run(s, k, "model.edge_ref", json!({ "at": [60, 0, 10] }));
+    let right = run(s, k, "model.edge_ref", json!({ "at": [60, 5, 10] }));
+    let mut p = json!({ "edges": [front, right] });
+    for (key, v) in options.as_object().unwrap() {
+        p[key] = v.clone();
+    }
+    id(&run(s, k, "sheet.corner_seam", p), "feature")
+}
+
+#[test]
+fn a_corner_seam_closes_the_corner_between_flanges_made_apart() {
+    let ba = allowance(FRAC_PI_2);
+    // Two flanges, one after the other. The first runs the whole length of its edge, bend and
+    // all, through the corner; the second starts where the first one's bend left its edge, so
+    // the corner is left open by a bend's radius, with the end of the first bend sticking out.
+    let (mut s, mut k, _) = two_walls(true, json!({ "corner": "trim" }), json!({}));
+    let open = 55.0 * 35.0 * T + bend_volume(FRAC_PI_2, 60.0 + 35.0) + 10.0 * T * (60.0 + 35.0);
+    assert!(near(volume(&mut s, &mut k), open), "{} {open}", volume(&mut s, &mut k));
+
+    // A corner seam between the two ends. The bends now end where their bend lines cross (55
+    // along the front, 5 along the side) and the walls are brought together with a gap of 2:
+    // each stops 2 + root 2 from the corner, as in one flange.
+    let end = 2.0 + 2f64.sqrt();
+    let closed = |walls: f64| 55.0 * 35.0 * T + bend_volume(FRAC_PI_2, 90.0) + 10.0 * T * walls;
+    let id = seam(&mut s, &mut k, json!({}));
+    assert!(near(volume(&mut s, &mut k), closed(100.0 - 2.0 * end)), "{} {}", volume(&mut s, &mut k), closed(100.0 - 2.0 * end));
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "area"), 55.0 * 35.0 + ba * 90.0 + 10.0 * (100.0 - 2.0 * end)), "{f}");
+    assert!(f["bends"].as_array().unwrap().len() == 2 && near(num(&f, "length"), 55.0 + ba + 10.0), "{f}");
+
+    // Where the wall's end is: the middle of the end face of the front wall (which looks along
+    // +X) and of the side wall (which looks along -Y).
+    let ends = |s: &mut Session, k: &mut OcctKernel| {
+        let all = flats(s, k);
+        let at =
+            |normal: Vec3| all.iter().find(|f| f.0.near(normal, 1e-9) && (f.2 - 10.0 * T).abs() < 1e-6).map(|f| f.1).expect("the wall's end face");
+        (at(Vec3::X).x, at(-Vec3::Y).y)
+    };
+    let (front, side) = ends(&mut s, &mut k);
+    assert!((front - (60.0 - end)).abs() < 1e-9 && (side - end).abs() < 1e-9, "{front} {side}");
+    // The piece put on a wall's end is the wall: its outer face is one face its whole length,
+    // and still the first flange's.
+    let outer: Vec<_> = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(-Vec3::Y, 1e-9) && f.2 > 100.0).collect();
+    assert!(outer.len() == 1 && near(outer[0].2, 10.0 * (60.0 - end)), "{outer:?}");
+    let first = s.document().features().iter().find(|f| f.name == "Flange1").unwrap().id.0;
+    let wall = run(&mut s, &mut k, "model.face_ref", json!({ "at": [56, 0, 10] }));
+    assert!(wall["origin"]["type"] == "from" && wall["origin"]["feature"] == first, "{wall}");
+
+    // An overlap: the first wall (the front one) runs right to the corner, across the end of
+    // the second, which stops 2 short of its inner face. Reversed, the side wall runs across.
+    update(&mut s, &mut k, id, json!({ "seam": "overlap" }));
+    assert!(near(volume(&mut s, &mut k), closed(60.0 + 36.0)), "{}", volume(&mut s, &mut k));
+    let (front, side) = ends(&mut s, &mut k);
+    assert!((front - 60.0).abs() < 1e-9 && (side - 4.0).abs() < 1e-9, "{front} {side}");
+    update(&mut s, &mut k, id, json!({ "seam": "reverse_overlap" }));
+    let (front, side) = ends(&mut s, &mut k);
+    assert!((front - 56.0).abs() < 1e-9 && side.abs() < 1e-9, "{front} {side}");
+    assert!(near(volume(&mut s, &mut k), closed(56.0 + 40.0)));
+    // Over half the other's thickness only; a gap of its own.
+    update(&mut s, &mut k, id, json!({ "seam": "overlap", "overlap": 0.5, "gap": 0.5 }));
+    let (front, side) = ends(&mut s, &mut k);
+    assert!((front - 59.0).abs() < 1e-9 && (side - 2.5).abs() < 1e-9, "{front} {side}");
+    // It is one sound solid that lays flat, whichever the seam.
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    assert!(near(num(&flat(&mut s, &mut k), "area"), 55.0 * 35.0 + ba * 90.0 + 10.0 * (59.0 + 37.5)));
+
+    // With a relief, the seamed corner is the corner one flange makes of the same two edges:
+    // the same solid and the same flat pattern, for every relief and seam.
+    for (rule, options) in [
+        (json!({ "corner": "round" }), json!({})),
+        (json!({ "corner": "square" }), json!({})),
+        (json!({ "corner": "round", "corner_size": 12 }), json!({ "seam": "overlap" })),
+        (json!({ "corner": "trim" }), json!({ "seam": "reverse_overlap", "gap": 1.0, "relief": "round", "relief_size": 10.0 })),
+    ] {
+        let (mut one, mut k1, _) = two_walls(false, rule.clone(), options.clone());
+        let (mut two, mut k2, _) = two_walls(true, rule.clone(), json!({}));
+        seam(&mut two, &mut k2, options.clone());
+        let (v1, v2) = (volume(&mut one, &mut k1), volume(&mut two, &mut k2));
+        assert!((v1 - v2).abs() < 1e-6 * v1, "{rule} {options}: {v1} {v2}");
+        let (f1, f2) = (flat(&mut one, &mut k1), flat(&mut two, &mut k2));
+        for key in ["area", "cut_length", "length", "width"] {
+            assert!((num(&f1, key) - num(&f2, key)).abs() < 1e-6 * num(&f1, key), "{rule} {options}: {key} {} {}", num(&f1, key), num(&f2, key));
+        }
+        let body = &run(&mut two, &mut k2, "model.topology", json!({}))["bodies"][0];
+        assert!(body["valid"] == true && body["solids"] == 1, "{rule} {options}: {body}");
+    }
+
+    // Two flanges that are not alike: the side wall's bend has radius 1, so its bend line is 3
+    // in from its edge and the two cross at (57, 5). Mitred with a gap of 2, each wall's end
+    // follows the other's bend: the front one stops root 2 - 1 short of the crossing, the side
+    // one reaches 3 - root 2 past it.
+    let (mut s, mut k, _) = two_walls(true, json!({ "corner": "trim" }), json!({ "radius": 1 }));
+    seam(&mut s, &mut k, json!({}));
+    let folded = 57.0 * 35.0 * T
+        + bend_volume(FRAC_PI_2, 57.0)
+        + FRAC_PI_2 / 2.0 * (9.0 - 1.0) * 35.0
+        + T * (10.0 * (57.0 - (2f64.sqrt() - 1.0)) + 12.0 * (35.0 + 3.0 - 2f64.sqrt()));
+    assert!(near(volume(&mut s, &mut k), folded), "{} {folded}", volume(&mut s, &mut k));
+
+    // What is no corner to close.
+    let (mut s, mut k, _) = two_walls(true, json!({}), json!({}));
+    let (front, right) =
+        (run(&mut s, &mut k, "model.edge_ref", json!({ "at": [60, 0, 10] })), run(&mut s, &mut k, "model.edge_ref", json!({ "at": [60, 5, 10] })));
+    // One edge; the top of a wall instead of its end; an edge of the plate.
+    let e = refused(&mut s, &mut k, "sheet.corner_seam", json!({ "edges": [front] }));
+    assert!(e.contains("takes two edges"), "{e}");
+    let top = run(&mut s, &mut k, "model.edge_ref", json!({ "at": [30, 0, 15] }));
+    run(&mut s, &mut k, "sheet.corner_seam", json!({ "edges": [top, right] }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("has no bend along its foot") || e.contains("pick, on each, the straight edge at its end"), "{e}");
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    let plate_corner = run(&mut s, &mut k, "model.edge_ref", json!({ "at": [0, 40, 1] }));
+    run(&mut s, &mut k, "sheet.corner_seam", json!({ "edges": [plate_corner, right] }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("A corner seam is between the ends of two faces of the sheet"), "{e}");
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    let e = refused(&mut s, &mut k, "sheet.corner_seam", json!({ "edges": [front, right], "overlap": 1.5 }));
+    assert!(e.contains("from 0 to 1"), "{e}");
+}
+
+#[test]
+fn a_flange_gives_its_own_corners_a_seam_a_gap_and_a_relief() {
+    // One flange on the front and the right edge. Overlapped, the first edge's wall runs right
+    // to the corner and the second stops 2 short of its inner face.
+    let closed = |walls: f64| 55.0 * 35.0 * T + bend_volume(FRAC_PI_2, 90.0) + 10.0 * T * walls;
+    let (mut s, mut k, _) = two_walls(false, json!({ "corner": "trim" }), json!({ "seam": "overlap" }));
+    assert!(near(volume(&mut s, &mut k), closed(60.0 + 36.0)), "{}", volume(&mut s, &mut k));
+    let flange = u64::from(s.document().features().last().unwrap().id.0);
+    // Half way into the other's thickness, with a gap of 1: 59 and 37.
+    update(&mut s, &mut k, flange, json!({ "overlap": 0.5, "gap": 1.0 }));
+    assert!(near(volume(&mut s, &mut k), closed(59.0 + 37.0)), "{}", volume(&mut s, &mut k));
+    // A relief of the flange's own in place of the rule's (which has none): square, 8 across.
+    update(&mut s, &mut k, flange, json!({ "seam": "symmetric", "overlap": 1.0, "gap": null, "relief": "square", "relief_size": 8.0 }));
+    let (mut by_rule, mut k2, _) = two_walls(false, json!({ "corner": "square" }), json!({}));
+    let (v1, v2) = (volume(&mut s, &mut k), volume(&mut by_rule, &mut k2));
+    assert!(near(v1, v2), "{v1} {v2}");
+    // Not mitred, the seam says nothing: each wall ends where its bend does.
+    update(&mut s, &mut k, flange, json!({ "miter": false, "seam": "overlap", "relief": "trim" }));
+    assert!(near(volume(&mut s, &mut k), closed(90.0)), "{}", volume(&mut s, &mut k));
+    // What it cannot have.
+    let (mut s, mut k, _) = two_walls(false, json!({}), json!({}));
+    let front = run(&mut s, &mut k, "model.edge_ref", json!({ "at": [30, 40, 2] }));
+    let e = refused(&mut s, &mut k, "sheet.flange", json!({ "edges": [front], "height": 15, "overlap": -0.5 }));
+    assert!(e.contains("from 0 to 1"), "{e}");
+    let e = refused(&mut s, &mut k, "sheet.flange", json!({ "edges": [front], "height": 15, "seam": "welded" }));
+    assert!(e.contains("welded"), "{e}");
+}

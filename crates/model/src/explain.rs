@@ -96,6 +96,9 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::Hem(_), _) => {
             "The hem could not be built on the sheet. It may fold into the part or into itself: try a larger gap, a shorter hem, or fold it to the other side.".into()
         }
+        (FeatureKind::CornerSeam(_), _) => {
+            "The corner could not be closed. The two faces may not come together at one corner of the sheet, or a relief may take too much of them: check the edges picked, or try a smaller relief.".into()
+        }
         (FeatureKind::ContourFlange(_), _) => {
             "The contour flange could not be made from this profile. It may cross itself, or a bend may be too tight for the sheet: check the sketch, or try a smaller bend radius.".into()
         }

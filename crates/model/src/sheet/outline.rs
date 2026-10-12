@@ -76,6 +76,25 @@ pub enum Cutter {
 }
 
 impl Cutter {
+    /// A point inside it.
+    fn centre(&self) -> Vec2 {
+        match self {
+            Cutter::Disc { center, .. } => *center,
+            Cutter::Polygon(corners) => corners.iter().fold(Vec2::ZERO, |a, c| a + *c) / corners.len().max(1) as f64,
+        }
+    }
+
+    /// Its own outline as pieces, every one tagged `tag` (a disc: as two half circles).
+    fn pieces(&self, tag: u64) -> Vec<Piece> {
+        match self {
+            Cutter::Disc { center, radius } => {
+                let (a, b) = (*center + Vec2::new(*radius, 0.0), *center - Vec2::new(*radius, 0.0));
+                vec![Piece { a, b, arc: Some((*center, *radius)), tag }, Piece { a: b, b: a, arc: Some((*center, *radius)), tag }]
+            }
+            Cutter::Polygon(corners) => polygon(&corners.iter().map(|c| (*c, tag)).collect::<Vec<_>>()),
+        }
+    }
+
     /// Whether `p` is inside (on its edge is not).
     pub fn covers(&self, p: Vec2) -> bool {
         match self {
@@ -173,6 +192,18 @@ fn chained(mut pieces: Vec<Piece>) -> Result<Vec<Piece>, &'static str> {
 /// `outline` less what `cutter` covers. What the cutter's own edge leaves is tagged `tag`.
 /// Nothing left is an empty outline; an outline cut in two is an error.
 pub fn cut(outline: &[Piece], cutter: &Cutter, tag: u64) -> Result<Vec<Piece>, String> {
+    clip(outline, cutter, tag, false)
+}
+
+/// What of `outline` the `cutter` covers: the part of a flange a corner relief takes, as the
+/// outline of the tool that takes it. The cutter's own edge is tagged `tag`. Nothing in common
+/// is an empty outline.
+pub fn keep(outline: &[Piece], cutter: &Cutter, tag: u64) -> Result<Vec<Piece>, String> {
+    clip(outline, cutter, tag, true)
+}
+
+/// `outline` with what `cutter` covers taken out of it, or (`inside`) with only that left.
+fn clip(outline: &[Piece], cutter: &Cutter, tag: u64, inside: bool) -> Result<Vec<Piece>, String> {
     let region: Vec<Vec2> = outline.iter().flat_map(Piece::points).collect();
     let mut kept: Vec<Piece> = Vec::new();
     // Whether the cutter takes any of the outline itself.
@@ -186,11 +217,16 @@ pub fn cut(outline: &[Piece], cutter: &Cutter, tag: u64) -> Result<Vec<Piece>, S
     };
     for p in outline {
         if p.arc.is_some() {
-            // What an earlier relief left: this one has no business there.
-            if [p.a, p.mid(), p.b].iter().any(|q| cutter.covers(*q)) {
+            // What an earlier relief left: this one has no business across it.
+            let covered = [p.a, p.mid(), p.b].iter().filter(|q| cutter.covers(**q)).count();
+            if covered != 0 && !(inside && covered == 3) {
                 return Err("The corner reliefs at the two ends of an edge run into each other: make the relief smaller, or the edge longer.".into());
             }
-            kept.push(*p);
+            if (covered == 3) == inside {
+                kept.push(*p);
+            } else {
+                gone = true;
+            }
             continue;
         }
         let d = p.b - p.a;
@@ -203,7 +239,7 @@ pub fn cut(outline: &[Piece], cutter: &Cutter, tag: u64) -> Result<Vec<Piece>, S
             if s.dist(e) <= MEET {
                 continue;
             }
-            if cutter.covers((s + e) / 2.0) {
+            if cutter.covers((s + e) / 2.0) != inside {
                 gone = true;
             } else {
                 kept.push(Piece::line(s, e, p.tag));
@@ -214,6 +250,11 @@ pub fn cut(outline: &[Piece], cutter: &Cutter, tag: u64) -> Result<Vec<Piece>, S
         }
     }
     if kept.is_empty() {
+        // (A cutter that lies wholly inside the outline covers none of its edge: all of the
+        // cutter is then what they have in common.)
+        if inside && within(&region, cutter.centre()) {
+            return Ok(cutter.pieces(tag));
+        }
         return Ok(kept);
     }
     // Only crossings between what stays and what goes count.
@@ -331,6 +372,26 @@ mod tests {
         // The kernel's arcs run counter-clockwise: so does this one, from the right to the left.
         let Curve2::Arc { start_angle, end_angle, .. } = out.iter().find(|p| p.arc.is_some()).unwrap().curve().curve else { panic!() };
         assert!(start_angle < end_angle && (start_angle - rise.atan2(2.0)).abs() < 1e-12, "{start_angle} {end_angle}");
+    }
+
+    #[test]
+    fn what_a_cutter_covers_of_an_outline_is_the_tool_that_takes_it() {
+        // The quarter of a disc that lies on the corner of a rectangle, and the rest of the
+        // rectangle, are the rectangle between them.
+        let disc = Cutter::Disc { center: Vec2::ZERO, radius: 3.0 };
+        let part = keep(&rect(10.0, 6.0), &disc, 9).unwrap();
+        assert!((area(&part) - 9.0 * PI / 4.0).abs() < 1e-12 && part.len() == 3, "{part:?}");
+        assert_eq!(part.iter().filter(|p| p.arc.is_some() && p.tag == 9).count(), 1);
+        assert!((area(&part) + area(&cut(&rect(10.0, 6.0), &disc, 9).unwrap()) - 60.0).abs() < 1e-12);
+        // A square across an end: the strip of it that is on the rectangle.
+        let square = Cutter::Polygon(vec![Vec2::new(-1.0, -3.0), Vec2::new(5.0, -3.0), Vec2::new(5.0, 3.0), Vec2::new(-1.0, 3.0)]);
+        let part = keep(&rect(4.0, 20.0), &square, 9).unwrap();
+        assert!((area(&part) - 12.0).abs() < 1e-12 && part.len() == 4, "{part:?}");
+        // Nothing in common; all of the outline; all of the cutter.
+        assert!(keep(&rect(10.0, 6.0), &Cutter::Disc { center: Vec2::new(-5.0, -5.0), radius: 3.0 }, 9).unwrap().is_empty());
+        assert_eq!(keep(&rect(10.0, 6.0), &Cutter::Disc { center: Vec2::new(5.0, 3.0), radius: 20.0 }, 9).unwrap(), rect(10.0, 6.0));
+        let whole = keep(&rect(10.0, 6.0), &Cutter::Disc { center: Vec2::new(5.0, 3.0), radius: 2.0 }, 9).unwrap();
+        assert!((area(&whole) - 4.0 * PI).abs() < 1e-12 && whole.len() == 2, "{whole:?}");
     }
 
     #[test]

@@ -10,7 +10,7 @@ use serde_json::json;
 use tenon_geom::Vec3;
 use tenon_kernel_occt::OcctKernel;
 use tenon_model::FeatureKind;
-use tenon_model::sheet::{BendPosition, CornerShape, HemShape, Sides};
+use tenon_model::sheet::{BendPosition, CornerShape, HemShape, Seam, Sides};
 
 use crate::Workbench;
 use crate::commands::{FLAT_TAB, MODEL_TAB, RIBBON, SHEET_TAB};
@@ -606,7 +606,7 @@ fn flanges_that_meet_are_mitred_unless_the_panel_says_not_and_the_gap_is_the_rul
     wb.edit_feature(tenon_model::FeatureId(flange as u32)).unwrap();
     frames(&mut d, &mut wb);
     let texts = d.texts();
-    assert!(texts.iter().any(|t| t == "Auto-Mitering") && texts.iter().any(|t| t == "gap 3 mm"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "Auto-Mitering") && texts.iter().any(|t| t == "3 mm"), "{texts:?}");
     d.click(&mut wb, pressable(&d, "tn_flange_miter"));
     frames(&mut d, &mut wb);
     assert!(near(volume(&wb), tray(160.0)), "the preview: {} {}", volume(&wb), tray(160.0));
@@ -641,4 +641,156 @@ fn a_long_panel_is_shown_whole_above_the_browser() {
     frames(&mut d, &mut wb);
     let short = browser_row(&d, "Origin").top();
     assert!(short < model.top() - 40.0, "{short} {}", model.top());
+}
+
+#[test]
+fn a_corner_seam_is_made_by_clicking_the_ends_of_two_flanges() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1300.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3, "corner": "trim" })).unwrap();
+    // Two flanges made one after the other, on the front edge and then the right one: the
+    // corner between them is open, with the first one's bend running through it.
+    let (face, lines) = plate(&mut wb, 60.0, 40.0);
+    for line in &lines[..2] {
+        let edge = wb
+            .exec(
+                "model.edge_ref",
+                json!({ "faces": [{ "type": "cap", "feature": face, "end": "end" }, { "type": "side", "feature": face, "curve": line }] }),
+            )
+            .unwrap();
+        wb.exec("sheet.flange", json!({ "edges": [edge], "height": 15 })).unwrap();
+    }
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    let open = 55.0 * 35.0 * 2.0 + ring(FRAC_PI_2, 3.0) * 95.0 + 10.0 * 2.0 * 95.0;
+    assert!(near(volume(&wb), open), "{} {open}", volume(&wb));
+
+    // Corner Seam is on the Modify panel, live. Nothing changes until both ends are clicked.
+    assert!(crate::commands::find("sheet.corner_seam").is_some_and(|c| c.available()));
+    wb.run_ui("sheet.corner_seam").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::CornerSeam(p)) if p.edges.is_empty() && p.corner.seam == Seam::Symmetric && !p.corner.own_gap));
+    let texts = d.texts();
+    for shown in ["Corner Seam", "Edges", "click two edges", "Seam", "Symmetric Gap", "Gap", "By rule", "2 mm", "Relief", "By rule (Trim to Bend)"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    // The end of the front wall, then the end of the side wall.
+    let first = on_screen(&wb, Vec3::new(60.0, 0.0, 10.0));
+    d.click(&mut wb, first);
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), open), "one edge is no corner yet: {}", volume(&wb));
+    let second = on_screen(&wb, Vec3::new(60.0, 5.0, 10.0));
+    d.click(&mut wb, second);
+    frames(&mut d, &mut wb);
+    let Some(Panel::CornerSeam(p)) = &wb.panel else { panic!("the corner seam panel") };
+    assert_eq!(p.edges.len(), 2);
+    // The corner closes in the preview: the bends end where they cross and each wall stops
+    // 2 + root 2 from the corner.
+    let closed = |walls: f64| 55.0 * 35.0 * 2.0 + ring(FRAC_PI_2, 3.0) * 90.0 + 10.0 * 2.0 * walls;
+    let mitred = 100.0 - 2.0 * (2.0 + 2f64.sqrt());
+    assert!(near(volume(&wb), closed(mitred)), "{} {}", volume(&wb), closed(mitred));
+    // Overlap chosen from the list: the first wall runs across the end of the second.
+    d.click(&mut wb, pressable(&d, "tn_seam_seam"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_seam_seam_overlap"));
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), closed(60.0 + 36.0)), "{} {}", volume(&wb), closed(96.0));
+    assert!(d.texts().iter().any(|t| t == "Overlap"), "the overlap's own field shows: {:?}", d.texts());
+    // A gap of its own, 1: the second wall stops 1 short of the first.
+    d.click(&mut wb, pressable(&d, "tn_seam_gap_by_rule"));
+    frames(&mut d, &mut wb);
+    type_into(&mut d, &mut wb, "tn_props_seam_gap", "1");
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), closed(60.0 + 37.0)), "{} {}", volume(&wb), closed(97.0));
+    // OK. The feature is what was set up, shows in the browser, and edits again from there.
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let made = wb.document().features().last().unwrap().clone();
+    let FeatureKind::CornerSeam(c) = &made.kind else { panic!("{made:?}") };
+    assert_eq!((made.name.as_str(), c.corner.seam, c.corner.gap, c.corner.relief), ("Corner Seam1", Seam::Overlap, Some(1.0), None));
+    assert!(browser_row(&d, "Corner Seam1").height() > 0.0);
+    assert!(near(volume(&wb), closed(97.0)));
+    wb.edit_feature(made.id).unwrap();
+    frames(&mut d, &mut wb);
+    assert!(
+        matches!(&wb.panel, Some(Panel::CornerSeam(p)) if p.editing == Some(made.id) && p.edges.len() == 2 && p.corner.own_gap && p.corner.gap == 1.0)
+    );
+    // A third edge clicked takes the place of the second; with one edge OK asks for the other.
+    wb.panel = None;
+    wb.run_ui("sheet.corner_seam").unwrap();
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, first);
+    frames(&mut d, &mut wb);
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.status_error && wb.status().contains("the edge at the end of each of the two faces"), "{}", wb.status());
+    assert!(wb.panel.is_some());
+}
+
+#[test]
+fn a_flange_s_corners_take_a_seam_and_a_relief_of_their_own_in_its_panel() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1300.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3, "corner": "trim" })).unwrap();
+    let (face, lines) = plate(&mut wb, 60.0, 40.0);
+    let edges: Vec<serde_json::Value> = lines[..2]
+        .iter()
+        .map(|l| {
+            wb.exec(
+                "model.edge_ref",
+                json!({ "faces": [{ "type": "cap", "feature": face, "end": "end" }, { "type": "side", "feature": face, "curve": l }] }),
+            )
+            .unwrap()
+        })
+        .collect();
+    let flange = wb.exec("sheet.flange", json!({ "edges": edges, "height": 15 })).unwrap()["feature"].as_u64().unwrap();
+    frames(&mut d, &mut wb);
+    let closed = |walls: f64| 55.0 * 35.0 * 2.0 + ring(FRAC_PI_2, 3.0) * 90.0 + 10.0 * 2.0 * walls;
+    wb.edit_feature(tenon_model::FeatureId(flange as u32)).unwrap();
+    frames(&mut d, &mut wb);
+    let texts = d.texts();
+    for shown in ["Auto-Mitering", "Seam", "Symmetric Gap", "Gap", "Relief", "By rule (Trim to Bend)"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    // Reverse Overlap: the second edge's wall runs across the end of the first.
+    d.click(&mut wb, pressable(&d, "tn_flange_seam"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_flange_seam_reverse"));
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), closed(56.0 + 40.0)), "{} {}", volume(&wb), closed(96.0));
+    // A square relief of its own, 8 across by the rule's size: less of the floor, the bends
+    // and the walls. Then a size of its own.
+    let before = volume(&wb);
+    d.click(&mut wb, pressable(&d, "tn_flange_relief"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_flange_relief_square"));
+    frames(&mut d, &mut wb);
+    let relieved = volume(&wb);
+    assert!(relieved < before - 1.0, "{relieved} {before}");
+    assert!(d.texts().iter().any(|t| t == "Relief Size") && d.texts().iter().any(|t| t == "8 mm"), "{:?}", d.texts());
+    d.click(&mut wb, pressable(&d, "tn_flange_size_by_rule"));
+    frames(&mut d, &mut wb);
+    type_into(&mut d, &mut wb, "tn_props_flange_relief_size", "12");
+    frames(&mut d, &mut wb);
+    assert!(volume(&wb) < relieved - 1.0, "{} {relieved}", volume(&wb));
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let FeatureKind::Flange(f) = &wb.document().feature(tenon_model::FeatureId(flange as u32)).unwrap().kind else { panic!() };
+    assert_eq!(
+        (f.corner.seam, f.corner.relief, f.corner.relief_size, f.corner.gap),
+        (Seam::ReverseOverlap, Some(CornerShape::Square), Some(12.0), None)
+    );
+    // Auto-Mitering off: the seam and the gap have nothing to say, and are not shown.
+    wb.edit_feature(tenon_model::FeatureId(flange as u32)).unwrap();
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_flange_miter"));
+    frames(&mut d, &mut wb);
+    let texts = d.texts();
+    assert!(!texts.iter().any(|t| t == "Seam") && texts.iter().any(|t| t == "Relief"), "{texts:?}");
 }

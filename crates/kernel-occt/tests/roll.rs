@@ -196,3 +196,48 @@ fn a_slanted_end_rolls_into_a_twisted_one_and_what_cannot_be_rolled_is_refused()
     assert!(matches!(k.roll(&profile(square(3.0), vec![]), 0.0, R, R + T), Err(KernelError::InvalidInput(_))));
     assert_eq!(k.live_shapes(), 0);
 }
+
+#[test]
+fn faces_in_one_plane_are_made_one_face_where_asked_and_nowhere_else() {
+    let mut k = OcctKernel::new();
+    // Two blocks end to end, joined: 14 faces, four of them cut in two by the joint.
+    let a = k.make_box(&Frame::WORLD, Vec3::new(10.0, 4.0, 2.0)).unwrap().shape;
+    let b = k.make_box(&Frame::new(Vec3::new(10.0, 0.0, 0.0), Vec3::Z, Vec3::X).unwrap(), Vec3::new(5.0, 4.0, 2.0)).unwrap().shape;
+    let joined = k.boolean(BoolOp::Union, a, &[b]).unwrap().shape;
+    let topo = k.topology(joined).unwrap();
+    assert_eq!(topo.faces, 10, "two ends and four sides in two pieces each");
+    let volume = k.mass_properties(joined, 1.0).unwrap().volume;
+    // The faces of the shorter block: those whose middle is past x = 10.
+    let short: Vec<_> = (0..topo.faces).filter(|f| k.face_info(joined.face(*f)).unwrap().centroid.x > 10.0).map(|f| joined.face(f)).collect();
+    assert_eq!(short.len(), 5);
+    let op = k.unify(joined, &short).unwrap();
+    let one = op.shape;
+    assert!(k.is_valid(one).unwrap());
+    let after = k.topology(one).unwrap();
+    assert_eq!((after.faces, after.edges, after.solids), (6, 12, 1), "a plain block again");
+    assert!((k.mass_properties(one, 1.0).unwrap().volume - volume).abs() < 1e-9);
+    // Every face of the two blocks says what it became: each side's two pieces, the one face.
+    let images: Vec<Vec<u32>> = (0..topo.faces)
+        .map(|f| {
+            op.history
+                .images
+                .iter()
+                .find(|i| i.source.id.kind == TopoKind::Face && i.source.id.index == f)
+                .map_or(vec![], |i| i.result.iter().map(|r| r.index).collect())
+        })
+        .collect();
+    assert!(images.iter().all(|i| i.len() == 1), "{images:?}");
+    let mut became: Vec<u32> = images.iter().map(|i| i[0]).collect();
+    became.sort_unstable();
+    became.dedup();
+    assert_eq!(became.len(), 6);
+    // Asked of a face that has no neighbour in its plane, nothing changes.
+    let end = (0..topo.faces).map(|f| joined.face(f)).find(|f| k.face_info(*f).unwrap().centroid.x < 1e-9).unwrap();
+    let same = k.unify(joined, &[end]).unwrap().shape;
+    assert_eq!(k.topology(same).unwrap().faces, 10);
+    assert!(matches!(k.unify(joined, &[one.face(0)]), Err(KernelError::InvalidInput(_))));
+    for h in [a, b, joined, one, same] {
+        k.release(h);
+    }
+    assert_eq!(k.live_shapes(), 0);
+}

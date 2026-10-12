@@ -120,6 +120,7 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::Flange(_) => Icon::Flange,
         FeatureKind::Hem(_) => Icon::Hem,
         FeatureKind::ContourFlange(_) => Icon::ContourFlange,
+        FeatureKind::CornerSeam(_) => Icon::CornerSeam,
     }
 }
 

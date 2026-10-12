@@ -632,7 +632,19 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     let first = run(&mut s, "sketch.line", json!({ "sketch": profile, "x1": 0, "y1": 0, "x2": 30, "y2": 0 }));
     run(&mut s, "sketch.line", json!({ "sketch": profile, "start": first["end"], "x2": 30, "y2": 20 }));
     run(&mut s, "sheet.contour_flange", json!({ "sketch": profile, "distance": 50, "position": "flipped", "direction": "symmetric", "radius": 2.5 }));
-    run(&mut s, "sheet.flange", json!({ "edges": [edge], "height": 12, "miter": false }));
+    run(&mut s, "sheet.flange", json!({ "edges": [edge.clone()], "height": 12, "miter": false }));
+    // A flange whose corners have a seam, a gap and a relief of their own, and a corner seam
+    // between two edges.
+    run(
+        &mut s,
+        "sheet.flange",
+        json!({ "edges": [edge.clone()], "height": 9, "seam": "reverse_overlap", "overlap": 0.5, "gap": 0.75, "relief": "square", "relief_size": 5 }),
+    );
+    let other = json!({
+        "faces": [{ "type": "cap", "feature": face, "end": "end" }, { "type": "side", "feature": face, "curve": r["lines"][2] }],
+        "fingerprint": { "mid": { "x": 20.0, "y": 30.0, "z": 1.5 }, "length": 40.0 },
+    });
+    run(&mut s, "sheet.corner_seam", json!({ "edges": [edge, other], "seam": "overlap", "gap": 1.25 }));
     run(&mut s, "sheet.flat_pattern", json!({}));
     let bytes = project::to_bytes(s.document(), &extra).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();
@@ -653,6 +665,16 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     for field in ["angle = 1.25", "height = 12.0", "position = \"adjacent\"", "radius = 2.0", "width = { centered = { width = 20.0 } }"] {
         assert!(flange.contains(field), "{field}: {flange}");
     }
+    // A corner's own seam, gap and relief are written where it has them, and only there.
+    assert_eq!((text.matches("seam = ").count(), text.matches("overlap = ").count(), text.matches("relief_size = ").count()), (2, 1, 1), "{text}");
+    let seamed = text.split("type = \"corner_seam\"").nth(1).unwrap();
+    for field in ["seam = \"overlap\"", "gap = 1.25"] {
+        assert!(seamed.contains(field), "{field}: {seamed}");
+    }
+    let own = text.split("height = 9.0").nth(1).unwrap();
+    for field in ["seam = \"reverse_overlap\"", "overlap = 0.5", "gap = 0.75", "relief = \"square\"", "relief_size = 5.0"] {
+        assert!(own.contains(field), "{field}: {own}");
+    }
     // A flange is mitred unless it says not; the hem and the contour flange say what they are.
     assert_eq!(text.matches("miter = false").count(), 1, "{text}");
     let hem = text.split("type = \"hem\"").nth(1).unwrap();
@@ -668,7 +690,7 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     assert_eq!(back.sheet_metal(), s.document().sheet_metal());
     assert_eq!(back.sheet_sizes().unwrap(), s.document().sheet_sizes().unwrap());
     assert_eq!(back.sheet_sizes().unwrap().bend_radius, 3.0);
-    assert_eq!(back.features().len(), 7);
+    assert_eq!(back.features().len(), 9);
     assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
     back.validate().unwrap();
 
@@ -707,4 +729,6 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     assert!(e.contains("the hem's gap must be from"), "{e}");
     let e = project::from_bytes(text.replace("distance = 50.0", "distance = -1.0").as_bytes()).unwrap_err().to_string();
     assert!(e.contains("the contour flange's distance must be more than 0"), "{e}");
+    let e = project::from_bytes(text.replace("overlap = 0.5", "overlap = 2.0").as_bytes()).unwrap_err().to_string();
+    assert!(e.contains("from 0 to 1"), "{e}");
 }

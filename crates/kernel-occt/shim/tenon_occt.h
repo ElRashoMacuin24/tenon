@@ -81,6 +81,8 @@ std::unique_ptr<Shape> transform(const Shape& shape, std::uint8_t kind, const V3
 std::unique_ptr<Shape> fillet(const Shape& body, rust::Slice<const std::uint32_t> edges, double radius, HistoryOut& hist);
 std::unique_ptr<Shape> chamfer(const Shape& body, rust::Slice<const std::uint32_t> edges, std::uint8_t kind, double a, double b,
                                std::uint32_t reference, HistoryOut& hist);
+// Faces that lie in one surface made one face, across the edges of `faces` only.
+std::unique_ptr<Shape> unify(const Shape& shape, rust::Slice<const std::uint32_t> faces, HistoryOut& hist);
 std::unique_ptr<Shape> shell(const Shape& body, rust::Slice<const std::uint32_t> faces, double offset, HistoryOut& hist);
 std::unique_ptr<Shape> sweep(const ProfileIn& profile, const PathIn& path, std::uint8_t mode, const V3& binormal, HistoryOut& hist);
 std::unique_ptr<Shape> loft(rust::Slice<const ProfileIn> sections, bool solid, bool ruled, HistoryOut& hist);
