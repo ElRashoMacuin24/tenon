@@ -896,7 +896,12 @@ impl Workbench {
                 |ui| {
                     let full = ui.max_rect();
                     let split = match (props, self.chrome.show_browser) {
-                        (true, true) => full.top() + full.height() * 0.58,
+                        // Rather more than half for the panel, and what it needs to show whole when
+                        // that is more, as long as the browser keeps a few rows.
+                        (true, true) => {
+                            let need: f32 = ui.ctx().data(|d| d.get_temp(egui::Id::new(crate::properties::PROPS_NEED))).unwrap_or(0.0);
+                            full.top() + (full.height() * 0.58).max(need.min(full.height() - 150.0))
+                        }
                         (true, false) => full.bottom(),
                         _ => full.top(),
                     };
@@ -1006,6 +1011,8 @@ impl Workbench {
             Some(FeatureKind::Thread(_)) => self.open_thread(Some(id)),
             Some(FeatureKind::SheetFace(_)) => self.open_sheet_face(Some(id)),
             Some(FeatureKind::Flange(_)) => self.open_flange(Some(id)),
+            Some(FeatureKind::Hem(_)) => self.open_hem(Some(id)),
+            Some(FeatureKind::ContourFlange(_)) => self.open_contour(Some(id)),
             Some(FeatureKind::PatternRect(_)) => self.open_pattern(crate::panels::CopyKind::Rect, Some(id)),
             Some(FeatureKind::PatternCircular(_)) => self.open_pattern(crate::panels::CopyKind::Circular, Some(id)),
             Some(FeatureKind::Mirror(_)) => self.open_pattern(crate::panels::CopyKind::Mirror, Some(id)),

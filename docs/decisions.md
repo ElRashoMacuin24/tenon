@@ -1156,13 +1156,9 @@ cross-section per edge and joined to the sheet.
   `MinimumRemnant` goes with it.
 - **Corners.** Edges of one flange that meet at a corner of the sheet each start where the
   other's bend line crosses its own, so the bends never share space, and the corner gets the
-  rule's relief: *round* (a hole `CornerReliefSize` across that touches both bend lines, opened
-  to the corner), *square* (a notch that size along both), or *trim to bend* (none).
-- **Reliefs are cut in the flat of the sheet only.** A bend stays whole, so the flat pattern of
-  a tray is lines and arcs with nothing approximated. This is where Tenon's round relief
-  differs from Inventor's default, which is centred on the crossing of the bend lines and cuts
-  into both bends: reproducing that needs a cut wrapped round a bend, which the kernel does not
-  make exactly.
+  rule's relief. What the relief is, and how the two walls close the corner, is DEC-063
+  (which replaced what stood here: reliefs cut in the flat of the sheet only, touching the
+  bend lines, and walls that ended where their bends did).
 - **Names.** The faces a flange makes are named after the edge it is on and the part they are
   (wall, tip, bend, ends), so a flange on a flange, or a sketch on a wall, is found again when
   the sheet changes. A script names such an edge or face by a point on it
@@ -1171,9 +1167,8 @@ cross-section per edge and joined to the sheet.
   flange lower than its own bend, one wider than its edge, two that meet in an inside corner,
   one that runs into the part.
 
-Not done: a tear relief (no slot at all); closing the gap between two walls at a corner (mitre,
-seam, overlap: Corner Seam); an angle or a height of its own for each edge of one flange;
-height to a point; flanges on curved edges.
+Not done: a tear relief (no slot at all); an angle or a height of its own for each edge of
+one flange; height to a point; flanges on curved edges.
 
 ## DEC-060 The flat pattern as DXF and SVG (2026-10-11)
 
@@ -1222,3 +1217,101 @@ switches); bend notes as text; nesting several parts on a sheet.
 - **The M8 example** is a tray for a circuit board (examples/m8-tray): a face, four walls in
   one flange with round corner reliefs, a tab that is a flange on a flange with bend reliefs,
   holes, a window, and its flat pattern as DXF, every number worked out by hand in its README.
+
+## DEC-063 Corners between flanges: mitred walls, and reliefs laid out in the flat (2026-10-11)
+
+The owner asked for the gap with Inventor's sheet metal to be closed before M9, the corners of
+a tray first. This replaces what DEC-059 says of corners and of reliefs being cut in the flat
+of the sheet only.
+
+Where two edges of one flange meet at a corner of the sheet:
+
+- **The bends** end where their two bend lines cross, as before: square to their own edge, so
+  they never share space, at any corner angle.
+- **The walls are mitred** (Auto-Mitering in the Flange panel, on unless unticked;
+  `miter = false` in the file). Each reaches on towards the corner, or draws back from it,
+  until the part's `GapSize` (a new parameter of the rule: Miter Gap in Sheet Metal Defaults,
+  one `Thickness` at first) is left between the two walls' inner faces, all the way up: the
+  two stop either side of the plane that halves the corner, half the gap from it. Each end is
+  cut square through the sheet, as a cutter cuts. Upright walls at a square corner end
+  `Thickness + GapSize / √2` from the corner; walls that lean in draw back as they rise, walls
+  that lean out reach on past the corner. Not mitred, each wall ends where its bend does, as in
+  M8.
+- **The relief** is laid out in the flat sheet and centred where the centre lines of the two
+  bends cross, as Inventor's default is: *round*, a disc `CornerReliefSize` across; *square*,
+  a square that size with sides along the two bend lines; *trim to bend*, none. It takes the
+  corner of the floor, the ends of the two bends and the feet of the two walls, as much of
+  each as it reaches. A relief too small to reach any of them changes nothing.
+
+How it is built. The pieces of a flange that meets another are no longer one extruded
+cross-section. Its bend and its wall are each an outline in the flat (a rectangle; a
+trapezium for a mitred wall) with the relief taken out of it by plain 2D clipping
+(`sheet::outline`); the wall is that outline made one thickness thick, the floor is cut by the
+relief's own outline, and the bend is its outline **rolled** round the bend's axis.
+
+- **`Kernel::roll`** is the new kernel operation: a flat outline rolled round an axis, each
+  point `x / rho` radians round it, between an inner and an outer radius. Its sides are square
+  to the sheet everywhere, so what was a circle in the flat is that circle again when the bend
+  is unrolled. Lines along the axis and round it stay planes; anything else (the arc of a round
+  relief) is a ruled surface between the two cylinders, which OpenCASCADE keeps as a spline.
+  The backend builds the faces itself and sews them (docs/architecture.md).
+- **The flat pattern gives arcs back as arcs.** An edge cut across a bend comes back from the
+  kernel as points. Where they lie on the circle of an arc beside them they are more of that
+  arc; on their own, on any one circle or line, they are that arc or line (to 0.01 µm;
+  `sheet::flat`). So a tray's corner relief is one arc in the DXF, from wall to wall.
+- **The folded part now depends on the K factor**, slightly: the relief is placed by the bend
+  allowance. That is the price of laying it out in the flat, and is what Inventor does.
+- A flange on one edge, and the ends of a flange that meet no other, are built as before.
+
+Not done: a relief of its own for one corner, the seams (overlap, reverse overlap), tear and
+weld reliefs, three bends meeting at a point. Edges that meet in an inside corner are still
+refused.
+
+## DEC-064 Hems and contour flanges are strips (2026-10-11)
+
+Both are sheet that follows a path seen end on: straight runs joined by bends. `sheet::strip`
+makes the cross-section of such a strip (the path offset to both faces of the sheet, each bend
+two arcs about one centre a thickness apart), refuses a bend tighter than the sheet can follow
+and a strip that comes back through itself, and the kernel pushes it out as one solid. So the
+bends are true cylinders and the flat pattern needs nothing new.
+
+- **Hem** (`hem`; Sheet Metal > Create > Hem). The path starts at an edge of the sheet's rim,
+  along the face the hem folds towards. The types are Inventor's: *single* (folded flat back,
+  `gap` between the faces, `length` over all), *double* (the hem's own end folded in under it:
+  the outer fold goes round the inner layer and a gap either side), *rolled* (a bend of
+  `radius` through `angle` and nothing after it) and *teardrop* (rolled past half a turn, then
+  straight back down to the sheet). Its width is the whole edge, a width in the middle, or
+  offsets, as a flange's. Nothing is cut from the sheet: the fold starts at the edge, so the
+  part grows by it.
+  - Inventor's help says what the fields are but not how the length is measured or where the
+    fold lies; Tenon's choices are its own: the length is over all, from the outside of the
+    fold, and the fold starts at the edge.
+  - A new hem's sizes are equations of the rule (`Thickness * 0.5`, `Thickness * 4`,
+    `BendRadius`), so it follows the sheet.
+  - A teardrop stops 0.01 mm short of the sheet: touching it, the part would be a solid that
+    meets itself along a line, which neither the kernel nor the flat pattern takes well.
+- **Contour Flange** (`contour_flange`; Sheet Metal > Create > Contour Flange). The path is an
+  open profile drawn in a sketch: its lines and arcs, end to end (construction and projected
+  geometry aside). A corner between two lines becomes a bend with the part's `BendRadius`
+  inside (or the feature's own); an arc is a bend as drawn and must run on smoothly from its
+  neighbours. The profile is pushed `distance` out of its plane: in front, behind, or half each
+  way. The sheet goes on the inside of the profile's first corner (the profile is then the
+  outside of the part, which is how a channel is usually dimensioned), on the outside, or half
+  each side. It joins the sheet it touches or is a solid of its own.
+  - Not done: a contour flange along edges of an existing face with a bend made to join it
+    (Inventor's edge sets), and its widths between two points.
+
+## DEC-065 Smaller things settled with the corners (2026-10-11)
+
+- **The properties panel takes the height it needs.** It had 58 % of the left column and
+  scrolled beyond that, which hid the last sections of the Flange panel on a laptop screen. It
+  now grows to what its content needs while the browser keeps a few rows.
+- **`sketch.arc` and `sketch.arc3` return the arc's points** (`center`, `start`, `end`), as
+  `sketch.line` does, so a script can start the next curve where an arc ended.
+- **A part saved before there was a `GapSize`** opens: the gap is one thickness until Sheet
+  Metal Defaults is confirmed, which adds the parameter.
+- **A test of the background worker** no longer depends on how fast the machine is
+  (`Worker::regenerating` says which slot is being worked on), and the M8 example's test
+  compares files without regard to line ends: both had failed on one CI platform only.
+- **The M8 example** gets the mitred corners and centred reliefs by being regenerated, and a
+  hem along the top of its back wall; its README works the new numbers out by hand.

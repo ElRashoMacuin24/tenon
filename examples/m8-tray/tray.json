@@ -1,11 +1,11 @@
 {
   "name": "M8 demo: a sheet metal tray, folded and laid flat",
-  "description": "A tray for a small circuit board, cut from 1.5 mm aluminium and folded: a floor with four walls, a tab on the front wall to fix it by, four mounting holes and a window for a cable. The part is modelled folded, as it will be used; its flat pattern is worked out from the folded solid with each bend as wide as its neutral surface is long, and written as the DXF a laser cutter takes. Every number checked here is worked out by hand in the README beside it.",
+  "description": "A tray for a small circuit board, cut from 1.5 mm aluminium and folded: a floor with four walls that close at the corners, a tab on the front wall to fix it by, a hem along the top of the back wall, four mounting holes and a window for a cable. The part is modelled folded, as it will be used; its flat pattern is worked out from the folded solid with each bend as wide as its neutral surface is long, and written as the DXF a laser cutter takes. Every number checked here is worked out by hand in the README beside it.",
   "steps": [
     { "run": "file.new", "with": { "name": "Tray" } },
     { "note": "The rule: 1.5 mm sheet. The bend radius, the reliefs and the K factor are the usual ones, each a parameter that follows the thickness.",
       "run": "sheet.defaults", "with": { "thickness": 1.5, "corner": "round", "relief": "straight" },
-      "expect": { "sheet_metal": true, "thickness": 1.5, "bend_radius": 1.5, "relief_width": 1.5, "relief_depth": 0.75, "min_remnant": 3, "corner_size": 6, "k_factor": 0.44 } },
+      "expect": { "sheet_metal": true, "thickness": 1.5, "bend_radius": 1.5, "relief_width": 1.5, "relief_depth": 0.75, "min_remnant": 3, "corner_size": 6, "gap": 1.5, "k_factor": 0.44 } },
     { "run": "document.material", "with": { "name": "Aluminium 5052", "density": 2.68, "color": "#c9cdd2" } },
 
     { "note": "The floor: 120 x 80 over all, drawn on the XY plane and made one thickness thick.",
@@ -18,23 +18,30 @@
     { "run": "sheet.face", "with": { "sketch": "$floor_sk.feature" }, "as": "face", "expect": { "name": "Face1" } },
     { "run": "model.mass", "expect": { "bodies.0.volume": 14400 } },
 
-    { "note": "The walls: one flange on all four edges of the top, 25 high over all. Each bend is cut 3 into the floor (its outer face goes through the edge, so the tray stays 120 x 80), each wall starts where its neighbour's bend line crosses its own, and each corner gets a round relief.",
+    { "note": "The walls: one flange on all four edges of the top, 25 high over all. Each bend is cut 3 into the floor (its outer face goes through the edge, so the tray stays 120 x 80) and starts where its neighbour's bend line crosses its own. The walls reach on towards the corners until a gap of one thickness is left between them, and each corner gets a round relief 6 across, centred where the centre lines of the two bends cross.",
       "run": "model.edge_ref", "with": { "faces": [{ "type": "cap", "feature": "$face.feature", "end": "end" }, { "type": "side", "feature": "$face.feature", "curve": "$floor.lines.0" }] }, "as": "front" },
     { "run": "model.edge_ref", "with": { "faces": [{ "type": "cap", "feature": "$face.feature", "end": "end" }, { "type": "side", "feature": "$face.feature", "curve": "$floor.lines.1" }] }, "as": "right" },
     { "run": "model.edge_ref", "with": { "faces": [{ "type": "cap", "feature": "$face.feature", "end": "end" }, { "type": "side", "feature": "$face.feature", "curve": "$floor.lines.2" }] }, "as": "back" },
     { "run": "model.edge_ref", "with": { "faces": [{ "type": "cap", "feature": "$face.feature", "end": "end" }, { "type": "side", "feature": "$face.feature", "curve": "$floor.lines.3" }] }, "as": "left" },
     { "run": "sheet.flange", "with": { "edges": ["$front", "$right", "$back", "$left"], "height": 25 }, "as": "walls", "expect": { "name": "Flange1" } },
     { "run": "model.regenerate", "expect": { "bodies": 1, "error": null } },
-    { "note": "Floor 114 x 74 less four reliefs, four bends (a quarter ring 1.5 to 3 in radius, 376 long in all) and four walls 22 high.",
-      "run": "model.mass", "expect": { "bodies.0.volume": 26874.1060363 } },
-    { "note": "Laid flat it is a cross: 114 + 2 x (bend allowance 3.393 + 22) by 74 + the same.",
-      "run": "sheet.flat", "expect": { "length": 164.785840132, "width": 124.785840132, "area": 17862.9149431, "holes": 4, "bends.0.up": true, "bends.0.allowance": 3.39292006588 } },
+    { "note": "Floor 114 x 74, four bends (a quarter ring 1.5 to 3 in radius, 376 long in all) and four walls 22 high, 379.515 long in all, less what the four reliefs take of each.",
+      "run": "model.mass", "expect": { "bodies.0.volume": 27112.2726859 } },
+    { "note": "Laid flat it is a cross, 114 + 2 x (bend allowance 3.393 + 22) by 74 + the same, its arms a little wider where the walls begin; the reliefs are bites out of its outline, not holes.",
+      "run": "sheet.flat", "expect": { "length": 164.785840132, "width": 124.785840132, "area": 18022.9762962, "holes": 0, "bends.0.up": true, "bends.0.allowance": 3.39292006588 } },
 
     { "note": "A tab to fix the tray by: a flange 40 wide in the middle of the front wall's top, turned outwards 12. It is on the outer edge of the wall's top, so it bends away from the tray; the wall is cut back 3 under it with a relief slot each side.",
       "run": "model.edge_ref", "with": { "at": [60, 0, 25] }, "as": "wall_top" },
     { "run": "sheet.flange", "with": { "edges": ["$wall_top"], "height": 12, "width": 40 }, "as": "tab", "expect": { "name": "Flange2" } },
     { "run": "model.regenerate", "expect": { "bodies": 1, "error": null } },
-    { "run": "model.mass", "expect": { "bodies.0.volume": 27429.2885404 } },
+    { "run": "model.mass", "expect": { "bodies.0.volume": 27667.4551901 } },
+
+    { "note": "A hem along the top of the back wall, so that it is not sharp: folded outwards and down, with half a thickness between the layers and four thicknesses long over all. Its sizes are equations of the thickness, so it follows the sheet.",
+      "run": "model.edge_ref", "with": { "at": [60, 80, 25] }, "as": "back_top" },
+    { "run": "sheet.hem", "with": { "edges": ["$back_top"], "gap": 0.75, "length": 6,
+        "equations": { "/shape/single/gap": "Thickness * 0.5", "/shape/single/length": "Thickness * 4" } }, "as": "hem", "expect": { "name": "Hem1" } },
+    { "run": "model.regenerate", "expect": { "bodies": 1, "error": null } },
+    { "run": "model.mass", "expect": { "bodies.0.volume": 28987.2891725 } },
 
     { "note": "Four 4 mm mounting holes through the floor, drilled up from the underside.",
       "run": "sketch.create", "with": { "plane": "xy" }, "as": "holes_sk" },
@@ -50,13 +57,13 @@
     { "run": "model.extrude", "with": { "sketch": "$window_sk.feature", "distance": 1.5, "backward": 1.5, "operation": "cut",
         "equations": { "/extent/two_sided/forward": "Thickness", "/extent/two_sided/backward": "Thickness" } } },
     { "run": "model.regenerate", "expect": { "bodies": 1, "error": null } },
-    { "note": "27 cm3 of aluminium: 72 g.",
-      "run": "model.mass", "expect": { "bodies.0.volume": 26993.8903167, "mass": 72.3436260488, "material": "Aluminium 5052" } },
+    { "note": "28.6 cm3 of aluminium: 76.5 g.",
+      "run": "model.mass", "expect": { "bodies.0.volume": 28551.8909488, "mass": 76.5190677429, "material": "Aluminium 5052" } },
 
-    { "note": "The flat pattern: the cross, with the tab 9.393 beyond the front arm, nine cut-outs (four holes, four reliefs, the window) and five bends: the walls up, the tab down (it folds away from whoever looks into the tray).",
+    { "note": "The flat pattern: the cross, with the tab 9.393 beyond the front arm and the hem 7.377 beyond the back one, five cut-outs (four holes and the window) and six bends: the walls up, the tab and the hem down (they fold away from whoever looks into the tray).",
       "run": "sheet.flat_pattern", "expect": { "flat_pattern": true } },
-    { "run": "sheet.flat", "expect": { "length": 164.785840132, "width": 134.178760198, "area": 17937.1162632, "cut_length": 819.743350861, "holes": 9, "thickness": 1.5, "k_factor": 0.44 } },
-    { "run": "sheet.export_dxf", "with": { "path": "tray-flat.dxf" }, "expect": { "bends": 5, "holes": 9, "entities.circles": 4, "entities.polylines": 0 } },
+    { "run": "sheet.flat", "expect": { "length": 164.785840132, "width": 141.555308594, "area": 18944.5857566, "cut_length": 768.270952282, "holes": 5, "thickness": 1.5, "k_factor": 0.44 } },
+    { "run": "sheet.export_dxf", "with": { "path": "tray-flat.dxf" }, "expect": { "bends": 6, "holes": 5, "entities.circles": 4, "entities.polylines": 0 } },
     { "run": "sheet.export_svg", "with": { "path": "tray-flat.svg" } },
     { "run": "file.save", "with": { "path": "tray.tenon" } },
     { "run": "export.step", "with": { "path": "tray.step" } },
@@ -65,7 +72,7 @@
     { "note": "A thicker sheet is one parameter: everything follows it, and the pattern changes by what the bends now take.",
       "run": "param.set", "with": { "name": "Thickness", "equation": "2 mm" } },
     { "run": "model.regenerate", "expect": { "bodies": 1, "error": null } },
-    { "run": "sheet.flat", "expect": { "length": 163.047786842, "thickness": 2, "holes": 9 } },
+    { "run": "sheet.flat", "expect": { "length": 163.047786842, "thickness": 2, "holes": 5 } },
     { "run": "edit.undo" }
   ]
 }

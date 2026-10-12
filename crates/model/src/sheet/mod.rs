@@ -4,13 +4,17 @@
 //! - The **rule** of the part ([`SheetMetal`]) says how reliefs are shaped; its sizes are
 //!   parameters of the part with fixed names ([`THICKNESS`], [`BEND_RADIUS`], ...), so they take
 //!   equations and design table columns like any other and the features follow them.
-//! - The features: [`Face`] (a sketch profile one thickness thick) and [`Flange`] (a bend and a
-//!   wall along edges of the sheet). Cuts, holes and rounded corners are the ordinary features.
+//! - The features: [`Face`] (a sketch profile one thickness thick), [`Flange`] (a bend and a
+//!   wall along edges of the sheet, mitred and relieved where two meet), [`Hem`] (an edge folded
+//!   back on itself) and [`ContourFlange`] (sheet along an open profile). Cuts, holes and
+//!   rounded corners are the ordinary features.
 //! - The **flat pattern** ([`flat`], [`unfold`]) is worked out from the solid, not from the
 //!   features, so whatever made the part, what is cut is what the model shows.
 
 pub mod flange;
 pub mod flat;
+pub mod outline;
+pub mod strip;
 pub mod unfold;
 
 use std::collections::BTreeMap;
@@ -34,9 +38,10 @@ pub const RELIEF_DEPTH: &str = "BendReliefDepth";
 pub const MIN_REMNANT: &str = "MinimumRemnant";
 pub const CORNER_SIZE: &str = "CornerReliefSize";
 pub const K_FACTOR: &str = "KFactor";
+pub const GAP_SIZE: &str = "GapSize";
 
 /// Every sheet metal parameter: its name, what it starts as, its unit and what it is.
-pub const PARAMETERS: [(&str, &str, ParamUnit, &str); 7] = [
+pub const PARAMETERS: [(&str, &str, ParamUnit, &str); 8] = [
     (THICKNESS, "1 mm", ParamUnit::Mm, "Thickness of the sheet"),
     (BEND_RADIUS, "Thickness", ParamUnit::Mm, "Radius of the inside of a bend"),
     (RELIEF_WIDTH, "Thickness", ParamUnit::Mm, "Width of the relief cut beside a bend"),
@@ -44,6 +49,7 @@ pub const PARAMETERS: [(&str, &str, ParamUnit, &str); 7] = [
     (MIN_REMNANT, "Thickness * 2", ParamUnit::Mm, "A strip left beside a bend relief narrower than this is cut away"),
     (CORNER_SIZE, "Thickness * 4", ParamUnit::Mm, "Size of the relief where two bends meet at a corner"),
     (K_FACTOR, "0.44", ParamUnit::Ul, "Where the neutral surface lies in the thickness: 0 inside of the bend, 1 outside"),
+    (GAP_SIZE, "Thickness", ParamUnit::Mm, "Gap left between flanges that meet at a corner"),
 ];
 
 /// The shape of the cut beside a bend that is narrower than the edge it is on.
@@ -57,17 +63,19 @@ pub enum ReliefShape {
     Round,
 }
 
-/// The shape of the cut where two bends meet at a corner of the sheet. It is made in the flat
-/// of the sheet between the two bend lines, so the bends themselves stay whole.
+/// The shape of the cut where two bends meet at a corner of the sheet. It is laid out in the
+/// flat sheet, centred where the centre lines of the two bends cross, so it takes the corner of
+/// the sheet between the bends and, when it is large enough, the ends of the bends and the
+/// feet of the walls beside it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CornerShape {
-    /// A round hole that touches both bend lines, opened to the corner.
+    /// A round hole, `CornerReliefSize` across.
     #[default]
     Round,
-    /// A square notch along both bend lines.
+    /// A square hole with sides of `CornerReliefSize` along the two bend lines.
     Square,
-    /// None: the sheet is trimmed to the bends, which end at the corner.
+    /// None: the bends simply end where their two lines cross.
     Trim,
 }
 
@@ -98,6 +106,8 @@ pub struct Sizes {
     pub min_remnant: f64,
     pub corner_size: f64,
     pub k_factor: f64,
+    /// The gap left between flanges that meet at a corner.
+    pub gap: f64,
 }
 
 impl Sizes {
@@ -118,6 +128,8 @@ impl Sizes {
             min_remnant: get(MIN_REMNANT)?,
             corner_size: get(CORNER_SIZE)?,
             k_factor: get(K_FACTOR)?,
+            // (Parts made before there was one: a thickness, as it starts out.)
+            gap: values.get(GAP_SIZE).copied().filter(|v| v.is_finite()).unwrap_or(get(THICKNESS)?),
         };
         s.check()?;
         Ok(s)
@@ -133,9 +145,13 @@ impl Sizes {
         if !(0.0..=1.0).contains(&self.k_factor) {
             return Err(format!("{K_FACTOR} must be from 0 to 1"));
         }
-        for (name, v) in
-            [(RELIEF_WIDTH, self.relief_width), (RELIEF_DEPTH, self.relief_depth), (MIN_REMNANT, self.min_remnant), (CORNER_SIZE, self.corner_size)]
-        {
+        for (name, v) in [
+            (RELIEF_WIDTH, self.relief_width),
+            (RELIEF_DEPTH, self.relief_depth),
+            (MIN_REMNANT, self.min_remnant),
+            (CORNER_SIZE, self.corner_size),
+            (GAP_SIZE, self.gap),
+        ] {
             if !(0.0..=1000.0).contains(&v) {
                 return Err(format!("{name} must be from 0 to 1000 mm"));
             }
@@ -233,6 +249,18 @@ pub struct Flange {
     pub radius: Option<f64>,
     #[serde(default)]
     pub width: FlangeWidth,
+    /// Where the flange meets another of the same feature at a corner, the two walls are
+    /// brought together until the part's `GapSize` is left between them.
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub miter: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_yes(b: &bool) -> bool {
+    *b
 }
 
 /// The smallest and largest angle a flange turns through.
@@ -269,6 +297,188 @@ impl Flange {
             _ => {}
         }
         Ok(())
+    }
+}
+
+/// How a hem is folded.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HemShape {
+    /// Folded flat back over the sheet, `gap` between the two faces. `length` is overall: from
+    /// the outside of the fold to the hem's end.
+    Single { gap: f64, length: f64 },
+    /// Folded over twice: the hem's own end is folded in under it, with `gap` between each two
+    /// layers. `length` is overall, from the outside of the outer fold to that of the inner.
+    Double { gap: f64, length: f64 },
+    /// Rolled: a bend of inside `radius` through `angle`, and nothing after it.
+    Rolled { radius: f64, angle: f64 },
+    /// Rolled through more than half a turn (`angle`) and then run straight back down to the
+    /// face of the sheet.
+    Teardrop { radius: f64, angle: f64 },
+}
+
+/// How far short of the sheet a teardrop hem stops (mm): touching it, the part would be a solid
+/// that meets itself along a line.
+pub const TEARDROP_CLEAR: f64 = 0.01;
+
+/// The edge of the sheet folded back on itself: stiffer, and no longer sharp.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Hem {
+    /// Straight edges of the sheet's rim. The hem folds towards the side each edge is on.
+    pub edges: Vec<EdgeRef>,
+    pub shape: HemShape,
+    /// Fold towards the other side of the sheet.
+    #[serde(default)]
+    pub flip: bool,
+    #[serde(default)]
+    pub width: FlangeWidth,
+}
+
+/// The largest angle a rolled hem turns through, and the range of a teardrop's.
+pub const MAX_ROLL_ANGLE: f64 = 350.0 * std::f64::consts::PI / 180.0;
+pub const MIN_TEARDROP_ANGLE: f64 = 181.0 * std::f64::consts::PI / 180.0;
+pub const MAX_TEARDROP_ANGLE: f64 = 270.0 * std::f64::consts::PI / 180.0;
+
+impl Hem {
+    pub fn check(&self) -> Result<(), String> {
+        if self.edges.is_empty() {
+            return Err("select at least one edge for the hem".into());
+        }
+        if self.edges.len() > MAX_FLANGE_EDGES {
+            return Err(format!("a hem takes at most {MAX_FLANGE_EDGES} edges"));
+        }
+        let size = |what: &str, v: f64, least: f64| {
+            if v.is_finite() && (least..=1000.0).contains(&v) { Ok(()) } else { Err(format!("the hem's {what} must be from {least} to 1000 mm")) }
+        };
+        match self.shape {
+            HemShape::Single { gap, length } | HemShape::Double { gap, length } => {
+                // The fold's inside radius is half the gap.
+                size("gap", gap, 2.0 * MIN_BEND_RADIUS)?;
+                size("length", length, 0.001)?;
+            }
+            HemShape::Rolled { radius, angle } => {
+                size("radius", radius, MIN_BEND_RADIUS)?;
+                if !(angle.is_finite() && (MIN_FLANGE_ANGLE..=MAX_ROLL_ANGLE).contains(&angle)) {
+                    return Err("a rolled hem turns through 1 to 350 degrees".into());
+                }
+            }
+            HemShape::Teardrop { radius, angle } => {
+                size("radius", radius, MIN_BEND_RADIUS)?;
+                if !(angle.is_finite() && (MIN_TEARDROP_ANGLE..=MAX_TEARDROP_ANGLE).contains(&angle)) {
+                    return Err("a teardrop hem turns through 181 to 270 degrees (a rolled hem takes any angle)".into());
+                }
+            }
+        }
+        match self.width {
+            FlangeWidth::Centered { width } if !(width.is_finite() && width > 0.0) => Err("the hem's width must be more than 0".into()),
+            FlangeWidth::Offset { start, end } if !(start.is_finite() && end.is_finite() && start >= 0.0 && end >= 0.0) => {
+                Err("the hem's offsets from the ends of its edge cannot be negative".into())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The hem seen end on, as steps from the edge: the path is the face of the sheet the hem
+    /// folds towards (the inside of every fold), setting off straight out of the sheet.
+    pub fn steps(&self, t: f64) -> Result<Vec<strip::Step>, String> {
+        use strip::Step::{Bend, Straight};
+        let half = std::f64::consts::PI;
+        match self.shape {
+            HemShape::Single { gap, length } => {
+                let fold = gap / 2.0 + t;
+                if length < fold - 1e-9 {
+                    return Err(format!(
+                        "The hem is {} mm long and its fold alone takes {} mm: make it longer, or the gap smaller.",
+                        crate::explain::mm(length),
+                        crate::explain::mm(fold)
+                    ));
+                }
+                Ok(vec![Bend { radius: gap / 2.0, angle: half }, Straight(length - fold)])
+            }
+            HemShape::Double { gap, length } => {
+                // The outer fold goes round the inner layer and a gap either side of it.
+                let (outer, inner) = (gap + t / 2.0, gap / 2.0);
+                let flat = length - (outer + t) - (inner + t);
+                if flat < 1e-6 {
+                    return Err(format!(
+                        "The hem is {} mm long and its two folds alone take {} mm: make it longer, or the gap smaller.",
+                        crate::explain::mm(length),
+                        crate::explain::mm(outer + inner + 2.0 * t)
+                    ));
+                }
+                Ok(vec![Bend { radius: outer, angle: half }, Straight(flat), Bend { radius: inner, angle: half }, Straight(flat)])
+            }
+            HemShape::Rolled { radius, angle } => Ok(vec![Bend { radius, angle }]),
+            HemShape::Teardrop { radius, angle } => {
+                // From where the roll ends, straight down to just short of the sheet.
+                let (sin, cos) = angle.sin_cos();
+                let down = (radius * (1.0 - cos) - TEARDROP_CLEAR) / -sin;
+                if !(down.is_finite() && down > 0.0) {
+                    return Err("The teardrop hem's angle leaves it no way back down to the sheet.".into());
+                }
+                Ok(vec![Bend { radius, angle }, Straight(down)])
+            }
+        }
+    }
+}
+
+/// One of two sides, or both alike.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Sides {
+    #[default]
+    Default,
+    Flipped,
+    Symmetric,
+}
+
+/// A strip of sheet that follows an open profile: lines and arcs drawn end to end in a sketch,
+/// pushed out of the sketch plane. Corners between lines become bends; an arc is a bend as
+/// drawn.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ContourFlange {
+    pub sketch: FeatureId,
+    /// How wide the strip is (how far the profile is pushed).
+    pub distance: f64,
+    /// In front of the sketch plane, behind it, or half each way.
+    #[serde(default)]
+    pub direction: Sides,
+    /// Which side of the profile the sheet's thickness goes: the inside of its first corner
+    /// (the profile is the outside of the part there), the outside, or half each way.
+    #[serde(default)]
+    pub position: Sides,
+    /// The inside radius of the bends made at corners; without it, the part's `BendRadius`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<f64>,
+    /// Join (to the sheet it touches) or a new solid.
+    #[serde(default)]
+    pub operation: Operation,
+}
+
+impl ContourFlange {
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.distance.is_finite() && self.distance > 0.0 && self.distance <= 1e5) {
+            return Err("the contour flange's distance must be more than 0".into());
+        }
+        if let Some(r) = self.radius
+            && !(r.is_finite() && (MIN_BEND_RADIUS..=1000.0).contains(&r))
+        {
+            return Err(format!("the bend radius must be from {MIN_BEND_RADIUS} to 1000 mm"));
+        }
+        match self.operation {
+            Operation::Join | Operation::NewBody => Ok(()),
+            _ => Err("a contour flange is joined to the part or starts a new solid".into()),
+        }
+    }
+
+    /// How far the sheet reaches to the left of the profile and to its right (negative), for a
+    /// sheet `t` thick.
+    pub fn reach(&self, t: f64) -> (f64, f64) {
+        match self.position {
+            Sides::Default => (0.0, t),
+            Sides::Flipped => (-t, 0.0),
+            Sides::Symmetric => (-t / 2.0, t / 2.0),
+        }
     }
 }
 
@@ -354,8 +564,8 @@ mod tests {
         doc.sync_parameters().unwrap();
         let s = doc.sheet_sizes().unwrap();
         assert_eq!(
-            (s.thickness, s.bend_radius, s.relief_width, s.relief_depth, s.min_remnant, s.corner_size, s.k_factor),
-            (1.0, 1.0, 1.0, 0.5, 2.0, 4.0, 0.44)
+            (s.thickness, s.bend_radius, s.relief_width, s.relief_depth, s.min_remnant, s.corner_size, s.k_factor, s.gap),
+            (1.0, 1.0, 1.0, 0.5, 2.0, 4.0, 0.44, 1.0)
         );
         // The sizes are parameters: the thickness changed, the rest follow by their equations.
         doc.set_equation(THICKNESS, Some("2 mm")).unwrap();
@@ -385,6 +595,7 @@ mod tests {
             flip: false,
             radius: None,
             width: FlangeWidth::Edge,
+            miter: true,
         };
         assert!(ok.check().unwrap_err().contains("at least one edge"));
         let face = crate::naming::FaceOrigin::Cap { feature: FeatureId(1), end: crate::naming::CapEnd::End };

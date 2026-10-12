@@ -118,6 +118,8 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::Thread(_) => Icon::Thread,
         FeatureKind::SheetFace(_) => Icon::SheetFace,
         FeatureKind::Flange(_) => Icon::Flange,
+        FeatureKind::Hem(_) => Icon::Hem,
+        FeatureKind::ContourFlange(_) => Icon::ContourFlange,
     }
 }
 

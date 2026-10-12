@@ -123,6 +123,20 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
             ("/width/offset/start", Mm),
             ("/width/offset/end", Mm),
         ],
+        FeatureKind::Hem(_) => &[
+            ("/shape/single/gap", Mm),
+            ("/shape/single/length", Mm),
+            ("/shape/double/gap", Mm),
+            ("/shape/double/length", Mm),
+            ("/shape/rolled/radius", Mm),
+            ("/shape/rolled/angle", Deg),
+            ("/shape/teardrop/radius", Mm),
+            ("/shape/teardrop/angle", Deg),
+            ("/width/centered/width", Mm),
+            ("/width/offset/start", Mm),
+            ("/width/offset/end", Mm),
+        ],
+        FeatureKind::ContourFlange(_) => &[("/distance", Mm), ("/radius", Mm)],
         FeatureKind::Sketch { .. }
         | FeatureKind::Mirror(_)
         | FeatureKind::WorkAxis(_)

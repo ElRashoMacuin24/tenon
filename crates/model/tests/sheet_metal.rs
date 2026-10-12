@@ -358,72 +358,171 @@ fn a_flange_narrower_than_its_edge_gets_reliefs_beside_it() {
 }
 
 #[test]
-fn a_tray_has_its_corners_relieved_and_lies_flat_as_a_cross() {
+fn a_tray_has_its_walls_mitred_and_its_corners_relieved() {
     let ba = allowance(FRAC_PI_2);
-    // (corner relief, what it takes out of the sheet at each corner)
-    for (corner, hole) in [("trim", 0.0), ("square", 64.0), ("round", 16.0 + 12.0 * PI)] {
+    // All four edges of a 60 x 40 plate in one flange, 15 high: the walls of a tray. Each bend
+    // is cut 5 into the sheet, so the floor is 50 x 30 and the bends are 50 and 30 long: each
+    // starts where its neighbour's bend line crosses its own. The walls (10 of them after the
+    // bend) reach on towards the corners until a gap of one thickness is left between them:
+    // their inner faces are 2 in from the edges, so they would meet 2 along, and the gap takes
+    // root 2 more from each.
+    let end = 2.0 + 2f64.sqrt();
+    let walls = 200.0 - 8.0 * end;
+    // The corner relief is centred where the centre lines of the two bends cross: half a bend's
+    // width out from each bend line, in the gap between the two bends.
+    let d = ba / 2.0;
+    let tray = |corner: &str, more: Value| {
         let (mut s, mut k) = (Session::default(), OcctKernel::new());
         let (face, lines) = plate(&mut s, &mut k, 60.0, 40.0);
-        run(&mut s, &mut k, "sheet.defaults", json!({ "corner": corner }));
-        // All four edges in one flange, 15 high: the walls of a tray. Each bend is cut 5 into
-        // the sheet, so the floor is 50 x 30 and each wall starts where its neighbour's bend
-        // line crosses its own.
-        let edges: Vec<Value> = lines.iter().map(|l| rim(&mut s, &mut k, face, "end", *l)).collect();
-        run(&mut s, &mut k, "sheet.flange", json!({ "edges": edges, "height": 15 }));
-        let walls = 2.0 * (50.0 + 30.0);
-        let folded = (1500.0 - 4.0 * hole) * T + bend_volume(FRAC_PI_2, walls) + 10.0 * T * walls;
-        assert!(near(volume(&mut s, &mut k), folded), "{corner}: {} {folded}", volume(&mut s, &mut k));
-        let f = flat(&mut s, &mut k);
-        assert!(near(num(&f, "length"), 70.0 + 2.0 * ba) && near(num(&f, "width"), 50.0 + 2.0 * ba), "{corner}: {f}");
-        assert!(near(num(&f, "area"), 1500.0 - 4.0 * hole + walls * (ba + 10.0)), "{corner}: {f}");
-        let bends = f["bends"].as_array().unwrap();
-        assert!(bends.len() == 4 && bends.iter().all(|b| b["up"] == true && near(num(b, "angle"), FRAC_PI_2)), "{corner}: {f}");
-        let outer = f["outer"].as_array().unwrap();
-        let kinds = |t: &str| outer.iter().filter(|c| c["type"] == t).count();
-        // The outline is a cross, three sides to each arm, whatever the relief: a relief is a
-        // hole that touches the outline at the corner where the two bend lines cross.
-        assert_eq!((outer.len(), kinds("line")), (12, 12), "{corner}: {f}");
-        let reliefs = f["inner"].as_array().unwrap();
-        let shapes: Vec<Vec<&str>> = reliefs.iter().map(|l| l.as_array().unwrap().iter().map(|c| c["type"].as_str().unwrap()).collect()).collect();
-        match corner {
-            "trim" => {
-                assert!(reliefs.is_empty(), "{f}");
-                assert!(near(num(&f, "cut_length"), walls + 8.0 * (ba + 10.0)), "{f}");
-            }
-            // Each corner notched 8 along both bend lines.
-            "square" => assert_eq!(shapes, vec![vec!["line"; 4]; 4], "{f}"),
-            // Each corner a hole 8 across that touches both bend lines, opened to the corner.
-            _ => {
-                assert_eq!(shapes.len(), 4, "{f}");
-                for (relief, shape) in reliefs.iter().zip(&shapes) {
-                    let mut kinds = shape.clone();
-                    kinds.sort_unstable();
-                    assert_eq!(kinds, vec!["arc", "line", "line"], "{f}");
-                    let arc = relief.as_array().unwrap().iter().find(|c| c["type"] == "arc").unwrap();
-                    assert!(near(num(arc, "radius"), 4.0), "{arc}");
-                }
-            }
+        let mut rule = json!({ "corner": corner });
+        for (key, v) in more.as_object().unwrap() {
+            rule[key] = v.clone();
         }
+        run(&mut s, &mut k, "sheet.defaults", rule);
+        let edges: Vec<Value> = lines.iter().map(|l| rim(&mut s, &mut k, face, "end", *l)).collect();
+        let fl = id(&run(&mut s, &mut k, "sheet.flange", json!({ "edges": edges, "height": 15 })), "feature");
+        (s, k, fl)
+    };
+    let kinds = |f: &Value, t: &str| f["outer"].as_array().unwrap().iter().filter(|c| c["type"] == t).count();
+    // The folded part is one solid the kernel finds nothing wrong with.
+    let sound = |s: &mut Session, k: &mut OcctKernel| {
+        let body = &run(s, k, "model.topology", json!({}))["bodies"][0];
+        body["valid"] == true && body["solids"] == 1
+    };
+
+    // Trimmed to the bends: no relief at all.
+    let (mut s, mut k, fl) = tray("trim", json!({}));
+    let folded = 1500.0 * T + bend_volume(FRAC_PI_2, 160.0) + 10.0 * T * walls;
+    assert!(near(volume(&mut s, &mut k), folded), "trim: {} {folded}", volume(&mut s, &mut k));
+    assert!(sound(&mut s, &mut k));
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "length"), 70.0 + 2.0 * ba) && near(num(&f, "width"), 50.0 + 2.0 * ba), "{f}");
+    assert!(near(num(&f, "area"), 1500.0 + 160.0 * ba + 10.0 * walls), "{f}");
+    let bends = f["bends"].as_array().unwrap();
+    assert!(bends.len() == 4 && bends.iter().all(|b| b["up"] == true && near(num(b, "angle"), FRAC_PI_2)), "{f}");
+    // A cross whose arms widen where the walls begin: seven sides to an arm.
+    assert_eq!((kinds(&f, "line"), f["outer"].as_array().unwrap().len(), f["inner"].as_array().unwrap().len()), (28, 28, 0), "{f}");
+    assert!(near(num(&f, "cut_length"), 8.0 * ba + 8.0 * (5.0 - end) + 80.0 + walls), "{f}");
+    // A wider gap draws the walls back: half of it, times root 2, from each end.
+    run(&mut s, &mut k, "sheet.defaults", json!({ "gap": 4 }));
+    assert!(near(volume(&mut s, &mut k), folded - 10.0 * T * 8.0 * 2f64.sqrt()), "{}", volume(&mut s, &mut k));
+    // Not mitred, each wall ends where its bend does: the outline is a plain cross.
+    update(&mut s, &mut k, fl, json!({ "miter": false }));
+    assert!(near(volume(&mut s, &mut k), 1500.0 * T + bend_volume(FRAC_PI_2, 160.0) + 10.0 * T * 160.0));
+    let f = flat(&mut s, &mut k);
+    assert_eq!((kinds(&f, "line"), f["outer"].as_array().unwrap().len()), (12, 12), "{f}");
+    assert!(near(num(&f, "cut_length"), 160.0 + 8.0 * (ba + 10.0)), "{f}");
+
+    // Square, 8 across (four thicknesses): it reaches 4 - d past each bend line, so it takes a
+    // square that size off each corner of the floor, as much off each end of each bend, and a
+    // notch as deep out of the foot of each wall from its end to the same line.
+    for (size, more) in [(8.0, json!({})), (12.0, json!({ "corner_size": "Thickness * 6" }))] {
+        let c = size / 2.0 - d;
+        let (mut s, mut k, _) = tray("square", more);
+        let notch = c * (5.0 + c - end);
+        let folded = (1500.0 - 4.0 * c * c) * T + bend_volume(FRAC_PI_2, 160.0 - 8.0 * c) + (10.0 * walls - 8.0 * notch) * T;
+        assert!(near(volume(&mut s, &mut k), folded), "square {size}: {} {folded}", volume(&mut s, &mut k));
+        assert!(sound(&mut s, &mut k), "square {size}");
+        let f = flat(&mut s, &mut k);
+        assert!(near(num(&f, "area"), 1500.0 - 4.0 * c * c + ba * (160.0 - 8.0 * c) + 10.0 * walls - 8.0 * notch), "square {size}: {f}");
+        // Six sides to a corner (the wall's end, the notch's side, and one line across wall,
+        // bend and floor, for each of the two flanges) and the four tops.
+        assert_eq!(
+            (kinds(&f, "line"), f["outer"].as_array().unwrap().len(), f["inner"].as_array().unwrap().len()),
+            (28, 28, 0),
+            "square {size}: {f}"
+        );
+        assert!(near(num(&f, "cut_length"), 8.0 * (10.0 - c) + 8.0 * (5.0 + c - end) + 8.0 * (ba + 2.0 * c) + walls), "square {size}: {f}");
+        assert!(near(num(&f, "length"), 70.0 + 2.0 * ba), "{f}");
     }
-    // The relief's size is the rule's too.
-    let (mut s, mut k) = (Session::default(), OcctKernel::new());
-    let (face, lines) = plate(&mut s, &mut k, 60.0, 40.0);
-    run(&mut s, &mut k, "sheet.defaults", json!({ "corner": "square", "corner_size": "Thickness * 2" }));
-    let edges: Vec<Value> = lines.iter().map(|l| rim(&mut s, &mut k, face, "end", *l)).collect();
-    run(&mut s, &mut k, "sheet.flange", json!({ "edges": edges, "height": 15 }));
-    assert!(near(num(&flat(&mut s, &mut k), "area"), 1500.0 - 4.0 * 16.0 + 160.0 * (ba + 10.0)));
-    // Two walls only, on edges that meet: one corner, relieved; the other ends run to the ends
-    // of their edges.
+    // A square too small to reach anything (4 across, inside the gap between the bends)
+    // changes nothing.
+    let (mut s, mut k, _) = tray("square", json!({ "corner_size": "Thickness * 2" }));
+    assert!(near(num(&flat(&mut s, &mut k), "area"), 1500.0 + 160.0 * ba + 10.0 * walls));
+
+    // Round, 8 across. Its centre is d from each bend's end and from each wall's foot, and
+    // d root 2 (4.31) from the corner of the floor, which it so does not reach: it takes a
+    // segment off the middle of each bend's end, and a bite out of the foot of each wall
+    // between the wall's end and where the circle leaves it.
+    let (mut s, mut k, _) = tray("round", json!({}));
+    let rise = (16.0 - d * d).sqrt();
+    let segment = 16.0 * (d / 4.0).acos() - d * rise;
+    let under = |y: f64| (y * (16.0 - y * y).sqrt() + 16.0 * (y / 4.0).asin()) / 2.0 - d * y;
+    // Along the edge, the centre is 5 - d from the corner.
+    let from = end - (5.0 - d);
+    let bite = under(rise) - under(from);
+    assert!(segment > 3.0 && bite > 0.4, "{segment} {bite}");
+    let folded = 1500.0 * T + (160.0 * ba - 8.0 * segment) * bend_volume(1.0, 1.0) / (R + K * T) + (10.0 * walls - 8.0 * bite) * T;
+    let got = volume(&mut s, &mut k);
+    assert!((got - folded).abs() < 1e-6 * folded, "round: {got} {folded}");
+    assert!(sound(&mut s, &mut k));
+    let f = flat(&mut s, &mut k);
+    let area = 1500.0 + 160.0 * ba - 8.0 * segment + 10.0 * walls - 8.0 * bite;
+    assert!((num(&f, "area") - area).abs() < 1e-6 * area, "round: {} {area}", num(&f, "area"));
+    // At each corner, for each of the two flanges: the wall's end, an arc out of its foot, what
+    // is left of the foot, the bend's end either side of the arc out of it. Everything that is
+    // round is an arc of radius 4, in the bends too, where the kernel has only points.
+    assert_eq!((kinds(&f, "line"), kinds(&f, "arc"), kinds(&f, "polyline"), f["inner"].as_array().unwrap().len()), (36, 16, 0, 0), "{f}");
+    for arc in f["outer"].as_array().unwrap().iter().filter(|c| c["type"] == "arc") {
+        assert!((num(arc, "radius") - 4.0).abs() < 1e-5, "{arc}");
+    }
+    let wall_arc = 4.0 * ((rise / 4.0).asin() - (from / 4.0).asin());
+    let bend_arc = 4.0 * 2.0 * (d / 4.0).acos();
+    let cut = 8.0 * (10.0 - ((16.0 - from * from).sqrt() - d))
+        + 8.0 * (5.0 - (5.0 - d + rise))
+        + 8.0 * (ba - 2.0 * rise)
+        + 8.0 * (wall_arc + bend_arc)
+        + walls;
+    assert!((num(&f, "cut_length") - cut).abs() < 1e-5 * cut, "round: {} {cut}", num(&f, "cut_length"));
+    // A larger one (12 across) reaches the floor too: the whole corner of it, and the whole
+    // end of each bend. Then one arc runs from wall to wall at each corner.
+    let (mut s, mut k, _) = tray("round", json!({ "corner_size": 12 }));
+    let f = flat(&mut s, &mut k);
+    assert_eq!((kinds(&f, "line"), kinds(&f, "arc"), kinds(&f, "polyline")), (12, 4, 0), "{f}");
+    let arc = f["outer"].as_array().unwrap().iter().find(|c| c["type"] == "arc").unwrap();
+    assert!(near(num(arc, "radius"), 6.0), "{arc}");
+    // What it takes, corner by corner: the disc, less what of it lies in the gap between the
+    // two flanges (which is no sheet), worked out here from the same circle.
+    let disc_in = |x0: f64, x1: f64, y0: f64, y1: f64| -> f64 {
+        // The area of the disc of radius 6 about (d, 5 - d) inside a box, by thin strips.
+        let n = 200_000;
+        (0..n)
+            .map(|i| {
+                let y = y0 + (y1 - y0) * (f64::from(i) + 0.5) / f64::from(n);
+                let half = 36.0 - (y - (5.0 - d)) * (y - (5.0 - d));
+                if half <= 0.0 {
+                    return 0.0;
+                }
+                let (lo, hi) = (d - half.sqrt(), d + half.sqrt());
+                (hi.min(x1) - lo.max(x0)).max(0.0) * (y1 - y0) / f64::from(n)
+            })
+            .sum()
+    };
+    // In one flange's flat: the floor is x < 0, the bend 0 to its width, the wall beyond; the
+    // bend and the floor begin 5 along the edge, the wall where it is mitred to.
+    let taken = disc_in(-20.0, 0.0, 5.0, 20.0) + 2.0 * disc_in(0.0, ba, 5.0, 20.0) + 2.0 * disc_in(ba, 20.0, end, 20.0);
+    let area = 1500.0 + 160.0 * ba + 10.0 * walls - 4.0 * taken;
+    assert!((num(&f, "area") - area).abs() < 1e-4, "round 12: {} {area}", num(&f, "area"));
+    let folded = (1500.0 - 4.0 * disc_in(-20.0, 0.0, 5.0, 20.0)) * T
+        + (160.0 * ba - 8.0 * disc_in(0.0, ba, 5.0, 20.0)) * bend_volume(1.0, 1.0) / (R + K * T)
+        + (10.0 * walls - 8.0 * disc_in(ba, 20.0, end, 20.0)) * T;
+    let got = volume(&mut s, &mut k);
+    assert!((got - folded).abs() < 1e-5 * folded, "round 12: {got} {folded}");
+    assert!(sound(&mut s, &mut k));
+
+    // Two walls only, on edges that meet: one corner, mitred and relieved; the other ends run
+    // to the ends of their edges.
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     let (face, lines) = plate(&mut s, &mut k, 60.0, 40.0);
     run(&mut s, &mut k, "sheet.defaults", json!({ "corner": "square" }));
     let edges = [rim(&mut s, &mut k, face, "end", lines[0]), rim(&mut s, &mut k, face, "end", lines[1])];
     run(&mut s, &mut k, "sheet.flange", json!({ "edges": edges, "height": 15 }));
-    let folded = (55.0 * 35.0 - 64.0) * T + (bend_volume(FRAC_PI_2, 1.0) + 10.0 * T) * (55.0 + 35.0);
+    let c = 4.0 - d;
+    let notch = c * (5.0 + c - end);
+    let folded = (55.0 * 35.0 - c * c) * T + bend_volume(FRAC_PI_2, 90.0 - 2.0 * c) + (10.0 * (100.0 - 2.0 * end) - 2.0 * notch) * T;
     assert!(near(volume(&mut s, &mut k), folded), "{} {folded}", volume(&mut s, &mut k));
-    assert!(near(num(&flat(&mut s, &mut k), "area"), 55.0 * 35.0 - 64.0 + 90.0 * (ba + 10.0)));
+    assert!(near(num(&flat(&mut s, &mut k), "area"), 55.0 * 35.0 - c * c + ba * (90.0 - 2.0 * c) + 10.0 * (100.0 - 2.0 * end) - 2.0 * notch));
 }
-
 #[test]
 fn holes_and_cuts_come_out_where_they_are_in_the_flat() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
@@ -680,4 +779,337 @@ fn an_edge_or_a_face_is_named_by_a_point_on_it() {
     let e = refused(&mut s, &mut k, "model.face_ref", json!({ "at": [40, 15, 20] }));
     assert!(e.contains("faces meet at") && e.contains("inside the face"), "{e}");
     assert!(refused(&mut s, &mut k, "model.face_ref", json!({ "at": [1, 2] })).contains("`at` is a point [x, y, z]"));
+}
+
+/// The corners of the box that holds the part: (min, max).
+fn bbox(s: &mut Session, k: &mut OcctKernel) -> (Vec3, Vec3) {
+    let b = &run(s, k, "model.topology", json!({}))["bodies"][0]["bbox"];
+    let p = |v: &Value| Vec3::new(v[0].as_f64().unwrap(), v[1].as_f64().unwrap(), v[2].as_f64().unwrap());
+    (p(&b["min"]), p(&b["max"]))
+}
+
+/// The cross-section of a bend through `angle` with inside radius `r`.
+fn ring(angle: f64, r: f64) -> f64 {
+    angle / 2.0 * ((r + T) * (r + T) - r * r)
+}
+
+#[test]
+fn hems_fold_an_edge_back_once_twice_or_into_a_roll() {
+    // A 40 x 30 plate, hemmed along its right edge (30 long). Nothing is cut from the sheet:
+    // the fold starts at the edge, and the part grows by it.
+    let hemmed = |hem: Value| {
+        let (mut s, mut k) = (Session::default(), OcctKernel::new());
+        let (face, lines) = plate(&mut s, &mut k, 40.0, 30.0);
+        let mut p = json!({ "edges": [rim(&mut s, &mut k, face, "end", lines[1])] });
+        for (key, v) in hem.as_object().unwrap() {
+            p[key] = v.clone();
+        }
+        let id = id(&run(&mut s, &mut k, "sheet.hem", p), "feature");
+        (s, k, id)
+    };
+    let plate_volume = 1200.0 * T;
+
+    // Single: a gap of 1 between the faces is a fold of inside radius 0.5; 10 long overall, of
+    // which the fold takes 0.5 + 2, leaving 7.5 flat.
+    let (mut s, mut k, hem) = hemmed(json!({ "gap": 1, "length": 10 }));
+    let section = ring(PI, 0.5) + 7.5 * T;
+    assert!(near(volume(&mut s, &mut k), plate_volume + section * 30.0), "{}", volume(&mut s, &mut k));
+    // It reaches 2.5 past the edge, and lies from 1 to 3 above the plate's top (at z = 2).
+    let (lo, hi) = bbox(&mut s, &mut k);
+    assert!(lo.near(Vec3::ZERO, 1e-6) && hi.near(Vec3::new(42.5, 30.0, 5.0), 1e-6), "{lo:?} {hi:?}");
+    let under = flats(&mut s, &mut k)
+        .into_iter()
+        .find(|f| f.0.near(-Vec3::Z, 1e-9) && (f.1.z - 3.0).abs() < 1e-9)
+        .expect("the hem's face that looks down at the plate");
+    assert!(near(under.2, 7.5 * 30.0) && (under.1.x - 36.25).abs() < 1e-9, "{under:?}");
+    // In the flat the fold is half a turn of the neutral surface: pi (0.5 + 0.44 x 2).
+    let fold = PI * (0.5 + K * T);
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "length"), 40.0 + fold + 7.5) && near(num(&f, "width"), 30.0) && near(num(&f, "area"), 1200.0 + (fold + 7.5) * 30.0), "{f}");
+    let bends = f["bends"].as_array().unwrap();
+    assert!(bends.len() == 1 && bends[0]["up"] == true && near(num(&bends[0], "angle"), PI) && near(num(&bends[0], "radius"), 0.5), "{f}");
+    // Folded to the other side: under the plate, and a bend down.
+    update(&mut s, &mut k, hem, json!({ "flip": true }));
+    assert!(near(volume(&mut s, &mut k), plate_volume + section * 30.0));
+    let (lo, hi) = bbox(&mut s, &mut k);
+    assert!(lo.near(Vec3::new(0.0, 0.0, -3.0), 1e-6) && hi.near(Vec3::new(42.5, 30.0, 2.0), 1e-6), "{lo:?} {hi:?}");
+    assert!(flat(&mut s, &mut k)["bends"][0]["up"] == false);
+    // 10 wide in the middle of the edge: no reliefs, since nothing of the sheet is bent.
+    update(&mut s, &mut k, hem, json!({ "flip": false, "width": { "centered": { "width": 10.0 } } }));
+    assert!(near(volume(&mut s, &mut k), plate_volume + section * 10.0));
+    assert!(near(num(&flat(&mut s, &mut k), "area"), 1200.0 + (fold + 7.5) * 10.0));
+    // By what it gets from the rule when nothing is said: half a thickness of gap, four of
+    // length (so 8 - 0.5 - 2 flat).
+    let (mut s, mut k, _) = hemmed(json!({}));
+    assert!(near(volume(&mut s, &mut k), plate_volume + (ring(PI, 0.5) + 5.5 * T) * 30.0));
+
+    // Double: the outer fold goes round the inner layer and a gap either side of it (inside
+    // radius 1 + 2 / 2 = 2), the inner fold is as a single hem's (0.5). 12 long overall leaves
+    // 12 - (2 + 2) - (0.5 + 2) = 5.5 flat in each layer.
+    let (mut s, mut k, _) = hemmed(json!({ "type": "double", "gap": 1, "length": 12 }));
+    let section = ring(PI, 2.0) + ring(PI, 0.5) + 2.0 * 5.5 * T;
+    assert!(near(volume(&mut s, &mut k), plate_volume + section * 30.0), "{}", volume(&mut s, &mut k));
+    // Three layers and two gaps above the plate's top: 2 + 1 + 2 + 1 + 2.
+    let (_, hi) = bbox(&mut s, &mut k);
+    assert!(hi.near(Vec3::new(44.0, 30.0, 8.0), 1e-6), "{hi:?}");
+    let f = flat(&mut s, &mut k);
+    let folds = PI * (2.0 + K * T) + PI * (0.5 + K * T);
+    assert!(near(num(&f, "length"), 40.0 + folds + 11.0), "{f}");
+    let bends = f["bends"].as_array().unwrap();
+    assert!(bends.len() == 2 && bends.iter().all(|b| b["up"] == true && near(num(b, "angle"), PI)), "{f}");
+
+    // Rolled: three quarters of a turn at the part's bend radius (3), and nothing after it.
+    let (mut s, mut k, _) = hemmed(json!({ "type": "rolled" }));
+    assert!(near(volume(&mut s, &mut k), plate_volume + ring(1.5 * PI, 3.0) * 30.0), "{}", volume(&mut s, &mut k));
+    assert!(near(num(&flat(&mut s, &mut k), "length"), 40.0 + 1.5 * PI * (3.0 + K * T)));
+    // Teardrop: rolled 190 degrees at radius 1, then straight back down until it is a hundredth
+    // of a millimetre off the plate.
+    let (mut s, mut k, _) = hemmed(json!({ "type": "teardrop", "radius": 1 }));
+    let turn = 190f64.to_radians();
+    let down = (1.0 - turn.cos() - 0.01) / -turn.sin();
+    assert!((down - 11.37).abs() < 0.01, "{down}");
+    assert!(near(volume(&mut s, &mut k), plate_volume + (ring(turn, 1.0) + down * T) * 30.0), "{}", volume(&mut s, &mut k));
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "length"), 40.0 + turn * (1.0 + K * T) + down), "{f}");
+
+    // What cannot be: a hem shorter than its own fold, a teardrop that does not come back, a
+    // roll that comes round into the sheet, and an edge that is not the sheet's.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (face, lines) = plate(&mut s, &mut k, 40.0, 30.0);
+    let edge = rim(&mut s, &mut k, face, "end", lines[1]);
+    let e = refused(&mut s, &mut k, "sheet.hem", json!({ "edges": [edge], "gap": 1, "length": 2 }));
+    assert!(e.contains("2 mm long and its fold alone takes 2.5 mm"), "{e}");
+    let e = refused(&mut s, &mut k, "sheet.hem", json!({ "edges": [edge], "type": "teardrop", "angle": 100f64.to_radians() }));
+    assert!(e.contains("181 to 270 degrees"), "{e}");
+    let e = refused(&mut s, &mut k, "sheet.hem", json!({ "edges": [edge], "type": "pressed" }));
+    assert!(e.contains("unknown hem type `pressed`"), "{e}");
+    let e = refused(&mut s, &mut k, "sheet.hem", json!({ "edges": [], "gap": 1, "length": 10 }));
+    assert!(e.contains("`edges` needs 1 to"), "{e}");
+    run(&mut s, &mut k, "sheet.hem", json!({ "edges": [edge], "type": "rolled", "radius": 1, "angle": 340f64.to_radians() }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("The hem runs into the part") && e.contains("larger gap or radius"), "{e}");
+}
+
+#[test]
+fn a_contour_flange_follows_an_open_profile_with_a_bend_at_every_corner() {
+    let ba = allowance(FRAC_PI_2);
+    // The profile is drawn on the XZ plane and pushed 50 out of it.
+    let start = |points: &[(f64, f64)]| {
+        let (mut s, mut k) = (Session::default(), OcctKernel::new());
+        run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": T, "bend_radius": R }));
+        let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" })), "feature");
+        let mut last: Option<Value> = None;
+        for w in points.windows(2) {
+            let mut p = json!({ "sketch": sk, "x1": w[0].0, "y1": w[0].1, "x2": w[1].0, "y2": w[1].1 });
+            if let Some(end) = &last {
+                p["start"] = end.clone();
+            }
+            last = Some(run(&mut s, &mut k, "sketch.line", p)["end"].clone());
+        }
+        (s, k, sk)
+    };
+    // The sizes of the box that holds the part, smallest first.
+    let sizes = |s: &mut Session, k: &mut OcctKernel| {
+        let (lo, hi) = bbox(s, k);
+        let mut d = [hi.x - lo.x, hi.y - lo.y, hi.z - lo.z];
+        d.sort_by(f64::total_cmp);
+        d
+    };
+    let close = |a: [f64; 3], b: [f64; 3]| a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-6);
+
+    // An L, 30 by 20. The sheet goes on the inside of its corner, so the profile is the part's
+    // outside: the bend's outside radius is 5 and it takes 5 of each line.
+    let l = [(0.0, 0.0), (30.0, 0.0), (30.0, 20.0)];
+    let (mut s, mut k, sk) = start(&l);
+    let cf = id(&run(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk, "distance": 50 })), "feature");
+    let section = T * (25.0 + 15.0) + ring(FRAC_PI_2, R);
+    assert!(near(volume(&mut s, &mut k), section * 50.0), "{}", volume(&mut s, &mut k));
+    assert!(close(sizes(&mut s, &mut k), [20.0, 30.0, 50.0]), "{:?}", sizes(&mut s, &mut k));
+    let f = flat(&mut s, &mut k);
+    // Laid flat it is 25 + the bend + 15 one way, and the 50 it was pushed the other.
+    let (across, along) = (num(&f, "length").min(num(&f, "width")), num(&f, "length").max(num(&f, "width")));
+    assert!(near(across, 25.0 + ba + 15.0) && near(along, 50.0) && f["bends"].as_array().unwrap().len() == 1, "{f}");
+    assert!(near(num(&f["bends"][0], "radius"), R) && near(num(&f, "area"), (40.0 + ba) * 50.0), "{f}");
+    // On the outside of the profile instead, the part is a thickness bigger each way and the
+    // profile is the inside of the bend (radius 3, taking 3 of each line).
+    update(&mut s, &mut k, cf, json!({ "position": "flipped" }));
+    assert!(near(volume(&mut s, &mut k), (T * (27.0 + 17.0) + ring(FRAC_PI_2, R)) * 50.0));
+    assert!(close(sizes(&mut s, &mut k), [22.0, 32.0, 50.0]), "{:?}", sizes(&mut s, &mut k));
+    // Half each side of it: the profile is the middle of the sheet.
+    update(&mut s, &mut k, cf, json!({ "position": "symmetric" }));
+    assert!(near(volume(&mut s, &mut k), (T * (26.0 + 16.0) + ring(FRAC_PI_2, R)) * 50.0));
+    assert!(close(sizes(&mut s, &mut k), [21.0, 31.0, 50.0]), "{:?}", sizes(&mut s, &mut k));
+    // Pushed half each way from the sketch plane, or behind it; a bend radius of its own.
+    let frame = s.regen(&mut k).sketch_frames[&tenon_model::FeatureId(sk as u32)];
+    let along = |s: &mut Session, k: &mut OcctKernel| {
+        let (lo, hi) = bbox(s, k);
+        let (a, b) = ((lo - frame.origin()).dot(frame.z()), (hi - frame.origin()).dot(frame.z()));
+        (a.min(b), a.max(b))
+    };
+    update(&mut s, &mut k, cf, json!({ "position": "default", "direction": "symmetric" }));
+    let (from, to) = along(&mut s, &mut k);
+    assert!((from + 25.0).abs() < 1e-6 && (to - 25.0).abs() < 1e-6, "{from} {to}");
+    update(&mut s, &mut k, cf, json!({ "direction": "flipped", "radius": 1.0 }));
+    let (from, to) = along(&mut s, &mut k);
+    assert!((from + 50.0).abs() < 1e-6 && to.abs() < 1e-6, "{from} {to}");
+    assert!(near(volume(&mut s, &mut k), (T * (27.0 + 17.0) + ring(FRAC_PI_2, 1.0)) * 50.0));
+
+    // A channel: three lines, two bends, 30 wide and 20 high outside.
+    let (mut s, mut k, sk) = start(&[(0.0, 20.0), (0.0, 0.0), (30.0, 0.0), (30.0, 20.0)]);
+    run(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk, "distance": 50 }));
+    assert!(near(volume(&mut s, &mut k), (T * (15.0 + 20.0 + 15.0) + 2.0 * ring(FRAC_PI_2, R)) * 50.0), "{}", volume(&mut s, &mut k));
+    assert!(close(sizes(&mut s, &mut k), [20.0, 30.0, 50.0]), "{:?}", sizes(&mut s, &mut k));
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "length").max(num(&f, "width")), 50.0 + 2.0 * ba) && f["bends"].as_array().unwrap().len() == 2, "{f}");
+    // It is sheet like any other: a hem along the top of one side, folded inwards. The side's
+    // top is 2 wide (x from 28 to 30 at y = 20 of the sketch); the hem goes on its inner edge.
+    let frame = s.regen(&mut k).sketch_frames[&tenon_model::FeatureId(sk as u32)];
+    let at = frame.plane_point(tenon_geom::Vec2::new(28.0, 20.0)) + frame.z() * 25.0;
+    let edge = run(&mut s, &mut k, "model.edge_ref", json!({ "at": [at.x, at.y, at.z] }));
+    let before = volume(&mut s, &mut k);
+    run(&mut s, &mut k, "sheet.hem", json!({ "edges": [edge], "gap": 1, "length": 8 }));
+    assert!(near(volume(&mut s, &mut k), before + (ring(PI, 0.5) + 5.5 * T) * 50.0), "{}", volume(&mut s, &mut k));
+    let f = flat(&mut s, &mut k);
+    assert!(
+        f["bends"].as_array().unwrap().len() == 3 && near(num(&f, "length").max(num(&f, "width")), 50.0 + 2.0 * ba + PI * (0.5 + K * T) + 5.5),
+        "{f}"
+    );
+
+    // A profile with an arc drawn in it: the arc is the bend, as drawn (radius 6 along the
+    // profile, so 4 inside with the sheet inside it).
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": T, "bend_radius": R }));
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" })), "feature");
+    let a = run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 24, "y2": 0 }));
+    let arc = run(&mut s, &mut k, "sketch.arc", json!({ "sketch": sk, "cx": 24, "cy": 6, "start": a["end"], "x2": 30, "y2": 6 }));
+    run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": 30, "y1": 6, "x2": 30, "y2": 20, "start": arc["end"] }));
+    run(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk, "distance": 50 }));
+    assert!(near(volume(&mut s, &mut k), (T * (24.0 + 14.0) + ring(FRAC_PI_2, 4.0)) * 50.0), "{}", volume(&mut s, &mut k));
+    assert!(near(num(&flat(&mut s, &mut k)["bends"][0], "radius"), 4.0));
+
+    // What is no profile for one.
+    let refuse = |points: &[(f64, f64)], more: &dyn Fn(&mut Session, &mut OcctKernel, u64), radius: f64| {
+        let (mut s, mut k, sk) = start(points);
+        more(&mut s, &mut k, sk);
+        run(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk, "distance": 50, "radius": radius }));
+        failure(&mut s, &mut k)
+    };
+    let nothing = |_: &mut Session, _: &mut OcctKernel, _: u64| {};
+    let e = refuse(&[(0.0, 0.0), (30.0, 0.0), (30.0, 4.0)], &nothing, R);
+    assert!(e.contains("4 mm long and the bends at its ends need 5 mm"), "{e}");
+    let e = refuse(&l, &|s, k, sk| drop(run(s, k, "sketch.circle", json!({ "sketch": sk, "cx": 10, "cy": 10, "r": 2 }))), R);
+    assert!(e.contains("has a circle in it"), "{e}");
+    let e = refuse(&l, &|s, k, sk| drop(run(s, k, "sketch.line", json!({ "sketch": sk, "x1": 50, "y1": 0, "x2": 60, "y2": 0 }))), R);
+    assert!(e.contains("more than one piece"), "{e}");
+    let e = refuse(&[(0.0, 0.0), (30.0, 0.0), (30.0, 20.0), (0.0, 20.0), (0.0, 0.0)], &nothing, R);
+    assert!(e.contains("closed") || e.contains("branches"), "{e}");
+    // A hook that comes back through its own first line.
+    let e = refuse(&[(0.0, 0.0), (40.0, 0.0), (40.0, 10.0), (20.0, 10.0), (20.0, -10.0)], &nothing, 1.0);
+    assert!(e.contains("folds into itself"), "{e}");
+    // Not a sheet metal part: it says what to do first.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" })), "feature");
+    assert!(refused(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk, "distance": 5 })).contains("run sheet.defaults first"));
+}
+
+#[test]
+fn a_six_sided_tray_is_mitred_and_relieved_at_its_blunt_corners() {
+    // A regular hexagon, 40 to a side, with a wall 15 high on every edge. Its corners are 120
+    // degrees: the bend lines (5 in from each edge) cross 5 / tan 60 along each edge, and the
+    // walls, whose inner faces are 2 in, meet 2 / tan 60 along and give up 1 / sin 60 more each
+    // for a gap of 2.
+    let corner = 2.0 * PI / 3.0;
+    let ba = allowance(FRAC_PI_2);
+    let (back, end) = (5.0 / (corner / 2.0).tan(), 2.0 / (corner / 2.0).tan() + 1.0 / (corner / 2.0).sin());
+    let tray = |relief: &str| {
+        let (mut s, mut k) = (Session::default(), OcctKernel::new());
+        run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": T, "bend_radius": R, "corner": relief }));
+        let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false })), "feature");
+        let at = |i: usize| (40.0 * (PI / 3.0 * i as f64).cos(), 40.0 * (PI / 3.0 * i as f64).sin());
+        let mut lines: Vec<Value> = Vec::new();
+        let mut points: Vec<Value> = Vec::new();
+        for i in 0..6 {
+            let (a, b) = (at(i), at(i + 1));
+            let mut p = json!({ "sketch": sk, "x1": a.0, "y1": a.1, "x2": b.0, "y2": b.1 });
+            if let Some(last) = points.last() {
+                p["start"] = last.clone();
+            }
+            if i == 5 {
+                p["end"] = points[0].clone();
+            }
+            let line = run(&mut s, &mut k, "sketch.line", p);
+            if i == 0 {
+                points.push(line["start"].clone());
+            }
+            points.push(line["end"].clone());
+            lines.push(line["line"].clone());
+        }
+        let face = id(&run(&mut s, &mut k, "sheet.face", json!({ "sketch": sk })), "feature");
+        let edges: Vec<Value> = lines.iter().map(|l| rim(&mut s, &mut k, face, "end", l.as_u64().unwrap())).collect();
+        run(&mut s, &mut k, "sheet.flange", json!({ "edges": edges, "height": 15 }));
+        (s, k)
+    };
+    // The floor is the hexagon 5 smaller all round: its sides are as long as the bends.
+    let apothem = 40.0 * (PI / 6.0).cos();
+    let side = 40.0 - 2.0 * back;
+    let floor = 6.0 * side * (apothem - 5.0) / 2.0;
+    let walls = 6.0 * (40.0 - 2.0 * end);
+
+    let (mut s, mut k) = tray("trim");
+    let folded = floor * T + bend_volume(FRAC_PI_2, 6.0 * side) + 10.0 * T * walls;
+    assert!(near(volume(&mut s, &mut k), folded), "{} {folded}", volume(&mut s, &mut k));
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    let f = flat(&mut s, &mut k);
+    let flat_trim = floor + ba * 6.0 * side + 10.0 * walls;
+    assert!(near(num(&f, "area"), flat_trim), "{f}");
+    assert!(f["bends"].as_array().unwrap().len() == 6 && f["inner"].as_array().unwrap().is_empty(), "{f}");
+
+    // A round relief 8 across at each corner. It is laid out in the flat, so what it takes is
+    // what of the disc lies on the sheet there: found here by counting the points of a fine grid
+    // that are in the disc and on the floor, a bend or a wall of the two flanges that meet.
+    let (mut s, mut k) = tray("round");
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    let f = flat(&mut s, &mut k);
+    let d = ba / 2.0;
+    let centre = (d, back - d / (corner / 2.0).tan());
+    // In one flange's flat: x out from where its bend starts, y along its edge from the corner.
+    let on_flange = |x: f64, y: f64| (0.0..=ba).contains(&x) && y >= back || x >= ba && x <= ba + 10.0 && y >= end;
+    // The same point as the other flange has it: the two are mirrored in the line that halves
+    // the corner.
+    let other = |x: f64, y: f64| (5.0 - y * corner.sin() + (5.0 - x) * corner.cos(), y * corner.cos() + (5.0 - x) * corner.sin());
+    let n = 3000;
+    let cell = 8.0 / f64::from(n);
+    let mut count = 0u64;
+    for i in 0..n {
+        for j in 0..n {
+            let (x, y) = (centre.0 - 4.0 + (f64::from(i) + 0.5) * cell, centre.1 - 4.0 + (f64::from(j) + 0.5) * cell);
+            if (x - centre.0).powi(2) + (y - centre.1).powi(2) > 16.0 {
+                continue;
+            }
+            let (ox, oy) = other(x, y);
+            if on_flange(x, y) || on_flange(ox, oy) || (x <= 0.0 && ox <= 0.0) {
+                count += 1;
+            }
+        }
+    }
+    let taken = count as f64 * cell * cell;
+    assert!(taken > 5.0 && taken < 30.0, "{taken}");
+    assert!((num(&f, "area") - (flat_trim - 6.0 * taken)).abs() < 0.2, "{} {}", num(&f, "area"), flat_trim - 6.0 * taken);
+    // Every relief is arcs of radius 4, and nothing in the outline is left as points.
+    let outer = f["outer"].as_array().unwrap();
+    assert!(outer.iter().all(|c| c["type"] != "polyline") && outer.iter().any(|c| c["type"] == "arc"), "{f}");
+    for arc in outer.iter().filter(|c| c["type"] == "arc") {
+        assert!((num(arc, "radius") - 4.0).abs() < 1e-5, "{arc}");
+    }
+    // Walls that lean in 30 degrees (the sheet turns 120) are cut on the slant, and still
+    // clear one another: the part is one sound solid.
+    let (mut s, mut k) = tray("trim");
+    let flange = s.document().features().last().unwrap().id.0;
+    update(&mut s, &mut k, u64::from(flange), json!({ "angle": 2.0 * PI / 3.0 }));
+    assert!(volume(&mut s, &mut k) > 0.0);
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    assert_eq!(flat(&mut s, &mut k)["bends"].as_array().unwrap().len(), 6);
 }

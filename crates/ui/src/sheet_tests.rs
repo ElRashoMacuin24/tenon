@@ -10,11 +10,12 @@ use serde_json::json;
 use tenon_geom::Vec3;
 use tenon_kernel_occt::OcctKernel;
 use tenon_model::FeatureKind;
-use tenon_model::sheet::{BendPosition, CornerShape};
+use tenon_model::sheet::{BendPosition, CornerShape, HemShape, Sides};
 
 use crate::Workbench;
 use crate::commands::{FLAT_TAB, MODEL_TAB, RIBBON, SHEET_TAB};
 use crate::panels::Panel;
+use crate::sheet::HemChoice;
 use crate::tests::{Driver, browser_row, on_screen, pressable, type_into};
 
 fn scratch(name: &str) -> PathBuf {
@@ -294,7 +295,7 @@ fn the_flat_pattern_is_shown_in_place_of_the_part_and_written_as_dxf() {
     assert_eq!((tabs(&wb), wb.chrome.tab), (vec!["Flat Pattern", "Tools", "View"], FLAT_TAB));
     let ba = FRAC_PI_2 * (3.0 + 0.44 * 2.0);
     let flat = wb.flat_now().expect("worked out when shown").clone().unwrap();
-    assert!(near(flat.length, 70.0 + 2.0 * ba) && near(flat.width, 50.0 + 2.0 * ba) && flat.bends.len() == 4 && flat.inner.len() == 4, "{flat:?}");
+    assert!(near(flat.length, 70.0 + 2.0 * ba) && near(flat.width, 50.0 + 2.0 * ba) && flat.bends.len() == 4 && flat.inner.is_empty(), "{flat:?}");
     let texts = d.texts();
     for shown in [
         "Flat pattern  82.189 x 62.189 mm",
@@ -309,7 +310,7 @@ fn the_flat_pattern_is_shown_in_place_of_the_part_and_written_as_dxf() {
     ] {
         assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
     }
-    assert!(texts.iter().any(|t| t.starts_with("4 bends, 4 cut-outs, ")), "{texts:?}");
+    assert!(texts.iter().any(|t| t.starts_with("4 bends, 0 cut-outs, ")), "{texts:?}");
     // The browser has the two states; the flat one is the one shown.
     let (folded, flat_row) = (browser_row(&d, "Folded Model"), browser_row(&d, "Flat Pattern"));
     assert!(folded.top() < flat_row.top());
@@ -323,9 +324,9 @@ fn the_flat_pattern_is_shown_in_place_of_the_part_and_written_as_dxf() {
     let tags = tenon_dxf::parse(text.as_bytes()).unwrap();
     let sections = tenon_dxf::sections(&tags);
     let on = |layer: &str| tenon_dxf::records(&sections[2].tags).iter().filter(|(_, r)| r.iter().any(|t| t.code == 8 && t.str() == layer)).count();
-    // A cross of 12 lines; four reliefs of two lines and an arc; four centre lines; eight
-    // extent lines.
-    assert_eq!((on("OUTER"), on("INTERIOR"), on("BEND_UP"), on("BEND_DOWN"), on("BEND_EXTENT")), (12, 12, 4, 0, 8), "{text}");
+    // The outline with its mitred walls and round reliefs (9 lines and 4 arcs to a corner, less
+    // the four tops counted twice); four centre lines; eight extent lines.
+    assert_eq!((on("OUTER"), on("INTERIOR"), on("BEND_UP"), on("BEND_DOWN"), on("BEND_EXTENT")), (52, 0, 4, 0, 8), "{text}");
     // With the extent lines hidden they are left out of the file too.
     wb.run_ui("sheet.show_extents").unwrap();
     frames(&mut d, &mut wb);
@@ -450,4 +451,194 @@ fn the_flat_pattern_is_worked_out_on_the_geometry_thread() {
     let flat = wb.flat_now().expect("worked out again").clone().unwrap();
     assert!(near(flat.length, 34.0 + FRAC_PI_2 * (3.0 + 0.44 * 3.0) + 14.0), "{}", flat.length);
     assert!(d.texts().iter().any(|t| t == "Sheet 3 mm, K factor 0.44"), "{:?}", d.texts());
+}
+
+/// The cross-section of a bend through `angle` with inside radius `r`, in 2 mm sheet.
+fn ring(angle: f64, r: f64) -> f64 {
+    angle / 2.0 * ((r + 2.0) * (r + 2.0) - r * r)
+}
+
+#[test]
+fn a_contour_flange_and_a_hem_are_made_from_their_panels_by_clicks() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1300.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3 })).unwrap();
+    frames(&mut d, &mut wb);
+    // The two are on the Create panel, live: Contour Flange with nothing to follow says what
+    // it wants.
+    for id in ["sheet.contour_flange", "sheet.hem"] {
+        assert!(crate::commands::find(id).is_some_and(|c| c.available()), "{id}");
+    }
+    let e = wb.run_ui("sheet.contour_flange").unwrap_err();
+    assert!(e.contains("draw an open profile in a sketch first"), "{e}");
+
+    // An L drawn on the XZ plane, 30 along and 20 up; Contour Flange while the sketch is still
+    // open finishes it and shows the sheet: 50 wide, on the inside of the corner.
+    wb.create_sketch(json!({ "plane": "xz" })).unwrap();
+    let Some(sk) = wb.document().features().last().map(|f| f.id) else { panic!() };
+    let a = wb.exec("sketch.line", json!({ "sketch": sk.0, "x1": 0, "y1": 0, "x2": 30, "y2": 0 })).unwrap();
+    wb.exec("sketch.line", json!({ "sketch": sk.0, "start": a["end"], "x2": 30, "y2": 20 })).unwrap();
+    wb.run_ui("sheet.contour_flange").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(!wb.is_sketching() && wb.has_properties());
+    assert!(matches!(&wb.panel, Some(Panel::ContourFlange(p)) if p.sketch == sk && p.distance == 50.0 && !p.own_radius));
+    let inside = 2.0 * (25.0 + 15.0) + ring(FRAC_PI_2, 3.0);
+    assert!(near(volume(&wb), inside * 50.0), "the preview: {} {}", volume(&wb), inside * 50.0);
+    let texts = d.texts();
+    for shown in ["Contour Flange", "Profile", "Position", "Direction", "Distance", "Bend Radius", "By rule", "3 mm"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    // 40 typed for the distance; Flipped chosen for the position: the sheet is outside the
+    // profile, which is the inside of the bend.
+    type_into(&mut d, &mut wb, "tn_props_contour_distance", "40");
+    d.click(&mut wb, pressable(&d, "tn_contour_position"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_contour_position_flipped"));
+    frames(&mut d, &mut wb);
+    let outside = 2.0 * (27.0 + 17.0) + ring(FRAC_PI_2, 3.0);
+    assert!(near(volume(&wb), outside * 40.0), "{} {}", volume(&wb), outside * 40.0);
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let made = wb.document().features().last().unwrap().clone();
+    let FeatureKind::ContourFlange(c) = &made.kind else { panic!("{made:?}") };
+    assert_eq!((made.name.as_str(), c.distance, c.position, c.radius), ("Contour Flange1", 40.0, Sides::Flipped, None));
+    assert!(browser_row(&d, "Contour Flange1").height() > 0.0);
+    // It edits again from the browser.
+    wb.edit_feature(made.id).unwrap();
+    assert!(matches!(&wb.panel, Some(Panel::ContourFlange(p)) if p.editing == Some(made.id) && p.position == Sides::Flipped));
+    wb.panel = None;
+
+    // Hem, on a plate: a click on the right-hand edge of its top. It folds at once, by the
+    // rule: half a thickness of gap, four thicknesses long.
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3 })).unwrap();
+    plate(&mut wb, 40.0, 30.0);
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    wb.run_ui("sheet.hem").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::Hem(p)) if p.edges.is_empty() && p.gap == 1.0 && p.length == 8.0));
+    let edge = on_screen(&wb, Vec3::new(40.0, 15.0, 2.0));
+    d.click(&mut wb, edge);
+    frames(&mut d, &mut wb);
+    let Some(Panel::Hem(p)) = &wb.panel else { panic!("the hem panel") };
+    assert_eq!(p.edges.len(), 1);
+    assert!(near(volume(&wb), 2400.0 + (ring(PI, 0.5) + 5.5 * 2.0) * 30.0), "{}", volume(&wb));
+    let texts = d.texts();
+    for shown in ["Hem", "Edges", "1 selected", "Type", "Single", "Gap", "Length", "Direction", "Width Extents"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    // Double, and 12 long: folded over twice.
+    d.click(&mut wb, pressable(&d, "tn_hem_type"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_hem_type_double"));
+    frames(&mut d, &mut wb);
+    type_into(&mut d, &mut wb, "tn_props_hem_length", "12");
+    frames(&mut d, &mut wb);
+    let double = ring(PI, 2.0) + ring(PI, 0.5) + 2.0 * 5.5 * 2.0;
+    assert!(near(volume(&wb), 2400.0 + double * 30.0), "{} {}", volume(&wb), 2400.0 + double * 30.0);
+    // Rolled: the fields are a radius (the part's bend radius) and an angle.
+    d.click(&mut wb, pressable(&d, "tn_hem_type"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_hem_type_rolled"));
+    frames(&mut d, &mut wb);
+    let texts = d.texts();
+    assert!(texts.iter().any(|t| t == "Radius") && texts.iter().any(|t| t == "Angle") && !texts.iter().any(|t| t == "Gap"), "{texts:?}");
+    type_into(&mut d, &mut wb, "tn_props_hem_angle", "270");
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), 2400.0 + ring(1.5 * PI, 3.0) * 30.0), "{}", volume(&wb));
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let made = wb.document().features().last().unwrap().clone();
+    let FeatureKind::Hem(h) = &made.kind else { panic!("{made:?}") };
+    assert!(
+        made.name == "Hem1" && matches!(h.shape, HemShape::Rolled { radius, angle } if radius == 3.0 && (angle - 1.5 * PI).abs() < 1e-12),
+        "{h:?}"
+    );
+    // Its radius is the rule's by name: a change of the rule is a change of the hem.
+    wb.exec("sheet.defaults", json!({ "bend_radius": 4 })).unwrap();
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), 2400.0 + ring(1.5 * PI, 4.0) * 30.0), "{}", volume(&wb));
+    wb.edit_feature(made.id).unwrap();
+    assert!(matches!(&wb.panel, Some(Panel::Hem(p)) if p.editing == Some(made.id) && p.shape == HemChoice::Rolled && p.degrees == 270.0));
+}
+
+#[test]
+fn flanges_that_meet_are_mitred_unless_the_panel_says_not_and_the_gap_is_the_rules() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1300.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3, "corner": "trim" })).unwrap();
+    let (face, lines) = plate(&mut wb, 60.0, 40.0);
+    let edges: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|l| {
+            wb.exec(
+                "model.edge_ref",
+                json!({ "faces": [{ "type": "cap", "feature": face, "end": "end" }, { "type": "side", "feature": face, "curve": l }] }),
+            )
+            .unwrap()
+        })
+        .collect();
+    let flange = wb.exec("sheet.flange", json!({ "edges": edges, "height": 15 })).unwrap()["feature"].as_u64().unwrap();
+    frames(&mut d, &mut wb);
+    // The walls of a tray, brought together until a thickness is left between them: each ends
+    // 2 + root 2 from its corner.
+    let tray = |walls: f64| 1500.0 * 2.0 + ring(FRAC_PI_2, 3.0) * 160.0 + 10.0 * 2.0 * walls;
+    let mitred = |gap: f64| 200.0 - 8.0 * (2.0 + gap / 2f64.sqrt());
+    assert!(near(volume(&wb), tray(mitred(2.0))), "{} {}", volume(&wb), tray(mitred(2.0)));
+    // The gap is the rule's: 3 typed into Miter Gap in Sheet Metal Defaults.
+    wb.run_ui("sheet.defaults").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(d.texts().iter().any(|t| t == "Miter Gap"), "{:?}", d.texts());
+    assert_eq!(wb.chrome.sheet.defaults.as_ref().unwrap().sizes[7], "Thickness");
+    type_into(&mut d, &mut wb, "tn_sheet_gap", "3");
+    d.click(&mut wb, pressable(&d, "tn_sheet_ok"));
+    frames(&mut d, &mut wb);
+    assert_eq!(wb.document().sheet_sizes().unwrap().gap, 3.0, "{}", wb.status());
+    assert!(near(volume(&wb), tray(mitred(3.0))), "{} {}", volume(&wb), tray(mitred(3.0)));
+    // Auto-Mitering unticked in the flange's panel: each wall ends where its bend does.
+    wb.edit_feature(tenon_model::FeatureId(flange as u32)).unwrap();
+    frames(&mut d, &mut wb);
+    let texts = d.texts();
+    assert!(texts.iter().any(|t| t == "Auto-Mitering") && texts.iter().any(|t| t == "gap 3 mm"), "{texts:?}");
+    d.click(&mut wb, pressable(&d, "tn_flange_miter"));
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), tray(160.0)), "the preview: {} {}", volume(&wb), tray(160.0));
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let FeatureKind::Flange(f) = &wb.document().feature(tenon_model::FeatureId(flange as u32)).unwrap().kind else { panic!() };
+    assert!(!f.miter);
+    assert!(near(volume(&wb), tray(160.0)));
+}
+
+#[test]
+fn a_long_panel_is_shown_whole_above_the_browser() {
+    // A laptop-sized window. The Flange panel is the longest there is: its last section, Corner,
+    // is on screen, the buttons under it, and the browser still below them.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    plate(&mut wb, 40.0, 30.0);
+    frames(&mut d, &mut wb);
+    wb.run_ui("sheet.flange").unwrap();
+    frames(&mut d, &mut wb);
+    let texts = d.texts();
+    for shown in ["Input Geometry", "Width Extents", "Bend Radius", "Corner", "Auto-Mitering"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    let (miter, model) = (pressable(&d, "tn_flange_miter"), browser_row(&d, "Origin"));
+    assert!(miter.y > 400.0 && miter.y < model.top() && model.bottom() < 860.0, "{miter:?} {model:?}");
+    // A short panel takes no more of the column than it did: the browser has the rest.
+    wb.panel = None;
+    wb.run_ui("sheet.hem").unwrap();
+    frames(&mut d, &mut wb);
+    let short = browser_row(&d, "Origin").top();
+    assert!(short < model.top() - 40.0, "{short} {}", model.top());
 }

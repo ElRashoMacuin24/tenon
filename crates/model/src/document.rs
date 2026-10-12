@@ -781,6 +781,10 @@ pub enum FeatureKind {
     SheetFace(crate::sheet::Face),
     /// Walls bent up from edges of the sheet.
     Flange(crate::sheet::Flange),
+    /// An edge of the sheet folded back on itself.
+    Hem(crate::sheet::Hem),
+    /// A strip of sheet along an open profile.
+    ContourFlange(crate::sheet::ContourFlange),
 }
 
 impl FeatureKind {
@@ -838,6 +842,8 @@ impl FeatureKind {
             FeatureKind::Thread(_) => "Thread",
             FeatureKind::SheetFace(_) => "Face",
             FeatureKind::Flange(_) => "Flange",
+            FeatureKind::Hem(_) => "Hem",
+            FeatureKind::ContourFlange(_) => "Contour Flange",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -866,6 +872,8 @@ impl FeatureKind {
             FeatureKind::Thread(_) => "Thread",
             FeatureKind::SheetFace(_) => "Face",
             FeatureKind::Flange(_) => "Flange",
+            FeatureKind::Hem(_) => "Hem",
+            FeatureKind::ContourFlange(_) => "Contour Flange",
         }
     }
     /// Features this one depends on.
@@ -902,6 +910,8 @@ impl FeatureKind {
             FeatureKind::Thread(t) => t.face.feature().into_iter().collect(),
             FeatureKind::SheetFace(f) => vec![f.sketch],
             FeatureKind::Flange(f) => f.edges.iter().flat_map(EdgeRef::features).collect(),
+            FeatureKind::Hem(h) => h.edges.iter().flat_map(EdgeRef::features).collect(),
+            FeatureKind::ContourFlange(c) => vec![c.sketch],
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -1291,6 +1301,9 @@ impl Document {
                 FeatureKind::SheetFace(s) if self.sketch(s.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, s.sketch)),
                 FeatureKind::SheetFace(s) => s.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Flange(fl) => fl.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Hem(h) => h.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::ContourFlange(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
+                FeatureKind::ContourFlange(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

@@ -188,15 +188,16 @@ flat = true
 | Field | |
 |---|---|
 | `relief` | the cut beside a bend that is narrower than its edge: `"straight"` or `"round"` |
-| `corner` | the cut where two bends meet at a corner: `"round"`, `"square"` or `"trim"` (none) |
+| `corner` | the cut where two bends meet at a corner, centred where the centre lines of the two bends cross in the flat (DEC-063): `"round"`, `"square"` or `"trim"` (none) |
 | `a_side` | optional: a [face reference](#references-to-faces-and-edges), the side that is up when the flat pattern lies on the table. Without it, the largest flat face |
 | `flat` | optional, written when true: the part has a flat pattern (it is shown in the browser). The pattern itself is not in the file: it is worked out from the solid |
 
 The rule's sizes are user parameters with fixed names, each with its equation like any other:
 `Thickness`, `BendRadius`, `BendReliefWidth`, `BendReliefDepth`, `MinimumRemnant`,
-`CornerReliefSize` (millimetres) and `KFactor` (a plain number from 0 to 1). A sheet metal part
-without one of them, or with one out of range, opens, and its sheet metal features say what is
-missing when the part is rebuilt.
+`CornerReliefSize`, `GapSize` (millimetres) and `KFactor` (a plain number from 0 to 1). A sheet
+metal part without one of them, or with one out of range, opens, and its sheet metal features
+say what is missing when the part is rebuilt; `GapSize` alone may be missing (parts saved
+before there was one), and is then one `Thickness`.
 
 ### Parameters (`[parameters]`)
 
@@ -247,7 +248,9 @@ may refer only to features before them.
 | `combine` | `base` (a face reference on the body that stays), `tools` (a face reference on each other body), `operation` (`"join"`, `"cut"` or `"intersect"`), `keep_tools` |
 | `thread` | `face` (a face reference on a round shaft or hole); optional `pitch` (mm; without it, the ISO coarse pitch for the face's diameter); optional `designation` (text for drawings; without it, `M<diameter>x<pitch>`); `length`: `"full"` or `{ distance = mm }` from the end it starts at; `reverse` (start from the other end); `left` (left-handed); `modelled` (the groove is cut into the part; otherwise the thread is cosmetic) |
 | `sheet_face` | `sketch`, `regions`, `flip` (the thickness goes behind the sketch plane), `operation` (`"join"` or `"new_body"`): a profile made one `Thickness` thick |
-| `flange` | `edges` (edge references: straight edges of the sheet's rim), `angle` (radians the sheet turns, 1 to 179 degrees), `height`, `datum` (`"outer"`, `"inner"` or `"tangent"`: what the height is measured from), `position` (`"inside"`, `"adjacent"`, `"outside"` or `"tangent"`: where the bend lies relative to the edge), `flip` (bend to the other side); optional `radius` (the bend's inside radius; without it the part's `BendRadius`); `width` (`"edge"`, `{ centered = { width = w } }` or `{ offset = { start = a, end = b } }`) |
+| `flange` | `edges` (edge references: straight edges of the sheet's rim), `angle` (radians the sheet turns, 1 to 179 degrees), `height`, `datum` (`"outer"`, `"inner"` or `"tangent"`: what the height is measured from), `position` (`"inside"`, `"adjacent"`, `"outside"` or `"tangent"`: where the bend lies relative to the edge), `flip` (bend to the other side); optional `radius` (the bend's inside radius; without it the part's `BendRadius`); `width` (`"edge"`, `{ centered = { width = w } }` or `{ offset = { start = a, end = b } }`); optional `miter`, written when false: where the flange meets another of the same feature at a corner, each wall ends where its bend does instead of being brought up to the part's `GapSize` from the other |
+| `hem` | `edges` (as a flange's), `shape` (`{ single = { gap = g, length = l } }`, `{ double = { gap = g, length = l } }`: the gap between the layers and the length over all; `{ rolled = { radius = r, angle = a } }`, `{ teardrop = { radius = r, angle = a } }`: the inside radius and the angle in radians, 1 to 350 degrees rolled and 181 to 270 for a teardrop), `flip` (fold to the other side), `width` (as a flange's) |
+| `contour_flange` | `sketch` (an open profile: its lines and arcs end to end), `distance` (how far it is pushed out of the sketch plane), `direction` and `position` (each `"default"`, `"flipped"` or `"symmetric"`: which way it is pushed, and which side of the profile the sheet's thickness goes), optional `radius` (inside, of the bends made at corners; without it the part's `BendRadius`), `operation` (`"join"` or `"new_body"`) |
 
 Field values:
 
@@ -705,7 +708,9 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   assembly component, a part's optional `appearance`, `[material]` and `[table]`, and for
   sketches the optional `centerline` and `reference` of an entity, the `linear_diameter`
   dimension and a sketch feature's optional `projections` (DEC-055, DEC-056), and for sheet
-  metal the `[sheet_metal]` table and the feature types `sheet_face` and `flange` (DEC-057).
+  metal the `[sheet_metal]` table and the feature types `sheet_face` and `flange` (DEC-057),
+  then `hem`, `contour_flange`, a flange's `miter` and the parameter `GapSize` (DEC-063,
+  DEC-064).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

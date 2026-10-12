@@ -38,6 +38,17 @@
 #include <gp_Pnt2d.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepFill.hxx>
+#include <Geom2dConvert.hxx>
+#include <Geom2d_BSplineCurve.hxx>
+#include <Geom2d_Circle.hxx>
+#include <Geom2d_TrimmedCurve.hxx>
+#include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
+#include <gp_Ax22d.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
@@ -669,6 +680,362 @@ std::unique_ptr<Shape> extrude(const ProfileIn& profile, double start, double le
     add_roles(hist, ROLE_START_CAP, *out, mk.FirstShape());
     add_roles(hist, ROLE_END_CAP, *out, mk.LastShape());
     record_tagged(mk, tags, *out, hist);
+    return out;
+  });
+}
+
+namespace {
+
+void require_valid(const TopoDS_Shape& s, const char* message);
+
+// How a curve of a rolled outline lies on the cylinders.
+enum : int {
+  ROLL_ALONG = 0, // along the axis: a straight line
+  ROLL_ROUND = 1, // round the axis: an arc of a circle
+  ROLL_OTHER = 2, // anything else: a curve of the cylinder's (angle, height) plane
+};
+
+struct RollCurve {
+  int kind = ROLL_OTHER;
+  std::uint64_t tag = 0;
+  // The ends as points of the outline (indices into the list of its corners).
+  int a = 0;
+  int b = 0;
+  // ROLL_ALONG: the angle and the two heights. ROLL_ROUND: the height and the two angles.
+  double u0 = 0.0;
+  double u1 = 0.0;
+  double v0 = 0.0;
+  double v1 = 0.0;
+  // ROLL_OTHER: the curve in (angle, height) and its range.
+  occ::handle<Geom2d_Curve> curve;
+  double first = 0.0;
+  double last = 0.0;
+};
+
+} // namespace
+
+std::unique_ptr<Shape> roll(const ProfileIn& profile, double rho, double inner, double outer, HistoryOut& hist) {
+  return guarded("roll", [&] {
+    if (!(rho > 1e-9 && inner > 1e-9 && outer > inner + 1e-9)) {
+      throw std::invalid_argument("a rolled outline needs radii above zero, the outer one the larger");
+    }
+    const gp_Pnt origin = pnt(profile.frame.origin);
+    const gp_Dir axis = dir(profile.frame.z_dir);
+    const gp_Dir zero = dir(profile.frame.x_dir);
+
+    // The outline: one loop of one region.
+    std::vector<const CurveIn*> input;
+    for (const CurveIn& c : profile.curves) {
+      if (c.region != 0 || c.loop_index != 0) {
+        throw std::invalid_argument("a rolled outline is one loop without holes");
+      }
+      input.push_back(&c);
+    }
+    if (input.size() < 2) {
+      throw std::invalid_argument("a rolled outline needs at least two curves");
+    }
+    // How far round the axis it reaches: the cylinders' seam is put opposite its middle.
+    double lo = std::numeric_limits<double>::infinity();
+    double hi = -lo;
+    auto reach = [&](double x) {
+      lo = std::min(lo, x);
+      hi = std::max(hi, x);
+    };
+    for (const CurveIn* c : input) {
+      switch (c->kind) {
+      case 0:
+        reach(c->x0);
+        reach(c->x1);
+        break;
+      case 1:
+        reach(c->cx - c->r);
+        reach(c->cx + c->r);
+        break;
+      case 3:
+        for (std::uint32_t i = 0; i < c->pole_count; ++i) {
+          const std::size_t k = (static_cast<std::size_t>(c->pole_start) + i) * 2;
+          if (k + 1 >= profile.poles.size()) {
+            throw std::invalid_argument("invalid B-spline in a rolled outline");
+          }
+          reach(profile.poles[k]);
+        }
+        break;
+      default:
+        throw std::invalid_argument("a rolled outline is made of lines, arcs and splines");
+      }
+    }
+    if (!((hi - lo) / rho < kTwoPi - 0.05)) {
+      throw std::invalid_argument("a rolled outline must reach less than once round its axis");
+    }
+    const double shift = 0.5 * kTwoPi - 0.5 * (lo + hi) / rho;
+    // The cylinders' own X direction: angle `shift` of theirs is angle 0 of the outline.
+    const gp_Dir side = axis.Crossed(zero);
+    const gp_Dir x_dir(zero.XYZ() * std::cos(shift) - side.XYZ() * std::sin(shift));
+    const gp_Ax3 frame(origin, axis, x_dir);
+    const double radii[2] = {inner, outer};
+    occ::handle<Geom_CylindricalSurface> cyl[2] = {new Geom_CylindricalSurface(frame, inner), new Geom_CylindricalSurface(frame, outer)};
+    auto angle = [&](double x) { return x / rho + shift; };
+
+    // The corners of the outline, and its curves between them.
+    std::vector<gp_Pnt2d> corners;
+    auto corner = [&](double x, double y) {
+      for (std::size_t i = 0; i < corners.size(); ++i) {
+        if (std::hypot(corners[i].X() - x, corners[i].Y() - y) < 1e-7) {
+          return static_cast<int>(i);
+        }
+      }
+      corners.emplace_back(x, y);
+      return static_cast<int>(corners.size() - 1);
+    };
+    std::vector<RollCurve> curves;
+    for (const CurveIn* c : input) {
+      RollCurve rc;
+      rc.tag = c->tag;
+      switch (c->kind) {
+      case 0: {
+        rc.a = corner(c->x0, c->y0);
+        rc.b = corner(c->x1, c->y1);
+        const double du = (c->x1 - c->x0) / rho;
+        const double dv = c->y1 - c->y0;
+        const double length = std::hypot(du, dv);
+        if (std::hypot(c->x1 - c->x0, dv) < 1e-7) {
+          throw std::invalid_argument("a line of a rolled outline has no length");
+        }
+        rc.u0 = angle(c->x0);
+        rc.u1 = angle(c->x1);
+        rc.v0 = c->y0;
+        rc.v1 = c->y1;
+        if (std::abs(c->x1 - c->x0) < 1e-9) {
+          rc.kind = ROLL_ALONG;
+        } else if (std::abs(dv) < 1e-9) {
+          rc.kind = ROLL_ROUND;
+        } else {
+          rc.kind = ROLL_OTHER;
+          rc.curve = new Geom2d_Line(gp_Pnt2d(rc.u0, rc.v0), gp_Dir2d(du, dv));
+          rc.first = 0.0;
+          rc.last = length;
+        }
+        break;
+      }
+      case 1: {
+        double a0 = c->a0;
+        double a1 = c->a1;
+        while (a1 <= a0) {
+          a1 += kTwoPi;
+        }
+        if (a1 - a0 > kTwoPi - 1e-6) {
+          throw std::invalid_argument("an arc of a rolled outline must be less than a whole circle");
+        }
+        rc.a = corner(c->cx + c->r * std::cos(a0), c->cy + c->r * std::sin(a0));
+        rc.b = corner(c->cx + c->r * std::cos(a1), c->cy + c->r * std::sin(a1));
+        // The arc as a rational spline, its poles then moved to (angle, height): still exact.
+        occ::handle<Geom2d_Circle> circle = new Geom2d_Circle(gp_Ax22d(gp_Pnt2d(c->cx, c->cy), gp_Dir2d(1.0, 0.0), gp_Dir2d(0.0, 1.0)), c->r);
+        occ::handle<Geom2d_TrimmedCurve> arc = new Geom2d_TrimmedCurve(circle, a0, a1);
+        occ::handle<Geom2d_BSplineCurve> spline = Geom2dConvert::CurveToBSplineCurve(arc);
+        for (int i = 1; i <= spline->NbPoles(); ++i) {
+          const gp_Pnt2d pole = spline->Pole(i);
+          spline->SetPole(i, gp_Pnt2d(angle(pole.X()), pole.Y()));
+        }
+        rc.curve = spline;
+        rc.first = spline->FirstParameter();
+        rc.last = spline->LastParameter();
+        break;
+      }
+      default: {
+        const int n = static_cast<int>(c->pole_count);
+        const int deg = static_cast<int>(c->degree);
+        if (deg < 1 || n <= deg) {
+          throw std::invalid_argument("invalid B-spline in a rolled outline");
+        }
+        NCollection_Array1<gp_Pnt2d> poles(1, n);
+        for (int i = 0; i < n; ++i) {
+          const std::size_t k = (static_cast<std::size_t>(c->pole_start) + static_cast<std::size_t>(i)) * 2;
+          poles(i + 1) = gp_Pnt2d(angle(profile.poles[k]), profile.poles[k + 1]);
+        }
+        const int nk = n - deg + 1;
+        NCollection_Array1<double> knots(1, nk);
+        NCollection_Array1<int> mults(1, nk);
+        for (int i = 0; i < nk; ++i) {
+          knots(i + 1) = static_cast<double>(i);
+          mults(i + 1) = (i == 0 || i == nk - 1) ? deg + 1 : 1;
+        }
+        const std::size_t k0 = static_cast<std::size_t>(c->pole_start) * 2;
+        const std::size_t k1 = (static_cast<std::size_t>(c->pole_start) + static_cast<std::size_t>(n) - 1) * 2;
+        rc.a = corner(profile.poles[k0], profile.poles[k0 + 1]);
+        rc.b = corner(profile.poles[k1], profile.poles[k1 + 1]);
+        rc.curve = new Geom2d_BSplineCurve(poles, knots, mults, deg);
+        rc.first = rc.curve->FirstParameter();
+        rc.last = rc.curve->LastParameter();
+        break;
+      }
+      }
+      if (rc.a == rc.b) {
+        throw std::invalid_argument("a curve of a rolled outline ends where it starts");
+      }
+      curves.push_back(rc);
+    }
+
+    // On each cylinder: the corners and the curves between them.
+    BRep_Builder builder;
+    std::vector<TopoDS_Vertex> vertices[2];
+    std::vector<TopoDS_Edge> edges[2];
+    for (int k = 0; k < 2; ++k) {
+      for (const gp_Pnt2d& c : corners) {
+        vertices[k].push_back(BRepBuilderAPI_MakeVertex(cyl[k]->Value(angle(c.X()), c.Y())).Vertex());
+      }
+      for (const RollCurve& rc : curves) {
+        const TopoDS_Vertex& va = vertices[k][static_cast<std::size_t>(rc.a)];
+        const TopoDS_Vertex& vb = vertices[k][static_cast<std::size_t>(rc.b)];
+        TopoDS_Edge edge;
+        if (rc.kind == ROLL_ALONG) {
+          BRepBuilderAPI_MakeEdge mk(va, vb);
+          if (!mk.IsDone()) {
+            throw std::runtime_error("could not build a straight edge of the rolled outline");
+          }
+          edge = mk.Edge();
+          occ::handle<Geom2d_Line> line = new Geom2d_Line(gp_Pnt2d(rc.u0, rc.v0), gp_Dir2d(0.0, rc.v1 > rc.v0 ? 1.0 : -1.0));
+          builder.UpdateEdge(edge, line, cyl[k], TopLoc_Location(), Precision::Confusion());
+        } else if (rc.kind == ROLL_ROUND) {
+          const gp_Pnt centre(origin.XYZ() + axis.XYZ() * rc.v0);
+          occ::handle<Geom_Circle> circle = new Geom_Circle(gp_Ax2(centre, axis, x_dir), radii[k]);
+          // (An edge runs the way its circle turns: from the smaller angle.)
+          const bool forward = rc.u0 < rc.u1;
+          BRepBuilderAPI_MakeEdge mk(circle, forward ? va : vb, forward ? vb : va, std::min(rc.u0, rc.u1), std::max(rc.u0, rc.u1));
+          if (!mk.IsDone()) {
+            throw std::runtime_error("could not build a round edge of the rolled outline");
+          }
+          edge = mk.Edge();
+          occ::handle<Geom2d_Line> line = new Geom2d_Line(gp_Pnt2d(0.0, rc.v0), gp_Dir2d(1.0, 0.0));
+          builder.UpdateEdge(edge, line, cyl[k], TopLoc_Location(), Precision::Confusion());
+        } else {
+          BRepBuilderAPI_MakeEdge mk(rc.curve, cyl[k], va, vb, rc.first, rc.last);
+          if (!mk.IsDone()) {
+            throw std::runtime_error("could not build a curved edge of the rolled outline");
+          }
+          edge = mk.Edge();
+          if (!BRepLib::BuildCurve3d(edge, 1.0e-7)) {
+            throw std::runtime_error("could not work out a curved edge of the rolled outline");
+          }
+        }
+        edges[k].push_back(edge);
+      }
+    }
+    // Across the thickness at every corner.
+    std::vector<TopoDS_Edge> across;
+    for (std::size_t i = 0; i < corners.size(); ++i) {
+      BRepBuilderAPI_MakeEdge mk(vertices[0][i], vertices[1][i]);
+      if (!mk.IsDone()) {
+        throw std::runtime_error("could not build an edge across the rolled outline");
+      }
+      across.push_back(mk.Edge());
+    }
+
+    BRepBuilderAPI_Sewing sew(1.0e-6);
+    // The two round faces.
+    for (int k = 0; k < 2; ++k) {
+      BRepBuilderAPI_MakeWire wire;
+      for (const TopoDS_Edge& e : edges[k]) {
+        wire.Add(e);
+        if (!wire.IsDone()) {
+          throw std::runtime_error("the curves of a rolled outline do not join end to end");
+        }
+      }
+      if (!BRep_Tool::IsClosed(wire.Wire())) {
+        throw std::runtime_error("a rolled outline is not closed");
+      }
+      BRepBuilderAPI_MakeFace face(cyl[k], wire.Wire(), true);
+      if (!face.IsDone()) {
+        throw std::runtime_error("could not build a round face of the rolled outline");
+      }
+      sew.Add(face.Face());
+    }
+    // The sides: flat where the outline runs along or round the axis, ruled between the two
+    // cylinders elsewhere.
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+      const RollCurve& rc = curves[i];
+      if (rc.kind == ROLL_OTHER) {
+        sew.Add(BRepFill::Face(edges[0][i], edges[1][i]));
+        continue;
+      }
+      const gp_Pnt p = cyl[0]->Value(rc.u0, rc.v0);
+      gp_Dir normal = axis;
+      if (rc.kind == ROLL_ALONG) {
+        const gp_Vec out(gp_Pnt(origin.XYZ() + axis.XYZ() * rc.v0), p);
+        normal = gp_Dir(gp_Vec(axis).Crossed(out));
+      }
+      BRepBuilderAPI_MakeWire wire;
+      for (const TopoDS_Edge& e : {edges[0][i], across[static_cast<std::size_t>(rc.b)], edges[1][i], across[static_cast<std::size_t>(rc.a)]}) {
+        wire.Add(e);
+        if (!wire.IsDone()) {
+          throw std::runtime_error("could not close a side of the rolled outline");
+        }
+      }
+      BRepBuilderAPI_MakeFace face(gp_Pln(p, normal), wire.Wire(), true);
+      if (!face.IsDone()) {
+        throw std::runtime_error("could not build a side of the rolled outline");
+      }
+      sew.Add(face.Face());
+    }
+    sew.Perform();
+    if (sew.NbFreeEdges() > 0) {
+      throw std::runtime_error("the faces of the rolled outline do not close");
+    }
+    TopExp_Explorer shells(sew.SewedShape(), TopAbs_SHELL);
+    if (!shells.More()) {
+      throw std::runtime_error("the faces of the rolled outline do not make a shell");
+    }
+    BRepBuilderAPI_MakeSolid make_solid(TopoDS::Shell(shells.Current()));
+    if (!make_solid.IsDone()) {
+      throw std::runtime_error("the rolled outline is not a solid");
+    }
+    TopoDS_Solid solid = make_solid.Solid();
+    BRepLib::OrientClosedSolid(solid);
+    require_valid(solid, "the rolled outline gave an invalid solid");
+
+    auto out = wrap(solid);
+    // Which face is which: the two round ones by their radius, each side by the curve of the
+    // outline its edge on the inner cylinder is.
+    std::vector<gp_Pnt> middles;
+    for (const TopoDS_Edge& e : edges[0]) {
+      BRepAdaptor_Curve curve(e);
+      middles.push_back(curve.Value(0.5 * (curve.FirstParameter() + curve.LastParameter())));
+    }
+    const gp_Lin centre_line(origin, axis);
+    for (int f = 1; f <= out->faces.Extent(); ++f) {
+      const TopoDS_Face& face = TopoDS::Face(out->faces(f));
+      BRepAdaptor_Surface surface(face);
+      if (surface.GetType() == GeomAbs_Cylinder && surface.Cylinder().Axis().IsCoaxial(gp_Ax1(origin, axis), 1e-9, 1e-7)) {
+        const double r = surface.Cylinder().Radius();
+        if (std::abs(r - inner) < 1e-7) {
+          add_role(hist, ROLE_START_CAP, *out, face);
+          continue;
+        }
+        if (std::abs(r - outer) < 1e-7) {
+          add_role(hist, ROLE_END_CAP, *out, face);
+          continue;
+        }
+      }
+      for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));
+        const gp_Pnt mid = curve.Value(0.5 * (curve.FirstParameter() + curve.LastParameter()));
+        if (std::abs(centre_line.Distance(mid) - inner) > 1e-6) {
+          continue;
+        }
+        std::size_t best = 0;
+        for (std::size_t i = 1; i < middles.size(); ++i) {
+          if (mid.Distance(middles[i]) < mid.Distance(middles[best])) {
+            best = i;
+          }
+        }
+        if (mid.Distance(middles[best]) < 1e-5) {
+          TagGen gen{curves[best].tag, 0, 0};
+          if (locate(*out, face, gen.gen_kind, gen.gen_index)) {
+            hist.tagged.push_back(gen);
+          }
+          break;
+        }
+      }
+    }
     return out;
   });
 }

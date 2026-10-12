@@ -445,6 +445,10 @@ pub(crate) enum Panel {
     SheetFace(crate::sheet::FacePanel),
     /// A sheet metal flange.
     Flange(crate::sheet::FlangePanel),
+    /// A hem along edges of the sheet.
+    Hem(crate::sheet::HemPanel),
+    /// A sheet along an open profile.
+    ContourFlange(crate::sheet::ContourPanel),
     Value(ValuePanel),
     /// A rectangular or circular pattern of sketch geometry.
     SketchPattern(crate::sketch_tools::SketchPatternPanel),
@@ -485,6 +489,8 @@ impl Panel {
             Panel::Thread(p) => p.editing,
             Panel::SheetFace(p) => p.editing,
             Panel::Flange(p) => p.editing,
+            Panel::Hem(p) => p.editing,
+            Panel::ContourFlange(p) => p.editing,
             _ => None,
         }
     }
@@ -539,6 +545,8 @@ impl Panel {
             Panel::Coil(_) => vec![("pitch", "/pitch"), ("turns", "/turns")],
             Panel::Draft(_) => vec![("degrees", "/angle")],
             Panel::Flange(p) => p.eq_pointers(),
+            Panel::Hem(p) => p.eq_pointers(),
+            Panel::ContourFlange(p) => p.eq_pointers(),
             Panel::Thread(p) => {
                 let mut v = Vec::new();
                 if p.custom_pitch {
@@ -692,6 +700,9 @@ impl Workbench {
             // With an edge picked the flange shows as it will be; further edges are picked on that.
             Some(Panel::Flange(p)) if !p.edges.is_empty() => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Flange(p)) => rolled(p.editing),
+            Some(Panel::Hem(p)) if !p.edges.is_empty() => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::Hem(p)) => rolled(p.editing),
+            Some(Panel::ContourFlange(p)) => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Fillet(p)) => rolled(p.editing),
             Some(Panel::Chamfer(p)) => rolled(p.editing),
             Some(Panel::Shell(p)) => rolled(p.editing),
@@ -1176,7 +1187,9 @@ impl Workbench {
                     | FeatureKind::Combine(_)
                     | FeatureKind::Thread(_)
                     | FeatureKind::SheetFace(_)
-                    | FeatureKind::Flange(_) => ("feature.add", json!({ "kind": kind_json })),
+                    | FeatureKind::Flange(_)
+                    | FeatureKind::Hem(_)
+                    | FeatureKind::ContourFlange(_) => ("feature.add", json!({ "kind": kind_json })),
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
@@ -1234,6 +1247,23 @@ impl Workbench {
                             reopen = Some("sheet.flange");
                         }
                     }
+                }
+            }
+            Panel::Hem(p) => {
+                if commit {
+                    if p.edges.is_empty() {
+                        self.set_error("Hem: click at least one edge of the sheet".to_string());
+                    } else {
+                        keep = !self.commit_panel(&ptrs, p.editing, p.kind());
+                        if !keep && again {
+                            reopen = Some("sheet.hem");
+                        }
+                    }
+                }
+            }
+            Panel::ContourFlange(p) => {
+                if commit {
+                    keep = !self.commit_panel(&ptrs, p.editing, p.kind());
                 }
             }
             Panel::Fillet(p) => {

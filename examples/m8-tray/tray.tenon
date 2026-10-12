@@ -2,7 +2,7 @@
 format = "tenon"
 version = 2
 name = "Tray"
-next_feature = 8
+next_feature = 9
 
 [material]
 name = "Aluminium 5052"
@@ -15,7 +15,7 @@ corner = "round"
 flat = true
 
 [parameters]
-next = 11
+next = 13
 user = [
   { name = "Thickness", equation = "1.5 mm", unit = "mm", comment = "Thickness of the sheet" },
   { name = "BendRadius", equation = "Thickness", unit = "mm", comment = "Radius of the inside of a bend" },
@@ -24,6 +24,7 @@ user = [
   { name = "MinimumRemnant", equation = "Thickness * 2", unit = "mm", comment = "A strip left beside a bend relief narrower than this is cut away" },
   { name = "CornerReliefSize", equation = "Thickness * 4", unit = "mm", comment = "Size of the relief where two bends meet at a corner" },
   { name = "KFactor", equation = "0.44", unit = "ul", comment = "Where the neutral surface lies in the thickness: 0 inside of the bend, 1 outside" },
+  { name = "GapSize", equation = "Thickness", unit = "mm", comment = "Gap left between flanges that meet at a corner" },
 ]
 model = [
   { name = "d0", target = { kind = "dimension", sketch = 1, constraint = 7 } },
@@ -33,10 +34,12 @@ model = [
   { name = "d4", target = { kind = "feature", feature = 4, field = "/angle" } },
   { name = "d5", target = { kind = "feature", feature = 4, field = "/height" } },
   { name = "d6", target = { kind = "feature", feature = 4, field = "/width/centered/width" } },
-  { name = "d7", target = { kind = "feature", feature = 6, field = "/diameter" } },
-  { name = "d8", target = { kind = "feature", feature = 6, field = "/tip_angle" } },
-  { name = "d9", target = { kind = "feature", feature = 8, field = "/extent/two_sided/forward" }, equation = "Thickness" },
-  { name = "d10", target = { kind = "feature", feature = 8, field = "/extent/two_sided/backward" }, equation = "Thickness" },
+  { name = "d7", target = { kind = "feature", feature = 5, field = "/shape/single/gap" }, equation = "Thickness * 0.5" },
+  { name = "d8", target = { kind = "feature", feature = 5, field = "/shape/single/length" }, equation = "Thickness * 4" },
+  { name = "d9", target = { kind = "feature", feature = 7, field = "/diameter" } },
+  { name = "d10", target = { kind = "feature", feature = 7, field = "/tip_angle" } },
+  { name = "d11", target = { kind = "feature", feature = 9, field = "/extent/two_sided/forward" }, equation = "Thickness" },
+  { name = "d12", target = { kind = "feature", feature = 9, field = "/extent/two_sided/backward" }, equation = "Thickness" },
 ]
 
 [[feature]]
@@ -103,7 +106,7 @@ name = "Flange2"
 suppressed = false
 type = "flange"
 edges = [
-  { faces = [{ type = "from", feature = 3, source = -8733478315968415533, ordinal = 0 }, { type = "from", feature = 3, source = -1814449590273147838, ordinal = 0 }], fingerprint = { mid = { x = 60.0, y = 0.0, z = 25.0 }, length = 114.0 } },
+  { faces = [{ type = "from", feature = 3, source = -8733478315968415533, ordinal = 0 }, { type = "from", feature = 3, source = -1814449590273147838, ordinal = 0 }], fingerprint = { mid = { x = 60.0, y = 0.0, z = 25.0 }, length = 114.878679656 } },
 ]
 angle = 1.5707963267948966
 height = 12.0
@@ -114,6 +117,18 @@ width = { centered = { width = 40.0 } }
 
 [[feature]]
 id = 5
+name = "Hem1"
+suppressed = false
+type = "hem"
+edges = [
+  { faces = [{ type = "from", feature = 3, source = 4795908806588600368, ordinal = 0 }, { type = "from", feature = 3, source = -2123119919106667327, ordinal = 0 }], fingerprint = { mid = { x = 60.0, y = 80.0, z = 25.0 }, length = 114.878679656 } },
+]
+shape = { single = { gap = 0.75, length = 6.0 } }
+flip = false
+width = "edge"
+
+[[feature]]
+id = 6
 name = "Sketch2"
 suppressed = false
 type = "sketch"
@@ -132,11 +147,11 @@ constraints = [
 ]
 
 [[feature]]
-id = 6
+id = 7
 name = "Hole1"
 suppressed = false
 type = "hole"
-sketch = 5
+sketch = 6
 points = [2, 3, 4, 5]
 diameter = 4.0
 kind = "simple"
@@ -145,7 +160,7 @@ tip_angle = 2.0594885173533086
 reverse = true
 
 [[feature]]
-id = 7
+id = 8
 name = "Sketch3"
 suppressed = false
 type = "sketch"
@@ -172,11 +187,11 @@ constraints = [
 ]
 
 [[feature]]
-id = 8
+id = 9
 name = "Extrusion1"
 suppressed = false
 type = "extrude"
-sketch = 7
+sketch = 8
 regions = "default"
 extent = { two_sided = { forward = 1.5, backward = 1.5 } }
 reverse = false

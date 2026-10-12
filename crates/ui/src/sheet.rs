@@ -1,4 +1,5 @@
-//! Sheet metal in the app (M8): the Sheet Metal tab's commands, the Face and Flange panels,
+//! Sheet metal in the app (M8): the Sheet Metal tab's commands, the Face, Flange, Hem and Contour
+//! Flange panels,
 //! Sheet Metal Defaults, and the flat pattern, shown in place of the folded part.
 //!
 //! The tab is a sheet metal part's home tab and shows only for one; any part becomes one with
@@ -10,8 +11,9 @@ use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, pos2
 use serde_json::json;
 use tenon_geom::Vec2;
 use tenon_io::flat::Marks;
-use tenon_model::sheet::{self, BendPosition, CornerShape, FlangeWidth, FlatPattern, HeightDatum, ReliefShape};
+use tenon_model::sheet::{self, BendPosition, CornerShape, FlangeWidth, FlatPattern, HeightDatum, HemShape, ReliefShape, Sides};
 use tenon_model::{EdgeRef, FeatureId, FeatureKind, Operation, RegionSel};
+use tenon_sketch::Geometry;
 
 use crate::commands::{FLAT_TAB, MODEL_TAB, SHEET_TAB};
 use crate::panels::{Direction, ExtentChoice, ExtrudePanel, Panel};
@@ -62,6 +64,8 @@ pub(crate) struct FlangePanel {
     pub width_value: f64,
     pub offset_a: f64,
     pub offset_b: f64,
+    /// Bring the walls together where this flange meets another at a corner.
+    pub miter: bool,
 }
 
 impl FlangePanel {
@@ -80,6 +84,7 @@ impl FlangePanel {
             flip: self.flip,
             radius: self.own_radius.then_some(self.radius),
             width,
+            miter: self.miter,
         })
     }
 
@@ -98,17 +103,113 @@ impl FlangePanel {
     }
 }
 
+/// How a hem is folded, as the panel offers it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HemChoice {
+    Single,
+    Teardrop,
+    Rolled,
+    Double,
+}
+
+/// An edge of the sheet folded back on itself.
+#[derive(Clone, Debug)]
+pub(crate) struct HemPanel {
+    pub editing: Option<FeatureId>,
+    pub edges: Vec<EdgeRef>,
+    pub shape: HemChoice,
+    /// Single and double hems: between the layers, and overall.
+    pub gap: f64,
+    pub length: f64,
+    /// Rolled and teardrop hems.
+    pub radius: f64,
+    pub degrees: f64,
+    pub flip: bool,
+    pub width: WidthChoice,
+    pub width_value: f64,
+    pub offset_a: f64,
+    pub offset_b: f64,
+}
+
+impl HemPanel {
+    pub(crate) fn kind(&self) -> FeatureKind {
+        let width = match self.width {
+            WidthChoice::Edge => FlangeWidth::Edge,
+            WidthChoice::Centered => FlangeWidth::Centered { width: self.width_value },
+            WidthChoice::Offset => FlangeWidth::Offset { start: self.offset_a, end: self.offset_b },
+        };
+        let shape = match self.shape {
+            HemChoice::Single => HemShape::Single { gap: self.gap, length: self.length },
+            HemChoice::Double => HemShape::Double { gap: self.gap, length: self.length },
+            HemChoice::Rolled => HemShape::Rolled { radius: self.radius, angle: self.degrees.to_radians() },
+            HemChoice::Teardrop => HemShape::Teardrop { radius: self.radius, angle: self.degrees.to_radians() },
+        };
+        FeatureKind::Hem(sheet::Hem { edges: self.edges.clone(), shape, flip: self.flip, width })
+    }
+
+    /// The value fields that take equations as the panel stands.
+    pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
+        let mut v = match self.shape {
+            HemChoice::Single => vec![("gap", "/shape/single/gap"), ("length", "/shape/single/length")],
+            HemChoice::Double => vec![("gap", "/shape/double/gap"), ("length", "/shape/double/length")],
+            HemChoice::Rolled => vec![("radius", "/shape/rolled/radius"), ("degrees", "/shape/rolled/angle")],
+            HemChoice::Teardrop => vec![("radius", "/shape/teardrop/radius"), ("degrees", "/shape/teardrop/angle")],
+        };
+        match self.width {
+            WidthChoice::Edge => {}
+            WidthChoice::Centered => v.push(("width", "/width/centered/width")),
+            WidthChoice::Offset => v.extend([("offset_a", "/width/offset/start"), ("offset_b", "/width/offset/end")]),
+        }
+        v
+    }
+}
+
+/// A strip of sheet along an open profile.
+#[derive(Clone, Debug)]
+pub(crate) struct ContourPanel {
+    pub editing: Option<FeatureId>,
+    pub sketch: FeatureId,
+    pub distance: f64,
+    pub direction: Sides,
+    pub position: Sides,
+    /// A bend radius of this flange's own, in place of the rule's.
+    pub own_radius: bool,
+    pub radius: f64,
+    pub new_solid: bool,
+}
+
+impl ContourPanel {
+    pub(crate) fn kind(&self) -> FeatureKind {
+        FeatureKind::ContourFlange(sheet::ContourFlange {
+            sketch: self.sketch,
+            distance: self.distance,
+            direction: self.direction,
+            position: self.position,
+            radius: self.own_radius.then_some(self.radius),
+            operation: if self.new_solid { Operation::NewBody } else { Operation::Join },
+        })
+    }
+
+    pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
+        let mut v = vec![("distance", "/distance")];
+        if self.own_radius {
+            v.push(("radius", "/radius"));
+        }
+        v
+    }
+}
+
 /// What is typed into Sheet Metal Defaults: each size as its equation, and the two shapes.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DefaultsEdit {
     /// In the order of [`FIELDS`].
-    pub sizes: [String; 7],
+    pub sizes: [String; 8],
     pub relief: ReliefShape,
     pub corner: CornerShape,
 }
 
 /// The sizes of Sheet Metal Defaults: the command's key, the parameter, the label, a hint.
-const FIELDS: [(&str, &str, &str, &str); 7] = [
+const FIELDS: [(&str, &str, &str, &str); 8] = [
     ("thickness", sheet::THICKNESS, "Thickness", "How thick the sheet is"),
     ("bend_radius", sheet::BEND_RADIUS, "Bend Radius", "The radius of the inside of every bend, unless a flange has its own"),
     ("relief_width", sheet::RELIEF_WIDTH, "Relief Width", "The width of the slot cut beside a bend that is narrower than its edge"),
@@ -121,6 +222,7 @@ const FIELDS: [(&str, &str, &str, &str); 7] = [
         "K Factor",
         "Where the sheet neither stretches nor shrinks in a bend: 0 at its inside, 1 at its outside. It sets how wide a bend is in the flat pattern",
     ),
+    ("gap", sheet::GAP_SIZE, "Miter Gap", "The gap left between two flanges that meet at a corner of the sheet"),
 ];
 
 /// What the app keeps about sheet metal between frames.
@@ -164,13 +266,90 @@ impl Default for SheetUi {
     }
 }
 
+/// A list to choose one of. The list is remembered under `key` and each entry under `key` and
+/// its own name; an entry's tip says what it does.
+fn choice<T: Copy + PartialEq>(ui: &mut Ui, key: &str, value: &mut T, options: &[(T, &str, &str, &str)]) {
+    let shown = options.iter().find(|o| o.0 == *value).map_or("?", |o| o.2);
+    let list = egui::ComboBox::from_id_salt(key).selected_text(shown).width(118.0).show_ui(ui, |ui| {
+        for (v, name, label, tip) in options {
+            let r = ui.selectable_label(*value == *v, *label);
+            crate::drawing::remember(ui, &format!("{key}_{name}"), r.rect);
+            if r.on_hover_text(*tip).clicked() {
+                *value = *v;
+            }
+        }
+    });
+    crate::drawing::remember(ui, key, list.response.rect);
+}
+
+/// How much of its edge a flange or a hem (`what`) takes: the whole edge, a width in its middle,
+/// or in from each end. Returns whether Enter was pressed in a value.
+#[allow(clippy::too_many_arguments)]
+fn width_extents(
+    ui: &mut Ui,
+    what: &str,
+    width: &mut WidthChoice,
+    width_value: &mut f64,
+    offset_a: &mut f64,
+    offset_b: &mut f64,
+    eqs: &mut Equations,
+    t: &Tokens,
+) -> bool {
+    let mut enter = false;
+    egui::Grid::new(format!("tn_props_{what}_width")).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+        ui.label("Type");
+        choice(
+            ui,
+            &format!("tn_{what}_width"),
+            width,
+            &[
+                (WidthChoice::Edge, "edge", "Edge", "The whole edge"),
+                (WidthChoice::Centered, "centered", "Width", "A width, in the middle of the edge"),
+                (WidthChoice::Offset, "offset", "Offset", "In from each end of the edge"),
+            ],
+        );
+        ui.end_row();
+        match width {
+            WidthChoice::Edge => {}
+            WidthChoice::Centered => {
+                ui.label("Width");
+                enter |=
+                    eq_value_field(ui, egui::Id::new(format!("tn_props_{what}_w")), width_value, eqs, "width", "mm", 0.001..=100_000.0, 110.0, t)
+                        .entered;
+                ui.end_row();
+            }
+            WidthChoice::Offset => {
+                ui.label("Offset 1")
+                    .on_hover_text("From the start of the edge (edges run clockwise round the sheet, seen from the side it bends to)");
+                enter |= eq_value_field(ui, egui::Id::new(format!("tn_props_{what}_o1")), offset_a, eqs, "offset_a", "mm", 0.0..=100_000.0, 110.0, t)
+                    .entered;
+                ui.end_row();
+                ui.label("Offset 2").on_hover_text("From the end of the edge");
+                enter |= eq_value_field(ui, egui::Id::new(format!("tn_props_{what}_o2")), offset_b, eqs, "offset_b", "mm", 0.0..=100_000.0, 110.0, t)
+                    .entered;
+                ui.end_row();
+            }
+        }
+    });
+    enter
+}
+
 /// Orange and blue enough to tell from the sheet in either theme: bends up and bends down.
 const BEND_UP: Color32 = Color32::from_rgb(0x1f, 0x9d, 0x4a);
 const BEND_DOWN: Color32 = Color32::from_rgb(0xd0, 0x45, 0x35);
 
 const NOT_SHEET: &str = "This is not a sheet metal part yet: use Convert to Sheet Metal on the 3D Model tab, or File > New Sheet Metal Part.";
+const NO_SHEET: &str = "there is no sheet yet: make a Face from a sketch first (or a Contour Flange)";
 
 impl Workbench {
+    /// The part has a feature that makes sheet (whether or not it is shown yet).
+    fn has_sheet(&self) -> bool {
+        self.document()
+            .features()
+            .iter()
+            .any(|f| matches!(f.kind, FeatureKind::SheetFace(_) | FeatureKind::ContourFlange(_) | FeatureKind::Extrude(_)))
+    }
+
     pub(crate) fn is_sheet_metal(&self) -> bool {
         !self.in_assembly() && !self.in_drawing() && self.document().sheet_metal().is_some()
     }
@@ -255,6 +434,8 @@ impl Workbench {
             "sheet.defaults" | "sheet.convert" => self.open_sheet_defaults(),
             "sheet.face" => self.open_sheet_face(None)?,
             "sheet.flange" => self.open_flange(None)?,
+            "sheet.hem" => self.open_hem(None)?,
+            "sheet.contour_flange" => self.open_contour(None)?,
             "sheet.cut" => self.open_sheet_cut()?,
             "sheet.corner_round" => {
                 self.open_modify("fillet", None)?;
@@ -380,6 +561,7 @@ impl Workbench {
                         width_value,
                         offset_a,
                         offset_b,
+                        miter: f.miter,
                     }
                 }
                 _ => return Err("not a flange".into()),
@@ -387,8 +569,8 @@ impl Workbench {
             None => {
                 let sizes =
                     self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
-                if !self.document().features().iter().any(|f| matches!(f.kind, FeatureKind::SheetFace(_) | FeatureKind::Extrude(_))) {
-                    return Err("there is no sheet yet: make a Face from a sketch first".into());
+                if !self.has_sheet() {
+                    return Err(NO_SHEET.into());
                 }
                 // High enough to stand clear of its own bend.
                 let height = (4.0 * (sizes.bend_radius + sizes.thickness)).max(10.0);
@@ -406,6 +588,7 @@ impl Workbench {
                     width_value: 10.0,
                     offset_a: 0.0,
                     offset_b: 0.0,
+                    miter: true,
                 }
             }
         };
@@ -440,7 +623,147 @@ impl Workbench {
         Ok(())
     }
 
-    /// The fields of the Face and Flange panels. Returns whether Enter was pressed in a value,
+    pub(crate) fn open_hem(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        let sizes = self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
+        let (mut gap, mut length, mut radius, mut degrees) = (sizes.thickness * 0.5, sizes.thickness * 4.0, sizes.bend_radius, 190.0);
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::Hem(h) => {
+                    let (width, width_value, offset_a, offset_b) = match h.width {
+                        FlangeWidth::Edge => (WidthChoice::Edge, 10.0, 0.0, 0.0),
+                        FlangeWidth::Centered { width } => (WidthChoice::Centered, width, 0.0, 0.0),
+                        FlangeWidth::Offset { start, end } => (WidthChoice::Offset, 10.0, start, end),
+                    };
+                    let shape = match h.shape {
+                        HemShape::Single { gap: g, length: l } => {
+                            (gap, length) = (g, l);
+                            HemChoice::Single
+                        }
+                        HemShape::Double { gap: g, length: l } => {
+                            (gap, length) = (g, l);
+                            HemChoice::Double
+                        }
+                        HemShape::Rolled { radius: r, angle } => {
+                            (radius, degrees) = (r, angle.to_degrees());
+                            HemChoice::Rolled
+                        }
+                        HemShape::Teardrop { radius: r, angle } => {
+                            (radius, degrees) = (r, angle.to_degrees());
+                            HemChoice::Teardrop
+                        }
+                    };
+                    HemPanel {
+                        editing,
+                        edges: h.edges.clone(),
+                        shape,
+                        gap,
+                        length,
+                        radius,
+                        degrees,
+                        flip: h.flip,
+                        width,
+                        width_value,
+                        offset_a,
+                        offset_b,
+                    }
+                }
+                _ => return Err("not a hem".into()),
+            },
+            None => {
+                if !self.has_sheet() {
+                    return Err(NO_SHEET.into());
+                }
+                HemPanel {
+                    editing: None,
+                    edges: self.picked_edges(),
+                    shape: HemChoice::Single,
+                    gap,
+                    length,
+                    radius,
+                    degrees,
+                    flip: false,
+                    width: WidthChoice::Edge,
+                    width_value: 10.0,
+                    offset_a: 0.0,
+                    offset_b: 0.0,
+                }
+            }
+        };
+        self.panel = Some(Panel::Hem(panel));
+        self.start_equations();
+        if editing.is_none() {
+            // A new hem follows the sheet: its sizes start as the rule's, by name.
+            self.panel_eqs.insert("gap", format!("{} * 0.5", sheet::THICKNESS));
+            self.panel_eqs.insert("length", format!("{} * 4", sheet::THICKNESS));
+            self.panel_eqs.insert("radius", sheet::BEND_RADIUS.to_owned());
+        }
+        self.view.selection.clear();
+        self.set_status("Hem: click an edge of the sheet's outline (it folds towards the side the edge is on), choose the type, then OK.");
+        Ok(())
+    }
+
+    /// The sketch a new contour flange follows: the one being drawn, otherwise the last that has
+    /// lines or arcs and no closed profile.
+    fn open_profile_sketch(&mut self) -> Result<FeatureId, String> {
+        let open = |doc: &tenon_model::Document, id: FeatureId| {
+            doc.sketch(id).is_some_and(|sk| {
+                sk.entities().any(|(_, e)| !e.construction && !e.reference && matches!(e.geometry, Geometry::Line { .. } | Geometry::Arc { .. }))
+                    && tenon_sketch::regions(sk).is_empty()
+            })
+        };
+        if let crate::workbench::Mode::Sketch(s) = &self.mode {
+            let id = s.feature;
+            self.finish_sketch();
+            if open(self.document(), id) {
+                return Ok(id);
+            }
+        }
+        let doc = self.document();
+        self.sketches()
+            .iter()
+            .rev()
+            .map(|s| s.0)
+            .find(|id| open(doc, *id))
+            .ok_or_else(|| "draw an open profile in a sketch first: lines and arcs end to end, as the sheet looks from its end".into())
+    }
+
+    pub(crate) fn open_contour(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        let sizes = self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::ContourFlange(c) => ContourPanel {
+                    editing,
+                    sketch: c.sketch,
+                    distance: c.distance,
+                    direction: c.direction,
+                    position: c.position,
+                    own_radius: c.radius.is_some(),
+                    radius: c.radius.unwrap_or(sizes.bend_radius),
+                    new_solid: c.operation == Operation::NewBody,
+                },
+                _ => return Err("not a contour flange".into()),
+            },
+            None => {
+                let sketch = self.open_profile_sketch()?;
+                ContourPanel {
+                    editing: None,
+                    sketch,
+                    distance: (25.0 * sizes.thickness).max(10.0),
+                    direction: Sides::Default,
+                    position: Sides::Default,
+                    own_radius: false,
+                    radius: sizes.bend_radius,
+                    new_solid: false,
+                }
+            }
+        };
+        self.panel = Some(Panel::ContourFlange(panel));
+        self.start_equations();
+        self.set_status("Contour Flange: the profile is pushed out of its sketch as sheet, with a bend at every corner. Set the distance, then OK.");
+        Ok(())
+    }
+
+    /// The fields of the sheet metal panels. Returns whether Enter was pressed in a value,
     /// and whether Clear was pressed on the picked edges.
     pub(crate) fn sheet_properties(
         &self,
@@ -452,21 +775,6 @@ impl Workbench {
     ) -> (bool, bool) {
         let (mut enter, mut clear) = (false, false);
         let sizes = self.document().sheet_sizes().ok();
-        // A list to choose one of. The list is remembered under `key` and each entry under
-        // `key` and its own name; an entry's tip says what it does.
-        fn choice<T: Copy + PartialEq>(ui: &mut Ui, key: &str, value: &mut T, options: &[(T, &str, &str, &str)]) {
-            let shown = options.iter().find(|o| o.0 == *value).map_or("?", |o| o.2);
-            let list = egui::ComboBox::from_id_salt(key).selected_text(shown).width(118.0).show_ui(ui, |ui| {
-                for (v, name, label, tip) in options {
-                    let r = ui.selectable_label(*value == *v, *label);
-                    crate::drawing::remember(ui, &format!("{key}_{name}"), r.rect);
-                    if r.on_hover_text(*tip).clicked() {
-                        *value = *v;
-                    }
-                }
-            });
-            crate::drawing::remember(ui, key, list.response.rect);
-        }
         match panel {
             Panel::SheetFace(p) => {
                 section(ui, "Input Geometry", true, |ui| {
@@ -573,71 +881,7 @@ impl Workbench {
                     });
                 });
                 section(ui, "Width Extents", true, |ui| {
-                    egui::Grid::new("tn_props_flange_width").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                        ui.label("Type");
-                        choice(
-                            ui,
-                            "tn_flange_width",
-                            &mut p.width,
-                            &[
-                                (WidthChoice::Edge, "edge", "Edge", "The whole edge"),
-                                (WidthChoice::Centered, "centered", "Width", "A width, in the middle of the edge"),
-                                (WidthChoice::Offset, "offset", "Offset", "In from each end of the edge"),
-                            ],
-                        );
-                        ui.end_row();
-                        match p.width {
-                            WidthChoice::Edge => {}
-                            WidthChoice::Centered => {
-                                ui.label("Width");
-                                enter |= eq_value_field(
-                                    ui,
-                                    egui::Id::new("tn_props_flange_w"),
-                                    &mut p.width_value,
-                                    eqs,
-                                    "width",
-                                    "mm",
-                                    0.001..=100_000.0,
-                                    110.0,
-                                    t,
-                                )
-                                .entered;
-                                ui.end_row();
-                            }
-                            WidthChoice::Offset => {
-                                ui.label("Offset 1").on_hover_text(
-                                    "From the start of the edge (edges run clockwise round the sheet, seen from the side the flange bends to)",
-                                );
-                                enter |= eq_value_field(
-                                    ui,
-                                    egui::Id::new("tn_props_flange_o1"),
-                                    &mut p.offset_a,
-                                    eqs,
-                                    "offset_a",
-                                    "mm",
-                                    0.0..=100_000.0,
-                                    110.0,
-                                    t,
-                                )
-                                .entered;
-                                ui.end_row();
-                                ui.label("Offset 2").on_hover_text("From the end of the edge");
-                                enter |= eq_value_field(
-                                    ui,
-                                    egui::Id::new("tn_props_flange_o2"),
-                                    &mut p.offset_b,
-                                    eqs,
-                                    "offset_b",
-                                    "mm",
-                                    0.0..=100_000.0,
-                                    110.0,
-                                    t,
-                                )
-                                .entered;
-                                ui.end_row();
-                            }
-                        }
-                    });
+                    enter |= width_extents(ui, "flange", &mut p.width, &mut p.width_value, &mut p.offset_a, &mut p.offset_b, eqs, t);
                 });
                 section(ui, "Bend", true, |ui| {
                     egui::Grid::new("tn_props_flange_bend").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
@@ -664,6 +908,195 @@ impl Workbench {
                         ui.end_row();
                     });
                 });
+                section(ui, "Corner", true, |ui| {
+                    ui.horizontal(|ui| {
+                        let r = ui.checkbox(&mut p.miter, "Auto-Mitering");
+                        crate::drawing::remember(ui, "tn_flange_miter", r.rect);
+                        r.on_hover_text(
+                            "Where the flange's edges meet at a corner, its walls are brought together until the Miter Gap of Sheet Metal Defaults is left between them. Off, each wall ends where its bend does",
+                        );
+                        if let (true, Some(s)) = (p.miter, sizes) {
+                            ui.label(RichText::new(format!("gap {} mm", fmt_value(s.gap))).color(t.text_dim));
+                        }
+                    });
+                });
+            }
+            Panel::Hem(p) => {
+                section(ui, "Input Geometry", true, |ui| {
+                    egui::Grid::new("tn_props_hem_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Edges");
+                        clear |= picked_row(ui, p.edges.len(), "click edges");
+                        ui.end_row();
+                    });
+                });
+                section(ui, "Shape", true, |ui| {
+                    egui::Grid::new("tn_props_hem_shape").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Type");
+                        choice(
+                            ui,
+                            "tn_hem_type",
+                            &mut p.shape,
+                            &[
+                                (HemChoice::Single, "single", "Single", "Folded flat back over the sheet"),
+                                (HemChoice::Teardrop, "teardrop", "Teardrop", "Rolled past half a turn, then straight back down to the sheet"),
+                                (HemChoice::Rolled, "rolled", "Rolled", "A roll and nothing after it"),
+                                (HemChoice::Double, "double", "Double", "Folded over twice: the hem's own end is folded in under it"),
+                            ],
+                        );
+                        ui.end_row();
+                        match p.shape {
+                            HemChoice::Single | HemChoice::Double => {
+                                ui.label("Gap").on_hover_text("Between the layers of the hem");
+                                enter |= eq_value_field(ui, egui::Id::new("tn_props_hem_gap"), &mut p.gap, eqs, "gap", "mm", 0.02..=1000.0, 110.0, t)
+                                    .entered;
+                                ui.end_row();
+                                ui.label("Length").on_hover_text("Overall, from the outside of the fold to the hem's end");
+                                enter |= eq_value_field(
+                                    ui,
+                                    egui::Id::new("tn_props_hem_length"),
+                                    &mut p.length,
+                                    eqs,
+                                    "length",
+                                    "mm",
+                                    0.001..=1000.0,
+                                    110.0,
+                                    t,
+                                )
+                                .entered;
+                                ui.end_row();
+                            }
+                            HemChoice::Rolled | HemChoice::Teardrop => {
+                                // A teardrop turns past half way and no further than three quarters.
+                                let (least, most) = if p.shape == HemChoice::Teardrop { (181.0, 270.0) } else { (1.0, 350.0) };
+                                p.degrees = p.degrees.clamp(least, most);
+                                ui.label("Radius").on_hover_text("Of the inside of the roll");
+                                enter |= eq_value_field(
+                                    ui,
+                                    egui::Id::new("tn_props_hem_radius"),
+                                    &mut p.radius,
+                                    eqs,
+                                    "radius",
+                                    "mm",
+                                    0.01..=1000.0,
+                                    110.0,
+                                    t,
+                                )
+                                .entered;
+                                ui.end_row();
+                                ui.label("Angle").on_hover_text("How far the roll turns");
+                                enter |= eq_value_field(
+                                    ui,
+                                    egui::Id::new("tn_props_hem_angle"),
+                                    &mut p.degrees,
+                                    eqs,
+                                    "degrees",
+                                    "deg",
+                                    least..=most,
+                                    110.0,
+                                    t,
+                                )
+                                .entered;
+                                ui.end_row();
+                            }
+                        }
+                        ui.label("Direction").on_hover_text("Which side of the sheet the hem folds to");
+                        flip_button(ui, &mut p.flip, t);
+                        ui.end_row();
+                    });
+                });
+                section(ui, "Width Extents", true, |ui| {
+                    enter |= width_extents(ui, "hem", &mut p.width, &mut p.width_value, &mut p.offset_a, &mut p.offset_b, eqs, t);
+                });
+            }
+            Panel::ContourFlange(p) => {
+                let three = |a: &'static str, b: &'static str, c: &'static str| {
+                    [
+                        (Sides::Default, "default", "Default", a),
+                        (Sides::Flipped, "flipped", "Flipped", b),
+                        (Sides::Symmetric, "symmetric", "Symmetric", c),
+                    ]
+                };
+                section(ui, "Input Geometry", true, |ui| {
+                    egui::Grid::new("tn_props_contour_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Profile").on_hover_text("An open profile: lines and arcs end to end, as the sheet looks from its end");
+                        egui::ComboBox::from_id_salt("tn_props_contour_sketch")
+                            .selected_text(sketches.iter().find(|s| s.0 == p.sketch).map_or("?".into(), |s| s.1.clone()))
+                            .show_ui(ui, |ui| {
+                                for (id, name) in sketches {
+                                    ui.selectable_value(&mut p.sketch, *id, name);
+                                }
+                            });
+                        ui.end_row();
+                    });
+                });
+                section(ui, "Behavior", true, |ui| {
+                    egui::Grid::new("tn_props_contour_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Position").on_hover_text("Which side of the profile the sheet's thickness goes");
+                        choice(
+                            ui,
+                            "tn_contour_position",
+                            &mut p.position,
+                            &three(
+                                "Inside the profile's first corner: the profile is the outside of the part there",
+                                "Outside the profile",
+                                "Half each side: the profile is the middle of the sheet",
+                            ),
+                        );
+                        ui.end_row();
+                        ui.label("Direction").on_hover_text("Which way the profile is pushed out of its sketch plane");
+                        choice(
+                            ui,
+                            "tn_contour_direction",
+                            &mut p.direction,
+                            &three("In front of the sketch plane", "Behind the sketch plane", "Half each way from the sketch plane"),
+                        );
+                        ui.end_row();
+                        ui.label("Distance").on_hover_text("How far the profile is pushed: the width of the strip");
+                        enter |= eq_value_field(
+                            ui,
+                            egui::Id::new("tn_props_contour_distance"),
+                            &mut p.distance,
+                            eqs,
+                            "distance",
+                            "mm",
+                            0.001..=100_000.0,
+                            110.0,
+                            t,
+                        )
+                        .entered;
+                        ui.end_row();
+                    });
+                });
+                section(ui, "Bend", true, |ui| {
+                    egui::Grid::new("tn_props_contour_bend").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Bend Radius").on_hover_text("Of the bends made where two lines of the profile meet at a corner");
+                        let mut by_rule = !p.own_radius;
+                        let r = ui.checkbox(&mut by_rule, "By rule");
+                        crate::drawing::remember(ui, "tn_contour_by_rule", r.rect);
+                        r.on_hover_text("The part's BendRadius, from Sheet Metal Defaults");
+                        if by_rule == p.own_radius {
+                            p.own_radius = !by_rule;
+                            if let (false, Some(s)) = (p.own_radius, sizes) {
+                                p.radius = s.bend_radius;
+                            }
+                        }
+                        ui.end_row();
+                        ui.label("");
+                        if p.own_radius {
+                            enter |=
+                                eq_value_field(ui, egui::Id::new("tn_props_contour_r"), &mut p.radius, eqs, "radius", "mm", 0.01..=1000.0, 110.0, t)
+                                    .entered;
+                        } else {
+                            ui.label(RichText::new(sizes.map_or("?".into(), |s| format!("{} mm", fmt_value(s.bend_radius)))).color(t.text_dim));
+                        }
+                        ui.end_row();
+                    });
+                });
+                if !self.scene.bodies.is_empty() || p.new_solid {
+                    section(ui, "Output", true, |ui| {
+                        ui.checkbox(&mut p.new_solid, "New solid").on_hover_text("A sheet of its own, not joined to the one it touches");
+                    });
+                }
             }
             _ => {}
         }
@@ -748,6 +1181,7 @@ impl Workbench {
                 };
                 heading(ui, "Sheet");
                 field(ui, 0);
+                field(ui, 7);
                 heading(ui, "Bend");
                 field(ui, 1);
                 ui.horizontal(|ui| {
@@ -765,7 +1199,7 @@ impl Workbench {
                 field(ui, 4);
                 heading(ui, "Corner");
                 ui.horizontal(|ui| {
-                    label(ui, "Relief Shape", "The cut where two bends meet at a corner of the sheet");
+                    label(ui, "Relief Shape", "The cut where two bends meet at a corner of the sheet, centred where their centre lines cross");
                     for (v, key, text) in [
                         (CornerShape::Round, "round", "Round"),
                         (CornerShape::Square, "square", "Square"),

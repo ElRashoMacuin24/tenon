@@ -12,6 +12,10 @@ use tenon_geom::Vec2;
 /// Two points of a flat pattern are the same point when they are this close (mm).
 pub const JOIN: f64 = 1e-6;
 
+/// A run of points is taken for part of a circle when none of them is further from it (mm): what
+/// is cut square through a bend is a curve of the kernel's own, and comes back as points.
+const ON_CIRCLE: f64 = 1e-5;
+
 /// How far from a point where outlines touch the sheet is looked for (mm).
 const PINCH_PROBE: f64 = 0.01;
 
@@ -216,7 +220,7 @@ impl FlatLoop {
 }
 
 /// Whether `p` is inside the polygon.
-fn within(poly: &[Vec2], p: Vec2) -> bool {
+pub(super) fn within(poly: &[Vec2], p: Vec2) -> bool {
     let mut inside = false;
     for i in 0..poly.len() {
         let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
@@ -264,6 +268,81 @@ pub struct FlatPattern {
     pub cut_length: f64,
 }
 
+/// How far round `center` a run of points turns (positive counter-clockwise), when every one of
+/// them is on the circle and they all go the same way round it.
+fn turned(points: &[Vec2], center: Vec2, radius: f64) -> Option<f64> {
+    if points.len() < 2 || points.iter().any(|p| (p.dist(center) - radius).abs() > ON_CIRCLE) {
+        return None;
+    }
+    let mut total = 0.0;
+    for w in points.windows(2) {
+        let (a, b) = (w[0] - center, w[1] - center);
+        let step = a.cross(b).atan2(a.dot(b));
+        if total != 0.0 && step != 0.0 && (step > 0.0) != (total > 0.0) {
+            return None;
+        }
+        total += step;
+    }
+    (total.abs() > 1e-12).then_some(total)
+}
+
+/// The arc from `start` to `end` that turns through `turned` in all: the whole circle when it
+/// comes back to where it started, and nothing when it would go further than that.
+fn arc_of(center: Vec2, radius: f64, start: Vec2, end: Vec2, ccw: bool, turned: f64) -> Option<FlatCurve> {
+    if turned > TAU + 1e-6 {
+        return None;
+    }
+    Some(if start.dist(end) < JOIN && turned > std::f64::consts::PI {
+        FlatCurve::Circle { center, radius }
+    } else {
+        FlatCurve::Arc { center, radius, start, end, ccw }
+    })
+}
+
+/// A run of points that lies on a straight line, as that line.
+fn straightened(c: FlatCurve) -> FlatCurve {
+    let FlatCurve::Polyline { points } = &c else { return c };
+    let (Some(&start), Some(&end)) = (points.first(), points.last()) else { return c };
+    let chord = end - start;
+    let length = chord.len();
+    if length < JOIN || points.iter().any(|p| ((*p - start).cross(chord) / length).abs() > 1e-7) {
+        return c;
+    }
+    FlatCurve::Line { start, end }
+}
+
+/// The centre and radius of the circle through three points, unless they are in line.
+fn circle_through(a: Vec2, b: Vec2, c: Vec2) -> Option<(Vec2, f64)> {
+    let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let (qa, qb, qc) = (a.dot(a), b.dot(b), c.dot(c));
+    let center =
+        Vec2::new((qa * (b.y - c.y) + qb * (c.y - a.y) + qc * (a.y - b.y)) / d, (qa * (c.x - b.x) + qb * (a.x - c.x) + qc * (b.x - a.x)) / d);
+    Some((center, center.dist(a)))
+}
+
+/// A run of points that lies on a line or on a circle, as the line, the arc or the circle.
+fn rounded(c: FlatCurve) -> FlatCurve {
+    let c = straightened(c);
+    let FlatCurve::Polyline { points } = &c else { return c };
+    let n = points.len();
+    let (Some(&start), Some(&end)) = (points.first(), points.last()) else { return c };
+    if n < 4 {
+        return c;
+    }
+    let closed = start.dist(end) < JOIN;
+    // Three of the points, well apart.
+    let (via, far) = if closed { (points[n / 3], points[2 * n / 3]) } else { (points[n / 2], end) };
+    let Some((center, radius)) = circle_through(start, via, far).filter(|(_, r)| *r < 1e5) else { return c };
+    match turned(points, center, radius) {
+        Some(t) if closed && (t.abs() - TAU).abs() < 1e-3 => FlatCurve::Circle { center, radius },
+        Some(t) if !closed => FlatCurve::Arc { center, radius, start, end, ccw: t > 0.0 },
+        _ => c,
+    }
+}
+
 /// Two curves that run on from one another as one curve, when they are pieces of the same
 /// line, of the same circle (the same way round) or both runs of points.
 fn joined(a: &FlatCurve, b: &FlatCurve) -> Option<FlatCurve> {
@@ -276,16 +355,16 @@ fn joined(a: &FlatCurve, b: &FlatCurve) -> Option<FlatCurve> {
             if center.dist(*c2) >= JOIN || (radius - r2).abs() >= JOIN || ccw != ccw2 {
                 return None;
             }
-            let turned = a.sweep().abs() + b.sweep().abs();
-            if turned > TAU + 1e-9 {
-                return None;
-            }
-            // All the way round, it is the circle.
-            Some(if (turned - TAU).abs() <= 1e-9 {
-                FlatCurve::Circle { center: *center, radius: *radius }
-            } else {
-                FlatCurve::Arc { center: *center, radius: *radius, start: *start, end: *end, ccw: *ccw }
-            })
+            arc_of(*center, *radius, *start, *end, *ccw, a.sweep().abs() + b.sweep().abs())
+        }
+        // A run of points that goes on round an arc's own circle is more of the arc.
+        (FlatCurve::Arc { center, radius, start, ccw, .. }, FlatCurve::Polyline { points }) => {
+            let more = turned(points, *center, *radius).filter(|d| (*d > 0.0) == *ccw)?;
+            arc_of(*center, *radius, *start, *points.last()?, *ccw, a.sweep().abs() + more.abs())
+        }
+        (FlatCurve::Polyline { points }, FlatCurve::Arc { center, radius, end, ccw, .. }) => {
+            let more = turned(points, *center, *radius).filter(|d| (*d > 0.0) == *ccw)?;
+            arc_of(*center, *radius, *points.first()?, *end, *ccw, b.sweep().abs() + more.abs())
         }
         (FlatCurve::Polyline { points: p }, FlatCurve::Polyline { points: q }) => {
             Some(FlatCurve::Polyline { points: p.iter().chain(q.iter().skip(1)).copied().collect() })
@@ -298,7 +377,7 @@ fn joined(a: &FlatCurve, b: &FlatCurve) -> Option<FlatCurve> {
 /// kernel splits edges where faces meet, and a cutter has no use for the joints.
 fn simplified(l: FlatLoop) -> FlatLoop {
     let mut out: Vec<FlatCurve> = Vec::with_capacity(l.curves.len());
-    for c in l.curves {
+    for c in l.curves.into_iter().map(straightened) {
         match out.last().and_then(|last| joined(last, &c)) {
             Some(one) => {
                 out.pop();
@@ -313,7 +392,7 @@ fn simplified(l: FlatLoop) -> FlatLoop {
         out.pop();
         out[0] = one;
     }
-    FlatLoop { curves: out }
+    FlatLoop { curves: out.into_iter().map(rounded).collect() }
 }
 
 /// A closed run of curves as loops that do not pass through one point twice: where an outline
@@ -350,7 +429,7 @@ pub fn chain(curves: Vec<FlatCurve>) -> Result<(FlatLoop, Vec<FlatLoop>), String
         match c.ends() {
             None => loops.push(FlatLoop { curves: vec![c] }),
             // A curve that ends where it starts is a loop of its own.
-            Some((a, b)) if a.dist(b) < JOIN && c.length() > JOIN => loops.push(FlatLoop { curves: vec![c] }),
+            Some((a, b)) if a.dist(b) < JOIN && c.length() > JOIN => loops.push(FlatLoop { curves: vec![rounded(c)] }),
             Some((a, b)) if a.dist(b) < JOIN => {}
             Some(_) => open.push(c),
         }
@@ -587,6 +666,63 @@ mod tests {
         let q = FlatCurve::Arc { center: Vec2::ZERO, radius: 2.0, start: Vec2::new(0.0, 2.0), end: Vec2::new(2.0, 0.0), ccw: false };
         assert!((q.sweep() + PI / 2.0).abs() < 1e-12 && (q.length() - PI).abs() < 1e-12);
         assert!(outer.contains(Vec2::new(14.0, 0.0)) && !outer.contains(Vec2::new(14.0, 4.5)));
+    }
+
+    #[test]
+    fn runs_of_points_on_a_line_or_a_circle_are_given_back_as_the_line_or_the_arc() {
+        let c = Vec2::new(20.0, 10.0);
+        let on = |a: f64| Vec2::polar(c, 3.0, a);
+        let run =
+            |from: f64, to: f64, n: usize| FlatCurve::Polyline { points: (0..=n).map(|i| on(from + (to - from) * i as f64 / n as f64)).collect() };
+        let arc = |from: f64, to: f64| FlatCurve::Arc { center: c, radius: 3.0, start: on(from), end: on(to), ccw: true };
+        let plate = |hole: Vec<FlatCurve>| {
+            let mut curves =
+                vec![line((0.0, 0.0), (40.0, 0.0)), line((40.0, 0.0), (40.0, 20.0)), line((40.0, 20.0), (0.0, 20.0)), line((0.0, 20.0), (0.0, 0.0))];
+            curves.extend(hole);
+            chain(curves).unwrap()
+        };
+        // A hole whose rim is two arcs and, between them, two runs of points on the same circle
+        // (where it crosses a bend, say): it is the circle, and its length is exact again.
+        let (_, inner) = plate(vec![arc(0.0, 1.0), run(1.0, PI, 40), arc(PI, 4.0), run(4.0, TAU, 60)]);
+        assert!(
+            matches!(inner.as_slice(), [FlatLoop { curves }] if matches!(curves.as_slice(), [FlatCurve::Circle { center, radius }] if center.near(c, 1e-12) && *radius == 3.0)),
+            "{inner:?}"
+        );
+        // The runs given backwards, and first: the same.
+        let (_, inner) = plate(vec![run(1.0, PI, 40).reversed(), arc(PI, 4.0), run(4.0, TAU, 60).reversed(), arc(0.0, 1.0)]);
+        assert!(matches!(inner[0].curves.as_slice(), [FlatCurve::Circle { .. }]), "{inner:?}");
+        // A notch with a round end that is only points: an arc through them, to a millionth.
+        let notch = vec![line((17.0, 10.0), (17.0, 14.0)), line((17.0, 14.0), (23.0, 14.0)), line((23.0, 14.0), (23.0, 10.0)), run(0.0, -PI, 50)];
+        let (_, inner) = plate(notch);
+        let round = inner[0].curves.iter().find(|k| matches!(k, FlatCurve::Arc { .. })).unwrap();
+        let FlatCurve::Arc { center, radius, .. } = round else { panic!("{round:?}") };
+        assert!(center.near(c, 1e-9) && (radius - 3.0).abs() < 1e-9, "{round:?}");
+        assert!((inner[0].signed_area().abs() - (24.0 + 4.5 * PI)).abs() < 1e-9 && inner[0].curves.len() == 4, "{inner:?}");
+        // A whole circle given as points only.
+        let (_, inner) = plate(vec![run(0.3, 0.3 + TAU, 90)]);
+        assert!(matches!(inner[0].curves.as_slice(), [FlatCurve::Circle { radius, .. }] if (radius - 3.0).abs() < 1e-9), "{inner:?}");
+        // Points along a straight line are the line, and run on into the lines beside them.
+        let straight = FlatCurve::Polyline { points: vec![Vec2::new(10.0, 0.0), Vec2::new(18.0, 0.0), Vec2::new(30.0, 0.0)] };
+        let (outer, _) = chain(vec![
+            line((0.0, 0.0), (10.0, 0.0)),
+            straight,
+            line((30.0, 0.0), (40.0, 0.0)),
+            line((40.0, 0.0), (40.0, 20.0)),
+            line((40.0, 20.0), (0.0, 20.0)),
+            line((0.0, 20.0), (0.0, 0.0)),
+        ])
+        .unwrap();
+        assert_eq!(outer.curves.len(), 4, "{outer:?}");
+        // Points on no circle (an ellipse, flatter than it is wide) stay points; nor does an arc
+        // take in points that are off its circle.
+        let oval = FlatCurve::Polyline {
+            points: (0..=80).map(|i| c + Vec2::new(3.0 * (TAU * f64::from(i) / 80.0).cos(), 2.0 * (TAU * f64::from(i) / 80.0).sin())).collect(),
+        };
+        let (_, inner) = plate(vec![oval]);
+        assert!(matches!(inner[0].curves.as_slice(), [FlatCurve::Polyline { .. }]), "{inner:?}");
+        let off = FlatCurve::Polyline { points: vec![on(1.0), c + Vec2::new(-0.5, 3.4), on(PI)] };
+        let (_, inner) = plate(vec![arc(PI, 1.0 + TAU), off]);
+        assert_eq!(inner[0].curves.len(), 2, "{inner:?}");
     }
 
     #[test]

@@ -395,6 +395,21 @@ impl Kernel for OcctKernel {
         self.finish(shape, hist)
     }
 
+    fn roll(&mut self, profile: &Profile, rho: f64, inner: f64, outer: f64) -> KResult<Op> {
+        self.not_cancelled()?;
+        let (rho, inner, outer) = (check::size("neutral radius", rho)?, check::size("inner radius", inner)?, check::size("outer radius", outer)?);
+        if outer - inner < tol::LINEAR {
+            return Err(bad("the outer radius of a rolled outline must be the larger"));
+        }
+        if profile.regions.len() != 1 || profile.regions.iter().any(|r| !r.holes.is_empty()) {
+            return Err(bad("a rolled outline is one region without holes"));
+        }
+        let p = profile_in(profile)?;
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::roll(&p, rho, inner, outer, &mut hist).map_err(failed("roll"))?;
+        self.finish(shape, hist)
+    }
+
     fn revolve(&mut self, profile: &Profile, axis: &Axis, angle: &AngleExtent) -> KResult<Op> {
         self.not_cancelled()?;
         check::point("revolve axis origin", axis.origin())?;

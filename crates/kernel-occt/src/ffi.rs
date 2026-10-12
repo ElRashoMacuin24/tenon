@@ -238,6 +238,9 @@ pub(crate) mod bridge {
         fn make_face(profile: &ProfileIn, offset: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// Prism of the profile placed at `start` along the normal, `length` long (may be negative).
         fn extrude(profile: &ProfileIn, start: f64, length: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// The profile's outline rolled round its frame's Z axis: x is the angle `x / rho` from the
+        /// frame's X, y the distance along the axis; from radius `inner` to radius `outer`.
+        fn roll(profile: &ProfileIn, rho: f64, inner: f64, outer: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// Revolution of the profile about an axis, from angle `start` sweeping `sweep` radians;
         /// `full` makes a closed revolution.
         fn revolve(profile: &ProfileIn, origin: &V3, dir: &V3, start: f64, sweep: f64, full: bool, hist: &mut HistoryOut)

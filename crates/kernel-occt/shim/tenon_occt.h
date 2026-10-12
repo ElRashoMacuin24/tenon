@@ -72,6 +72,9 @@ std::unique_ptr<Shape> boolean_op(std::uint8_t op, const Shape& target, const Sh
 
 std::unique_ptr<Shape> make_face(const ProfileIn& profile, double offset, HistoryOut& hist);
 std::unique_ptr<Shape> extrude(const ProfileIn& profile, double start, double length, HistoryOut& hist);
+// The outline rolled round the frame's Z axis: its x is the angle x / rho from the frame's X,
+// its y the distance along the axis; the solid reaches from radius `inner` to `outer`.
+std::unique_ptr<Shape> roll(const ProfileIn& profile, double rho, double inner, double outer, HistoryOut& hist);
 std::unique_ptr<Shape> revolve(const ProfileIn& profile, const V3& origin, const V3& dir, double start, double sweep, bool full,
                                HistoryOut& hist);
 std::unique_ptr<Shape> transform(const Shape& shape, std::uint8_t kind, const V3& a, const V3& b, double value, HistoryOut& hist);

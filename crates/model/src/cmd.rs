@@ -779,16 +779,37 @@ fn sketch_circle(s: &mut Session, p: &Value) -> CmdResult {
     Ok(json!({ "circle": id.0, "center": center.map(|c| c.0) }))
 }
 
+/// An arc's centre, start and end points.
+fn arc_points(sk: &tenon_sketch::Sketch, id: tenon_sketch::EntityId) -> Option<[u32; 3]> {
+    match sk.geometry(id) {
+        Some(tenon_sketch::Geometry::Arc { center, start, end }) => Some([center.0, start.0, end.0]),
+        _ => None,
+    }
+}
+
+fn arc_value(id: tenon_sketch::EntityId, points: Option<[u32; 3]>) -> Value {
+    match points {
+        Some([center, start, end]) => json!({ "arc": id.0, "center": center, "start": start, "end": end }),
+        None => json!({ "arc": id.0 }),
+    }
+}
+
 fn sketch_arc(s: &mut Session, p: &Value) -> CmdResult {
     let (c, a, b) = (point_ref(p, "center", "cx", "cy")?, point_ref(p, "start", "x1", "y1")?, point_ref(p, "end", "x2", "y2")?);
-    let id = on_sketch(s, p, |sk| Ok(sk.add_arc(c, a, b)?))?;
-    Ok(json!({ "arc": id.0 }))
+    let (id, ends) = on_sketch(s, p, |sk| {
+        let id = sk.add_arc(c, a, b)?;
+        Ok((id, arc_points(sk, id)))
+    })?;
+    Ok(arc_value(id, ends))
 }
 
 fn sketch_arc3(s: &mut Session, p: &Value) -> CmdResult {
     let (a, m, b) = (pos(p, "x1", "y1")?, pos(p, "x2", "y2")?, pos(p, "x3", "y3")?);
-    let id = on_sketch(s, p, |sk| Ok(sk.add_arc_three_point(a, m, b)?))?;
-    Ok(json!({ "arc": id.0 }))
+    let (id, ends) = on_sketch(s, p, |sk| {
+        let id = sk.add_arc_three_point(a, m, b)?;
+        Ok((id, arc_points(sk, id)))
+    })?;
+    Ok(arc_value(id, ends))
 }
 
 fn sketch_rectangle(s: &mut Session, p: &Value) -> CmdResult {
@@ -2161,6 +2182,7 @@ fn sheet_value(d: &Document) -> Value {
             v["min_remnant"] = json!(s.min_remnant);
             v["corner_size"] = json!(s.corner_size);
             v["k_factor"] = json!(s.k_factor);
+            v["gap"] = json!(s.gap);
         }
         Err(e) => v["error"] = json!(e),
     }
@@ -2172,7 +2194,7 @@ fn sheet_info(s: &mut Session, _: &Value) -> CmdResult {
 }
 
 /// The sizes of the rule a command may set: its key and the parameter it is.
-const SHEET_KEYS: [(&str, &str); 7] = [
+const SHEET_KEYS: [(&str, &str); 8] = [
     ("thickness", crate::sheet::THICKNESS),
     ("bend_radius", crate::sheet::BEND_RADIUS),
     ("relief_width", crate::sheet::RELIEF_WIDTH),
@@ -2180,6 +2202,7 @@ const SHEET_KEYS: [(&str, &str); 7] = [
     ("min_remnant", crate::sheet::MIN_REMNANT),
     ("corner_size", crate::sheet::CORNER_SIZE),
     ("k_factor", crate::sheet::K_FACTOR),
+    ("gap", crate::sheet::GAP_SIZE),
 ];
 
 fn sheet_defaults(s: &mut Session, p: &Value) -> CmdResult {
@@ -2232,20 +2255,11 @@ fn sheet_face(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn sheet_flange(s: &mut Session, p: &Value) -> CmdResult {
-    use crate::sheet::{BendPosition, Flange, FlangeWidth, HeightDatum};
+    use crate::sheet::{BendPosition, Flange, HeightDatum};
     if s.document().sheet_metal().is_none() {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
     }
-    let width = match (opt_num(p, "width")?, p.get("offsets")) {
-        (Some(_), Some(o)) if !o.is_null() => return Err("give `width` (in the middle of the edge) or `offsets`, not both".into()),
-        (Some(width), _) => FlangeWidth::Centered { width },
-        (None, Some(o)) if !o.is_null() => {
-            let [start, end]: [f64; 2] =
-                serde_json::from_value(o.clone()).map_err(|e| CmdError(format!("`offsets` is [from the start, from the end]: {e}")))?;
-            FlangeWidth::Offset { start, end }
-        }
-        _ => FlangeWidth::Edge,
-    };
+    let width = sheet_width(p)?;
     let named = |key: &str| p.get(key).filter(|v| !v.is_null());
     let flange = Flange {
         edges: edge_refs(p)?,
@@ -2262,9 +2276,77 @@ fn sheet_flange(s: &mut Session, p: &Value) -> CmdResult {
         flip: flag(p, "flip"),
         radius: opt_num(p, "radius")?,
         width,
+        miter: p.get("miter").and_then(Value::as_bool).unwrap_or(true),
     };
     flange.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::Flange(flange), p)
+}
+
+/// How much of its edge a flange or a hem takes: `width` (in the middle) or `offsets`.
+fn sheet_width(p: &Value) -> Result<crate::sheet::FlangeWidth, CmdError> {
+    use crate::sheet::FlangeWidth;
+    Ok(match (opt_num(p, "width")?, p.get("offsets")) {
+        (Some(_), Some(o)) if !o.is_null() => return Err("give `width` (in the middle of the edge) or `offsets`, not both".into()),
+        (Some(width), _) => FlangeWidth::Centered { width },
+        (None, Some(o)) if !o.is_null() => {
+            let [start, end]: [f64; 2] =
+                serde_json::from_value(o.clone()).map_err(|e| CmdError(format!("`offsets` is [from the start, from the end]: {e}")))?;
+            FlangeWidth::Offset { start, end }
+        }
+        _ => FlangeWidth::Edge,
+    })
+}
+
+fn sheet_hem(s: &mut Session, p: &Value) -> CmdResult {
+    use crate::sheet::{Hem, HemShape};
+    let sizes = s
+        .document()
+        .sheet_sizes()
+        .map_err(|_| CmdError("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into()))?;
+    // What is not given starts as the rule has it: half a thickness of gap, four of length; the
+    // part's bend radius, and three quarters of a turn (a teardrop: 190 degrees).
+    let (gap, length) = (opt_num(p, "gap")?.unwrap_or(sizes.thickness * 0.5), opt_num(p, "length")?.unwrap_or(sizes.thickness * 4.0));
+    let radius = opt_num(p, "radius")?.unwrap_or(sizes.bend_radius);
+    let turn = |degrees: f64| opt_num(p, "angle").map(|a| a.unwrap_or(degrees.to_radians()));
+    let shape = match p.get("type").and_then(Value::as_str).unwrap_or("single") {
+        "single" => HemShape::Single { gap, length },
+        "double" => HemShape::Double { gap, length },
+        "rolled" => HemShape::Rolled { radius, angle: turn(270.0)? },
+        "teardrop" => HemShape::Teardrop { radius, angle: turn(190.0)? },
+        other => return Err(CmdError(format!("unknown hem type `{other}` (single, double, rolled, teardrop)"))),
+    };
+    let hem = Hem { edges: edge_refs(p)?, shape, flip: flag(p, "flip"), width: sheet_width(p)? };
+    hem.check().map_err(CmdError)?;
+    hem.steps(sizes.thickness).map_err(CmdError)?;
+    add_feature(s, FeatureKind::Hem(hem), p)
+}
+
+fn sheet_contour_flange(s: &mut Session, p: &Value) -> CmdResult {
+    use crate::sheet::{ContourFlange, Sides};
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let sides = |key: &str| -> Result<Sides, CmdError> {
+        match p.get(key) {
+            Some(v) if !v.is_null() => parse(p, key),
+            _ => Ok(Sides::default()),
+        }
+    };
+    let operation = match p.get("operation").and_then(Value::as_str).unwrap_or("join") {
+        "join" => Operation::Join,
+        "new_body" => Operation::NewBody,
+        other => return Err(CmdError(format!("unknown operation `{other}` for a contour flange (join, new_body)"))),
+    };
+    let flange = ContourFlange {
+        sketch: sketch_id(p)?,
+        distance: num(p, "distance")?,
+        direction: sides("direction")?,
+        position: sides("position")?,
+        radius: opt_num(p, "radius")?,
+        operation,
+    };
+    flange.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::ContourFlange(flange), p)
 }
 
 fn sheet_a_side(s: &mut Session, p: &Value) -> CmdResult {
@@ -2419,7 +2501,13 @@ static COMMANDS: &[CommandSpec] = &[
         true,
         sketch_circle
     ),
-    doc_cmd!("sketch.arc", "Arc", "sketch; center or cx, cy; start or x1, y1; end or x2, y2 (counter-clockwise)", true, sketch_arc),
+    doc_cmd!(
+        "sketch.arc",
+        "Arc",
+        "sketch; center or cx, cy; start or x1, y1; end or x2, y2 (counter-clockwise). Returns the arc and its points (`center`, `start`, `end`)",
+        true,
+        sketch_arc
+    ),
     doc_cmd!("sketch.arc3", "Three-Point Arc", "sketch, x1, y1, x2, y2 (a point on the arc), x3, y3", true, sketch_arc3),
     doc_cmd!(
         "sketch.rectangle",
@@ -2783,7 +2871,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.defaults",
         "Sheet Metal Defaults",
-        "Makes the part a sheet metal part and sets its rule. Sizes, each a number (mm) or an equation: thickness, bend_radius, relief_width, relief_depth, min_remnant, corner_size, and k_factor (0 to 1); they are the parameters Thickness, BendRadius, BendReliefWidth, BendReliefDepth, MinimumRemnant, CornerReliefSize and KFactor. relief: \"straight\" | \"round\" (the cut beside a bend narrower than its edge); corner: \"round\" | \"square\" | \"trim\" (the relief where two bends meet at a corner). Returns the rule as it now is",
+        "Makes the part a sheet metal part and sets its rule. Sizes, each a number (mm) or an equation: thickness, bend_radius, relief_width, relief_depth, min_remnant, corner_size, gap, and k_factor (0 to 1); they are the parameters Thickness, BendRadius, BendReliefWidth, BendReliefDepth, MinimumRemnant, CornerReliefSize, GapSize and KFactor. relief: \"straight\" | \"round\" (the cut beside a bend narrower than its edge); corner: \"round\" | \"square\" | \"trim\" (the relief where two bends meet at a corner, centred where their centre lines cross). Returns the rule as it now is",
         true,
         sheet_defaults
     ),
@@ -2798,9 +2886,23 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.flange",
         "Flange",
-        "edges: [edge references] (straight edges of the sheet's rim; the flange bends towards the side each is on); height; angle (rad, default a quarter turn); datum: \"outer\" (default: the height is overall) | \"inner\" | \"tangent\"; position: \"inside\" (default: the flange's outer face goes through the edge) | \"adjacent\" (the bend starts at the edge) | \"outside\" | \"tangent\"; flip (bend to the other side); radius (default BendRadius); width (in the middle of the edge) or offsets: [from the start, from the end] (default: the whole edge). Edges that meet at a corner get the rule's corner relief",
+        "edges: [edge references] (straight edges of the sheet's rim; the flange bends towards the side each is on); height; angle (rad, default a quarter turn); datum: \"outer\" (default: the height is overall) | \"inner\" | \"tangent\"; position: \"inside\" (default: the flange's outer face goes through the edge) | \"adjacent\" (the bend starts at the edge) | \"outside\" | \"tangent\"; flip (bend to the other side); radius (default BendRadius); width (in the middle of the edge) or offsets: [from the start, from the end] (default: the whole edge). Edges that meet at a corner get the rule's corner relief, and their walls are brought together to leave the rule's gap (miter: false leaves each wall ending where its bend does)",
         true,
         sheet_flange
+    ),
+    doc_cmd!(
+        "sheet.hem",
+        "Hem",
+        "edges: [edge references] (straight edges of the sheet's rim; the hem folds towards the side each is on); type: \"single\" (default: folded flat back over the sheet) | \"double\" (folded over twice) | \"rolled\" (a bend and nothing after it) | \"teardrop\" (rolled past half a turn, then straight back down to the sheet); gap (single, double: between the layers; default half a Thickness) and length (overall, from the outside of the fold; default four Thicknesses); radius (rolled, teardrop: inside; default BendRadius) and angle (rad; default 270 degrees rolled, 190 teardrop); flip (fold to the other side); width or offsets: [from the start, from the end] as for sheet.flange",
+        true,
+        sheet_hem
+    ),
+    doc_cmd!(
+        "sheet.contour_flange",
+        "Contour Flange",
+        "sketch (an open profile: lines and arcs end to end; corners between lines become bends, an arc is a bend as drawn); distance (how far the profile is pushed out of its plane); direction: \"default\" | \"flipped\" | \"symmetric\"; position: \"default\" (the sheet goes on the inside of the profile's first corner) | \"flipped\" | \"symmetric\"; radius (inside, of the bends made at corners; default BendRadius); operation: \"join\" (default) | \"new_body\"",
+        true,
+        sheet_contour_flange
     ),
     doc_cmd!(
         "sheet.a_side",

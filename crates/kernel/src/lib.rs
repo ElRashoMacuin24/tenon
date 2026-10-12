@@ -142,6 +142,19 @@ pub trait Kernel: Send {
         let _ = (profile, axis, angle);
         unsupported!("revolve")
     }
+    /// A flat outline rolled round an axis, as sheet is bent: the solid between the radii
+    /// `inner` and `outer` whose sides are square to the axis' cylinders everywhere.
+    ///
+    /// The profile is one region without holes; its frame gives the axis (through the origin
+    /// along Z) and where the outline starts (X: the direction from the axis to the outline's
+    /// `x = 0`). A point `(x, y)` of the outline lies `x / rho` radians round the axis from
+    /// there, turning from X towards Y, and `y` along the axis. The faces made from the outline's
+    /// curves are reported by their tags; the face at `inner` is the start cap, the one at
+    /// `outer` the end cap.
+    fn roll(&mut self, profile: &Profile, rho: f64, inner: f64, outer: f64) -> KResult<Op> {
+        let _ = (profile, rho, inner, outer);
+        unsupported!("roll")
+    }
     fn sweep(&mut self, profile: &Profile, path: &Path3, opts: &SweepOpts) -> KResult<Op> {
         let _ = (profile, path, opts);
         unsupported!("sweep")

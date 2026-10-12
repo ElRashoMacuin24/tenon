@@ -212,11 +212,11 @@ commands are in radians. [commands.md](commands.md) lists what each takes.
 `sheet.defaults` makes the part a sheet metal part and sets its rule. Each size is a number
 (millimetres) or an equation, and is a parameter of the part from then on (`Thickness`,
 `BendRadius`, ...), so `param.set` changes it and equations use it. `sheet.face` makes a sketch
-profile one thickness thick; `sheet.flange` bends walls up from edges of the sheet. Cuts and
-holes are the ordinary commands.
+profile one thickness thick; `sheet.flange` bends walls up from edges of the sheet; `sheet.hem`
+and `sheet.contour_flange` are below. Cuts and holes are the ordinary commands.
 
 ```json
-{ "run": "sheet.defaults", "with": { "thickness": 1.5, "corner": "round" }, "expect": { "bend_radius": 1.5, "k_factor": 0.44 } },
+{ "run": "sheet.defaults", "with": { "thickness": 1.5, "corner": "round" }, "expect": { "bend_radius": 1.5, "gap": 1.5, "k_factor": 0.44 } },
 { "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
 { "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 120, "y2": 80 }, "as": "r" },
 { "run": "sheet.face", "with": { "sketch": "$s.feature" }, "as": "face" },
@@ -233,6 +233,32 @@ is in radians (a quarter turn unless given), its `height` is overall unless `dat
 otherwise, and `position` says where the bend lies (`inside`, the default, keeps the part's
 outside size). The faces a flange makes have names a script cannot spell, so an edge or a face
 on one is named by a point on it: `model.edge_ref` and `model.face_ref` take `at: [x, y, z]`.
+
+Edges of one flange that meet at a corner of the sheet have their walls brought together until
+the rule's `gap` is left between them (`miter: false` leaves each ending where its bend does),
+and the corner gets the rule's relief, centred where the two bends' centre lines cross.
+
+`sheet.hem` folds an edge back on itself (`type`: `single`, `double`, `rolled` or `teardrop`),
+and `sheet.contour_flange` makes sheet along an open profile, with a bend at every corner. A
+channel 30 wide and 20 high outside, 50 long, with a double hem along the top of one side:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3 } },
+{ "run": "sketch.create", "with": { "plane": "xz" }, "as": "s" },
+{ "run": "sketch.line", "with": { "sketch": "$s.feature", "x1": 0, "y1": 20, "x2": 0, "y2": 0 }, "as": "a" },
+{ "run": "sketch.line", "with": { "sketch": "$s.feature", "start": "$a.end", "x2": 30, "y2": 0 }, "as": "b" },
+{ "run": "sketch.line", "with": { "sketch": "$s.feature", "start": "$b.end", "x2": 30, "y2": 20 } },
+{ "run": "sheet.contour_flange", "with": { "sketch": "$s.feature", "distance": 50 } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 6256.63706144 } },
+{ "run": "model.edge_ref", "with": { "at": [28, -25, 20] }, "as": "top" },
+{ "run": "sheet.hem", "with": { "edges": ["$top"], "type": "double", "gap": 1, "length": 12 } },
+{ "run": "sheet.flat", "expect": { "length": 86.5725642002, "bends.2.angle": 3.14159265359 } }
+```
+
+The profile's curves must join end to end: start each where the last one ended (`"start":
+"$a.end"`; `sketch.arc` returns its `start` and `end` too). The sheet goes on the inside of the
+profile's first corner unless `position` is `flipped` or `symmetric`, so the profile above is
+the outside of the channel. A hem's `length` is over all, from the outside of its fold.
 
 `sheet.flat` lays the part flat and returns the size of the sheet (`length`, `width`), its
 `area`, the `cut_length`, the number of cut-outs (`holes`) and every bend's `angle`, `radius`,

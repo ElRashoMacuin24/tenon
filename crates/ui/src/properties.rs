@@ -370,6 +370,9 @@ pub(crate) fn picked_row(ui: &mut Ui, n: usize, hint: &str) -> bool {
     clear
 }
 
+/// Where the height the open panel needs is kept between frames.
+pub(crate) const PROPS_NEED: &str = "tn_props_need";
+
 pub(crate) fn section(ui: &mut Ui, title: &str, open: bool, body: impl FnOnce(&mut Ui)) {
     egui::CollapsingHeader::new(egui::RichText::new(title).font(theme::body()).strong()).default_open(open).show(ui, body);
 }
@@ -411,6 +414,8 @@ impl Workbench {
                     | Panel::Thread(_)
                     | Panel::SheetFace(_)
                     | Panel::Flange(_)
+                    | Panel::Hem(_)
+                    | Panel::ContourFlange(_)
                     | Panel::Asm(_)
             )
         )
@@ -470,6 +475,8 @@ impl Workbench {
             Panel::Thread(p) => ("Thread", p.editing.map(|f| self.feature_name(f))),
             Panel::SheetFace(p) => ("Face", p.editing.map(|f| self.feature_name(f))),
             Panel::Flange(p) => ("Flange", p.editing.map(|f| self.feature_name(f))),
+            Panel::Hem(p) => ("Hem", p.editing.map(|f| self.feature_name(f))),
+            Panel::ContourFlange(p) => ("Contour Flange", p.editing.map(|f| self.feature_name(f))),
             Panel::Asm(p) => {
                 (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
             }
@@ -482,9 +489,11 @@ impl Workbench {
             ui.label(egui::RichText::new(format!("> {}", name.unwrap_or_else(|| "new".into()))).font(theme::body()).color(t.text_dim));
         });
         ui.add_space(4.0);
-        egui::ScrollArea::vertical().id_salt("tn_props_scroll").max_height((r.height() - 110.0).max(80.0)).auto_shrink([false, true]).show(
-            ui,
-            |ui| {
+        let scrolled = egui::ScrollArea::vertical()
+            .id_salt("tn_props_scroll")
+            .max_height((r.height() - 110.0).max(80.0))
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
                 ui.spacing_mut().indent = 10.0;
                 match &mut panel {
                     Panel::Extrude(p) => {
@@ -1255,7 +1264,7 @@ impl Workbench {
                         enter |= entered;
                         clear |= cleared;
                     }
-                    p @ (Panel::SheetFace(_) | Panel::Flange(_)) => {
+                    p @ (Panel::SheetFace(_) | Panel::Flange(_) | Panel::Hem(_) | Panel::ContourFlange(_)) => {
                         let (entered, cleared) = self.sheet_properties(ui, p, &mut eqs, &sketches, t);
                         enter |= entered;
                         clear |= cleared;
@@ -1391,8 +1400,10 @@ impl Workbench {
                     Panel::Asm(p) => self.asm_panel_ui(ui, p, t),
                     _ => {}
                 }
-            },
-        );
+            });
+        // What the panel needs to show whole: the column gives it that much when it can (see
+        // `Workbench::ui`), so that a long panel is not scrolled while the browser has room.
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(PROPS_NEED), scrolled.content_size.y + 110.0));
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.add_space(8.0);
@@ -1485,9 +1496,16 @@ impl Workbench {
             Some(Panel::Coil(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::SheetFace(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Loft(p)) => p.sections.first().and_then(|s| self.profile_anchor(*s)).map(|a| a.0),
-            Some(Panel::Fillet(_) | Panel::Chamfer(_) | Panel::Shell(_) | Panel::Draft(_) | Panel::Thread(_) | Panel::Flange(_)) => {
-                self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center()))
-            }
+            Some(
+                Panel::Fillet(_)
+                | Panel::Chamfer(_)
+                | Panel::Shell(_)
+                | Panel::Draft(_)
+                | Panel::Thread(_)
+                | Panel::Flange(_)
+                | Panel::Hem(_)
+                | Panel::ContourFlange(_),
+            ) => self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center())),
             Some(Panel::Hole(p)) => p
                 .points
                 .first()

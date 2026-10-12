@@ -134,6 +134,7 @@ Standard sizes and physical constants held in code:
 | `examples/m8-tray/workbench.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --screenshot examples/m8-tray/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m8-tray/flat-pattern.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.flat_view --screenshot examples/m8-tray/flat-pattern.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m8-tray/flange.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.flange --screenshot examples/m8-tray/flange.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m8-tray/hem.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.hem --screenshot examples/m8-tray/hem.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m8-tray/defaults.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.defaults --screenshot examples/m8-tray/defaults.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m2-mount/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.json` | Tenon contributors | written for this repository (a second M2 example script) | MIT OR Apache-2.0 | Original |

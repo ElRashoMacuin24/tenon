@@ -93,6 +93,12 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::Flange(_), _) => {
             "The flange could not be built on the sheet. It may run into another flange, or the bend may be too large for the edge: try a smaller bend radius, a lower flange, or offsets from the ends of the edge.".into()
         }
+        (FeatureKind::Hem(_), _) => {
+            "The hem could not be built on the sheet. It may fold into the part or into itself: try a larger gap, a shorter hem, or fold it to the other side.".into()
+        }
+        (FeatureKind::ContourFlange(_), _) => {
+            "The contour flange could not be made from this profile. It may cross itself, or a bend may be too tight for the sheet: check the sketch, or try a smaller bend radius.".into()
+        }
         (FeatureKind::PatternRect(_) | FeatureKind::PatternCircular(_) | FeatureKind::Mirror(_), _) => {
             "The copies could not be joined to the part. A copy may touch the part only along an edge or at a point: change the spacing, count or plane.".into()
         }

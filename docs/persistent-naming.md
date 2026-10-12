@@ -32,8 +32,12 @@ kept for the parts not built (neighbour origins, split ordinals, vertex referenc
   - flanges: from the edge the flange is on (the key of its two face names) and the part of
     the flange the face is: the wall's inner and outer faces, its tip, its two ends, the
     inside and outside of the bend, and what the cuts for the bend and the corner reliefs
-    leave in the sheet (`sub_key`, `pair_key`). A sheet metal face is named as an extrusion
-    is.
+    leave in the sheet (`sub_key`, `pair_key`). A flange that meets another at a corner is
+    built as a bend and a wall of their own: their ends, the wall's foot and what a corner
+    relief leaves in each are named apart. A hem's faces are named after its edge, the step
+    of the fold they are and the side of the sheet; a contour flange's after the curve of
+    the sketch they follow (a bend made at a corner: the two lines it joins) and the side of
+    the sheet. A sheet metal face is named as an extrusion is.
 
 Booleans pass names on through `images` (`names_of_boolean`); modify operations through images
 and `generated` (`names_of_modify`).

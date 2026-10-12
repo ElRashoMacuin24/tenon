@@ -625,14 +625,27 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
         "faces": [{ "type": "cap", "feature": face, "end": "end" }, { "type": "side", "feature": face, "curve": r["lines"][1] }],
         "fingerprint": { "mid": { "x": 40.0, "y": 15.0, "z": 1.5 }, "length": 30.0 },
     });
-    run(&mut s, "sheet.flange", json!({ "edges": [edge], "height": 12, "angle": 1.25, "position": "adjacent", "width": 20, "radius": 2 }));
+    run(&mut s, "sheet.flange", json!({ "edges": [edge.clone()], "height": 12, "angle": 1.25, "position": "adjacent", "width": 20, "radius": 2 }));
+    // A hem, a contour flange along an open profile, and a flange that is not mitred.
+    run(&mut s, "sheet.hem", json!({ "edges": [edge.clone()], "gap": 0.75, "length": 6, "offsets": [2, 3] }));
+    let profile = run(&mut s, "sketch.create", json!({ "plane": "xz", "project_origin": false }))["feature"].as_u64().unwrap();
+    let first = run(&mut s, "sketch.line", json!({ "sketch": profile, "x1": 0, "y1": 0, "x2": 30, "y2": 0 }));
+    run(&mut s, "sketch.line", json!({ "sketch": profile, "start": first["end"], "x2": 30, "y2": 20 }));
+    run(&mut s, "sheet.contour_flange", json!({ "sketch": profile, "distance": 50, "position": "flipped", "direction": "symmetric", "radius": 2.5 }));
+    run(&mut s, "sheet.flange", json!({ "edges": [edge], "height": 12, "miter": false }));
     run(&mut s, "sheet.flat_pattern", json!({}));
     let bytes = project::to_bytes(s.document(), &extra).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();
     // The rule is a table of its own; its sizes are parameters, each with its equation; the
     // features are records like any others, with only what is not the usual written out.
     assert!(text.contains("[sheet_metal]\nrelief = \"straight\"\ncorner = \"square\"\nflat = true\n"), "{text}");
-    for (name, equation) in [("Thickness", "1.5 mm"), ("BendRadius", "Thickness * 2"), ("BendReliefDepth", "Thickness * 0.5"), ("KFactor", "0.44")] {
+    for (name, equation) in [
+        ("Thickness", "1.5 mm"),
+        ("BendRadius", "Thickness * 2"),
+        ("BendReliefDepth", "Thickness * 0.5"),
+        ("KFactor", "0.44"),
+        ("GapSize", "Thickness"),
+    ] {
         assert!(text.contains(&format!("name = \"{name}\", equation = \"{equation}\"")), "{name}: {text}");
     }
     assert!(text.contains("type = \"sheet_face\"") && text.contains("type = \"flange\""), "{text}");
@@ -640,12 +653,22 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     for field in ["angle = 1.25", "height = 12.0", "position = \"adjacent\"", "radius = 2.0", "width = { centered = { width = 20.0 } }"] {
         assert!(flange.contains(field), "{field}: {flange}");
     }
+    // A flange is mitred unless it says not; the hem and the contour flange say what they are.
+    assert_eq!(text.matches("miter = false").count(), 1, "{text}");
+    let hem = text.split("type = \"hem\"").nth(1).unwrap();
+    for field in ["shape = { single = { gap = 0.75, length = 6.0 } }", "width = { offset = { start = 2.0, end = 3.0 } }"] {
+        assert!(hem.contains(field), "{field}: {hem}");
+    }
+    let contour = text.split("type = \"contour_flange\"").nth(1).unwrap();
+    for field in ["distance = 50.0", "direction = \"symmetric\"", "position = \"flipped\"", "radius = 2.5"] {
+        assert!(contour.contains(field), "{field}: {contour}");
+    }
     // Read back, it is the same part, and saves as the same bytes.
     let (back, _) = project::from_bytes(&bytes).unwrap();
     assert_eq!(back.sheet_metal(), s.document().sheet_metal());
     assert_eq!(back.sheet_sizes().unwrap(), s.document().sheet_sizes().unwrap());
     assert_eq!(back.sheet_sizes().unwrap().bend_radius, 3.0);
-    assert_eq!(back.features().len(), 3);
+    assert_eq!(back.features().len(), 7);
     assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
     back.validate().unwrap();
 
@@ -660,9 +683,28 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     for line in ["sheet metal bend relief straight -> round", "sheet metal corner relief square -> round", "flat pattern deleted", "Thickness"] {
         assert!(changed.contains(line), "{line}: {changed}");
     }
+    // A part saved before there was a gap between mitred flanges has none written: it opens,
+    // and the gap is a thickness.
+    let older: String = text
+        .lines()
+        .filter(|l| !l.contains("GapSize"))
+        .map(|l| {
+            format!(
+                "{l}
+"
+            )
+        })
+        .collect();
+    assert!(older.len() < text.len());
+    let (old, _) = project::from_bytes(older.as_bytes()).unwrap();
+    assert_eq!(old.sheet_sizes().unwrap().gap, 1.5);
     // A file edited into something that cannot be is refused as damaged, saying what is wrong.
     let e = project::from_bytes(text.replace("angle = 1.25", "angle = 4.0").as_bytes()).unwrap_err().to_string();
     assert!(e.contains("the flange angle must be from 1 to 179 degrees"), "{e}");
     let e = project::from_bytes(text.replace("corner = \"square\"", "corner = \"wavy\"").as_bytes()).unwrap_err().to_string();
     assert!(e.contains("wavy"), "{e}");
+    let e = project::from_bytes(text.replace("gap = 0.75", "gap = 0.0").as_bytes()).unwrap_err().to_string();
+    assert!(e.contains("the hem's gap must be from"), "{e}");
+    let e = project::from_bytes(text.replace("distance = 50.0", "distance = -1.0").as_bytes()).unwrap_err().to_string();
+    assert!(e.contains("the contour flange's distance must be more than 0"), "{e}");
 }

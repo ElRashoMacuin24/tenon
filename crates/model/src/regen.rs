@@ -229,7 +229,7 @@ fn prefix_hashes(doc: &Document, copied: &std::collections::BTreeSet<FeatureId>)
     out.push(h.finish());
     for (i, f) in doc.features().iter().enumerate() {
         serde_json::to_string(f).unwrap_or_default().hash(&mut h);
-        if matches!(f.kind, FeatureKind::SheetFace(_) | FeatureKind::Flange(_)) {
+        if matches!(f.kind, FeatureKind::SheetFace(_) | FeatureKind::Flange(_) | FeatureKind::Hem(_) | FeatureKind::ContourFlange(_)) {
             rule.hash(&mut h);
         }
         (i >= end).hash(&mut h);
@@ -496,6 +496,8 @@ impl<'a> Ctx<'a> {
             FeatureKind::Thread(t) => self.thread(f.id, t),
             FeatureKind::SheetFace(s) => self.sheet_face(f.id, s),
             FeatureKind::Flange(fl) => self.flange(f.id, fl),
+            FeatureKind::Hem(h) => self.hem(f.id, h),
+            FeatureKind::ContourFlange(c) => self.contour_flange(f.id, c),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };
