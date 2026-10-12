@@ -22,7 +22,8 @@ In parts, you can:
 - copy features in rectangular and circular patterns, and mirror them;
 - place work planes, axes and points;
 - make sheet metal parts: faces, flanges bent up from their edges and brought to a seam where
-  they meet (corner seams between flanges made apart too), bends that join faces made apart,
+  they meet (corner seams between flanges made apart too; lips turned in over a tray are
+  mitred at its corners), bends that join faces made apart,
   folds along a line drawn across a face, hems, sheet along an open profile or along an edge,
   bend and corner reliefs, cuts that go round the bends as drawn on the flat sheet and cuts
   square to the sheet from a sketch at any angle; open the square corners of a shelled box

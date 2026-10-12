@@ -17,8 +17,11 @@ use std::path::{Path, PathBuf};
 use tenon_kernel::Kernel;
 use tenon_ui::{Services, ThemeName, Workbench};
 
-/// Frames to wait for regeneration before taking a screenshot anyway.
+/// Frames, and seconds, to wait for regeneration before taking a screenshot anyway: both, since
+/// frames go by in no time where nothing holds them back, and a part may take seconds to build
+/// and lay flat.
 const SCREENSHOT_MAX_FRAMES: u32 = 600;
+const SCREENSHOT_MAX_SECONDS: f64 = 30.0;
 
 struct App {
     wb: Workbench,
@@ -88,7 +91,8 @@ impl eframe::App for App {
         self.frames += 1;
         // Half a second lets window fade-ins and view glides finish.
         let ready = self.frames >= 3 && self.wb.is_settled() && ctx.input(|i| i.time) >= 0.5;
-        if (ready || self.frames >= SCREENSHOT_MAX_FRAMES) && !self.requested {
+        let overdue = self.frames >= SCREENSHOT_MAX_FRAMES && ctx.input(|i| i.time) >= SCREENSHOT_MAX_SECONDS;
+        if (ready || overdue) && !self.requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             self.requested = true;
         }

@@ -34,7 +34,9 @@ kept for the parts not built (neighbour origins, split ordinals, vertex referenc
     inside and outside of the bend, and what the cuts for the bend and the corner reliefs
     leave in the sheet (`sub_key`, `pair_key`). A flange that meets another at a corner is
     built as a bend and a wall of their own: their ends, the wall's foot and what a corner
-    relief leaves in each are named apart. A hem's faces are named after its edge, the step
+    relief leaves in each are named apart, and so is an end mitred against a flange on
+    another face (the lips of two walls of a box), of the bend and of the wall. A hem's
+    faces are named after its edge, the step
     of the fold they are and the side of the sheet; a contour flange's after the curve of
     the sketch they follow (a bend made at a corner: the two lines it joins) and the side of
     the sheet. A corner seam's faces are named after the two edges it was given, which of

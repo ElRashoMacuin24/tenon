@@ -33,6 +33,9 @@ struct Wall {
     /// The ends where the flange meets that of another edge of the feature at a corner of the
     /// sheet: the angle between the two edges there, and which of the two it is.
     meets: [Option<flange::Meet>; 2],
+    /// The ends where it comes up to the flange of an edge on another face of the sheet, and
+    /// is mitred back from the plane between the two faces.
+    rims: [Option<flange::Rim>; 2],
 }
 
 /// Where two walls of one feature meet at a corner of the sheet: what the corner's relief takes
@@ -313,7 +316,7 @@ impl Ctx<'_> {
         for (e, key) in &found {
             let site = self.flange_site(body, &topo, *e, t, fl.flip)?;
             let span = flange::span(&fl.width, site.length)?;
-            walls.push(Wall { site, key: *key, span, meets: [None, None] });
+            walls.push(Wall { site, key: *key, span, meets: [None, None], rims: [None, None] });
         }
 
         // Where two of the walls meet at a corner of the sheet, each bend starts where the other's
@@ -368,6 +371,58 @@ impl Ctx<'_> {
                 }
             }
         }
+        // Where two of the walls are on different faces of the sheet, whose planes cross along a
+        // line both edges are square to, and both set off along that line from one level (the
+        // rims of two walls of a box, each turned in over it), their flanges would share the
+        // corner between them: each is mitred back from the plane that halves the two faces, as
+        // far up it as it comes near, so that their inner sides are the gap apart.
+        if let Some(joint) = corner_rule.joint {
+            let far = dims.allowance(rho) + dims.straight;
+            for i in 0..walls.len() {
+                for j in i + 1..walls.len() {
+                    let (a, b) = (walls[i].site, walls[j].site);
+                    let line = a.up.cross(b.up);
+                    let square = |s: &Site| s.along.dot(line).abs() < 1e-6 * line.len();
+                    if line.len() < 1e-6
+                        || !square(&a)
+                        || !square(&b)
+                        || a.out.dot(b.out) < 0.999
+                        || (a.origin - b.origin).dot(a.out).abs() > 1e-6 * (1.0 + t)
+                    {
+                        continue;
+                    }
+                    // The end of a wall that is towards the other face, when the wall is all on
+                    // the side of that face it looks to: and where that face's plane crosses
+                    // the wall's edge.
+                    let towards = |w: &Wall, other: &Site| -> Option<(usize, f64)> {
+                        let across = w.site.along.dot(other.up);
+                        let at = (other.origin - w.site.origin).dot(other.up) / across;
+                        if across > 0.0 && at <= w.span.0 + 1e-9 {
+                            Some((0, at))
+                        } else if across < 0.0 && at >= w.span.1 - 1e-9 {
+                            Some((1, at))
+                        } else {
+                            None
+                        }
+                    };
+                    let (Some((ea, at_a)), Some((eb, at_b))) = (towards(&walls[i], &b), towards(&walls[j], &a)) else { continue };
+                    let turn = a.up.dot(b.up).clamp(-1.0, 1.0).acos();
+                    for (w, e, at) in [(i, ea, at_a), (j, eb, at_b)] {
+                        let rim = flange::Rim::new(at, turn, joint.gap);
+                        let wall = &mut walls[w];
+                        // Only where the mitre takes anything of the flange at all, and of two
+                        // that would, the one that takes more.
+                        let takes = |r: &flange::Rim| {
+                            let reach = dims.rim_reach(rho, r, far);
+                            if e == 0 { r.at + reach - wall.span.0 } else { wall.span.1 - (r.at - reach) }
+                        };
+                        if takes(&rim) > 1e-9 && wall.meets[e].is_none() && wall.rims[e].is_none_or(|r| takes(&r) < takes(&rim)) {
+                            wall.rims[e] = Some(rim);
+                        }
+                    }
+                }
+            }
+        }
         if walls.iter().any(|w| w.span.1 - w.span.0 < 1e-6) {
             return Err(
                 "The bends of the flanges beside it leave nothing of one of the edges: use a smaller bend radius, or leave that edge out.".into()
@@ -390,12 +445,15 @@ impl Ctx<'_> {
                     cuts.push(made);
                 }
                 let name = |p: Part| sub_key(w.key, p as u32);
-                if w.meets != [None, None] {
+                if w.meets != [None, None] || w.rims != [None, None] {
                     // A flange that meets another: its bend and its wall each from its outline in
                     // the flat, with the corner's relief out of both.
-                    let pieces = flange::pieces(&dims, rho, w.span, w.site.length, w.meets, &corner_rule, name)?;
+                    // (At a rim the end of the bend is a curve, given piece by piece.)
+                    let pieces = flange::pieces_at_rims(&dims, rho, w.span, w.site.length, w.meets, w.rims, &corner_rule, name)?;
                     let frame = w.site.bend_frame(&dims).ok_or("the flange's edge has no direction")?;
-                    let bend = Profile { frame, regions: vec![Region { outer: outline::to_loop(&pieces.bend), holes: vec![] }] };
+                    let mitred = |tag: u64| tag == name(Part::MiterStart) || tag == name(Part::MiterEnd);
+                    let outer = if w.rims == [None, None] { outline::to_loop(&pieces.bend) } else { region::to_loop_smoothing(&pieces.bend, mitred) };
+                    let bend = Profile { frame, regions: vec![Region { outer, holes: vec![] }] };
                     let made = self.sheet_roll(id, &bend, rho, dims.r, dims.r + t, [name(Part::BendInner), name(Part::BendOuter)])?;
                     prisms.push(made);
                     if !pieces.wall.is_empty() {

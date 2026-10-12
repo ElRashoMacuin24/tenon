@@ -1450,3 +1450,72 @@ fn sharp_edges_are_made_bends_by_clicking_them_in_the_bend_panel() {
     let Some(FeatureKind::SharpBend(b)) = wb.document().feature(id).map(|f| f.kind.clone()) else { panic!() };
     assert_eq!(b.radius, Some(1.0));
 }
+
+#[test]
+fn lips_turned_in_from_the_tops_of_a_trays_walls_are_mitred_at_its_corners() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1300.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3, "corner": "trim", "gap": 1 })).unwrap();
+    // A tray 100 by 80 and 30 high: a plate with a flange on its four edges.
+    let (face, lines) = plate(&mut wb, 100.0, 80.0);
+    let edges: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|l| {
+            wb.exec(
+                "model.edge_ref",
+                json!({ "faces": [{ "type": "cap", "feature": face, "end": "end" }, { "type": "side", "feature": face, "curve": l }] }),
+            )
+            .unwrap()
+        })
+        .collect();
+    wb.exec("sheet.flange", json!({ "edges": edges, "height": 30 })).unwrap();
+    wb.look_from(Vec3::new(1.0, -1.0, 2.0));
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    let tray = volume(&wb);
+
+    // Flange again, with the inner top edge of each wall clicked in turn. The first two lips
+    // would share the corner between them: they are mitred as soon as the second is picked,
+    // and the preview is a sound part at every click.
+    wb.run_ui("sheet.flange").unwrap();
+    frames(&mut d, &mut wb);
+    type_into(&mut d, &mut wb, "tn_props_flange_h", "12");
+    frames(&mut d, &mut wb);
+    let reach = 2.0 + 1.0 / 2f64.sqrt();
+    let lip = |width: f64, mitres: f64| {
+        (ring(FRAC_PI_2, 3.0) + 7.0 * 2.0 - 5.0 * 2.0) * width - mitres * (8.0 * 3.0 * (FRAC_PI_2 - 1.0) + 2.0 * (3.0 + 10.0) / 2.0 * 7.0)
+    };
+    let (long, short) = (100.0 - 2.0 * reach, 80.0 - 2.0 * reach);
+    let about = |a: f64, b: f64| (a - b).abs() <= 1e-4 * b.abs();
+    let mut expected = Vec::new();
+    for (i, (at, width)) in [
+        (Vec3::new(50.0, 2.0, 30.0), long),
+        (Vec3::new(98.0, 40.0, 30.0), short),
+        (Vec3::new(50.0, 78.0, 30.0), long),
+        (Vec3::new(2.0, 40.0, 30.0), short),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let edge = on_screen(&wb, at);
+        d.click(&mut wb, edge);
+        frames(&mut d, &mut wb);
+        let Some(Panel::Flange(p)) = &wb.panel else { panic!("the flange panel") };
+        assert_eq!(p.edges.len(), i + 1, "{}", wb.status());
+        expected.push(width);
+        // Corners between the lips picked so far: none, one, two, then all four.
+        let corners = [0.0, 1.0, 2.0, 4.0][i];
+        let lips = lip(expected.iter().sum(), 2.0 * corners);
+        assert!(about(volume(&wb) - tray, lips), "{i}: {} {lips}: {}", volume(&wb) - tray, wb.status());
+    }
+    // OK: one flange of four edges, and the box lays flat with its eight bends.
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let FeatureKind::Flange(f) = wb.document().features().last().map(|f| f.kind.clone()).unwrap() else { panic!() };
+    assert!(f.edges.len() == 4 && f.miter && f.height == 12.0);
+    let flat = wb.exec("sheet.flat", json!({})).unwrap();
+    assert!(flat["bends"].as_array().is_some_and(|b| b.len() == 8), "{flat}");
+}

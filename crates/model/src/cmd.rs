@@ -3014,7 +3014,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.flange",
         "Flange",
-        "edges: [edge references] (straight edges of the sheet's rim; the flange bends towards the side each is on); height; angle (rad, default a quarter turn); datum: \"outer\" (default: the height is overall) | \"inner\" | \"tangent\"; position: \"inside\" (default: the flange's outer face goes through the edge) | \"adjacent\" (the bend starts at the edge) | \"outside\" | \"tangent\"; flip (bend to the other side); radius (default BendRadius); width (in the middle of the edge) or offsets: [from the start, from the end] (default: the whole edge). Edges that meet at a corner get the rule's corner relief, and their walls are brought together to leave the rule's gap (miter: false leaves each wall ending where its bend does)",
+        "edges: [edge references] (straight edges of the sheet's rim; the flange bends towards the side each is on); height; angle (rad, default a quarter turn); datum: \"outer\" (default: the height is overall) | \"inner\" | \"tangent\"; position: \"inside\" (default: the flange's outer face goes through the edge) | \"adjacent\" (the bend starts at the edge) | \"outside\" | \"tangent\"; flip (bend to the other side); radius (default BendRadius); width (in the middle of the edge) or offsets: [from the start, from the end] (default: the whole edge). Edges that meet at a corner get the rule's corner relief, and their walls are brought together to leave the rule's gap (miter: false leaves each wall ending where its bend does). Edges on the tops of two walls either side of a corner are mitred the same way: lips turned in over a tray do not share its corners",
         true,
         sheet_flange
     ),

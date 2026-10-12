@@ -533,8 +533,14 @@ fn through(points: &[Vec2], tag: u64) -> TaggedCurve2 {
 /// smooth curve through their ends. For outlines that were worked out point by point: a
 /// profile seen on a face it is not parallel to, or on a bend.
 pub fn to_loop_smooth(pieces: &[Piece]) -> Loop {
+    to_loop_smoothing(pieces, |tag| tag != 0)
+}
+
+/// As [`to_loop_smooth`], for the curves whose tags `which` says were worked out point by
+/// point: every other piece is itself.
+pub fn to_loop_smoothing(pieces: &[Piece], which: impl Fn(u64) -> bool) -> Loop {
     let n = pieces.len();
-    if n < 2 || pieces.iter().all(|p| p.arc.is_some() || p.tag == 0) {
+    if n < 2 || pieces.iter().all(|p| p.arc.is_some() || !which(p.tag)) {
         return to_loop(pieces);
     }
     // Each piece as the chain is walked: where it is entered and where it is left.
@@ -545,7 +551,7 @@ pub fn to_loop_smooth(pieces: &[Piece]) -> Loop {
         walked.push((from, to));
         here = to;
     }
-    let sampled = |i: usize| pieces[i].arc.is_none() && pieces[i].tag != 0;
+    let sampled = |i: usize| pieces[i].arc.is_none() && which(pieces[i].tag);
     // Whether piece `i` carries on the curve of the piece before it.
     let follows = |i: usize| {
         let before = (i + n - 1) % n;

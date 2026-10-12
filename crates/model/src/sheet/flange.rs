@@ -177,6 +177,10 @@ pub enum Part {
     /// What a corner relief leaves in the wall.
     WallReliefStart = 17,
     WallReliefEnd = 18,
+    /// The end of a flange where a rim's mitre takes it, at the start of the edge and at its end
+    /// ([`Rim`]): of its bend and of its wall.
+    MiterStart = 19,
+    MiterEnd = 20,
 }
 
 /// The stretch of its edge a flange takes: from, to (measured along the edge).
@@ -420,6 +424,52 @@ impl Shape {
     }
 }
 
+/// An end of a flange where it comes up to a flange like it on another face of the sheet:
+/// the rims of two walls of a box, each with a lip turned in over it, where the lips would
+/// otherwise share the corner. Each is mitred back from the plane that halves the angle
+/// between the two faces, far enough to leave half the gap on its own side of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rim {
+    /// Where the other face's plane crosses this flange's edge, measured along the edge from
+    /// its beginning (before the beginning, or past the end: the flange is all to one side).
+    pub at: f64,
+    /// How far back from there the flange stays for each millimetre it stands above the face
+    /// its own edge is on: the tangent of half the angle between the two faces.
+    pub slope: f64,
+    /// How far back it stays where it does not stand above its face at all: its half of the gap.
+    pub clear: f64,
+}
+
+impl Rim {
+    /// The mitre between flanges on two faces whose normals are `turn` apart (radians), with
+    /// `gap` left between them.
+    pub fn new(at: f64, turn: f64, gap: f64) -> Rim {
+        Rim { at, slope: (turn / 2.0).tan(), clear: gap / (2.0 * (turn / 2.0).cos()) }
+    }
+}
+
+impl Shape {
+    /// How high above the face its edge is on a flange stands, `u` along it in the flat from
+    /// where its bend starts: the side of the sheet that is the higher there (the inner side,
+    /// until the flange is turned past upright).
+    pub fn rise(&self, rho: f64, u: f64) -> f64 {
+        let width = self.allowance(rho);
+        let over = |turned: f64| self.t * (-turned.cos()).max(0.0);
+        if u <= width {
+            let turned = (u.max(0.0) / rho).min(self.angle);
+            self.r * (1.0 - turned.cos()) + over(turned)
+        } else {
+            self.r * (1.0 - self.angle.cos()) + (u - width) * self.angle.sin() + over(self.angle)
+        }
+    }
+
+    /// How far a flange stays from where the other face's plane crosses its edge, `u` along it
+    /// in the flat, at a rim.
+    pub fn rim_reach(&self, rho: f64, rim: &Rim, u: f64) -> f64 {
+        rim.clear + rim.slope * self.rise(rho, u)
+    }
+}
+
 /// A cutter placed by its distance from a corner, as it lies along the edge itself (`y` from the
 /// edge's beginning): as it is at the beginning of the edge, turned round at its end.
 pub fn at_end(cutter: &Cutter, end: usize, length: f64) -> Cutter {
@@ -449,6 +499,29 @@ pub fn pieces(
     rule: &Corners,
     tag: impl Fn(Part) -> u64,
 ) -> Result<Pieces, String> {
+    pieces_at_rims(shape, rho, span, length, meets, [None, None], rule, tag)
+}
+
+/// How many straight pieces the curve a rim's mitre makes of a bend's end is given in (the
+/// kernel takes them as one smooth curve through their ends).
+const RIM_STEPS: usize = 16;
+
+/// As [`pieces`], for a flange that also comes up to a flange on another face of the sheet at
+/// the ends that have something in `rims` (and nothing in `meets`). Such an end is the span's
+/// own as far up the flange as that keeps it clear, and from there on the mitre: in the bend a
+/// curve, tagged [`Part::MiterStart`] or [`Part::MiterEnd`] piece by piece, in the wall a
+/// straight line.
+#[allow(clippy::too_many_arguments)]
+pub fn pieces_at_rims(
+    shape: &Shape,
+    rho: f64,
+    span: (f64, f64),
+    length: f64,
+    meets: [Option<Meet>; 2],
+    rims: [Option<Rim>; 2],
+    rule: &Corners,
+    tag: impl Fn(Part) -> u64,
+) -> Result<Pieces, String> {
     let width = shape.allowance(rho);
     let reliefs = [0, 1].map(|e| meets[e].and_then(|m| shape.relief(rho, m.corner, rule)).map(|k| at_end(&k, e, length)));
     let relieved = |mut outline: Vec<Piece>, parts: [Part; 2]| -> Result<Vec<Piece>, String> {
@@ -464,33 +537,89 @@ pub fn pieces(
         }
         Ok(outline)
     };
-    let bend = relieved(
-        outline::polygon(&[
-            (Vec2::new(0.0, span.0), tag(Part::BendStart)),
-            (Vec2::new(width, span.0), tag(Part::Neck)),
-            (Vec2::new(width, span.1), tag(Part::BendEnd)),
-            (Vec2::new(0.0, span.1), tag(Part::Root)),
-        ]),
-        [Part::BendReliefStart, Part::BendReliefEnd],
-    )?;
+    let rims = [0, 1].map(|e| rims[e].filter(|_| meets[e].is_none()));
+    // How much more than the span leaves it a rim's mitre takes of end `e`, `u` out from where
+    // the bend starts (nothing, or less than nothing, where the span's end is clear already).
+    let bite = |e: usize, u: f64| {
+        rims[e].map_or(f64::NEG_INFINITY, |rim| {
+            let reach = shape.rim_reach(rho, &rim, u);
+            if e == 0 { rim.at + reach - span.0 } else { span.1 - (rim.at - reach) }
+        })
+    };
+    let end = |e: usize, u: f64| if e == 0 { span.0 + bite(0, u).max(0.0) } else { span.1 - bite(1, u).max(0.0) };
+    // Where, going out, the mitre begins to take anything (it only ever takes more): no
+    // further than `to`.
+    let begins = |e: usize, to: f64| -> f64 {
+        // (Within a hair of taking something at the very start is from the start.)
+        if bite(e, 0.0) > -1e-9 {
+            return 0.0;
+        }
+        if bite(e, to) <= 1e-9 {
+            return to;
+        }
+        let (mut clear, mut taken) = (0.0, to);
+        for _ in 0..60 {
+            let middle = (clear + taken) / 2.0;
+            if bite(e, middle) > 0.0 { taken = middle } else { clear = middle }
+        }
+        if taken < 1e-6 { 0.0 } else { taken }
+    };
     let high = shape.straight;
+    let far = width + high;
+    if (0..=4).any(|i| end(1, far * f64::from(i) / 4.0) - end(0, far * f64::from(i) / 4.0) < 1e-6) {
+        return Err(
+            "The flanges on the faces beside it leave nothing of one of the flanges where they would share a corner: make the flange lower or narrower, or leave that edge out."
+                .into(),
+        );
+    }
+
+    // The bend: its start, out along its low end, its far side, back along its high end.
+    let (low_from, high_from) = (begins(0, width), begins(1, width));
+    let step = |from: f64, k: usize| from + (width - from) * k as f64 / RIM_STEPS as f64;
+    let mut corners: Vec<(Vec2, u64)> = Vec::new();
+    if low_from > 1e-9 {
+        corners.push((Vec2::new(0.0, span.0), tag(Part::BendStart)));
+    }
+    if low_from < width - 1e-9 {
+        corners.extend((0..RIM_STEPS).map(|k| (Vec2::new(step(low_from, k), end(0, step(low_from, k))), tag(Part::MiterStart))));
+    }
+    corners.push((Vec2::new(width, end(0, width)), tag(Part::Neck)));
+    if high_from < width - 1e-9 {
+        corners.extend((0..RIM_STEPS).rev().map(|k| (Vec2::new(step(high_from, k + 1), end(1, step(high_from, k + 1))), tag(Part::MiterEnd))));
+        if high_from > 1e-9 {
+            corners.push((Vec2::new(high_from, span.1), tag(Part::BendEnd)));
+        }
+    } else {
+        corners.push((Vec2::new(width, span.1), tag(Part::BendEnd)));
+    }
+    corners.push((Vec2::new(0.0, end(1, 0.0)), tag(Part::Root)));
+    let bend = relieved(outline::polygon(&corners), [Part::BendReliefStart, Part::BendReliefEnd])?;
     if high < 1e-9 {
         return Ok(Pieces { bend, wall: Vec::new() });
     }
-    let low_end = |h: f64| meets[0].map_or(span.0, |m| shape.wall_end(&m, rule.joint.as_ref(), h));
-    let high_end = |h: f64| meets[1].map_or(span.1, |m| length - shape.wall_end(&m, rule.joint.as_ref(), h));
+
+    // The wall: an end is where a flange it meets on the same face leaves it, or the span's own
+    // and then the mitre of a rim, which is straight up a flat wall.
+    let low_end = |h: f64| meets[0].map_or_else(|| end(0, width + h), |m| shape.wall_end(&m, rule.joint.as_ref(), h));
+    let high_end = |h: f64| meets[1].map_or_else(|| end(1, width + h), |m| length - shape.wall_end(&m, rule.joint.as_ref(), h));
     if high_end(0.0) - low_end(0.0) < 1e-6 || high_end(high) - low_end(high) < 1e-6 {
         return Err("The flanges on the edges beside it leave nothing of one of the walls: make the flange lower, or leave that edge out.".into());
     }
-    let wall = relieved(
-        outline::polygon(&[
-            (Vec2::new(width, low_end(0.0)), tag(Part::Start)),
-            (Vec2::new(width + high, low_end(high)), tag(Part::Tip)),
-            (Vec2::new(width + high, high_end(high)), tag(Part::End)),
-            (Vec2::new(width, high_end(0.0)), tag(Part::Foot)),
-        ]),
-        [Part::WallReliefStart, Part::WallReliefEnd],
-    )?;
+    // Where up the wall a rim's mitre begins, when it begins part of the way up.
+    let turns = |e: usize| Some(begins(e, far) - width).filter(|h| rims[e].is_some() && *h > 1e-9 && *h < high - 1e-9);
+    let mitred = |e: usize, h: f64| rims[e].is_some() && bite(e, width + h) > 1e-9;
+    let mut corners: Vec<(Vec2, u64)> = Vec::new();
+    corners.push((Vec2::new(width, low_end(0.0)), tag(if mitred(0, 0.0) { Part::MiterStart } else { Part::Start })));
+    if let Some(h) = turns(0) {
+        corners.push((Vec2::new(width + h, span.0), tag(Part::MiterStart)));
+    }
+    corners.push((Vec2::new(far, low_end(high)), tag(Part::Tip)));
+    corners.push((Vec2::new(far, high_end(high)), tag(if mitred(1, high) { Part::MiterEnd } else { Part::End })));
+    if let Some(h) = turns(1) {
+        corners.push((Vec2::new(width + h, span.1), tag(Part::End)));
+    }
+    corners.push((Vec2::new(width, high_end(0.0)), tag(Part::Foot)));
+    let wall = relieved(outline::polygon(&corners), [Part::WallReliefStart, Part::WallReliefEnd])?;
     Ok(Pieces { bend, wall })
 }
 
@@ -763,5 +892,63 @@ mod tests {
         let huge = Corners { size: 400.0, ..round };
         let e = pieces(&s, rho, (5.0, 40.0), 40.0, [Some(first), None], &huge, tag).unwrap_err();
         assert!(e.contains("larger than the flange"), "{e}");
+    }
+
+    #[test]
+    fn a_flange_at_a_rim_is_mitred_as_far_up_it_as_it_comes_near_the_next() {
+        // A lip 12 wide on the top of a wall of a box whose walls end 1 / sqrt 2 short of the
+        // corner planes: the next wall's inner face crosses the lip's edge that far before it
+        // begins, and after it ends.
+        let q = FRAC_PI_2;
+        let s = Shape::new(&sizes(), None, q, 12.0, HeightDatum::Outer, BendPosition::Inside).unwrap();
+        let rho = 3.0 + 0.44 * 2.0;
+        let (width, clear) = (q * rho, 1.0 / 2f64.sqrt());
+        let rule = Corners { shape: CornerShape::Trim, size: 0.0, joint: Some(Joint { seam: Seam::Symmetric, gap: 1.0, overlap: 1.0 }) };
+        let tag = |p: Part| p as u64;
+        // Square faces: a flange stays its own height above its face, and half the gap along
+        // the bisector, away from the other face.
+        let rim = Rim::new(-clear, q, 1.0);
+        assert!((rim.slope - 1.0).abs() < 1e-12 && (rim.clear - clear).abs() < 1e-12);
+        // It stands 3 (1 - cos) above its face round the bend, and from 3 on up the flat.
+        assert!(s.rise(rho, 0.0).abs() < 1e-12 && (s.rise(rho, width) - 3.0).abs() < 1e-12 && (s.rise(rho, width + 7.0) - 10.0).abs() < 1e-12);
+        assert!((s.rise(rho, width / 2.0) - 3.0 * (1.0 - (q / 2.0).cos())).abs() < 1e-12);
+        let p = pieces_at_rims(&s, rho, (0.0, 90.0), 90.0, [None, None], [Some(rim), Some(Rim::new(90.0 + clear, q, 1.0))], &rule, tag).unwrap();
+        // The bend: no straight end at all, a curve at each end from the wall's end to 3 along,
+        // which takes 3 (width - rho) of it at each.
+        assert!(p.bend.iter().all(|k| k.tag != Part::BendStart as u64 && k.tag != Part::BendEnd as u64));
+        assert_eq!(p.bend.iter().filter(|k| k.tag == Part::MiterStart as u64).count(), RIM_STEPS);
+        let curve = 3.0 * (width - rho);
+        let chords = outline::area(&p.bend) - (width * 90.0 - 2.0 * curve);
+        assert!(chords < 0.0 && chords > -0.03, "the curve is given as chords, which cut its corners: {chords}");
+        // The wall: a straight mitre from 3 along at its foot to 10 at its tip, at each end.
+        assert!((outline::area(&p.wall) - (7.0 * 90.0 - 2.0 * (3.0 + 10.0) / 2.0 * 7.0)).abs() < 1e-9, "{}", outline::area(&p.wall));
+        assert_eq!(
+            p.wall.iter().map(|k| k.tag).collect::<Vec<_>>(),
+            [Part::MiterStart, Part::Tip, Part::MiterEnd, Part::Foot].map(|part| part as u64)
+        );
+        // Walls that end 3 short of the corner planes: the lip is clear of the next until it
+        // stands 3 - 1 / sqrt 2 above its face, part of the way round the bend. Its end is
+        // square as far as that and mitred from there.
+        let p = pieces_at_rims(&s, rho, (0.0, 90.0), 90.0, [None, None], [Some(Rim::new(-3.0, q, 1.0)), None], &rule, tag).unwrap();
+        let square = p.bend.iter().find(|k| k.tag == Part::BendStart as u64).expect("a square end as far as it is clear");
+        let turned = (1.0 - (3.0 - clear) / 3.0).acos();
+        assert!(square.a.near(Vec2::ZERO, 1e-9) && square.b.near(Vec2::new(rho * turned, 0.0), 1e-6), "{square:?}");
+        assert_eq!(p.bend.iter().filter(|k| k.tag == Part::BendEnd as u64).count(), 1, "the other end is as it was");
+        assert!((outline::area(&p.wall) - (7.0 * 90.0 - (clear + clear + 7.0) / 2.0 * 7.0)).abs() < 1e-9, "{}", outline::area(&p.wall));
+        // Further off still, the mitre begins part of the way up the wall, and further than the
+        // lip is long it takes nothing: the end is the span's own.
+        let p = pieces_at_rims(&s, rho, (0.0, 90.0), 90.0, [None, None], [Some(Rim::new(-8.0, q, 1.0)), None], &rule, tag).unwrap();
+        assert!(p.bend.iter().all(|k| k.tag != Part::MiterStart as u64));
+        assert_eq!(
+            p.wall.iter().map(|k| k.tag).collect::<Vec<_>>(),
+            [Part::Start, Part::MiterStart, Part::Tip, Part::End, Part::Foot].map(|part| part as u64)
+        );
+        let from = 8.0 - clear - 3.0;
+        assert!((outline::area(&p.wall) - (7.0 * 90.0 - (7.0 - from) * (7.0 - from) / 2.0)).abs() < 1e-9, "{}", outline::area(&p.wall));
+        let plain = pieces(&s, rho, (0.0, 90.0), 90.0, [None, None], &rule, tag).unwrap();
+        assert_eq!(pieces_at_rims(&s, rho, (0.0, 90.0), 90.0, [None, None], [Some(Rim::new(-20.0, q, 1.0)), None], &rule, tag).unwrap(), plain);
+        // A flange too short for the two mitres it would take.
+        let e = pieces_at_rims(&s, rho, (0.0, 12.0), 12.0, [None, None], [Some(rim), Some(Rim::new(12.0 + clear, q, 1.0))], &rule, tag).unwrap_err();
+        assert!(e.contains("leave nothing of one of the flanges"), "{e}");
     }
 }

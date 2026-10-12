@@ -239,6 +239,30 @@ Edges of one flange that meet at a corner of the sheet have their walls brought 
 the rule's `gap` is left between them (`miter: false` leaves each ending where its bend does),
 and the corner gets the rule's relief, centred where the two bends' centre lines cross.
 
+Edges of one flange on the tops of two walls that stand either side of a corner are mitred
+too: lips turned in over a tray would share its corners, so each is cut back from the plane
+that halves the corner until the gap is left between them. A tray 100 by 80 and 30 high with
+a lip 12 wide all round, which lays flat with eight bends:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3, "gap": 1 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 100, "y2": 80 }, "as": "r" },
+{ "run": "sheet.face", "with": { "sketch": "$s.feature" }, "as": "face" },
+{ "run": "model.edge_ref", "with": { "at": [50, 0, 2] }, "as": "e0" },
+{ "run": "model.edge_ref", "with": { "at": [100, 40, 2] }, "as": "e1" },
+{ "run": "model.edge_ref", "with": { "at": [50, 80, 2] }, "as": "e2" },
+{ "run": "model.edge_ref", "with": { "at": [0, 40, 2] }, "as": "e3" },
+{ "run": "sheet.flange", "with": { "edges": ["$e0", "$e1", "$e2", "$e3"], "height": 30 } },
+{ "run": "model.edge_ref", "with": { "at": [50, 2, 30] }, "as": "t0" },
+{ "run": "model.edge_ref", "with": { "at": [98, 40, 30] }, "as": "t1" },
+{ "run": "model.edge_ref", "with": { "at": [50, 78, 30] }, "as": "t2" },
+{ "run": "model.edge_ref", "with": { "at": [2, 40, 30] }, "as": "t3" },
+{ "run": "sheet.flange", "with": { "edges": ["$t0", "$t1", "$t2", "$t3"], "height": 12 } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 38234.3759485 }, "within": 1e-4, "note": "the mitred ends of the bends are curves through points" },
+{ "run": "sheet.flat", "expect": { "length": 168.378758992, "width": 148.378758992, "bends.7.angle": 1.57079632679 } }
+```
+
 `sheet.hem` folds an edge back on itself (`type`: `single`, `double`, `rolled` or `teardrop`),
 and `sheet.contour_flange` makes sheet along an open profile, with a bend at every corner. A
 channel 30 wide and 20 high outside, 50 long, with a double hem along the top of one side:

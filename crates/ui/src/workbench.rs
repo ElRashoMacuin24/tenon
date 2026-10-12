@@ -225,7 +225,9 @@ impl Workbench {
     }
     /// Nothing is being computed and the view is at rest (for taking a picture of it).
     pub fn is_settled(&self) -> bool {
-        !self.is_busy() && self.view.anim.is_none() && self.view.aim_at.is_none()
+        // (A flat pattern that is shown but not worked out yet is asked for on a later frame.)
+        let flat_due = self.chrome.sheet.flat_view && self.flat_now().is_none();
+        !self.is_busy() && !flat_due && self.view.anim.is_none() && self.view.aim_at.is_none()
     }
     pub fn is_sketching(&self) -> bool {
         matches!(self.mode, Mode::Sketch(_))

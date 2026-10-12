@@ -1754,3 +1754,51 @@ version 2 (DEC-046).
 Not done: a relief of the rule's shape where bends meet (the corner is trimmed to the bends,
 square); a bend relief cut beside a bend that is shorter than the sheet next to it (it is
 refused instead); Inventor's Bend Extension choice; curved edges.
+
+## DEC-076 Flanges on the rims of two walls are mitred (2026-10-12)
+
+The owner's answer to Bend on a sharp edge was to keep going until there is enough to start
+M9. The first thing tried was an everyday enclosure, a tray with a lip turned in from the
+top of each wall, and it could not be made: the four lips, one flange on four edges, ran
+into each other at the corners. Inventor mitres such flanges (Auto-Mitering applies between
+the flanges of one feature wherever they come together), so this is a gap in what was there
+already, not a new command.
+
+**When.** Two edges of one flange are on different faces of the sheet whose planes cross
+along a line both edges are square to, and both flanges set off along that line from the
+same level: the tops of two walls of a box. (Edges on one face that meet at a corner of the
+sheet are DEC-063's, and stay as they were.) Each wall must be all on the side of the other
+face that face looks to; lips turned outwards part from one another and are left whole.
+
+**What.** Each flange is mitred back from the plane that halves the angle between the two
+faces, so that half the gap is left on its own side of it: where the flange stands `d`
+above the face its edge is on, it stops `d tan(a/2) + gap / (2 cos(a/2))` short of where
+the other face's plane crosses its edge, `a` being the angle between the two faces' normals
+(a right angle on a box: `d + gap / sqrt 2`). The gap is the flange's own or the rule's
+`GapSize`, as for corners on one face. Where the walls themselves were brought together to
+that gap, the mitre begins exactly where the wall ends.
+
+- It is laid out in the flat and cut square to the sheet, like every other end
+  (`flange::pieces_at_rims`): up the flat of the flange it is a straight line, and round the
+  bend it is the curve `3 (1 - cos)` makes, which goes to the kernel as a smooth curve
+  through points of it (DEC-073's `region::to_loop_smoothing`). The height `d` is that of
+  the inner side of the sheet, or of the outer side once the flange is turned past upright,
+  so whichever side is nearer keeps the gap.
+- It takes only what it must: an end stays square as far up the flange as that keeps it
+  clear, and a flange that never comes near the other is not touched at all (it is built as
+  it always was, with the same face names).
+- Auto-Mitering off leaves the flanges as long as their edges, and they are refused if they
+  then run into each other, as before. Only the symmetric seam is made here: an overlap
+  seam between two such flanges is not.
+
+In files nothing changes: it is what a `flange` with several `edges` does. New face names:
+the mitred end of a bend and of a wall, at the start and at the end of the edge.
+
+**On the way:** a screenshot run (`--screenshot`) waited a number of frames for the part
+and its flat pattern, which go by in no time when nothing holds the frames back; it now
+waits until the flat pattern that is shown has been worked out, and for thirty seconds
+before giving up.
+
+Not done: the same mitre between flanges made as two features (Corner Seam between faces in
+one plane); overlap seams between flanges on two faces; edges that are not square to the
+line where the two faces' planes meet.

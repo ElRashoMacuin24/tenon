@@ -2668,3 +2668,111 @@ fn a_bend_on_a_sharp_edge_says_what_is_in_its_way() {
     let e = refused(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": [edge] }));
     assert!(e.contains("not a sheet metal part"), "{e}");
 }
+
+/// A tray 100 by 80 and 30 high (walls on all four edges of a plate, in one flange) with the
+/// rule's gap 1 and its corners trimmed to the bends; `mitred` says whether the walls are
+/// brought together at the corners. Its volume.
+fn deep_tray(mitred: bool) -> (Session, OcctKernel, f64) {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (face, lines) = plate(&mut s, &mut k, 100.0, 80.0);
+    run(&mut s, &mut k, "sheet.defaults", json!({ "corner": "trim", "gap": 1 }));
+    let edges: Vec<Value> = lines.iter().map(|l| rim(&mut s, &mut k, face, "end", *l)).collect();
+    run(&mut s, &mut k, "sheet.flange", json!({ "edges": edges, "height": 30, "miter": mitred }));
+    let whole = volume(&mut s, &mut k);
+    (s, k, whole)
+}
+
+/// The inner top edges of the tray's four walls: front, right, back, left.
+fn rims_of(s: &mut Session, k: &mut OcctKernel) -> Vec<Value> {
+    [Vec3::new(50.0, 2.0, 30.0), Vec3::new(98.0, 40.0, 30.0), Vec3::new(50.0, 78.0, 30.0), Vec3::new(2.0, 40.0, 30.0)]
+        .iter()
+        .map(|at| edge_at(s, k, *at))
+        .collect()
+}
+
+/// The distance between the faces of the part at two points.
+fn apart(s: &mut Session, k: &mut OcctKernel, a: [f64; 3], b: [f64; 3]) -> f64 {
+    let face = |s: &mut Session, k: &mut OcctKernel, at: [f64; 3]| json!({ "face": run(s, k, "model.face_ref", json!({ "at": at })) });
+    let (a, b) = (face(s, k, a), face(s, k, b));
+    let m = run(s, k, "model.measure", json!({ "a": a, "b": b }));
+    m["values"].as_array().unwrap().iter().find(|v| v["label"] == "Distance").map(|v| v["value"].as_f64().unwrap()).unwrap_or_else(|| panic!("{m}"))
+}
+
+#[test]
+fn flanges_on_the_rims_of_two_walls_are_mitred_where_they_would_share_the_corner() {
+    let ba = allowance(FRAC_PI_2);
+    let rho = R + K * T;
+    // Lips 12 wide turned in over the tray from the tops of its four walls, in one flange. The
+    // walls end 2 + 1 / sqrt 2 from the corners, and the lips are as long as the walls where
+    // they leave them; but two lips at a corner would lie in one plane and share it, so each
+    // is mitred back from the plane that halves the corner: where it stands d above the
+    // inside of its wall it stops d + 1 / sqrt 2 from the inside of the next wall, which on
+    // the flat of the lip is a line at 45 degrees and round the bend a curve.
+    let (mut s, mut k, tray) = deep_tray(true);
+    let before = flat(&mut s, &mut k);
+    let rims = rims_of(&mut s, &mut k);
+    let lips = id(&run(&mut s, &mut k, "sheet.flange", json!({ "edges": rims, "height": 12 })), "feature");
+    let reach = T + 1.0 / 2f64.sqrt();
+    let walls = 2.0 * ((100.0 - 2.0 * reach) + (80.0 - 2.0 * reach));
+    // Along each wall: the bend, 7 of lip beyond it, and the 5 of wall the bend replaces. At
+    // each of the eight ends the mitre takes 3 (1 - cos) of the bend at each angle, through
+    // the sheet, and of the lip a strip that widens from 3 to 10.
+    let whole = (bend_volume(FRAC_PI_2, 1.0) + 7.0 * T - 5.0 * T) * walls;
+    let mitres = 8.0 * (((R + T) * (R + T) - R * R) / 2.0 * 3.0 * (FRAC_PI_2 - 1.0) + T * (3.0 + 10.0) / 2.0 * 7.0);
+    let added = volume(&mut s, &mut k) - tray;
+    // (The ends of the bends are curves through points: the kernel sums the volume of such a
+    // solid to a part in ten thousand.)
+    assert!((added - (whole - mitres)).abs() < 1e-4 * (whole - mitres), "{added} {}", whole - mitres);
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    // The mitred ends of two lips, on the flat of each: 1 apart, and the lips' own faces.
+    let (front, left) = ([8.0 + 1.0 / 2f64.sqrt(), 8.0, 29.0], [8.0, 8.0 + 1.0 / 2f64.sqrt(), 29.0]);
+    assert!(near(apart(&mut s, &mut k, front, left), 1.0), "{}", apart(&mut s, &mut k, front, left));
+    let end = run(&mut s, &mut k, "model.face_ref", json!({ "at": front }));
+    assert!(end["origin"]["type"] == "from" && end["origin"]["feature"] == lips, "{end}");
+    // Round the bends too the two keep clear of one another: nowhere nearer than the gap.
+    let (inner_a, inner_b) = ([20.0, 5.0 - 3.0 / 2f64.sqrt(), 25.0 + 3.0 / 2f64.sqrt()], [5.0 - 3.0 / 2f64.sqrt(), 20.0, 25.0 + 3.0 / 2f64.sqrt()]);
+    let between = apart(&mut s, &mut k, inner_a, inner_b);
+    assert!(between > 1.0 - 1e-6 && between < 1.0 + 1e-3, "the insides of two bends: {between}");
+    // Laid flat: eight bends, and each lip a strip with its ends cut back the same way.
+    let f = flat(&mut s, &mut k);
+    assert_eq!(f["bends"].as_array().unwrap().len(), 8, "{f}");
+    let more = (ba + 7.0 - 5.0) * walls - 8.0 * (3.0 * (ba - rho) + (3.0 + 10.0) / 2.0 * 7.0);
+    assert!(roughly(num(&f, "area") - num(&before, "area"), more), "{} {more}", num(&f, "area") - num(&before, "area"));
+    assert!(near(num(&f, "length"), num(&before, "length") + 2.0 * (ba + 7.0 - 5.0)), "{f}");
+
+    // With Auto-Mitering off the lips are left as long as their walls, and run into each other.
+    update(&mut s, &mut k, lips, json!({ "miter": false }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("The flange runs into the part"), "{e}");
+    // A lip that is all bend is mitred as well.
+    update(&mut s, &mut k, lips, json!({ "miter": true, "height": 5 }));
+    let low = volume(&mut s, &mut k) - tray;
+    let by_hand = (bend_volume(FRAC_PI_2, 1.0) - 5.0 * T) * walls - 8.0 * ((R + T) * (R + T) - R * R) / 2.0 * 3.0 * (FRAC_PI_2 - 1.0);
+    assert!((low - by_hand).abs() < 1e-4 * by_hand.abs(), "{low} {by_hand}");
+
+    // Walls that were not brought together end where their bends do, 5 from the corners. Lips
+    // on them are clear of each other until they stand 2.293 above the inside of their walls,
+    // which is part of the way round their bends: each end is square as far as that, then
+    // mitred, and the flats of two lips are 1 apart as before.
+    let (mut s, mut k, tray) = deep_tray(false);
+    let rims: Vec<Value> = [Vec3::new(50.0, 2.0, 30.0), Vec3::new(98.0, 40.0, 30.0), Vec3::new(50.0, 78.0, 30.0), Vec3::new(2.0, 40.0, 30.0)]
+        .iter()
+        .map(|at| edge_at(&mut s, &mut k, *at))
+        .collect();
+    run(&mut s, &mut k, "sheet.flange", json!({ "edges": rims, "height": 12 }));
+    assert!(volume(&mut s, &mut k) > tray);
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    assert!(near(apart(&mut s, &mut k, front, left), 1.0), "{}", apart(&mut s, &mut k, front, left));
+    assert_eq!(flat(&mut s, &mut k)["bends"].as_array().unwrap().len(), 8);
+
+    // Lips turned outwards part from one another: nothing to mitre, and they are whole.
+    let (mut s, mut k, tray) = deep_tray(true);
+    let outer: Vec<Value> = [Vec3::new(50.0, 0.0, 30.0), Vec3::new(100.0, 40.0, 30.0), Vec3::new(50.0, 80.0, 30.0), Vec3::new(0.0, 40.0, 30.0)]
+        .iter()
+        .map(|at| edge_at(&mut s, &mut k, *at))
+        .collect();
+    run(&mut s, &mut k, "sheet.flange", json!({ "edges": outer, "height": 12 }));
+    assert!(near(volume(&mut s, &mut k) - tray, whole), "{} {whole}", volume(&mut s, &mut k) - tray);
+}
