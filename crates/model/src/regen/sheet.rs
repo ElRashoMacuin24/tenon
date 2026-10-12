@@ -16,7 +16,7 @@ use crate::sheet::region;
 use crate::sheet::strip;
 use crate::sheet::unfold::Unfold;
 use crate::sheet::wrap::{self, Tool};
-use crate::sheet::{BendBetween, ContourFlange, CornerSeam, CutAcrossBend, Face, Flange, Fold, FoldLocation, Hem, Sides};
+use crate::sheet::{BendBetween, ContourFlange, CornerSeam, CutAcrossBend, CutNormal, Face, Flange, Fold, FoldLocation, Hem, Sides};
 
 /// A solid on its way into the part, and the names of its faces.
 type Named = (ShapeHandle, Vec<Option<FaceOrigin>>);
@@ -184,7 +184,11 @@ impl Ctx<'_> {
                 own = false;
                 let (Ok(before), Ok(most)) = (before, most) else { continue };
                 let took = before - volume(self, now.0)?;
-                let slack = 1e-6 * (1.0 + before);
+                // (The kernel sums the volume of a solid with walls of free curves, as a cut seen
+                // at an angle has, far less closely than that of one of flats and rounds: to
+                // about a two thousandth of the tool, where the others are right to a billionth.
+                // What this looks for is a tool that was not taken, or took something else.)
+                let slack = 1e-6 * (1.0 + before) + 1e-2 * most;
                 let (wrong, due) = match shared {
                     Some(shared) => ((took - shared).abs() > slack, shared),
                     None => (took < -slack || took > most + slack, most),
@@ -1245,33 +1249,72 @@ impl Ctx<'_> {
         };
         let body = self.regen.bodies.get(bi).ok_or("no such body")?.shape;
         let tools = wrap::wrap(&*self.k, body, base, &frame, &profile.regions, c.distance.unwrap_or(t), &opts)?;
+        self.sheet_tools(id, bi, body, &tools, false)
+    }
+
+    /// A cut normal: the profile is taken out of every face and bend of the sheet it is seen
+    /// on, looking along its sketch's normal, each cut square to itself. (What is seen at an
+    /// angle or on a bend is not the profile's own lines and arcs: those outlines go to the
+    /// kernel as smooth curves through points of them.)
+    pub(super) fn cut_normal(&mut self, id: FeatureId, c: &CutNormal) -> Result<(), Stop> {
+        c.check()?;
+        let sizes = self.doc.sheet_sizes()?;
+        let t = sizes.thickness;
+        let (held, frame) = self.sketch_and_frame(c.sketch)?;
+        let sketch: &Sketch = &held;
+        let all = regions(sketch);
+        let profile = profile(sketch, frame, &select(sketch, &all, &c.regions)?);
+        let opts = Unfold { thickness: t, k_factor: sizes.k_factor, base: None, deflection: crate::sheet::FLAT_DEFLECTION };
+        let Some((bi, base, toward)) = crate::sheet::seen_on(self.doc, &self.regen, &*self.k, &frame, &profile.regions)? else {
+            return Err(
+                "No side of the sheet looks at the sketch: its plane is edge on to every face of the sheet. Put the sketch on a plane that looks at the face to be cut."
+                    .into(),
+            );
+        };
+        let body = self.regen.bodies.get(bi).ok_or("no such body")?.shape;
+        let tools = wrap::project(&*self.k, body, base, toward, &frame, &profile.regions, c.distance.unwrap_or(t), &opts)?;
+        self.sheet_tools(id, bi, body, &tools, true)
+    }
+
+    /// What a profile takes out of the faces and bends of body `bi`, cut out of it. `smooth`:
+    /// the outlines were worked out point by point, and are curves through the points.
+    fn sheet_tools(&mut self, id: FeatureId, bi: usize, body: ShapeHandle, tools: &[Tool], smooth: bool) -> Result<(), Stop> {
         // A wall of the cut is named after the curve of the profile that cuts it and the face of
         // the sheet it is cut in; its floor, where it does not go through, after that face.
         let names = self.regen.bodies.get(bi).map(|b| b.names.clone()).unwrap_or_default();
         let on = |face: u32| names.get(face as usize).copied().flatten().map_or(0, |n| n.key());
-        let tagged = |pieces: &[outline::Piece], face: u32| -> Vec<outline::Piece> {
-            pieces
-                .iter()
-                .map(|p| outline::Piece { tag: if p.tag == 0 { sub_key(on(face), 0) } else { pair_key(sub_key(p.tag, 1), on(face)) }, ..*p })
-                .collect()
+        // (A curve that comes to the kernel in more than one piece, as a closed one worked out
+        // point by point does, has a wall to each: they are told apart by their order.)
+        let named = |mut closed: tenon_kernel::Loop, face: u32| {
+            let mut met: Vec<u64> = Vec::new();
+            for c in &mut closed.curves {
+                if c.tag == 0 {
+                    c.tag = sub_key(on(face), 0);
+                    continue;
+                }
+                let key = pair_key(sub_key(c.tag, 1), on(face));
+                let nth = met.iter().filter(|k| **k == key).count() as u32;
+                met.push(key);
+                c.tag = if smooth && nth > 0 { sub_key(key, 16 + nth) } else { key };
+            }
+            closed
         };
+        let flat = |pieces: &[outline::Piece], face: u32| named(if smooth { region::to_loop_smooth(pieces) } else { region::to_loop(pieces) }, face);
         let mut cuts: Vec<Named> = Vec::new();
         let built = (|| -> Result<(), Stop> {
-            for tool in &tools {
+            for tool in tools {
                 let floor = sub_key(on(tool.face()), 2);
                 let made = match tool {
                     Tool::Flat { face, frame, reach, shapes } => {
                         let regions = shapes
                             .iter()
-                            .map(|s| Region {
-                                outer: region::to_loop(&tagged(&s.outer, *face)),
-                                holes: s.holes.iter().map(|h| region::to_loop(&tagged(h, *face))).collect(),
-                            })
+                            .map(|s| Region { outer: flat(&s.outer, *face), holes: s.holes.iter().map(|h| flat(h, *face)).collect() })
                             .collect();
                         self.sheet_prism(id, &Profile { frame: *frame, regions }, *reach, Some([floor, floor]))?
                     }
                     Tool::Bend { face, frame, rho, inner, outer, outline } => {
-                        let regions = vec![Region { outer: outline::to_loop(&tagged(outline, *face)), holes: vec![] }];
+                        let rolled = named(if smooth { region::to_loop_smooth(outline) } else { outline::to_loop(outline) }, *face);
+                        let regions = vec![Region { outer: rolled, holes: vec![] }];
                         self.sheet_roll(id, &Profile { frame: *frame, regions }, *rho, *inner, *outer, [floor, floor])?
                     }
                 };

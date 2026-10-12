@@ -164,7 +164,7 @@ fn largest_flat(faces: &[FaceInfo]) -> Option<u32> {
 
 /// The chart of the face the pattern is laid out from: seen from outside, with the part's Z up
 /// the page where the face is upright and the part's X across it where it lies flat.
-fn base_chart(face: &FaceInfo) -> Option<Chart> {
+pub(super) fn base_chart(face: &FaceInfo) -> Option<Chart> {
     let SurfaceKind::Plane { normal, .. } = &face.surface else { return None };
     let n = normal.normalized();
     let (u3, v3) = if n.dot(Vec3::Z).abs() < 0.999 {

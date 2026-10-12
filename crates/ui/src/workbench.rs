@@ -1016,7 +1016,7 @@ impl Workbench {
             Some(FeatureKind::CornerSeam(_)) => self.open_corner_seam(Some(id)),
             Some(FeatureKind::Bend(_)) => self.open_bend(Some(id)),
             Some(FeatureKind::Fold(_)) => self.open_fold(Some(id)),
-            Some(FeatureKind::CutAcrossBend(_)) => self.open_sheet_cut(Some(id)),
+            Some(FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_)) => self.open_sheet_cut(Some(id)),
             Some(FeatureKind::PatternRect(_)) => self.open_pattern(crate::panels::CopyKind::Rect, Some(id)),
             Some(FeatureKind::PatternCircular(_)) => self.open_pattern(crate::panels::CopyKind::Circular, Some(id)),
             Some(FeatureKind::Mirror(_)) => self.open_pattern(crate::panels::CopyKind::Mirror, Some(id)),

@@ -1221,7 +1221,8 @@ impl Workbench {
                     | FeatureKind::CornerSeam(_)
                     | FeatureKind::Bend(_)
                     | FeatureKind::Fold(_)
-                    | FeatureKind::CutAcrossBend(_) => ("feature.add", json!({ "kind": kind_json })),
+                    | FeatureKind::CutAcrossBend(_)
+                    | FeatureKind::CutNormal(_) => ("feature.add", json!({ "kind": kind_json })),
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)

@@ -7,7 +7,7 @@
 use std::f64::consts::{PI, TAU};
 
 use tenon_geom::Vec2;
-use tenon_kernel::{Curve2, Loop};
+use tenon_kernel::{Curve2, Loop, TaggedCurve2};
 
 use super::flat::{FlatCurve, FlatLoop};
 use super::outline::{self, Piece};
@@ -408,6 +408,255 @@ pub fn to_loop(pieces: &[Piece]) -> Loop {
     outline::to_loop(pieces)
 }
 
+/// The value at `u` of each of the `m` pieces a cubic spline with `m` poles is the sum of, for
+/// a clamped spline whose knots are evenly spaced (0, 1, 2, ... up to `m - 3`).
+fn cubic_basis(m: usize, u: f64) -> Vec<f64> {
+    let top = (m - 3) as f64;
+    let knot = |j: usize| (j as f64 - 3.0).clamp(0.0, top);
+    // Degree 0: the span `u` is in (the last one, at the very end).
+    let span = (u.floor() as usize).min(m - 4) + 3;
+    let mut b = vec![0.0; m + 3];
+    b[span] = 1.0;
+    for degree in 1..=3usize {
+        for i in 0..m + 3 - degree {
+            let (left, right) = (knot(i + degree) - knot(i), knot(i + degree + 1) - knot(i + 1));
+            let first = if left > 0.0 { (u - knot(i)) / left * b[i] } else { 0.0 };
+            let second = if right > 0.0 { (knot(i + degree + 1) - u) / right * b[i + 1] } else { 0.0 };
+            b[i] = first + second;
+        }
+    }
+    b.truncate(m);
+    b
+}
+
+/// The solution of `rows * x = right` for each of the two columns of `right`, by elimination.
+fn solve(mut rows: Vec<Vec<f64>>, mut right: Vec<Vec2>) -> Option<Vec<Vec2>> {
+    let n = rows.len();
+    for col in 0..n {
+        let pivot = (col..n).max_by(|a, b| rows[*a][col].abs().total_cmp(&rows[*b][col].abs()))?;
+        if rows[pivot][col].abs() < 1e-12 {
+            return None;
+        }
+        rows.swap(col, pivot);
+        right.swap(col, pivot);
+        let (above, below) = rows.split_at_mut(col + 1);
+        let lead = &above[col];
+        for (offset, row) in below.iter_mut().enumerate() {
+            let f = row[col] / lead[col];
+            if f != 0.0 {
+                for (x, l) in row.iter_mut().zip(lead).skip(col) {
+                    *x -= f * l;
+                }
+                right[col + 1 + offset] = right[col + 1 + offset] - right[col] * f;
+            }
+        }
+    }
+    let mut x = vec![Vec2::ZERO; n];
+    for r in (0..n).rev() {
+        let done = (r + 1..n).fold(Vec2::ZERO, |sum, c| sum + x[c] * rows[r][c]);
+        x[r] = (right[r] - done) / rows[r][r];
+    }
+    Some(x)
+}
+
+/// A smooth curve through points that lie along one curve, in order: the line through two, the
+/// parabola through three, and through more a cubic spline that passes through every one of
+/// them at even steps of its parameter (its knots).
+fn through(points: &[Vec2], tag: u64) -> TaggedCurve2 {
+    // Points much closer together than the rest (the end of a curve that was cut short, beside
+    // the point that was next along it) would pull an evenly stepped curve about: without them.
+    let step = points.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>() / (points.len().max(2) - 1) as f64;
+    let mut kept: Vec<Vec2> = Vec::with_capacity(points.len());
+    for (i, p) in points.iter().enumerate() {
+        let ends = i == 0 || i + 1 == points.len();
+        if ends || kept.last().is_none_or(|k| k.dist(*p) > 0.3 * step) {
+            kept.push(*p);
+        }
+    }
+    if let [.., before, last] = kept.as_slice()
+        && kept.len() > 2
+        && before.dist(*last) <= 0.3 * step
+    {
+        kept.remove(kept.len() - 2);
+    }
+    // Points along one straight line are the line.
+    let (first, last) = (kept[0], kept[kept.len() - 1]);
+    let chord = last - first;
+    if chord.len() > MEET && kept.iter().all(|p| (*p - first).cross(chord).abs() <= 1e-9 * chord.len()) {
+        return TaggedCurve2 { tag, curve: Curve2::Line { start: first, end: last } };
+    }
+    let curve = match kept.as_slice() {
+        [a, b] => Curve2::Line { start: *a, end: *b },
+        [a, m, b] => Curve2::BSpline { poles: vec![*a, *m * 2.0 - (*a + *b) / 2.0, *b], degree: 2 },
+        all => {
+            // Point i is where the curve is at its knot i, and at each end the curve sets off
+            // as the points there do (the slope of the cubic through the nearest four): two
+            // poles more than there are points.
+            let n = all.len();
+            let m = n + 2;
+            // How the curve leaves `at` towards the points after it (`step` 1) or before it
+            // (-1): the slope there of the polynomial through as many as six of them.
+            let slope_at = |at: usize, step: isize| -> Vec2 {
+                let p = |i: usize| all[at.wrapping_add_signed(step * i as isize)];
+                let sum = match n {
+                    4 => (p(0) * -11.0 + p(1) * 18.0 - p(2) * 9.0 + p(3) * 2.0) / 6.0,
+                    5 => (p(0) * -25.0 + p(1) * 48.0 - p(2) * 36.0 + p(3) * 16.0 - p(4) * 3.0) / 12.0,
+                    _ => (p(0) * -137.0 + p(1) * 300.0 - p(2) * 300.0 + p(3) * 200.0 - p(4) * 75.0 + p(5) * 12.0) / 60.0,
+                };
+                sum * step as f64
+            };
+            let (leaves, arrives) = (slope_at(0, 1), slope_at(n - 1, -1));
+            let slope = |from: usize, to: usize| {
+                let mut row = vec![0.0; m];
+                (row[from], row[to]) = (-3.0, 3.0);
+                row
+            };
+            let mut rows: Vec<Vec<f64>> = vec![slope(0, 1)];
+            let mut right = vec![leaves];
+            for (i, p) in all.iter().enumerate() {
+                rows.push(cubic_basis(m, i as f64));
+                right.push(*p);
+            }
+            rows.push(slope(m - 2, m - 1));
+            right.push(arrives);
+            match solve(rows, right) {
+                Some(poles) => Curve2::BSpline { poles, degree: 3 },
+                None => Curve2::BSpline { poles: all.to_vec(), degree: 1 },
+            }
+        }
+    };
+    TaggedCurve2 { tag, curve }
+}
+
+/// A closed chain as the kernel takes it, with every run of straight pieces that stand for one
+/// curve of a profile (one tag, and not the 0 of a face's own boundary) given back as one
+/// smooth curve through their ends. For outlines that were worked out point by point: a
+/// profile seen on a face it is not parallel to, or on a bend.
+pub fn to_loop_smooth(pieces: &[Piece]) -> Loop {
+    let n = pieces.len();
+    if n < 2 || pieces.iter().all(|p| p.arc.is_some() || p.tag == 0) {
+        return to_loop(pieces);
+    }
+    // Each piece as the chain is walked: where it is entered and where it is left.
+    let mut here = if pieces[0].a.dist(pieces[1].a) <= JOIN || pieces[0].a.dist(pieces[1].b) <= JOIN { pieces[0].b } else { pieces[0].a };
+    let mut walked: Vec<(Vec2, Vec2)> = Vec::with_capacity(n);
+    for p in pieces {
+        let (from, to) = if p.a.dist(here) <= p.b.dist(here) { (p.a, p.b) } else { (p.b, p.a) };
+        walked.push((from, to));
+        here = to;
+    }
+    let sampled = |i: usize| pieces[i].arc.is_none() && pieces[i].tag != 0;
+    // Whether piece `i` carries on the curve of the piece before it.
+    let follows = |i: usize| {
+        let before = (i + n - 1) % n;
+        sampled(i) && sampled(before) && pieces[i].tag == pieces[before].tag
+    };
+    let Some(start) = (0..n).find(|&i| !follows(i)) else {
+        // One curve all the way round: in two halves, as a circle is.
+        let points: Vec<Vec2> = walked.iter().map(|w| w.0).collect();
+        let half = n / 2;
+        let mut back: Vec<Vec2> = points[half..].to_vec();
+        back.push(points[0]);
+        return Loop { curves: vec![through(&points[..=half], pieces[0].tag), through(&back, pieces[0].tag)] };
+    };
+    let mut curves = Vec::new();
+    let mut done = 0;
+    while done < n {
+        let at = (start + done) % n;
+        if !sampled(at) {
+            curves.push(pieces[at].curve());
+            done += 1;
+            continue;
+        }
+        let mut points = vec![walked[at].0, walked[at].1];
+        let mut run = 1;
+        while done + run < n && follows((start + done + run) % n) {
+            points.push(walked[(start + done + run) % n].1);
+            run += 1;
+        }
+        curves.push(through(&points, pieces[at].tag));
+        done += run;
+    }
+    Loop { curves }
+}
+
+/// Loops with their pieces divided where they cross the straight `lines` (each from one point
+/// to another): points that both sides of such a line then have in common exactly, however the
+/// pieces are taken from point to point afterwards ([`sampled`]).
+pub fn divided_at(loops: &[Vec<Piece>], lines: &[(Vec2, Vec2)]) -> Vec<Vec<Piece>> {
+    loops
+        .iter()
+        .map(|pieces| {
+            let cuts: Vec<Vec<Vec2>> =
+                pieces.iter().map(|p| lines.iter().flat_map(|(a, b)| crossings(p, &Piece::line(*a, *b, 0))).collect()).collect();
+            divided(pieces, &cuts)
+        })
+        .collect()
+}
+
+/// The curve of a profile as a run of short straight pieces through points of it moved by
+/// `to`, which need not keep straight lines straight: `steps` of them to a straight piece, an
+/// arc in steps of about `turn` radians (and no fewer than `steps`), the points evenly spaced along what the piece is moved
+/// to (not along the piece, where `to` stretches it). None when `to` has no place for a point.
+pub fn sampled(pieces: &[Piece], to: impl Fn(Vec2) -> Option<Vec2>, steps: usize, turn: f64) -> Option<Vec<Piece>> {
+    let mut out = Vec::new();
+    for p in pieces {
+        let count = match p.arc {
+            None => steps.max(1),
+            Some((c, _)) => ((p.sweep(c) / turn).ceil() as usize).max(4).max(steps),
+        };
+        let at = |s: f64| -> Vec2 {
+            match p.arc {
+                _ if s <= 0.0 => p.a,
+                _ if s >= 1.0 => p.b,
+                None => p.a + (p.b - p.a) * s,
+                Some((c, r)) => Vec2::polar(c, r, (p.a - c).angle() + p.sweep(c) * s),
+            }
+        };
+        let place = |along: &[f64]| -> Option<Vec<Vec2>> { along.iter().map(|s| to(at(*s))).collect() };
+        let mut along: Vec<f64> = (0..=count).map(|i| i as f64 / count as f64).collect();
+        let mut points = place(&along)?;
+        // Until it settles: where along the piece the points would be evenly spaced once
+        // moved, taking what is between two of them now as straight. (A curve fitted through
+        // unevenly spaced points at even steps of its parameter is far less true to them.)
+        for _ in 0..if count > 1 { 24 } else { 0 } {
+            let mut run = vec![0.0; count + 1];
+            for i in 1..=count {
+                run[i] = run[i - 1] + points[i - 1].dist(points[i]);
+            }
+            if run[count] <= MEET {
+                break;
+            }
+            let mut even = Vec::with_capacity(count + 1);
+            let mut j = 1;
+            for i in 0..=count {
+                let want = run[count] * i as f64 / count as f64;
+                while j < count && run[j] < want {
+                    j += 1;
+                }
+                let span = run[j] - run[j - 1];
+                let part = if span > 0.0 { ((want - run[j - 1]) / span).clamp(0.0, 1.0) } else { 0.0 };
+                even.push(along[j - 1] + (along[j] - along[j - 1]) * part);
+            }
+            (even[0], even[count]) = (0.0, 1.0);
+            let settled = even.iter().zip(&along).all(|(new, old)| (new - old).abs() <= 1e-9);
+            along = even;
+            points = place(&along)?;
+            if settled {
+                break;
+            }
+        }
+        let mut from = points[0];
+        for next in &points[1..] {
+            if from.dist(*next) > MEET {
+                out.push(Piece::line(from, *next, p.tag));
+                from = *next;
+            }
+        }
+    }
+    Some(out)
+}
+
 /// A closed chain with its pieces moved by `to`: a rigid move of the plane, turned over when
 /// `mirrored`.
 pub fn moved(pieces: &[Piece], to: impl Fn(Vec2) -> Vec2, mirrored: bool) -> Vec<Piece> {
@@ -567,5 +816,41 @@ mod tests {
         );
         let lens = common(&[circle(Vec2::ZERO, 5.0, 1).to_vec()], &[circle(Vec2::new(6.0, 0.0), 5.0, 2).to_vec()]).unwrap();
         assert_eq!(to_loop(&lens[0].outer).curves.len(), 2);
+    }
+
+    #[test]
+    fn a_curve_given_point_by_point_goes_to_the_kernel_as_a_smooth_curve_through_the_points() {
+        // A circle of radius 5 as 48 straight pieces (one curve: one tag) comes back as two
+        // splines, and nowhere are they further from the circle than a hundred thousandth.
+        let around = sampled(&circle(Vec2::new(2.0, 1.0), 5.0, 7), Some, 1, 2.0 * PI / 48.0).unwrap();
+        assert_eq!(around.len(), 48);
+        let smooth = to_loop_smooth(&around);
+        assert_eq!(smooth.curves.len(), 2);
+        for c in &smooth.curves {
+            let Curve2::BSpline { poles, degree: 3 } = &c.curve else { panic!("{c:?}") };
+            assert_eq!((poles.len(), c.tag), (27, 7));
+            for i in 0..=240 {
+                let u = i as f64 / 10.0;
+                let at = cubic_basis(poles.len(), u).iter().zip(poles).fold(Vec2::ZERO, |sum, (b, p)| sum + *p * *b);
+                assert!((at.dist(Vec2::new(2.0, 1.0)) - 5.0).abs() < 5e-6, "{u}: {}", at.dist(Vec2::new(2.0, 1.0)));
+            }
+        }
+        // The half of it on one side of a line: the line (a face's own boundary, tag 0) stays a
+        // line, and the half circle is one curve from one end of it to the other.
+        let half = common(&[around], &[rect(-10.0, 1.0, 30.0, 30.0, 0)]).unwrap();
+        let smooth = to_loop_smooth(&half[0].outer);
+        assert_eq!(smooth.curves.len(), 2, "{smooth:?}");
+        assert!(smooth.curves.iter().any(|c| matches!(c.curve, Curve2::Line { .. }) && c.tag == 0));
+        let Some(Curve2::BSpline { poles, .. }) = smooth.curves.iter().map(|c| &c.curve).find(|c| matches!(c, Curve2::BSpline { .. })) else {
+            panic!()
+        };
+        let ends = [poles[0], poles[poles.len() - 1]];
+        assert!(ends.iter().all(|e| (e.y - 1.0).abs() < 1e-9 && ((e.x - 2.0).abs() - 5.0).abs() < 1e-9), "{ends:?}");
+        // Two points are a line and three a parabola through the middle one.
+        assert!(matches!(through(&[Vec2::ZERO, Vec2::X], 1).curve, Curve2::Line { .. }));
+        let Curve2::BSpline { poles, degree: 2 } = through(&[Vec2::ZERO, Vec2::new(1.0, 1.0), Vec2::new(2.0, 0.0)], 1).curve else { panic!() };
+        assert!((poles[0] * 0.25 + poles[1] * 0.5 + poles[2] * 0.25).near(Vec2::new(1.0, 1.0), 1e-12));
+        // A move that has no place for a point stops the sampling.
+        assert!(sampled(&rect(0.0, 0.0, 2.0, 1.0, 1), |p| (p.x < 1.5).then_some(p), 4, 0.1).is_none());
     }
 }

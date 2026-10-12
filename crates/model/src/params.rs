@@ -139,9 +139,11 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
             ("/width/offset/start", Mm),
             ("/width/offset/end", Mm),
         ],
-        FeatureKind::ContourFlange(_) => &[("/distance", Mm), ("/radius", Mm)],
+        FeatureKind::ContourFlange(_) => {
+            &[("/distance", Mm), ("/radius", Mm), ("/width/centered/width", Mm), ("/width/offset/start", Mm), ("/width/offset/end", Mm)]
+        }
         FeatureKind::CornerSeam(_) => &[("/gap", Mm), ("/overlap", Ul), ("/relief_size", Mm)],
-        FeatureKind::CutAcrossBend(_) => &[("/distance", Mm)],
+        FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => &[("/distance", Mm)],
         FeatureKind::Bend(_) => &[("/radius", Mm)],
         FeatureKind::Fold(_) => &[("/angle", Deg), ("/radius", Mm)],
         FeatureKind::Sketch { .. }

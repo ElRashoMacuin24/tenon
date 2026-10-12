@@ -43,7 +43,8 @@ impl FacePanel {
 }
 
 /// Cut: a profile through the sheet. Across bends it is cut out of the sheet as it lies flat
-/// from the sketch's face, round every bend it lies on; otherwise it is an extrusion that
+/// from the sketch's face, round every bend it lies on; normal, it is cut out of every face and
+/// bend it is seen on from its sketch, each square to itself; otherwise it is an extrusion that
 /// cuts, the distance each way from the sketch (so it goes through whichever side that is on).
 #[derive(Clone, Debug)]
 pub(crate) struct CutPanel {
@@ -51,6 +52,8 @@ pub(crate) struct CutPanel {
     pub sketch: FeatureId,
     pub regions: RegionSel,
     pub across: bool,
+    /// Cut Normal (a cut across bends is one as well, whatever this says).
+    pub normal: bool,
     pub distance: f64,
 }
 
@@ -58,6 +61,8 @@ impl CutPanel {
     pub(crate) fn kind(&self) -> FeatureKind {
         if self.across {
             FeatureKind::CutAcrossBend(sheet::CutAcrossBend { sketch: self.sketch, regions: self.regions.clone(), distance: Some(self.distance) })
+        } else if self.normal {
+            FeatureKind::CutNormal(sheet::CutNormal { sketch: self.sketch, regions: self.regions.clone(), distance: Some(self.distance) })
         } else {
             FeatureKind::Extrude(Extrude {
                 sketch: self.sketch,
@@ -71,7 +76,7 @@ impl CutPanel {
     }
 
     pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
-        if self.across {
+        if self.across || self.normal {
             vec![("distance", "/distance")]
         } else {
             vec![("distance", "/extent/two_sided/forward"), ("distance", "/extent/two_sided/backward")]
@@ -934,12 +939,32 @@ impl Workbench {
         let sizes = self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
         let panel = match editing {
             Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
-                FeatureKind::CutAcrossBend(c) => {
-                    CutPanel { editing, sketch: c.sketch, regions: c.regions.clone(), across: true, distance: c.distance.unwrap_or(sizes.thickness) }
-                }
-                _ => return Err("not a cut across bends".into()),
+                FeatureKind::CutAcrossBend(c) => CutPanel {
+                    editing,
+                    sketch: c.sketch,
+                    regions: c.regions.clone(),
+                    across: true,
+                    normal: true,
+                    distance: c.distance.unwrap_or(sizes.thickness),
+                },
+                FeatureKind::CutNormal(c) => CutPanel {
+                    editing,
+                    sketch: c.sketch,
+                    regions: c.regions.clone(),
+                    across: false,
+                    normal: true,
+                    distance: c.distance.unwrap_or(sizes.thickness),
+                },
+                _ => return Err("not a cut of the sheet".into()),
             },
-            None => CutPanel { editing: None, sketch: self.profile_sketch()?, regions: RegionSel::Default, across: false, distance: sizes.thickness },
+            None => CutPanel {
+                editing: None,
+                sketch: self.profile_sketch()?,
+                regions: RegionSel::Default,
+                across: false,
+                normal: false,
+                distance: sizes.thickness,
+            },
         };
         let fresh = panel.editing.is_none();
         self.panel = Some(Panel::SheetCut(panel));
@@ -947,7 +972,9 @@ impl Workbench {
         if fresh {
             self.panel_eqs.insert("distance", sheet::THICKNESS.to_owned());
         }
-        self.set_status("Cut: the profile is cut through the sheet. Tick Cut Across Bend to take it round the bends it is drawn over, then OK.");
+        self.set_status(
+            "Cut: the profile is cut through the sheet. Tick Cut Across Bend to take it round the bends it is drawn over, or Cut Normal to cut it square to the sheet wherever it is seen on it, then OK.",
+        );
         Ok(())
     }
 
@@ -1284,13 +1311,33 @@ impl Workbench {
                     let across = ui
                         .add_enabled(p.editing.is_none(), egui::Checkbox::new(&mut p.across, "Cut Across Bend"))
                         .on_hover_text("The profile is drawn on the sheet as it lies flat from the sketch's face, and is cut out of every face and bend it lies on")
-                        .on_disabled_hover_text("This cut goes round the bends: to cut straight through instead, delete it and make another");
+                        .on_disabled_hover_text(if p.across {
+                            "This cut goes round the bends: to cut straight through instead, delete it and make another"
+                        } else {
+                            "This cut is where its profile is seen on the sheet: to take it round the bends as it is drawn instead, delete it and make another"
+                        });
                     crate::drawing::remember(ui, "tn_cut_across", across.rect);
+                    // A cut across bends is square to the sheet as it is: the box shows so.
+                    let mut square = p.across || p.normal;
+                    let normal = ui
+                        .add_enabled(p.editing.is_none() && !p.across, egui::Checkbox::new(&mut square, "Cut Normal"))
+                        .on_hover_text("The profile is cut out of every face and bend it is seen on from its sketch, each square to itself: the walls of the cut are square to the sheet whatever the angle of the sketch")
+                        .on_disabled_hover_text(if p.across {
+                            "A cut across bends is always square to the sheet"
+                        } else {
+                            "This cut is square to the sheet: to cut along the sketch's normal instead, delete it and make another"
+                        });
+                    if normal.changed() && !p.across {
+                        p.normal = square;
+                    }
+                    crate::drawing::remember(ui, "tn_cut_normal", normal.rect);
                 });
                 section(ui, "Behavior", true, |ui| {
                     egui::Grid::new("tn_props_cut_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         ui.label("Distance").on_hover_text(if p.across {
                             "How deep the cut goes from the side the sketch is on: the Thickness, or more, is through"
+                        } else if p.normal {
+                            "How deep the cut goes from the side of the sheet that looks at the sketch: the Thickness, or more, is through"
                         } else {
                             "How far the cut goes each way from the sketch"
                         });

@@ -108,6 +108,9 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::CutAcrossBend(_), _) => {
             "The profile could not be cut out of the sheet round its bends. It may just touch an edge of the sheet or a bend line: move it a little, or draw it clear across.".into()
         }
+        (FeatureKind::CutNormal(_), _) => {
+            "The profile could not be cut out of the sheet where it is seen on it. It may just touch an edge of the sheet or a bend line, or be seen too nearly edge on: move it a little, or turn the sketch to look at the sheet more squarely.".into()
+        }
         (FeatureKind::ContourFlange(_), _) => {
             "The contour flange could not be made from this profile. It may cross itself, or a bend may be too tight for the sheet: check the sketch, or try a smaller bend radius.".into()
         }

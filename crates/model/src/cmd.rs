@@ -2417,6 +2417,15 @@ fn sheet_cut_across_bend(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::CutAcrossBend(cut), p)
 }
 
+fn sheet_cut_normal(s: &mut Session, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let cut = crate::sheet::CutNormal { sketch: sketch_id(p)?, regions: region_sel(p)?, distance: opt_num(p, "distance")? };
+    cut.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::CutNormal(cut), p)
+}
+
 fn sheet_bend(s: &mut Session, p: &Value) -> CmdResult {
     if s.document().sheet_metal().is_none() {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
@@ -3018,6 +3027,13 @@ static COMMANDS: &[CommandSpec] = &[
         "sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern",
         true,
         sheet_cut_across_bend
+    ),
+    doc_cmd!(
+        "sheet.cut_normal",
+        "Cut Normal",
+        "sketch (on any plane that looks at the sheet: a face of it, or a work plane over it at any angle; its profile of lines, arcs and circles); regions; distance (how deep from the side of the sheet that looks at the sketch; default and at most Thickness: through). The profile is cut out of every flat face and bend of that side it is seen on, looking along the sketch's normal, and each is cut square to itself: a cut whose walls are square to the sheet whatever the angle of the sketch, so the flat pattern has one clean outline. (On a face parallel to the sketch it is the profile; at an angle, or on a bend, the profile as it is seen there.)",
+        true,
+        sheet_cut_normal
     ),
     doc_cmd!(
         "sheet.bend",

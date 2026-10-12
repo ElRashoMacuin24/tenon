@@ -1614,3 +1614,53 @@ Not done: mitres where the flanges of adjacent edges meet (they must stop short 
 corner, by a width or offsets, or the flange is refused for running into itself); loop
 select; a relief where the sheet is cut back beside a narrower flange (it is cut square);
 From To and Distance extents.
+
+## DEC-073 Cut Normal (2026-10-12)
+
+The third of the four asked for on Bend's report.
+
+**What it is.** In Inventor's sheet metal Cut, Cut Normal projects the profile onto the faces
+of the sheet and cuts square to each face it lands on, so a sketch that is not parallel to
+the sheet still leaves walls that are square to it. A plain Cut of the same sketch goes along
+the sketch's normal and leaves slanted walls that a laser cannot cut from the flat sheet.
+Tenon has it as a feature of its own, `cut_normal` (Sheet Metal > Modify > Cut, with Cut
+Normal ticked; `sheet.cut_normal`).
+
+- **Where the profile is seen.** The profile is looked at along its sketch's normal. Of the
+  flat sides of the sheet that look towards the sketch, the one with most of the profile over
+  it says which side of the sheet is cut (the nearest to the sketch, of equals; the nearest
+  to the profile when it is over none of them, as a hole in a bend alone). Every flat face
+  and every bend of that side that looks at the sketch takes what is seen on it; a face seen
+  edge on, or from behind, takes nothing. `distance` is how deep from that side (default and
+  at most the Thickness: through).
+- **Each face is cut square to itself**: a flat face by a prism along its own normal, a bend
+  by an outline rolled round its axis, as a cut across bends is (DEC-068). The two differ in
+  where the profile lies: across bends it is drawn on the sheet laid flat, here it is where
+  it is seen on the folded part. On a bend seen more and more edge on, the hole is longer in
+  the flat pattern than the profile that was drawn.
+- **Curves.** On a face parallel to the sketch the profile is itself, lines and arcs. On a
+  face at an angle its lines are lines, and an arc is an oval; on a bend everything is a
+  curve of its own. Those are worked out point by point (the profile is first divided where
+  it crosses the straight edges of the sheet as the sketch sees them, so two faces that
+  share an edge have the very same point of the profile on it) and given to the kernel as
+  cubic splines through the points, evenly spaced along the curve: within a millionth of the
+  curve's size. A run of points along one straight line is a line.
+- **Cut Across Bend implies it.** In the panel the Cut Normal box is ticked and not for
+  changing while Cut Across Bend is, as in Inventor: a cut across bends is always square to
+  the sheet.
+
+**The kernel's volumes.** OCCT sums the volume of a solid with walls of free curves far less
+closely than one of flats and rounds: off by up to about five parts in ten thousand of such
+a cut, where the others are right to a billionth. Its Gauss-Kronrod routine is exact but
+took minutes on these parts, so it is not used. Two things follow: the check that a sheet
+cut took what its tool shares with the part (DEC-067) allows a hundredth of the tool, which
+still finds a tool that was not taken or took something else; and the mass of a part with
+such a cut is right to about a hundred thousandth, not a billionth. The areas of its faces
+are right to a millionth, and the tests measure the cut by those.
+
+In files: `type = "cut_normal"` with `sketch`, `regions` and an optional `distance`; an
+addition to version 2 (DEC-046).
+
+Not done: an island of the profile on a bend (refused, as across bends); splines in the
+profile; the flat pattern shows these curves as chains of short lines (within 0.005 mm), not
+as splines; From To and To Next extents.

@@ -1179,3 +1179,89 @@ fn a_contour_flange_runs_along_an_edge_clicked_in_its_panel() {
     let Some(Panel::ContourFlange(p)) = &wb.panel else { panic!("double-click edits it: {}", wb.status()) };
     assert_eq!((p.editing, p.edges.len(), p.width, p.width_value), (Some(id), 1, crate::sheet::WidthChoice::Centered, 20.0));
 }
+
+#[test]
+fn a_cut_is_square_to_the_sheet_where_its_profile_is_seen_when_its_panel_is_told_to() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1000.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3 })).unwrap();
+    // A plate, and over it a work plane through the X axis turned 30 degrees up from it, with
+    // a circle of radius 4 that is seen on the top of the plate at (30, 20).
+    plate(&mut wb, 60.0, 40.0);
+    let tilt = 30f64.to_radians();
+    let wp = wb.exec("work.plane", json!({ "by": "angle", "base": "xy", "axis": "x", "angle": tilt })).unwrap()["feature"].as_u64().unwrap();
+    wb.create_sketch(json!({ "work_plane": wp })).unwrap();
+    let Some(sketch) = wb.document().features().last().map(|f| f.id) else { panic!() };
+    frames(&mut d, &mut wb);
+    let at = wb.sketch_frame(sketch).unwrap().to_local(Vec3::new(30.0, 20.0, 2.0));
+    wb.exec("sketch.circle", json!({ "sketch": sketch.0, "cx": at.x, "cy": at.y, "r": 4 })).unwrap();
+
+    // Cut: straight through to begin with, a Thickness each way from the sketch, which is
+    // nowhere near the plate from a plane that is 11 above it there.
+    wb.run_ui("sheet.cut").unwrap();
+    frames(&mut d, &mut wb);
+    let Some(Panel::SheetCut(p)) = &wb.panel else { panic!("the Cut panel: {}", wb.status()) };
+    assert_eq!((p.editing, p.across, p.normal, p.distance), (None, false, false, 2.0));
+    let texts = d.texts();
+    for shown in ["Cut", "Profiles", "1 selected", "Cut Across Bend", "Cut Normal", "Distance", "fx: Thickness"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    assert!(near(volume(&wb), 4800.0), "{}", volume(&wb));
+    // Cut Normal ticked: the circle is cut where it is seen on the plate, an oval 4 by
+    // 4 / cos 30, through the sheet square to it.
+    d.click(&mut wb, pressable(&d, "tn_cut_normal"));
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::SheetCut(p)) if p.normal && !p.across));
+    let oval = 16.0 * PI / tilt.cos();
+    let about = |a: f64, b: f64| (a - b).abs() <= 1e-3 * b.abs();
+    assert!(about(4800.0 - volume(&wb), oval * 2.0), "{} {}: {}", 4800.0 - volume(&wb), oval * 2.0, wb.status());
+    // OK: a feature of its own, named Cut, its depth the Thickness by equation.
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let (id, name, kind) = wb.document().features().last().map(|f| (f.id, f.name.clone(), f.kind.clone())).unwrap();
+    let FeatureKind::CutNormal(c) = kind else { panic!("{kind:?}") };
+    assert_eq!((name.as_str(), c.sketch, c.distance), ("Cut1", sketch, Some(2.0)));
+    assert!(about(4800.0 - volume(&wb), oval * 2.0), "{}", volume(&wb));
+    let flat = wb.exec("sheet.flat", json!({})).unwrap();
+    assert!(flat["holes"] == 1 && flat["area"].as_f64().is_some_and(|a| about(2400.0 - a, oval)), "{flat}");
+
+    // Edited from the browser it is still a cut normal (neither box is for changing here), and
+    // a depth typed into it makes a pocket half a millimetre deep in the top of the plate.
+    let row = browser_row(&d, "Cut1");
+    double_click(&mut d, &mut wb, row.center());
+    frames(&mut d, &mut wb);
+    let Some(Panel::SheetCut(p)) = &wb.panel else { panic!("double-click edits the cut: {}", wb.status()) };
+    assert_eq!((p.editing, p.across, p.normal, p.distance), (Some(id), false, true, 2.0));
+    for boxed in ["tn_cut_normal", "tn_cut_across"] {
+        d.click(&mut wb, pressable(&d, boxed));
+        frames(&mut d, &mut wb);
+        assert!(matches!(&wb.panel, Some(Panel::SheetCut(p)) if p.normal && !p.across), "{boxed}");
+    }
+    type_into(&mut d, &mut wb, "tn_props_cut_distance", "0.5");
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none() && about(4800.0 - volume(&wb), oval * 0.5), "{}: {}", 4800.0 - volume(&wb), wb.status());
+    let Some(FeatureKind::CutNormal(c)) = wb.document().feature(id).map(|f| f.kind.clone()) else { panic!() };
+    assert_eq!(c.distance, Some(0.5));
+
+    // A cut across bends is square to the sheet as it is: with that ticked in a new Cut, the
+    // Cut Normal box is not for changing, and what is made is the cut across bends.
+    let top = wb.exec("model.face_ref", json!({ "at": [5, 5, 2] })).unwrap();
+    wb.create_sketch(json!({ "face": top })).unwrap();
+    let Some(second) = wb.document().features().last().map(|f| f.id) else { panic!() };
+    frames(&mut d, &mut wb);
+    let at = wb.sketch_frame(second).unwrap().to_local(Vec3::new(10.0, 10.0, 2.0));
+    wb.exec("sketch.circle", json!({ "sketch": second.0, "cx": at.x, "cy": at.y, "r": 3 })).unwrap();
+    wb.run_ui("sheet.cut").unwrap();
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_cut_across"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_cut_normal"));
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::SheetCut(p)) if p.across && !p.normal), "{}", wb.status());
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none() && matches!(wb.document().features().last().map(|f| &f.kind), Some(FeatureKind::CutAcrossBend(_))), "{}", wb.status());
+}

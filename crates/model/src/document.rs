@@ -789,6 +789,8 @@ pub enum FeatureKind {
     CornerSeam(crate::sheet::CornerSeam),
     /// A profile cut out of the sheet round its bends.
     CutAcrossBend(crate::sheet::CutAcrossBend),
+    /// A profile cut out of the sheet where it is seen on it, square to every face.
+    CutNormal(crate::sheet::CutNormal),
     /// Two faces of the sheet that do not touch, joined by a bend.
     Bend(crate::sheet::BendBetween),
     /// A face of the sheet folded along a line drawn across it.
@@ -853,7 +855,7 @@ impl FeatureKind {
             FeatureKind::Hem(_) => "Hem",
             FeatureKind::ContourFlange(_) => "Contour Flange",
             FeatureKind::CornerSeam(_) => "Corner Seam",
-            FeatureKind::CutAcrossBend(_) => "Cut",
+            FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => "Cut",
             FeatureKind::Bend(_) => "Bend",
             FeatureKind::Fold(_) => "Fold",
         }
@@ -887,7 +889,7 @@ impl FeatureKind {
             FeatureKind::Hem(_) => "Hem",
             FeatureKind::ContourFlange(_) => "Contour Flange",
             FeatureKind::CornerSeam(_) => "Corner Seam",
-            FeatureKind::CutAcrossBend(_) => "Cut",
+            FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => "Cut",
             FeatureKind::Bend(_) => "Bend",
             FeatureKind::Fold(_) => "Fold",
         }
@@ -930,6 +932,7 @@ impl FeatureKind {
             FeatureKind::ContourFlange(c) => std::iter::once(c.sketch).chain(c.edges.iter().flat_map(EdgeRef::features)).collect(),
             FeatureKind::CornerSeam(c) => c.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::CutAcrossBend(c) => vec![c.sketch],
+            FeatureKind::CutNormal(c) => vec![c.sketch],
             FeatureKind::Bend(b) => b.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::Fold(f) => vec![f.sketch],
             FeatureKind::PatternRect(p) => {
@@ -1327,6 +1330,8 @@ impl Document {
                 FeatureKind::CornerSeam(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::CutAcrossBend(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
                 FeatureKind::CutAcrossBend(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::CutNormal(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
+                FeatureKind::CutNormal(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Bend(b) => b.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Fold(fo) if self.sketch(fo.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, fo.sketch)),
                 FeatureKind::Fold(fo) => fo.check().map_err(|e| format!("{}: {e}", f.name))?,

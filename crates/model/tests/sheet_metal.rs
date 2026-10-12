@@ -6,7 +6,7 @@
 //! `a * (3 + 0.44 * 2)` wide in the flat: 1.94 pi for a quarter turn.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::f64::consts::{FRAC_PI_2, PI};
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 use serde_json::{Value, json};
 use tenon_geom::Vec3;
@@ -2041,4 +2041,277 @@ fn a_contour_flange_along_an_edge_says_what_its_profile_must_be() {
     assert!(failure(&mut s, &mut k).contains("wider than its edge"));
     let e = refused(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk }));
     assert!(e.contains("distance"), "{e}");
+}
+
+/// As `near`, for what is made of curves through points: to a part in a hundred thousand.
+fn about(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 1e-5 * b.abs().max(1.0)
+}
+
+/// As `near`, for an area of the flat pattern whose outline has such curves in it: the flat
+/// pattern has them as chains of short lines, each within 0.005 of the curve.
+fn roughly(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 1e-3 * b.abs().max(1.0)
+}
+
+/// A sketch on a work plane, and where the part's point `p` is seen in it (looking along the
+/// sketch's normal).
+fn sketch_over(s: &mut Session, k: &mut OcctKernel, plane: Value) -> (u64, impl Fn(Vec3) -> (f64, f64) + use<>) {
+    let wp = id(&run(s, k, "work.plane", plane), "feature");
+    let sk = id(&run(s, k, "sketch.create", json!({ "work_plane": wp })), "feature");
+    let frame = s.regen(k).sketch_frames[&tenon_model::FeatureId(sk as u32)];
+    (sk, move |p: Vec3| {
+        let at = frame.to_local(p);
+        (at.x, at.y)
+    })
+}
+
+/// A circle of radius `r` in sketch `sk` where the part's point `p` is seen in it: its centre
+/// point.
+fn circle_over(s: &mut Session, k: &mut OcctKernel, sk: u64, to: &impl Fn(Vec3) -> (f64, f64), p: Vec3, r: f64) -> u64 {
+    let (x, y) = to(p);
+    id(&run(s, k, "sketch.circle", json!({ "sketch": sk, "cx": x, "cy": y, "r": r })), "center")
+}
+
+/// How wide a circle of radius `r` is where a bend of inside radius `R` is seen under it from
+/// above, summed over the angle the bend turns (a quarter turn): the circle's middle is `c`
+/// past the bend line, and where the bend has turned by an angle it is seen `R sin angle` past
+/// that line. Times a radius, this is the area of the hole on the bend's cylinder of that radius.
+fn seen_on_bend(c: f64, r: f64) -> f64 {
+    let steps = 400_000;
+    let wide = |turn: f64| 2.0 * (r * r - (R * turn.sin() - c).powi(2)).max(0.0).sqrt();
+    let h = FRAC_PI_2 / steps as f64;
+    (0..=steps)
+        .map(|i| {
+            wide(i as f64 * h)
+                * if i == 0 || i == steps {
+                    1.0
+                } else if i % 2 == 1 {
+                    4.0
+                } else {
+                    2.0
+                }
+        })
+        .sum::<f64>()
+        * h
+        / 3.0
+}
+
+#[test]
+fn a_cut_normal_is_the_profile_as_it_is_seen_on_the_sheet_with_walls_square_to_it() {
+    // Seen square on, from a plane well above the plate: the profile itself, straight through.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    plate(&mut s, &mut k, 60.0, 40.0);
+    let before = flat(&mut s, &mut k);
+    let (sk, to) = sketch_over(&mut s, &mut k, json!({ "base": "xy", "distance": 30 }));
+    circle_over(&mut s, &mut k, sk, &to, Vec3::new(20.0, 20.0, T), 4.0);
+    let cut = id(&run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk })), "feature");
+    assert_eq!(s.document().feature(tenon_model::FeatureId(cut as u32)).unwrap().name, "Cut1");
+    assert!(near(volume(&mut s, &mut k), 4800.0 - 16.0 * PI * T), "{}", volume(&mut s, &mut k));
+    let f = flat(&mut s, &mut k);
+    let inner = f["inner"].as_array().unwrap();
+    assert!(inner.len() == 1 && inner[0].as_array().unwrap().len() == 1 && inner[0][0]["type"] == "circle", "{}", f["inner"]);
+    assert!(near(num(&inner[0][0], "radius"), 4.0) && near(num(&f, "area"), num(&before, "area") - 16.0 * PI), "{f}");
+    // Half a millimetre deep from below: a pocket in the underside, which is the side that
+    // looks at a sketch under the plate.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    plate(&mut s, &mut k, 60.0, 40.0);
+    let (sk, to) = sketch_over(&mut s, &mut k, json!({ "base": "xy", "distance": -10 }));
+    circle_over(&mut s, &mut k, sk, &to, Vec3::new(20.0, 20.0, 0.0), 4.0);
+    run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk, "distance": 0.5 }));
+    assert!(near(volume(&mut s, &mut k), 4800.0 - 16.0 * PI * 0.5), "{}", volume(&mut s, &mut k));
+    let sides = flats(&mut s, &mut k);
+    let area = |z: f64, level: f64| sides.iter().find(|f| f.0.near(Vec3::Z * z, 1e-9) && (f.1.z - level).abs() < 1e-9).map(|f| f.2);
+    assert!(area(1.0, T).is_some_and(|a| near(a, 2400.0)) && area(-1.0, 0.0).is_some_and(|a| near(a, 2400.0 - 16.0 * PI)), "{sides:?}");
+    assert!(area(-1.0, 0.5).is_some_and(|a| near(a, 16.0 * PI)), "the floor of the pocket: {sides:?}");
+
+    // Seen at an angle, from a plane through the X axis turned 30 degrees up from the plate:
+    // the circle is seen on the plate as an oval, 4 by 4 / cos 30, and the hole goes through
+    // square to the plate (not along the line of sight, as an extrusion would cut it).
+    let tilt = 30f64.to_radians();
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    plate(&mut s, &mut k, 60.0, 40.0);
+    let (sk, to) = sketch_over(&mut s, &mut k, json!({ "by": "angle", "base": "xy", "axis": "x", "angle": tilt }));
+    let centre = circle_over(&mut s, &mut k, sk, &to, Vec3::new(30.0, 20.0, T), 4.0);
+    let cut = id(&run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk })), "feature");
+    let oval = 16.0 * PI / tilt.cos();
+    // (The kernel sums the volume of a hole with such walls less closely than it does the
+    // areas of the faces it is cut in, which say what the hole is.)
+    assert!(roughly(4800.0 - volume(&mut s, &mut k), oval * T), "{} {}", 4800.0 - volume(&mut s, &mut k), oval * T);
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    // Both sides of the plate lose the same oval, in the same place: what is left of each has
+    // its middle where the plate's is, pulled away from the hole by as much.
+    let sides = flats(&mut s, &mut k);
+    for (normal, level) in [(Vec3::Z, T), (-Vec3::Z, 0.0)] {
+        let side = sides.iter().find(|f| f.0.near(normal, 1e-9) && (f.1.z - level).abs() < 1e-9).expect("a side of the plate");
+        assert!(about(2400.0 - side.2, oval), "{side:?}");
+        assert!((side.1.x - 30.0).abs() < 1e-6 && (side.1.y - 20.0).abs() < 1e-6, "{side:?}");
+    }
+    let f = flat(&mut s, &mut k);
+    assert!(roughly(2400.0 - num(&f, "area"), oval) && f["inner"].as_array().unwrap().len() == 1, "{f}");
+    // Its walls are the cut's: at the end of the oval's long side, half way through the sheet.
+    let wall = run(&mut s, &mut k, "model.face_ref", json!({ "at": [30, 20.0 + 4.0 / tilt.cos(), 1] }));
+    assert!(wall["origin"]["type"] == "from" && wall["origin"]["feature"] == cut, "{wall}");
+    // The cut follows its sketch: with the circle dragged to be seen 10 along the plate, the
+    // oval is there.
+    let (x, y) = to(Vec3::new(40.0, 20.0, T));
+    run(&mut s, &mut k, "sketch.drag", json!({ "sketch": sk, "point": centre, "x": x, "y": y }));
+    assert!(roughly(4800.0 - volume(&mut s, &mut k), oval * T), "{}", volume(&mut s, &mut k));
+    let wall = run(&mut s, &mut k, "model.face_ref", json!({ "at": [40, 20.0 + 4.0 / tilt.cos(), 1] }));
+    assert!(wall["origin"]["type"] == "from" && wall["origin"]["feature"] == cut, "{wall}");
+}
+
+#[test]
+fn a_cut_normal_goes_onto_the_bends_it_is_seen_on_and_leaves_what_is_seen_edge_on() {
+    let ba = allowance(FRAC_PI_2);
+    let rho = R + K * T;
+    let through = ((R + T).powi(2) - R * R) / 2.0;
+    // A plate with a wall bent up along its right edge, seen from above. The plate's top is
+    // seen as it is; the inside of the bend is seen from x = 55 to 58 (three of radius), all of
+    // a quarter turn; the wall is seen edge on.
+    let (mut s, mut k, _) = channel(false);
+    let whole = volume(&mut s, &mut k);
+    let before = flat(&mut s, &mut k);
+    // A slot 8 wide from x = 40 to past the wall: 15 of plate, all of the bend, none of the wall.
+    let (sk, to) = sketch_over(&mut s, &mut k, json!({ "base": "xy", "distance": 30 }));
+    let ((x1, y1), (x2, y2)) = (to(Vec3::new(40.0, 16.0, T)), to(Vec3::new(70.0, 24.0, T)));
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": x1, "y1": y1, "x2": x2, "y2": y2 }));
+    run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk }));
+    let slot = 8.0 * 15.0 * T + bend_volume(FRAC_PI_2, 8.0);
+    assert!(near(volume(&mut s, &mut k), whole - slot), "{} {}", volume(&mut s, &mut k), whole - slot);
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    // The wall is whole: 40 by 10 on its outside.
+    let outer = flats(&mut s, &mut k).into_iter().find(|f| f.0.near(Vec3::X, 1e-9) && f.1.x > 59.9).expect("the outer face of the wall");
+    assert!(near(outer.2, 400.0), "{outer:?}");
+    // In the flat pattern the slot is a rectangle from 40 to where the bend ends: four lines.
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "area"), num(&before, "area") - 8.0 * (15.0 + ba)), "{f}");
+    let inner = f["inner"].as_array().unwrap();
+    assert!(inner.len() == 1 && inner[0].as_array().unwrap().len() == 4 && inner[0].as_array().unwrap().iter().all(|c| c["type"] == "line"), "{f}");
+
+    // A round hole of radius 4 seen from above with its middle on the bend line: half of it
+    // is on the plate. The rest is seen on the bend out to x = 58, where the bend is seen more
+    // and more edge on, so laid flat the hole is longer there than the circle that was drawn.
+    let (mut s, mut k, _) = channel(false);
+    let (sk, to) = sketch_over(&mut s, &mut k, json!({ "base": "xy", "distance": 30 }));
+    circle_over(&mut s, &mut k, sk, &to, Vec3::new(55.0, 20.0, T), 4.0);
+    run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk }));
+    let on_bend = seen_on_bend(0.0, 4.0);
+    let hole = 8.0 * PI * T + on_bend * through;
+    assert!(about(whole - volume(&mut s, &mut k), hole), "{} {}", whole - volume(&mut s, &mut k), hole);
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    let f = flat(&mut s, &mut k);
+    let gone = num(&before, "area") - num(&f, "area");
+    assert!(roughly(gone, 8.0 * PI + rho * on_bend) && rho * on_bend > 1.2 * 8.0 * PI, "{gone} {}", 8.0 * PI + rho * on_bend);
+    // In the flat pattern: half the circle that was drawn, curves from its ends out to the end
+    // of the bend, and a straight end there, sqrt 7 either side of the middle.
+    let inner = f["inner"].as_array().unwrap();
+    assert_eq!(inner.len(), 1, "{f}");
+    let kinds: Vec<&str> = inner[0].as_array().unwrap().iter().map(|c| c["type"].as_str().unwrap()).collect();
+    assert!(
+        kinds.contains(&"arc") && kinds.iter().filter(|k| **k == "line").count() == 1 && kinds.iter().any(|k| *k != "arc" && *k != "line"),
+        "{kinds:?}"
+    );
+    let end = inner[0].as_array().unwrap().iter().find(|c| c["type"] == "line").unwrap();
+    let (a, b) = (&end["start"], &end["end"]);
+    assert!(near(num(a, "x"), 55.0 + ba) && near(num(b, "x"), 55.0 + ba) && about((num(a, "y") - num(b, "y")).abs(), 2.0 * 7f64.sqrt()), "{end}");
+
+    // A hole of radius 1 that is seen on the bend alone, its middle 1.5 past the bend line.
+    let (mut s, mut k, _) = channel(false);
+    let (sk, to) = sketch_over(&mut s, &mut k, json!({ "base": "xy", "distance": 30 }));
+    circle_over(&mut s, &mut k, sk, &to, Vec3::new(56.5, 20.0, T), 1.0);
+    run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk }));
+    let on_bend = seen_on_bend(1.5, 1.0);
+    assert!(about(whole - volume(&mut s, &mut k), on_bend * through), "{} {}", whole - volume(&mut s, &mut k), on_bend * through);
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    let f = flat(&mut s, &mut k);
+    assert!(roughly(num(&before, "area") - num(&f, "area"), rho * on_bend) && f["inner"].as_array().unwrap().len() == 1, "{f}");
+
+    // Seen at 45 degrees into the corner of the channel, from a plane through the Y axis: the
+    // top of the plate, the inside of the bend and the inside of the wall are all seen, and a
+    // circle of radius 5 whose middle is over the middle of the bend is on all three.
+    let (mut s, mut k, _) = channel(false);
+    let sides = flats(&mut s, &mut k);
+    let (sk, to) = sketch_over(&mut s, &mut k, json!({ "by": "angle", "base": "xy", "axis": "y", "angle": -FRAC_PI_4 }));
+    let frame = s.regen(&mut k).sketch_frames[&tenon_model::FeatureId(sk as u32)];
+    let middle = Vec3::new(56.0, 20.0, 4.0);
+    circle_over(&mut s, &mut k, sk, &to, middle, 5.0);
+    let cut = id(&run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk })), "feature");
+    assert!(volume(&mut s, &mut k) < whole - 200.0);
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    // Looked at from the sketch, the rim of the hole on the side that is seen is the circle
+    // that was drawn, on the plate, round the bend and up the wall: four edges of it, all
+    // their ends 5 from the circle's middle. (The rim on the far side is not: the hole goes
+    // through square to the sheet, not along the line of sight.)
+    let seen = |p: Vec3| {
+        let (at, mid) = (frame.to_local(p), frame.to_local(middle));
+        ((at.x - mid.x).powi(2) + (at.y - mid.y).powi(2)).sqrt()
+    };
+    let point = |v: &Value| Vec3::new(v[0].as_f64().unwrap(), v[1].as_f64().unwrap(), v[2].as_f64().unwrap());
+    let edges = run(&mut s, &mut k, "model.edges", json!({}));
+    let rim: Vec<&Value> =
+        edges["edges"].as_array().unwrap().iter().filter(|e| e["faces"].as_array().unwrap().iter().any(|f| f["feature"] == cut)).collect();
+    let near_side: Vec<&&Value> = rim.iter().filter(|e| [&e["start"], &e["end"]].iter().all(|end| (seen(point(end)) - 5.0).abs() < 1e-6)).collect();
+    assert_eq!(near_side.len(), 4, "{rim:?}");
+    assert!(rim.iter().any(|e| (seen(point(&e["start"])) - 5.0).abs() > 0.5), "{rim:?}");
+    // The view is the same to either side of the bend, so the plate and the wall lose as much.
+    let after = flats(&mut s, &mut k);
+    let lost = |normal: Vec3, level: f64| {
+        let area = |all: &[(Vec3, Vec3, f64)]| {
+            all.iter().find(|f| f.0.near(normal, 1e-9) && (f.1.dot(normal) - level).abs() < 1e-9).map(|f| f.2).expect("a side of the sheet")
+        };
+        area(&sides) - area(&after)
+    };
+    let (plate_lost, wall_lost) = (lost(Vec3::Z, T), lost(-Vec3::X, -58.0));
+    assert!(plate_lost > 20.0 && about(plate_lost, wall_lost), "{plate_lost} {wall_lost}");
+    // And the flat pattern has the one hole.
+    let f = flat(&mut s, &mut k);
+    assert!(f["inner"].as_array().unwrap().len() == 1 && num(&f, "area") < num(&before, "area") - 100.0, "{f}");
+}
+
+#[test]
+fn a_cut_normal_says_what_it_cannot_see_or_cut() {
+    let (mut s, mut k, _) = channel(false);
+    // Nothing of the sheet under the profile.
+    let (sk, to) = sketch_over(&mut s, &mut k, json!({ "base": "xy", "distance": 30 }));
+    let centre = circle_over(&mut s, &mut k, sk, &to, Vec3::new(100.0, 100.0, T), 0.5);
+    let cut = id(&run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk })), "feature");
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("not over the sheet") && e.contains("no face and no bend of the sheet is seen under it"), "{e}");
+    // Over the top of the wall alone, which is seen edge on from above: nothing to cut either.
+    let (x, y) = to(Vec3::new(59.0, 20.0, T));
+    run(&mut s, &mut k, "sketch.drag", json!({ "sketch": sk, "point": centre, "x": x, "y": y }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("not over the sheet"), "{e}");
+    // A depth of nothing.
+    let e = refused(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk, "distance": 0 }));
+    assert!(e.contains("more than 0"), "{e}");
+    // Moved over the plate it cuts, and the part follows.
+    let whole = 4800.0 + bend_volume(FRAC_PI_2, 40.0) + 40.0 * 10.0 * T - 5.0 * 40.0 * T;
+    let (x, y) = to(Vec3::new(20.0, 20.0, T));
+    run(&mut s, &mut k, "sketch.drag", json!({ "sketch": sk, "point": centre, "x": x, "y": y }));
+    assert!(near(volume(&mut s, &mut k), whole - 0.25 * PI * T), "{} {}", volume(&mut s, &mut k), whole - 0.25 * PI * T);
+    let kind = serde_json::to_value(&s.document().feature(tenon_model::FeatureId(cut as u32)).unwrap().kind).unwrap();
+    assert_eq!(kind, json!({ "type": "cut_normal", "sketch": sk, "regions": "default" }), "what a file says of it");
+
+    // A sketch that sees the sheet edge on: no side of it to cut.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    plate(&mut s, &mut k, 60.0, 40.0);
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" })), "feature");
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 4 }));
+    run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("No side of the sheet looks at the sketch") && e.contains("edge on"), "{e}");
+
+    // Not a sheet metal part.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 4 }));
+    let e = refused(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk }));
+    assert!(e.contains("not a sheet metal part"), "{e}");
 }

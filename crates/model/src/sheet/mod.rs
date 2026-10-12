@@ -348,6 +348,30 @@ impl CutAcrossBend {
     }
 }
 
+/// A profile cut out of the sheet where it is seen on it, looking along its sketch's normal,
+/// with every face and bend it is seen on cut square to itself (Cut with Cut Normal). The
+/// sketch need not be on the sheet, nor parallel to any face of it: the walls of the cut are
+/// square to the sheet all the same, so the flat pattern has one clean outline.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CutNormal {
+    pub sketch: FeatureId,
+    #[serde(default)]
+    pub regions: RegionSel,
+    /// How deep the cut goes, from the side of the sheet that looks at the sketch; without it
+    /// (or at the thickness or more) it goes through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance: Option<f64>,
+}
+
+impl CutNormal {
+    pub fn check(&self) -> Result<(), String> {
+        match self.distance {
+            Some(d) if !(d.is_finite() && d > 0.0) => Err("the depth of a cut must be more than 0".into()),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// A bend between two faces of the sheet that do not touch: given an edge of each, the faces
 /// are trimmed or extended to where the bend begins and joined by it. Faces in planes that
 /// cross take one bend; faces in parallel planes take two ([`DoubleBend`]). (The bends of a
@@ -795,6 +819,30 @@ pub(crate) fn seat_of(
         }
     }
     Ok(best.map(|(b, face, _)| (b, face)))
+}
+
+/// The side of the sheet that `profile`, in the plane `frame`, is seen on looking along that
+/// plane's normal, as `regen` has the part: the solid, its face, and the way from the face
+/// towards the sketch. Of the flat sides of the sheet that look towards the sketch it is the
+/// one with most of the profile over it, or the nearest when it is over none (it may be over
+/// a bend beside one). None when no side of the sheet looks at the sketch.
+pub(crate) fn seen_on(
+    doc: &Document,
+    regen: &crate::Regen,
+    k: &dyn Kernel,
+    frame: &tenon_geom::Frame,
+    profile: &[tenon_kernel::Region],
+) -> Result<Option<(usize, u32, tenon_geom::Vec3)>, String> {
+    let opts = unfold_opts(doc)?;
+    let mut best: Option<(usize, u32, tenon_geom::Vec3, f64, f64)> = None;
+    for (b, body) in regen.bodies.iter().enumerate() {
+        if let Some((face, toward, share, tie)) = wrap::facing(k, body.shape, frame, profile, &opts)?
+            && best.is_none_or(|(.., most, nearest)| share > most + 1e-9 || ((share - most).abs() <= 1e-9 && tie < nearest))
+        {
+            best = Some((b, face, toward, share, tie));
+        }
+    }
+    Ok(best.map(|(b, face, toward, ..)| (b, face, toward)))
 }
 
 /// Where edge `edge` of the part lies in sketch `sketch` with the sheet laid flat from the face
