@@ -561,7 +561,10 @@ mod tests {
         // The two halves of a circle go to the kernel as the circle; two arcs of different
         // circles (a lens) as the two arcs they are.
         let round = to_loop(&circle(Vec2::new(1.0, 1.0), 2.0, 7));
-        assert!(matches!(round.curves.as_slice(), [c] if c.tag == 7 && c.curve == Curve2::Circle { center: Vec2::new(1.0, 1.0), radius: 2.0 }), "{round:?}");
+        assert!(
+            matches!(round.curves.as_slice(), [c] if c.tag == 7 && c.curve == Curve2::Circle { center: Vec2::new(1.0, 1.0), radius: 2.0 }),
+            "{round:?}"
+        );
         let lens = common(&[circle(Vec2::ZERO, 5.0, 1).to_vec()], &[circle(Vec2::new(6.0, 0.0), 5.0, 2).to_vec()]).unwrap();
         assert_eq!(to_loop(&lens[0].outer).curves.len(), 2);
     }
