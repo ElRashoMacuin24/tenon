@@ -57,6 +57,10 @@ pub(crate) enum PartJob {
         revision: u64,
         setup: Setup,
     },
+    /// What the edges of a face are in a sketch with the sheet laid flat (Project Flat Pattern).
+    FlatEdges {
+        sketch: tenon_model::FeatureId,
+    },
     /// The flat pattern of a sheet metal part, of this revision of it.
     Flat {
         revision: u64,
@@ -121,7 +125,7 @@ fn unexpected<T>() -> Result<T, String> {
 impl Workbench {
     /// Runs `work` on the open part's solids with the kernel, wherever that is; what it returns
     /// comes back to [`Workbench::part_job_done`] as `job`.
-    fn part_job<T: Send + 'static>(
+    pub(crate) fn part_job<T: Send + 'static>(
         &mut self,
         job: PartJob,
         work: impl FnOnce(&mut dyn Kernel, &[ShapeHandle], &Document) -> Result<T, String> + Send + 'static,
@@ -180,6 +184,7 @@ impl Workbench {
                 }
             }
             PartJob::Flat { revision } => self.flat_done(revision, result),
+            PartJob::FlatEdges { sketch } => self.flat_edges_done(sketch, result),
             PartJob::Print { revision, setup } => {
                 let report = result.downcast::<Result<Report, String>>().map_or_else(|_| unexpected(), |b| *b);
                 let print = &mut self.chrome.print;

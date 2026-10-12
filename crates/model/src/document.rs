@@ -787,6 +787,8 @@ pub enum FeatureKind {
     ContourFlange(crate::sheet::ContourFlange),
     /// The corner between two faces of the sheet closed.
     CornerSeam(crate::sheet::CornerSeam),
+    /// A profile cut out of the sheet round its bends.
+    CutAcrossBend(crate::sheet::CutAcrossBend),
 }
 
 impl FeatureKind {
@@ -847,6 +849,7 @@ impl FeatureKind {
             FeatureKind::Hem(_) => "Hem",
             FeatureKind::ContourFlange(_) => "Contour Flange",
             FeatureKind::CornerSeam(_) => "Corner Seam",
+            FeatureKind::CutAcrossBend(_) => "Cut",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -878,6 +881,7 @@ impl FeatureKind {
             FeatureKind::Hem(_) => "Hem",
             FeatureKind::ContourFlange(_) => "Contour Flange",
             FeatureKind::CornerSeam(_) => "Corner Seam",
+            FeatureKind::CutAcrossBend(_) => "Cut",
         }
     }
     /// Features this one depends on.
@@ -917,6 +921,7 @@ impl FeatureKind {
             FeatureKind::Hem(h) => h.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::ContourFlange(c) => vec![c.sketch],
             FeatureKind::CornerSeam(c) => c.edges.iter().flat_map(EdgeRef::features).collect(),
+            FeatureKind::CutAcrossBend(c) => vec![c.sketch],
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -1310,6 +1315,8 @@ impl Document {
                 FeatureKind::ContourFlange(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
                 FeatureKind::ContourFlange(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::CornerSeam(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::CutAcrossBend(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
+                FeatureKind::CutAcrossBend(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

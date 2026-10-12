@@ -443,6 +443,8 @@ pub(crate) enum Panel {
     Thread(crate::bodies::ThreadPanel),
     /// A sheet metal face.
     SheetFace(crate::sheet::FacePanel),
+    /// Cut: a profile through the sheet, round its bends when asked.
+    SheetCut(crate::sheet::CutPanel),
     /// A sheet metal flange.
     Flange(crate::sheet::FlangePanel),
     /// A hem along edges of the sheet.
@@ -490,6 +492,7 @@ impl Panel {
             Panel::Combine(p) => p.editing,
             Panel::Thread(p) => p.editing,
             Panel::SheetFace(p) => p.editing,
+            Panel::SheetCut(p) => p.editing,
             Panel::Flange(p) => p.editing,
             Panel::Hem(p) => p.editing,
             Panel::ContourFlange(p) => p.editing,
@@ -547,6 +550,7 @@ impl Panel {
             Panel::Rib(_) => vec![("thickness", "/thickness"), ("distance", "/extent/distance")],
             Panel::Coil(_) => vec![("pitch", "/pitch"), ("turns", "/turns")],
             Panel::Draft(_) => vec![("degrees", "/angle")],
+            Panel::SheetCut(p) => p.eq_pointers(),
             Panel::Flange(p) => p.eq_pointers(),
             Panel::Hem(p) => p.eq_pointers(),
             Panel::ContourFlange(p) => p.eq_pointers(),
@@ -701,6 +705,7 @@ impl Workbench {
                 None => rolled(p.editing),
             },
             Some(Panel::SheetFace(p)) => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::SheetCut(p)) => with_feature(self.document(), p.editing, p.kind()),
             // With an edge picked the flange shows as it will be; further edges are picked on that.
             Some(Panel::Flange(p)) if !p.edges.is_empty() => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Flange(p)) => rolled(p.editing),
@@ -1199,7 +1204,8 @@ impl Workbench {
                     | FeatureKind::Flange(_)
                     | FeatureKind::Hem(_)
                     | FeatureKind::ContourFlange(_)
-                    | FeatureKind::CornerSeam(_) => ("feature.add", json!({ "kind": kind_json })),
+                    | FeatureKind::CornerSeam(_)
+                    | FeatureKind::CutAcrossBend(_) => ("feature.add", json!({ "kind": kind_json })),
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
@@ -1244,6 +1250,15 @@ impl Workbench {
                     keep = !self.commit_panel(&ptrs, editing, kind);
                     if !keep && again {
                         reopen = Some("sheet.face");
+                    }
+                }
+            }
+            Panel::SheetCut(p) => {
+                if commit {
+                    let (editing, kind) = (p.editing, p.kind());
+                    keep = !self.commit_panel(&ptrs, editing, kind);
+                    if !keep && again {
+                        reopen = Some("sheet.cut");
                     }
                 }
             }

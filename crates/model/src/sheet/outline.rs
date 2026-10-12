@@ -30,7 +30,7 @@ impl Piece {
     }
 
     /// How far the arc turns.
-    fn sweep(&self, center: Vec2) -> f64 {
+    pub(super) fn sweep(&self, center: Vec2) -> f64 {
         let d = ((self.b - center).angle() - (self.a - center).angle()).rem_euclid(TAU);
         if d < 1e-12 { TAU } else { d }
     }

@@ -452,6 +452,8 @@ constexpr double kTwoPi = 6.283185307179586;
 // is approximated coarsely (a 60-turn coil came out at half its volume) and booleans with it are
 // unreliable (a thread's groove cut nothing, or everything, depending on its length).
 constexpr double kHelixTurnsPerEdge = 1.0;
+// How closely the volume of each face's share of a solid is summed (relative).
+constexpr double kVolumePrecision = 1.0e-9;
 /// Distance within which an edge lies on the profile curve it was built from (mm).
 constexpr double kTagTolerance = 1e-5;
 
@@ -1935,7 +1937,10 @@ void tessellate(const Shape& s, double linear, double angular, bool relaxed, Mes
 void mass_properties(const Shape& s, MassOut& out) {
   guarded("mass_properties", [&] {
     GProp_GProps vol;
-    BRepGProp::VolumeProperties(s.shape, vol);
+    // To a precision asked for, face by face: the plain sum is off where a face of a round
+    // surface has a rim that curves back on itself (a hole drilled across a shaft: by a
+    // millionth of the part; half a circle cut across a bend: by a five hundredth of the cut).
+    BRepGProp::VolumeProperties(s.shape, vol, kVolumePrecision, false, false);
     GProp_GProps surf;
     BRepGProp::SurfaceProperties(s.shape, surf);
     out.volume = vol.Mass();

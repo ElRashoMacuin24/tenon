@@ -1403,3 +1403,94 @@ is taken only when it leaves the same solid (same volume, one solid).
   they are left as they are.
 - A cause that shows on one platform only is found on that platform: a draft pull request
   from a throwaway branch ran the one test there with its steps printed, and was closed.
+
+## DEC-068 Cut Across Bend, and Project Flat Pattern (2026-10-12)
+
+Asked for by the owner on Corner Seam's report: Cut Across Bend next.
+
+**What it is.** In Inventor a Cut with Cut Across Bend takes a profile drawn on a face of the
+sheet and wraps it across the faces and bends it lies over, Thickness deep unless told
+otherwise; in the flat pattern the cut is the profile as it was drawn. Tenon's is the same
+(`cut_across_bend`; Sheet Metal > Modify > Cut with Cut Across Bend ticked):
+
+1. the sheet is laid flat from the face the sketch is on, *in the sketch's own coordinates*:
+   that face stays where it is, a bend beside it is its allowance wide, the face beyond lies
+   past that. This is the unfolding the flat pattern already does (`sheet::unfold::follow`),
+   started from the sketch's frame;
+2. every flat face and every bend of that side of the sheet takes the part of the profile
+   that lies on it (`sheet::region::common`: what two regions bounded by lines and arcs have
+   in common, with holes, written for this);
+3. a face's share is cut as a prism in the face's own plane, a bend's share as the outline
+   rolled round the bend's axis (`Kernel::roll`, as a relieved corner is), each one at a time
+   and checked (DEC-067).
+
+So a round hole drawn across a bend line is a circle in the flat pattern, where the same
+circle extruded through the part is an arc and a run of points (the M8 test still shows that).
+
+- **The face the sketch is on** is the face it was put on. A sketch on an origin or work plane
+  that lies on a side of the sheet works as well: of the sides in its plane, the one with
+  most of the profile on it. The rim of the sheet is no side (its other side is not one
+  thickness behind it), so a sketch there is refused in words.
+- **Depth** (`distance`): from the side the sketch is on. Without one, or at the thickness or
+  more, the cut goes through, whatever the thickness becomes. Less is a pocket: on a bend it is
+  that much of the thickness from the side the sketch is on, inside or outside. The panel's
+  field starts as the equation `Thickness`, as Inventor's does.
+- **A face's own outline** bounds what is cut in it (not its holes: a hole is no sheet, and the
+  floor of a pocket is sheet like any other). A bend is taken as far round as it turns and as
+  far along as it reaches. What of the profile lies on no face and no bend cuts nothing; none
+  of it on the sheet is an error.
+- **Profiles** are lines, arcs and circles. A profile with an island keeps the island where it
+  is on a flat face or across a bend line; an island that lies wholly on a bend is refused
+  (the rolled outline has no holes yet), as is a spline.
+- **Names.** A wall of the cut is named after the curve of the profile that cuts it and the
+  face of the sheet it is cut in. A circle on a flat face is one wall, as an extruded one is.
+- **The Cut panel.** Sheet Metal > Modify > Cut now has a panel of its own: the profile, Cut
+  Across Bend, the distance. Unticked it makes what it made before, an extrusion that cuts one
+  distance each way from its sketch (an ordinary Extrusion in the browser, edited as one);
+  ticked it makes a Cut. A Cut stays a cut across bends when edited.
+
+**Project Flat Pattern** (Sketch > Create, under Project Geometry; `sketch.project` with
+`flat`). Inventor's workflow starts there: the faces beyond a bend are shown in the sketch
+where they lie unfolded, and the profile is drawn on them. A projection (DEC-055) gains
+`flat`: its edge is shown where the sheet has it when laid flat from the sketch's face, by the
+same unfolding the cut uses, and follows the part like any projected edge (a higher wall's top
+edge moves out). Straight edges, edges round a bend (straight in the flat) and circles on flat
+faces; an edge of the sheet's other side has no place on this one. In the app the kernel is on
+the geometry thread, so a click on a face asks it for the edges laid flat and the answer goes
+into the sketch as the command's `geometry`.
+
+In files: the feature type `cut_across_bend` (`sketch`, `regions`, `distance` when it has one)
+and `flat = true` on a projection; additions to version 2 (DEC-046).
+
+Not done: Cut Normal as a choice (the cut that is not across bends is the extrusion it was);
+the projected flat pattern of a whole face in one go with its bend centre lines (the bend's
+extent lines are edges and are shown; its centre line is not an edge); a pocket in the flat
+pattern drawing (the pattern follows one side of the sheet: a pocket on that side shows as a
+hole, one on the other side not at all, as for any pocket).
+
+## DEC-069 The volume of a solid is asked for to a precision (2026-10-12)
+
+Found by the first round hole cut across a bend: the cut and the volume the tool shared with
+the part, both from the kernel, differed by 0.03 mm³, and both were 0.1 mm³ from the hand
+formula. The solid was right (its mesh agreed with the formula); its volume was not.
+
+OpenCASCADE sums a solid's volume face by face. The plain call does that with a fixed number
+of points, and is off where a face of a round surface has a rim that curves back on itself:
+
+- a rolled half disc (an arc of half a turn on a bend): 0.2 % of its volume, an arc of 5.5
+  rad 0.9 %; an arc under about 2 rad, as a corner relief's is, under a millionth;
+- a hole of radius 3 drilled across a shaft of radius 10: 0.009 mm³ of its 559, which is
+  0.7 millionths of the part. So the mass of quite ordinary parts was a little out.
+
+**Decision.** `Kernel::mass_properties` asks for the volume to a relative precision of 1e-9 a
+face (`BRepGProp::VolumeProperties` with `Eps`, the adaptive sum). The same cases are then
+right to 1e-9 against the formula (`the_volume_is_right_where_the_rim_of_a_round_face_curves_back_on_itself`,
+`half_a_disc_and_most_of_one_roll_into_the_volume_their_area_has`). Every volume the model
+tests check by hand kept its value; no test or example changed.
+
+- Cost: on a sheet metal part of 25 faces a call went from 3.4 ms to 7.9 ms (5.2 ms at 1e-6).
+  Regeneration is far longer; M9 will measure it in a whole session.
+- Face areas are left as they are: they are not what was wrong, and a face's area is part of
+  how a face is found again (its fingerprint).
+- Two things tried first did nothing: shorter spans in the rolled arc's curve, and lower
+  degrees in the curves of the rolled side face.

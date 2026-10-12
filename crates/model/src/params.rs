@@ -141,6 +141,7 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         ],
         FeatureKind::ContourFlange(_) => &[("/distance", Mm), ("/radius", Mm)],
         FeatureKind::CornerSeam(_) => &[("/gap", Mm), ("/overlap", Ul), ("/relief_size", Mm)],
+        FeatureKind::CutAcrossBend(_) => &[("/distance", Mm)],
         FeatureKind::Sketch { .. }
         | FeatureKind::Mirror(_)
         | FeatureKind::WorkAxis(_)

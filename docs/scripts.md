@@ -286,6 +286,33 @@ wall's thickness is covered (1 unless given), `gap` and `relief`, `relief_size` 
 the rule's. `sheet.flange` takes the same five for the corners it makes itself, where the
 first wall is the one whose edge comes first in `edges`.
 
+`sheet.cut_across_bend` cuts a profile out of the sheet as it lies flat, so the cut goes round
+the bends it is drawn over. Its sketch is on a side of the sheet (a face of it, or a plane that
+lies on one: here the XY plane, the underside of the plate), and what is drawn past an edge
+that is a bend line lies on the bend, then on the face beyond. `sketch.project` with
+`flat: true` shows a face of the part where it lies on the sheet laid flat, to draw on. This
+circle is centred on the bend line: half of it is cut out of the plate and half out of the
+bend, and in the flat pattern it is the circle that was drawn:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 60, "y2": 40 }, "as": "r" },
+{ "run": "sheet.face", "with": { "sketch": "$s.feature" }, "as": "face" },
+{ "run": "model.edge_ref", "with": { "faces": [{ "type": "cap", "feature": "$face.feature", "end": "end" }, { "type": "side", "feature": "$face.feature", "curve": "$r.lines.1" }] }, "as": "right" },
+{ "run": "sheet.flange", "with": { "edges": ["$right"], "height": 15 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "c" },
+{ "run": "model.face_ref", "with": { "at": [60, 20, 10] }, "as": "wall" },
+{ "run": "sketch.project", "with": { "sketch": "$c.feature", "face": "$wall", "flat": true } },
+{ "run": "sketch.circle", "with": { "sketch": "$c.feature", "cx": 55, "cy": 20, "r": 4 } },
+{ "run": "sheet.cut_across_bend", "with": { "sketch": "$c.feature" } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 5600.56925724 } },
+{ "run": "sheet.flat", "expect": { "holes": 1, "area": 2793.52210746 } }
+```
+
+`distance` makes it a pocket that deep from the side the sketch is on; without it, or at the
+thickness or more, the cut goes through. The profile is of lines, arcs and circles.
+
 `sheet.flat` lays the part flat and returns the size of the sheet (`length`, `width`), its
 `area`, the `cut_length`, the number of cut-outs (`holes`) and every bend's `angle`, `radius`,
 `allowance` and whether it is `up`; with `curves: true`, the outlines too. `sheet.export_dxf`

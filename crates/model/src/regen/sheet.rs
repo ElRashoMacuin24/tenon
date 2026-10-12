@@ -9,8 +9,11 @@ use crate::FeatureId;
 use crate::naming::{FaceOrigin, edge_key, names_of_boolean, names_of_sweep, pair_key, resolve_edge, sub_key};
 use crate::sheet::flange::{self, Notch, Part, Site};
 use crate::sheet::outline::{self, Cutter};
+use crate::sheet::region;
 use crate::sheet::strip;
-use crate::sheet::{ContourFlange, CornerSeam, Face, Flange, Hem, Sides};
+use crate::sheet::unfold::Unfold;
+use crate::sheet::wrap::{self, Tool};
+use crate::sheet::{ContourFlange, CornerSeam, CutAcrossBend, Face, Flange, Hem, Sides};
 
 /// A solid on its way into the part, and the names of its faces.
 type Named = (ShapeHandle, Vec<Option<FaceOrigin>>);
@@ -871,6 +874,71 @@ impl Ctx<'_> {
         // The piece put on the end of a wall is the wall: one face, with the wall's name.
         self.sheet_unify(bi, id);
         Ok(())
+    }
+
+    /// A profile cut out of the sheet round its bends (`crate::sheet::wrap`): each face and bend
+    /// the profile lies on, with the sheet laid flat from the face its sketch is on, loses its
+    /// part of it.
+    pub(super) fn cut_across_bend(&mut self, id: FeatureId, c: &CutAcrossBend) -> Result<(), Stop> {
+        c.check()?;
+        let sizes = self.doc.sheet_sizes()?;
+        let t = sizes.thickness;
+        let (held, frame) = self.sketch_and_frame(c.sketch)?;
+        let sketch: &Sketch = &held;
+        let all = regions(sketch);
+        let profile = profile(sketch, frame, &select(sketch, &all, &c.regions)?);
+        let opts = Unfold { thickness: t, k_factor: sizes.k_factor, base: None, deflection: crate::sheet::FLAT_DEFLECTION };
+        // The face the sketch is on.
+        let seat = crate::sheet::seat_of(self.doc, &self.regen, &*self.k, c.sketch, &frame, &profile.regions)?;
+        let Some((bi, base)) = seat else {
+            return Err(
+                "A cut across bends is drawn on the sheet: its sketch must be on a flat face of the sheet, and this one's plane has no face of the part in it. Put the sketch on the face the cut starts from."
+                    .into(),
+            );
+        };
+        let body = self.regen.bodies.get(bi).ok_or("no such body")?.shape;
+        let tools = wrap::wrap(&*self.k, body, base, &frame, &profile.regions, c.distance.unwrap_or(t), &opts)?;
+        // A wall of the cut is named after the curve of the profile that cuts it and the face of
+        // the sheet it is cut in; its floor, where it does not go through, after that face.
+        let names = self.regen.bodies.get(bi).map(|b| b.names.clone()).unwrap_or_default();
+        let on = |face: u32| names.get(face as usize).copied().flatten().map_or(0, |n| n.key());
+        let tagged = |pieces: &[outline::Piece], face: u32| -> Vec<outline::Piece> {
+            pieces
+                .iter()
+                .map(|p| outline::Piece { tag: if p.tag == 0 { sub_key(on(face), 0) } else { pair_key(sub_key(p.tag, 1), on(face)) }, ..*p })
+                .collect()
+        };
+        let mut cuts: Vec<Named> = Vec::new();
+        let built = (|| -> Result<(), Stop> {
+            for tool in &tools {
+                let floor = sub_key(on(tool.face()), 2);
+                let made = match tool {
+                    Tool::Flat { face, frame, reach, shapes } => {
+                        let regions = shapes
+                            .iter()
+                            .map(|s| Region {
+                                outer: region::to_loop(&tagged(&s.outer, *face)),
+                                holes: s.holes.iter().map(|h| region::to_loop(&tagged(h, *face))).collect(),
+                            })
+                            .collect();
+                        self.sheet_prism(id, &Profile { frame: *frame, regions }, *reach, Some([floor, floor]))?
+                    }
+                    Tool::Bend { face, frame, rho, inner, outer, outline } => {
+                        let regions = vec![Region { outer: outline::to_loop(&tagged(outline, *face)), holes: vec![] }];
+                        self.sheet_roll(id, &Profile { frame: *frame, regions }, *rho, *inner, *outer, [floor, floor])?
+                    }
+                };
+                cuts.push(made);
+            }
+            Ok(())
+        })();
+        if let Err(e) = built {
+            for (s, _) in cuts {
+                self.k.release(s);
+            }
+            return Err(e);
+        }
+        self.sheet_assemble(bi, body, cuts, Vec::new(), Vec::new(), "cut", ["", ""])
     }
 
     pub(super) fn contour_flange(&mut self, id: FeatureId, c: &ContourFlange) -> Result<(), Stop> {

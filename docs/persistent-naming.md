@@ -39,7 +39,10 @@ kept for the parts not built (neighbour origins, split ordinals, vertex referenc
     the sketch they follow (a bend made at a corner: the two lines it joins) and the side of
     the sheet. A corner seam's faces are named after the two edges it was given, which of
     the two faces they are on and the part they are; what it adds in the plane of a face of
-    the part is made one with that face, which keeps its name. A sheet metal face is named
+    the part is made one with that face, which keeps its name. A wall of a cut across bends
+    is named after the curve of the profile that cuts it and the face of the sheet it is cut
+    in (one curve cuts a wall in the plate, one in the bend, one in the face beyond), and the
+    floor of one that does not go through after that face. A sheet metal face is named
     as an extrusion is.
 
 Booleans pass names on through `images` (`names_of_boolean`); modify operations through images

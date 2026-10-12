@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::f64::consts::TAU;
 
 use tenon_geom::{Axis, Vec2, Vec3};
-use tenon_kernel::{CurveKind, EdgeId, EdgeInfo, FaceInfo, Kernel, KernelError, ShapeHandle, SurfaceKind};
+use tenon_kernel::{CurveKind, EdgeId, EdgeInfo, FaceInfo, Kernel, KernelError, ShapeHandle, SurfaceKind, Topology};
 
 use super::flat::{Bend, FlatCurve, FlatLoop, FlatPattern, JOIN, bounds, chain, crossing};
 
@@ -33,7 +33,7 @@ const VOLUME_REL: f64 = 0.02;
 
 /// Where a face of the A side lies in the flat.
 #[derive(Clone, Debug)]
-enum Chart {
+pub(super) enum Chart {
     /// A rigid move: `o3` goes to `o2`, the directions `u3`, `v3` in the plane to `u2`, `v2`.
     Plane { o3: Vec3, u3: Vec3, v3: Vec3, o2: Vec2, u2: Vec2, v2: Vec2 },
     /// Unrolled: `q` goes to `o2`, a step along the axis to `ea`, and a turn by an angle about
@@ -65,7 +65,7 @@ fn radial(axis: &Axis, p: Vec3) -> Option<Vec3> {
 
 impl Chart {
     /// How far round the axis `p` is from the chart's reference point, and how far along.
-    fn round(&self, p: Vec3) -> (f64, f64) {
+    pub(super) fn round(&self, p: Vec3) -> (f64, f64) {
         match self {
             Chart::Plane { .. } => (0.0, 0.0),
             Chart::Bend { q, axis, r0, mid, .. } => {
@@ -77,7 +77,7 @@ impl Chart {
         }
     }
 
-    fn map(&self, p: Vec3) -> Vec2 {
+    pub(super) fn map(&self, p: Vec3) -> Vec2 {
         match self {
             Chart::Plane { o3, u3, v3, o2, u2, v2 } => *o2 + *u2 * (p - *o3).dot(*u3) + *v2 * (p - *o3).dot(*v3),
             Chart::Bend { rho, o2, ea, eg, .. } => {
@@ -88,7 +88,7 @@ impl Chart {
     }
 
     /// Where a point given by its angle and its distance along a bend lies in the flat.
-    fn unrolled(&self, angle: f64, along: f64) -> Vec2 {
+    pub(super) fn unrolled(&self, angle: f64, along: f64) -> Vec2 {
         match self {
             Chart::Plane { o2, .. } => *o2,
             Chart::Bend { rho, o2, ea, eg, .. } => *o2 + *ea * along + *eg * (rho * angle),
@@ -201,7 +201,7 @@ fn child_chart(parent: &Chart, q: Vec3, face: &FaceInfo, inner: Option<bool>, op
 }
 
 /// An edge of a face as a curve of the flat.
-fn flatten(k: &dyn Kernel, edge: EdgeId, info: &EdgeInfo, chart: &Chart, deflection: f64) -> Result<FlatCurve, String> {
+pub(super) fn flatten(k: &dyn Kernel, edge: EdgeId, info: &EdgeInfo, chart: &Chart, deflection: f64) -> Result<FlatCurve, String> {
     let (start, end) = (chart.map(info.start), chart.map(info.end));
     let sampled = || -> Result<FlatCurve, String> {
         let pts = k.edge_points(edge, deflection).map_err(|e| e.to_string())?;
@@ -242,36 +242,25 @@ fn kerr(e: KernelError) -> String {
     e.to_string()
 }
 
-/// Lays `shape` flat.
-///
-/// The solid must be one sheet of `thickness`: flat faces joined by round bends, cut square
-/// through. That is checked by volume (its A side's faces, each `thickness` deep, must account
-/// for the solid to within 2 %), so a solid that is something else is refused in plain words
-/// and never unfolded into nonsense.
-pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatPattern, String> {
-    let t = opts.thickness;
-    if !(t.is_finite() && t > 0.0) {
-        return Err("the sheet thickness must be more than 0".into());
-    }
-    if !(opts.k_factor.is_finite() && (0.0..=1.0).contains(&opts.k_factor)) {
-        return Err("the K factor must be from 0 to 1".into());
-    }
+/// A solid as the unfolding reads it: what its faces and edges are, and which meet.
+pub(super) struct Read {
+    pub topo: Topology,
+    pub faces: Vec<FaceInfo>,
+    pub edges: Vec<EdgeInfo>,
+}
+
+pub(super) fn read(k: &dyn Kernel, shape: ShapeHandle) -> Result<Read, String> {
     let topo = k.topology(shape).map_err(kerr)?;
-    if topo.solids != 1 {
-        return Err(format!("A flat pattern is of one solid, and this part has {}. Combine them, or keep each in a part of its own.", topo.solids));
-    }
     let faces: Vec<FaceInfo> = (0..topo.faces).map(|i| k.face_info(shape.face(i))).collect::<Result<_, _>>().map_err(kerr)?;
     let edges: Vec<EdgeInfo> = (0..topo.edges).map(|i| k.edge_info(shape.edge(i))).collect::<Result<_, _>>().map_err(kerr)?;
+    Ok(Read { topo, faces, edges })
+}
 
-    let base = match opts.base {
-        Some(b) => b,
-        None => largest_flat(&faces).ok_or("The part has no flat face to lay the pattern out from.")?,
-    };
-    let base_info = faces.get(base as usize).ok_or("the face to lay the pattern out from does not exist")?;
-    let first = base_chart(base_info).ok_or("The pattern is laid out from a flat face: the face chosen is not flat.")?;
-
-    // Follow the A side from the base face across every edge where the next face runs on
-    // smoothly: a flat face in the same plane, or one side of a bend.
+/// Where every face of one side of the sheet lies in the flat, when face `base` lies at `first`:
+/// the side is followed from the base face across every edge where the next face runs on
+/// smoothly, a flat face in the same plane or one side of a bend.
+pub(super) fn follow(solid: &Read, base: u32, first: Chart, opts: &Unfold) -> Result<BTreeMap<u32, Chart>, String> {
+    let Read { topo, faces, edges } = solid;
     let mut charts: BTreeMap<u32, Chart> = BTreeMap::from([(base, first)]);
     let mut queue: VecDeque<u32> = VecDeque::from([base]);
     while let Some(f) = queue.pop_front() {
@@ -291,7 +280,7 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
                     SurfaceKind::Plane { .. } => None,
                     // A round face that is no bend (the rounded rim of the sheet) is not part
                     // of the side: the outline stops at it.
-                    _ => match bend_side(g as usize, &faces, t) {
+                    _ => match bend_side(g as usize, faces, opts.thickness) {
                         Some(inner) => Some(inner),
                         None => continue,
                     },
@@ -301,6 +290,38 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
             }
         }
     }
+    Ok(charts)
+}
+
+/// Lays `shape` flat.
+///
+/// The solid must be one sheet of `thickness`: flat faces joined by round bends, cut square
+/// through. That is checked by volume (its A side's faces, each `thickness` deep, must account
+/// for the solid to within 2 %), so a solid that is something else is refused in plain words
+/// and never unfolded into nonsense.
+pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatPattern, String> {
+    let t = opts.thickness;
+    if !(t.is_finite() && t > 0.0) {
+        return Err("the sheet thickness must be more than 0".into());
+    }
+    if !(opts.k_factor.is_finite() && (0.0..=1.0).contains(&opts.k_factor)) {
+        return Err("the K factor must be from 0 to 1".into());
+    }
+    let solid = read(k, shape)?;
+    if solid.topo.solids != 1 {
+        return Err(format!(
+            "A flat pattern is of one solid, and this part has {}. Combine them, or keep each in a part of its own.",
+            solid.topo.solids
+        ));
+    }
+    let base = match opts.base {
+        Some(b) => b,
+        None => largest_flat(&solid.faces).ok_or("The part has no flat face to lay the pattern out from.")?,
+    };
+    let base_info = solid.faces.get(base as usize).ok_or("the face to lay the pattern out from does not exist")?;
+    let first = base_chart(base_info).ok_or("The pattern is laid out from a flat face: the face chosen is not flat.")?;
+    let charts = follow(&solid, base, first, opts)?;
+    let Read { topo, faces, edges } = solid;
 
     // The faces of the side, each one thickness deep, must be the solid.
     let volume = k.mass_properties(shape, 1.0).map_err(kerr)?.volume;

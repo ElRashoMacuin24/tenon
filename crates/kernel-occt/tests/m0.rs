@@ -336,3 +336,35 @@ fn kernel_moves_to_a_worker_thread() {
     let v = std::thread::spawn(move || volume(k.as_ref(), b)).join().unwrap();
     assert!(approx(v, 4000.0));
 }
+
+#[test]
+fn the_volume_is_right_where_the_rim_of_a_round_face_curves_back_on_itself() {
+    // A hole of radius 3 drilled across a shaft of radius 10, through its axis. What the two
+    // cylinders have in common is 8 r^2 times the integral, over a quarter turn, of
+    // cos^2(a) sqrt(R^2 - r^2 sin^2(a)): summed here by Simpson's rule. (Summed face by face
+    // without asking for a precision, the kernel had this hole 0.009 mm³ too large.)
+    let mut k = OcctKernel::new();
+    let shaft = cylinder_z(&mut k, Vec3::ZERO, 10.0, 40.0);
+    let drill = k.make_cylinder(&Axis::new(Vec3::new(-20.0, 0.0, 20.0), Vec3::X).unwrap(), 3.0, 40.0).unwrap().shape;
+    let cut = k.boolean(BoolOp::Cut, shaft, &[drill]).unwrap();
+    let (big, small) = (10.0f64, 3.0f64);
+    let f = |a: f64| a.cos().powi(2) * (big * big - small * small * a.sin().powi(2)).sqrt();
+    let n = 2000;
+    let h = PI / 2.0 / f64::from(n);
+    let sum: f64 = (0..=n)
+        .map(|i| {
+            f(f64::from(i) * h)
+                * if i == 0 || i == n {
+                    1.0
+                } else if i % 2 == 1 {
+                    4.0
+                } else {
+                    2.0
+                }
+        })
+        .sum();
+    let hole = 8.0 * small * small * sum * h / 3.0;
+    let want = PI * 100.0 * 40.0 - hole;
+    let got = volume(&k, cut.shape);
+    assert!((got - want).abs() < 1e-9 * want, "{got} {want}: the hole {} {hole}", PI * 4000.0 - got);
+}

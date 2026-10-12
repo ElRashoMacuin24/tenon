@@ -1,5 +1,6 @@
 //! Sheet metal through the UI (M8), with real pointer and key input: the Sheet Metal tab, Sheet
-//! Metal Defaults, the Face and Flange panels, and the flat pattern with its DXF.
+//! Metal Defaults, the panels of its features, Project Flat Pattern in a sketch, and the flat
+//! pattern with its DXF.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::f64::consts::{FRAC_PI_2, PI};
@@ -251,12 +252,15 @@ fn a_face_and_a_flange_are_made_from_their_panels_by_clicks() {
     wb.exec("sketch.circle", json!({ "sketch": hole.0, "cx": at.x, "cy": at.y, "r": 4 })).unwrap();
     wb.run_ui("sheet.cut").unwrap();
     frames(&mut d, &mut wb);
-    let Some(Panel::Extrude(p)) = &wb.panel else { panic!("Cut is an extrusion that cuts") };
-    assert_eq!((p.operation, p.distance, p.distance_b), (tenon_model::Operation::Cut, 2.0, 2.0));
+    let Some(Panel::SheetCut(p)) = &wb.panel else { panic!("the Cut panel: {}", wb.status()) };
+    assert_eq!((p.across, p.distance), (false, 2.0));
     d.tap(&mut wb, egui::Key::Enter);
     frames(&mut d, &mut wb);
     let cut = own - 10.0 * 2.0 * 12.0 - 16.0 * PI * 2.0;
     assert!(wb.panel.is_none() && near(volume(&wb), cut), "{} {cut}: {}", volume(&wb), wb.status());
+    // It is an extrusion that cuts, a Thickness each way.
+    let Some(FeatureKind::Extrude(e)) = wb.document().features().last().map(|f| f.kind.clone()) else { panic!("an extrusion") };
+    assert_eq!((e.operation, e.extent), (tenon_model::Operation::Cut, tenon_model::ExtrudeExtent::TwoSided { forward: 2.0, backward: 2.0 }));
     // Its distances follow the thickness: a thicker sheet is still cut through.
     wb.exec("sheet.defaults", json!({ "thickness": 3 })).unwrap();
     frames(&mut d, &mut wb);
@@ -793,4 +797,147 @@ fn a_flange_s_corners_take_a_seam_and_a_relief_of_their_own_in_its_panel() {
     frames(&mut d, &mut wb);
     let texts = d.texts();
     assert!(!texts.iter().any(|t| t == "Seam") && texts.iter().any(|t| t == "Relief"), "{texts:?}");
+}
+
+#[test]
+fn a_cut_goes_round_a_bend_when_its_panel_is_told_to() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1000.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3 })).unwrap();
+    // A plate with a wall bent up from its right edge: the bend line is at x = 55.
+    let (face, lines) = plate(&mut wb, 60.0, 40.0);
+    let edge = wb
+        .exec(
+            "model.edge_ref",
+            json!({ "faces": [{ "type": "cap", "feature": face, "end": "end" }, { "type": "side", "feature": face, "curve": lines[1] }] }),
+        )
+        .unwrap();
+    wb.exec("sheet.flange", json!({ "edges": [edge], "height": 15 })).unwrap();
+    frames(&mut d, &mut wb);
+    let whole = volume(&wb);
+    // A circle of radius 4 drawn on the top of the plate, centred on the bend line.
+    let top = wb.exec("model.face_ref", json!({ "origin": { "type": "cap", "feature": face, "end": "end" } })).unwrap();
+    wb.create_sketch(json!({ "face": top })).unwrap();
+    let Some(sketch) = wb.document().features().last().map(|f| f.id) else { panic!() };
+    frames(&mut d, &mut wb);
+    let at = wb.sketch_frame(sketch).unwrap().to_local(Vec3::new(55.0, 20.0, 2.0));
+    wb.exec("sketch.circle", json!({ "sketch": sketch.0, "cx": at.x, "cy": at.y, "r": 4 })).unwrap();
+
+    // Cut, from the Modify panel of the Sheet Metal tab: straight through to begin with, one
+    // Thickness each way from the sketch, which takes a slice of the bend that is no circle on
+    // the flat sheet.
+    wb.run_ui("sheet.cut").unwrap();
+    frames(&mut d, &mut wb);
+    let Some(Panel::SheetCut(p)) = &wb.panel else { panic!("the Cut panel: {}", wb.status()) };
+    assert_eq!((p.editing, p.across, p.distance), (None, false, 2.0));
+    let texts = d.texts();
+    for shown in ["Cut", "Profiles", "1 selected", "Cut Across Bend", "Distance", "fx: Thickness"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    let wrapped = whole - (8.0 * PI * 2.0 + 8.0 * PI * (25.0 - 9.0) / (2.0 * 3.88));
+    assert!(volume(&wb) < whole - 8.0 * PI * 2.0 && !near(volume(&wb), wrapped), "{} {wrapped}", volume(&wb));
+    // Cut Across Bend ticked: the preview is the hole wrapped round the bend, half of it on the
+    // plate and half on the bend.
+    d.click(&mut wb, pressable(&d, "tn_cut_across"));
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::SheetCut(p)) if p.across));
+    assert!(near(volume(&wb), wrapped), "{} {wrapped}", volume(&wb));
+    // OK: a feature of its own, named Cut, its depth the Thickness by equation.
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let (id, name, kind) = wb.document().features().last().map(|f| (f.id, f.name.clone(), f.kind.clone())).unwrap();
+    let FeatureKind::CutAcrossBend(c) = kind else { panic!("{kind:?}") };
+    assert_eq!((name.as_str(), c.sketch, c.distance), ("Cut1", sketch, Some(2.0)));
+    assert!(near(volume(&wb), wrapped), "{} {wrapped}", volume(&wb));
+    // In the flat pattern it is the circle that was drawn.
+    let flat = wb.exec("sheet.flat", json!({ "curves": true })).unwrap();
+    assert!(
+        flat["holes"] == 1 && flat["inner"][0][0]["type"] == "circle" && flat["inner"][0][0]["radius"].as_f64().is_some_and(|r| near(r, 4.0)),
+        "{flat}"
+    );
+    // A thicker sheet is still cut through: the depth follows the Thickness.
+    wb.exec("sheet.defaults", json!({ "thickness": 3 })).unwrap();
+    frames(&mut d, &mut wb);
+    assert_eq!(wb.exec("sheet.flat", json!({})).unwrap()["holes"], 1);
+    wb.exec("sheet.defaults", json!({ "thickness": 2 })).unwrap();
+    frames(&mut d, &mut wb);
+
+    // Edited from the browser it is still a cut across the bend (that cannot be unticked), and
+    // a depth typed into it makes a pocket: 1 deep from the top, the inside of the bend.
+    let row = browser_row(&d, "Cut1");
+    double_click(&mut d, &mut wb, row.center());
+    frames(&mut d, &mut wb);
+    let Some(Panel::SheetCut(p)) = &wb.panel else { panic!("double-click edits the cut: {}", wb.status()) };
+    assert_eq!((p.editing, p.across, p.distance), (Some(id), true, 2.0));
+    d.click(&mut wb, pressable(&d, "tn_cut_across"));
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::SheetCut(p)) if p.across), "the box is not for unticking here");
+    type_into(&mut d, &mut wb, "tn_props_cut_distance", "1");
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    let pocket = whole - (8.0 * PI * 1.0 + 8.0 * PI * (16.0 - 9.0) / (2.0 * 3.88));
+    assert!(wb.panel.is_none() && near(volume(&wb), pocket), "{} {pocket}: {}", volume(&wb), wb.status());
+}
+
+#[test]
+fn project_flat_pattern_shows_the_wall_beyond_a_bend_in_a_sketch_on_the_plate() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1000.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3 })).unwrap();
+    let (face, lines) = plate(&mut wb, 60.0, 40.0);
+    let edge = wb
+        .exec(
+            "model.edge_ref",
+            json!({ "faces": [{ "type": "cap", "feature": face, "end": "end" }, { "type": "side", "feature": face, "curve": lines[1] }] }),
+        )
+        .unwrap();
+    wb.exec("sheet.flange", json!({ "edges": [edge], "height": 15 })).unwrap();
+    let top = wb.exec("model.face_ref", json!({ "origin": { "type": "cap", "feature": face, "end": "end" } })).unwrap();
+    wb.create_sketch(json!({ "face": top })).unwrap();
+    let Some(sk) = wb.document().features().last().map(|f| f.id) else { panic!() };
+    d.settle(&mut wb);
+    // Seen from the left, so that the inside of the wall can be clicked.
+    wb.look_from(Vec3::new(-1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    let flat = |wb: &Workbench| wb.document().projections(sk).iter().filter(|p| p.flat).count();
+    assert_eq!(flat(&wb), 0);
+
+    // Project Flat Pattern is under Project Geometry on the Sketch tab. A click on the inside
+    // of the wall: its four edges are in the sketch, where the wall lies with the sheet laid
+    // flat from the plate.
+    assert!(crate::commands::find("sketch.project_flat").is_some_and(|c| c.available()));
+    wb.run_ui("sketch.project_flat").unwrap();
+    assert_eq!(wb.active_tool_id(), Some("sketch.project_flat"));
+    let wall = on_screen(&wb, Vec3::new(58.0, 20.0, 10.0));
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(wall)]);
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(wb.view.hover, Some(crate::viewport::Pick::Face { .. })), "the face lights up: {:?}", wb.view.hover);
+    d.click(&mut wb, wall);
+    frames(&mut d, &mut wb);
+    assert!(!wb.status_error && wb.status().starts_with("Laid flat: 4 edges"), "{}", wb.status());
+    assert_eq!(flat(&wb), 4);
+    // The far edge of the wall is the bend's allowance and the wall's 10 beyond the bend line.
+    let ba = FRAC_PI_2 * 3.88;
+    let frame = wb.sketch_frame(sk).unwrap();
+    let sketch = wb.document().sketch(sk).unwrap().clone();
+    let far = frame.to_local(Vec3::new(65.0 + ba, 20.0, 2.0));
+    let on_far = |entity| sketch.line(entity).is_some_and(|(a, b)| (a.mid(b).x - far.x).abs() < 1e-9 && (a.mid(b).y - far.y).abs() < 1e-9);
+    assert!(
+        wb.document().projections(sk).iter().any(|p| p.flat && sketch.is_reference(p.entity) && on_far(p.entity)),
+        "the top of the wall, laid flat"
+    );
+    // A click on nothing says what to click; Esc ends the tool.
+    let nowhere = on_screen(&wb, Vec3::new(30.0, 20.0, 30.0));
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(nowhere)]);
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, nowhere);
+    assert!(wb.status_error && wb.status().contains("click a face of the sheet"), "{}", wb.status());
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.active_tool_id(), None);
 }

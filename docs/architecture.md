@@ -13,7 +13,7 @@ rules are enforced by `cargo xtask layers` (table in `xtask/src/layers.rs`) and
 | L1 | `kernel` | backend-neutral `Kernel` trait, handles, operation history, query types, validation | M0 |
 | L2 (backend) | `kernel-occt` | OpenCASCADE 8 backend: cxx bridge + C++ shim; the only crate with `unsafe` | M0 |
 | L2 | `sketch` | 2D sketch entities, constraints, solver behind `SketchSolver`, sketch tools, profile regions | M1 |
-| L3 | `model` | feature tree, regeneration (incremental), face and edge naming, parameters and equations, measuring, command registry and undo, regeneration worker; the standard parts library; sheet metal (the rule, faces, flanges, hems and contour flanges, and the flat pattern unfolded from the solid: `sheet`) | M8 |
+| L3 | `model` | feature tree, regeneration (incremental), face and edge naming, parameters and equations, measuring, command registry and undo, regeneration worker; the standard parts library; sheet metal (the rule, faces, flanges, hems, contour flanges and corner seams, cuts wrapped round the bends, and the flat pattern unfolded from the solid: `sheet`) | M8 |
 | L4 | `assembly` | assemblies: components, constraints and joints, the rigid-body solver, degrees of freedom, parts list, interference, exploded view, `asm.*` commands | M3 |
 | L5 | `drawing` | drawings: sheets, views through hidden-line removal (projected, section, detail, isometric), associative dimensions, centrelines, hole tables, balloons, parts lists, title blocks, PDF/SVG/DXF, `drw.*` commands | M4 |
 | L6 | `io` | `.tenon` part, `.tenonasm` assembly and `.tenondrw` drawing files, file and export commands, STL and 3MF, the mesh checks behind the 3D print check; flat patterns as DXF and SVG; STEP via the kernel | M8 |
@@ -61,6 +61,9 @@ model / io / cli  ──>  dyn Kernel  ──>  OcctKernel (Rust arena of shapes
   outline runs along or round the axis, ruled ones elsewhere, sewn into a solid and checked.
   `unify` makes faces that lie in one surface one face across the edges it is told of, with
   the image of every face (OCCT's ShapeUpgrade_UnifySameDomain, every other edge kept).
+- **Volumes to a precision.** `mass_properties` asks OCCT for a solid's volume to 1e-9 a face
+  (its adaptive sum): the plain sum is off where a face of a round surface has a rim that
+  curves back on itself, a hole drilled across a shaft or a round cut across a bend (DEC-069).
 - **Threading.** `Kernel: Send`. A kernel is owned by one thread at a time (in the app, the
   regeneration worker); OCCT's STEP translator, which has global state, is serialised by a lock.
 - **Quiet.** OCCT's default message printers are removed so nothing writes to stdout.

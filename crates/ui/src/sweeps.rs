@@ -403,6 +403,7 @@ impl Workbench {
             // (Its closed regions can be clicked to choose what is extruded.)
             Some(Panel::Extrude(p)) => vec![p.sketch],
             Some(Panel::SheetFace(p)) => vec![p.sketch],
+            Some(Panel::SheetCut(p)) => vec![p.sketch],
             Some(Panel::Loft(p)) => p.sections.clone(),
             _ => vec![],
         };
@@ -598,6 +599,7 @@ impl Workbench {
             Some(Panel::Sweep(p)) => Some((p.sketch, &p.regions)),
             Some(Panel::Coil(p)) => Some((p.sketch, &p.regions)),
             Some(Panel::SheetFace(p)) => Some((p.sketch, &p.regions)),
+            Some(Panel::SheetCut(p)) => Some((p.sketch, &p.regions)),
             _ => None,
         }
     }
@@ -641,6 +643,7 @@ impl Workbench {
             Some(Panel::Sweep(p)) => &mut p.regions,
             Some(Panel::Coil(p)) => &mut p.regions,
             Some(Panel::SheetFace(p)) => &mut p.regions,
+            Some(Panel::SheetCut(p)) => &mut p.regions,
             _ => return false,
         };
         *regions = RegionSel::Keys(keys);

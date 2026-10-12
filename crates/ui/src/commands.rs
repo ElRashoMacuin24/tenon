@@ -191,7 +191,8 @@ pub const RIBBON: &[RibbonTab] = &[
                         "Show edges of the part in the sketch as reference geometry: it follows the part, and the sketch is dimensioned and constrained to it",
                         Icon::Project,
                         0,
-                    ),
+                    )
+                    .more(&["sketch.project", "sketch.project_flat"]),
                 ],
             },
             RibbonPanel {
@@ -783,6 +784,13 @@ pub const DRW_RETURN: UiCommand = large("drw.return", "Return", "Finish editing 
 /// Commands reachable from drop-down arrows, menus and keys but not shown on the ribbon itself.
 pub const EXTRA: &[UiCommand] = &[
     small("sketch.spline", "Spline", "Click control points; Enter finishes", Icon::Spline, 0),
+    small(
+        "sketch.project_flat",
+        "Project Flat Pattern",
+        "In a sketch on a sheet metal face: show a face beyond a bend where it lies with the sheet laid flat, to draw a cut across the bend on",
+        Icon::Project,
+        0,
+    ),
     small("sketch.polygon", "Polygon", "Click the centre, then a corner (6 sides)", Icon::Polygon, 0),
     small(
         "sketch.break_link",

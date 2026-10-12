@@ -56,6 +56,8 @@ pub(crate) enum Tool {
     ArcTangent,
     /// Project Geometry: clicks are on the part, not the sketch.
     Project,
+    /// Project Flat Pattern: a click on a face of the sheet shows it laid flat in the sketch.
+    ProjectFlat,
 }
 
 const TOOLS: &[(&str, Tool)] = &[
@@ -83,6 +85,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("sketch.concentric", Tool::Concentric),
     ("sketch.fix", Tool::Fix),
     ("sketch.project", Tool::Project),
+    ("sketch.project_flat", Tool::ProjectFlat),
     ("sketch.move", Tool::Move),
     ("sketch.copy", Tool::Copy),
     ("sketch.rotate", Tool::Rotate),
@@ -129,6 +132,7 @@ impl Tool {
             Tool::Collinear => "Click two lines.",
             Tool::Symmetric => "Click two points, then the line of symmetry.",
             Tool::Project => "Click edges of the part to show them in the sketch (a face: all its edges). Esc ends.",
+            Tool::ProjectFlat => "Click a face of the sheet beyond a bend: it is shown where it lies with the sheet laid flat. Esc ends.",
             Tool::Move => "Click the point to move from, then where it goes (or type X and Y).",
             Tool::Copy => "Click the point to copy from, then where each copy goes. Esc ends.",
             Tool::Rotate => "Click the point to turn about, then a point to turn from and one to turn to (or type the angle).",
@@ -809,8 +813,8 @@ impl Workbench {
             Mode::Model => Tool::Select,
         };
         // Project Geometry works on the part behind the sketch, not on the sketch.
-        if tool == Tool::Project {
-            self.project_tool(ui, resp, rect, feature);
+        if matches!(tool, Tool::Project | Tool::ProjectFlat) {
+            self.project_tool(ui, resp, rect, feature, tool == Tool::ProjectFlat);
         } else {
             self.view.hover = None;
         }
@@ -1450,7 +1454,7 @@ impl Workbench {
             // (Its clicks are on dimensions, which are handled where they are drawn.)
             Tool::Driven => self.set_status(Tool::Driven.hint()),
             // (Its clicks are on the part: see `project_tool`.)
-            Tool::Project => {}
+            Tool::Project | Tool::ProjectFlat => {}
             t if crate::sketch_tools::is_tool(t) => self.modify_click(feature, sketch, click, hover),
             t => self.constraint_click(feature, sketch, t, hover),
         }

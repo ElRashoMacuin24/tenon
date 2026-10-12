@@ -6,16 +6,19 @@
 //!   equations and design table columns like any other and the features follow them.
 //! - The features: [`Face`] (a sketch profile one thickness thick), [`Flange`] (a bend and a
 //!   wall along edges of the sheet, mitred and relieved where two meet), [`Hem`] (an edge folded
-//!   back on itself) and [`ContourFlange`] (sheet along an open profile). Cuts, holes and
-//!   rounded corners are the ordinary features.
+//!   back on itself), [`ContourFlange`] (sheet along an open profile), [`CornerSeam`] and
+//!   [`CutAcrossBend`] (a profile cut round the bends, as drawn on the sheet laid flat: [`wrap`]).
+//!   Other cuts, holes and rounded corners are the ordinary features.
 //! - The **flat pattern** ([`flat`], [`unfold`]) is worked out from the solid, not from the
 //!   features, so whatever made the part, what is cut is what the model shows.
 
 pub mod flange;
 pub mod flat;
 pub mod outline;
+pub mod region;
 pub mod strip;
 pub mod unfold;
+pub mod wrap;
 
 use std::collections::BTreeMap;
 
@@ -318,6 +321,30 @@ impl CornerSeam {
     }
 }
 
+/// A profile cut out of the sheet as it lies flat: laid out from the face the profile's sketch
+/// is on, every face and every bend the profile lies on loses its part of it, so the cut goes
+/// round the bends with the sheet (Cut with Cut Across Bend). In the flat pattern it is the
+/// profile as drawn.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CutAcrossBend {
+    pub sketch: FeatureId,
+    #[serde(default)]
+    pub regions: RegionSel,
+    /// How deep the cut goes, from the side of the sheet the sketch is on; without it (or at
+    /// the thickness or more) it goes through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance: Option<f64>,
+}
+
+impl CutAcrossBend {
+    pub fn check(&self) -> Result<(), String> {
+        match self.distance {
+            Some(d) if !(d.is_finite() && d > 0.0) => Err("the depth of a cut must be more than 0".into()),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// How much of its edge a flange takes up.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -615,6 +642,66 @@ pub fn pattern_of(doc: &Document, regen: &crate::Regen, k: &dyn Kernel, body: Op
         None => None,
     };
     unfold(k, shape, &Unfold { thickness: sizes.thickness, k_factor: sizes.k_factor, base, deflection: FLAT_DEFLECTION })
+}
+
+/// How a sheet is laid flat by the part's rule.
+pub(crate) fn unfold_opts(doc: &Document) -> Result<Unfold, String> {
+    let sizes = doc.sheet_sizes()?;
+    Ok(Unfold { thickness: sizes.thickness, k_factor: sizes.k_factor, base: None, deflection: FLAT_DEFLECTION })
+}
+
+/// The side of the sheet that sketch `sketch` (whose plane is `frame`) lies on, as `regen` has
+/// the part: the solid and its face. That is the face the sketch was put on when it is one;
+/// else, of the sides of the sheet in the sketch's plane, the one with most of `profile` on it,
+/// or the nearest. None when the sketch's plane holds no side of the sheet.
+pub(crate) fn seat_of(
+    doc: &Document,
+    regen: &crate::Regen,
+    k: &dyn Kernel,
+    sketch: FeatureId,
+    frame: &tenon_geom::Frame,
+    profile: &[tenon_kernel::Region],
+) -> Result<Option<(usize, u32)>, String> {
+    let opts = unfold_opts(doc)?;
+    if let Some(crate::FeatureKind::Sketch { plane: crate::PlaneRef::Face(on), .. }) = doc.feature(sketch).map(|f| &f.kind)
+        && let Ok((b, face)) = regen.resolve(on, k)
+        && let Some(body) = regen.bodies.get(b)
+        && wrap::is_seat(k, body.shape, face, frame, &opts)?
+    {
+        return Ok(Some((b, face)));
+    }
+    let mut best: Option<(usize, u32, f64)> = None;
+    for (b, body) in regen.bodies.iter().enumerate() {
+        if let Some((face, share)) = wrap::seat(k, body.shape, frame, profile, &opts)?
+            && best.is_none_or(|(_, _, most)| share > most)
+        {
+            best = Some((b, face, share));
+        }
+    }
+    Ok(best.map(|(b, face, _)| (b, face)))
+}
+
+/// Where edge `edge` of the part lies in sketch `sketch` with the sheet laid flat from the face
+/// the sketch is on (Project Flat Pattern).
+pub(crate) fn edge_laid_flat(
+    doc: &Document,
+    regen: &crate::Regen,
+    k: &dyn Kernel,
+    sketch: FeatureId,
+    frame: &tenon_geom::Frame,
+    edge: &EdgeRef,
+) -> Result<crate::project::Projected, String> {
+    if doc.sheet_metal().is_none() {
+        return Err("the part is not sheet metal, so it has no flat pattern to show".into());
+    }
+    let (b, e) = regen.resolve_edge(edge, k)?;
+    let (seat, base) =
+        seat_of(doc, regen, k, sketch, frame, &[])?.ok_or("the sketch is not on a side of the sheet, so there is nothing to lay flat from")?;
+    if seat != b {
+        return Err("it is on another solid than the one the sketch is on".into());
+    }
+    let shape = regen.bodies.get(b).ok_or("no such body")?.shape;
+    wrap::flat_edge(k, shape, base, frame, e, &unfold_opts(doc)?)
 }
 
 impl Document {

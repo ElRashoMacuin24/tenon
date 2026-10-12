@@ -1,6 +1,7 @@
 //! Sketch tools that reach beyond the sketch (DEC-055): the part's edges shown in it as
 //! reference geometry, by the Project Geometry tool or from the start when a sketch is made on
-//! a face. And the tools of the sketch's Modify and Pattern panels and its further shapes
+//! a face; and the faces of a sheet metal part beyond a bend shown laid flat (Project Flat
+//! Pattern, DEC-068). And the tools of the sketch's Modify and Pattern panels and its further shapes
 //! (DEC-056): what a click does with each, what is shown before the click that commits it, and
 //! the pattern window.
 
@@ -58,13 +59,15 @@ impl Workbench {
     }
 
     /// The Project Geometry tool: the part's edge (or face) under the pointer lights up, and a
-    /// click shows it in the sketch. Returns true while the tool has the pointer.
-    pub(crate) fn project_tool(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect, feature: FeatureId) -> bool {
+    /// click shows it in the sketch. With `flat` it is Project Flat Pattern: a face of the sheet
+    /// is shown where it lies with the sheet laid flat from the sketch's face. Returns true
+    /// while the tool has the pointer.
+    pub(crate) fn project_tool(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect, feature: FeatureId, flat: bool) -> bool {
         let Some(frame) = self.sketch_frame(feature) else { return true };
         let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
         let under = resp.hover_pos().and_then(|p| {
             let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
-            if let Some(e) = tenon_render::pick::pick_edge(&meshes, &self.view.camera, w, h, x, y, 6.0) {
+            if !flat && let Some(e) = tenon_render::pick::pick_edge(&meshes, &self.view.camera, w, h, x, y, 6.0) {
                 return Some(Pick::Edge { body: e.body, edge: e.edge });
             }
             let (o, d) = self.view.camera.ray(x, y, w, h);
@@ -75,6 +78,16 @@ impl Workbench {
             return true;
         }
         let _ = ui;
+        if flat {
+            match under {
+                Some(Pick::Face { body, face }) => match self.face_ref_of(body, face) {
+                    Some(face) => self.project_flat(feature, face),
+                    None => self.set_error("That face cannot be referred to yet, so it cannot be shown laid flat."),
+                },
+                _ => self.set_error("Project Flat Pattern: click a face of the sheet, beyond a bend from the face the sketch is on."),
+            }
+            return true;
+        }
         let found = match under {
             Some(Pick::Edge { body, edge }) => self.edge_on(body, edge, &frame).map(|(e, p)| (vec![e], vec![p])),
             Some(Pick::Face { body, face }) => match self.face_edges_on(body, face, &frame) {
@@ -97,6 +110,38 @@ impl Workbench {
             Err(e) => self.set_error(format!("That cannot be projected: {e}.").replace("..", ".")),
         }
         true
+    }
+
+    /// Project Flat Pattern: the edges of `face` shown in sketch `sketch` where they lie with
+    /// the sheet laid flat from the sketch's face. Worked out with the kernel, wherever that is.
+    fn project_flat(&mut self, sketch: FeatureId, face: FaceRef) {
+        let job = crate::print_dialog::PartJob::FlatEdges { sketch };
+        let asked = self.part_job(job, move |k, _, doc| tenon_model::cmd::projected(doc, k, sketch, Vec::new(), Some(&face), true));
+        if let Err(e) = asked {
+            self.set_error(format!("Project Flat Pattern: {e}"));
+        }
+    }
+
+    /// The edges of a face laid flat arrived: those that can be shown go into the sketch.
+    pub(crate) fn flat_edges_done(&mut self, sketch: FeatureId, result: Box<dyn std::any::Any + Send>) {
+        type Found = Vec<(EdgeRef, Result<Projected, String>)>;
+        let found = result.downcast::<Result<Found, String>>().map_or_else(|_| Err("internal: unexpected result".into()), |b| *b);
+        let found = match found {
+            Ok(found) => found,
+            Err(e) => return self.set_error(format!("That cannot be shown laid flat: {e}.").replace("..", ".")),
+        };
+        let why = found.iter().find_map(|(_, at)| at.as_ref().err().cloned());
+        let (edges, geometry): (Vec<EdgeRef>, Vec<Projected>) = found.into_iter().filter_map(|(e, at)| Some((e, at.ok()?))).unzip();
+        if edges.is_empty() {
+            let why = why.unwrap_or_else(|| "it has no edges that can be referred to".into());
+            return self.set_error(format!("That face cannot be shown laid flat: {why}.").replace("..", "."));
+        }
+        let n = edges.len();
+        if self.exec_status("sketch.project", json!({ "sketch": sketch.0, "edges": edges, "geometry": geometry, "flat": true })).is_some() {
+            self.set_status(format!(
+                "Laid flat: {n} edges of the face are reference geometry in the sketch, where the sheet has them when it is unfolded. Draw on them for a cut across the bend."
+            ));
+        }
     }
 }
 

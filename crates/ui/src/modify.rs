@@ -424,7 +424,10 @@ impl Workbench {
                 return true;
             }
         }
-        if matches!(self.panel, Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Sweep(_) | Panel::Coil(_) | Panel::SheetFace(_))) {
+        if matches!(
+            self.panel,
+            Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Sweep(_) | Panel::Coil(_) | Panel::SheetFace(_) | Panel::SheetCut(_))
+        ) {
             // A click inside a closed region of the profile's sketch: that region joins the
             // feature, or leaves it.
             if resp.clicked()

@@ -1,5 +1,5 @@
-//! Sheet metal in the app (M8): the Sheet Metal tab's commands, the Face, Flange, Hem and Contour
-//! Flange panels,
+//! Sheet metal in the app (M8): the Sheet Metal tab's commands, the Face, Flange, Hem, Contour
+//! Flange, Corner Seam and Cut panels,
 //! Sheet Metal Defaults, and the flat pattern, shown in place of the folded part.
 //!
 //! The tab is a sheet metal part's home tab and shows only for one; any part becomes one with
@@ -12,11 +12,11 @@ use serde_json::json;
 use tenon_geom::Vec2;
 use tenon_io::flat::Marks;
 use tenon_model::sheet::{self, BendPosition, CornerOptions, CornerShape, FlangeWidth, FlatPattern, HeightDatum, HemShape, ReliefShape, Seam, Sides};
-use tenon_model::{EdgeRef, FeatureId, FeatureKind, Operation, RegionSel};
+use tenon_model::{EdgeRef, Extrude, ExtrudeExtent, FeatureId, FeatureKind, Operation, RegionSel};
 use tenon_sketch::Geometry;
 
 use crate::commands::{FLAT_TAB, MODEL_TAB, SHEET_TAB};
-use crate::panels::{Direction, ExtentChoice, ExtrudePanel, Panel};
+use crate::panels::Panel;
 use crate::print_dialog::PartJob;
 use crate::properties::{Equations, eq_value_field, flip_button, fmt_value, picked_row, section};
 use crate::theme::{self, Tokens};
@@ -36,6 +36,43 @@ impl FacePanel {
     pub(crate) fn kind(&self) -> FeatureKind {
         let operation = if self.new_solid { Operation::NewBody } else { Operation::Join };
         FeatureKind::SheetFace(sheet::Face { sketch: self.sketch, regions: self.regions.clone(), flip: self.flip, operation })
+    }
+}
+
+/// Cut: a profile through the sheet. Across bends it is cut out of the sheet as it lies flat
+/// from the sketch's face, round every bend it lies on; otherwise it is an extrusion that
+/// cuts, the distance each way from the sketch (so it goes through whichever side that is on).
+#[derive(Clone, Debug)]
+pub(crate) struct CutPanel {
+    pub editing: Option<FeatureId>,
+    pub sketch: FeatureId,
+    pub regions: RegionSel,
+    pub across: bool,
+    pub distance: f64,
+}
+
+impl CutPanel {
+    pub(crate) fn kind(&self) -> FeatureKind {
+        if self.across {
+            FeatureKind::CutAcrossBend(sheet::CutAcrossBend { sketch: self.sketch, regions: self.regions.clone(), distance: Some(self.distance) })
+        } else {
+            FeatureKind::Extrude(Extrude {
+                sketch: self.sketch,
+                regions: self.regions.clone(),
+                extent: ExtrudeExtent::TwoSided { forward: self.distance, backward: self.distance },
+                reverse: false,
+                operation: Operation::Cut,
+                taper: None,
+            })
+        }
+    }
+
+    pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
+        if self.across {
+            vec![("distance", "/distance")]
+        } else {
+            vec![("distance", "/extent/two_sided/forward"), ("distance", "/extent/two_sided/backward")]
+        }
     }
 }
 
@@ -632,7 +669,7 @@ impl Workbench {
             "sheet.hem" => self.open_hem(None)?,
             "sheet.contour_flange" => self.open_contour(None)?,
             "sheet.corner_seam" => self.open_corner_seam(None)?,
-            "sheet.cut" => self.open_sheet_cut()?,
+            "sheet.cut" => self.open_sheet_cut(None)?,
             "sheet.corner_round" => {
                 self.open_modify("fillet", None)?;
                 self.set_status("Corner Round: click the upright edges at the corners of the sheet, set the radius, then OK.");
@@ -797,27 +834,26 @@ impl Workbench {
         Ok(())
     }
 
-    /// Cut: an extrusion that removes its profile through the sheet, one thickness each way
-    /// from the sketch, so that it goes through whichever side the sketch is on and no further.
-    fn open_sheet_cut(&mut self) -> Result<(), String> {
+    /// Cut: a profile through the sheet, one thickness deep unless told otherwise; with Cut
+    /// Across Bend, round the bends it lies on.
+    pub(crate) fn open_sheet_cut(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
         let sizes = self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
-        let sketch = self.profile_sketch()?;
-        self.panel = Some(Panel::Extrude(ExtrudePanel {
-            editing: None,
-            sketch,
-            extent: ExtentChoice::Distance,
-            direction: Direction::Asymmetric,
-            distance: sizes.thickness,
-            distance_b: sizes.thickness,
-            operation: Operation::Cut,
-            regions: RegionSel::Default,
-            keep_taper: false,
-            taper: 0.0,
-        }));
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::CutAcrossBend(c) => {
+                    CutPanel { editing, sketch: c.sketch, regions: c.regions.clone(), across: true, distance: c.distance.unwrap_or(sizes.thickness) }
+                }
+                _ => return Err("not a cut across bends".into()),
+            },
+            None => CutPanel { editing: None, sketch: self.profile_sketch()?, regions: RegionSel::Default, across: false, distance: sizes.thickness },
+        };
+        let fresh = panel.editing.is_none();
+        self.panel = Some(Panel::SheetCut(panel));
         self.start_equations();
-        self.panel_eqs.insert("distance", sheet::THICKNESS.to_owned());
-        self.panel_eqs.insert("distance_b", sheet::THICKNESS.to_owned());
-        self.set_status("Cut: the profile is cut through the sheet (one Thickness each way from the sketch). OK to cut.");
+        if fresh {
+            self.panel_eqs.insert("distance", sheet::THICKNESS.to_owned());
+        }
+        self.set_status("Cut: the profile is cut through the sheet. Tick Cut Across Bend to take it round the bends it is drawn over, then OK.");
         Ok(())
     }
 
@@ -1035,6 +1071,54 @@ impl Workbench {
                         ui.checkbox(&mut p.new_solid, "New solid").on_hover_text("A sheet of its own, not joined to the one it touches");
                     });
                 }
+            }
+            Panel::SheetCut(p) => {
+                section(ui, "Input Geometry", true, |ui| {
+                    egui::Grid::new("tn_props_cut_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Profiles");
+                        ui.label(format!("{} selected", self.profile_count(p.sketch, &p.regions)));
+                        ui.end_row();
+                        ui.label("Sketch");
+                        egui::ComboBox::from_id_salt("tn_props_cut_sketch")
+                            .selected_text(sketches.iter().find(|s| s.0 == p.sketch).map_or("?".into(), |s| s.1.clone()))
+                            .show_ui(ui, |ui| {
+                                for (id, name) in sketches {
+                                    if ui.selectable_value(&mut p.sketch, *id, name).clicked() {
+                                        p.regions = RegionSel::Default;
+                                    }
+                                }
+                            });
+                        ui.end_row();
+                    });
+                    // (A cut that is an extrusion is edited as one: this one stays what it is.)
+                    let across = ui
+                        .add_enabled(p.editing.is_none(), egui::Checkbox::new(&mut p.across, "Cut Across Bend"))
+                        .on_hover_text("The profile is drawn on the sheet as it lies flat from the sketch's face, and is cut out of every face and bend it lies on")
+                        .on_disabled_hover_text("This cut goes round the bends: to cut straight through instead, delete it and make another");
+                    crate::drawing::remember(ui, "tn_cut_across", across.rect);
+                });
+                section(ui, "Behavior", true, |ui| {
+                    egui::Grid::new("tn_props_cut_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Distance").on_hover_text(if p.across {
+                            "How deep the cut goes from the side the sketch is on: the Thickness, or more, is through"
+                        } else {
+                            "How far the cut goes each way from the sketch"
+                        });
+                        enter |= eq_value_field(
+                            ui,
+                            egui::Id::new("tn_props_cut_distance"),
+                            &mut p.distance,
+                            eqs,
+                            "distance",
+                            "mm",
+                            0.001..=100_000.0,
+                            110.0,
+                            t,
+                        )
+                        .entered;
+                        ui.end_row();
+                    });
+                });
             }
             Panel::Flange(p) => {
                 section(ui, "Input Geometry", true, |ui| {

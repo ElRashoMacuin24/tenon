@@ -252,6 +252,7 @@ may refer only to features before them.
 | `hem` | `edges` (as a flange's), `shape` (`{ single = { gap = g, length = l } }`, `{ double = { gap = g, length = l } }`: the gap between the layers and the length over all; `{ rolled = { radius = r, angle = a } }`, `{ teardrop = { radius = r, angle = a } }`: the inside radius and the angle in radians, 1 to 350 degrees rolled and 181 to 270 for a teardrop), `flip` (fold to the other side), `width` (as a flange's) |
 | `contour_flange` | `sketch` (an open profile: its lines and arcs end to end), `distance` (how far it is pushed out of the sketch plane), `direction` and `position` (each `"default"`, `"flipped"` or `"symmetric"`: which way it is pushed, and which side of the profile the sheet's thickness goes), optional `radius` (inside, of the bends made at corners; without it the part's `BendRadius`), `operation` (`"join"` or `"new_body"`) |
 | `corner_seam` | `edges` (two edge references: the edge at the end of each of two faces bent up from one sheet, where they come together at a square corner; the first face's, then the second's); optional `seam`, `overlap`, `gap`, `relief` and `relief_size`, as a flange's. The bends are ended where their bend lines cross, the faces brought to the seam, and the corner relieved (DEC-066) |
+| `cut_across_bend` | `sketch` (on a side of the sheet: a face of it, or a plane that lies on one), `regions` (its profile: lines, arcs and circles, drawn as on the sheet laid flat from that face), optional `distance` (how deep from the side the sketch is on; without it, or at the thickness or more, through). The profile is cut out of every face and bend it lies on, so the cut goes round the bends and is the profile in the flat pattern (DEC-068) |
 
 Field values:
 
@@ -365,6 +366,11 @@ Each entity is listed once at most. At every regeneration the edge is found agai
 entity, with its points, is put where the edge then is on the sketch's plane; the positions in
 the file are those of the last regeneration. An edge that cannot be found leaves its entity
 where it is. A sketch with no projected edges has no `projections` field.
+
+A projection with `flat = true` (Project Flat Pattern, DEC-068) is of a sheet metal part: its
+entity is put where the edge lies when the sheet is laid flat from the face the sketch is on,
+a bend's allowance and the faces beyond it unfolded into the sketch's plane, not where the
+edge is seen square on.
 
 Point positions are where the solver left them; they are rounded on writing (see
 [Text files](#text-files)).
@@ -711,7 +717,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   dimension and a sketch feature's optional `projections` (DEC-055, DEC-056), and for sheet
   metal the `[sheet_metal]` table and the feature types `sheet_face` and `flange` (DEC-057),
   then `hem`, `contour_flange`, `corner_seam`, a flange's `miter` and corner options and the
-  parameter `GapSize` (DEC-063, DEC-064, DEC-066).
+  parameter `GapSize` (DEC-063, DEC-064, DEC-066), then `cut_across_bend` and a projection's
+  `flat` (DEC-068).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

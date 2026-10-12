@@ -231,7 +231,12 @@ fn prefix_hashes(doc: &Document, copied: &std::collections::BTreeSet<FeatureId>)
         serde_json::to_string(f).unwrap_or_default().hash(&mut h);
         if matches!(
             f.kind,
-            FeatureKind::SheetFace(_) | FeatureKind::Flange(_) | FeatureKind::Hem(_) | FeatureKind::ContourFlange(_) | FeatureKind::CornerSeam(_)
+            FeatureKind::SheetFace(_)
+                | FeatureKind::Flange(_)
+                | FeatureKind::Hem(_)
+                | FeatureKind::ContourFlange(_)
+                | FeatureKind::CornerSeam(_)
+                | FeatureKind::CutAcrossBend(_)
         ) {
             rule.hash(&mut h);
         }
@@ -502,6 +507,7 @@ impl<'a> Ctx<'a> {
             FeatureKind::Hem(h) => self.hem(f.id, h),
             FeatureKind::ContourFlange(c) => self.contour_flange(f.id, c),
             FeatureKind::CornerSeam(c) => self.corner_seam(f.id, c),
+            FeatureKind::CutAcrossBend(c) => self.cut_across_bend(f.id, c),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };
@@ -998,7 +1004,12 @@ impl<'a> Ctx<'a> {
     fn project_into(&mut self, id: FeatureId, sketch: &Sketch, projections: &[crate::project::Projection], frame: &Frame) -> Result<(), Stop> {
         let views = self.regen.views();
         let (regen, k) = (&self.regen, &*self.k);
-        let resolved = crate::project::resolve(sketch, projections, |edge| {
+        let doc = self.doc;
+        let resolved = crate::project::resolve(sketch, projections, |p| {
+            if p.flat {
+                return crate::sheet::edge_laid_flat(doc, regen, k, id, frame, &p.edge);
+            }
+            let edge = &p.edge;
             let (b, e) = resolve_edge(edge, &views, k)?;
             let shape = regen.bodies.get(b).ok_or("no such body")?.shape;
             let info = k.edge_info(shape.edge(e)).map_err(kerr)?;

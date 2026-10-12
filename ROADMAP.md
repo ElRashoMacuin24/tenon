@@ -11,8 +11,8 @@ goes first.
 
 Current milestone: **M8 sheet metal basics**, started 2026-10-11 and reported to the owner the
 same day. The owner asked for the gap with Inventor's sheet metal to be closed before going
-on: the second round and Corner Seam (the section after M8 below) are done and reported, and
-wait for the owner's confirmation. Next is M9 performance.
+on: the second round, Corner Seam and Cut Across Bend (the section after M8 below) are done
+and reported, and wait for the owner's confirmation. Next is M9 performance.
 
 **M8** brought:
 - sheet metal parts: a rule whose sizes (thickness, bend radius, reliefs, K factor) are
@@ -27,7 +27,9 @@ wait for the owner's confirmation. Next is M9 performance.
 - the example [examples/m8-tray](examples/m8-tray);
 - in the second round: walls mitred where they meet and corner reliefs centred on the bend
   lines, as Inventor's are (DEC-063); Hem and Contour Flange (DEC-064); then Corner Seam, with
-  overlapped seams and a seam, gap and relief of a corner's own (DEC-066).
+  overlapped seams and a seam, gap and relief of a corner's own (DEC-066); then Cut Across
+  Bend, a profile cut round the bends as it is drawn on the flat sheet, with Project Flat
+  Pattern to draw it on (DEC-068).
 
 M7 (standard parts and maker workflow) was confirmed by the owner on 2026-10-11 (DEC-054), who
 asked again for the interface to come closer to Inventor's; the sketch environment was gone
@@ -348,9 +350,10 @@ version 2 stands.
 
 Asked for by the owner on 2026-10-11, on M8's report: to go on closing the gap with Inventor
 before M9, the corners of a tray first, then Hem and Contour Flange; then, on that report,
-Corner Seam. Decisions: DEC-063 to DEC-067. In files: the parameter `GapSize`, a flange's
-optional `miter` and corner options (`seam`, `overlap`, `gap`, `relief`, `relief_size`), and
-the feature types `hem`, `contour_flange` and `corner_seam`; format version 2 stands (DEC-046).
+Corner Seam; then Cut Across Bend. Decisions: DEC-063 to DEC-069. In files: the parameter
+`GapSize`, a flange's optional `miter` and corner options (`seam`, `overlap`, `gap`, `relief`,
+`relief_size`), the feature types `hem`, `contour_flange`, `corner_seam` and
+`cut_across_bend`, and `flat` on a projected edge; format version 2 stands (DEC-046).
 
 | Feature | Status | Proof / gap |
 |---|---|---|
@@ -365,6 +368,13 @@ the feature types `hem`, `contour_flange` and `corner_seam`; format version 2 st
 | Corner Seam: the corner between two flanges made apart, closed | done | DEC-066. Read from the solid, whatever made it: `a_corner_seam_closes_the_corner_between_flanges_made_apart` (two flanges one after the other leave the corner open with the first bend through it; seamed, the bends end where they cross and the walls are where a symmetric seam, an overlap, a reverse overlap, half an overlap and a gap of its own put them, by hand; for every relief and seam the solid and the flat pattern are those of one flange on the same two edges; two flanges with bends of radius 3 and 1 by hand; one edge, the top of a wall and an edge of the plate are refused in words). In the app, by a click on the end of each wall with the corner closing in the preview: `a_corner_seam_is_made_by_clicking_the_ends_of_two_flanges`. Gap: square outside corners only; no Corner Rip, no mitre between faces in one plane, no Extend Corner |
 | What a feature adds in the plane of a face is that face | done | `Kernel::unify`: `faces_in_one_plane_are_made_one_face_where_asked_and_nowhere_else`. After a corner seam the wall is one face its whole length and keeps the first flange's name: `a_corner_seam_closes_the_corner_between_flanges_made_apart` |
 | What a sheet feature cuts out is what its tool shares with the part | done | DEC-067. The tools of a relief lie against one another along the bend lines, and taken out in one boolean they left a sound solid of the wrong volume on macOS only. They go one at a time now, each cut compared with the volume the tool and the part have in common, and a cut that took anything else fails the feature in words. The same test on every platform: `a_corner_seam_closes_the_corner_between_flanges_made_apart` |
+| Cut Across Bend: a profile cut out of the sheet as it lies flat, round the bends it is drawn over | done | DEC-068. By hand against the kernel: `a_cut_across_a_bend_goes_round_it_and_is_its_profile_in_the_flat_pattern` (a slot from the plate round the bend and up the wall: the volume of each part, the wall's face 32 mm² less, four lines in the flat pattern; a circle centred on the bend line, from a sketch on the underside and on the top: the same hole, and a circle of radius 4 at (55, 20) in the flat pattern; a wall of the slot on the bend is the cut's), `a_cut_across_bends_crosses_as_many_as_its_profile_does_and_goes_as_deep_as_asked` (a slot across a channel, up both walls and round both bends, by hand, each bend then in two in the flat pattern; 0.5 deep from the outside of the bends and, by the equation `Thickness / 4`, from their inside; deeper than the sheet is through). Gap: Cut Normal as a choice; splines; a partial depth shows in the flat pattern as any pocket does |
+| What a cut across bends keeps and refuses | done | `a_cut_across_a_bend_keeps_an_island_on_a_face_and_says_what_it_cannot_cut` (an island on the plate, and one across the bend line, stay, by hand; an island wholly on a bend, a sketch on the rim of the sheet, a profile off the sheet and a depth of nothing are refused in words) |
+| What two regions bounded by lines and arcs have in common | done | `sheet::region`: `what_two_regions_have_in_common_is_bounded_by_pieces_of_both` (rectangles, a disc across a strip, two discs, one inside the other, apart), `boundaries_that_run_along_one_another_are_counted_once_or_not_at_all` (shared sides, the same region twice, side by side, touching circles), `a_hole_is_kept_where_it_is_whole_and_opens_the_outline_where_it_is_cut`, `a_point_is_inside_a_region_or_in_a_hole_of_it`, `profiles_and_flat_loops_become_pieces_and_pieces_are_moved` |
+| Project Flat Pattern: a face beyond a bend shown in the sketch where it lies laid flat | done | DEC-068. `the_sheet_beyond_a_bend_is_shown_laid_flat_in_a_sketch_and_follows_the_part` (the wall's four edges a bend allowance past the bend line, and 10 further; again adds nothing; a hole drawn 5 up the wall by them is cut there; the wall made higher, its far edge follows; the other side of the sheet and a part that is not sheet metal say why not). In the app, by a click on the wall's inside with the sketch on the plate: `project_flat_pattern_shows_the_wall_beyond_a_bend_in_a_sketch_on_the_plate`. Gap: a bend's centre line is not shown (it is no edge); edges that would be neither line nor arc |
+| The Cut panel: the profile, Cut Across Bend, the distance | done | `a_cut_goes_round_a_bend_when_its_panel_is_told_to` (Cut opens its panel with the distance `fx: Thickness`; unticked the preview is the extrusion; ticked, the hole wrapped round the bend; OK makes Cut1, a circle in the flat pattern, through still at another thickness; edited from the browser it cannot be unticked and takes a depth of 1). Unticked it is the extrusion it was: `a_face_and_a_flange_are_made_from_their_panels_by_clicks` |
+| The volume of a solid, to a precision | done | DEC-069. `the_volume_is_right_where_the_rim_of_a_round_face_curves_back_on_itself` (a hole drilled across a shaft, against the integral summed by Simpson's rule, to 1e-9), `half_a_disc_and_most_of_one_roll_into_the_volume_their_area_has` |
+| A cut across bends and edges laid flat, in files | done | `a_sheet_metal_part_is_written_as_text_and_read_back` (two `cut_across_bend` records, `distance` only where it has one; `flat = true` on the projection; read back the same, saved as the same bytes) |
 | The new features in files | done | `a_sheet_metal_part_is_written_as_text_and_read_back` (`GapSize` with its equation; `miter = false` only where it is not mitred; `hem` and `contour_flange` records; a part saved before there was a gap opens with one thickness; a hem with no gap and a contour flange with no distance are refused as damaged; a corner seam and a flange's corner options, written only where they are not the usual) |
 | The properties panel shows a long panel whole | done | DEC-065: `a_long_panel_is_shown_whole_above_the_browser` (the Flange panel's last section on a 1400 x 860 window, with the browser still below it) |
 | The example | done | [examples/m8-tray](examples/m8-tray) regenerated: mitred walls, round reliefs centred on the bend lines, a hem along the back wall, every number by hand in its README. `the_m8_demo_script_folds_a_tray_and_lays_it_flat_for_a_cutter` (one outline of 20 lines and four arcs, five cut-outs, six bend lines), `the_checked_in_m8_example_is_what_the_script_writes` |

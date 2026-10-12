@@ -241,3 +241,26 @@ fn faces_in_one_plane_are_made_one_face_where_asked_and_nowhere_else() {
     }
     assert_eq!(k.live_shapes(), 0);
 }
+
+#[test]
+fn half_a_disc_and_most_of_one_roll_into_the_volume_their_area_has() {
+    // An arc of half a turn or more curves back on itself on the round faces it bounds. (The
+    // kernel's plain sum of a solid's volume was a five hundredth out for the half disc and
+    // nearly a hundredth for the larger one; the volume is now asked for to a precision.)
+    let mut k = OcctKernel::new();
+    for (sweep, r) in [(PI, 4.0), (5.5, 2.0), (2.0, 4.0)] {
+        // The part of a disc beyond a chord, the chord along the axis where the outline starts.
+        let half = sweep / 2.0;
+        let c = Vec2::new(0.5 - r * half.cos(), 20.0);
+        let (a, b) = (Vec2::polar(c, r, -half), Vec2::polar(c, r, half));
+        let outline = vec![
+            TaggedCurve2 { tag: 9, curve: Curve2::Arc { center: c, radius: r, start_angle: -half, end_angle: half } },
+            TaggedCurve2 { tag: 1, curve: Curve2::Line { start: b, end: a } },
+        ];
+        let op = rolled(&mut k, outline);
+        assert!(k.is_valid(op.shape).unwrap());
+        let (volume, want) = (k.mass_properties(op.shape, 1.0).unwrap().volume, volume_of(r * r * (sweep - sweep.sin()) / 2.0));
+        assert!((volume - want).abs() < 1e-7 * want, "an arc of {sweep} rad: {volume} vs {want}");
+        k.release(op.shape);
+    }
+}

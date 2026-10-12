@@ -743,7 +743,7 @@ fn sketch_create(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
     let (id, projected) = s.edit(|d| {
         let id = d.add(FeatureKind::Sketch { plane, sketch, projections: Vec::new() }).map_err(CmdError)?;
         let index = d.index_of(id).unwrap_or(usize::MAX);
-        let (entities, _) = put_projections(d, id, index, found, true)?;
+        let (entities, _) = put_projections(d, id, index, found, true, false)?;
         Ok((id, entities))
     })?;
     let name = s.document().feature(id).map(|f| f.name.clone()).unwrap_or_default();
@@ -1166,7 +1166,14 @@ fn said(p: &Value, edges: Vec<EdgeRef>) -> Result<Vec<Found>, CmdError> {
 
 /// Puts `found` into sketch `id` (the feature at `index`) as reference geometry. With `lenient`,
 /// edges that cannot be shown are left out and why is returned; otherwise the first is an error.
-fn put_projections(doc: &mut Document, id: FeatureId, index: usize, found: Vec<Found>, lenient: bool) -> Result<(Vec<u32>, Vec<String>), CmdError> {
+fn put_projections(
+    doc: &mut Document,
+    id: FeatureId,
+    index: usize,
+    found: Vec<Found>,
+    lenient: bool,
+    flat: bool,
+) -> Result<(Vec<u32>, Vec<String>), CmdError> {
     let (mut entities, mut skipped) = (Vec::new(), Vec::new());
     for (edge, at) in found {
         if let Some(later) = edge.features().into_iter().find(|f| doc.index_of(*f).is_none_or(|i| i >= index)) {
@@ -1184,7 +1191,8 @@ fn put_projections(doc: &mut Document, id: FeatureId, index: usize, found: Vec<F
             Err(why) => return Err(CmdError(format!("that edge cannot be projected: {why}"))),
         };
         // (Projected already: the same geometry is not put in twice.)
-        if let Some(there) = doc.projections(id).iter().find(|p| p.edge.faces == edge.faces && p.edge.fingerprint.distance(&edge.fingerprint) < 1e-6)
+        if let Some(there) =
+            doc.projections(id).iter().find(|p| p.flat == flat && p.edge.faces == edge.faces && p.edge.fingerprint.distance(&edge.fingerprint) < 1e-6)
         {
             entities.push(there.entity.0);
             continue;
@@ -1192,11 +1200,40 @@ fn put_projections(doc: &mut Document, id: FeatureId, index: usize, found: Vec<F
         let sk = doc.sketch_mut(id).ok_or_else(|| CmdError(format!("{id} is not a sketch")))?;
         let entity = crate::project::add(sk, &at).map_err(CmdError)?;
         if let Some(list) = doc.projections_mut(id) {
-            list.push(crate::project::Projection { entity, edge });
+            list.push(crate::project::Projection { entity, edge, flat });
         }
         entities.push(entity.0);
     }
     Ok((entities, skipped))
+}
+
+/// What `edges`, and the edges round `face`, are in sketch `id` of `doc`: seen square on to its
+/// plane or, `flat`, where the sheet has them when it is laid flat from the face the sketch is
+/// on. The part is taken as it stands when the sketch is reached: later features may have cut
+/// an edge short.
+pub fn projected(
+    doc: &Document,
+    k: &mut dyn Kernel,
+    id: FeatureId,
+    mut edges: Vec<EdgeRef>,
+    face: Option<&FaceRef>,
+    flat: bool,
+) -> Result<Vec<(EdgeRef, Result<crate::project::Projected, String>)>, String> {
+    let index = doc.index_of(id).filter(|_| doc.sketch(id).is_some()).ok_or_else(|| format!("{id} is not a sketch"))?;
+    let mut upto = doc.clone();
+    let next = upto.features().get(index + 1).map(|f| f.id);
+    upto.set_end_of_part(next)?;
+    let mut r = regenerate(&upto, k);
+    let out = (|| -> Result<Vec<Found>, String> {
+        let frame = *r.sketch_frames.get(&id).ok_or("the sketch's plane is not there: a feature before it fails")?;
+        if let Some(f) = face {
+            edges.extend(edges_round(&r, k, f).map_err(|e| e.0)?);
+        }
+        let at = |e: &EdgeRef| if flat { crate::sheet::edge_laid_flat(&upto, &r, k, id, &frame, e) } else { edge_on_plane(&r, k, e, &frame) };
+        Ok(edges.into_iter().map(|e| (e.clone(), at(&e))).collect())
+    })();
+    r.release(k);
+    out
 }
 
 /// Projects edges of the part into a sketch as reference geometry: other geometry is
@@ -1210,6 +1247,7 @@ fn sketch_project(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
         _ => Vec::new(),
     };
     let face: Option<FaceRef> = if p.get("face").is_some() { Some(parse(p, "face")?) } else { None };
+    let flat = flag(p, "flat");
     if edges.is_empty() && face.is_none() {
         return Err("give `edge` or `edges` (from model.edge_ref), or `face`: a face whose edges are all projected".into());
     }
@@ -1219,26 +1257,10 @@ fn sketch_project(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
     let found: Vec<Found> = match (k, p.get("geometry")) {
         (_, Some(_)) if face.is_some() => return Err("with `geometry`, name the edges themselves: `face` is for the kernel to look up".into()),
         (_, Some(_)) => said(p, edges)?,
-        (Some(k), None) => {
-            // The part as it stands when the sketch is reached: later features may have cut
-            // the edge short.
-            let mut upto = s.document().clone();
-            let next = upto.features().get(index + 1).map(|f| f.id);
-            upto.set_end_of_part(next).map_err(CmdError)?;
-            let mut r = regenerate(&upto, k);
-            let out = (|| -> Result<Vec<Found>, CmdError> {
-                let frame = *r.sketch_frames.get(&id).ok_or("the sketch's plane is not there: a feature before it fails")?;
-                if let Some(f) = &face {
-                    edges.extend(edges_round(&r, k, f)?);
-                }
-                Ok(edges.into_iter().map(|e| (e.clone(), edge_on_plane(&r, k, &e, &frame))).collect())
-            })();
-            r.release(k);
-            out?
-        }
+        (Some(k), None) => projected(s.document(), k, id, std::mem::take(&mut edges), face.as_ref(), flat).map_err(CmdError)?,
         (None, None) => return Err("sketch.project needs the geometry kernel, or `geometry`: what each edge is on the sketch plane".into()),
     };
-    let (entities, skipped) = s.edit(|doc| put_projections(doc, id, index, found, lenient))?;
+    let (entities, skipped) = s.edit(|doc| put_projections(doc, id, index, found, lenient, flat))?;
     Ok(json!({ "entities": entities, "skipped": skipped }))
 }
 
@@ -1338,7 +1360,11 @@ fn sketch_info(s: &mut Session, p: &Value) -> CmdResult {
         .iter()
         .map(|p| {
             let why = lost.and_then(|l| l.iter().find(|(e, _)| *e == p.entity)).map(|(_, why)| why.as_str());
-            json!({ "entity": p.entity.0, "edge": p.edge, "lost": why })
+            let mut shown = json!({ "entity": p.entity.0, "edge": p.edge, "lost": why });
+            if p.flat {
+                shown["flat"] = json!(true);
+            }
+            shown
         })
         .collect();
     if !shown.is_empty() {
@@ -2378,6 +2404,15 @@ fn sheet_corner_seam(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::CornerSeam(seam), p)
 }
 
+fn sheet_cut_across_bend(s: &mut Session, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let cut = crate::sheet::CutAcrossBend { sketch: sketch_id(p)?, regions: region_sel(p)?, distance: opt_num(p, "distance")? };
+    cut.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::CutAcrossBend(cut), p)
+}
+
 fn sheet_a_side(s: &mut Session, p: &Value) -> CmdResult {
     let face: Option<FaceRef> = match p.get("face") {
         None | Some(Value::Null) => None,
@@ -2589,7 +2624,7 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "sketch.project",
         label: "Project Geometry",
-        help: "sketch; edge or edges: edge references (model.edge_ref), or face: a face reference whose edges are all projected. The edges are shown in the sketch as reference geometry: it follows the part, other geometry is constrained and dimensioned to it, and it bounds profiles. Only edges made before the sketch; straight and circular ones. geometry: what each of `edges` is on the sketch plane (for callers without a kernel). Returns the entities, and why any edge of a face was left out",
+        help: "sketch; edge or edges: edge references (model.edge_ref), or face: a face reference whose edges are all projected. The edges are shown in the sketch as reference geometry: it follows the part, other geometry is constrained and dimensioned to it, and it bounds profiles. Only edges made before the sketch; straight and circular ones. flat: true (Project Flat Pattern, in a sketch on a side of a sheet metal part) shows each edge where it lies with the sheet laid flat from the sketch's face, so the faces beyond a bend can be drawn on for a cut across it. geometry: what each of `edges` is on the sketch plane (for callers without a kernel). Returns the entities, and why any edge of a face was left out",
         mutates: true,
         run: Run::Opt(sketch_project),
     },
@@ -2939,6 +2974,13 @@ static COMMANDS: &[CommandSpec] = &[
         "edges: [two edge references]: the edge at the end of each of two faces that are bent up from one sheet and come together at a square corner (flanges made apart: edges of one flange close their own corners); the first face's, then the second's. Their bends are ended where the two bend lines cross, the faces brought together, and the corner relieved. seam: \"symmetric\" (default: both stop the gap apart) | \"overlap\" (the first runs across the end of the second) | \"reverse_overlap\"; overlap (how much of the other's thickness is covered, 0 to 1; default 1); gap (default GapSize); relief: \"round\" | \"square\" | \"trim\" and relief_size (default: the rule's)",
         true,
         sheet_corner_seam
+    ),
+    doc_cmd!(
+        "sheet.cut_across_bend",
+        "Cut Across Bend",
+        "sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern",
+        true,
+        sheet_cut_across_bend
     ),
     doc_cmd!(
         "sheet.a_side",

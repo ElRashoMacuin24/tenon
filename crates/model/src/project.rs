@@ -30,6 +30,10 @@ pub struct Projection {
     /// straight edge seen end on).
     pub entity: EntityId,
     pub edge: EdgeRef,
+    /// Shown where the edge lies with the sheet laid flat from the face the sketch is on (Project
+    /// Flat Pattern), not where it is seen square on to the sketch plane.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flat: bool,
 }
 
 /// An edge as the kernel (or a scene) describes it.
@@ -223,12 +227,16 @@ pub struct Resolved {
     pub moved: bool,
 }
 
-/// Finds every projection of `sketch` again with `find` (an edge reference to what the edge is
+/// Finds every projection of `sketch` again with `find` (a projection to what its edge is
 /// on the sketch plane), puts the reference geometry there and solves the sketch.
-pub fn resolve(sketch: &Sketch, projections: &[Projection], mut find: impl FnMut(&EdgeRef) -> Result<Projected, String>) -> Result<Resolved, String> {
+pub fn resolve(
+    sketch: &Sketch,
+    projections: &[Projection],
+    mut find: impl FnMut(&Projection) -> Result<Projected, String>,
+) -> Result<Resolved, String> {
     let mut out = Resolved { sketch: sketch.clone(), lost: Vec::new(), moved: false };
     for p in projections {
-        match find(&p.edge).and_then(|at| place(&mut out.sketch, p.entity, &at)) {
+        match find(p).and_then(|at| place(&mut out.sketch, p.entity, &at)) {
             Ok(moved) => out.moved |= moved,
             Err(why) => out.lost.push((p.entity, why)),
         }
@@ -373,8 +381,8 @@ mod tests {
             )
         };
         let list =
-            vec![Projection { entity: edge, edge: pick(1) }, Projection { entity: hole, edge: pick(2) }, Projection { entity: arc, edge: pick(3) }];
-        let r = resolve(&before, &list, |e| match e.faces[0].feature().0 {
+            vec![(edge, 1), (hole, 2), (arc, 3)].into_iter().map(|(entity, i)| Projection { entity, edge: pick(i), flat: false }).collect::<Vec<_>>();
+        let r = resolve(&before, &list, |p| match p.edge.faces[0].feature().0 {
             1 => Ok(Projected::Line { start: Vec2::new(0.0, 5.0), end: Vec2::new(40.0, 5.0) }),
             2 => Ok(Projected::Circle { center: Vec2::new(30.0, 10.0), radius: 3.0 }),
             _ => Err("no edge joins those faces any more".into()),

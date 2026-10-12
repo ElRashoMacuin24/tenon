@@ -413,6 +413,7 @@ impl Workbench {
                     | Panel::Combine(_)
                     | Panel::Thread(_)
                     | Panel::SheetFace(_)
+                    | Panel::SheetCut(_)
                     | Panel::Flange(_)
                     | Panel::Hem(_)
                     | Panel::ContourFlange(_)
@@ -475,6 +476,7 @@ impl Workbench {
             Panel::Combine(p) => ("Combine", p.editing.map(|f| self.feature_name(f))),
             Panel::Thread(p) => ("Thread", p.editing.map(|f| self.feature_name(f))),
             Panel::SheetFace(p) => ("Face", p.editing.map(|f| self.feature_name(f))),
+            Panel::SheetCut(p) => ("Cut", p.editing.map(|f| self.feature_name(f))),
             Panel::Flange(p) => ("Flange", p.editing.map(|f| self.feature_name(f))),
             Panel::Hem(p) => ("Hem", p.editing.map(|f| self.feature_name(f))),
             Panel::ContourFlange(p) => ("Contour Flange", p.editing.map(|f| self.feature_name(f))),
@@ -1266,7 +1268,12 @@ impl Workbench {
                         enter |= entered;
                         clear |= cleared;
                     }
-                    p @ (Panel::SheetFace(_) | Panel::Flange(_) | Panel::Hem(_) | Panel::ContourFlange(_) | Panel::CornerSeam(_)) => {
+                    p @ (Panel::SheetFace(_)
+                    | Panel::SheetCut(_)
+                    | Panel::Flange(_)
+                    | Panel::Hem(_)
+                    | Panel::ContourFlange(_)
+                    | Panel::CornerSeam(_)) => {
                         let (entered, cleared) = self.sheet_properties(ui, p, &mut eqs, &sketches, t);
                         enter |= entered;
                         clear |= cleared;
@@ -1497,6 +1504,7 @@ impl Workbench {
             Some(Panel::Sweep(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Coil(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::SheetFace(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
+            Some(Panel::SheetCut(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Loft(p)) => p.sections.first().and_then(|s| self.profile_anchor(*s)).map(|a| a.0),
             Some(
                 Panel::Fillet(_)
