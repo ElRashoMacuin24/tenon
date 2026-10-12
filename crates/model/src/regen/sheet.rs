@@ -154,6 +154,60 @@ impl Ctx<'_> {
         done
     }
 
+    /// Takes `tools` out of `target` one at a time, and sees each time that what went is what the
+    /// tool shared with the part: a cut that took anything else is refused. (Tools that lie
+    /// against one another, as the pieces of a relief do along a bend line, are not safe to take
+    /// out in one boolean: the kernel then gives a sound solid of the wrong volume on some
+    /// platforms, DEC-067.) The tools are used up; `target` is released when it is not the part's
+    /// own body (`keep`).
+    fn sheet_cut(&mut self, target: Named, keep: bool, tools: Vec<Named>, what: &str) -> Result<Named, Stop> {
+        let volume = |ctx: &Self, s: ShapeHandle| ctx.k.mass_properties(s, 1.0).map(|m| m.volume);
+        let (mut now, mut own) = (target, keep);
+        let mut pending = tools.into_iter();
+        let result = (|| -> Result<(), Stop> {
+            for tool in pending.by_ref() {
+                let before = volume(self, now.0);
+                // What the tool can take: what it shares with the part, and no more than itself.
+                let most = volume(self, tool.0);
+                let shared = self.k.boolean(BoolOp::Intersect, now.0, &[tool.0]).ok().and_then(|op| {
+                    let v = volume(self, op.shape);
+                    self.k.release(op.shape);
+                    v.ok()
+                });
+                now = self.sheet_step(BoolOp::Cut, now.clone(), own, vec![tool])?;
+                own = false;
+                let (Ok(before), Ok(most)) = (before, most) else { continue };
+                let took = before - volume(self, now.0)?;
+                let slack = 1e-6 * (1.0 + before);
+                let (wrong, due) = match shared {
+                    Some(shared) => ((took - shared).abs() > slack, shared),
+                    None => (took < -slack || took > most + slack, most),
+                };
+                if wrong {
+                    return Err(format!(
+                        "The {what} could not be cut out of the part: taking a piece of it out removed {} mm³ where {} mm³ was to go. Change its size or its place a little.",
+                        crate::explain::mm(took),
+                        crate::explain::mm(due)
+                    )
+                    .into());
+                }
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => Ok(now),
+            Err(e) => {
+                for (s, _) in pending {
+                    self.k.release(s);
+                }
+                if !own {
+                    self.k.release(now.0);
+                }
+                Err(e)
+            }
+        }
+    }
+
     /// A profile pushed `distance` along its frame's Z, every face named after the curve of
     /// the profile that made it and its two ends by `caps`.
     fn sheet_prism(&mut self, id: FeatureId, profile: &Profile, distance: f64, caps: Option<[u64; 2]>) -> Result<Named, Stop> {
@@ -411,47 +465,10 @@ impl Ctx<'_> {
                 if n == 1 {
                     before_join = volume(self, now.0)?;
                 }
-                if std::env::var("TENON_SEAM_DEBUG").is_ok() {
-                    let vol = |ctx: &Self, s: ShapeHandle| ctx.k.mass_properties(s, 1.0).map(|m| m.volume).unwrap_or(f64::NAN);
-                    eprintln!("step {n} {kind:?}: body {} valid {:?}", vol(self, now.0), self.k.is_valid(now.0));
-                    for (ti, tool) in tools.iter().enumerate() {
-                        let common = self.k.boolean(BoolOp::Intersect, now.0, &[tool.0]).ok().map(|op| { let v = vol(self, op.shape); self.k.release(op.shape); v });
-                        let alone = self.k.boolean(kind, now.0, &[tool.0]).ok().map(|op| { let v = (vol(self, op.shape), self.k.is_valid(op.shape).ok()); self.k.release(op.shape); v });
-                        eprintln!("  tool {ti}: volume {} valid {:?} faces {:?} common {common:?} alone leaves {alone:?}", vol(self, tool.0), self.k.is_valid(tool.0), self.k.topology(tool.0).map(|t| t.faces));
-                    }
-                    // One at a time.
-                    let mut seq = now.0;
-                    for (ti, tool) in tools.iter().enumerate() {
-                        match self.k.boolean(kind, seq, &[tool.0]) {
-                            Ok(op) => {
-                                if seq != now.0 { self.k.release(seq); }
-                                seq = op.shape;
-                                eprintln!("  one at a time, after tool {ti}: {} valid {:?} topo {:?}", vol(self, seq), self.k.is_valid(seq), self.k.topology(seq).map(|t| (t.solids, t.faces)));
-                            }
-                            Err(e) => eprintln!("  one at a time, tool {ti}: {e}"),
-                        }
-                    }
-                    if seq != now.0 { self.k.release(seq); }
-                    // The tools made one first.
-                    if tools.len() > 1 {
-                        let rest: Vec<ShapeHandle> = tools[1..].iter().map(|t| t.0).collect();
-                        match self.k.boolean(BoolOp::Union, tools[0].0, &rest) {
-                            Ok(one) => {
-                                eprintln!("  tools as one: {} valid {:?} topo {:?}", vol(self, one.shape), self.k.is_valid(one.shape), self.k.topology(one.shape).map(|t| (t.solids, t.faces)));
-                                if let Ok(op) = self.k.boolean(kind, now.0, &[one.shape]) {
-                                    eprintln!("  with the tools as one: {} valid {:?}", vol(self, op.shape), self.k.is_valid(op.shape));
-                                    self.k.release(op.shape);
-                                }
-                                self.k.release(one.shape);
-                            }
-                            Err(e) => eprintln!("  tools as one: {e}"),
-                        }
-                    }
-                }
-                now = self.sheet_step(kind, now.clone(), own, tools)?;
-                if std::env::var("TENON_SEAM_DEBUG").is_ok() {
-                    eprintln!("  all at once: {:?} valid {:?} topo {:?}", volume(self, now.0), self.k.is_valid(now.0), self.k.topology(now.0).map(|t| (t.solids, t.faces)));
-                }
+                now = match kind {
+                    BoolOp::Cut => self.sheet_cut(now.clone(), own, tools, what)?,
+                    _ => self.sheet_step(kind, now.clone(), own, tools)?,
+                };
                 own = false;
                 if n == 1 {
                     let after = volume(self, now.0)?;
@@ -492,7 +509,7 @@ impl Ctx<'_> {
 
     /// Makes the faces feature `id` added one with the faces of the part they lie in the plane of
     /// (a wall, and the piece a corner seam put on its end). Such a face keeps the name the part
-    /// had for it. Left as it is when the kernel cannot.
+    /// had for it. Left as it is when the kernel cannot, or gives anything but the same solid.
     fn sheet_unify(&mut self, bi: usize, id: FeatureId) {
         let Some((shape, names)) = self.regen.bodies.get(bi).map(|b| (b.shape, b.names.clone())) else { return };
         let own = |n: &Option<FaceOrigin>| matches!(n, Some(FaceOrigin::From { feature, .. }) if *feature == id);
@@ -502,7 +519,10 @@ impl Ctx<'_> {
             return;
         }
         let Ok(op) = self.k.unify(shape, &faces) else { return };
-        let Ok(topo) = self.k.topology(op.shape) else {
+        // The same solid with fewer faces, or it is not taken.
+        let volume = |ctx: &Self, s: ShapeHandle| ctx.k.mass_properties(s, 1.0).map(|m| m.volume);
+        let same = matches!((volume(self, shape), volume(self, op.shape)), (Ok(a), Ok(b)) if (a - b).abs() <= 1e-6 * (1.0 + a));
+        let Some(topo) = self.k.topology(op.shape).ok().filter(|t| same && t.solids == 1) else {
             self.k.release(op.shape);
             return;
         };
@@ -842,11 +862,6 @@ impl Ctx<'_> {
         )?;
         // The piece put on the end of a wall is the wall: one face, with the wall's name.
         self.sheet_unify(bi, id);
-        if std::env::var("TENON_SEAM_DEBUG").is_ok()
-            && let Some(s) = self.regen.bodies.get(bi).map(|b| b.shape)
-        {
-            eprintln!("  unified: {:?} valid {:?} topo {:?}", self.k.mass_properties(s, 1.0).map(|m| m.volume), self.k.is_valid(s), self.k.topology(s).map(|t| (t.solids, t.faces)));
-        }
         Ok(())
     }
 

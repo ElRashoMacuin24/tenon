@@ -29,5 +29,5 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Corner seam, step by step
-        run: pixi run cargo test -p tenon-model --test sheet_metal a_corner_seam -- --nocapture
+      - name: Kernel, model and command line tests
+        run: pixi run cargo test -p tenon-kernel-occt -p tenon-model -p tenon-cli
