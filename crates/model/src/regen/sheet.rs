@@ -1288,8 +1288,145 @@ impl Ctx<'_> {
         self.sheet_assemble(bi, body, cuts, Vec::new(), Vec::new(), "cut", ["", ""])
     }
 
+    /// A contour flange along edges of the sheet: its profile, drawn square to the first edge
+    /// and starting at it, is taken as the cross-section at every edge given. The side of the
+    /// sheet the edge is on runs on into the profile, so where the profile leaves the edge at
+    /// an angle a bend joins the two, and the sheet is cut back to where that bend begins.
+    fn contour_along(&mut self, id: FeatureId, c: &ContourFlange) -> Result<(), Stop> {
+        let sizes = self.doc.sheet_sizes()?;
+        let t = sizes.thickness;
+        let (held, frame) = self.sketch_and_frame(c.sketch)?;
+        let sketch: &Sketch = &held;
+        let (drawn, mut ids) = contour_path(sketch)?;
+        let (bi, body, found) = self.sheet_edges(&c.edges, "contour flange")?;
+        let topo = self.k.topology(body)?;
+        let mut sites: Vec<(Site, u64)> = Vec::with_capacity(found.len());
+        for (e, key) in &found {
+            sites.push((
+                self.flange_site(body, &topo, *e, t, false).map_err(|stop| match stop {
+                    Stop::Failed(m) => Stop::Failed(m.replace("A flange goes", "A contour flange goes").replace("a flange", "a contour flange")),
+                    other => other,
+                })?,
+                *key,
+            ));
+        }
+        let Some(&(first, _)) = sites.first() else { return Err("select an edge for the contour flange".into()) };
+        // The profile seen in the cross-section of the first edge: out of the sheet and up from
+        // the side the edge is on.
+        if frame.z().cross(first.along).len() > 1e-6 {
+            return Err(
+                "The profile's sketch is not square to the edge: for a contour flange along an edge, draw the profile on a plane the edge runs straight through (the end of the sheet there, or a plane across it)."
+                    .into(),
+            );
+        }
+        let seen = |p: Vec2| {
+            let from_edge = frame.plane_point(p) - first.origin;
+            Vec2::new(from_edge.dot(first.out), from_edge.dot(first.up))
+        };
+        let across = |v: Vec3| Vec2::new(v.dot(first.out), v.dot(first.up));
+        let mirrored = across(frame.x()).cross(across(frame.y())) < 0.0;
+        let mut path: Vec<strip::Run> = drawn
+            .iter()
+            .map(|run| match *run {
+                strip::Run::Line { from, to } => strip::Run::Line { from: seen(from), to: seen(to) },
+                strip::Run::Arc { center, radius, from, sweep } => {
+                    let (middle, start) = (seen(center), seen(Vec2::polar(center, radius, from)));
+                    strip::Run::Arc { center: middle, radius, from: (start - middle).angle(), sweep: if mirrored { -sweep } else { sweep } }
+                }
+            })
+            .collect();
+        // It starts at the edge, whichever way round it was drawn.
+        let at_edge = |p: Vec2| p.len() < 1e-6;
+        let (Some(head), Some(tail)) = (path.first().map(strip::Run::start), path.last().map(strip::Run::end)) else {
+            return Err("the profile is empty".into());
+        };
+        if !at_edge(head) {
+            if !at_edge(tail) {
+                return Err(format!(
+                    "The profile does not start at the edge: its ends are {} mm and {} mm from it. Start it at the edge (shown as a point in a sketch square to it: project the edge or the face it bounds).",
+                    crate::explain::mm(head.len()),
+                    crate::explain::mm(tail.len())
+                )
+                .into());
+            }
+            path.reverse();
+            for run in &mut path {
+                *run = run.reversed();
+            }
+            ids.reverse();
+        }
+        // The side of the sheet leads up to the edge, and every corner from there on is a bend.
+        let lead = 1.0e4;
+        let mut whole = vec![strip::Run::Line { from: Vec2::new(-lead, 0.0), to: Vec2::ZERO }];
+        whole.extend(path);
+        let rounded = strip::rounded(&whole, c.radius.unwrap_or(sizes.bend_radius), -t, 0.0)?;
+        let Some((strip::Run::Line { to: begins, .. }, _)) = rounded.first().copied() else {
+            return Err("the contour flange has no profile".into());
+        };
+        // What the bend at the edge takes of the sheet.
+        let trim = (-begins.x).max(0.0);
+        let runs: Vec<strip::Run> = rounded.iter().skip(1).map(|p| p.0).collect();
+        if runs.is_empty() {
+            return Err("The profile only runs back along the sheet: draw it out of the sheet from the edge.".into());
+        }
+        if strip::crosses(&runs, -t, 0.0) {
+            return Err("The contour flange folds into itself: its profile comes back through its own path. Shorten the part that does, or draw it clear of the rest.".into());
+        }
+        // A face is named after the edge, the curve of the profile it follows (a bend: the two
+        // it joins; the sheet itself counts as one) and the side of the sheet it is.
+        let curve = |i: usize| if i == 0 { sub_key(0, 7) } else { sub_key(u64::from(ids.get(i - 1).map_or(0, |e| e.0)), 1) };
+        let (mut pieces, mut cuts): (Vec<Named>, Vec<Named>) = (Vec::new(), Vec::new());
+        let built = (|| -> Result<(), Stop> {
+            for (site, edge) in &sites {
+                let span = flange::span(&c.width, site.length).map_err(|m| m.replace("The flange", "The contour flange"))?;
+                let width = span.1 - span.0;
+                let section = site.section_frame(span.0).ok_or("the contour flange's edge has no direction")?;
+                let tag = |n: usize, left: bool| {
+                    let [a, b] = rounded.get(n + 1).map_or([0, 0], |p| p.1);
+                    sub_key(pair_key(*edge, if a == b { curve(a) } else { pair_key(curve(a), curve(b)) }), 2 + u32::from(left))
+                };
+                let name = |part: u32| sub_key(*edge, part);
+                let region = strip::outline(&runs, -t, 0.0, tag, [name(Part::Root as u32), name(Part::Tip as u32)])?;
+                let caps = [name(Part::Start as u32), name(Part::End as u32)];
+                pieces.push(self.sheet_strip(id, &Profile { frame: section, regions: vec![region] }, &Extent::Distance(width), caps)?);
+                if trim > 1e-9 {
+                    let cut = name(Part::Cut as u32);
+                    let back =
+                        outline::polygon(&[(Vec2::new(-trim, 0.0), cut), (Vec2::ZERO, cut), (Vec2::new(0.0, -t), cut), (Vec2::new(-trim, -t), cut)]);
+                    let profile = Profile { frame: section, regions: vec![Region { outer: outline::to_loop(&back), holes: vec![] }] };
+                    cuts.push(self.sheet_prism(id, &profile, width, Some([cut, cut]))?);
+                }
+            }
+            Ok(())
+        })();
+        if let Err(e) = built {
+            for (s, _) in pieces.into_iter().chain(cuts) {
+                self.k.release(s);
+            }
+            return Err(e);
+        }
+        self.sheet_assemble(
+            bi,
+            body,
+            cuts,
+            pieces,
+            Vec::new(),
+            "contour flange",
+            [
+                "Where it runs along edges that meet at a corner, give it a width or offsets so that it stops short of the corner.",
+                "the edge picked for it is not on the rim of the sheet.",
+            ],
+        )?;
+        // What runs straight on from the sheet is the sheet: one face, with the sheet's name.
+        self.sheet_unify(bi, id);
+        Ok(())
+    }
+
     pub(super) fn contour_flange(&mut self, id: FeatureId, c: &ContourFlange) -> Result<(), Stop> {
         c.check()?;
+        if !c.edges.is_empty() {
+            return self.contour_along(id, c);
+        }
         let sizes = self.doc.sheet_sizes()?;
         let t = sizes.thickness;
         let (held, frame) = self.sketch_and_frame(c.sketch)?;

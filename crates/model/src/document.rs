@@ -927,7 +927,7 @@ impl FeatureKind {
             FeatureKind::SheetFace(f) => vec![f.sketch],
             FeatureKind::Flange(f) => f.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::Hem(h) => h.edges.iter().flat_map(EdgeRef::features).collect(),
-            FeatureKind::ContourFlange(c) => vec![c.sketch],
+            FeatureKind::ContourFlange(c) => std::iter::once(c.sketch).chain(c.edges.iter().flat_map(EdgeRef::features)).collect(),
             FeatureKind::CornerSeam(c) => c.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::CutAcrossBend(c) => vec![c.sketch],
             FeatureKind::Bend(b) => b.edges.iter().flat_map(EdgeRef::features).collect(),

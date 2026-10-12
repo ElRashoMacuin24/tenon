@@ -1583,3 +1583,34 @@ In files: the feature type `fold` (`sketch`, optional `line`, `angle`, optional 
 
 Not done: a line that is not straight; several lines in one feature; picking the line in the
 viewport (the panel takes the sketch, and the feature its one line, or the one named).
+
+## DEC-072 Contour Flange along edges of the sheet (2026-10-12)
+
+The second of the four asked for on Bend's report.
+
+**What it is.** In Inventor a Contour Flange either pushes its open profile out of the sketch
+by a distance, or runs it along edges picked on an existing face, with width extents. Tenon
+had the first (DEC-064); a contour flange now takes `edges` as well (Sheet Metal > Create >
+Contour Flange: click an edge of the sheet; `sheet.contour_flange` with `edges`).
+
+- **The profile's sketch is square to the first edge** (the edge runs straight through its
+  plane, and shows in it as a point) and **the profile starts at that edge**. Either end of
+  the profile may be the one there. Anything else is refused, saying how far off it is.
+- **The side of the sheet the edge is on runs on into the profile**: seen end on, the profile
+  is that side of the sheet continued. Where it leaves the edge at an angle there is a bend
+  of the rule's radius (or the flange's own), for which the sheet is cut back to where the
+  bend begins, exactly as a Bend trims a face; where it leaves straight on, nothing is cut and
+  what is added is made one face with the sheet. Every further corner is a bend, as in a
+  contour flange pushed out of its sketch. (`distance`, `direction` and `position` say
+  nothing here: the thickness is where the sheet's is.)
+- **Along each edge given** the same profile is used, seen from that edge: on the opposite
+  edge of a plate it is the mirror image. How much of an edge it takes is a flange's `width`
+  (the whole edge, a width in its middle, offsets from its ends).
+
+In files: a `contour_flange` gains optional `edges` and `width`, and its `distance` is not
+written when it has edges; additions to version 2 (DEC-046).
+
+Not done: mitres where the flanges of adjacent edges meet (they must stop short of the
+corner, by a width or offsets, or the flange is refused for running into itself); loop
+select; a relief where the sheet is cut back beside a narrower flange (it is cut square);
+From To and Distance extents.

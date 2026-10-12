@@ -668,7 +668,9 @@ pub enum Sides {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ContourFlange {
     pub sketch: FeatureId,
-    /// How wide the strip is (how far the profile is pushed).
+    /// How wide the strip is (how far the profile is pushed out of its sketch); nothing when it
+    /// runs along `edges`.
+    #[serde(default, skip_serializing_if = "is_nothing")]
     pub distance: f64,
     /// In front of the sketch plane, behind it, or half each way.
     #[serde(default)]
@@ -680,14 +682,31 @@ pub struct ContourFlange {
     /// The inside radius of the bends made at corners; without it, the part's `BendRadius`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub radius: Option<f64>,
+    /// Edges of the sheet's rim the flange runs along. The profile's sketch is square to the
+    /// first and the profile starts at it; the side of the sheet the edge is on runs on into
+    /// the profile, with a bend where it leaves at an angle. `distance`, `direction` and
+    /// `position` then say nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<EdgeRef>,
+    /// How much of each edge it takes, when it runs along edges.
+    #[serde(default, skip_serializing_if = "takes_the_edge")]
+    pub width: FlangeWidth,
     /// Join (to the sheet it touches) or a new solid.
     #[serde(default)]
     pub operation: Operation,
 }
 
+fn is_nothing(d: &f64) -> bool {
+    *d == 0.0
+}
+
+fn takes_the_edge(w: &FlangeWidth) -> bool {
+    *w == FlangeWidth::Edge
+}
+
 impl ContourFlange {
     pub fn check(&self) -> Result<(), String> {
-        if !(self.distance.is_finite() && self.distance > 0.0 && self.distance <= 1e5) {
+        if self.edges.is_empty() && !(self.distance.is_finite() && self.distance > 0.0 && self.distance <= 1e5) {
             return Err("the contour flange's distance must be more than 0".into());
         }
         if let Some(r) = self.radius

@@ -220,22 +220,43 @@ pub(crate) struct ContourPanel {
     pub own_radius: bool,
     pub radius: f64,
     pub new_solid: bool,
+    /// Edges of the sheet it runs along (then the distance, direction and position say nothing).
+    pub edges: Vec<EdgeRef>,
+    pub width: WidthChoice,
+    pub width_value: f64,
+    pub offset_a: f64,
+    pub offset_b: f64,
 }
 
 impl ContourPanel {
     pub(crate) fn kind(&self) -> FeatureKind {
+        let width = match self.width {
+            WidthChoice::Edge => FlangeWidth::Edge,
+            WidthChoice::Centered => FlangeWidth::Centered { width: self.width_value },
+            WidthChoice::Offset => FlangeWidth::Offset { start: self.offset_a, end: self.offset_b },
+        };
+        let along = !self.edges.is_empty();
         FeatureKind::ContourFlange(sheet::ContourFlange {
             sketch: self.sketch,
-            distance: self.distance,
+            distance: if along { 0.0 } else { self.distance },
             direction: self.direction,
             position: self.position,
             radius: self.own_radius.then_some(self.radius),
+            edges: self.edges.clone(),
+            width: if along { width } else { FlangeWidth::Edge },
             operation: if self.new_solid { Operation::NewBody } else { Operation::Join },
         })
     }
 
     pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
-        let mut v = vec![("distance", "/distance")];
+        let mut v = if self.edges.is_empty() { vec![("distance", "/distance")] } else { Vec::new() };
+        if !self.edges.is_empty() {
+            match self.width {
+                WidthChoice::Edge => {}
+                WidthChoice::Centered => v.push(("width", "/width/centered/width")),
+                WidthChoice::Offset => v.extend([("offset_a", "/width/offset/start"), ("offset_b", "/width/offset/end")]),
+            }
+        }
         if self.own_radius {
             v.push(("radius", "/radius"));
         }
@@ -1151,6 +1172,15 @@ impl Workbench {
                     own_radius: c.radius.is_some(),
                     radius: c.radius.unwrap_or(sizes.bend_radius),
                     new_solid: c.operation == Operation::NewBody,
+                    edges: c.edges.clone(),
+                    width: match c.width {
+                        FlangeWidth::Edge => WidthChoice::Edge,
+                        FlangeWidth::Centered { .. } => WidthChoice::Centered,
+                        FlangeWidth::Offset { .. } => WidthChoice::Offset,
+                    },
+                    width_value: if let FlangeWidth::Centered { width } = c.width { width } else { 10.0 },
+                    offset_a: if let FlangeWidth::Offset { start, .. } = c.width { start } else { 0.0 },
+                    offset_b: if let FlangeWidth::Offset { end, .. } = c.width { end } else { 0.0 },
                 },
                 _ => return Err("not a contour flange".into()),
             },
@@ -1165,12 +1195,20 @@ impl Workbench {
                     own_radius: false,
                     radius: sizes.bend_radius,
                     new_solid: false,
+                    edges: self.picked_edges(),
+                    width: WidthChoice::Edge,
+                    width_value: 10.0,
+                    offset_a: 0.0,
+                    offset_b: 0.0,
                 }
             }
         };
         self.panel = Some(Panel::ContourFlange(panel));
         self.start_equations();
-        self.set_status("Contour Flange: the profile is pushed out of its sketch as sheet, with a bend at every corner. Set the distance, then OK.");
+        self.view.selection.clear();
+        self.set_status(
+            "Contour Flange: the profile is pushed out of its sketch as sheet, with a bend at every corner. Set the distance, or click an edge of the sheet the profile starts at to run it along that edge, then OK.",
+        );
         Ok(())
     }
 
@@ -1641,46 +1679,57 @@ impl Workbench {
                                 }
                             });
                         ui.end_row();
-                    });
-                });
-                section(ui, "Behavior", true, |ui| {
-                    egui::Grid::new("tn_props_contour_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                        ui.label("Position").on_hover_text("Which side of the profile the sheet's thickness goes");
-                        choice(
-                            ui,
-                            "tn_contour_position",
-                            &mut p.position,
-                            &three(
-                                "Inside the profile's first corner: the profile is the outside of the part there",
-                                "Outside the profile",
-                                "Half each side: the profile is the middle of the sheet",
-                            ),
-                        );
-                        ui.end_row();
-                        ui.label("Direction").on_hover_text("Which way the profile is pushed out of its sketch plane");
-                        choice(
-                            ui,
-                            "tn_contour_direction",
-                            &mut p.direction,
-                            &three("In front of the sketch plane", "Behind the sketch plane", "Half each way from the sketch plane"),
-                        );
-                        ui.end_row();
-                        ui.label("Distance").on_hover_text("How far the profile is pushed: the width of the strip");
-                        enter |= eq_value_field(
-                            ui,
-                            egui::Id::new("tn_props_contour_distance"),
-                            &mut p.distance,
-                            eqs,
-                            "distance",
-                            "mm",
-                            0.001..=100_000.0,
-                            110.0,
-                            t,
-                        )
-                        .entered;
+                        ui.label("Edges")
+                            .on_hover_text("Edges of the sheet to run the profile along: its sketch is square to the first and it starts there");
+                        clear |= picked_row(ui, p.edges.len(), "none: pushed out of its sketch");
                         ui.end_row();
                     });
                 });
+                if !p.edges.is_empty() {
+                    section(ui, "Width Extents", true, |ui| {
+                        enter |= width_extents(ui, "contour", &mut p.width, &mut p.width_value, &mut p.offset_a, &mut p.offset_b, eqs, t);
+                    });
+                }
+                if p.edges.is_empty() {
+                    section(ui, "Behavior", true, |ui| {
+                        egui::Grid::new("tn_props_contour_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                            ui.label("Position").on_hover_text("Which side of the profile the sheet's thickness goes");
+                            choice(
+                                ui,
+                                "tn_contour_position",
+                                &mut p.position,
+                                &three(
+                                    "Inside the profile's first corner: the profile is the outside of the part there",
+                                    "Outside the profile",
+                                    "Half each side: the profile is the middle of the sheet",
+                                ),
+                            );
+                            ui.end_row();
+                            ui.label("Direction").on_hover_text("Which way the profile is pushed out of its sketch plane");
+                            choice(
+                                ui,
+                                "tn_contour_direction",
+                                &mut p.direction,
+                                &three("In front of the sketch plane", "Behind the sketch plane", "Half each way from the sketch plane"),
+                            );
+                            ui.end_row();
+                            ui.label("Distance").on_hover_text("How far the profile is pushed: the width of the strip");
+                            enter |= eq_value_field(
+                                ui,
+                                egui::Id::new("tn_props_contour_distance"),
+                                &mut p.distance,
+                                eqs,
+                                "distance",
+                                "mm",
+                                0.001..=100_000.0,
+                                110.0,
+                                t,
+                            )
+                            .entered;
+                            ui.end_row();
+                        });
+                    });
+                }
                 section(ui, "Bend", true, |ui| {
                     egui::Grid::new("tn_props_contour_bend").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         ui.label("Bend Radius").on_hover_text("Of the bends made where two lines of the profile meet at a corner");
@@ -1706,7 +1755,7 @@ impl Workbench {
                         ui.end_row();
                     });
                 });
-                if !self.scene.bodies.is_empty() || p.new_solid {
+                if p.edges.is_empty() && (!self.scene.bodies.is_empty() || p.new_solid) {
                     section(ui, "Output", true, |ui| {
                         ui.checkbox(&mut p.new_solid, "New solid").on_hover_text("A sheet of its own, not joined to the one it touches");
                     });

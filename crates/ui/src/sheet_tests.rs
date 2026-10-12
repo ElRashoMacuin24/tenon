@@ -1111,3 +1111,71 @@ fn a_face_is_folded_along_a_line_from_its_panel() {
     let Some(Panel::Fold(p)) = &wb.panel else { panic!("double-click edits the fold: {}", wb.status()) };
     assert_eq!((p.editing, p.degrees.round(), p.location, p.flip_side, p.flip_direction), (Some(id), 45.0, FoldLocation::Start, true, true));
 }
+
+#[test]
+fn a_contour_flange_runs_along_an_edge_clicked_in_its_panel() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1000.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3 })).unwrap();
+    // A plate, and on the XZ plane (square to its right edge, at the edge's front end) a
+    // profile that starts at the top of that edge: 15 up, then 15 out.
+    plate(&mut wb, 60.0, 40.0);
+    let sk = wb.exec("sketch.create", json!({ "plane": "xz" })).unwrap()["feature"].as_u64().unwrap();
+    frames(&mut d, &mut wb);
+    let frame = wb.sketch_frame(tenon_model::FeatureId(sk as u32)).unwrap();
+    let at = |x: f64, z: f64| frame.to_local(Vec3::new(x, 0.0, z));
+    let (a, b, c) = (at(60.0, 2.0), at(60.0, 17.0), at(75.0, 17.0));
+    let first = wb.exec("sketch.line", json!({ "sketch": sk, "x1": a.x, "y1": a.y, "x2": b.x, "y2": b.y })).unwrap();
+    wb.exec("sketch.line", json!({ "sketch": sk, "start": first["end"], "x2": c.x, "y2": c.y })).unwrap();
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+
+    // Contour Flange takes the profile; with no edge it would be pushed out of its sketch.
+    wb.run_ui("sheet.contour_flange").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::ContourFlange(p)) if p.sketch.0 as u64 == sk && p.edges.is_empty()));
+    let texts = d.texts();
+    for shown in ["Contour Flange", "Profile", "Edges", "none: pushed out of its sketch", "Distance"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    // A click on the plate's upper right edge: the profile runs along it, the whole 40. The
+    // plate is cut back by 3 for the bend at the edge; then a bend, 7 of wall, a bend and 10 of lip.
+    let edge = on_screen(&wb, Vec3::new(60.0, 20.0, 2.0));
+    d.click(&mut wb, edge);
+    frames(&mut d, &mut wb);
+    let Some(Panel::ContourFlange(p)) = &wb.panel else { panic!("the contour flange panel") };
+    assert_eq!(p.edges.len(), 1, "{}", wb.status());
+    let strip = |width: f64| (-3.0 * 2.0 + 2.0 * ring(FRAC_PI_2, 3.0) + 17.0 * 2.0) * width;
+    assert!(near(volume(&wb), 4800.0 + strip(40.0)), "{} {}: {}", volume(&wb), 4800.0 + strip(40.0), wb.status());
+    let texts = d.texts();
+    for (shown, there) in [("1 selected", true), ("Width Extents", true), ("Distance", false), ("Direction", false)] {
+        assert_eq!(texts.iter().any(|t| t == shown), there, "{shown}: {texts:?}");
+    }
+    // 20 wide in the middle of the edge, from the list.
+    d.click(&mut wb, pressable(&d, "tn_contour_width"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_contour_width_centered"));
+    frames(&mut d, &mut wb);
+    type_into(&mut d, &mut wb, "tn_props_contour_w", "20");
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), 4800.0 + strip(20.0)), "{} {}", volume(&wb), 4800.0 + strip(20.0));
+    // OK: the feature says its edge and its width, and edits again with them.
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let (id, kind) = wb.document().features().last().map(|f| (f.id, f.kind.clone())).unwrap();
+    let FeatureKind::ContourFlange(c) = kind else { panic!("{kind:?}") };
+    assert!(
+        c.edges.len() == 1 && c.distance == 0.0 && matches!(c.width, tenon_model::sheet::FlangeWidth::Centered { width } if width == 20.0),
+        "{c:?}"
+    );
+    assert!(near(volume(&wb), 4800.0 + strip(20.0)));
+    let row = browser_row(&d, "Contour Flange1");
+    double_click(&mut d, &mut wb, row.center());
+    frames(&mut d, &mut wb);
+    let Some(Panel::ContourFlange(p)) = &wb.panel else { panic!("double-click edits it: {}", wb.status()) };
+    assert_eq!((p.editing, p.edges.len(), p.width, p.width_value), (Some(id), 1, crate::sheet::WidthChoice::Centered, 20.0));
+}

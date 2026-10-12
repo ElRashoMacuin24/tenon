@@ -1947,3 +1947,98 @@ fn a_fold_carries_what_is_on_the_sheet_beyond_it_and_says_what_it_cannot_fold() 
     run(&mut s, &mut k, "sheet.fold", json!({ "sketch": off }));
     assert!(failure(&mut s, &mut k).contains("must be on a flat face of the sheet"));
 }
+
+/// A 60 x 40 plate and, in a sketch on the XZ plane (square to the plate's right and left
+/// edges, at their front ends), an open profile through the given points of the part's X and Z.
+/// Returns the plate's face feature, its sketch lines and the profile's sketch.
+fn plate_and_profile(points: &[(f64, f64)]) -> (Session, OcctKernel, u64, Vec<u64>, u64) {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (face, lines) = plate(&mut s, &mut k, 60.0, 40.0);
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" })), "feature");
+    let frame = s.regen(&mut k).sketch_frames[&tenon_model::FeatureId(sk as u32)];
+    let at = |(x, z): (f64, f64)| {
+        let p = frame.to_local(Vec3::new(x, 0.0, z));
+        (p.x, p.y)
+    };
+    let mut last: Option<Value> = None;
+    for pair in points.windows(2) {
+        let ((x1, y1), (x2, y2)) = (at(pair[0]), at(pair[1]));
+        let line = match &last {
+            Some(end) => run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "start": end, "x2": x2, "y2": y2 })),
+            None => run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": x1, "y1": y1, "x2": x2, "y2": y2 })),
+        };
+        last = Some(line["end"].clone());
+    }
+    (s, k, face, lines, sk)
+}
+
+#[test]
+fn a_contour_flange_runs_along_an_edge_of_the_sheet_from_a_profile_that_starts_there() {
+    let ba = allowance(FRAC_PI_2);
+    // The profile starts at the plate's upper right edge, goes 15 straight up and then 15
+    // out. Along the edge it is a wall and a lip: the upper side of the plate runs on up the
+    // wall's inside (a bend of inside radius 3 at the edge, for which the plate is cut back by
+    // 3) and over the top of the lip (a bend the other way, the profile its outside).
+    let (mut s, mut k, face, lines, sk) = plate_and_profile(&[(60.0, 2.0), (60.0, 17.0), (75.0, 17.0)]);
+    let right = rim(&mut s, &mut k, face, "end", lines[1]);
+    let cf = id(&run(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk, "edges": [right.clone()] })), "feature");
+    let bend = bend_volume(FRAC_PI_2, 1.0);
+    let strip = |width: f64| -3.0 * T * width + (2.0 * bend + (7.0 + 10.0) * T) * width;
+    assert!(near(volume(&mut s, &mut k), 4800.0 + strip(40.0)), "{} {}", volume(&mut s, &mut k), 4800.0 + strip(40.0));
+    assert_eq!(solids(&mut s, &mut k), (1, 1, true));
+    // The wall's inside is where the profile's first line is (x = 60), 7 of it flat; the top
+    // of the lip is where its second line is (z = 17), 10 of it flat.
+    let all = flats(&mut s, &mut k);
+    assert!(all.iter().any(|f| f.0.near(-Vec3::X, 1e-9) && near(f.1.x, 60.0) && near(f.2, 7.0 * 40.0)), "{all:?}");
+    assert!(all.iter().any(|f| f.0.near(Vec3::Z, 1e-9) && near(f.1.z, 17.0) && near(f.2, 10.0 * 40.0)), "{all:?}");
+    // It lays flat with the plate: 57 of plate, a bend, 7, a bend, 10.
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "length"), 57.0 + ba + 7.0 + ba + 10.0) && near(num(&f, "width"), 40.0) && f["bends"].as_array().unwrap().len() == 2, "{f}");
+
+    // 20 wide in the middle of the edge: the plate is cut back only there.
+    update(&mut s, &mut k, cf, json!({ "width": { "centered": { "width": 20.0 } } }));
+    assert!(near(volume(&mut s, &mut k), 4800.0 + strip(20.0)), "{}", volume(&mut s, &mut k));
+    // Along the left edge too: the same profile seen from that edge, a mirror image of the first.
+    let left = rim(&mut s, &mut k, face, "end", lines[3]);
+    update(&mut s, &mut k, cf, json!({ "width": "edge", "edges": [right.clone(), left] }));
+    assert!(near(volume(&mut s, &mut k), 4800.0 + 2.0 * strip(40.0)), "{}", volume(&mut s, &mut k));
+    let all = flats(&mut s, &mut k);
+    assert!(all.iter().any(|f| f.0.near(Vec3::X, 1e-9) && near(f.1.x, 0.0) && near(f.2, 7.0 * 40.0)), "the left wall's inside: {all:?}");
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "length"), 54.0 + 2.0 * (ba + 7.0 + ba + 10.0)) && f["bends"].as_array().unwrap().len() == 4, "{f}");
+
+    // A profile that runs straight on out of the plate before it turns up: nothing is cut
+    // back, and what runs straight on is the plate (its top one face, 72 long to the bend).
+    let (mut s, mut k, face, lines, sk) = plate_and_profile(&[(60.0, 2.0), (75.0, 2.0), (75.0, 14.0)]);
+    let right = rim(&mut s, &mut k, face, "end", lines[1]);
+    run(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk, "edges": [right] }));
+    assert!(near(volume(&mut s, &mut k), 4800.0 + (12.0 * T + bend + 9.0 * T) * 40.0), "{}", volume(&mut s, &mut k));
+    let top: Vec<_> = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(Vec3::Z, 1e-9) && near(f.1.z, 2.0)).collect();
+    assert!(top.len() == 1 && near(top[0].2, 72.0 * 40.0), "{top:?}");
+    let named = run(&mut s, &mut k, "model.face_ref", json!({ "at": [70, 20, 2] }));
+    assert!(named["origin"]["type"] == "cap" && named["origin"]["feature"] == face, "{named}");
+}
+
+#[test]
+fn a_contour_flange_along_an_edge_says_what_its_profile_must_be() {
+    // A profile that does not start at the edge.
+    let (mut s, mut k, face, lines, sk) = plate_and_profile(&[(62.0, 2.0), (62.0, 17.0)]);
+    let right = rim(&mut s, &mut k, face, "end", lines[1]);
+    run(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk, "edges": [right.clone()] }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("does not start at the edge") && e.contains("2 mm"), "{e}");
+    // A sketch that is not square to the edge: the front edge runs along X, in the sketch's plane.
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    let front = rim(&mut s, &mut k, face, "end", lines[0]);
+    run(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk, "edges": [front] }));
+    assert!(failure(&mut s, &mut k).contains("not square to the edge"));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    // Wider than the edge (with a profile that does start at it); and without edges a
+    // distance is still asked for.
+    let (mut s, mut k, face, lines, sk) = plate_and_profile(&[(60.0, 2.0), (60.0, 17.0)]);
+    let right = rim(&mut s, &mut k, face, "end", lines[1]);
+    run(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk, "edges": [right], "width": 50 }));
+    assert!(failure(&mut s, &mut k).contains("wider than its edge"));
+    let e = refused(&mut s, &mut k, "sheet.contour_flange", json!({ "sketch": sk }));
+    assert!(e.contains("distance"), "{e}");
+}

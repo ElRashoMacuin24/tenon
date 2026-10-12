@@ -2381,12 +2381,16 @@ fn sheet_contour_flange(s: &mut Session, p: &Value) -> CmdResult {
         "new_body" => Operation::NewBody,
         other => return Err(CmdError(format!("unknown operation `{other}` for a contour flange (join, new_body)"))),
     };
+    // Along edges of the sheet, when any are given: the distance then says nothing.
+    let edges = if p.get("edges").is_some_and(|v| !v.is_null()) { edge_refs(p)? } else { Vec::new() };
     let flange = ContourFlange {
         sketch: sketch_id(p)?,
-        distance: num(p, "distance")?,
+        distance: if edges.is_empty() { num(p, "distance")? } else { opt_num(p, "distance")?.unwrap_or(0.0) },
         direction: sides("direction")?,
         position: sides("position")?,
         radius: opt_num(p, "radius")?,
+        width: if edges.is_empty() { crate::sheet::FlangeWidth::Edge } else { sheet_width(p)? },
+        edges,
         operation,
     };
     flange.check().map_err(CmdError)?;
@@ -2997,7 +3001,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.contour_flange",
         "Contour Flange",
-        "sketch (an open profile: lines and arcs end to end; corners between lines become bends, an arc is a bend as drawn); distance (how far the profile is pushed out of its plane); direction: \"default\" | \"flipped\" | \"symmetric\"; position: \"default\" (the sheet goes on the inside of the profile's first corner) | \"flipped\" | \"symmetric\"; radius (inside, of the bends made at corners; default BendRadius); operation: \"join\" (default) | \"new_body\"",
+        "sketch (an open profile: lines and arcs end to end; corners between lines become bends, an arc is a bend as drawn); distance (how far the profile is pushed out of its plane); direction: \"default\" | \"flipped\" | \"symmetric\"; position: \"default\" (the sheet goes on the inside of the profile's first corner) | \"flipped\" | \"symmetric\"; radius (inside, of the bends made at corners; default BendRadius); operation: \"join\" (default) | \"new_body\". Or along edges of the sheet: edges: [edge references] (straight edges of its rim; the sketch is square to the first and the profile starts at that edge, the side of the sheet the edge is on running on into it, with a bend where it leaves at an angle, for which the sheet is cut back) with width or offsets as for sheet.flange; distance, direction and position then say nothing",
         true,
         sheet_contour_flange
     ),
