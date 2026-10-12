@@ -346,7 +346,8 @@ version 2 stands.
 | Scripts name an edge or face by a point on it | done | DEC-062: `an_edge_or_a_face_is_named_by_a_point_on_it` (a flange's faces have names a script cannot spell; a point on nothing says how far the nearest is, one where several meet asks for another) |
 | Contour flange, hem | done later | the second round below |
 | Bend between faces, corner seam | done later | the second round below |
-| Fold, rip, punch, unfold and refold | missing | on the Sheet Metal tab as buttons that say they are not there yet (DEC-057) |
+| Fold | done later | the second round below |
+| Rip, punch, unfold and refold | missing | on the Sheet Metal tab as buttons that say they are not there yet (DEC-057) |
 
 ## Sheet metal, second round (after M8)
 
@@ -385,7 +386,8 @@ Corner Seam; then Cut Across Bend; then Bend. Decisions: DEC-063 to DEC-070. In 
 | A sheet in several pieces, and what a bend refuses | done | `a_bend_says_what_it_cannot_join_and_leaves_other_pieces_of_sheet_alone` (three pieces: a flange goes on one, a bend joins two and leaves the third; edges that are not parallel, one edge twice, one edge only, a radius of nothing, an unknown kind; faces in one plane; edges not beside one another) |
 | The Bend panel: two edges, the radius, the kind of double bend, Flip Fixed Edge | done | `a_bend_is_made_by_clicking_an_edge_of_each_of_two_faces` (Bend live on the Create panel; nothing changes at one edge; at two the preview is Fix Edges by hand; 90 Degree from the list, Flip Fixed Edge, a radius of 2 typed, each by hand; OK makes Bend1 and one piece of sheet with two bends in its flat pattern; a double-click edits it) |
 | A bend in files | done | `a_sheet_metal_part_is_written_as_text_and_read_back` (two `bend` records: one with its edges only, one with `radius`, `double = "90_degree"` and `flip_fixed`) |
-| Lofted flange, contour roll, fold, rip, punch, unfold and refold | missing | on the Sheet Metal tab as buttons that say they are not there yet |
+| Fold: a face folded along a line drawn across it, with nothing added | done | DEC-071. `a_fold_turns_the_sheet_beyond_a_line_about_a_bend_and_adds_nothing` (a quarter turn by hand: the volume, where what folded stands and what stayed lies, the flat pattern the 60 x 40 plate again with its bend line where the line was drawn; the line as the start and as the end of the bend; the other side; down; 45 degrees with a radius of its own; from a sketch on the underside), `a_fold_carries_what_is_on_the_sheet_beyond_it_and_says_what_it_cannot_fold` (a flange goes with the piece that folds and the flat pattern is what it was before; a line short of the edges, two lines, no line, an angle of nothing and a sketch off the sheet are refused in words). In the app: `a_face_is_folded_along_a_line_from_its_panel` (Fold live on the Create panel; the preview by hand; Start of Bend, Flip Side, Flip Direction and 45 degrees from the panel; Fold1 in the browser, edited by a double-click). Gap: the line is not picked in the viewport |
+| Lofted flange, contour roll, rip, punch, unfold and refold | missing | on the Sheet Metal tab as buttons that say they are not there yet |
 
 ## M9 performance
 

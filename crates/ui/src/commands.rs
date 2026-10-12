@@ -409,7 +409,7 @@ pub const RIBBON: &[RibbonTab] = &[
                         Icon::Bend,
                         0,
                     ),
-                    small("sheet.fold", "Fold", "Fold a face along a sketched line", Icon::Bend, LATER),
+                    small("sheet.fold", "Fold", "Fold a face along a line drawn across it, from edge to edge", Icon::Bend, 0),
                 ],
             },
             RibbonPanel {

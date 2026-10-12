@@ -384,6 +384,64 @@ impl BendBetween {
     }
 }
 
+/// Where the bend of a fold lies relative to the line it is folded along.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FoldLocation {
+    /// The line is the middle of the bend.
+    #[default]
+    Centerline,
+    /// The bend starts at the line, on the side that folds.
+    Start,
+    /// The bend ends at the line: it lies on the side that stays.
+    End,
+}
+
+/// A face of the sheet folded along a straight line drawn across it, from edge to edge. The
+/// sheet on one side of the line stays where it is; the bend takes its allowance of sheet at
+/// the line; everything on the other side turns with it. No material is added: laid flat, the
+/// part is what it was.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Fold {
+    /// The sketch the line is in: on a side of the sheet.
+    pub sketch: FeatureId,
+    /// The line to fold along; without it, the sketch's one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<tenon_sketch::EntityId>,
+    /// How far the sheet turns (radians).
+    pub angle: f64,
+    /// The inside radius of the bend; without it, the part's `BendRadius`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<f64>,
+    #[serde(default, skip_serializing_if = "on_the_centerline")]
+    pub location: FoldLocation,
+    /// The sheet on the other side of the line is the one that folds (as drawn it is the side
+    /// to the left of the line, seen from the side of the sheet the sketch is on).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip_side: bool,
+    /// Folded down, away from the side of the sheet the sketch is on, not up towards it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip_direction: bool,
+}
+
+fn on_the_centerline(l: &FoldLocation) -> bool {
+    *l == FoldLocation::Centerline
+}
+
+impl Fold {
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.angle.is_finite() && (1f64.to_radians()..=179f64.to_radians()).contains(&self.angle)) {
+            return Err("the fold angle must be from 1 to 179 degrees".into());
+        }
+        match self.radius {
+            Some(r) if !(r.is_finite() && (MIN_BEND_RADIUS..=1000.0).contains(&r)) => {
+                Err(format!("the bend radius must be from {MIN_BEND_RADIUS} to 1000 mm"))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 /// How much of its edge a flange takes up.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

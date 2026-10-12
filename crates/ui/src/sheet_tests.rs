@@ -11,7 +11,7 @@ use serde_json::json;
 use tenon_geom::Vec3;
 use tenon_kernel_occt::OcctKernel;
 use tenon_model::FeatureKind;
-use tenon_model::sheet::{BendPosition, CornerShape, DoubleBend, HemShape, Seam, Sides};
+use tenon_model::sheet::{BendPosition, CornerShape, DoubleBend, FoldLocation, HemShape, Seam, Sides};
 
 use crate::Workbench;
 use crate::commands::{FLAT_TAB, MODEL_TAB, RIBBON, SHEET_TAB};
@@ -1024,4 +1024,90 @@ fn a_bend_is_made_by_clicking_an_edge_of_each_of_two_faces() {
     frames(&mut d, &mut wb);
     let Some(Panel::Bend(p)) = &wb.panel else { panic!("double-click edits the bend: {}", wb.status()) };
     assert_eq!((p.editing, p.edges.len(), p.own_radius, p.radius, p.double, p.flip_fixed), (Some(id), 2, true, 2.0, DoubleBend::Ninety, true));
+}
+
+#[test]
+fn a_face_is_folded_along_a_line_from_its_panel() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1000.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3 })).unwrap();
+    // A plate with a line drawn across its top, 40 from its left end.
+    let (face, _) = plate(&mut wb, 60.0, 40.0);
+    let top = wb.exec("model.face_ref", json!({ "origin": { "type": "cap", "feature": face, "end": "end" } })).unwrap();
+    wb.create_sketch(json!({ "face": top })).unwrap();
+    let Some(sketch) = wb.document().features().last().map(|f| f.id) else { panic!() };
+    frames(&mut d, &mut wb);
+    let frame = wb.sketch_frame(sketch).unwrap();
+    let (a, b) = (frame.to_local(Vec3::new(40.0, 0.0, 2.0)), frame.to_local(Vec3::new(40.0, 40.0, 2.0)));
+    wb.exec("sketch.line", json!({ "sketch": sketch.0, "x1": a.x, "y1": a.y, "x2": b.x, "y2": b.y })).unwrap();
+
+    // Fold is on the Create panel, live: it takes the sketch being drawn, and the preview is
+    // a quarter turn up about the line, which takes the bend's allowance of the plate.
+    assert!(crate::commands::find("sheet.fold").is_some_and(|c| c.available()));
+    wb.run_ui("sheet.fold").unwrap();
+    frames(&mut d, &mut wb);
+    let Some(Panel::Fold(p)) = &wb.panel else { panic!("the Fold panel: {}", wb.status()) };
+    assert_eq!(
+        (p.editing, p.sketch, p.degrees, p.own_radius, p.location, p.flip_side, p.flip_direction),
+        (None, sketch, 90.0, false, FoldLocation::Centerline, false, false)
+    );
+    let texts = d.texts();
+    for shown in
+        ["Fold", "Bend Line", "Flip Side", "Flip Direction", "Fold Location", "Centerline of Bend", "Fold Angle", "Bend Radius", "By rule", "3 mm"]
+    {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    let ring = |angle: f64| angle / 2.0 * (25.0 - 9.0) * 40.0;
+    let folded = |angle: f64| (60.0 - angle * 3.88) * 40.0 * 2.0 + ring(angle);
+    assert!(near(volume(&wb), folded(FRAC_PI_2)), "{} {}", volume(&wb), folded(FRAC_PI_2));
+    // What stayed flat: the largest face that looks up.
+    let flat_top = |wb: &Workbench| {
+        let up = |s: &tenon_kernel::SurfaceKind| matches!(s, tenon_kernel::SurfaceKind::Plane { normal, .. } if normal.z > 0.999);
+        wb.scene().bodies.iter().flat_map(|b| &b.faces).filter(|f| up(&f.1.surface)).map(|f| f.1.area).fold(0.0, f64::max)
+    };
+    let half = FRAC_PI_2 * 3.88 / 2.0;
+    assert!(near(flat_top(&wb), (20.0 - half) * 40.0), "{}", flat_top(&wb));
+    // Start of Bend from the list: the bend starts at the line, and the 20 beyond it stays whole.
+    d.click(&mut wb, pressable(&d, "tn_fold_location"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_fold_location_start"));
+    frames(&mut d, &mut wb);
+    assert!(near(flat_top(&wb), 20.0 * 40.0), "{}", flat_top(&wb));
+    // Flip Side: the 20 is now what folds, and the 40 less the bend stays.
+    d.click(&mut wb, pressable(&d, "tn_fold_flip_side"));
+    frames(&mut d, &mut wb);
+    assert!(near(flat_top(&wb), 40.0 * 40.0), "{}", flat_top(&wb));
+    // Flip Direction: it folds down, so nothing of it is above the plate.
+    d.click(&mut wb, pressable(&d, "tn_fold_flip_direction"));
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::Fold(p)) if p.flip_side && p.flip_direction && p.location == FoldLocation::Start));
+    let top_of = wb.scene().bodies.iter().filter_map(|b| b.bbox.as_ref()).map(|b| b.max.z).fold(f64::NEG_INFINITY, f64::max);
+    assert!(top_of < 2.0 + 1e-6, "{top_of}");
+    // 45 degrees typed: less of a turn, less of the plate taken by the bend.
+    type_into(&mut d, &mut wb, "tn_props_fold_angle", "45");
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), folded(FRAC_PI_2 / 2.0)), "{} {}", volume(&wb), folded(FRAC_PI_2 / 2.0));
+    // OK: a Fold in the browser, and the part lays flat as the plate it was.
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let (id, name, kind) = wb.document().features().last().map(|f| (f.id, f.name.clone(), f.kind.clone())).unwrap();
+    let FeatureKind::Fold(f) = kind else { panic!("{kind:?}") };
+    assert_eq!(
+        (name.as_str(), f.sketch, f.location, f.flip_side, f.flip_direction, f.radius),
+        ("Fold1", sketch, FoldLocation::Start, true, true, None)
+    );
+    assert!((f.angle - FRAC_PI_2 / 2.0).abs() < 1e-12);
+    let flat = wb.exec("sheet.flat", json!({})).unwrap();
+    let (long, short) = (
+        flat["length"].as_f64().unwrap().max(flat["width"].as_f64().unwrap()),
+        flat["length"].as_f64().unwrap().min(flat["width"].as_f64().unwrap()),
+    );
+    assert!(near(long, 60.0) && near(short, 40.0) && near(flat["area"].as_f64().unwrap(), 2400.0), "{flat}");
+    let row = browser_row(&d, "Fold1");
+    double_click(&mut d, &mut wb, row.center());
+    frames(&mut d, &mut wb);
+    let Some(Panel::Fold(p)) = &wb.panel else { panic!("double-click edits the fold: {}", wb.status()) };
+    assert_eq!((p.editing, p.degrees.round(), p.location, p.flip_side, p.flip_direction), (Some(id), 45.0, FoldLocation::Start, true, true));
 }

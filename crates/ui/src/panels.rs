@@ -455,6 +455,8 @@ pub(crate) enum Panel {
     CornerSeam(crate::sheet::SeamPanel),
     /// A bend between two faces of the sheet that do not touch.
     Bend(crate::sheet::BendPanel),
+    /// A face of the sheet folded along a line drawn across it.
+    Fold(crate::sheet::FoldPanel),
     Value(ValuePanel),
     /// A rectangular or circular pattern of sketch geometry.
     SketchPattern(crate::sketch_tools::SketchPatternPanel),
@@ -498,6 +500,7 @@ impl Panel {
             Panel::Flange(p) => p.editing,
             Panel::Hem(p) => p.editing,
             Panel::ContourFlange(p) => p.editing,
+            Panel::Fold(p) => p.editing,
             Panel::CornerSeam(p) => p.editing,
             Panel::Bend(p) => p.editing,
             _ => None,
@@ -557,6 +560,7 @@ impl Panel {
             Panel::Flange(p) => p.eq_pointers(),
             Panel::Hem(p) => p.eq_pointers(),
             Panel::ContourFlange(p) => p.eq_pointers(),
+            Panel::Fold(p) => p.eq_pointers(),
             Panel::CornerSeam(p) => p.eq_pointers(),
             Panel::Bend(p) => p.eq_pointers(),
             Panel::Thread(p) => {
@@ -716,6 +720,7 @@ impl Workbench {
             Some(Panel::Hem(p)) if !p.edges.is_empty() => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Hem(p)) => rolled(p.editing),
             Some(Panel::ContourFlange(p)) => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::Fold(p)) => with_feature(self.document(), p.editing, p.kind()),
             // With both edges picked the bend shows as it will be.
             Some(Panel::Bend(p)) => match p.kind() {
                 Some(kind) => with_feature(self.document(), p.editing, kind),
@@ -1215,6 +1220,7 @@ impl Workbench {
                     | FeatureKind::ContourFlange(_)
                     | FeatureKind::CornerSeam(_)
                     | FeatureKind::Bend(_)
+                    | FeatureKind::Fold(_)
                     | FeatureKind::CutAcrossBend(_) => ("feature.add", json!({ "kind": kind_json })),
                     FeatureKind::Sketch { .. } => return false,
                 };
@@ -1320,6 +1326,11 @@ impl Workbench {
                         }
                         None => self.set_error("Corner Seam: click the edge at the end of each of the two faces".to_string()),
                     }
+                }
+            }
+            Panel::Fold(p) => {
+                if commit {
+                    keep = !self.commit_panel(&ptrs, p.editing, p.kind());
                 }
             }
             Panel::ContourFlange(p) => {

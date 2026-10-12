@@ -417,6 +417,7 @@ impl Workbench {
                     | Panel::Flange(_)
                     | Panel::Hem(_)
                     | Panel::ContourFlange(_)
+                    | Panel::Fold(_)
                     | Panel::CornerSeam(_)
                     | Panel::Bend(_)
                     | Panel::Asm(_)
@@ -481,6 +482,7 @@ impl Workbench {
             Panel::Flange(p) => ("Flange", p.editing.map(|f| self.feature_name(f))),
             Panel::Hem(p) => ("Hem", p.editing.map(|f| self.feature_name(f))),
             Panel::ContourFlange(p) => ("Contour Flange", p.editing.map(|f| self.feature_name(f))),
+            Panel::Fold(p) => ("Fold", p.editing.map(|f| self.feature_name(f))),
             Panel::CornerSeam(p) => ("Corner Seam", p.editing.map(|f| self.feature_name(f))),
             Panel::Bend(p) => ("Bend", p.editing.map(|f| self.feature_name(f))),
             Panel::Asm(p) => {
@@ -1275,6 +1277,7 @@ impl Workbench {
                     | Panel::Flange(_)
                     | Panel::Hem(_)
                     | Panel::ContourFlange(_)
+                    | Panel::Fold(_)
                     | Panel::CornerSeam(_)
                     | Panel::Bend(_)) => {
                         let (entered, cleared) = self.sheet_properties(ui, p, &mut eqs, &sketches, t);
@@ -1518,6 +1521,7 @@ impl Workbench {
                 | Panel::Flange(_)
                 | Panel::Hem(_)
                 | Panel::ContourFlange(_)
+                | Panel::Fold(_)
                 | Panel::CornerSeam(_)
                 | Panel::Bend(_),
             ) => self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center())),

@@ -791,6 +791,8 @@ pub enum FeatureKind {
     CutAcrossBend(crate::sheet::CutAcrossBend),
     /// Two faces of the sheet that do not touch, joined by a bend.
     Bend(crate::sheet::BendBetween),
+    /// A face of the sheet folded along a line drawn across it.
+    Fold(crate::sheet::Fold),
 }
 
 impl FeatureKind {
@@ -853,6 +855,7 @@ impl FeatureKind {
             FeatureKind::CornerSeam(_) => "Corner Seam",
             FeatureKind::CutAcrossBend(_) => "Cut",
             FeatureKind::Bend(_) => "Bend",
+            FeatureKind::Fold(_) => "Fold",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -886,6 +889,7 @@ impl FeatureKind {
             FeatureKind::CornerSeam(_) => "Corner Seam",
             FeatureKind::CutAcrossBend(_) => "Cut",
             FeatureKind::Bend(_) => "Bend",
+            FeatureKind::Fold(_) => "Fold",
         }
     }
     /// Features this one depends on.
@@ -927,6 +931,7 @@ impl FeatureKind {
             FeatureKind::CornerSeam(c) => c.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::CutAcrossBend(c) => vec![c.sketch],
             FeatureKind::Bend(b) => b.edges.iter().flat_map(EdgeRef::features).collect(),
+            FeatureKind::Fold(f) => vec![f.sketch],
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -1323,6 +1328,8 @@ impl Document {
                 FeatureKind::CutAcrossBend(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
                 FeatureKind::CutAcrossBend(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Bend(b) => b.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Fold(fo) if self.sketch(fo.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, fo.sketch)),
+                FeatureKind::Fold(fo) => fo.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

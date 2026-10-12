@@ -1548,3 +1548,38 @@ would be); the Face command's own bend to an edge it is drawn against; Inventor'
 of a bend's width (the bend is as wide as the edges overlap); what Inventor does at Fix
 Edges when the edges are too close for the rule's radius (Tenon refuses, and says which
 kinds move an edge).
+
+## DEC-071 Fold (2026-10-12)
+
+Asked for by the owner on Bend's report, with Corner Rip, Contour Flange along edges and Cut
+Normal: all four at once.
+
+**What it is.** In Inventor a Fold bends a sheet metal face along a straight sketched line
+that ends at the face's edges, and adds no material; the line is the centre, the start or the
+end of the bend, and Flip Side and Flip Direction say which side folds and which way.
+Tenon's is the same (`fold`; Sheet Metal > Create > Fold; `sheet.fold`).
+
+**How.** The bend's allowance of sheet (angle x (radius + K x thickness), as the flat pattern
+has it) is cut out of the face at the line, as long as the line. That leaves the sheet in two.
+The piece on the side that folds (told from the other by a point just past the cut) is brought
+up to the cut and turned about the bend's axis; the bend, a strip built as a hem's is, joins
+the two again. So everything on the sheet beyond the line goes with it, flanges and all, and
+laid flat the part is exactly what it was: the test compares the flat pattern before and after.
+
+- **The side that folds** is the one to the left of the line as it was drawn (from its start
+  to its end), seen from the side of the sheet the sketch is on; Flip Side takes the other.
+  Inventor shows the side with an arrow and does not say how it chooses; by the line's own
+  direction it does not change when a dimension makes one side the larger.
+- **Up** is towards the side of the sheet the sketch is on; Flip Direction folds down.
+- **Location**: the line is the middle of the bend (the default, as there), its start (the
+  bend lies on the side that folds) or its end (on the side that stays).
+- A line that does not reach from edge to edge leaves the face in one piece and is refused,
+  as is a fold that would run what folds into the rest (the volume says so).
+- The sketch is on a side of the sheet: a face of it, or a plane that lies on one, as for a
+  cut across bends (DEC-068).
+
+In files: the feature type `fold` (`sketch`, optional `line`, `angle`, optional `radius`,
+`location`, `flip_side`, `flip_direction`); an addition to version 2 (DEC-046).
+
+Not done: a line that is not straight; several lines in one feature; picking the line in the
+viewport (the panel takes the sketch, and the feature its one line, or the one named).

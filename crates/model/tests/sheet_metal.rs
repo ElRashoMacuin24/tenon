@@ -1803,3 +1803,147 @@ fn a_bend_says_what_it_cannot_join_and_leaves_other_pieces_of_sheet_alone() {
     bend(&mut s, &mut k, [40.0, 15.0, 2.0], [60.0, 65.0, 12.0], json!({ "double": "90_degree" }));
     assert!(failure(&mut s, &mut k).contains("do not run alongside one another"));
 }
+
+/// A 60 x 40 plate with a line drawn on its top (or on its underside) from (40, 0) to (40, 40),
+/// and the fold along it. Returns the fold feature.
+fn folded(top: bool, options: Value) -> (Session, OcctKernel, u64) {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (face, _) = plate(&mut s, &mut k, 60.0, 40.0);
+    let (sk, to) = sketch_on(&mut s, &mut k, face, top);
+    let ((x1, y1), (x2, y2)) = (to(40.0, 0.0), to(40.0, 40.0));
+    run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": x1, "y1": y1, "x2": x2, "y2": y2 }));
+    let mut p = json!({ "sketch": sk });
+    for (key, v) in options.as_object().unwrap() {
+        p[key] = v.clone();
+    }
+    let fold = id(&run(&mut s, &mut k, "sheet.fold", p), "feature");
+    (s, k, fold)
+}
+
+#[test]
+fn a_fold_turns_the_sheet_beyond_a_line_about_a_bend_and_adds_nothing() {
+    let ba = allowance(FRAC_PI_2);
+    // A quarter turn up along a line 40 from the plate's left end, the line the middle of the
+    // bend. Seen from above, the sheet to the left of the line as drawn (towards x = 0) is what
+    // folds. The bend takes its allowance of the 60: what is left is flat or stands upright.
+    let (mut s, mut k, fold) = folded(true, json!({}));
+    assert_eq!(s.document().feature(tenon_model::FeatureId(fold as u32)).unwrap().name, "Fold1");
+    let whole = (60.0 - ba) * 40.0 * T + bend_volume(FRAC_PI_2, 40.0);
+    assert!(near(volume(&mut s, &mut k), whole), "{} {whole}", volume(&mut s, &mut k));
+    assert_eq!(solids(&mut s, &mut k), (1, 1, true));
+    // What folded stands up from where the bend ends: its face that was the top looks back
+    // along X from 3 short of where the bend starts (40 + half the allowance), and it is as
+    // long as the plate was to the left of the bend.
+    let stood = 40.0 - ba / 2.0;
+    let inner: Vec<_> = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(Vec3::X, 1e-9) && near(f.2, stood * 40.0)).collect();
+    assert_eq!(inner.len(), 1, "the inside of what stands up");
+    assert!(near(inner[0].1.x, 40.0 + ba / 2.0 - R) && near(inner[0].1.z, T + R + stood / 2.0), "{:?}", inner[0]);
+    // What stayed is the 20 to the right, less half the allowance.
+    let stayed: Vec<_> = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(Vec3::Z, 1e-9) && near(f.2, (20.0 - ba / 2.0) * 40.0)).collect();
+    assert!(stayed.len() == 1 && near(stayed[0].1.x, 60.0 - (20.0 - ba / 2.0) / 2.0), "{stayed:?}");
+    // Laid flat it is the plate it was folded from: nothing was added.
+    let f = flat(&mut s, &mut k);
+    // (It is laid out from its largest flat face, which is now the piece that stands up.)
+    let sides = |f: &Value| (num(f, "length").max(num(f, "width")), num(f, "length").min(num(f, "width")));
+    assert!(near(sides(&f).0, 60.0) && near(sides(&f).1, 40.0) && near(num(&f, "area"), 2400.0), "{f}");
+    let bends = f["bends"].as_array().unwrap();
+    assert!(bends.len() == 1 && near(num(&bends[0], "angle"), FRAC_PI_2) && near(num(&bends[0], "radius"), R), "{f}");
+    // The bend's centre line is the line that was drawn: 40 from one end of the sheet, 20
+    // from the other, right across it.
+    let line = centre_line(&bends[0]);
+    let across = [line.0.0, line.0.1, line.1.0, line.1.1];
+    assert!(across.iter().filter(|c| near(**c, 20.0) || near(**c, 40.0)).count() >= 2, "{line:?}");
+
+    // The line as the start of the bend: all 20 to the right stays. As its end: all 40 folds.
+    update(&mut s, &mut k, fold, json!({ "location": "start" }));
+    let top = |s: &mut Session, k: &mut OcctKernel| flats(s, k).into_iter().filter(|f| f.0.near(Vec3::Z, 1e-9)).map(|f| f.2).fold(0.0, f64::max);
+    assert!(near(top(&mut s, &mut k), 20.0 * 40.0), "{}", top(&mut s, &mut k));
+    assert!(near(volume(&mut s, &mut k), whole));
+    update(&mut s, &mut k, fold, json!({ "location": "end" }));
+    assert!(near(top(&mut s, &mut k), (20.0 - ba) * 40.0), "{}", top(&mut s, &mut k));
+    let stands = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(Vec3::X, 1e-9)).map(|f| f.2).fold(0.0, f64::max);
+    assert!(near(stands, 40.0 * 40.0), "{stands}");
+
+    // The other side folds: the 20 stands up, at the far side of the bend, looking back along -X.
+    update(&mut s, &mut k, fold, json!({ "location": "centerline", "flip_side": true }));
+    assert!(near(volume(&mut s, &mut k), whole));
+    let inner: Vec<_> = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(-Vec3::X, 1e-9) && near(f.2, (20.0 - ba / 2.0) * 40.0)).collect();
+    assert!(inner.len() == 1 && near(inner[0].1.x, 40.0 - ba / 2.0 + R), "{inner:?}");
+    // Folded down, what folds hangs below the plate: its face that was the top looks along +X
+    // from 5 beyond where the bend starts.
+    update(&mut s, &mut k, fold, json!({ "flip_direction": true }));
+    assert!(near(volume(&mut s, &mut k), whole));
+    let outer: Vec<_> = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(Vec3::X, 1e-9) && near(f.2, (20.0 - ba / 2.0) * 40.0)).collect();
+    assert!(outer.len() == 1 && near(outer[0].1.x, 40.0 - ba / 2.0 + R + T) && outer[0].1.z < 0.0, "{outer:?}");
+    // 45 degrees, a radius of its own: the bend is as wide as its own allowance.
+    let eighth = std::f64::consts::FRAC_PI_4;
+    update(&mut s, &mut k, fold, json!({ "angle": eighth, "radius": 1.0, "flip_direction": false, "flip_side": false }));
+    let own = eighth * (1.0 + K * T);
+    let leaning = (60.0 - own) * 40.0 * T + eighth / 2.0 * (9.0 - 1.0) * 40.0;
+    assert!(near(volume(&mut s, &mut k), leaning), "{} {leaning}", volume(&mut s, &mut k));
+    let f = flat(&mut s, &mut k);
+    assert!(near(sides(&f).0, 60.0) && near(num(&f["bends"][0], "angle"), eighth) && near(num(&f["bends"][0], "radius"), 1.0), "{f}");
+
+    // Drawn on the underside it is the same fold seen from below: up is then down.
+    let (mut below, mut kb, _) = folded(false, json!({}));
+    assert!(near(volume(&mut below, &mut kb), whole));
+    let hangs = flats(&mut below, &mut kb).into_iter().filter(|f| near(f.0.x.abs(), 1.0) && f.2 > 500.0).map(|f| f.1.z).fold(0.0, f64::min);
+    assert!(hangs < -10.0, "what folds goes down from a sketch on the underside: {hangs}");
+}
+
+#[test]
+fn a_fold_carries_what_is_on_the_sheet_beyond_it_and_says_what_it_cannot_fold() {
+    // A flange on the plate's left end, then a fold along a line 40 along: the flange goes
+    // with the piece that folds, and laid flat the part is what it was before the fold.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (face, lines) = plate(&mut s, &mut k, 60.0, 40.0);
+    let left = rim(&mut s, &mut k, face, "end", lines[3]);
+    run(&mut s, &mut k, "sheet.flange", json!({ "edges": [left], "height": 12 }));
+    let before = flat(&mut s, &mut k);
+    let was = volume(&mut s, &mut k);
+    let (sk, to) = sketch_on(&mut s, &mut k, face, true);
+    let ((x1, y1), (x2, y2)) = (to(40.0, 0.0), to(40.0, 40.0));
+    let line = run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": x1, "y1": y1, "x2": x2, "y2": y2 }));
+    run(&mut s, &mut k, "sheet.fold", json!({ "sketch": sk, "line": line["line"], "flip_direction": true }));
+    let ba = allowance(FRAC_PI_2);
+    assert!(near(volume(&mut s, &mut k), was - ba * 40.0 * T + bend_volume(FRAC_PI_2, 40.0)), "{}", volume(&mut s, &mut k));
+    assert_eq!(solids(&mut s, &mut k), (1, 1, true));
+    let after = flat(&mut s, &mut k);
+    let long = |f: &Value| num(f, "length").max(num(f, "width"));
+    assert!(near(long(&after), long(&before)), "{} {}", long(&after), long(&before));
+    for key in ["area", "cut_length"] {
+        assert!(near(num(&after, key), num(&before, key)), "{key}: {} {}", num(&after, key), num(&before, key));
+    }
+    assert_eq!(after["bends"].as_array().unwrap().len(), 2);
+    // The flange's wall is the flange's still, wherever it went.
+    let flange = s.document().features().iter().find(|f| f.name == "Flange1").unwrap().id.0;
+    let faces = run(&mut s, &mut k, "model.faces", json!({}));
+    assert!(faces["faces"].as_array().unwrap().iter().any(|f| f["name"]["feature"] == flange), "{faces}");
+
+    // A line that stops short of the face's edges cuts nothing in two.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (face, _) = plate(&mut s, &mut k, 60.0, 40.0);
+    let (sk, to) = sketch_on(&mut s, &mut k, face, true);
+    let ((x1, y1), (x2, y2)) = (to(40.0, 5.0), to(40.0, 35.0));
+    run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": x1, "y1": y1, "x2": x2, "y2": y2 }));
+    run(&mut s, &mut k, "sheet.fold", json!({ "sketch": sk }));
+    assert!(failure(&mut s, &mut k).contains("does not cut the face in two"));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    // Two lines and no word of which; no line at all; an angle that is none.
+    let ((x1, y1), (x2, y2)) = (to(20.0, 0.0), to(20.0, 40.0));
+    run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": x1, "y1": y1, "x2": x2, "y2": y2 }));
+    run(&mut s, &mut k, "sheet.fold", json!({ "sketch": sk }));
+    assert!(failure(&mut s, &mut k).contains("more than one line"));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    let e = refused(&mut s, &mut k, "sheet.fold", json!({ "sketch": sk, "angle": 0 }));
+    assert!(e.contains("from 1 to 179 degrees"), "{e}");
+    let empty = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
+    run(&mut s, &mut k, "sheet.fold", json!({ "sketch": empty }));
+    assert!(failure(&mut s, &mut k).contains("no line of its own"));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    // A sketch that is on no side of the sheet.
+    let off = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" })), "feature");
+    run(&mut s, &mut k, "sketch.line", json!({ "sketch": off, "x1": 40, "y1": -5, "x2": 40, "y2": 5 }));
+    run(&mut s, &mut k, "sheet.fold", json!({ "sketch": off }));
+    assert!(failure(&mut s, &mut k).contains("must be on a flat face of the sheet"));
+}

@@ -2428,6 +2428,24 @@ fn sheet_bend(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::Bend(bend), p)
 }
 
+fn sheet_fold(s: &mut Session, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let given = |key: &str| p.get(key).is_some_and(|v| !v.is_null());
+    let fold = crate::sheet::Fold {
+        sketch: sketch_id(p)?,
+        line: if given("line") { Some(EntityId(id_u32(p, "line")?)) } else { None },
+        angle: opt_num(p, "angle")?.unwrap_or(std::f64::consts::FRAC_PI_2),
+        radius: opt_num(p, "radius")?,
+        location: if given("location") { parse(p, "location")? } else { crate::sheet::FoldLocation::default() },
+        flip_side: flag(p, "flip_side"),
+        flip_direction: flag(p, "flip_direction"),
+    };
+    fold.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Fold(fold), p)
+}
+
 fn sheet_a_side(s: &mut Session, p: &Value) -> CmdResult {
     let face: Option<FaceRef> = match p.get("face") {
         None | Some(Value::Null) => None,
@@ -3003,6 +3021,13 @@ static COMMANDS: &[CommandSpec] = &[
         "edges: [two edge references]: a straight edge of the rim of each of two faces of the sheet that do not touch (a face made apart from the rest is one), running alongside one another. The faces are joined by a bend along as much of the edges as lie side by side, each face trimmed or extended to where the bend begins. radius (inside; default BendRadius). Faces in planes that cross take one bend, tangent to both. Faces in parallel planes take two, as double says: \"fix_edges\" (default: two equal bends between the edges as they are), \"45_degree\" or \"90_degree\" (two bends of that angle and a face between them: side by side an S, one over the other a U at 90), \"full_radius\" (one over the other: half a circle, as wide inside as the faces are apart); flip_fixed (the second edge stays where it is and the first face is trimmed or extended, not the other way round)",
         true,
         sheet_bend
+    ),
+    doc_cmd!(
+        "sheet.fold",
+        "Fold",
+        "sketch (on a side of the sheet: a face of it, or a plane that lies on one) with a straight line across the face, from edge to edge; line: its id (default: the sketch's one line). The sheet on one side of the line stays, the bend takes its allowance of sheet at the line, and the rest turns with it: nothing is added. angle (rad, default a quarter turn); radius (inside; default BendRadius); location: \"centerline\" (default: the line is the middle of the bend) | \"start\" (the bend starts at the line) | \"end\"; flip_side (the other side of the line folds: as drawn, the side to its left seen from the sketch's side of the sheet); flip_direction (down, away from the sketch's side, not up towards it)",
+        true,
+        sheet_fold
     ),
     doc_cmd!(
         "sheet.a_side",

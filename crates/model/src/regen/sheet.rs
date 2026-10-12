@@ -1,7 +1,9 @@
 //! Regenerating sheet metal features: faces and flanges (see `crate::sheet`).
 
-use tenon_geom::{Vec2, Vec3};
-use tenon_kernel::{BoolOp, CurveKind, Extent, Op, Origin, PrimitiveRole, Profile, Region, ShapeHandle, SurfaceKind, TopoKind, Topology, Transform};
+use tenon_geom::{Axis, Frame, Vec2, Vec3};
+use tenon_kernel::{
+    BoolOp, CurveKind, Extent, Op, Origin, PrimitiveRole, Profile, Region, ShapeHandle, SubShape, SurfaceKind, TopoKind, Topology, Transform,
+};
 use tenon_sketch::{Sketch, profile, regions};
 
 use super::{Ctx, Stop, label, select};
@@ -14,7 +16,7 @@ use crate::sheet::region;
 use crate::sheet::strip;
 use crate::sheet::unfold::Unfold;
 use crate::sheet::wrap::{self, Tool};
-use crate::sheet::{BendBetween, ContourFlange, CornerSeam, CutAcrossBend, Face, Flange, Hem, Sides};
+use crate::sheet::{BendBetween, ContourFlange, CornerSeam, CutAcrossBend, Face, Flange, Fold, FoldLocation, Hem, Sides};
 
 /// A solid on its way into the part, and the names of its faces.
 type Named = (ShapeHandle, Vec<Option<FaceOrigin>>);
@@ -1037,6 +1039,186 @@ impl Ctx<'_> {
             return Err(format!("The bend does not join the two faces: {}", advice[1]).into());
         }
         // The piece put on the edge of a face is the face: one face, with the face's name.
+        self.sheet_unify(bi, id);
+        Ok(())
+    }
+
+    /// A face of the sheet folded along a line drawn across it: the bend's allowance of sheet is
+    /// taken out at the line, which leaves the sheet in two; the piece on the side that folds is
+    /// brought up to the cut and turned about the bend's axis, and the bend joins the two again.
+    pub(super) fn fold(&mut self, id: FeatureId, f: &Fold) -> Result<(), Stop> {
+        f.check()?;
+        let sizes = self.doc.sheet_sizes()?;
+        let t = sizes.thickness;
+        let r = f.radius.unwrap_or(sizes.bend_radius);
+        let (held, frame) = self.sketch_and_frame(f.sketch)?;
+        let sketch: &Sketch = &held;
+        // The line: the one named, or the sketch's only line of its own.
+        let line = match f.line {
+            Some(l) => l,
+            None => {
+                let own: Vec<_> = sketch
+                    .entities()
+                    .filter(|(_, e)| !e.reference && !e.construction && matches!(e.geometry, tenon_sketch::Geometry::Line { .. }))
+                    .map(|(id, _)| id)
+                    .collect();
+                match own.as_slice() {
+                    [one] => *one,
+                    [] => {
+                        return Err("A fold is along a straight line drawn across a face of the sheet, and the sketch has no line of its own.".into());
+                    }
+                    _ => return Err("The sketch has more than one line: say which one the fold is along.".into()),
+                }
+            }
+        };
+        let (p, q) = sketch.line(line).ok_or("the fold's line is not a line of its sketch")?;
+        let (p0, p1) = (frame.plane_point(p), frame.plane_point(q));
+        let length = p0.dist(p1);
+        if length < 1e-6 {
+            return Err("The fold's line has no length.".into());
+        }
+        // The face the line is drawn on: the side of the sheet the sketch is on, under the line.
+        let across = (q - p).normalized().perp() * 0.01;
+        let sliver = outline::polygon(&[(p - across, 0), (q - across, 0), (q + across, 0), (p + across, 0)]);
+        let under = [Region { outer: outline::to_loop(&sliver), holes: vec![] }];
+        let Some((bi, base)) = crate::sheet::seat_of(self.doc, &self.regen, &*self.k, f.sketch, &frame, &under)? else {
+            return Err("A fold is along a line drawn on the sheet: its sketch must be on a flat face of the sheet, and this one's plane has no face of the part in it.".into());
+        };
+        let body = self.body_shape(bi)?;
+        let SurfaceKind::Plane { normal, .. } = self.k.face_info(body.face(base))?.surface else {
+            return Err("the face under the fold's line is not flat".into());
+        };
+        let n = normal.normalized();
+        let along = (p1 - p0).normalized();
+        // The side that folds: to the left of the line as drawn, seen from outside the face.
+        let side = n.cross(along) * if f.flip_side { -1.0 } else { 1.0 };
+        // The bend's width of sheet in the flat, and where it starts across the line.
+        let allowance = f.angle * (r + sizes.k_factor * t);
+        let start = match f.location {
+            FoldLocation::Centerline => -allowance / 2.0,
+            FoldLocation::Start => 0.0,
+            FoldLocation::End => -allowance,
+        };
+        let up = !f.flip_direction;
+        let name = |part: u32| sub_key(u64::from(line.0), part);
+
+        // The strip of sheet the bend takes: across the face from `start`, as long as the line.
+        let zone_frame = Frame::new(p0, n, side).ok_or("the fold's line has no direction")?;
+        let reach = (p1 - p0).dot(zone_frame.y());
+        let tag = name(Part::Cut as u32);
+        let corner = |x: f64, y: f64| (Vec2::new(x, y), tag);
+        let zone = outline::polygon(&[
+            corner(start, reach.min(0.0)),
+            corner(start + allowance, reach.min(0.0)),
+            corner(start + allowance, reach.max(0.0)),
+            corner(start, reach.max(0.0)),
+        ]);
+        let zone = self.sheet_prism(
+            id,
+            &Profile { frame: zone_frame, regions: vec![Region { outer: outline::to_loop(&zone), holes: vec![] }] },
+            -t,
+            Some([tag, tag]),
+        )?;
+        let names = self.regen.bodies.get(bi).map(|b| b.names.clone()).unwrap_or_default();
+        let lumps = self.k.topology(body)?.solids.max(1);
+        let cut = self.sheet_cut((body, names), true, vec![zone], "fold")?;
+
+        // Everything made on the way, to be released whatever happens.
+        let mut temp: Vec<ShapeHandle> = vec![cut.0];
+        let mut made = || -> Result<Named, Stop> {
+            let topo = self.k.topology(cut.0)?;
+            if topo.solids != lumps + 1 {
+                return Err("The fold's line does not cut the face in two: draw it from edge to edge of the face it is on.".into());
+            }
+            // The piece that folds is the one just past the bend's strip of sheet.
+            let middle = (p0 + p1) * 0.5 + side * (start + allowance + (0.01f64).min(t)) - n * (t / 2.0);
+            let probe = self.k.make_sphere(middle, t * 0.001)?.shape;
+            temp.push(probe);
+            let (mut moving, mut staying): (Option<Named>, Vec<Named>) = (None, Vec::new());
+            for i in 0..topo.solids {
+                let s = self.k.solid(cut.0, i)?;
+                temp.push(s.shape);
+                let faces = self.k.topology(s.shape)?.faces;
+                let named = (s.shape, names_of_boolean(&s.history, &[&cut.1], faces));
+                if moving.is_none() && self.k.min_distance(SubShape::Shape(s.shape), SubShape::Shape(probe))?.value < 1e-6 {
+                    moving = Some(named);
+                } else {
+                    staying.push(named);
+                }
+            }
+            let (Some(moving), false) = (moving, staying.is_empty()) else {
+                return Err("The fold's line does not leave sheet on both sides of it to fold: draw it across the face.".into());
+            };
+            // Brought up to the cut, then turned about the bend's axis: above the face for a
+            // fold up, below the sheet for a fold down.
+            let foot = p0 + side * start;
+            let (centre, turn) = if up { (foot + n * r, side.cross(n)) } else { (foot - n * (t + r), n.cross(side)) };
+            let axis = Axis::new(centre, turn).ok_or("the fold has no axis")?;
+            let shifted = self.k.transform(moving.0, &Transform::Translate(-side * allowance))?.shape;
+            temp.push(shifted);
+            let turned = self.k.transform(shifted, &Transform::Rotate { axis, angle: f.angle })?.shape;
+            temp.push(turned);
+            // The bend: a strip from the edge of what stays, as a hem's is.
+            let (out, lift) = (side, if up { n } else { -n });
+            let run = out.cross(lift);
+            let origin = (if run.dot(along) > 0.0 { p0 } else { p1 }) + side * start - if up { Vec3::ZERO } else { n * t };
+            let site = Site { origin, out, up: lift, along: run, length };
+            let path = strip::walk(Vec2::ZERO, Vec2::X, &[strip::Step::Bend { radius: r, angle: f.angle }]);
+            let region = strip::outline(
+                &path,
+                -t,
+                0.0,
+                |i, left| name(32 + 2 * u32::try_from(i).unwrap_or(0) + u32::from(left)),
+                [name(Part::Root as u32), name(Part::Tip as u32)],
+            )?;
+            let section = site.section_frame(0.0).ok_or("the fold's line has no direction")?;
+            let bend = self.sheet_strip(
+                id,
+                &Profile { frame: section, regions: vec![region] },
+                &Extent::Distance(length),
+                [name(Part::Start as u32), name(Part::End as u32)],
+            )?;
+            temp.push(bend.0);
+            // What stays, the bend and what folded, one solid again.
+            let volume = |ctx: &Self, s: ShapeHandle| ctx.k.mass_properties(s, 1.0).map(|m| m.volume);
+            let parts = volume(self, cut.0)? + volume(self, bend.0)?;
+            let mut inputs: Vec<&[Option<FaceOrigin>]> = staying.iter().map(|s| s.1.as_slice()).collect();
+            inputs.push(&bend.1);
+            inputs.push(&moving.1);
+            let tools: Vec<ShapeHandle> = staying.iter().skip(1).map(|s| s.0).chain([bend.0, turned]).collect();
+            let joined = self.k.boolean(BoolOp::Union, staying[0].0, &tools)?;
+            let topo = match self.k.topology(joined.shape) {
+                Ok(topo) => topo,
+                Err(e) => {
+                    self.k.release(joined.shape);
+                    return Err(e.into());
+                }
+            };
+            let whole = volume(self, joined.shape).unwrap_or(f64::NAN);
+            if (whole - parts).abs() > 1e-6 * (1.0 + parts) || topo.solids != lumps {
+                self.k.release(joined.shape);
+                return Err(if topo.solids != lumps {
+                    "The fold does not hold together: what folds is not joined to the rest by the bend. Draw the line from edge to edge of the face."
+                        .into()
+                } else {
+                    format!(
+                        "The fold runs into the part: {} mm³ of what folds would be where the part already is. Fold it less, or the other way.",
+                        crate::explain::mm((parts - whole).abs())
+                    )
+                    .into()
+                });
+            }
+            Ok((joined.shape, names_of_boolean(&joined.history, &inputs, topo.faces)))
+        };
+        let result = made();
+        for s in temp {
+            self.k.release(s);
+        }
+        let (shape, names) = result?;
+        self.k.release(body);
+        if let Some(b) = self.regen.bodies.get_mut(bi) {
+            (b.shape, b.names) = (shape, names);
+        }
         self.sheet_unify(bi, id);
         Ok(())
     }

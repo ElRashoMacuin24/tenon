@@ -12,7 +12,8 @@ use serde_json::json;
 use tenon_geom::Vec2;
 use tenon_io::flat::Marks;
 use tenon_model::sheet::{
-    self, BendPosition, CornerOptions, CornerShape, DoubleBend, FlangeWidth, FlatPattern, HeightDatum, HemShape, ReliefShape, Seam, Sides,
+    self, BendPosition, CornerOptions, CornerShape, DoubleBend, FlangeWidth, FlatPattern, FoldLocation, HeightDatum, HemShape, ReliefShape, Seam,
+    Sides,
 };
 use tenon_model::{EdgeRef, Extrude, ExtrudeExtent, FeatureId, FeatureKind, Operation, RegionSel};
 use tenon_sketch::Geometry;
@@ -345,6 +346,44 @@ impl BendPanel {
 
     pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
         if self.own_radius { vec![("radius", "/radius")] } else { Vec::new() }
+    }
+}
+
+/// A face of the sheet folded along a line drawn across it: Fold.
+#[derive(Clone, Debug)]
+pub(crate) struct FoldPanel {
+    pub editing: Option<FeatureId>,
+    pub sketch: FeatureId,
+    /// The line to fold along, when the sketch has more than one.
+    pub line: Option<tenon_sketch::EntityId>,
+    pub degrees: f64,
+    /// A bend radius of this fold's own, in place of the rule's.
+    pub own_radius: bool,
+    pub radius: f64,
+    pub location: FoldLocation,
+    pub flip_side: bool,
+    pub flip_direction: bool,
+}
+
+impl FoldPanel {
+    pub(crate) fn kind(&self) -> FeatureKind {
+        FeatureKind::Fold(sheet::Fold {
+            sketch: self.sketch,
+            line: self.line,
+            angle: self.degrees.to_radians(),
+            radius: self.own_radius.then_some(self.radius),
+            location: self.location,
+            flip_side: self.flip_side,
+            flip_direction: self.flip_direction,
+        })
+    }
+
+    pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
+        let mut v = vec![("degrees", "/angle")];
+        if self.own_radius {
+            v.push(("radius", "/radius"));
+        }
+        v
     }
 }
 
@@ -702,6 +741,7 @@ impl Workbench {
             "sheet.contour_flange" => self.open_contour(None)?,
             "sheet.corner_seam" => self.open_corner_seam(None)?,
             "sheet.bend" => self.open_bend(None)?,
+            "sheet.fold" => self.open_fold(None)?,
             "sheet.cut" => self.open_sheet_cut(None)?,
             "sheet.corner_round" => {
                 self.open_modify("fillet", None)?;
@@ -1001,6 +1041,50 @@ impl Workbench {
         self.start_equations();
         self.view.selection.clear();
         self.set_status("Bend: click an edge of each of the two faces to join (edges that run alongside one another), then OK.");
+        Ok(())
+    }
+
+    pub(crate) fn open_fold(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        let sizes = self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::Fold(f) => FoldPanel {
+                    editing,
+                    sketch: f.sketch,
+                    line: f.line,
+                    degrees: f.angle.to_degrees(),
+                    own_radius: f.radius.is_some(),
+                    radius: f.radius.unwrap_or(sizes.bend_radius),
+                    location: f.location,
+                    flip_side: f.flip_side,
+                    flip_direction: f.flip_direction,
+                },
+                _ => return Err("not a fold".into()),
+            },
+            None => {
+                if !self.has_sheet() {
+                    return Err(NO_SHEET.into());
+                }
+                // The sketch with the line: one being drawn, or the last with lines and no profile.
+                let sketch = self
+                    .open_profile_sketch()
+                    .map_err(|_| "draw a line across a face of the sheet first, from edge to edge: the fold is along it".to_owned())?;
+                FoldPanel {
+                    editing: None,
+                    sketch,
+                    line: None,
+                    degrees: 90.0,
+                    own_radius: false,
+                    radius: sizes.bend_radius,
+                    location: FoldLocation::default(),
+                    flip_side: false,
+                    flip_direction: false,
+                }
+            }
+        };
+        self.panel = Some(Panel::Fold(panel));
+        self.start_equations();
+        self.set_status("Fold: the sheet beyond the line turns about a bend at it. Set the angle and which side folds, then OK.");
         Ok(())
     }
 
@@ -1369,6 +1453,74 @@ impl Workbench {
                         .on_hover_text("The second edge stays where it is and the first face is trimmed or extended, not the other way round")
                         .on_disabled_hover_text("With Fix Edges both edges stay where they are");
                     crate::drawing::remember(ui, "tn_bend_flip", flip.rect);
+                });
+            }
+            Panel::Fold(p) => {
+                section(ui, "Input Geometry", true, |ui| {
+                    egui::Grid::new("tn_props_fold_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Bend Line").on_hover_text("A straight line drawn across a face of the sheet, from edge to edge");
+                        egui::ComboBox::from_id_salt("tn_props_fold_sketch")
+                            .selected_text(sketches.iter().find(|s| s.0 == p.sketch).map_or("?".into(), |s| s.1.clone()))
+                            .show_ui(ui, |ui| {
+                                for (id, name) in sketches {
+                                    if ui.selectable_value(&mut p.sketch, *id, name).clicked() {
+                                        p.line = None;
+                                    }
+                                }
+                            });
+                        ui.end_row();
+                    });
+                });
+                section(ui, "Flip Controls", true, |ui| {
+                    let side =
+                        ui.checkbox(&mut p.flip_side, "Flip Side").on_hover_text("The sheet on the other side of the line is the one that folds");
+                    crate::drawing::remember(ui, "tn_fold_flip_side", side.rect);
+                    let way = ui
+                        .checkbox(&mut p.flip_direction, "Flip Direction")
+                        .on_hover_text("Fold down, away from the side the line is drawn on, not up towards it");
+                    crate::drawing::remember(ui, "tn_fold_flip_direction", way.rect);
+                });
+                section(ui, "Fold", true, |ui| {
+                    egui::Grid::new("tn_props_fold_fold").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Fold Location").on_hover_text("Where the bend lies relative to the line");
+                        choice(
+                            ui,
+                            "tn_fold_location",
+                            &mut p.location,
+                            &[
+                                (FoldLocation::Centerline, "centerline", "Centerline of Bend", "The line is the middle of the bend"),
+                                (FoldLocation::Start, "start", "Start of Bend", "The bend starts at the line, on the side that folds"),
+                                (FoldLocation::End, "end", "End of Bend", "The bend ends at the line: it lies on the side that stays"),
+                            ],
+                        );
+                        ui.end_row();
+                        ui.label("Fold Angle").on_hover_text("How far the sheet turns");
+                        enter |=
+                            eq_value_field(ui, egui::Id::new("tn_props_fold_angle"), &mut p.degrees, eqs, "degrees", "deg", 1.0..=179.0, 110.0, t)
+                                .entered;
+                        ui.end_row();
+                        ui.label("Bend Radius");
+                        let mut by_rule = !p.own_radius;
+                        let r = ui.checkbox(&mut by_rule, "By rule");
+                        crate::drawing::remember(ui, "tn_fold_by_rule", r.rect);
+                        r.on_hover_text("The part's BendRadius, from Sheet Metal Defaults");
+                        if by_rule == p.own_radius {
+                            p.own_radius = !by_rule;
+                            if let (false, Some(s)) = (p.own_radius, sizes) {
+                                p.radius = s.bend_radius;
+                            }
+                        }
+                        ui.end_row();
+                        ui.label("");
+                        if p.own_radius {
+                            enter |=
+                                eq_value_field(ui, egui::Id::new("tn_props_fold_r"), &mut p.radius, eqs, "radius", "mm", 0.01..=1000.0, 110.0, t)
+                                    .entered;
+                        } else {
+                            ui.label(RichText::new(format!("{} mm", fmt_value(p.radius))).color(t.text_dim));
+                        }
+                        ui.end_row();
+                    });
                 });
             }
             Panel::CornerSeam(p) => {

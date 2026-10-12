@@ -122,6 +122,7 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::ContourFlange(_) => Icon::ContourFlange,
         FeatureKind::CornerSeam(_) => Icon::CornerSeam,
         FeatureKind::Bend(_) => Icon::Bend,
+        FeatureKind::Fold(_) => Icon::Bend,
         FeatureKind::CutAcrossBend(_) => Icon::SheetCut,
     }
 }
