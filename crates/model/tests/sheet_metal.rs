@@ -714,8 +714,8 @@ fn a_change_of_the_rule_rebuilds_the_part_from_its_first_sheet_metal_feature() {
     let left = rim(&mut s, &mut k, face, "end", lines[3]);
     run(&mut s, &mut k, "sheet.flange", json!({ "edges": [right], "height": 20 }));
     let lip = id(&run(&mut s, &mut k, "sheet.flange", json!({ "edges": [left], "height": 10 })), "feature");
-    // The app keeps the part as it stood before the feature last changed, and rebuilds from
-    // there. The rule is no part of any feature, yet a face and a flange are built to it: a
+    // The app keeps the part as it stood before each feature, and rebuilds from the feature
+    // that changed. The rule is no part of any feature, yet a face and a flange are built to it: a
     // change of the rule must not find them in what was kept.
     let mut cache = RegenCache::default();
     let built = |s: &Session, k: &mut OcctKernel, cache: &mut RegenCache| -> (f64, usize) {
@@ -738,19 +738,20 @@ fn a_change_of_the_rule_rebuilds_the_part_from_its_first_sheet_metal_feature() {
     update(&mut s, &mut k, lip, json!({ "height": 14.0 }));
     let (v, kept) = built(&s, &mut k, &mut cache);
     assert!(near(v, folded(2.0, 14.0)) && kept == 3, "{v} kept {kept}");
-    // The thickness: only the sketch is as it was. Face and flanges are built again, 3 thick.
+    // The thickness: only the sketch is as it was, and is kept. Face and flanges are built
+    // again, 3 thick.
     run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": 3 }));
     let (v, kept) = built(&s, &mut k, &mut cache);
-    assert!(near(v, folded(3.0, 14.0)) && kept == 0, "{v} {} kept {kept}", folded(3.0, 14.0));
+    assert!(near(v, folded(3.0, 14.0)) && kept == 1, "{v} {} kept {kept}", folded(3.0, 14.0));
     run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": 2.5 }));
     let (v, kept) = built(&s, &mut k, &mut cache);
     assert!(near(v, folded(2.5, 14.0)) && kept == 1, "{v} {} kept {kept}", folded(2.5, 14.0));
     // Which side the flat pattern is laid out from is not the solid's business: nothing of it
-    // is built again that was kept.
+    // is built again that was kept (the last feature has no checkpoint after it to start from).
     let under = run(&mut s, &mut k, "model.face_ref", json!({ "origin": { "type": "cap", "feature": face, "end": "start" } }));
     run(&mut s, &mut k, "sheet.a_side", json!({ "face": under }));
     let (v, kept) = built(&s, &mut k, &mut cache);
-    assert!(near(v, folded(2.5, 14.0)) && kept == 1, "{v} kept {kept}");
+    assert!(near(v, folded(2.5, 14.0)) && kept == 3, "{v} kept {kept}");
     cache.release(&mut k);
 }
 
@@ -2135,9 +2136,7 @@ fn a_cut_normal_is_the_profile_as_it_is_seen_on_the_sheet_with_walls_square_to_i
     let centre = circle_over(&mut s, &mut k, sk, &to, Vec3::new(30.0, 20.0, T), 4.0);
     let cut = id(&run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk })), "feature");
     let oval = 16.0 * PI / tilt.cos();
-    // (The kernel sums the volume of a hole with such walls less closely than it does the
-    // areas of the faces it is cut in, which say what the hole is.)
-    assert!(roughly(4800.0 - volume(&mut s, &mut k), oval * T), "{} {}", 4800.0 - volume(&mut s, &mut k), oval * T);
+    assert!(about(4800.0 - volume(&mut s, &mut k), oval * T), "{} {}", 4800.0 - volume(&mut s, &mut k), oval * T);
     let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
     assert!(body["valid"] == true && body["solids"] == 1, "{body}");
     // Both sides of the plate lose the same oval, in the same place: what is left of each has
@@ -2157,7 +2156,7 @@ fn a_cut_normal_is_the_profile_as_it_is_seen_on_the_sheet_with_walls_square_to_i
     // oval is there.
     let (x, y) = to(Vec3::new(40.0, 20.0, T));
     run(&mut s, &mut k, "sketch.drag", json!({ "sketch": sk, "point": centre, "x": x, "y": y }));
-    assert!(roughly(4800.0 - volume(&mut s, &mut k), oval * T), "{}", volume(&mut s, &mut k));
+    assert!(about(4800.0 - volume(&mut s, &mut k), oval * T), "{}", volume(&mut s, &mut k));
     let wall = run(&mut s, &mut k, "model.face_ref", json!({ "at": [40, 20.0 + 4.0 / tilt.cos(), 1] }));
     assert!(wall["origin"]["type"] == "from" && wall["origin"]["feature"] == cut, "{wall}");
 }

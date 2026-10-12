@@ -9,11 +9,17 @@ tools and find the free ones rough. It wins on reliability, coherence and speed,
 count: when two tasks compete, the one that makes existing features more dependable and pleasant
 goes first.
 
-Current milestone: **M8 sheet metal basics**, started 2026-10-11 and reported to the owner the
+Current milestone: **M9 performance**, started 2026-10-12 (DEC-077): benchmarks on the example
+models with budgets that CI holds (`tenon-cli bench`, a step of `cargo xtask ci`), and the first
+changes they pointed to (DEC-078). Not finished: see the M9 section below.
+
+M8 sheet metal basics was started 2026-10-11 and reported to the owner the
 same day. The owner asked for the gap with Inventor's sheet metal to be closed before going
 on: the second round, Corner Seam, Cut Across Bend, Bend, then Fold, Contour Flange along
 edges, Cut Normal and Corner Rip, and then Bend on a sharp edge (the section after M8 below) are
-done and reported, and wait for the owner's confirmation. Next is M9 performance.
+done and reported. On the report of the last of them the owner said to go on until there was
+enough to start M9: the mitre between lips on a tray's walls followed (DEC-076), and with it
+the round was closed (DEC-077).
 
 **M8** brought:
 - sheet metal parts: a rule whose sizes (thickness, bend radius, reliefs, K factor) are
@@ -406,9 +412,10 @@ edges), `corner_seam`, `corner_rip`, `bend`, `sharp_bend`, `fold`, `cut_normal` 
 
 | Feature | Status | Proof / gap |
 |---|---|---|
-| Benchmarks in CI with budgets that fail on regression (regeneration, tessellation, assembly load, memory) | partial | loose budgets only (see M1, M2 and M3 rows) |
-| Per-feature regeneration caching | done | `regeneration_resumes_from_the_feature_being_edited` (M2) |
-| Per-face tessellation caching, parallel tessellation, level of detail for large assemblies | missing | |
+| Benchmarks in CI with budgets that fail on regression (regeneration, tessellation, assembly load, memory) | partial | DEC-078. `tenon-cli bench --check` is a step of `cargo xtask ci`: 57 rows on the example models. Gap: the budgets are still loose (to be set from the three CI platforms' own numbers) |
+| Per-feature regeneration caching | done | DEC-078: a checkpoint before every feature. `regeneration_resumes_from_the_feature_being_edited` (M2), `a_change_of_the_rule_rebuilds_the_part_from_its_first_sheet_metal_feature`; the bench rows "rebuild after an edit half way up the history" |
+| Per-face tessellation caching, parallel tessellation | partial | the kernel meshes faces in parallel and keeps each face's triangles, and now keeps each face's measures too (DEC-078); shown by the bench (`tenon-cli bench profile`: "the same again"). Gap: no test of its own yet |
+| Level of detail for large assemblies | missing | |
 | Published numbers in docs/performance.md, including where OCCT is the limit | partial | M1 and M2 numbers only |
 
 ## M10 agent-native workflow

@@ -1,5 +1,6 @@
-# The same gate as `pixi run cargo xtask ci` locally: fmt, clippy -D warnings, tests, asset
-# attribution, crate layering, unsafe audit, wasm check of the backend-neutral crates.
+# The same gate as `pixi run cargo xtask ci` locally: fmt, clippy -D warnings, tests, the
+# benchmarks against their budgets, asset attribution, crate layering, unsafe audit, wasm check
+# of the backend-neutral crates.
 name: CI
 
 on:

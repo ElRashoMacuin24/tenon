@@ -20,7 +20,8 @@ commands:
   layers          enforce the crate dependency layering (docs/architecture.md)
   unsafe-audit    `unsafe` only in the FFI backend; #![forbid(unsafe_code)] on every other crate
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
-  ci              fmt --check, clippy -D warnings, test, assets, layers, unsafe-audit, wasm
+  bench           (as `tenon-cli bench --check`) time the example models against their budgets
+  ci              fmt --check, clippy -D warnings, test, bench, assets, layers, unsafe-audit, wasm
                   (stops at first failure)
   corpus          show where test corpora live
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
@@ -36,6 +37,11 @@ fn main() -> ExitCode {
         Some("layers") => cmd_layers(),
         Some("unsafe-audit") => metadata().and_then(|m| unsafe_audit::run(&m)),
         Some("wasm") => cmd_wasm(),
+        Some("bench") => {
+            let mut c = cargo();
+            c.args(["run", "-q", "-p", "tenon-cli", "--", "bench", "--check"]);
+            run(c, "cargo run -q -p tenon-cli -- bench --check")
+        }
         Some("ci") => cmd_ci(),
         Some("corpus") => cmd_corpus(),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
@@ -172,6 +178,14 @@ fn cmd_ci() -> Result<(), String> {
                 let mut c = cargo();
                 c.args(["test", "--workspace"]);
                 run(c, "cargo test --workspace")
+            }),
+        ),
+        (
+            "bench",
+            Box::new(|| {
+                let mut c = cargo();
+                c.args(["run", "-q", "-p", "tenon-cli", "--", "bench", "--check"]);
+                run(c, "cargo run -q -p tenon-cli -- bench --check")
             }),
         ),
         ("assets", Box::new(|| assets::run(&root()))),

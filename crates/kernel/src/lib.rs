@@ -19,6 +19,7 @@ pub mod check;
 mod handle;
 mod history;
 mod query;
+pub mod timed;
 mod types;
 
 use std::sync::Arc;

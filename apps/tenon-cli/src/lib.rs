@@ -2,6 +2,7 @@
 //! summary and the same data as JSON, so scripts and agents can verify results.
 #![forbid(unsafe_code)]
 
+pub mod bench;
 pub mod engine;
 pub mod mcp;
 pub mod script;

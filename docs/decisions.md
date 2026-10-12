@@ -1802,3 +1802,89 @@ before giving up.
 Not done: the same mitre between flanges made as two features (Corner Seam between faces in
 one plane); overlap seams between flanges on two faces; edges that are not square to the
 line where the two faces' planes meet.
+
+## DEC-077 Sheet metal is enough for now; M9 starts (2026-10-12)
+
+The owner's word on the report of Bend on a sharp edge was to keep going until there is
+enough to start M9. After the mitre between lips (DEC-076) the everyday parts tried all
+build and lay flat: a bracket with a tab, rounded corners and patterned holes; a channel
+with end walls, hems and a notch round a bend; a tray with lips; a shelled box ripped and
+bent. What is left on the Sheet Metal tab is specialist (Lofted Flange, Contour Roll, Rip,
+Punch Tool, Unfold and Refold, bend tables, tear and weld reliefs, a Corner Seam between
+faces in one plane) and waits until after M9. One thing found on the way is left as it is
+and said here: walls on the straight edges of a plate whose corners are rounded with a
+radius smaller than the bends reach are refused for running into each other, with advice
+that fits (make the flange narrower), not mitred across the rounded corner.
+
+M9 is the plan's performance milestone: benchmarks in CI with budgets, regeneration and
+tessellation caching, parallel tessellation, level of detail for large assemblies, and the
+numbers published.
+
+## DEC-078 Where the time went, and the first three changes (2026-10-12)
+
+**Measured first.** `tenon-cli bench` times, on the example models and two made for the
+purpose (a plate with 40 holes as 42 features, a tray with four mitred lips): a part
+rebuilt from nothing, meshed and measured for the screen, rebuilt after an edit of its last
+feature and of one half way up its history, meshed again after an edit; a flat pattern; an
+assembly opened; a drawing's views. Each row has a budget, and `cargo xtask ci` runs it as
+a step of its own (`bench`), so CI fails when a row goes over. `tenon-cli bench profile`
+says where the time of a rebuild goes, kernel call by kernel call, by wrapping the kernel
+(`tenon_kernel::timed::Timed`).
+
+The profile said three things. Up to 60 % of a rebuild was the kernel summing volumes:
+after every cutting or joining feature the part's volume is taken, to see that the feature
+did something (DEC-032), and each time every face of the part was integrated again to a
+part in a billion. Most of the rest was booleans. And meshing for the screen was mostly
+not meshing: on curved parts, measuring the faces took several times longer.
+
+**1. The kernel keeps what each face adds** (the OCCT shim; no change to the `Kernel`
+trait). A solid's volume, centre and inertia are sums over its faces, reckoned from one
+point; the shim keeps each face's share, and its area and centroid, by the face itself (the
+same underlying face, in the same place, the same way round). After a feature only the
+faces it made or changed are summed. The point they are reckoned from is near the part's
+middle on a coarse grid that grows with the part, so that it stays put while the part
+changes a little; when it moves, everything is summed again. Shares of faces nothing else
+holds any more are dropped each time the table has doubled.
+
+- A flat face's share is summed with the plain integration, which is exact for it (seen
+  from any point it is a cone), not the adaptive one.
+- A wall pushed out of a free curve (an extrusion surface: the wall of a hole cut from a
+  profile seen at an angle) is summed span by span with the Gauss-Kronrod integration. The
+  adaptive sum settled too soon on these, up to five parts in ten thousand of the cut out:
+  this was the error DEC-073 put down to the kernel in general. With it gone, the check on
+  sheet cuts (DEC-067) is back to a millionth of the part, and the test of an angled cut
+  holds its volume to the tolerance of its areas. On rolled faces the Gauss-Kronrod sum is
+  still far too slow, and the adaptive one is right on them to a few parts in a billion.
+
+**2. A checkpoint before every feature** (`RegenCache`), where there was one, before the
+feature last changed. An edit anywhere now starts from the feature it changes; the first
+edit of an earlier feature no longer costs a rebuild from nothing. A checkpoint is second
+handles to shapes the kernel holds anyway (they share their unchanged faces), and a copy of
+the face names; a history longer than 128 features has one every few.
+
+**3. Booleans run on all cores** (`SetRunParallel(true)`). The results are the same: the
+whole test suite, and three builds of three examples compared file by file.
+
+Meshing was already parallel and already kept: OCCT keeps a face's triangles on the face,
+so a part meshed again after an edit meshes only what changed, and the bench now shows it
+(`the same again` in the profile).
+
+On the development machine, in the profile CI builds with (milliseconds, before and after):
+
+| | before | after |
+|---|---|---|
+| m8-tray: rebuild from nothing | 646 | 237 |
+| m8-tray: rebuild after an edit half way up | 656 | 45 |
+| m8-tray: mesh and measure | 54 | 18 |
+| m8-tray: lay flat | 37 | 1.6 |
+| A tray with four mitred lips: rebuild | 1161 | 484 |
+| A tray with four mitred lips: mesh and measure | 203 | 23 |
+| A plate with 40 holes: rebuild | 411 | 189 |
+| A plate with 40 holes: edit of the last feature | 32 | 9 |
+| A plate with 40 holes: edit half way up | 447 | 118 |
+| m6 bolt (a modelled thread): rebuild | 857 | 256 |
+| m6 bolt: mesh and measure | 194 | 30 |
+| m2-enclosure: rebuild | 79 | 37 |
+| m6 fittings assembly: open | 1160 | 553 |
+
+What is left is the kernel's own work: of the tray's 237 ms, booleans are about 140.

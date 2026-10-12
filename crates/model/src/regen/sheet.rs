@@ -219,11 +219,10 @@ impl Ctx<'_> {
                 own = false;
                 let (Ok(before), Ok(most)) = (before, most) else { continue };
                 let took = before - volume(self, now.0)?;
-                // (The kernel sums the volume of a solid with walls of free curves, as a cut seen
-                // at an angle has, far less closely than that of one of flats and rounds: to
-                // about a two thousandth of the tool, where the others are right to a billionth.
-                // What this looks for is a tool that was not taken, or took something else.)
-                let slack = 1e-6 * (1.0 + before) + 1e-2 * most;
+                // (To a millionth of the part, and a hundred thousandth of the tool for one with
+                // walls of free curves, as a cut seen at an angle has: what this looks for is a
+                // tool that was not taken, or took something else.)
+                let slack = 1e-6 * (1.0 + before) + 1e-5 * most;
                 let (wrong, due) = match shared {
                     Some(shared) => ((took - shared).abs() > slack, shared),
                     None => (took < -slack || took > most + slack, most),

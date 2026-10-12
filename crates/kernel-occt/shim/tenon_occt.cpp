@@ -12,6 +12,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -79,6 +80,10 @@
 #include <BRepBuilderAPI_MakeShape.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
+#include <BRepGProp_Domain.hxx>
+#include <BRepGProp_Face.hxx>
+#include <BRepGProp_Vinert.hxx>
+#include <BRepGProp_VinertGK.hxx>
 #include <BRepLib_ToolTriangulatedShape.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -424,7 +429,7 @@ std::unique_ptr<Shape> boolean_op(std::uint8_t op, const Shape& target, const Sh
     }
     algo->SetArguments(args);
     algo->SetTools(tool_list);
-    algo->SetRunParallel(false);
+    algo->SetRunParallel(true);
     algo->Build();
     if (algo->HasErrors()) {
       std::ostringstream report;
@@ -1665,6 +1670,85 @@ void topology(const Shape& s, TopoOut& out) {
   });
 }
 
+namespace {
+
+// What one face adds to the volume properties of a solid, reckoned from the point `about`,
+// and its own surface properties. They are kept by the face (the same underlying face, in the
+// same place, the same way round), so that after a feature only the faces it made or changed
+// are summed again: most faces of a part come through a feature untouched, and summing the
+// volume of a part from nothing after each feature was most of the time of rebuilding it.
+struct FaceSums {
+  bool has_surface = false;
+  GProp_GProps surface;
+  bool has_volume = false;
+  gp_Pnt about;
+  GProp_GProps volume;
+};
+
+struct FaceKey {
+  TopoDS_Shape face;
+  bool operator==(const FaceKey& other) const { return face.IsEqual(other.face); }
+};
+
+struct FaceKeyHash {
+  std::size_t operator()(const FaceKey& key) const noexcept {
+    const std::size_t shape = std::hash<const void*>()(key.face.TShape().get());
+    return shape ^ (key.face.Location().HashCode() * 31u) ^ static_cast<std::size_t>(key.face.Orientation());
+  }
+};
+
+std::mutex g_sums_lock;
+std::unordered_map<FaceKey, FaceSums, FaceKeyHash> g_sums;
+std::size_t g_sums_swept = 0;
+
+// The sums of faces that nothing but this table holds any more are dropped, each time the
+// table has grown to twice what the last sweep left. (Call with the lock held.)
+void sweep_sums() {
+  if (g_sums.size() < 2 * g_sums_swept + 4096) {
+    return;
+  }
+  for (auto it = g_sums.begin(); it != g_sums.end();) {
+    if (it->first.face.TShape()->GetRefCount() <= 1) {
+      it = g_sums.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  g_sums_swept = g_sums.size();
+}
+
+// The surface properties of a face, from the table. (Call with the lock held.)
+const GProp_GProps& surface_sums(const TopoDS_Face& face) {
+  FaceSums& sums = g_sums[FaceKey{face}];
+  if (!sums.has_surface) {
+    BRepGProp::SurfaceProperties(face, sums.surface);
+    sums.has_surface = true;
+  }
+  return sums.surface;
+}
+
+// The point a solid's volume is reckoned from: near its middle, so that nothing is lost to
+// rounding on a part far from the origin, and on a coarse grid that grows with the part, so
+// that it stays where it is while the part changes a little and the faces' sums stay good.
+gp_Pnt sum_point(const TopoDS_Shape& shape) {
+  Bnd_Box box;
+  for (TopExp_Explorer ex(shape, TopAbs_VERTEX); ex.More(); ex.Next()) {
+    box.Add(BRep_Tool::Pnt(TopoDS::Vertex(ex.Current())));
+  }
+  if (box.IsVoid()) {
+    return gp_Pnt(0.0, 0.0, 0.0);
+  }
+  double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  const double size = std::max({x1 - x0, y1 - y0, z1 - z0, 1.0});
+  const double step = std::pow(2.0, std::ceil(std::log2(size)));
+  auto snap = [&](double low, double high) { return std::round(0.5 * (low + high) / step) * step; };
+  return gp_Pnt(snap(x0, x1), snap(y0, y1), snap(z0, z1));
+}
+
+} // namespace
+
+
 void face_info(const Shape& s, std::uint32_t index, FaceOut& out) {
   guarded("face_info", [&] {
     if (index >= static_cast<std::uint32_t>(s.faces.Extent())) {
@@ -1673,7 +1757,11 @@ void face_info(const Shape& s, std::uint32_t index, FaceOut& out) {
     const TopoDS_Face& face = TopoDS::Face(s.faces(static_cast<int>(index) + 1));
     out.reversed = face.Orientation() == TopAbs_REVERSED;
     GProp_GProps props;
-    BRepGProp::SurfaceProperties(face, props);
+    {
+      // (Kept by the face: a part is asked for its faces again after every change.)
+      std::lock_guard<std::mutex> hold(g_sums_lock);
+      props = surface_sums(face);
+    }
     out.area = props.Mass();
     out.centroid = v3(props.CentreOfMass());
 
@@ -1936,13 +2024,68 @@ void tessellate(const Shape& s, double linear, double angular, bool relaxed, Mes
 
 void mass_properties(const Shape& s, MassOut& out) {
   guarded("mass_properties", [&] {
-    GProp_GProps vol;
-    // To a precision asked for, face by face: the plain sum is off where a face of a round
-    // surface has a rim that curves back on itself (a hole drilled across a shaft: by a
-    // millionth of the part; half a circle cut across a bend: by a five hundredth of the cut).
-    BRepGProp::VolumeProperties(s.shape, vol, kVolumePrecision, false, false);
+    const gp_Pnt about = sum_point(s.shape);
+    GProp_GProps vol(about);
     GProp_GProps surf;
-    BRepGProp::SurfaceProperties(s.shape, surf);
+    {
+      std::lock_guard<std::mutex> hold(g_sums_lock);
+      for (TopExp_Explorer ex(s.shape, TopAbs_FACE); ex.More(); ex.Next()) {
+        const TopoDS_Face& face = TopoDS::Face(ex.Current());
+        surf.Add(surface_sums(face));
+        const TopAbs_Orientation way = face.Orientation();
+        if (way != TopAbs_FORWARD && way != TopAbs_REVERSED) {
+          continue;
+        }
+        FaceSums& sums = g_sums[FaceKey{face}];
+        if (!sums.has_volume || sums.about.SquareDistance(about) > 0.0) {
+          // To a precision asked for, face by face: the plain sum is off where a face of a
+          // round surface has a rim that curves back on itself (a hole drilled across a shaft:
+          // by a millionth of the part; half a circle cut across a bend: by a five hundredth
+          // of the cut).
+          BRepGProp_Vinert one;
+          one.SetLocation(about);
+          BRepGProp_Face on(face);
+          // A flat face needs no such care: seen from any point its share is a cone, which the
+          // plain sum has to the last figure, for a fraction of the work.
+          const GeomAbs_SurfaceType kind = BRepAdaptor_Surface(face, false).GetType();
+          const bool flat = kind == GeomAbs_Plane;
+          // A wall pushed out of a free curve (a profile with a spline in it): the adaptive sum
+          // settles too soon on these, some parts in a hundred thousand out; the slower sum
+          // span by span along the curve does not.
+          if (kind == GeomAbs_SurfaceOfExtrusion && face.NbChildren() != 0) {
+            BRepGProp_Face spans(face, true);
+            BRepGProp_Domain within;
+            within.Init(face);
+            const BRepGProp_VinertGK slow(spans, within, about, kVolumePrecision, true, true);
+            sums.volume = slow;
+            sums.about = about;
+            sums.has_volume = true;
+            vol.Add(sums.volume);
+            continue;
+          }
+          if (face.NbChildren() == 0) {
+            if (flat) {
+              one.Perform(on);
+            } else {
+              one.Perform(on, kVolumePrecision);
+            }
+          } else {
+            BRepGProp_Domain within;
+            within.Init(face);
+            if (flat) {
+              one.Perform(on, within);
+            } else {
+              one.Perform(on, within, kVolumePrecision);
+            }
+          }
+          sums.volume = one;
+          sums.about = about;
+          sums.has_volume = true;
+        }
+        vol.Add(sums.volume);
+      }
+      sweep_sums();
+    }
     out.volume = vol.Mass();
     out.area = surf.Mass();
     const GProp_GProps& use = std::abs(out.volume) > 0.0 ? vol : surf;

@@ -27,6 +27,10 @@ usage:
                                               1 different, 2 error
   tenon-cli upgrade FILE... [--json]          save Tenon files in the current format version,
                                               keeping version-1 originals as NAME.v1.EXT
+  tenon-cli bench [--check] [--json] [--out DIR]
+                                              time rebuilding, meshing, flat patterns, assemblies and
+                                              drawings on the example models; --check: exit code 1
+                                              when one is over its budget (docs/performance.md)
   tenon-cli info FILE.step [--json]           import STEP; report volume, area, bounding box, topology
   tenon-cli convert IN.step OUT.stl [--json]  tessellate STEP to binary STL (mm)
 ";
@@ -45,6 +49,7 @@ fn parse_size(s: &str) -> Option<[u32; 2]> {
 fn main() -> ExitCode {
     let mut json = false;
     let mut markdown = false;
+    let mut check = false;
     let mut out: Option<PathBuf> = None;
     let mut view = "iso".to_owned();
     let mut size = [1024, 768];
@@ -54,6 +59,7 @@ fn main() -> ExitCode {
         match a.as_str() {
             "--json" => json = true,
             "--markdown" => markdown = true,
+            "--check" => check = true,
             "--out" => match args.next() {
                 Some(dir) => out = Some(PathBuf::from(dir)),
                 None => return fail("--out needs a directory"),
@@ -108,6 +114,13 @@ fn main() -> ExitCode {
         ["demo", "m6"] => tenon_cli::demo_m6(kernel(), &demo_dir()),
         ["demo", "m7"] => tenon_cli::demo_m7(kernel(), &demo_dir()),
         ["demo", "m8"] => tenon_cli::demo_m8(kernel(), &demo_dir()),
+        ["bench"] => return bench(json, check, out.as_deref()),
+        ["bench", "profile"] => {
+            let scratch = std::env::temp_dir().join(format!("tenon-bench-{}", std::process::id()));
+            let done = tenon_cli::bench::profile(&kernel, &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples"), &scratch);
+            let _ = std::fs::remove_dir_all(&scratch);
+            done
+        }
         ["info", file] => tenon_cli::info(&mut OcctKernel::new(), Path::new(file)),
         ["convert", input, output] => tenon_cli::convert(&mut OcctKernel::new(), Path::new(input), Path::new(output)),
         _ => return fail(&format!("unrecognised command\n\n{USAGE}")),
@@ -120,6 +133,28 @@ fn main() -> ExitCode {
         Ok(r) => {
             println!("{}", r.text);
             ExitCode::SUCCESS
+        }
+        Err(e) => fail(&e),
+    }
+}
+
+/// `tenon-cli bench`: the measurements, and with `--check` exit code 1 when one is over its
+/// budget.
+fn bench(json: bool, check: bool, work: Option<&Path>) -> ExitCode {
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let scratch = std::env::temp_dir().join(format!("tenon-bench-{}", std::process::id()));
+    let work = work.map_or(scratch.clone(), Path::to_path_buf);
+    let rows = tenon_cli::bench::run(&kernel, &examples, &work);
+    let _ = std::fs::remove_dir_all(&scratch);
+    match rows {
+        Ok(rows) => {
+            let report = tenon_cli::bench::report(&rows);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report.json).unwrap_or_default());
+            } else {
+                println!("{}", report.text);
+            }
+            if check && rows.iter().any(tenon_cli::bench::Row::over) { ExitCode::FAILURE } else { ExitCode::SUCCESS }
         }
         Err(e) => fail(&e),
     }

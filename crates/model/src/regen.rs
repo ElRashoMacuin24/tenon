@@ -194,21 +194,23 @@ fn kerr(e: KernelError) -> String {
     e.to_string()
 }
 
-/// Regeneration state kept between runs, so an edit recomputes only from the first feature it
-/// changes: the part as it stood just before that feature is kept as a checkpoint.
+/// Regeneration state kept between runs, so an edit recomputes only from the feature it
+/// changes: the part as it stood before each feature is kept as a checkpoint (in a long
+/// history, before every few), and a run starts from the furthest of them that its history
+/// still leads up to.
 #[derive(Debug, Default)]
 pub struct RegenCache {
     /// Prefix hashes of the document regenerated last: `last[i]` covers its first `i` features.
     last: Vec<u64>,
-    /// The state after the first `.0` features, and the hash of that prefix.
-    checkpoint: Option<(usize, u64, Regen)>,
-    /// How many features the last run took from the checkpoint (0: computed them all).
+    /// The state after the first `.0` features, and the hash of that prefix: in order.
+    checkpoints: Vec<(usize, u64, Regen)>,
+    /// How many features the last run took from a checkpoint (0: computed them all).
     pub resumed_at: usize,
 }
 
 impl RegenCache {
     pub fn release(&mut self, k: &mut dyn Kernel) {
-        if let Some((_, _, mut r)) = self.checkpoint.take() {
+        for (_, _, mut r) in self.checkpoints.drain(..) {
             r.release(k);
         }
         self.last.clear();
@@ -290,38 +292,49 @@ pub fn regenerate(doc: &Document, k: &mut dyn Kernel) -> Regen {
     regenerate_with(doc, k, None)
 }
 
-/// Rebuilds the part, resuming from `cache`'s checkpoint when the history before it is
-/// unchanged, and leaving a checkpoint just before the first feature this document changed.
+/// The most checkpoints a cache keeps: every feature has one in a history no longer than this.
+const MAX_CHECKPOINTS: usize = 128;
+
+/// Rebuilds the part, resuming from the furthest of `cache`'s checkpoints that the history
+/// still leads up to, and leaving checkpoints before the features it computes.
 pub fn regenerate_with(doc: &Document, k: &mut dyn Kernel, mut cache: Option<&mut RegenCache>) -> Regen {
     let t0 = Instant::now();
     let copied: std::collections::BTreeSet<FeatureId> = doc.features().iter().flat_map(|f| f.kind.copies().iter().copied()).collect();
     let hashes = if cache.is_some() { prefix_hashes(doc, &copied) } else { Vec::new() };
-    // Resume from the checkpoint if the features before it are the same.
+    // Checkpoints of a history that is no longer this one's are of no more use; of the rest,
+    // the furthest on is where this run starts.
     let mut begin = 0;
     let mut start = Regen::default();
-    if let Some(c) = cache.as_deref_mut()
-        && let Some((at, hash, state)) = &c.checkpoint
-        && hashes.get(*at) == Some(hash)
-        && let Ok(copy) = state.duplicate(k)
-    {
-        begin = *at;
-        start = copy;
+    if let Some(c) = cache.as_deref_mut() {
+        let (good, stale): (Vec<_>, Vec<_>) = std::mem::take(&mut c.checkpoints).into_iter().partition(|(at, hash, _)| hashes.get(*at) == Some(hash));
+        for (_, _, mut state) in stale {
+            state.release(k);
+        }
+        c.checkpoints = good;
+        if let Some((at, _, state)) = c.checkpoints.last()
+            && let Ok(copy) = state.duplicate(k)
+        {
+            begin = *at;
+            start = copy;
+        }
     }
-    // Where this document first differs from the last one: the next checkpoint goes there.
+    // Where this document first differs from the last one: always worth a checkpoint, since
+    // the next edit is most likely of the same feature.
     let unchanged = cache.as_deref().map_or(0, |c| c.last.iter().zip(&hashes).take_while(|(a, b)| a == b).count().saturating_sub(1));
-    // (Nothing changed: the checkpoint stays where it is useful.)
-    let snapshot_at = (cache.is_some() && unchanged > begin && unchanged < doc.features().len()).then_some(unchanged);
+    let every = doc.features().len() / MAX_CHECKPOINTS + 1;
     let mut failed = start.status.iter().any(|(_, s)| matches!(s, FeatureStatus::Error { .. }));
     let mut cx = Ctx { doc, k, regen: start, copied };
     let end = doc.end_of_part();
     for (i, f) in doc.features().iter().enumerate().skip(begin) {
-        if Some(i) == snapshot_at
+        // The part as it stands before this feature, for the next run to start from.
+        if i > begin
+            && i < end
+            && (i % every == 0 || i == unchanged)
             && !failed
             && let Some(c) = cache.as_deref_mut()
             && let Ok(copy) = cx.regen.duplicate(cx.k)
-            && let Some((_, _, mut old)) = c.checkpoint.replace((i, hashes[i], copy))
         {
-            old.release(cx.k);
+            c.checkpoints.push((i, hashes[i], copy));
         }
         let status = if i >= end {
             FeatureStatus::RolledBack
