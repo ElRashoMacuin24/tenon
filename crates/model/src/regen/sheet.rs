@@ -154,6 +154,60 @@ impl Ctx<'_> {
         done
     }
 
+    /// Takes `tools` out of `target` one at a time, and sees each time that what went is what the
+    /// tool shared with the part: a cut that took anything else is refused. (Tools that lie
+    /// against one another, as the pieces of a relief do along a bend line, are not safe to take
+    /// out in one boolean: the kernel then gives a sound solid of the wrong volume on some
+    /// platforms, DEC-067.) The tools are used up; `target` is released when it is not the part's
+    /// own body (`keep`).
+    fn sheet_cut(&mut self, target: Named, keep: bool, tools: Vec<Named>, what: &str) -> Result<Named, Stop> {
+        let volume = |ctx: &Self, s: ShapeHandle| ctx.k.mass_properties(s, 1.0).map(|m| m.volume);
+        let (mut now, mut own) = (target, keep);
+        let mut pending = tools.into_iter();
+        let result = (|| -> Result<(), Stop> {
+            for tool in pending.by_ref() {
+                let before = volume(self, now.0);
+                // What the tool can take: what it shares with the part, and no more than itself.
+                let most = volume(self, tool.0);
+                let shared = self.k.boolean(BoolOp::Intersect, now.0, &[tool.0]).ok().and_then(|op| {
+                    let v = volume(self, op.shape);
+                    self.k.release(op.shape);
+                    v.ok()
+                });
+                now = self.sheet_step(BoolOp::Cut, now.clone(), own, vec![tool])?;
+                own = false;
+                let (Ok(before), Ok(most)) = (before, most) else { continue };
+                let took = before - volume(self, now.0)?;
+                let slack = 1e-6 * (1.0 + before);
+                let (wrong, due) = match shared {
+                    Some(shared) => ((took - shared).abs() > slack, shared),
+                    None => (took < -slack || took > most + slack, most),
+                };
+                if wrong {
+                    return Err(format!(
+                        "The {what} could not be cut out of the part: taking a piece of it out removed {} mm³ where {} mm³ was to go. Change its size or its place a little.",
+                        crate::explain::mm(took),
+                        crate::explain::mm(due)
+                    )
+                    .into());
+                }
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => Ok(now),
+            Err(e) => {
+                for (s, _) in pending {
+                    self.k.release(s);
+                }
+                if !own {
+                    self.k.release(now.0);
+                }
+                Err(e)
+            }
+        }
+    }
+
     /// A profile pushed `distance` along its frame's Z, every face named after the curve of
     /// the profile that made it and its two ends by `caps`.
     fn sheet_prism(&mut self, id: FeatureId, profile: &Profile, distance: f64, caps: Option<[u64; 2]>) -> Result<Named, Stop> {
@@ -411,7 +465,10 @@ impl Ctx<'_> {
                 if n == 1 {
                     before_join = volume(self, now.0)?;
                 }
-                now = self.sheet_step(kind, now.clone(), own, tools)?;
+                now = match kind {
+                    BoolOp::Cut => self.sheet_cut(now.clone(), own, tools, what)?,
+                    _ => self.sheet_step(kind, now.clone(), own, tools)?,
+                };
                 own = false;
                 if n == 1 {
                     let after = volume(self, now.0)?;
@@ -421,6 +478,14 @@ impl Ctx<'_> {
                             "The {what} runs into the part: {} mm³ of it would be where the part already is. {}",
                             crate::explain::mm(lost),
                             advice[0]
+                        )
+                        .into());
+                    }
+                    // More than went in is no join at all.
+                    if lost < -1e-6 * (1.0 + after) {
+                        return Err(format!(
+                            "The {what} could not be joined to the part: the whole came out {} mm³ more than its pieces. Change its size or its place a little.",
+                            crate::explain::mm(-lost)
                         )
                         .into());
                     }
@@ -452,7 +517,7 @@ impl Ctx<'_> {
 
     /// Makes the faces feature `id` added one with the faces of the part they lie in the plane of
     /// (a wall, and the piece a corner seam put on its end). Such a face keeps the name the part
-    /// had for it. Left as it is when the kernel cannot.
+    /// had for it. Left as it is when the kernel cannot, or gives anything but the same solid.
     fn sheet_unify(&mut self, bi: usize, id: FeatureId) {
         let Some((shape, names)) = self.regen.bodies.get(bi).map(|b| (b.shape, b.names.clone())) else { return };
         let own = |n: &Option<FaceOrigin>| matches!(n, Some(FaceOrigin::From { feature, .. }) if *feature == id);
@@ -462,7 +527,10 @@ impl Ctx<'_> {
             return;
         }
         let Ok(op) = self.k.unify(shape, &faces) else { return };
-        let Ok(topo) = self.k.topology(op.shape) else {
+        // The same solid with fewer faces, or it is not taken.
+        let volume = |ctx: &Self, s: ShapeHandle| ctx.k.mass_properties(s, 1.0).map(|m| m.volume);
+        let same = matches!((volume(self, shape), volume(self, op.shape)), (Ok(a), Ok(b)) if (a - b).abs() <= 1e-6 * (1.0 + a));
+        let Some(topo) = self.k.topology(op.shape).ok().filter(|t| same && t.solids == 1) else {
             self.k.release(op.shape);
             return;
         };

@@ -1370,3 +1370,36 @@ compares them, for every seam and relief).
   between two faces in one plane, Extend Corner (aligned or perpendicular), the Face/Edge
   gap, No Seam as a choice in the feature (a corner without a seam is one without the
   feature).
+
+## DEC-067 Sheet cuts are made one tool at a time, and checked (2026-10-12)
+
+The first push of Corner Seam (DEC-066) was green on Linux and Windows and red on macOS, in
+one case of its test only: a round relief 12 across with an overlapped seam came out 25 mm³
+short of the same corner made by one flange. Read step by step on the macOS runner:
+
+- each of the five relief tools (the flat's prism, the two rolled bend tools, the two wall
+  prisms) taken out alone, or one after the other, leaves the right solid on every platform;
+- all five in one boolean, or made one tool first and then cut, leaves a *sound* solid of the
+  wrong volume there, and not the same wrong volume from one run to the next (44 mm³ too much
+  in the second run).
+
+The tools of a relief lie against one another along the bend lines, face on face, and their
+curved faces run on into one another there. A boolean with several such tools is where the
+kernel's answer depends on the platform; nothing in the result says so (it is valid, one
+solid).
+
+**Decision.** Everything the sheet metal features take out of the part (`sheet_cut`: a
+flange's and a corner seam's trims, a corner seam's relief) goes one tool at a time, and each
+time what went is compared with what the tool shared with the part (their common volume, by a
+boolean of its own): a cut that took anything else fails the feature with a message, instead
+of leaving a part that is silently wrong. Where the common volume cannot be had, the cut must
+at least take nothing negative and no more than the tool. `Kernel::unify` after a corner seam
+is taken only when it leaves the same solid (same volume, one solid).
+
+- This costs two booleans a tool where there was one for all. The parts are small; M9 will
+  measure it.
+- Joining pieces on was already checked (nothing shared, one solid) and stays one boolean.
+- Other features' booleans with many tools (a pattern's cuts) are tools that stand apart;
+  they are left as they are.
+- A cause that shows on one platform only is found on that platform: a draft pull request
+  from a throwaway branch ran the one test there with its steps printed, and was closed.
