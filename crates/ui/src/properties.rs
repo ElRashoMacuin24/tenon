@@ -483,7 +483,7 @@ impl Workbench {
             Panel::Hem(p) => ("Hem", p.editing.map(|f| self.feature_name(f))),
             Panel::ContourFlange(p) => ("Contour Flange", p.editing.map(|f| self.feature_name(f))),
             Panel::Fold(p) => ("Fold", p.editing.map(|f| self.feature_name(f))),
-            Panel::CornerSeam(p) => ("Corner Seam", p.editing.map(|f| self.feature_name(f))),
+            Panel::CornerSeam(p) => (if p.rip { "Corner Rip" } else { "Corner Seam" }, p.editing.map(|f| self.feature_name(f))),
             Panel::Bend(p) => ("Bend", p.editing.map(|f| self.feature_name(f))),
             Panel::Asm(p) => {
                 (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))

@@ -11,7 +11,8 @@ goes first.
 
 Current milestone: **M8 sheet metal basics**, started 2026-10-11 and reported to the owner the
 same day. The owner asked for the gap with Inventor's sheet metal to be closed before going
-on: the second round, Corner Seam, Cut Across Bend and Bend (the section after M8 below) are
+on: the second round, Corner Seam, Cut Across Bend, Bend, and then Fold, Contour Flange along
+edges, Cut Normal and Corner Rip (the section after M8 below) are
 done and reported, and wait for the owner's confirmation. Next is M9 performance.
 
 **M8** brought:
@@ -30,7 +31,8 @@ done and reported, and wait for the owner's confirmation. Next is M9 performance
   overlapped seams and a seam, gap and relief of a corner's own (DEC-066); then Cut Across
   Bend, a profile cut round the bends as it is drawn on the flat sheet, with Project Flat
   Pattern to draw it on (DEC-068); then Bend, which joins two faces made apart, with the four
-  kinds of double bend for faces in parallel planes (DEC-070).
+  kinds of double bend for faces in parallel planes (DEC-070); then Fold, a contour flange
+  along edges of the sheet, Cut Normal and Corner Rip (DEC-071 to DEC-074).
 
 M7 (standard parts and maker workflow) was confirmed by the owner on 2026-10-11 (DEC-054), who
 asked again for the interface to come closer to Inventor's; the sketch environment was gone
@@ -353,9 +355,11 @@ version 2 stands.
 
 Asked for by the owner on 2026-10-11, on M8's report: to go on closing the gap with Inventor
 before M9, the corners of a tray first, then Hem and Contour Flange; then, on that report,
-Corner Seam; then Cut Across Bend; then Bend. Decisions: DEC-063 to DEC-070. In files: the parameter
+Corner Seam; then Cut Across Bend; then Bend; then Fold, Contour Flange along edges, Cut Normal
+and Corner Rip. Decisions: DEC-063 to DEC-074. In files: the parameter
 `GapSize`, a flange's optional `miter` and corner options (`seam`, `overlap`, `gap`, `relief`,
-`relief_size`), the feature types `hem`, `contour_flange`, `corner_seam`, `bend` and
+`relief_size`), the feature types `hem`, `contour_flange` (with `edges` and `width` along
+edges), `corner_seam`, `corner_rip`, `bend`, `fold`, `cut_normal` and
 `cut_across_bend`, and `flat` on a projected edge; format version 2 stands (DEC-046).
 
 | Feature | Status | Proof / gap |
@@ -389,6 +393,8 @@ Corner Seam; then Cut Across Bend; then Bend. Decisions: DEC-063 to DEC-070. In 
 | Fold: a face folded along a line drawn across it, with nothing added | done | DEC-071. `a_fold_turns_the_sheet_beyond_a_line_about_a_bend_and_adds_nothing` (a quarter turn by hand: the volume, where what folded stands and what stayed lies, the flat pattern the 60 x 40 plate again with its bend line where the line was drawn; the line as the start and as the end of the bend; the other side; down; 45 degrees with a radius of its own; from a sketch on the underside), `a_fold_carries_what_is_on_the_sheet_beyond_it_and_says_what_it_cannot_fold` (a flange goes with the piece that folds and the flat pattern is what it was before; a line short of the edges, two lines, no line, an angle of nothing and a sketch off the sheet are refused in words). In the app: `a_face_is_folded_along_a_line_from_its_panel` (Fold live on the Create panel; the preview by hand; Start of Bend, Flip Side, Flip Direction and 45 degrees from the panel; Fold1 in the browser, edited by a double-click). Gap: the line is not picked in the viewport |
 | Contour Flange along edges of the sheet, from a profile that starts at the edge | done | DEC-072. `a_contour_flange_runs_along_an_edge_of_the_sheet_from_a_profile_that_starts_there` (a wall and a lip along the plate's right edge by hand: the plate cut back by 3, where the wall's inside and the lip's top are, the flat pattern 57 + two bends + 7 + 10 long; 20 wide in the middle of the edge; along the left edge too, a mirror image; a profile that runs straight on is the plate's own face), `a_contour_flange_along_an_edge_says_what_its_profile_must_be` (not starting at the edge, a sketch not square to it, wider than the edge, no edges and no distance). In the app, by a click on the edge with the profile's sketch chosen: `a_contour_flange_runs_along_an_edge_clicked_in_its_panel`. Gap: no mitres between adjacent edges, no loop select |
 | Cut Normal: a profile cut where it is seen on the sheet from its sketch, each face and bend square to itself | done | DEC-073. `a_cut_normal_is_the_profile_as_it_is_seen_on_the_sheet_with_walls_square_to_it` (from a parallel plane the circle itself, a circle in the flat pattern; a pocket half a millimetre deep in the side that looks at the sketch; from a plane at 30 degrees an oval 4 by 4 / cos 30 lost by both sides of the plate in the same place, and it follows the circle dragged in its sketch), `a_cut_normal_goes_onto_the_bends_it_is_seen_on_and_leaves_what_is_seen_edge_on` (a slot across plate and bend that leaves the wall whole, four lines in the flat; a round hole half on the plate and half on the bend, its volume by hand, longer in the flat pattern than the circle; a hole in the bend alone; at 45 degrees into the corner the rim on the side that is seen is the circle, on plate, bend and wall, and plate and wall lose as much), `a_cut_normal_says_what_it_cannot_see_or_cut`. Curves through points: `a_curve_given_point_by_point_goes_to_the_kernel_as_a_smooth_curve_through_the_points`. In the app, by the Cut Normal box of Cut: `a_cut_is_square_to_the_sheet_where_its_profile_is_seen_when_its_panel_is_told_to`. Gap: no island on a bend, such curves are short lines in the flat pattern, the kernel's volume of such a cut is right to five parts in ten thousand |
+| Corner Rip: a square corner with no seam opened along its edge, as Corner Seam's other shape | done | DEC-074. `a_corner_rip_opens_the_square_corner_of_a_shelled_box_along_its_edge` (a shelled box: by the outside edge the walls stop 2 + 1 / sqrt 2 from the corner and the floor loses its corner, by hand; the gap follows the rule; by the inside edge the floor is whole; four corners in one rip), `a_corner_rip_lets_one_wall_keep_the_corner_and_says_what_is_no_corner` (overlap and reverse overlap cut a slit in one wall or the other, half and no overlap take the corner too; a rim edge, no gap, a relief, an edge twice, a part that is not sheet metal). In the app, from Corner Seam's Shape list by a click on the corner's edge: `a_square_corner_is_opened_by_the_corner_rip_of_corner_seam`. Gap: the sharp edges that are left take no bend yet, so a ripped box is not laid flat |
+| A fold, a contour flange along edges, a cut normal and a corner rip in files | done | `a_sheet_metal_part_is_written_as_text_and_read_back` (two `fold` records, one with its sketch and angle only and one with its line, radius, location and both flips; a `contour_flange` with `edges` and `width` and no `distance`; two `cut_normal` records, `distance` where it has one; two `corner_rip` records, `seam`, `overlap` and `gap` where it has them) |
 | Lofted flange, contour roll, rip, punch, unfold and refold | missing | on the Sheet Metal tab as buttons that say they are not there yet |
 
 ## M9 performance

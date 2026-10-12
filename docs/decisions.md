@@ -1664,3 +1664,45 @@ addition to version 2 (DEC-046).
 Not done: an island of the profile on a bend (refused, as across bends); splines in the
 profile; the flat pattern shows these curves as chains of short lines (within 0.005 mm), not
 as splines; From To and To Next extents.
+
+## DEC-074 Corner Rip (2026-10-12)
+
+The fourth of the four asked for on Bend's report.
+
+**What it is.** Inventor's Corner Seam has a second shape, Corner Rip: it opens a square
+corner where two faces meet with no seam between them, "typically on a converted part
+model": a box that was shelled and then made sheet metal has such corners. Tenon has it as a
+feature of its own, `corner_rip` (Sheet Metal > Modify > Corner Seam, with Corner Rip chosen
+under Shape; `sheet.corner_rip`). In the browser it is a Corner Rip, with Corner Seam's icon.
+
+- **The edge.** Each edge given is the edge of a corner between two walls: flat faces that
+  are both sides of the sheet (each with the sheet's other side one thickness behind it) and
+  stand square to one another. The outside edge of the corner or the inside one will do;
+  which it is is found by looking for sheet a little way to either side of it. The rip is
+  as long as the edge: on a shelled box the outside edge runs down through the floor, and
+  the floor loses its corner with the walls; the inside edge starts at the floor, and the
+  floor stays whole. An edge of the rim, a curved edge and a corner that is not square are
+  refused, each saying why. One rip may open several corners.
+- **The seam** is a corner seam's (DEC-066), with the same gap (the part's `GapSize` unless
+  the rip has one) measured between the walls. *Symmetric*: both walls stop where their
+  inner faces are the gap apart (the thickness and gap / sqrt 2 from the outside of the
+  corner), and the corner between them goes. *Overlap*: the first wall keeps the corner, as
+  far into the second's thickness as `overlap` says, and the second stops the gap short of
+  its inner face; *reverse overlap* is the other way round. The first wall is the one
+  whose face the edge reference names first, which is settled by the faces' names, not by
+  the click: the two overlaps are there to be tried.
+- **No gap is no rip**: with a gap of nothing an overlap would leave the corner as it is,
+  so it is refused. There is no relief, since there is no bend at the corner.
+
+**What it does not do.** As in Inventor, a rip only opens the corner. The edges where the
+walls meet the floor are still sharp, and the flat pattern follows bends, so a shelled box
+with its corners ripped is not yet laid flat: Inventor's next step is Bend on those edges,
+which Tenon's Bend does not do yet (it joins faces that do not touch, DEC-070). That is the
+next thing to offer.
+
+In files: `type = "corner_rip"` with `edges` and, where they are not the defaults, `seam`,
+`overlap` and `gap`; an addition to version 2 (DEC-046).
+
+Not done: bends on the sharp edges that are left; the Face/Edge gap; corners that are not
+square; Inventor's separate Rip command (a gap cut across a face, for lofted flanges and
+contour rolls).

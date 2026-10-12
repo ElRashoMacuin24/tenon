@@ -45,7 +45,15 @@ kept for the parts not built (neighbour origins, split ordinals, vertex referenc
     floor of one that does not go through after that face. A bend between two faces names
     its faces after the two edges it was given, the step of the strip between them they are
     (a straight run, a bend) and the side of the sheet; what it puts in the plane of a face
-    is made one with that face, which keeps its name. A sheet metal face is named
+    is made one with that face, which keeps its name. A fold's faces are named after its
+    line and the part they are (the inside and outside of the bend, its ends, what the cut
+    for the bend's zone leaves); the sheet it turns keeps the names it had. A contour
+    flange along an edge names its faces after that edge and the curve of the profile they
+    follow (the first stretch, which is the sheet run on: the edge alone). A wall of a cut
+    normal is named as one of a cut across bends is; where one curve of the profile comes
+    to the kernel in more than one piece on a face (a closed curve seen at an angle does,
+    in two), the pieces after the first are told apart by their order. The faces a corner
+    rip leaves are named after the edge it opened. A sheet metal face is named
     as an extrusion is.
 
 Booleans pass names on through `images` (`names_of_boolean`); modify operations through images

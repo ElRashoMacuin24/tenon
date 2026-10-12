@@ -1013,7 +1013,7 @@ impl Workbench {
             Some(FeatureKind::Flange(_)) => self.open_flange(Some(id)),
             Some(FeatureKind::Hem(_)) => self.open_hem(Some(id)),
             Some(FeatureKind::ContourFlange(_)) => self.open_contour(Some(id)),
-            Some(FeatureKind::CornerSeam(_)) => self.open_corner_seam(Some(id)),
+            Some(FeatureKind::CornerSeam(_) | FeatureKind::CornerRip(_)) => self.open_corner_seam(Some(id)),
             Some(FeatureKind::Bend(_)) => self.open_bend(Some(id)),
             Some(FeatureKind::Fold(_)) => self.open_fold(Some(id)),
             Some(FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_)) => self.open_sheet_cut(Some(id)),

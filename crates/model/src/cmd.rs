@@ -2408,6 +2408,15 @@ fn sheet_corner_seam(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::CornerSeam(seam), p)
 }
 
+fn sheet_corner_rip(s: &mut Session, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let rip = crate::sheet::CornerRip { edges: edge_refs(p)?, corner: corner_options(p)? };
+    rip.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::CornerRip(rip), p)
+}
+
 fn sheet_cut_across_bend(s: &mut Session, p: &Value) -> CmdResult {
     if s.document().sheet_metal().is_none() {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
@@ -3020,6 +3029,13 @@ static COMMANDS: &[CommandSpec] = &[
         "edges: [two edge references]: the edge at the end of each of two faces that are bent up from one sheet and come together at a square corner (flanges made apart: edges of one flange close their own corners); the first face's, then the second's. Their bends are ended where the two bend lines cross, the faces brought together, and the corner relieved. seam: \"symmetric\" (default: both stop the gap apart) | \"overlap\" (the first runs across the end of the second) | \"reverse_overlap\"; overlap (how much of the other's thickness is covered, 0 to 1; default 1); gap (default GapSize); relief: \"round\" | \"square\" | \"trim\" and relief_size (default: the rule's)",
         true,
         sheet_corner_seam
+    ),
+    doc_cmd!(
+        "sheet.corner_rip",
+        "Corner Rip",
+        "edges: [edge references]: each the edge of a square corner where two walls of the sheet meet with no seam between them (the corner of a shelled box, say), its outside edge or its inside one. The corner is opened along the edge, as far as the edge goes: seam: \"symmetric\" (default: both walls stop where their inner faces are the gap apart, and the corner between them goes) | \"overlap\" (the first wall keeps the corner and the second stops the gap short of it; the first is the wall whose face the edge reference names first) | \"reverse_overlap\"; overlap (how much of the other wall's thickness the wall that keeps the corner covers, 0 to 1; default 1); gap (default GapSize). Bends are not made of the sharp edges that are left",
+        true,
+        sheet_corner_rip
     ),
     doc_cmd!(
         "sheet.cut_across_bend",

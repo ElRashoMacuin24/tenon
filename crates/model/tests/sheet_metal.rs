@@ -2315,3 +2315,140 @@ fn a_cut_normal_says_what_it_cannot_see_or_cut() {
     let e = refused(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk }));
     assert!(e.contains("not a sheet metal part"), "{e}");
 }
+
+/// A box 60 by 40 by 20 with a corner at the origin, shelled to the sheet's thickness with its
+/// top open: a floor and four walls that meet in square corners with no seam. Its volume.
+fn shelled_box() -> (Session, OcctKernel, f64) {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": T, "bend_radius": R }));
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 }));
+    let block = id(&run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 20 })), "feature");
+    let top = run(&mut s, &mut k, "model.face_ref", json!({ "origin": { "type": "cap", "feature": block, "end": "end" } }));
+    run(&mut s, &mut k, "model.shell", json!({ "remove": [top], "thickness": T }));
+    let whole = volume(&mut s, &mut k);
+    assert!(near(whole, 60.0 * 40.0 * 20.0 - 56.0 * 36.0 * 18.0), "{whole}");
+    (s, k, whole)
+}
+
+#[test]
+fn a_corner_rip_opens_the_square_corner_of_a_shelled_box_along_its_edge() {
+    // Symmetric, with a gap of 1: each wall stops where its inner face is 1 from the other's,
+    // which is 2 + 1 / sqrt 2 from the outside of the corner, and the corner between them goes.
+    let reach = T + 1.0 / 2f64.sqrt();
+    let walls = reach * reach - (reach - T) * (reach - T);
+    // Along the outside edge, which runs down through the floor: the floor loses its corner.
+    let (mut s, mut k, whole) = shelled_box();
+    let edge = edge_at(&mut s, &mut k, Vec3::new(0.0, 0.0, 10.0));
+    let rip = id(&run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": [edge], "gap": 1 })), "feature");
+    assert_eq!(s.document().feature(tenon_model::FeatureId(rip as u32)).unwrap().name, "Corner Rip1");
+    let gone = walls * 18.0 + reach * reach * T;
+    assert!(near(volume(&mut s, &mut k), whole - gone), "{} {}", volume(&mut s, &mut k), whole - gone);
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    // The ends of the two walls, square to them where the walls stop: 18 high above the floor,
+    // and one face with the side of the notch in the floor below.
+    let sides = flats(&mut s, &mut k);
+    for (normal, across) in [(-Vec3::X, Vec3::X), (-Vec3::Y, Vec3::Y)] {
+        let end = sides
+            .iter()
+            .find(|f| f.0.near(normal, 1e-9) && (f.1.dot(across) - reach).abs() < 1e-9)
+            .unwrap_or_else(|| panic!("the end of a wall: {sides:?}"));
+        assert!(near(end.2, T * 18.0 + reach * T), "{end:?}");
+    }
+    let end = run(&mut s, &mut k, "model.face_ref", json!({ "at": [reach, 1, 10] }));
+    assert!(end["origin"]["type"] == "from" && end["origin"]["feature"] == rip, "{end}");
+    // What a file says of it.
+    let kind = serde_json::to_value(&s.document().feature(tenon_model::FeatureId(rip as u32)).unwrap().kind).unwrap();
+    assert!(
+        kind["type"] == "corner_rip" && kind["gap"] == 1.0 && kind["edges"].as_array().unwrap().len() == 1 && kind.get("seam").is_none(),
+        "{kind}"
+    );
+    // The gap follows the rule where the rip has none of its own.
+    run(&mut s, &mut k, "sheet.defaults", json!({ "gap": 2 }));
+    update(&mut s, &mut k, rip, json!({ "gap": null }));
+    let wider = T + 2.0 / 2f64.sqrt();
+    let gone = (wider * wider - (wider - T) * (wider - T)) * 18.0 + wider * wider * T;
+    assert!(near(volume(&mut s, &mut k), whole - gone), "{} {}", volume(&mut s, &mut k), whole - gone);
+
+    // Along the inside edge, which starts at the floor: the walls are opened and the floor is whole.
+    let (mut s, mut k, whole) = shelled_box();
+    let edge = edge_at(&mut s, &mut k, Vec3::new(T, T, 11.0));
+    run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": [edge], "gap": 1 }));
+    assert!(near(volume(&mut s, &mut k), whole - walls * 18.0), "{} {}", volume(&mut s, &mut k), whole - walls * 18.0);
+    let floor = flats(&mut s, &mut k).into_iter().find(|f| f.0.near(-Vec3::Z, 1e-9)).expect("the underside");
+    assert!(near(floor.2, 2400.0), "{floor:?}");
+
+    // All four corners in one rip: four walls on a floor, each clear of the next.
+    let (mut s, mut k, whole) = shelled_box();
+    let edges: Vec<Value> =
+        [(0.0, 0.0), (60.0, 0.0), (60.0, 40.0), (0.0, 40.0)].iter().map(|(x, y)| edge_at(&mut s, &mut k, Vec3::new(*x, *y, 10.0))).collect();
+    run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": edges, "gap": 1 }));
+    let gone = 4.0 * (walls * 18.0 + reach * reach * T);
+    assert!(near(volume(&mut s, &mut k), whole - gone), "{} {}", volume(&mut s, &mut k), whole - gone);
+    let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+    assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+}
+
+#[test]
+fn a_corner_rip_lets_one_wall_keep_the_corner_and_says_what_is_no_corner() {
+    // Overlap: one wall keeps the corner whole and the other stops the gap short of its inner
+    // face, a slit one thickness long. Reverse overlap: the other wall keeps it.
+    let ends = |seam: &str, overlap: f64| {
+        let (mut s, mut k, whole) = shelled_box();
+        let edge = edge_at(&mut s, &mut k, Vec3::new(0.0, 0.0, 10.0));
+        let rip = id(&run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": [edge], "seam": seam, "overlap": overlap, "gap": 1 })), "feature");
+        let gone = whole - volume(&mut s, &mut k);
+        let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+        assert!(body["valid"] == true && body["solids"] == 1, "{seam}: {body}");
+        // Which wall was cut short: the one along X ends in a face that looks back along X,
+        // 3 from the outside of the corner (its thickness and the gap).
+        let x_wall_cut = flats(&mut s, &mut k).iter().any(|f| f.0.near(-Vec3::X, 1e-9) && (f.1.x - (T + 1.0)).abs() < 1e-9);
+        let y_wall_cut = flats(&mut s, &mut k).iter().any(|f| f.0.near(-Vec3::Y, 1e-9) && (f.1.y - (T + 1.0)).abs() < 1e-9);
+        let _ = rip;
+        (gone, x_wall_cut, y_wall_cut)
+    };
+    let (gone, x_cut, y_cut) = ends("overlap", 1.0);
+    assert!(near(gone, T * 1.0 * 20.0) && x_cut != y_cut, "{gone} {x_cut} {y_cut}");
+    let (back, x_back, y_back) = ends("reverse_overlap", 1.0);
+    assert!(near(back, gone) && x_back == y_cut && y_back == x_cut, "{back} {x_back} {y_back}");
+    // Half an overlap: the wall that keeps the corner covers half the other's thickness, so
+    // it loses the other half of the corner as well.
+    let (half, ..) = ends("overlap", 0.5);
+    assert!(near(half, T * 1.0 * 20.0 + T * 1.0 * 20.0), "{half}");
+    // No overlap at all: it stops at the other's inner face, and the whole corner goes.
+    let (none, ..) = ends("overlap", 0.0);
+    assert!(near(none, T * 1.0 * 20.0 + T * T * 20.0), "{none}");
+
+    let (mut s, mut k, _) = shelled_box();
+    // An edge of the rim is no corner between two walls.
+    let rim = edge_at(&mut s, &mut k, Vec3::new(30.0, 0.0, 20.0));
+    run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": [rim], "gap": 1 }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("not both flat sides of the sheet") && e.contains("rim"), "{e}");
+    assert!(s.undo());
+    // No gap, nothing opened.
+    let edge = edge_at(&mut s, &mut k, Vec3::new(0.0, 0.0, 10.0));
+    run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": [edge.clone()], "gap": 0 }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("no gap leaves the corner as it is"), "{e}");
+    assert!(s.undo());
+    // A relief belongs to a corner with bends.
+    let e = refused(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": [edge.clone()], "relief": "round" }));
+    assert!(e.contains("no relief"), "{e}");
+    let e = refused(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": [edge.clone()], "overlap": 2 }));
+    assert!(e.contains("from 0 to 1"), "{e}");
+    // The same edge twice.
+    run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": [edge.clone(), edge], "gap": 1 }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("picked twice"), "{e}");
+
+    // A part that is not sheet metal.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 20 }));
+    let edge = edge_at(&mut s, &mut k, Vec3::new(0.0, 0.0, 10.0));
+    let e = refused(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": [edge] }));
+    assert!(e.contains("not a sheet metal part"), "{e}");
+}

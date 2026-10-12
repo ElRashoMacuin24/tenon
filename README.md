@@ -23,9 +23,10 @@ In parts, you can:
 - place work planes, axes and points;
 - make sheet metal parts: faces, flanges bent up from their edges and brought to a seam where
   they meet (corner seams between flanges made apart too), bends that join faces made apart,
-  hems, sheet along an open profile, bend and corner reliefs, cuts that go round the bends as
-  drawn on the flat sheet; lay them flat by K factor and export the flat pattern as DXF for a
-  cutter;
+  folds along a line drawn across a face, hems, sheet along an open profile or along an edge,
+  bend and corner reliefs, cuts that go round the bends as drawn on the flat sheet and cuts
+  square to the sheet from a sketch at any angle, the square corners of a shelled box
+  opened; lay them flat by K factor and export the flat pattern as DXF for a cutter;
 - drive any dimension or feature value by an equation of named parameters (fx);
 - keep one part in several sizes with a design table, and use it in an assembly in any of them;
 - give the part a material and a colour, and read its mass, volume and centre of gravity;

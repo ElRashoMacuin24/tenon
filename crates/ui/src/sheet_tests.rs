@@ -1265,3 +1265,88 @@ fn a_cut_is_square_to_the_sheet_where_its_profile_is_seen_when_its_panel_is_told
     frames(&mut d, &mut wb);
     assert!(wb.panel.is_none() && matches!(wb.document().features().last().map(|f| &f.kind), Some(FeatureKind::CutAcrossBend(_))), "{}", wb.status());
 }
+
+#[test]
+fn a_square_corner_is_opened_by_the_corner_rip_of_corner_seam() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1300.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3, "gap": 1 })).unwrap();
+    // A box 60 by 40 by 20, shelled to the sheet's thickness with its top open: four walls on
+    // a floor, with no seam where they meet.
+    let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].as_u64().unwrap();
+    wb.exec("sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 })).unwrap();
+    let block = wb.exec("model.extrude", json!({ "sketch": sk, "distance": 20 })).unwrap()["feature"].as_u64().unwrap();
+    let top = wb.exec("model.face_ref", json!({ "origin": { "type": "cap", "feature": block, "end": "end" } })).unwrap();
+    wb.exec("model.shell", json!({ "remove": [top], "thickness": 2 })).unwrap();
+    wb.look_from(Vec3::new(-1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    let whole = 60.0 * 40.0 * 20.0 - 56.0 * 36.0 * 18.0;
+    assert!(near(volume(&wb), whole), "{}", volume(&wb));
+
+    // Corner Seam opens as a seam; Corner Rip is chosen from its Shape list, and then the
+    // panel asks for the corner's edge and has no relief to offer.
+    wb.run_ui("sheet.corner_seam").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::CornerSeam(p)) if !p.rip && p.edges.is_empty()));
+    let texts = d.texts();
+    for shown in ["Shape", "Corner Seam", "click two edges", "Relief"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    d.click(&mut wb, pressable(&d, "tn_seam_shape"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_seam_shape_rip"));
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::CornerSeam(p)) if p.rip && p.edges.is_empty()));
+    let texts = d.texts();
+    for (shown, there) in
+        [("Corner Rip", true), ("click a corner's edge", true), ("Seam", true), ("Symmetric Gap", true), ("1 mm", true), ("Relief", false)]
+    {
+        assert_eq!(texts.iter().any(|t| t == shown), there, "{shown}: {texts:?}");
+    }
+    // A click on the outside edge of the near corner: the corner opens in the preview, each
+    // wall stopping 2 + 1 / sqrt 2 from it, and the floor loses its corner with them.
+    let near_corner = on_screen(&wb, Vec3::new(0.0, 0.0, 10.0));
+    d.click(&mut wb, near_corner);
+    frames(&mut d, &mut wb);
+    let Some(Panel::CornerSeam(p)) = &wb.panel else { panic!("the corner seam panel") };
+    assert_eq!(p.edges.len(), 1, "{}", wb.status());
+    let reach = 2.0 + 1.0 / 2f64.sqrt();
+    let symmetric = (reach * reach - (reach - 2.0) * (reach - 2.0)) * 18.0 + reach * reach * 2.0;
+    assert!(near(volume(&wb), whole - symmetric), "{} {}: {}", volume(&wb), whole - symmetric, wb.status());
+    // Overlap from the list: one wall keeps the corner, the other stops the gap short of it.
+    d.click(&mut wb, pressable(&d, "tn_seam_seam"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_seam_seam_overlap"));
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), whole - 2.0 * 1.0 * 20.0), "{} {}", volume(&wb), whole - 40.0);
+    // OK: a feature of its own, a Corner Rip with the one edge and the rule's gap.
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let (id, name, kind) = wb.document().features().last().map(|f| (f.id, f.name.clone(), f.kind.clone())).unwrap();
+    let FeatureKind::CornerRip(r) = kind else { panic!("{kind:?}") };
+    assert_eq!((name.as_str(), r.edges.len(), r.corner.seam, r.corner.gap, r.corner.relief), ("Corner Rip1", 1, Seam::Overlap, None, None));
+    assert!(near(volume(&wb), whole - 40.0), "{}", volume(&wb));
+
+    // Edited from the browser it is a rip still (its Shape is not for changing), and a click
+    // on another corner's edge opens that one too.
+    let row = browser_row(&d, "Corner Rip1");
+    double_click(&mut d, &mut wb, row.center());
+    frames(&mut d, &mut wb);
+    let Some(Panel::CornerSeam(p)) = &wb.panel else { panic!("double-click edits the rip: {}", wb.status()) };
+    assert_eq!((p.editing, p.rip, p.edges.len(), p.corner.seam), (Some(id), true, 1, Seam::Overlap));
+    assert!(d.texts().iter().any(|t| t == "Corner Rip"), "{:?}", d.texts());
+    let other_corner = on_screen(&wb, Vec3::new(60.0, 0.0, 10.0));
+    d.click(&mut wb, other_corner);
+    frames(&mut d, &mut wb);
+    let Some(Panel::CornerSeam(p)) = &wb.panel else { panic!("the corner seam panel") };
+    assert_eq!(p.edges.len(), 2, "{}", wb.status());
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none() && near(volume(&wb), whole - 80.0), "{}: {}", volume(&wb), wb.status());
+    let Some(FeatureKind::CornerRip(r)) = wb.document().feature(id).map(|f| f.kind.clone()) else { panic!() };
+    assert_eq!(r.edges.len(), 2);
+}

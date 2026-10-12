@@ -285,8 +285,9 @@ impl Workbench {
             }
             (Some(Panel::CornerSeam(f)), Some(r), _) => {
                 edit_list(&mut f.edges, r, present, toggle, same_edge);
-                // Two edges make a corner: a third takes the place of the second.
-                if f.edges.len() > 2 {
+                // Two edges make a corner to close: a third takes the place of the second. (A
+                // rip opens as many corners as are picked.)
+                if !f.rip && f.edges.len() > 2 {
                     f.edges.remove(1);
                 }
             }

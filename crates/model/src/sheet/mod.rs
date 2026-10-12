@@ -6,9 +6,11 @@
 //!   equations and design table columns like any other and the features follow them.
 //! - The features: [`Face`] (a sketch profile one thickness thick), [`Flange`] (a bend and a
 //!   wall along edges of the sheet, mitred and relieved where two meet), [`Hem`] (an edge folded
-//!   back on itself), [`ContourFlange`] (sheet along an open profile), [`CornerSeam`],
-//!   [`BendBetween`] (two faces made apart joined by a bend: [`join`]) and
-//!   [`CutAcrossBend`] (a profile cut round the bends, as drawn on the sheet laid flat: [`wrap`]).
+//!   back on itself), [`ContourFlange`] (sheet along an open profile, pushed out of its
+//!   sketch or run along edges), [`CornerSeam`] and [`CornerRip`] (a corner closed, or opened),
+//!   [`BendBetween`] (two faces made apart joined by a bend: [`join`]), [`Fold`] (a face
+//!   folded along a line), [`CutAcrossBend`] (a profile cut round the bends, as drawn on the
+//!   sheet laid flat) and [`CutNormal`] (one cut where it is seen on the sheet: both [`wrap`]).
 //!   Other cuts, holes and rounded corners are the ordinary features.
 //! - The **flat pattern** ([`flat`], [`unfold`]) is worked out from the solid, not from the
 //!   features, so whatever made the part, what is cut is what the model shows.
@@ -320,6 +322,32 @@ pub struct CornerSeam {
 
 impl CornerSeam {
     pub fn check(&self) -> Result<(), String> {
+        self.corner.check()
+    }
+}
+
+/// A square corner of the sheet opened along its edge: where two walls meet with no seam
+/// between them (the corner of a box that was shelled, not folded), each is cut back from
+/// the corner as the seam says (Corner Seam with Corner Rip). The first wall is the one
+/// whose face the edge reference names first.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CornerRip {
+    /// The edges to open: each the outside or the inside edge of a corner between two walls.
+    /// The rip is as long as the edge.
+    pub edges: Vec<EdgeRef>,
+    /// The seam, its overlap and its gap. (A rip has no relief: there is no bend at it.)
+    #[serde(flatten)]
+    pub corner: CornerOptions,
+}
+
+impl CornerRip {
+    pub fn check(&self) -> Result<(), String> {
+        if self.edges.is_empty() {
+            return Err("a corner rip needs at least one edge".into());
+        }
+        if self.corner.relief.is_some() || self.corner.relief_size.is_some() {
+            return Err("a corner rip has no relief: there is no bend at the corner it opens".into());
+        }
         self.corner.check()
     }
 }

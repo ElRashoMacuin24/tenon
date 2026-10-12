@@ -322,18 +322,25 @@ impl CornerEdit {
     }
 }
 
-/// The corner between two faces closed: Corner Seam.
+/// The corner between two faces closed, or a square corner with no seam opened along its edge:
+/// Corner Seam, and its Corner Rip.
 #[derive(Clone, Debug)]
 pub(crate) struct SeamPanel {
     pub editing: Option<FeatureId>,
-    /// The end of each of the two faces: the first, then the second.
+    /// Corner Rip: the edges are corners to open, any number of them.
+    pub rip: bool,
+    /// A seam: the end of each of the two faces, the first, then the second.
     pub edges: Vec<EdgeRef>,
     pub corner: CornerEdit,
 }
 
 impl SeamPanel {
-    /// The feature, once both edges are picked.
+    /// The feature, once its edges are picked: both for a seam, at least one for a rip.
     pub(crate) fn kind(&self) -> Option<FeatureKind> {
+        if self.rip {
+            let corner = CornerOptions { relief: None, relief_size: None, ..self.corner.options() };
+            return (!self.edges.is_empty()).then(|| FeatureKind::CornerRip(sheet::CornerRip { edges: self.edges.clone(), corner }));
+        }
         let [a, b] = self.edges.as_slice() else { return None };
         Some(FeatureKind::CornerSeam(sheet::CornerSeam { edges: [a.clone(), b.clone()], corner: self.corner.options() }))
     }
@@ -341,6 +348,9 @@ impl SeamPanel {
     pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
         let mut v = Vec::new();
         self.corner.eq_pointers(&mut v);
+        if self.rip {
+            v.retain(|p| p.0 != "relief_size");
+        }
         v
     }
 }
@@ -549,7 +559,7 @@ fn width_extents(
 }
 
 /// The rows of a corner's own settings: its seam and gap when the walls are brought together at
-/// all (`joined`), then its relief. `what` names the panel in the keys. Returns whether Enter
+/// all (`joined`), then its relief (unless it has none: `relief`). `what` names the panel in the keys. Returns whether Enter
 /// was pressed in a value.
 #[allow(clippy::too_many_arguments)]
 fn corner_fields(
@@ -557,6 +567,7 @@ fn corner_fields(
     what: &str,
     c: &mut CornerEdit,
     joined: bool,
+    relief: bool,
     sizes: Option<&sheet::Sizes>,
     by_rule: CornerShape,
     eqs: &mut Equations,
@@ -607,6 +618,9 @@ fn corner_fields(
                 dim(ui, sizes.map_or("?".into(), |s| format!("{} mm", fmt_value(s.gap))));
             }
             ui.end_row();
+        }
+        if !relief {
+            return;
         }
         ui.label("Relief").on_hover_text("The cut where the two bends meet, centred where their centre lines cross");
         let name = |s: CornerShape| match s {
@@ -1140,7 +1154,12 @@ impl Workbench {
         let sizes = self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
         let panel = match editing {
             Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
-                FeatureKind::CornerSeam(c) => SeamPanel { editing, edges: c.edges.to_vec(), corner: CornerEdit::of(&c.corner, Some(&sizes)) },
+                FeatureKind::CornerSeam(c) => {
+                    SeamPanel { editing, rip: false, edges: c.edges.to_vec(), corner: CornerEdit::of(&c.corner, Some(&sizes)) }
+                }
+                FeatureKind::CornerRip(c) => {
+                    SeamPanel { editing, rip: true, edges: c.edges.clone(), corner: CornerEdit::of(&c.corner, Some(&sizes)) }
+                }
                 _ => return Err("not a corner seam".into()),
             },
             None => {
@@ -1149,6 +1168,7 @@ impl Workbench {
                 }
                 SeamPanel {
                     editing: None,
+                    rip: false,
                     edges: self.picked_edges().into_iter().take(2).collect(),
                     corner: CornerEdit::of(&CornerOptions::default(), Some(&sizes)),
                 }
@@ -1157,7 +1177,9 @@ impl Workbench {
         self.panel = Some(Panel::CornerSeam(panel));
         self.start_equations();
         self.view.selection.clear();
-        self.set_status("Corner Seam: click the edge at the end of each of the two faces, where they come together (in an overlap, the first runs across the second), then OK.");
+        self.set_status(
+            "Corner Seam: click the edge at the end of each of the two faces, where they come together (in an overlap, the first runs across the second), then OK. To open a square corner that has no seam, choose Corner Rip and click the corner's edge.",
+        );
         Ok(())
     }
 
@@ -1459,7 +1481,7 @@ impl Workbench {
                     r.on_hover_text(
                         "Where the flange's edges meet at a corner, its walls are brought together to a seam. Off, each wall ends where its bend does",
                     );
-                    enter |= corner_fields(ui, "flange", &mut p.corner, p.miter, sizes.as_ref(), rule_relief, eqs, t);
+                    enter |= corner_fields(ui, "flange", &mut p.corner, p.miter, true, sizes.as_ref(), rule_relief, eqs, t);
                 });
             }
             Panel::Bend(p) => {
@@ -1611,13 +1633,35 @@ impl Workbench {
             Panel::CornerSeam(p) => {
                 section(ui, "Input Geometry", true, |ui| {
                     egui::Grid::new("tn_props_seam_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                        ui.label("Edges").on_hover_text("The edge at the end of each of the two faces, where they come together");
-                        clear |= picked_row(ui, p.edges.len(), "click two edges");
+                        ui.label("Shape").on_hover_text("Corner Seam closes the corner between two flanges; Corner Rip opens a square corner that has no seam, as a shelled box has");
+                        if p.editing.is_some() {
+                            ui.label(RichText::new(if p.rip { "Corner Rip" } else { "Corner Seam" }).color(t.text_dim));
+                        } else {
+                            let was = p.rip;
+                            choice(
+                                ui,
+                                "tn_seam_shape",
+                                &mut p.rip,
+                                &[
+                                    (false, "seam", "Corner Seam", "Two faces bent up from one sheet are brought together at their corner"),
+                                    (true, "rip", "Corner Rip", "A square corner where two walls meet with no seam is opened along its edge"),
+                                ],
+                            );
+                            // The two take different edges: what was picked for the one is no use to the other.
+                            clear |= was != p.rip;
+                        }
+                        ui.end_row();
+                        ui.label("Edges").on_hover_text(if p.rip {
+                            "The edge of each corner to open: its outside edge, or its inside one. The rip is as long as the edge"
+                        } else {
+                            "The edge at the end of each of the two faces, where they come together"
+                        });
+                        clear |= picked_row(ui, p.edges.len(), if p.rip { "click a corner's edge" } else { "click two edges" });
                         ui.end_row();
                     });
                 });
                 section(ui, "Seam", true, |ui| {
-                    enter |= corner_fields(ui, "seam", &mut p.corner, true, sizes.as_ref(), rule_relief, eqs, t);
+                    enter |= corner_fields(ui, "seam", &mut p.corner, true, !p.rip, sizes.as_ref(), rule_relief, eqs, t);
                 });
             }
             Panel::Hem(p) => {

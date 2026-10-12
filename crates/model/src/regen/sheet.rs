@@ -16,7 +16,7 @@ use crate::sheet::region;
 use crate::sheet::strip;
 use crate::sheet::unfold::Unfold;
 use crate::sheet::wrap::{self, Tool};
-use crate::sheet::{BendBetween, ContourFlange, CornerSeam, CutAcrossBend, CutNormal, Face, Flange, Fold, FoldLocation, Hem, Sides};
+use crate::sheet::{BendBetween, ContourFlange, CornerRip, CornerSeam, CutAcrossBend, CutNormal, Face, Flange, Fold, FoldLocation, Hem, Seam, Sides};
 
 /// A solid on its way into the part, and the names of its faces.
 type Named = (ShapeHandle, Vec<Option<FaceOrigin>>);
@@ -1225,6 +1225,118 @@ impl Ctx<'_> {
         }
         self.sheet_unify(bi, id);
         Ok(())
+    }
+
+    /// A corner rip: each edge given is the outside or the inside edge of a square corner
+    /// where two walls of the sheet meet with no seam, and the walls are cut back from it as
+    /// the seam says, for the length of the edge. Seen along the edge with the corner's
+    /// outside at the origin, the first wall runs out along `u` (one thickness deep in `v`)
+    /// and the second along `v`:
+    /// - symmetric: both stop where their inner faces are the gap apart, and the corner
+    ///   between them goes;
+    /// - overlap: the first keeps the corner (as far into the second's thickness as the
+    ///   overlap says) and the second stops the gap short of its inner face; in a reverse
+    ///   overlap the second keeps it.
+    pub(super) fn corner_rip(&mut self, id: FeatureId, rip: &CornerRip) -> Result<(), Stop> {
+        rip.check()?;
+        let sizes = self.doc.sheet_sizes()?;
+        let t = sizes.thickness;
+        let gap = rip.corner.gap.unwrap_or(sizes.gap);
+        if gap < 1e-6 {
+            return Err(
+                "A corner rip with no gap leaves the corner as it is: give it a gap, or set the part's Miter Gap in Sheet Metal Defaults.".into()
+            );
+        }
+        let (bi, body, found) = self.sheet_edges(&rip.edges, "corner rip")?;
+        let topo = self.k.topology(body)?;
+        let faces: Vec<tenon_kernel::FaceInfo> = (0..topo.faces).map(|i| self.k.face_info(body.face(i))).collect::<Result<_, _>>()?;
+        let names = self.regen.bodies.get(bi).map(|b| b.names.clone()).unwrap_or_default();
+        // A flat face of the sheet with its other side one thickness behind it: its normal.
+        let side = |f: u32| -> Option<Vec3> {
+            let face = faces.get(f as usize)?;
+            let SurfaceKind::Plane { normal, .. } = &face.surface else { return None };
+            let n = normal.normalized();
+            faces
+                .iter()
+                .any(|g| matches!(&g.surface, SurfaceKind::Plane { normal: m, .. } if m.normalized().dot(n) < -1.0 + 1e-9 && ((g.centroid - face.centroid).dot(n) + t).abs() < 1e-6 * (1.0 + t)))
+                .then_some(n)
+        };
+        let mut cuts: Vec<Named> = Vec::with_capacity(found.len());
+        let built = (|| -> Result<(), Stop> {
+            for ((e, key), picked) in found.iter().zip(&rip.edges) {
+                let info = self.k.edge_info(body.edge(*e))?;
+                if !matches!(info.curve, CurveKind::Line { .. }) || info.length < 1e-6 {
+                    return Err("A corner rip opens a straight corner, and an edge picked for it is curved.".into());
+                }
+                let &[fa, fb] = topo.edge_faces.get(*e as usize).map_or(&[][..], Vec::as_slice) else {
+                    return Err("A corner rip goes on an edge between two faces of the sheet.".into());
+                };
+                // The first wall is the one whose face the edge is named by first.
+                let named = |f: u32| names.get(f as usize).copied().flatten();
+                let (fa, fb) = if named(fb) == Some(picked.faces[0]) && named(fa) != Some(picked.faces[0]) { (fb, fa) } else { (fa, fb) };
+                let (Some(na), Some(nb)) = (side(fa), side(fb)) else {
+                    return Err(
+                        "A corner rip opens the corner where two walls of the sheet meet, and an edge picked is not one: the faces either side of it are not both flat sides of the sheet. (An edge of the sheet's rim is no corner, and a corner with a bend round it is open already.)"
+                            .into(),
+                    );
+                };
+                if na.dot(nb).abs() > 1e-6 {
+                    return Err("The two walls at an edge picked do not meet squarely, and a corner rip opens square corners.".into());
+                }
+                // The outside edge of the corner, or the inside one: beside the inside edge
+                // there is sheet a little way along either wall, beside the outside edge none.
+                let middle = (info.start + info.end) * 0.5;
+                let mut inside = [false; 2];
+                for (slot, way) in inside.iter_mut().zip([na - nb, nb - na]) {
+                    let probe = self.k.make_sphere(middle + way * (t / 2.0), t * 0.001)?.shape;
+                    let near = self.k.min_distance(SubShape::Shape(body), SubShape::Shape(probe)).map(|d| d.value < 1e-6);
+                    self.k.release(probe);
+                    *slot = near?;
+                }
+                let (u, v, corner) = match inside {
+                    [false, false] => (-nb, -na, info.start),
+                    [true, true] => (nb, na, info.start - (na + nb) * t),
+                    _ => return Err("The walls at an edge picked are too short to tell which side of the corner it is on: a corner rip needs walls longer than they are thick.".into()),
+                };
+                let along = (info.end - info.start).normalized();
+                // Seen with `u` to the right and `v` up, from the end the prism grows from.
+                let (origin, axis) = if along.cross(u).dot(v) > 0.0 { (corner, along) } else { (corner + along * info.length, -along) };
+                let frame = Frame::new(origin, axis, u).ok_or("the corner's edge has no direction")?;
+                let tag = sub_key(*key, 1);
+                let at = |x: f64, y: f64| (Vec2::new(x, y), tag);
+                let keeps = t * (1.0 - rip.corner.overlap);
+                // (The wall that keeps the corner loses none of it at a whole overlap.)
+                let outline = match (rip.corner.seam, keeps > 1e-9) {
+                    (Seam::Symmetric, _) => {
+                        let reach = t + gap / 2f64.sqrt();
+                        outline::polygon(&[at(0.0, 0.0), at(reach, 0.0), at(reach, reach), at(0.0, reach)])
+                    }
+                    (Seam::Overlap, true) => {
+                        outline::polygon(&[at(0.0, 0.0), at(keeps, 0.0), at(keeps, t), at(t, t), at(t, t + gap), at(0.0, t + gap)])
+                    }
+                    (Seam::Overlap, false) => outline::polygon(&[at(0.0, t), at(t, t), at(t, t + gap), at(0.0, t + gap)]),
+                    (Seam::ReverseOverlap, true) => {
+                        outline::polygon(&[at(0.0, 0.0), at(0.0, keeps), at(t, keeps), at(t, t), at(t + gap, t), at(t + gap, 0.0)])
+                    }
+                    (Seam::ReverseOverlap, false) => outline::polygon(&[at(t, 0.0), at(t + gap, 0.0), at(t + gap, t), at(t, t)]),
+                };
+                let tool = self.sheet_prism(
+                    id,
+                    &Profile { frame, regions: vec![Region { outer: outline::to_loop(&outline), holes: vec![] }] },
+                    info.length,
+                    Some([tag, tag]),
+                )?;
+                cuts.push(tool);
+            }
+            Ok(())
+        })();
+        if let Err(e) = built {
+            for (s, _) in cuts {
+                self.k.release(s);
+            }
+            return Err(e);
+        }
+        self.sheet_assemble(bi, body, cuts, Vec::new(), Vec::new(), "corner rip", ["", ""])
     }
 
     /// A profile cut out of the sheet round its bends (`crate::sheet::wrap`): each face and bend

@@ -657,6 +657,22 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     // double bend and a fixed edge of its own.
     run(&mut s, "sheet.bend", json!({ "edges": [edge.clone(), other.clone()] }));
     run(&mut s, "sheet.bend", json!({ "edges": [edge.clone(), other.clone()], "radius": 1.5, "double": "90_degree", "flip_fixed": true }));
+    // A fold along the one line of its sketch as it comes, and one with a line named and
+    // everything of its own; a contour flange along an edge; a cut normal, through and to a
+    // depth; a corner rip with a seam of its own, and one of two corners as the rule has them.
+    let folding = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let along = run(&mut s, "sketch.line", json!({ "sketch": folding, "x1": 10, "y1": 0, "x2": 10, "y2": 30 }));
+    run(&mut s, "sheet.fold", json!({ "sketch": folding }));
+    run(
+        &mut s,
+        "sheet.fold",
+        json!({ "sketch": folding, "line": along["line"], "angle": 1.0, "radius": 2.5, "location": "start", "flip_side": true, "flip_direction": true }),
+    );
+    run(&mut s, "sheet.contour_flange", json!({ "sketch": profile, "edges": [edge.clone()], "width": 20 }));
+    run(&mut s, "sheet.cut_normal", json!({ "sketch": across }));
+    run(&mut s, "sheet.cut_normal", json!({ "sketch": across, "distance": 0.5 }));
+    run(&mut s, "sheet.corner_rip", json!({ "edges": [edge.clone()], "seam": "overlap", "overlap": 0.25, "gap": 0.6 }));
+    run(&mut s, "sheet.corner_rip", json!({ "edges": [edge.clone(), other.clone()] }));
     run(&mut s, "sheet.flat_pattern", json!({}));
     let bytes = project::to_bytes(s.document(), &extra).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();
@@ -678,7 +694,7 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
         assert!(flange.contains(field), "{field}: {flange}");
     }
     // A corner's own seam, gap and relief are written where it has them, and only there.
-    assert_eq!((text.matches("seam = ").count(), text.matches("overlap = ").count(), text.matches("relief_size = ").count()), (2, 1, 1), "{text}");
+    assert_eq!((text.matches("seam = ").count(), text.matches("overlap = ").count(), text.matches("relief_size = ").count()), (3, 2, 1), "{text}");
     let seamed = text.split("type = \"corner_seam\"").nth(1).unwrap();
     for field in ["seam = \"overlap\"", "gap = 1.25"] {
         assert!(seamed.contains(field), "{field}: {seamed}");
@@ -703,6 +719,31 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     for field in ["radius = 1.5", "double = \"90_degree\"", "flip_fixed = true"] {
         assert!(bends[1].contains(field), "{field}: {}", bends[1]);
     }
+    // A fold says its sketch and its angle, and the rest where it is not as it comes.
+    let folds: Vec<&str> = text.split("type = \"fold\"").skip(1).map(|c| c.split("[[").next().unwrap()).collect();
+    assert!(folds.len() == 2 && folds[0].contains("angle = 1.5707963267948966"), "{folds:?}");
+    for field in ["line = ", "radius", "location", "flip_side", "flip_direction"] {
+        assert!(!folds[0].contains(field), "{field}: {}", folds[0]);
+    }
+    for field in ["line = ", "angle = 1.0", "radius = 2.5", "location = \"start\"", "flip_side = true", "flip_direction = true"] {
+        assert!(folds[1].contains(field), "{field}: {}", folds[1]);
+    }
+    // A contour flange along edges says them and how much of them, and no distance.
+    let along_edges = text.split("type = \"contour_flange\"").nth(2).unwrap().split("[[").next().unwrap();
+    assert!(
+        along_edges.contains("edges = ") && along_edges.contains("width = { centered = { width = 20.0 } }") && !along_edges.contains("distance"),
+        "{along_edges}"
+    );
+    assert!(!contour.split("[[").next().unwrap().contains("edges"), "{contour}");
+    // A cut normal is its sketch, and its depth where it has one.
+    let normals: Vec<&str> = text.split("type = \"cut_normal\"").skip(1).map(|c| c.split("[[").next().unwrap()).collect();
+    assert!(normals.len() == 2 && !normals[0].contains("distance") && normals[1].contains("distance = 0.5"), "{normals:?}");
+    // A corner rip is its edges, and a seam, an overlap and a gap where it has them.
+    let rips: Vec<&str> = text.split("type = \"corner_rip\"").skip(1).map(|c| c.split("[[").next().unwrap()).collect();
+    assert!(rips.len() == 2 && rips.iter().all(|r| r.contains("edges = ") && !r.contains("relief")), "{rips:?}");
+    for field in ["seam = \"overlap\"", "overlap = 0.25", "gap = 0.6"] {
+        assert!(rips[0].contains(field) && !rips[1].contains(field.split(' ').next().unwrap()), "{field}: {rips:?}");
+    }
     // A cut across bends is its sketch, and its depth where it has one; an edge shown laid flat
     // says so (the rule's own `flat = true` is the flat pattern).
     let cuts: Vec<&str> = text.split("type = \"cut_across_bend\"").skip(1).map(|c| c.split("[[").next().unwrap()).collect();
@@ -713,7 +754,7 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     assert_eq!(back.sheet_metal(), s.document().sheet_metal());
     assert_eq!(back.sheet_sizes().unwrap(), s.document().sheet_sizes().unwrap());
     assert_eq!(back.sheet_sizes().unwrap().bend_radius, 3.0);
-    assert_eq!(back.features().len(), 14);
+    assert_eq!(back.features().len(), 22);
     assert_eq!(back.projections(tenon_model::FeatureId(across as u32)), s.document().projections(tenon_model::FeatureId(across as u32)));
     assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
     back.validate().unwrap();

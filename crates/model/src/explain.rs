@@ -99,6 +99,9 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::CornerSeam(_), _) => {
             "The corner could not be closed. The two faces may not come together at one corner of the sheet, or a relief may take too much of them: check the edges picked, or try a smaller relief.".into()
         }
+        (FeatureKind::CornerRip(_), _) => {
+            "The corner could not be opened. The edge picked may not be where two walls of the sheet meet squarely, or the gap may take more of a wall than there is: check the edge, or try a smaller gap.".into()
+        }
         (FeatureKind::Fold(_), _) => {
             "The face could not be folded along this line. The line may not reach from edge to edge of the face, or what folds may run into the rest: check the line, or try a smaller angle or radius.".into()
         }

@@ -213,7 +213,8 @@ commands are in radians. [commands.md](commands.md) lists what each takes.
 (millimetres) or an equation, and is a parameter of the part from then on (`Thickness`,
 `BendRadius`, ...), so `param.set` changes it and equations use it. `sheet.face` makes a sketch
 profile one thickness thick; `sheet.flange` bends walls up from edges of the sheet; `sheet.hem`
-and `sheet.contour_flange` are below. Cuts and holes are the ordinary commands.
+and `sheet.contour_flange` are below, with the corner seam and rip, the bend, the fold and the
+cuts of the sheet. Other cuts and holes are the ordinary commands.
 
 ```json
 { "run": "sheet.defaults", "with": { "thickness": 1.5, "corner": "round" }, "expect": { "bend_radius": 1.5, "gap": 1.5, "k_factor": 0.44 } },
@@ -340,6 +341,91 @@ bend, and in the flat pattern it is the circle that was drawn:
 
 `distance` makes it a pocket that deep from the side the sketch is on; without it, or at the
 thickness or more, the cut goes through. The profile is of lines, arcs and circles.
+
+`sheet.cut_normal` cuts a profile out of the sheet where it is seen on it, looking along its
+sketch's normal, and cuts every face and bend it is seen on square to itself. Its sketch may
+be on any plane that looks at the sheet, at any angle. Here the same circle is on a work plane
+30 above the plate: half of it is seen on the plate, and the rest on the inside of the bend,
+which is seen more and more edge on, so the hole is longer in the flat pattern than the circle:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 60, "y2": 40 }, "as": "r" },
+{ "run": "sheet.face", "with": { "sketch": "$s.feature" }, "as": "face" },
+{ "run": "model.edge_ref", "with": { "faces": [{ "type": "cap", "feature": "$face.feature", "end": "end" }, { "type": "side", "feature": "$face.feature", "curve": "$r.lines.1" }] }, "as": "right" },
+{ "run": "sheet.flange", "with": { "edges": ["$right"], "height": 15 } },
+{ "run": "work.plane", "with": { "base": "xy", "distance": 30 }, "as": "above" },
+{ "run": "sketch.create", "with": { "work_plane": "$above.feature" }, "as": "c" },
+{ "run": "sketch.circle", "with": { "sketch": "$c.feature", "cx": 55, "cy": 20, "r": 4 } },
+{ "run": "sheet.cut_normal", "with": { "sketch": "$c.feature" } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 5568.00712667 }, "within": 1e-4, "note": "the hole's walls on the bend are curves through points" },
+{ "run": "sheet.flat", "expect": { "holes": 1, "area": 2777.72964342 }, "within": 1e-4 }
+```
+
+`sheet.fold` folds a face along a line drawn across it, from edge to edge, in a sketch on a
+side of the sheet. Nothing is added: the sheet beyond the line turns about a bend, and laid
+flat the part is the plate it was. `angle` is in radians (a quarter turn unless given),
+`radius` stands in for the rule's, `location` says where the line is in the bend's zone
+(`centerline`, the default, `start` or `end`), `flip_side` folds the sheet on the other side
+of the line and `flip_direction` folds it down. A sketch with more than one line says which
+with `line`:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 60, "y2": 40 } },
+{ "run": "sheet.face", "with": { "sketch": "$s.feature" } },
+{ "run": "model.face_ref", "with": { "at": [30, 20, 2] }, "as": "top" },
+{ "run": "sketch.create", "with": { "face": "$top", "project_edges": false }, "as": "l" },
+{ "run": "sketch.line", "with": { "sketch": "$l.feature", "x1": 40, "y1": 0, "x2": 40, "y2": 40 } },
+{ "run": "sheet.fold", "with": { "sketch": "$l.feature" } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 4815.07964474 } },
+{ "run": "sheet.flat", "expect": { "area": 2400, "cut_length": 200, "bends.0.angle": 1.57079632679 } }
+```
+
+`sheet.contour_flange` with `edges` runs its profile along edges of the sheet in place of
+pushing it out of its sketch. The sketch is square to the first edge and the profile starts
+at it; the side of the sheet the edge is on runs on into the profile, with a bend where the
+profile leaves the edge at an angle. `width` and `offsets` say how much of each edge, as a
+flange's do. A wall 15 high and a lip 15 out along the plate's right edge:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 60, "y2": 40 } },
+{ "run": "sheet.face", "with": { "sketch": "$s.feature" } },
+{ "run": "sketch.create", "with": { "plane": "xz" }, "as": "p" },
+{ "run": "sketch.line", "with": { "sketch": "$p.feature", "x1": 60, "y1": 2, "x2": 60, "y2": 17 }, "as": "a" },
+{ "run": "sketch.line", "with": { "sketch": "$p.feature", "start": "$a.end", "x2": 75, "y2": 17 } },
+{ "run": "model.edge_ref", "with": { "at": [60, 20, 2] }, "as": "right" },
+{ "run": "sheet.contour_flange", "with": { "sketch": "$p.feature", "edges": ["$right"] } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 6925.30964915 } },
+{ "run": "sheet.flat", "expect": { "length": 86.1893794959, "width": 40 } }
+```
+
+`sheet.corner_rip` opens a square corner where two walls meet with no seam between them: the
+corners of a box that was shelled, not folded. Each edge given is the outside or the inside
+edge of such a corner, and the rip is as long as the edge. `seam`, `overlap` and `gap` are a
+corner seam's: `symmetric` cuts both walls back until their inner faces are the gap apart,
+`overlap` keeps one wall whole and stops the other the gap short of it (`reverse_overlap`
+the other way round). The edges where the walls meet the floor stay sharp, so the box is not
+laid flat yet:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "gap": 1 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 60, "y2": 40 } },
+{ "run": "model.extrude", "with": { "sketch": "$s.feature", "distance": 20 } },
+{ "run": "model.face_ref", "with": { "at": [30, 20, 20] }, "as": "top" },
+{ "run": "model.shell", "with": { "remove": ["$top"], "thickness": 2 } },
+{ "run": "model.edge_ref", "with": { "at": [0, 0, 10] }, "as": "corner" },
+{ "run": "sheet.corner_rip", "with": { "edges": ["$corner"] } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 11574.4314575 } },
+{ "run": "model.edge_ref", "with": { "at": [60, 0, 10] }, "as": "next" },
+{ "run": "sheet.corner_rip", "with": { "edges": ["$next"], "seam": "overlap" } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 11534.4314575 } }
+```
 
 `sheet.flat` lays the part flat and returns the size of the sheet (`length`, `width`), its
 `area`, the `cut_length`, the number of cut-outs (`holes`) and every bend's `angle`, `radius`,

@@ -1219,6 +1219,7 @@ impl Workbench {
                     | FeatureKind::Hem(_)
                     | FeatureKind::ContourFlange(_)
                     | FeatureKind::CornerSeam(_)
+                    | FeatureKind::CornerRip(_)
                     | FeatureKind::Bend(_)
                     | FeatureKind::Fold(_)
                     | FeatureKind::CutAcrossBend(_)
@@ -1325,6 +1326,7 @@ impl Workbench {
                                 reopen = Some("sheet.corner_seam");
                             }
                         }
+                        None if p.rip => self.set_error("Corner Rip: click the edge of the corner to open".to_string()),
                         None => self.set_error("Corner Seam: click the edge at the end of each of the two faces".to_string()),
                     }
                 }
