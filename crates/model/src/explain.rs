@@ -99,6 +99,9 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::CornerSeam(_), _) => {
             "The corner could not be closed. The two faces may not come together at one corner of the sheet, or a relief may take too much of them: check the edges picked, or try a smaller relief.".into()
         }
+        (FeatureKind::Bend(_), _) => {
+            "The bend could not be built between the two faces. The edges picked may not face one another, or a face may be too short for what the bend takes of it: check the edges, or try a smaller bend radius.".into()
+        }
         (FeatureKind::CutAcrossBend(_), _) => {
             "The profile could not be cut out of the sheet round its bends. It may just touch an edge of the sheet or a bend line: move it a little, or draw it clear across.".into()
         }

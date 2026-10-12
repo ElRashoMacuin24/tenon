@@ -6,7 +6,8 @@
 //!   equations and design table columns like any other and the features follow them.
 //! - The features: [`Face`] (a sketch profile one thickness thick), [`Flange`] (a bend and a
 //!   wall along edges of the sheet, mitred and relieved where two meet), [`Hem`] (an edge folded
-//!   back on itself), [`ContourFlange`] (sheet along an open profile), [`CornerSeam`] and
+//!   back on itself), [`ContourFlange`] (sheet along an open profile), [`CornerSeam`],
+//!   [`BendBetween`] (two faces made apart joined by a bend: [`join`]) and
 //!   [`CutAcrossBend`] (a profile cut round the bends, as drawn on the sheet laid flat: [`wrap`]).
 //!   Other cuts, holes and rounded corners are the ordinary features.
 //! - The **flat pattern** ([`flat`], [`unfold`]) is worked out from the solid, not from the
@@ -14,6 +15,7 @@
 
 pub mod flange;
 pub mod flat;
+pub mod join;
 pub mod outline;
 pub mod region;
 pub mod strip;
@@ -31,6 +33,7 @@ use crate::params::{ParamUnit, UserParam};
 use crate::{Document, FeatureId};
 
 pub use flat::{Bend, FlatCurve, FlatLoop, FlatPattern};
+pub use join::DoubleBend;
 pub use unfold::{Unfold, unfold};
 
 /// The names of the part's sheet metal parameters.
@@ -340,6 +343,42 @@ impl CutAcrossBend {
     pub fn check(&self) -> Result<(), String> {
         match self.distance {
             Some(d) if !(d.is_finite() && d > 0.0) => Err("the depth of a cut must be more than 0".into()),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// A bend between two faces of the sheet that do not touch: given an edge of each, the faces
+/// are trimmed or extended to where the bend begins and joined by it. Faces in planes that
+/// cross take one bend; faces in parallel planes take two ([`DoubleBend`]). (The bends of a
+/// flat pattern are [`Bend`]s.)
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BendBetween {
+    /// An edge of each of the two faces, along which the bend joins them: straight edges of
+    /// the sheet's rim that run alongside one another.
+    pub edges: [EdgeRef; 2],
+    /// The inside radius of the bend; without it, the part's `BendRadius`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<f64>,
+    /// How faces in parallel planes are joined.
+    #[serde(default, skip_serializing_if = "fixes_edges")]
+    pub double: DoubleBend,
+    /// Where one face is trimmed or extended to the bends (45 Degree, Full Radius, 90 Degree):
+    /// the second face's edge stays where it is and the first face moves, not the other way.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip_fixed: bool,
+}
+
+fn fixes_edges(d: &DoubleBend) -> bool {
+    *d == DoubleBend::FixEdges
+}
+
+impl BendBetween {
+    pub fn check(&self) -> Result<(), String> {
+        match self.radius {
+            Some(r) if !(r.is_finite() && (MIN_BEND_RADIUS..=1000.0).contains(&r)) => {
+                Err(format!("the bend radius must be from {MIN_BEND_RADIUS} to 1000 mm"))
+            }
             _ => Ok(()),
         }
     }

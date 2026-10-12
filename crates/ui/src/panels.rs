@@ -453,6 +453,8 @@ pub(crate) enum Panel {
     ContourFlange(crate::sheet::ContourPanel),
     /// A corner seam between two faces of the sheet.
     CornerSeam(crate::sheet::SeamPanel),
+    /// A bend between two faces of the sheet that do not touch.
+    Bend(crate::sheet::BendPanel),
     Value(ValuePanel),
     /// A rectangular or circular pattern of sketch geometry.
     SketchPattern(crate::sketch_tools::SketchPatternPanel),
@@ -497,6 +499,7 @@ impl Panel {
             Panel::Hem(p) => p.editing,
             Panel::ContourFlange(p) => p.editing,
             Panel::CornerSeam(p) => p.editing,
+            Panel::Bend(p) => p.editing,
             _ => None,
         }
     }
@@ -555,6 +558,7 @@ impl Panel {
             Panel::Hem(p) => p.eq_pointers(),
             Panel::ContourFlange(p) => p.eq_pointers(),
             Panel::CornerSeam(p) => p.eq_pointers(),
+            Panel::Bend(p) => p.eq_pointers(),
             Panel::Thread(p) => {
                 let mut v = Vec::new();
                 if p.custom_pitch {
@@ -712,6 +716,11 @@ impl Workbench {
             Some(Panel::Hem(p)) if !p.edges.is_empty() => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Hem(p)) => rolled(p.editing),
             Some(Panel::ContourFlange(p)) => with_feature(self.document(), p.editing, p.kind()),
+            // With both edges picked the bend shows as it will be.
+            Some(Panel::Bend(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind),
+                None => rolled(p.editing),
+            },
             // With both edges picked the corner shows as it will be.
             Some(Panel::CornerSeam(p)) => match p.kind() {
                 Some(kind) => with_feature(self.document(), p.editing, kind),
@@ -1205,6 +1214,7 @@ impl Workbench {
                     | FeatureKind::Hem(_)
                     | FeatureKind::ContourFlange(_)
                     | FeatureKind::CornerSeam(_)
+                    | FeatureKind::Bend(_)
                     | FeatureKind::CutAcrossBend(_) => ("feature.add", json!({ "kind": kind_json })),
                     FeatureKind::Sketch { .. } => return false,
                 };
@@ -1283,6 +1293,19 @@ impl Workbench {
                         if !keep && again {
                             reopen = Some("sheet.hem");
                         }
+                    }
+                }
+            }
+            Panel::Bend(p) => {
+                if commit {
+                    match p.kind() {
+                        Some(kind) => {
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("sheet.bend");
+                            }
+                        }
+                        None => self.set_error("Bend: click an edge of each of the two faces".to_string()),
                     }
                 }
             }

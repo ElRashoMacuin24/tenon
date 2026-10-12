@@ -2413,6 +2413,21 @@ fn sheet_cut_across_bend(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::CutAcrossBend(cut), p)
 }
 
+fn sheet_bend(s: &mut Session, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let edges: [crate::naming::EdgeRef; 2] =
+        edge_refs(p)?.try_into().map_err(|_| CmdError("a bend takes two edges: an edge of each of the two faces it joins".into()))?;
+    let double = match p.get("double") {
+        Some(v) if !v.is_null() => parse(p, "double")?,
+        _ => crate::sheet::DoubleBend::default(),
+    };
+    let bend = crate::sheet::BendBetween { edges, radius: opt_num(p, "radius")?, double, flip_fixed: flag(p, "flip_fixed") };
+    bend.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Bend(bend), p)
+}
+
 fn sheet_a_side(s: &mut Session, p: &Value) -> CmdResult {
     let face: Option<FaceRef> = match p.get("face") {
         None | Some(Value::Null) => None,
@@ -2981,6 +2996,13 @@ static COMMANDS: &[CommandSpec] = &[
         "sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern",
         true,
         sheet_cut_across_bend
+    ),
+    doc_cmd!(
+        "sheet.bend",
+        "Bend",
+        "edges: [two edge references]: a straight edge of the rim of each of two faces of the sheet that do not touch (a face made apart from the rest is one), running alongside one another. The faces are joined by a bend along as much of the edges as lie side by side, each face trimmed or extended to where the bend begins. radius (inside; default BendRadius). Faces in planes that cross take one bend, tangent to both. Faces in parallel planes take two, as double says: \"fix_edges\" (default: two equal bends between the edges as they are), \"45_degree\" or \"90_degree\" (two bends of that angle and a face between them: side by side an S, one over the other a U at 90), \"full_radius\" (one over the other: half a circle, as wide inside as the faces are apart); flip_fixed (the second edge stays where it is and the first face is trimmed or extended, not the other way round)",
+        true,
+        sheet_bend
     ),
     doc_cmd!(
         "sheet.a_side",

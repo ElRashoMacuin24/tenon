@@ -11,8 +11,8 @@ goes first.
 
 Current milestone: **M8 sheet metal basics**, started 2026-10-11 and reported to the owner the
 same day. The owner asked for the gap with Inventor's sheet metal to be closed before going
-on: the second round, Corner Seam and Cut Across Bend (the section after M8 below) are done
-and reported, and wait for the owner's confirmation. Next is M9 performance.
+on: the second round, Corner Seam, Cut Across Bend and Bend (the section after M8 below) are
+done and reported, and wait for the owner's confirmation. Next is M9 performance.
 
 **M8** brought:
 - sheet metal parts: a rule whose sizes (thickness, bend radius, reliefs, K factor) are
@@ -29,7 +29,8 @@ and reported, and wait for the owner's confirmation. Next is M9 performance.
   lines, as Inventor's are (DEC-063); Hem and Contour Flange (DEC-064); then Corner Seam, with
   overlapped seams and a seam, gap and relief of a corner's own (DEC-066); then Cut Across
   Bend, a profile cut round the bends as it is drawn on the flat sheet, with Project Flat
-  Pattern to draw it on (DEC-068).
+  Pattern to draw it on (DEC-068); then Bend, which joins two faces made apart, with the four
+  kinds of double bend for faces in parallel planes (DEC-070).
 
 M7 (standard parts and maker workflow) was confirmed by the owner on 2026-10-11 (DEC-054), who
 asked again for the interface to come closer to Inventor's; the sketch environment was gone
@@ -344,15 +345,16 @@ version 2 stands.
 | An example of the round trip | done | [examples/m8-tray](examples/m8-tray): a tray for a circuit board in 1.5 mm aluminium (a face, four walls in one flange with round corner reliefs, a tab that is a flange on a flange with bend reliefs, holes, a window), its flat pattern as DXF and SVG, every number worked out by hand in its README. `the_m8_demo_script_folds_a_tray_and_lays_it_flat_for_a_cutter`, `the_checked_in_m8_example_is_what_the_script_writes` (regenerated in the second round below) |
 | Scripts name an edge or face by a point on it | done | DEC-062: `an_edge_or_a_face_is_named_by_a_point_on_it` (a flange's faces have names a script cannot spell; a point on nothing says how far the nearest is, one where several meet asks for another) |
 | Contour flange, hem | done later | the second round below |
-| Bend between faces, fold, corner seam, rip, punch, unfold and refold | missing | on the Sheet Metal tab as buttons that say they are not there yet (DEC-057) |
+| Bend between faces, corner seam | done later | the second round below |
+| Fold, rip, punch, unfold and refold | missing | on the Sheet Metal tab as buttons that say they are not there yet (DEC-057) |
 
 ## Sheet metal, second round (after M8)
 
 Asked for by the owner on 2026-10-11, on M8's report: to go on closing the gap with Inventor
 before M9, the corners of a tray first, then Hem and Contour Flange; then, on that report,
-Corner Seam; then Cut Across Bend. Decisions: DEC-063 to DEC-069. In files: the parameter
+Corner Seam; then Cut Across Bend; then Bend. Decisions: DEC-063 to DEC-070. In files: the parameter
 `GapSize`, a flange's optional `miter` and corner options (`seam`, `overlap`, `gap`, `relief`,
-`relief_size`), the feature types `hem`, `contour_flange`, `corner_seam` and
+`relief_size`), the feature types `hem`, `contour_flange`, `corner_seam`, `bend` and
 `cut_across_bend`, and `flat` on a projected edge; format version 2 stands (DEC-046).
 
 | Feature | Status | Proof / gap |
@@ -378,7 +380,12 @@ Corner Seam; then Cut Across Bend. Decisions: DEC-063 to DEC-069. In files: the 
 | The new features in files | done | `a_sheet_metal_part_is_written_as_text_and_read_back` (`GapSize` with its equation; `miter = false` only where it is not mitred; `hem` and `contour_flange` records; a part saved before there was a gap opens with one thickness; a hem with no gap and a contour flange with no distance are refused as damaged; a corner seam and a flange's corner options, written only where they are not the usual) |
 | The properties panel shows a long panel whole | done | DEC-065: `a_long_panel_is_shown_whole_above_the_browser` (the Flange panel's last section on a 1400 x 860 window, with the browser still below it) |
 | The example | done | [examples/m8-tray](examples/m8-tray) regenerated: mitred walls, round reliefs centred on the bend lines, a hem along the back wall, every number by hand in its README. `the_m8_demo_script_folds_a_tray_and_lays_it_flat_for_a_cutter` (one outline of 20 lines and four arcs, five cut-outs, six bend lines), `the_checked_in_m8_example_is_what_the_script_writes` |
-| Lofted flange, contour roll, bend between faces, fold, rip, punch, unfold and refold | missing | on the Sheet Metal tab as buttons that say they are not there yet |
+| Bend: two faces that do not touch joined by a bend, each trimmed or extended to it | done | DEC-070. `a_bend_joins_a_face_made_apart_to_the_sheet_and_the_two_lay_flat_as_one` (a wall made apart over the plate's edge, as a piece of the same solid and as a solid of its own: the plate cut back by 5 and the wall let down by 5, by hand; one piece of sheet, one bend in a flat pattern 70 + the allowance long; the wall's face still the wall's, 35 high; a radius of its own; a wall further off, both faces extended, picked by either edge of its foot). The geometry by itself: `faces_in_planes_that_cross_take_one_bend_tangent_to_both`. Gap: Bend Extension aligned to the side faces; a relief where a wider face is cut back |
+| Double Bend between faces in parallel planes: Fix Edges, 45 Degree, Full Radius, 90 Degree, Flip Fixed Edge | done | `faces_in_parallel_planes_are_joined_by_a_double_bend` (side by side: 90 Degree by hand, one bend up and one down in the flat pattern, the second plate 12 longer, or the first with the fixed edge flipped; 45 Degree by hand; Fix Edges with neither plate changed and the angle the flat pattern reports satisfying both the rise and the reach; one over the other: Full Radius, a half circle 10 across inside with the second plate cut back by 4, and 90 Degree; each kind refused for the arrangement it is not for). The geometry by itself: `faces_side_by_side_in_parallel_planes_take_an_s`, `faces_one_over_the_other_take_a_u` |
+| A sheet in several pieces, and what a bend refuses | done | `a_bend_says_what_it_cannot_join_and_leaves_other_pieces_of_sheet_alone` (three pieces: a flange goes on one, a bend joins two and leaves the third; edges that are not parallel, one edge twice, one edge only, a radius of nothing, an unknown kind; faces in one plane; edges not beside one another) |
+| The Bend panel: two edges, the radius, the kind of double bend, Flip Fixed Edge | done | `a_bend_is_made_by_clicking_an_edge_of_each_of_two_faces` (Bend live on the Create panel; nothing changes at one edge; at two the preview is Fix Edges by hand; 90 Degree from the list, Flip Fixed Edge, a radius of 2 typed, each by hand; OK makes Bend1 and one piece of sheet with two bends in its flat pattern; a double-click edits it) |
+| A bend in files | done | `a_sheet_metal_part_is_written_as_text_and_read_back` (two `bend` records: one with its edges only, one with `radius`, `double = "90_degree"` and `flip_fixed`) |
+| Lofted flange, contour roll, fold, rip, punch, unfold and refold | missing | on the Sheet Metal tab as buttons that say they are not there yet |
 
 ## M9 performance
 

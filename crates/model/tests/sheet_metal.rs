@@ -1574,3 +1574,232 @@ fn the_sheet_beyond_a_bend_is_shown_laid_flat_in_a_sketch_and_follows_the_part()
     let r = run(&mut s, &mut k, "sketch.project", json!({ "sketch": on, "face": top, "flat": true }));
     assert!(r["skipped"][0].as_str().is_some_and(|e| e.contains("not sheet metal")), "{r}");
 }
+
+/// A sheet metal part with a 40 x 30 plate on the XY plane, and a second face made apart from
+/// it: a `w` x 30 rectangle from (`x`, 0) on a plane `z` above the XY plane (`None`: standing
+/// on the YZ plane from height 10 to 40). Returns the two face features.
+fn two_faces(second: Option<(f64, f64, f64)>, new_body: bool) -> (Session, OcctKernel, u64, u64) {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (first, _) = plate(&mut s, &mut k, 40.0, 30.0);
+    let sk = match second {
+        Some((x, w, z)) => {
+            let plane = id(&run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": z })), "feature");
+            let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": plane })), "feature");
+            run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": x, "y1": 0, "x2": x + w, "y2": 30 }));
+            sk
+        }
+        None => {
+            let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "yz" })), "feature");
+            run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 10, "x2": 30, "y2": 40 }));
+            sk
+        }
+    };
+    let operation = if new_body { "new_body" } else { "join" };
+    let face = id(&run(&mut s, &mut k, "sheet.face", json!({ "sketch": sk, "operation": operation })), "feature");
+    (s, k, first, face)
+}
+
+/// A bend between the edges at two points.
+fn bend(s: &mut Session, k: &mut OcctKernel, a: [f64; 3], b: [f64; 3], options: Value) -> u64 {
+    let (first, second) = (run(s, k, "model.edge_ref", json!({ "at": a })), run(s, k, "model.edge_ref", json!({ "at": b })));
+    let mut p = json!({ "edges": [first, second] });
+    for (key, v) in options.as_object().unwrap() {
+        p[key] = v.clone();
+    }
+    id(&run(s, k, "sheet.bend", p), "feature")
+}
+
+fn solids(s: &mut Session, k: &mut OcctKernel) -> (u64, u64, bool) {
+    let t = run(s, k, "model.topology", json!({}));
+    let bodies = t["bodies"].as_array().unwrap();
+    (bodies.len() as u64, bodies.iter().map(|b| b["solids"].as_u64().unwrap()).sum(), bodies.iter().all(|b| b["valid"] == true))
+}
+
+#[test]
+fn a_bend_joins_a_face_made_apart_to_the_sheet_and_the_two_lay_flat_as_one() {
+    let ba = allowance(FRAC_PI_2);
+    for new_body in [false, true] {
+        // A plate, and a wall standing over its left edge: 2 thick from x = 0, from 10 above
+        // the XY plane to 40. Made apart they are two pieces of sheet (of one solid body, or
+        // each a solid of its own).
+        let (mut s, mut k, _, wall) = two_faces(None, new_body);
+        assert!(near(volume(&mut s, &mut k), 2400.0 + 1800.0));
+        assert_eq!(solids(&mut s, &mut k), (if new_body { 2 } else { 1 }, 2, true));
+        // A bend between the plate's left edge and the wall's bottom edge. The wall's face
+        // towards the plate is 2 in from the plate's edge and the bend's inside radius is 3,
+        // so the plate is cut back by 5 and the wall extended down by 5, to where the bend
+        // begins on each.
+        let b = bend(&mut s, &mut k, [0.0, 15.0, 2.0], [2.0, 15.0, 10.0], json!({}));
+        assert_eq!(s.document().feature(tenon_model::FeatureId(b as u32)).unwrap().name, "Bend1");
+        let whole = 35.0 * 30.0 * T + bend_volume(FRAC_PI_2, 30.0) + 35.0 * 30.0 * T;
+        assert!(near(volume(&mut s, &mut k), whole), "{} {whole}", volume(&mut s, &mut k));
+        assert_eq!(solids(&mut s, &mut k), (1, 1, true), "one piece of sheet now");
+        // It lays flat as one sheet with one bend: plate, bend, wall.
+        let f = flat(&mut s, &mut k);
+        assert!(near(num(&f, "length"), 70.0 + ba) && near(num(&f, "width"), 30.0) && near(num(&f, "area"), (70.0 + ba) * 30.0), "{f}");
+        let bends = f["bends"].as_array().unwrap();
+        assert!(bends.len() == 1 && near(num(&bends[0], "angle"), FRAC_PI_2) && near(num(&bends[0], "radius"), R), "{f}");
+        // The wall's face is the wall's still, its whole height: what the bend put on its
+        // foot is the wall.
+        let face = run(&mut s, &mut k, "model.face_ref", json!({ "at": [2, 15, 20] }));
+        assert!(face["origin"]["feature"] == wall, "{face}");
+        let inner: Vec<_> = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(Vec3::X, 1e-9) && near(f.2, 35.0 * 30.0)).collect();
+        assert_eq!(inner.len(), 1, "the wall's inner face, 35 high");
+        // A radius of the bend's own: 1. The plate is cut back by 2 + 1, the wall let down by 7.
+        update(&mut s, &mut k, b, json!({ "radius": 1 }));
+        let tighter = 37.0 * 30.0 * T + FRAC_PI_2 / 2.0 * (9.0 - 1.0) * 30.0 + 37.0 * 30.0 * T;
+        assert!(near(volume(&mut s, &mut k), tighter), "{} {tighter}", volume(&mut s, &mut k));
+    }
+
+    // The wall further off (its foot 20 above the plate, its near face 6 out past the plate's
+    // edge): plate and wall are both extended to the bend. Picked by the other edge of the
+    // wall's foot, it is the same bend.
+    for at in [8.0, 6.0] {
+        let (mut s, mut k) = (Session::default(), OcctKernel::new());
+        plate(&mut s, &mut k, 40.0, 30.0);
+        let plane = id(&run(&mut s, &mut k, "work.plane", json!({ "base": "yz", "distance": -8 })), "feature");
+        let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": plane })), "feature");
+        run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 22, "x2": 30, "y2": 40 }));
+        run(&mut s, &mut k, "sheet.face", json!({ "sketch": sk }));
+        // (The wall is 2 thick from x = -8 to x = -6.)
+        bend(&mut s, &mut k, [0.0, 15.0, 2.0], [-at, 15.0, 22.0], json!({}));
+        // The bend turns up outside the plate's edge, its inside the plate's top and the wall's
+        // near face (x = -6): 3 of plate added to reach it, and 20 - 3 of wall.
+        let whole = 43.0 * 30.0 * T + bend_volume(FRAC_PI_2, 30.0) + (18.0 + 17.0) * 30.0 * T;
+        assert!(near(volume(&mut s, &mut k), whole), "{at}: {} {whole}", volume(&mut s, &mut k));
+        assert_eq!(solids(&mut s, &mut k), (1, 1, true));
+    }
+}
+
+#[test]
+fn faces_in_parallel_planes_are_joined_by_a_double_bend() {
+    let ba = allowance(FRAC_PI_2);
+    let ring = |angle: f64| angle / 2.0 * ((R + T) * (R + T) - R * R) * 30.0;
+    // Side by side: a second plate 40 long, 12 higher than the first, its edge 20 from the
+    // first one's edge and facing it.
+    let side_by_side = || {
+        let (s, k, _, _) = two_faces(Some((60.0, 40.0, 12.0)), false);
+        (s, k)
+    };
+    let plates = 2.0 * 2400.0;
+    // 90 Degree: a quarter turn up from the first edge, 4 of face, a quarter turn back, and
+    // the second plate brought the 12 that is left to there.
+    let (mut s, mut k) = side_by_side();
+    let b = bend(&mut s, &mut k, [40.0, 15.0, 2.0], [60.0, 15.0, 12.0], json!({ "double": "90_degree" }));
+    let z = plates + 2.0 * ring(FRAC_PI_2) + 4.0 * 30.0 * T + 12.0 * 30.0 * T;
+    assert!(near(volume(&mut s, &mut k), z), "{} {z}", volume(&mut s, &mut k));
+    assert_eq!(solids(&mut s, &mut k), (1, 1, true));
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "length"), 40.0 + ba + 4.0 + ba + 12.0 + 40.0) && f["bends"].as_array().unwrap().len() == 2, "{f}");
+    // One bend up and one down, seen from one side of the sheet.
+    let ups: Vec<bool> = f["bends"].as_array().unwrap().iter().map(|b| b["up"] == true).collect();
+    assert!(ups[0] != ups[1], "{f}");
+    // The first plate is as it was (its top is 40 x 30); the second is 12 longer.
+    let tops: Vec<f64> = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(Vec3::Z, 1e-9)).map(|f| f.2).collect();
+    assert!(tops.iter().any(|a| near(*a, 1200.0)) && tops.iter().any(|a| near(*a, 52.0 * 30.0)), "{tops:?}");
+    // With the second edge the one that stays, the first plate is the one made longer.
+    update(&mut s, &mut k, b, json!({ "flip_fixed": true }));
+    assert!(near(volume(&mut s, &mut k), z));
+    let tops: Vec<f64> = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(Vec3::Z, 1e-9)).map(|f| f.2).collect();
+    assert!(tops.iter().any(|a| near(*a, 52.0 * 30.0)) && tops.iter().any(|a| near(*a, 1200.0)), "{tops:?}");
+
+    // 45 Degree: two eighths of a turn and the face between them on the slant.
+    update(&mut s, &mut k, b, json!({ "double": "45_degree", "flip_fixed": false }));
+    let quarter = std::f64::consts::FRAC_PI_4;
+    let web = (12.0 - 8.0 * (1.0 - quarter.cos())) / quarter.sin();
+    let run = 8.0 * quarter.sin() + web * quarter.cos();
+    let z45 = plates + 2.0 * ring(quarter) + web * 30.0 * T + (20.0 - run) * 30.0 * T;
+    assert!(near(volume(&mut s, &mut k), z45), "{} {z45}", volume(&mut s, &mut k));
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "length"), 80.0 + 2.0 * allowance(quarter) + web + 20.0 - run), "{f}");
+
+    // Fix Edges (what a bend does unless told): neither plate changes; the two bends turn
+    // as far as it takes for them and the face between them to reach from edge to edge.
+    update(&mut s, &mut k, b, json!({ "double": "fix_edges" }));
+    let whole = volume(&mut s, &mut k);
+    let f = flat(&mut s, &mut k);
+    let angle = num(&f["bends"][0], "angle");
+    assert!(near(angle, num(&f["bends"][1], "angle")) && angle > 0.5 && angle < FRAC_PI_2, "{f}");
+    // The face between the bends is what the rise and the reach leave of each: the same.
+    let web = (12.0 - 8.0 * (1.0 - angle.cos())) / angle.sin();
+    assert!(near((20.0 - 8.0 * angle.sin()) / angle.cos(), web), "{angle} {web}");
+    assert!(near(whole, plates + 2.0 * ring(angle) + web * 30.0 * T), "{whole}");
+    assert!(near(num(&f, "length"), 80.0 + 2.0 * allowance(angle) + web), "{f}");
+    let tops: Vec<f64> = flats(&mut s, &mut k).into_iter().filter(|f| f.0.near(Vec3::Z, 1e-9)).map(|f| f.2).collect();
+    assert!(tops.len() == 2 && tops.iter().all(|a| near(*a, 1200.0)), "{tops:?}");
+    // Full Radius is for faces one over the other.
+    update(&mut s, &mut k, b, json!({ "double": "full_radius" }));
+    assert!(failure(&mut s, &mut k).contains("side by side"));
+
+    // One over the other: a second plate 34 long whose underside is 10 above the first one's
+    // top, its edge 4 further out than the first one's, the same way.
+    let (mut s, mut k, _, _) = two_faces(Some((10.0, 34.0, 12.0)), false);
+    let b = bend(&mut s, &mut k, [40.0, 15.0, 2.0], [44.0, 15.0, 14.0], json!({ "double": "full_radius" }));
+    // Half a circle, 10 across inside, from the first edge; the second plate cut back by 4.
+    let half = std::f64::consts::PI / 2.0 * (49.0 - 25.0) * 30.0;
+    let u = 2400.0 + 30.0 * 30.0 * T + half;
+    assert!(near(volume(&mut s, &mut k), u), "{} {u}", volume(&mut s, &mut k));
+    assert_eq!(solids(&mut s, &mut k), (1, 1, true));
+    let f = flat(&mut s, &mut k);
+    assert!(near(num(&f, "length"), 40.0 + PI * (5.0 + K * T) + 30.0) && near(num(&f["bends"][0], "radius"), 5.0), "{f}");
+    // 90 Degree: two quarter turns of the rule's radius and 4 of face between them.
+    update(&mut s, &mut k, b, json!({ "double": "90_degree" }));
+    let c = 2400.0 + 30.0 * 30.0 * T + 2.0 * ring(FRAC_PI_2) + 4.0 * 30.0 * T;
+    assert!(near(volume(&mut s, &mut k), c), "{} {c}", volume(&mut s, &mut k));
+    // The second edge fixed: the first plate is 4 longer and the second keeps its 34.
+    update(&mut s, &mut k, b, json!({ "flip_fixed": true }));
+    assert!(near(volume(&mut s, &mut k), c + 2.0 * 4.0 * 30.0 * T), "{}", volume(&mut s, &mut k));
+    // Fix Edges and 45 Degree are for faces side by side.
+    update(&mut s, &mut k, b, json!({ "double": "fix_edges" }));
+    assert!(failure(&mut s, &mut k).contains("one over the other"));
+}
+
+#[test]
+fn a_bend_says_what_it_cannot_join_and_leaves_other_pieces_of_sheet_alone() {
+    // Three pieces of sheet: the plate, a wall over its left edge and a second plate above its
+    // right end. A flange goes on one of them while the others are loose, and a bend joins
+    // two of the three.
+    let (mut s, mut k, _, _) = two_faces(None, false);
+    let plane = id(&run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 12 })), "feature");
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": plane })), "feature");
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 60, "y1": 0, "x2": 100, "y2": 30 }));
+    run(&mut s, &mut k, "sheet.face", json!({ "sketch": sk }));
+    assert_eq!(solids(&mut s, &mut k), (1, 3, true));
+    let far = run(&mut s, &mut k, "model.edge_ref", json!({ "at": [100, 15, 14] }));
+    run(&mut s, &mut k, "sheet.flange", json!({ "edges": [far], "height": 10 }));
+    assert_eq!(solids(&mut s, &mut k), (1, 3, true), "a flange on one piece of three");
+    bend(&mut s, &mut k, [0.0, 15.0, 2.0], [2.0, 15.0, 10.0], json!({}));
+    assert_eq!(solids(&mut s, &mut k), (1, 2, true), "two of the three are one now");
+
+    // Edges that do not run alongside one another: the wall's side edge, and the plate's front.
+    let (mut s, mut k, _, _) = two_faces(None, false);
+    bend(&mut s, &mut k, [0.0, 15.0, 2.0], [2.0, 0.0, 25.0], json!({}));
+    assert!(failure(&mut s, &mut k).contains("not parallel"));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    // The same edge twice; one edge only; a radius that is none.
+    let edge = run(&mut s, &mut k, "model.edge_ref", json!({ "at": [0, 15, 2] }));
+    run(&mut s, &mut k, "sheet.bend", json!({ "edges": [edge.clone(), edge.clone()] }));
+    assert!(failure(&mut s, &mut k).contains("picked twice"));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    let e = refused(&mut s, &mut k, "sheet.bend", json!({ "edges": [edge.clone()] }));
+    assert!(e.contains("takes two edges"), "{e}");
+    let other = run(&mut s, &mut k, "model.edge_ref", json!({ "at": [2, 15, 10] }));
+    let e = refused(&mut s, &mut k, "sheet.bend", json!({ "edges": [edge.clone(), other.clone()], "radius": 0 }));
+    assert!(e.contains("bend radius must be from"), "{e}");
+    let e = refused(&mut s, &mut k, "sheet.bend", json!({ "edges": [edge, other], "double": "three" }));
+    assert!(e.contains("three"), "{e}");
+
+    // Faces in one plane have nothing to bend between them; faces beside one another along
+    // their edges, not across them, do not face each other.
+    let (mut s, mut k, _, _) = two_faces(Some((60.0, 40.0, 0.0)), false);
+    bend(&mut s, &mut k, [40.0, 15.0, 2.0], [60.0, 15.0, 2.0], json!({}));
+    assert!(failure(&mut s, &mut k).contains("in one plane"));
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    plate(&mut s, &mut k, 40.0, 30.0);
+    let plane = id(&run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 12 })), "feature");
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": plane })), "feature");
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 60, "y1": 50, "x2": 100, "y2": 80 }));
+    run(&mut s, &mut k, "sheet.face", json!({ "sketch": sk }));
+    bend(&mut s, &mut k, [40.0, 15.0, 2.0], [60.0, 65.0, 12.0], json!({ "double": "90_degree" }));
+    assert!(failure(&mut s, &mut k).contains("do not run alongside one another"));
+}

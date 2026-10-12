@@ -60,7 +60,9 @@ impl Workbench {
     /// What the open panel picks in the viewport, if it picks anything.
     pub(crate) fn panel_wants(&self) -> Option<Wants> {
         match &self.panel {
-            Some(Panel::Fillet(_) | Panel::Flange(_) | Panel::Hem(_) | Panel::CornerSeam(_)) => Some(Wants { edges: true, faces: false }),
+            Some(Panel::Fillet(_) | Panel::Flange(_) | Panel::Hem(_) | Panel::CornerSeam(_) | Panel::Bend(_)) => {
+                Some(Wants { edges: true, faces: false })
+            }
             Some(Panel::Chamfer(p)) => Some(Wants { edges: true, faces: p.method != ChamferMethod::Distance }),
             Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => {
                 Some(Wants { edges: false, faces: true })
@@ -122,6 +124,7 @@ impl Workbench {
             Some(Panel::Flange(p)) => edges(&p.edges),
             Some(Panel::Hem(p)) => edges(&p.edges),
             Some(Panel::CornerSeam(p)) => edges(&p.edges),
+            Some(Panel::Bend(p)) => edges(&p.edges),
             Some(Panel::Chamfer(p)) => {
                 let mut v = edges(&p.edges);
                 v.extend(p.reference.as_ref().and_then(face));
@@ -271,6 +274,13 @@ impl Workbench {
             (Some(Panel::Fillet(f)), Some(r), _) => edit_list(&mut f.edges, r, present, toggle, same_edge),
             (Some(Panel::Flange(f)), Some(r), _) => edit_list(&mut f.edges, r, present, toggle, same_edge),
             (Some(Panel::Hem(f)), Some(r), _) => edit_list(&mut f.edges, r, present, toggle, same_edge),
+            (Some(Panel::Bend(f)), Some(r), _) => {
+                edit_list(&mut f.edges, r, present, toggle, same_edge);
+                // A bend is between two edges: a third takes the place of the second.
+                if f.edges.len() > 2 {
+                    f.edges.remove(1);
+                }
+            }
             (Some(Panel::CornerSeam(f)), Some(r), _) => {
                 edit_list(&mut f.edges, r, present, toggle, same_edge);
                 // Two edges make a corner: a third takes the place of the second.
@@ -498,6 +508,7 @@ impl Workbench {
             Some(Panel::Flange(f)) => f.edges.clear(),
             Some(Panel::Hem(f)) => f.edges.clear(),
             Some(Panel::CornerSeam(f)) => f.edges.clear(),
+            Some(Panel::Bend(f)) => f.edges.clear(),
             Some(Panel::Chamfer(c)) => c.edges.clear(),
             Some(Panel::Shell(s)) => s.faces.clear(),
             Some(Panel::Hole(h)) => h.points.clear(),

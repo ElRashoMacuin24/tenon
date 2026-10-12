@@ -1,5 +1,5 @@
 //! Sheet metal in the app (M8): the Sheet Metal tab's commands, the Face, Flange, Hem, Contour
-//! Flange, Corner Seam and Cut panels,
+//! Flange, Bend, Corner Seam and Cut panels,
 //! Sheet Metal Defaults, and the flat pattern, shown in place of the folded part.
 //!
 //! The tab is a sheet metal part's home tab and shows only for one; any part becomes one with
@@ -11,7 +11,9 @@ use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, pos2
 use serde_json::json;
 use tenon_geom::Vec2;
 use tenon_io::flat::Marks;
-use tenon_model::sheet::{self, BendPosition, CornerOptions, CornerShape, FlangeWidth, FlatPattern, HeightDatum, HemShape, ReliefShape, Seam, Sides};
+use tenon_model::sheet::{
+    self, BendPosition, CornerOptions, CornerShape, DoubleBend, FlangeWidth, FlatPattern, HeightDatum, HemShape, ReliefShape, Seam, Sides,
+};
 use tenon_model::{EdgeRef, Extrude, ExtrudeExtent, FeatureId, FeatureKind, Operation, RegionSel};
 use tenon_sketch::Geometry;
 
@@ -313,6 +315,36 @@ impl SeamPanel {
         let mut v = Vec::new();
         self.corner.eq_pointers(&mut v);
         v
+    }
+}
+
+/// Two faces of the sheet that do not touch, joined by a bend: Bend.
+#[derive(Clone, Debug)]
+pub(crate) struct BendPanel {
+    pub editing: Option<FeatureId>,
+    /// An edge of each of the two faces: the first, then the second.
+    pub edges: Vec<EdgeRef>,
+    /// A bend radius of this bend's own, in place of the rule's.
+    pub own_radius: bool,
+    pub radius: f64,
+    pub double: DoubleBend,
+    pub flip_fixed: bool,
+}
+
+impl BendPanel {
+    /// The feature, once both edges are picked.
+    pub(crate) fn kind(&self) -> Option<FeatureKind> {
+        let [a, b] = self.edges.as_slice() else { return None };
+        Some(FeatureKind::Bend(sheet::BendBetween {
+            edges: [a.clone(), b.clone()],
+            radius: self.own_radius.then_some(self.radius),
+            double: self.double,
+            flip_fixed: self.flip_fixed,
+        }))
+    }
+
+    pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
+        if self.own_radius { vec![("radius", "/radius")] } else { Vec::new() }
     }
 }
 
@@ -669,6 +701,7 @@ impl Workbench {
             "sheet.hem" => self.open_hem(None)?,
             "sheet.contour_flange" => self.open_contour(None)?,
             "sheet.corner_seam" => self.open_corner_seam(None)?,
+            "sheet.bend" => self.open_bend(None)?,
             "sheet.cut" => self.open_sheet_cut(None)?,
             "sheet.corner_round" => {
                 self.open_modify("fillet", None)?;
@@ -933,6 +966,41 @@ impl Workbench {
         }
         self.view.selection.clear();
         self.set_status("Hem: click an edge of the sheet's outline (it folds towards the side the edge is on), choose the type, then OK.");
+        Ok(())
+    }
+
+    pub(crate) fn open_bend(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        let sizes = self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::Bend(b) => BendPanel {
+                    editing,
+                    edges: b.edges.to_vec(),
+                    own_radius: b.radius.is_some(),
+                    radius: b.radius.unwrap_or(sizes.bend_radius),
+                    double: b.double,
+                    flip_fixed: b.flip_fixed,
+                },
+                _ => return Err("not a bend".into()),
+            },
+            None => {
+                if !self.has_sheet() {
+                    return Err(NO_SHEET.into());
+                }
+                BendPanel {
+                    editing: None,
+                    edges: self.picked_edges().into_iter().take(2).collect(),
+                    own_radius: false,
+                    radius: sizes.bend_radius,
+                    double: DoubleBend::default(),
+                    flip_fixed: false,
+                }
+            }
+        };
+        self.panel = Some(Panel::Bend(panel));
+        self.start_equations();
+        self.view.selection.clear();
+        self.set_status("Bend: click an edge of each of the two faces to join (edges that run alongside one another), then OK.");
         Ok(())
     }
 
@@ -1223,6 +1291,84 @@ impl Workbench {
                         "Where the flange's edges meet at a corner, its walls are brought together to a seam. Off, each wall ends where its bend does",
                     );
                     enter |= corner_fields(ui, "flange", &mut p.corner, p.miter, sizes.as_ref(), rule_relief, eqs, t);
+                });
+            }
+            Panel::Bend(p) => {
+                section(ui, "Input Geometry", true, |ui| {
+                    egui::Grid::new("tn_props_bend_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Edges").on_hover_text("An edge of each of the two faces, along which the bend joins them");
+                        clear |= picked_row(ui, p.edges.len(), "click two edges");
+                        ui.end_row();
+                    });
+                });
+                section(ui, "Bend", true, |ui| {
+                    egui::Grid::new("tn_props_bend_bend").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Bend Radius");
+                        let mut by_rule = !p.own_radius;
+                        let r = ui.checkbox(&mut by_rule, "By rule");
+                        crate::drawing::remember(ui, "tn_bend_by_rule", r.rect);
+                        r.on_hover_text("The part's BendRadius, from Sheet Metal Defaults");
+                        if by_rule == p.own_radius {
+                            p.own_radius = !by_rule;
+                            if let (false, Some(s)) = (p.own_radius, sizes) {
+                                p.radius = s.bend_radius;
+                            }
+                        }
+                        ui.end_row();
+                        ui.label("");
+                        if p.own_radius {
+                            enter |=
+                                eq_value_field(ui, egui::Id::new("tn_props_bend_r"), &mut p.radius, eqs, "radius", "mm", 0.01..=1000.0, 110.0, t)
+                                    .entered;
+                        } else {
+                            ui.label(RichText::new(format!("{} mm", fmt_value(p.radius))).color(t.text_dim));
+                        }
+                        ui.end_row();
+                    });
+                });
+                section(ui, "Double Bend", true, |ui| {
+                    egui::Grid::new("tn_props_bend_double").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Type").on_hover_text(
+                            "How two faces in parallel planes are joined: faces in planes that cross take one bend, whatever is chosen here",
+                        );
+                        choice(
+                            ui,
+                            "tn_bend_double",
+                            &mut p.double,
+                            &[
+                                (
+                                    DoubleBend::FixEdges,
+                                    "fix_edges",
+                                    "Fix Edges",
+                                    "Two equal bends between the edges as they are: neither face is trimmed or extended",
+                                ),
+                                (
+                                    DoubleBend::FortyFive,
+                                    "45",
+                                    "45 Degree",
+                                    "Two bends of 45 degrees and a face between them; one face is trimmed or extended",
+                                ),
+                                (
+                                    DoubleBend::FullRadius,
+                                    "full",
+                                    "Full Radius",
+                                    "For faces one over the other: half a circle, as wide inside as they are apart",
+                                ),
+                                (
+                                    DoubleBend::Ninety,
+                                    "90",
+                                    "90 Degree",
+                                    "Two bends of 90 degrees and a face between them; one face is trimmed or extended",
+                                ),
+                            ],
+                        );
+                        ui.end_row();
+                    });
+                    let flip = ui
+                        .add_enabled(p.double != DoubleBend::FixEdges, egui::Checkbox::new(&mut p.flip_fixed, "Flip Fixed Edge"))
+                        .on_hover_text("The second edge stays where it is and the first face is trimmed or extended, not the other way round")
+                        .on_disabled_hover_text("With Fix Edges both edges stay where they are");
+                    crate::drawing::remember(ui, "tn_bend_flip", flip.rect);
                 });
             }
             Panel::CornerSeam(p) => {

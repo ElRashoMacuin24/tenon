@@ -237,6 +237,7 @@ fn prefix_hashes(doc: &Document, copied: &std::collections::BTreeSet<FeatureId>)
                 | FeatureKind::ContourFlange(_)
                 | FeatureKind::CornerSeam(_)
                 | FeatureKind::CutAcrossBend(_)
+                | FeatureKind::Bend(_)
         ) {
             rule.hash(&mut h);
         }
@@ -508,6 +509,7 @@ impl<'a> Ctx<'a> {
             FeatureKind::ContourFlange(c) => self.contour_flange(f.id, c),
             FeatureKind::CornerSeam(c) => self.corner_seam(f.id, c),
             FeatureKind::CutAcrossBend(c) => self.cut_across_bend(f.id, c),
+            FeatureKind::Bend(b) => self.bend_between(f.id, b),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };

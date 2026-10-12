@@ -11,7 +11,7 @@ use serde_json::json;
 use tenon_geom::Vec3;
 use tenon_kernel_occt::OcctKernel;
 use tenon_model::FeatureKind;
-use tenon_model::sheet::{BendPosition, CornerShape, HemShape, Seam, Sides};
+use tenon_model::sheet::{BendPosition, CornerShape, DoubleBend, HemShape, Seam, Sides};
 
 use crate::Workbench;
 use crate::commands::{FLAT_TAB, MODEL_TAB, RIBBON, SHEET_TAB};
@@ -940,4 +940,88 @@ fn project_flat_pattern_shows_the_wall_beyond_a_bend_in_a_sketch_on_the_plate() 
     d.tap(&mut wb, egui::Key::Escape);
     d.frame(&mut wb, vec![]);
     assert_eq!(wb.active_tool_id(), None);
+}
+
+#[test]
+fn a_bend_is_made_by_clicking_an_edge_of_each_of_two_faces() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1000.0));
+    wb.run_unprompted("file.new_sheet_metal").unwrap();
+    wb.exec("sheet.defaults", json!({ "thickness": 2, "bend_radius": 3 })).unwrap();
+    // A plate, and a second one made apart from it: 12 higher, its edge 20 from the first
+    // one's edge and facing it. Two pieces of sheet in one part.
+    plate(&mut wb, 40.0, 30.0);
+    let plane = wb.exec("work.plane", json!({ "base": "xy", "distance": 12 })).unwrap()["feature"].as_u64().unwrap();
+    let sk = wb.exec("sketch.create", json!({ "work_plane": plane })).unwrap()["feature"].as_u64().unwrap();
+    wb.exec("sketch.rectangle", json!({ "sketch": sk, "x1": 60, "y1": 0, "x2": 100, "y2": 30 })).unwrap();
+    wb.exec("sheet.face", json!({ "sketch": sk })).unwrap();
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    let plates = 2.0 * 40.0 * 30.0 * 2.0;
+    assert!(near(volume(&wb), plates), "{}", volume(&wb));
+    let pieces = |wb: &mut Workbench| wb.exec("model.topology", json!({})).unwrap()["bodies"][0]["solids"].as_u64().unwrap();
+    assert_eq!(pieces(&mut wb), 2);
+
+    // Bend is on the Create panel, live. Nothing changes until both edges are clicked.
+    assert!(crate::commands::find("sheet.bend").is_some_and(|c| c.available()));
+    wb.run_ui("sheet.bend").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::Bend(p)) if p.edges.is_empty() && !p.own_radius && p.double == DoubleBend::FixEdges && !p.flip_fixed));
+    let texts = d.texts();
+    for shown in ["Bend", "Edges", "click two edges", "Bend Radius", "By rule", "3 mm", "Double Bend", "Type", "Fix Edges", "Flip Fixed Edge"] {
+        assert!(texts.iter().any(|t| t == shown), "{shown}: {texts:?}");
+    }
+    let first = on_screen(&wb, Vec3::new(40.0, 15.0, 2.0));
+    d.click(&mut wb, first);
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), plates), "one edge is no bend yet: {}", volume(&wb));
+    let second = on_screen(&wb, Vec3::new(60.0, 15.0, 14.0));
+    d.click(&mut wb, second);
+    frames(&mut d, &mut wb);
+    let Some(Panel::Bend(p)) = &wb.panel else { panic!("the bend panel") };
+    assert_eq!(p.edges.len(), 2, "{}", wb.status());
+    // Fix Edges, in the preview: two equal bends and a face between them reach from edge to
+    // edge, and neither plate changes.
+    let ring = |angle: f64, r: f64| angle / 2.0 * ((r + 2.0) * (r + 2.0) - r * r) * 30.0;
+    let angle = (8.0 / 20f64.hypot(-4.0)).asin() - (-4f64).atan2(20.0);
+    let web = (20.0 - 8.0 * angle.sin()) / angle.cos();
+    let fixed = plates + 2.0 * ring(angle, 3.0) + web * 30.0 * 2.0;
+    assert!(near(volume(&wb), fixed), "{} {fixed}: {}", volume(&wb), wb.status());
+    // 90 Degree chosen from the list: two quarter turns with 4 of face between them, and the
+    // second plate brought the 12 that is left to there.
+    d.click(&mut wb, pressable(&d, "tn_bend_double"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_bend_double_90"));
+    frames(&mut d, &mut wb);
+    let square = plates + 2.0 * ring(FRAC_PI_2, 3.0) + 4.0 * 30.0 * 2.0 + 12.0 * 30.0 * 2.0;
+    assert!(near(volume(&wb), square), "{} {square}", volume(&wb));
+    // Flip Fixed Edge: the first plate is the one made longer. The volume is the same.
+    d.click(&mut wb, pressable(&d, "tn_bend_flip"));
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::Bend(p)) if p.flip_fixed && p.double == DoubleBend::Ninety));
+    assert!(near(volume(&wb), square), "{} {square}", volume(&wb));
+    // A radius of its own, 2: the bends take 6 of the 12 up and of the 20 along.
+    d.click(&mut wb, pressable(&d, "tn_bend_by_rule"));
+    frames(&mut d, &mut wb);
+    type_into(&mut d, &mut wb, "tn_props_bend_r", "2");
+    frames(&mut d, &mut wb);
+    let tighter = plates + 2.0 * ring(FRAC_PI_2, 2.0) + 6.0 * 30.0 * 2.0 + 14.0 * 30.0 * 2.0;
+    assert!(near(volume(&wb), tighter), "{} {tighter}", volume(&wb));
+    // OK: the part is one piece of sheet, with a Bend in the browser that edits again.
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let (id, name, kind) = wb.document().features().last().map(|f| (f.id, f.name.clone(), f.kind.clone())).unwrap();
+    let FeatureKind::Bend(b) = kind else { panic!("{kind:?}") };
+    assert_eq!((name.as_str(), b.radius, b.double, b.flip_fixed), ("Bend1", Some(2.0), DoubleBend::Ninety, true));
+    assert!(near(volume(&wb), tighter) && pieces(&mut wb) == 1, "{}", volume(&wb));
+    let flat = wb.exec("sheet.flat", json!({})).unwrap();
+    assert_eq!(flat["bends"].as_array().unwrap().len(), 2, "{flat}");
+    let row = browser_row(&d, "Bend1");
+    double_click(&mut d, &mut wb, row.center());
+    frames(&mut d, &mut wb);
+    let Some(Panel::Bend(p)) = &wb.panel else { panic!("double-click edits the bend: {}", wb.status()) };
+    assert_eq!((p.editing, p.edges.len(), p.own_radius, p.radius, p.double, p.flip_fixed), (Some(id), 2, true, 2.0, DoubleBend::Ninety, true));
 }

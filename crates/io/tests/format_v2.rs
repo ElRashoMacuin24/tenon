@@ -644,7 +644,7 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
         "faces": [{ "type": "cap", "feature": face, "end": "end" }, { "type": "side", "feature": face, "curve": r["lines"][2] }],
         "fingerprint": { "mid": { "x": 20.0, "y": 30.0, "z": 1.5 }, "length": 40.0 },
     });
-    run(&mut s, "sheet.corner_seam", json!({ "edges": [edge, other.clone()], "seam": "overlap", "gap": 1.25 }));
+    run(&mut s, "sheet.corner_seam", json!({ "edges": [edge.clone(), other.clone()], "seam": "overlap", "gap": 1.25 }));
     // A cut across bends, through and to a depth, from a sketch that shows an edge of the part
     // laid flat (Project Flat Pattern).
     let across = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
@@ -653,6 +653,10 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     run(&mut s, "sketch.project", json!({ "sketch": across, "edges": [other.clone()], "geometry": laid, "flat": true }));
     run(&mut s, "sheet.cut_across_bend", json!({ "sketch": across }));
     run(&mut s, "sheet.cut_across_bend", json!({ "sketch": across, "distance": 0.75 }));
+    // A bend between two faces: by the rule and as it comes, and one with a radius, a kind of
+    // double bend and a fixed edge of its own.
+    run(&mut s, "sheet.bend", json!({ "edges": [edge.clone(), other.clone()] }));
+    run(&mut s, "sheet.bend", json!({ "edges": [edge.clone(), other.clone()], "radius": 1.5, "double": "90_degree", "flip_fixed": true }));
     run(&mut s, "sheet.flat_pattern", json!({}));
     let bytes = project::to_bytes(s.document(), &extra).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();
@@ -693,6 +697,12 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     for field in ["distance = 50.0", "direction = \"symmetric\"", "position = \"flipped\"", "radius = 2.5"] {
         assert!(contour.contains(field), "{field}: {contour}");
     }
+    // A bend says its two edges, and what it has of its own where it has it.
+    let bends: Vec<&str> = text.split("type = \"bend\"").skip(1).map(|c| c.split("[[").next().unwrap()).collect();
+    assert!(bends.len() == 2 && !bends[0].contains("radius") && !bends[0].contains("double") && !bends[0].contains("flip_fixed"), "{bends:?}");
+    for field in ["radius = 1.5", "double = \"90_degree\"", "flip_fixed = true"] {
+        assert!(bends[1].contains(field), "{field}: {}", bends[1]);
+    }
     // A cut across bends is its sketch, and its depth where it has one; an edge shown laid flat
     // says so (the rule's own `flat = true` is the flat pattern).
     let cuts: Vec<&str> = text.split("type = \"cut_across_bend\"").skip(1).map(|c| c.split("[[").next().unwrap()).collect();
@@ -703,7 +713,7 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     assert_eq!(back.sheet_metal(), s.document().sheet_metal());
     assert_eq!(back.sheet_sizes().unwrap(), s.document().sheet_sizes().unwrap());
     assert_eq!(back.sheet_sizes().unwrap().bend_radius, 3.0);
-    assert_eq!(back.features().len(), 12);
+    assert_eq!(back.features().len(), 14);
     assert_eq!(back.projections(tenon_model::FeatureId(across as u32)), s.document().projections(tenon_model::FeatureId(across as u32)));
     assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
     back.validate().unwrap();

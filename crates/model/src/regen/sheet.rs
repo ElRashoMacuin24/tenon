@@ -1,19 +1,20 @@
 //! Regenerating sheet metal features: faces and flanges (see `crate::sheet`).
 
 use tenon_geom::{Vec2, Vec3};
-use tenon_kernel::{BoolOp, CurveKind, Extent, Op, Origin, PrimitiveRole, Profile, Region, ShapeHandle, SurfaceKind, TopoKind, Topology};
+use tenon_kernel::{BoolOp, CurveKind, Extent, Op, Origin, PrimitiveRole, Profile, Region, ShapeHandle, SurfaceKind, TopoKind, Topology, Transform};
 use tenon_sketch::{Sketch, profile, regions};
 
 use super::{Ctx, Stop, label, select};
 use crate::FeatureId;
 use crate::naming::{FaceOrigin, edge_key, names_of_boolean, names_of_sweep, pair_key, resolve_edge, sub_key};
 use crate::sheet::flange::{self, Notch, Part, Site};
+use crate::sheet::join;
 use crate::sheet::outline::{self, Cutter};
 use crate::sheet::region;
 use crate::sheet::strip;
 use crate::sheet::unfold::Unfold;
 use crate::sheet::wrap::{self, Tool};
-use crate::sheet::{ContourFlange, CornerSeam, CutAcrossBend, Face, Flange, Hem, Sides};
+use crate::sheet::{BendBetween, ContourFlange, CornerSeam, CutAcrossBend, Face, Flange, Hem, Sides};
 
 /// A solid on its way into the part, and the names of its faces.
 type Named = (ShapeHandle, Vec<Option<FaceOrigin>>);
@@ -434,7 +435,7 @@ impl Ctx<'_> {
 
     /// Makes the part's body `bi` what it is with `cuts` taken out of it and `pieces` joined on.
     /// The pieces must sit on the sheet without sharing space with it or with one another, and
-    /// leave it in one piece: `advice` says what to do about each when they do not. Everything
+    /// each be joined to it: `advice` says what to do about each when they do not. Everything
     /// given is used up or released.
     fn sheet_assemble(
         &mut self,
@@ -446,6 +447,26 @@ impl Ctx<'_> {
         what: &str,
         advice: [&str; 2],
     ) -> Result<(), Stop> {
+        self.sheet_assemble_more(bi, body, cuts, pieces, after, 0, what, advice)
+    }
+
+    /// As [`Self::sheet_assemble`], for pieces that bring `more` separate solids of their own
+    /// (another piece of sheet that the rest joins to this one): the body may come out in that
+    /// many more pieces than it was, and no more.
+    #[allow(clippy::too_many_arguments)]
+    fn sheet_assemble_more(
+        &mut self,
+        bi: usize,
+        body: ShapeHandle,
+        cuts: Vec<Named>,
+        pieces: Vec<Named>,
+        after: Vec<Named>,
+        more: u32,
+        what: &str,
+        advice: [&str; 2],
+    ) -> Result<(), Stop> {
+        // (A sheet may be in several pieces: faces made apart, before a bend joins them.)
+        let were = self.k.topology(body).map_or(1, |t| t.solids.max(1));
         let volume = |ctx: &Self, s: ShapeHandle| ctx.k.mass_properties(s, 1.0).map(|m| m.volume);
         let added: f64 = pieces.iter().map(|p| volume(self, p.0).unwrap_or(0.0)).sum();
         let Some(names) = self.regen.bodies.get(bi).map(|b| b.names.clone()) else {
@@ -492,7 +513,7 @@ impl Ctx<'_> {
                         )
                         .into());
                     }
-                    if self.k.topology(now.0)?.solids != 1 {
+                    if self.k.topology(now.0)?.solids > were + more {
                         return Err(format!("The {what} does not join the sheet: {}", advice[1]).into());
                     }
                 }
@@ -872,6 +893,150 @@ impl Ctx<'_> {
             ["Give it a wider gap, or another kind of seam.", "the faces picked for it do not come together at one corner."],
         )?;
         // The piece put on the end of a wall is the wall: one face, with the wall's name.
+        self.sheet_unify(bi, id);
+        Ok(())
+    }
+
+    /// A bend between two faces of the sheet that do not touch (`crate::sheet::join`): each face
+    /// is cut back where the strip between them begins short of its edge, and the strip, with
+    /// its bends, is joined to both.
+    pub(super) fn bend_between(&mut self, id: FeatureId, b: &BendBetween) -> Result<(), Stop> {
+        b.check()?;
+        let sizes = self.doc.sheet_sizes()?;
+        let t = sizes.thickness;
+        let r = b.radius.unwrap_or(sizes.bend_radius);
+        // The two edges, each on a piece of the sheet: one solid of the part, or two.
+        let mut ends: Vec<(usize, u32, u64)> = Vec::with_capacity(2);
+        {
+            let views = self.regen.views();
+            for e in &b.edges {
+                let (body, edge) = resolve_edge(e, &views, &*self.k).map_err(|m| {
+                    let [a, c] = &e.faces;
+                    format!(
+                        "{m} (the edge between the {} and the {})",
+                        a.describe(&label(self.doc, a.feature())),
+                        c.describe(&label(self.doc, c.feature()))
+                    )
+                })?;
+                ends.push((body, edge, edge_key(&e.faces[0], &e.faces[1])));
+            }
+        }
+        let &[(b1, e1, key1), (b2, e2, key2)] = ends.as_slice() else { return Err("a bend takes two edges".into()) };
+        if (b1, e1) == (b2, e2) {
+            return Err("An edge is picked twice for the bend: pick an edge of each of the two faces.".into());
+        }
+        let (body1, body2) = (self.body_shape(b1)?, self.body_shape(b2)?);
+        let site = |ctx: &Self, body: ShapeHandle, e: u32| -> Result<Site, Stop> {
+            let topo = ctx.k.topology(body)?;
+            ctx.flange_site(body, &topo, e, t, false).map_err(|stop| match stop {
+                Stop::Failed(_) => Stop::Failed(
+                    "A bend joins two faces of the sheet along a straight edge of each, on the rim of the sheet: pick, on each face, the edge the bend is to start from."
+                        .to_owned(),
+                ),
+                other => other,
+            })
+        };
+        let (s1, s2) = (site(self, body1, e1)?, site(self, body2, e2)?);
+        if s1.along.cross(s2.along).len() > 1e-6 {
+            return Err("The two edges are not parallel: a bend joins two faces along edges that run alongside one another.".into());
+        }
+        // As much of the first edge as the second runs alongside.
+        let along = |p: Vec3| (p - s1.origin).dot(s1.along);
+        let (from, to) = (along(s2.origin), along(s2.at(0.0, 0.0, s2.length)));
+        let span = (from.min(to).max(0.0), from.max(to).min(s1.length));
+        let width = span.1 - span.0;
+        if width < 1e-6 {
+            return Err(
+                "The two edges do not run alongside one another: seen along them, neither is beside the other. Pick edges that face each other."
+                    .into(),
+            );
+        }
+        // The second face in the cross-section of the first, and the strip from one to the other.
+        let seen = |v: Vec3| Vec2::new(v.dot(s1.out), v.dot(s1.up));
+        let other = join::Other::of(seen(s2.origin - s1.origin), seen(s2.out), seen(s2.up), t);
+        let joined = join::join(&other, t, r, b.double, b.flip_fixed)?;
+        let path = strip::walk(Vec2::new(-joined.trims[0], 0.0), Vec2::X, &joined.steps);
+        if strip::crosses(&path, -t, 0.0) {
+            return Err("The bend folds into itself between the two faces: use a smaller bend radius, or another kind of double bend.".into());
+        }
+        let name = |part: u32| sub_key(pair_key(key1, key2), part);
+        let frame = s1.section_frame(span.0).ok_or("the bend's edge has no direction")?;
+        // What each face loses to make room: the sheet from its edge back to where the strip
+        // begins, as wide as the bend.
+        let right = -other.into.perp();
+        let lost = [
+            [Vec2::new(-joined.trims[0], 0.0), Vec2::ZERO, Vec2::new(0.0, -t), Vec2::new(-joined.trims[0], -t)],
+            [other.at, other.at + other.into * joined.trims[1], other.at + other.into * joined.trims[1] + right * t, other.at + right * t],
+        ];
+        let (mut pieces, mut cuts): (Vec<Named>, [Option<Named>; 2]) = (Vec::new(), [None, None]);
+        let built = (|| -> Result<(), Stop> {
+            let region = strip::outline(
+                &path,
+                -t,
+                0.0,
+                |i, left| name(32 + 2 * u32::try_from(i).unwrap_or(0) + u32::from(left)),
+                [name(Part::Root as u32), name(Part::Tip as u32)],
+            )?;
+            let caps = [name(Part::Start as u32), name(Part::End as u32)];
+            pieces.push(self.sheet_strip(id, &Profile { frame, regions: vec![region] }, &Extent::Distance(width), caps)?);
+            for (i, corners) in lost.iter().enumerate() {
+                if joined.trims[i] <= 1e-9 {
+                    continue;
+                }
+                let tag = name(Part::Cut as u32 + 16 * u32::try_from(i).unwrap_or(0));
+                let outline = outline::polygon(&corners.map(|c| (c, tag)));
+                let profile = Profile { frame, regions: vec![Region { outer: outline::to_loop(&outline), holes: vec![] }] };
+                cuts[i] = Some(self.sheet_prism(id, &profile, width, Some([tag, tag]))?);
+            }
+            Ok(())
+        })();
+        let [cut1, cut2] = cuts;
+        if let Err(e) = built {
+            for (s, _) in pieces.into_iter().chain(cut1).chain(cut2) {
+                self.k.release(s);
+            }
+            return Err(e);
+        }
+        let advice = [
+            "Use a smaller bend radius, or another kind of double bend.",
+            "the strip between the two edges does not reach both faces: pick the edges that face each other.",
+        ];
+        // How many pieces the sheet is in before, to see that the bend made two of them one.
+        let lumps = |ctx: &Self, s: ShapeHandle| ctx.k.topology(s).map_or(1, |t| t.solids.max(1));
+        let before = lumps(self, body1) + if b1 == b2 { 0 } else { lumps(self, body2) };
+        let bi = if b1 == b2 {
+            self.sheet_assemble(b1, body1, cut1.into_iter().chain(cut2).collect(), pieces, Vec::new(), "bend", advice)?;
+            b1
+        } else {
+            // The second face is on a solid of its own: that solid, less what the bend takes of
+            // it, is joined on with the strip, and is then part of the first.
+            let names2 = self.regen.bodies.get(b2).map(|b| b.names.clone()).unwrap_or_default();
+            let second: Result<Named, Stop> = match cut2 {
+                Some(tool) => self.sheet_cut((body2, names2), true, vec![tool], "bend"),
+                None => self.k.transform(body2, &Transform::Translate(Vec3::ZERO)).map(|op| (op.shape, names2)).map_err(Stop::from),
+            };
+            let second = match second {
+                Ok(s) => s,
+                Err(e) => {
+                    for (s, _) in pieces.into_iter().chain(cut1) {
+                        self.k.release(s);
+                    }
+                    return Err(e);
+                }
+            };
+            let more = lumps(self, second.0);
+            pieces.push(second);
+            self.sheet_assemble_more(b1, body1, cut1.into_iter().collect(), pieces, Vec::new(), more, "bend", advice)?;
+            let gone = self.regen.bodies.remove(b2);
+            self.k.release(gone.shape);
+            if b2 < b1 { b1 - 1 } else { b1 }
+        };
+        let after = self.regen.bodies.get(bi).map_or(before, |b| lumps(self, b.shape));
+        if after + 1 != before {
+            // (The part is left as the bend made it: the feature fails, and regeneration stops.)
+            return Err(format!("The bend does not join the two faces: {}", advice[1]).into());
+        }
+        // The piece put on the edge of a face is the face: one face, with the face's name.
         self.sheet_unify(bi, id);
         Ok(())
     }

@@ -42,7 +42,10 @@ kept for the parts not built (neighbour origins, split ordinals, vertex referenc
     the part is made one with that face, which keeps its name. A wall of a cut across bends
     is named after the curve of the profile that cuts it and the face of the sheet it is cut
     in (one curve cuts a wall in the plate, one in the bend, one in the face beyond), and the
-    floor of one that does not go through after that face. A sheet metal face is named
+    floor of one that does not go through after that face. A bend between two faces names
+    its faces after the two edges it was given, the step of the strip between them they are
+    (a straight run, a bend) and the side of the sheet; what it puts in the plane of a face
+    is made one with that face, which keeps its name. A sheet metal face is named
     as an extrusion is.
 
 Booleans pass names on through `images` (`names_of_boolean`); modify operations through images

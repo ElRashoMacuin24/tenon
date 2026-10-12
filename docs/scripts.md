@@ -286,6 +286,34 @@ wall's thickness is covered (1 unless given), `gap` and `relief`, `relief_size` 
 the rule's. `sheet.flange` takes the same five for the corners it makes itself, where the
 first wall is the one whose edge comes first in `edges`.
 
+A face made apart from the rest of the sheet is a second piece of it, and `sheet.bend` joins
+two such faces: given a straight edge of the rim of each (edges that run alongside one
+another), each face is trimmed or extended to where the bend begins. Here a wall stands over
+the plate's left edge, 10 above it; the plate is cut back by 5 and the wall let down by 5 to a
+bend of inside radius 3:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 40, "y2": 30 } },
+{ "run": "sheet.face", "with": { "sketch": "$s.feature" } },
+{ "run": "sketch.create", "with": { "plane": "yz" }, "as": "w" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$w.feature", "x1": 0, "y1": 10, "x2": 30, "y2": 40 } },
+{ "run": "sheet.face", "with": { "sketch": "$w.feature" } },
+{ "run": "model.edge_ref", "with": { "at": [0, 15, 2] }, "as": "plate" },
+{ "run": "model.edge_ref", "with": { "at": [2, 15, 10] }, "as": "wall" },
+{ "run": "sheet.bend", "with": { "edges": ["$plate", "$wall"] } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 4576.99111843 } },
+{ "run": "sheet.flat", "expect": { "length": 76.0946897480, "width": 30 } }
+```
+
+Faces in planes that cross take one bend. Faces in parallel planes take two, as `double` says:
+`fix_edges` (the default: two equal bends between the edges as they are), `45_degree` or
+`90_degree` (bends of that angle with a face between them), or, for faces one over the other,
+`full_radius` (half a circle as wide inside as the faces are apart) or `90_degree`. Where a
+face is trimmed or extended to the bends it is the second one, or with `flip_fixed` the first.
+`radius` is the bend's own inside radius in place of the rule's.
+
 `sheet.cut_across_bend` cuts a profile out of the sheet as it lies flat, so the cut goes round
 the bends it is drawn over. Its sketch is on a side of the sheet (a face of it, or a plane that
 lies on one: here the XY plane, the underside of the plate), and what is drawn past an edge

@@ -253,6 +253,7 @@ may refer only to features before them.
 | `contour_flange` | `sketch` (an open profile: its lines and arcs end to end), `distance` (how far it is pushed out of the sketch plane), `direction` and `position` (each `"default"`, `"flipped"` or `"symmetric"`: which way it is pushed, and which side of the profile the sheet's thickness goes), optional `radius` (inside, of the bends made at corners; without it the part's `BendRadius`), `operation` (`"join"` or `"new_body"`) |
 | `corner_seam` | `edges` (two edge references: the edge at the end of each of two faces bent up from one sheet, where they come together at a square corner; the first face's, then the second's); optional `seam`, `overlap`, `gap`, `relief` and `relief_size`, as a flange's. The bends are ended where their bend lines cross, the faces brought to the seam, and the corner relieved (DEC-066) |
 | `cut_across_bend` | `sketch` (on a side of the sheet: a face of it, or a plane that lies on one), `regions` (its profile: lines, arcs and circles, drawn as on the sheet laid flat from that face), optional `distance` (how deep from the side the sketch is on; without it, or at the thickness or more, through). The profile is cut out of every face and bend it lies on, so the cut goes round the bends and is the profile in the flat pattern (DEC-068) |
+| `bend` | `edges` (two edge references: a straight edge of the rim of each of two faces of the sheet that do not touch, running alongside one another); optional `radius` (the bend's inside radius; without it the part's `BendRadius`), `double` (how faces in parallel planes are joined: `"fix_edges"` when it is not written, `"45_degree"`, `"full_radius"` or `"90_degree"`) and `flip_fixed` (the second edge stays and the first face is trimmed or extended). The faces are trimmed or extended to the bend and joined by it (DEC-070) |
 
 Field values:
 
@@ -718,7 +719,7 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   metal the `[sheet_metal]` table and the feature types `sheet_face` and `flange` (DEC-057),
   then `hem`, `contour_flange`, `corner_seam`, a flange's `miter` and corner options and the
   parameter `GapSize` (DEC-063, DEC-064, DEC-066), then `cut_across_bend` and a projection's
-  `flat` (DEC-068).
+  `flat` (DEC-068), then `bend` (DEC-070).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

@@ -1494,3 +1494,57 @@ tests check by hand kept its value; no test or example changed.
   how a face is found again (its fingerprint).
 - Two things tried first did nothing: shorter spans in the rolled arc's curve, and lower
   degrees in the curves of the rolled side face.
+
+## DEC-070 Bend between two faces (2026-10-12)
+
+Asked for by the owner on Cut Across Bend's report: Bend between two faces next.
+
+**What it is.** In Inventor a Bend joins two sheet metal faces that do not touch: a model edge
+is picked on each, and the faces are trimmed or extended as needed to make the bend. Faces
+that are parallel but not in one plane take a Double Bend, of one of four kinds. Tenon's is
+the same (`bend`; Sheet Metal > Create > Bend; `sheet.bend`).
+
+**Pieces of sheet.** A Face made apart from the rest (Join, touching nothing) is a second
+piece of the same solid body: that was so already, and is what a Bend is for. Sheet features
+no longer ask that the body be one piece, only that what they add is joined to it, so a
+flange or a hem goes on one piece while others are loose. A Bend makes two pieces one, and
+says so when it does not. The two faces may also be on two solids (a Face made as a New
+solid): the second solid is then joined into the first.
+
+**The strip between the faces** (`sheet::join`). Seen end on, in the cross-section of the
+first face at its edge, the bend is a strip of sheet that sets off out of the first face along
+its side and arrives going into the second face along the side of it that is the same side of
+the sheet (whichever edge of the second face's end was picked). It is built as a hem is: its
+cross-section pushed along the edges, as wide as the two edges lie side by side.
+
+- **Planes that cross: one bend**, tangent to both faces, turning from the way out of the
+  first to the way into the second about where their sides would cross. Each face is extended
+  to where the bend begins or cut back to it, over the width of the bend.
+- **Parallel planes, side by side** (edge towards edge): an S of two bends, one the inside
+  of its bend and one the outside. *Fix Edges* (the default, as Inventor's): both edges stay,
+  and the two equal bends turn as far as it takes for them and the face between them to reach
+  from one to the other. *45 Degree* and *90 Degree*: bends of that angle with a face between
+  them (at 45, bends that turn less and are tangent when the faces are too close for a face
+  between); the first edge stays and the second face is trimmed or extended to the bends, or
+  the other way round with Flip Fixed Edge.
+- **Parallel planes, one over the other** (edges the same way): a U. *Full Radius*: half a
+  circle whose inside is as wide as the faces are apart (its radius is not the rule's). *90
+  Degree*: two quarter turns with a face between them. One face is trimmed or extended to
+  where the U is, by Flip Fixed Edge the first.
+- What does not fit is said with the numbers: faces too close for two bends of this radius,
+  a kind of double bend that is for the other arrangement, faces in one plane, edges that are
+  not parallel or not beside one another.
+
+**The piece put on a face is the face**: what the bend adds in the plane of a face is made one
+with it (`Kernel::unify`, as a corner seam's is), and the face keeps its name. The flat
+pattern needs nothing new: it is unfolded from the solid.
+
+In files: the feature type `bend` (`edges`, optional `radius`, `double` when it is not
+`fix_edges`, `flip_fixed`); an addition to version 2 (DEC-046).
+
+Not done: Bend Extension aligned to the side faces (the bend's ends are square to it); a
+relief where a face is wider than the bend and is cut back (it is cut square, as a tear
+would be); the Face command's own bend to an edge it is drawn against; Inventor's Bend Edit
+of a bend's width (the bend is as wide as the edges overlap); what Inventor does at Fix
+Edges when the edges are too close for the rule's radius (Tenon refuses, and says which
+kinds move an edge).
