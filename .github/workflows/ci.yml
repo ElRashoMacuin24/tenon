@@ -33,11 +33,14 @@ jobs:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
 
-      # OpenCASCADE 8 (conda-forge, pinned by pixi.lock), linked dynamically.
+      # OpenCASCADE 8 (conda-forge, pinned by pixi.lock), linked dynamically; and, in an
+      # environment of their own, the mesher and the solver that stress studies are checked
+      # with (Gmsh and CalculiX: programs that are started, not linked).
       - uses: prefix-dev/setup-pixi@v0.8.1
         with:
           pixi-version: v0.81.0
           cache: true
+          environments: default fea
 
       - uses: Swatinem/rust-cache@v2
 

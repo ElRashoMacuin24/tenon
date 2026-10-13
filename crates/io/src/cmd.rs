@@ -14,7 +14,7 @@ pub(crate) fn path(p: &Value) -> Result<PathBuf, CmdError> {
     path_in(p, "path")
 }
 
-fn path_in(p: &Value, key: &str) -> Result<PathBuf, CmdError> {
+pub(crate) fn path_in(p: &Value, key: &str) -> Result<PathBuf, CmdError> {
     let s = arg(p, key).and_then(Value::as_str).ok_or_else(|| CmdError(format!("missing parameter `{key}`")))?;
     if s.is_empty() || s.len() > 4096 || s.contains('\0') {
         return Err(format!("invalid path in `{key}`").into());
@@ -297,6 +297,13 @@ static COMMANDS: &[CommandSpec] = &[
         help: "how the part would print. min_wall (mm, default 0.8); overhang (degrees from vertical a face may lean out, default 45); up: x | y | z | -x | -y | -z (which way is up on the printer, default z); bed: [x, y, height] in mm (default: not checked). Returns ok and, each with its own ok: watertight (open, crowded and flipped edges), overhangs (area and the faces, each with its steepest angle), walls (the thinnest found and the faces under min_wall), size (the part's extents, its height standing that way, and whether it fits the bed)",
         mutates: false,
         run: Run::Geo(print_check),
+    },
+    CommandSpec {
+        id: "study.solve",
+        label: "Simulate",
+        help: "Works a stress study out: the part is divided into elements (by Gmsh) and solved (by CalculiX), two programs that are not part of Tenon and must be on the machine (docs/stress.md). study (default: the part's only one); keep: a folder to leave the mesher's and the solver's files in. Returns nodes, elements and element_size; max_von_mises {megapascals, at}; max_displacement {millimetres, at}; yield_strength; safety_factor (yield strength over the largest von Mises stress); holds (safety_factor at least 1); seconds; note. An engineering aid, not a certified analysis. What the study lacks (study.check) is refused in words before anything is started",
+        mutates: false,
+        run: Run::Geo(crate::stress::solve),
     },
     CommandSpec {
         id: "sheet.export_dxf",

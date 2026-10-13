@@ -36,3 +36,20 @@ test = "cargo test --workspace"
 app = "cargo run --release -q -p tenon --"
 # The MCP server on stdio (docs/mcp.md); cargo's messages go to stderr, stdout stays protocol-only.
 mcp = "cargo run --release -q -p tenon-cli -- mcp"
+
+# Stress checks (M11) are worked out by two programs of their own, each under its own licence
+# (the GPL): Gmsh divides a part into elements and CalculiX solves them. They are not linked
+# into Tenon and not shipped with it: Tenon starts them and reads the files they write
+# (docs/m11-proposal.md, DEC-098). conda-forge's Gmsh is built on another OpenCASCADE than
+# Tenon's, so the two live in an environment of their own:
+#
+#   pixi install -e fea             # once: downloads them into .pixi/envs/fea
+#   pixi run -e fea gmsh --version
+#
+# Tenon finds them there, where TENON_GMSH and TENON_CCX say, or on the PATH.
+[feature.fea.dependencies]
+gmsh = "4.*"
+calculix = "2.*"
+
+[environments]
+fea = { features = ["fea"], no-default-feature = true }

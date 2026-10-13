@@ -120,7 +120,10 @@ Where a part is held and what pushes on it is set up by the `study.*` commands (
   worked out: `ready`, and in `needs` what it lacks in words (a support, a load, a material
   that says how strong it is, faces that a later change took off the part).
 
-Working a study out is not there yet (ROADMAP, M11).
+- `study.solve` works it out: the largest von Mises stress and displacement with where they
+  are, and the safety factor. It takes two programs that are not part of Tenon
+  ([stress.md](stress.md)); without them it says which is missing. A result is an engineering
+  aid, not a certified analysis, and says so.
 
 ### What was done
 

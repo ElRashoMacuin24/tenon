@@ -35,6 +35,18 @@ compiled into Tenon: it is linked dynamically as shared libraries (TKernel, TKMa
 The C++ shim in crates/kernel-occt/shim is original Tenon code (MIT OR Apache-2.0) written against
 OCCT's public headers.
 
+Gmsh and CalculiX
+-----------------
+Stress studies are worked out by two programs that are NOT part of this repository, are not
+linked into Tenon and are not shipped with it: Gmsh (Copyright (c) C. Geuzaine and J.-F. Remacle,
+GNU General Public License version 2 or later, https://gmsh.info) and CalculiX (Copyright (c)
+Guido Dhondt, GNU General Public License version 2, http://www.dhondt.de). Tenon starts them as
+separate programs and exchanges files with them (docs/stress.md). pixi.toml names them so that a
+developer can download them from conda-forge into an environment of their own; whoever passes
+either program on to others does so under that program's licence. Nothing in Tenon is derived
+from their source: the readers and writers of their file formats in crates/fea are original
+Tenon code.
+
 Other third-party material
 --------------------------
 Rust dependencies are listed in Cargo.lock with their own licences. Bundled assets (if any) are

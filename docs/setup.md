@@ -28,7 +28,7 @@ Install the Build Tools before Rust so rustup finds MSVC. Open a new terminal af
 new PATH entries apply. Then, in the repository:
 
 ```powershell
-pixi install
+pixi install --all
 pixi run ci
 pixi run app examples/m1-bracket/bracket.tenon
 pixi run cargo run -p tenon-cli -- demo m1 --out out
@@ -70,8 +70,12 @@ xcode-select --install
 curl https://sh.rustup.rs -sSf | sh
 rustup target add wasm32-unknown-unknown
 curl -fsSL https://pixi.sh/install.sh | sh
-pixi install && pixi run cargo xtask ci
+pixi install --all && pixi run cargo xtask ci
 ```
+
+`pixi install --all` gets both environments: OpenCASCADE, which Tenon is built against, and the
+two programs that stress studies are worked out with (Gmsh and CalculiX; [stress.md](stress.md)).
+The gate needs both; `pixi install` alone is enough to build and run Tenon.
 
 ## Linux (Debian/Ubuntu)
 
@@ -81,7 +85,7 @@ sudo apt-get install build-essential git libxkbcommon-dev libwayland-dev \
 curl https://sh.rustup.rs -sSf | sh
 rustup target add wasm32-unknown-unknown
 curl -fsSL https://pixi.sh/install.sh | sh
-pixi install && pixi run cargo xtask ci
+pixi install --all && pixi run cargo xtask ci
 ```
 
 pixi sets `LD_LIBRARY_PATH` (Linux) and `DYLD_FALLBACK_LIBRARY_PATH` (macOS) to the environment's

@@ -40,5 +40,6 @@ pub mod scenes;
 pub mod schemas;
 pub mod steps;
 pub mod stl;
+pub mod stress;
 mod text;
 pub mod threemf;

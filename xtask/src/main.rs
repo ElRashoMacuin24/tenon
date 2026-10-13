@@ -177,7 +177,11 @@ fn cmd_ci() -> Result<(), String> {
             Box::new(|| {
                 let mut c = cargo();
                 c.args(["test", "--workspace"]);
-                run(c, "cargo test --workspace")
+                // The gate holds stress studies against textbook answers through the real
+                // mesher and solver: here their absence is a failure, not a test left out
+                // (`pixi install -e fea`).
+                c.env("TENON_FEA_REQUIRED", "1");
+                run(c, "cargo test --workspace  (with the mesher and solver required)")
             }),
         ),
         (

@@ -6002,6 +6002,35 @@
       }
     },
     {
+      "id": "study.solve",
+      "label": "Simulate",
+      "undoable": false,
+      "description": "Works a stress study out: the part is divided into elements (by Gmsh) and solved (by CalculiX), two programs that are not part of Tenon and must be on the machine (docs/stress.md). study (default: the part's only one); keep: a folder to leave the mesher's and the solver's files in. Returns nodes, elements and element_size; max_von_mises {megapascals, at}; max_displacement {millimetres, at}; yield_strength; safety_factor (yield strength over the largest von Mises stress); holds (safety_factor at least 1); seconds; note. An engineering aid, not a certified analysis. What the study lacks (study.check) is refused in words before anything is started",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the study's id (default: the part's only one)"
+          },
+          "keep": {
+            "anyOf": [
+              {
+                "type": "string",
+                "x-path": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "a folder to leave the mesher's and the solver's files in (default: they go when it is done)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "id": "sheet.export_dxf",
       "label": "Export Flat Pattern DXF",
       "undoable": false,

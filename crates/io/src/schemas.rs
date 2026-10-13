@@ -42,6 +42,13 @@ static PART: &[C] = &[
         ],
     ),
     C::new(
+        "study.solve",
+        &[
+            opt("study", Id, "the study's id (default: the part's only one)"),
+            opt("keep", Either(&[Path, Null]), "a folder to leave the mesher's and the solver's files in (default: they go when it is done)"),
+        ],
+    ),
+    C::new(
         "sheet.export_dxf",
         &[
             req("path", Path, "the file to write (.dxf)"),

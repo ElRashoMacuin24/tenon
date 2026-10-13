@@ -1,8 +1,12 @@
 # M11 stress checks: the mesher and the solver
 
 For the owner to decide (docs/plan.md: third-party solvers are asked about first, and M11's
-licence analysis comes before anything is bundled or recommended). Written 2026-10-12. Nothing
-below has been installed, bundled or recommended yet.
+licence analysis comes before anything is bundled or recommended). Written 2026-10-12, when
+nothing below had been installed, bundled or recommended.
+
+**Answered 2026-10-13: option A, yes to questions 1 to 3** (DEC-098). What was built on the
+answer is in [docs/stress.md](stress.md). Question 4 (bundling) is still for when there are
+installers.
 
 ## What is needed
 

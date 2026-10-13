@@ -2540,3 +2540,64 @@ it had lost it), and what was typed went in beside the old name. The Rename wind
 one for features, studies, supports and loads, with the fault mended:
 `a_feature_is_renamed_by_typing_its_name_and_enter` (checked to fail with the fault put
 back).
+
+## DEC-098 Gmsh and CalculiX, as separate programs: the owner's answer, and the pipeline (2026-10-13)
+
+**The answer.** Asked the questions of DEC-094 again on the second report, the owner chose
+"Yes, all three": Tenon may use Gmsh and CalculiX as separate programs; they may be in
+`pixi.toml` as a second environment, for developers and CI to download; the documentation
+may tell users to install them. They are not bundled: that is asked again when there are
+installers.
+
+**What that made.**
+
+- `pixi.toml` has a `fea` environment (Gmsh 4.15, CalculiX 2.23, conda-forge, locked for
+  Windows, Linux, macOS on Intel and Apple). It shares nothing with the default one, whose
+  locked packages are as they were (compared before and after). `pixi install -e fea`.
+- **The trial** the proposal promised came first: a bar meshed, solved and held against beam
+  theory by hand, here on Windows; then the same as tests on the three platforms in CI.
+- A crate, `tenon-fea` (layer 4), with everything between the two programs, all of it our
+  own: the mesh read from Gmsh's file; its surfaces told to be faces of the part; supports
+  and loads put on nodes; CalculiX's input written and its results read. `tenon_io::stress`
+  rebuilds the part, exports it and runs the whole; `study.solve` is the command (220).
+- Tenon finds the programs where `TENON_GMSH` and `TENON_CCX` say, in a checkout's
+  `.pixi/envs/fea`, or on the search path, and starts them with their output in a log.
+  Started from outside its environment on Windows, a program is given the environment's
+  library folders (CalculiX would not start without them).
+
+**Decisions inside it.**
+
+- **Faces are told apart by where they lie.** A STEP file keeps neither the order of a
+  part's faces nor their names, and the mesher numbers surfaces its own way. Each surface of
+  the mesh is the face of the part that its triangles lie on, judged against the triangles
+  the kernel draws the part with (a dozen triangles of each surface vote).
+- **Supports are directions a node may not move along**, not a solver's kinds of support.
+  Fixed is all three; Frictionless is square to the face (the radius, on a round one); a Pin
+  is across, along or round its axis. A node on two supports is held by both. They are
+  written as boundary conditions where they are along an axis of the part and as equations
+  between the node's own movements where they are not, each equation leading with a freedom
+  no other uses. No solver's "transform" is used, which a node could have only one of.
+- **Loads are forces on nodes**, worked out by integrating over each six-node triangle as
+  its mid-side nodes curve it. A flat one under an even push puts nothing on its corners
+  and a third on the middle of each side. Which way is out of the solid is found from the
+  element behind the triangle, not from how the mesher wound it.
+- **A part that can still move is told so first.** Held as it is, the ways a part can slide
+  or turn as a whole are counted (six less the independent conditions on rigid motion). More
+  than none, and the study is refused in words with how many, before the solver is asked
+  for an answer that does not exist.
+- **Numbers are written short.** CalculiX reads a number from twenty characters; a full
+  double with sign and exponent is longer and would be read wrong without a word. Twelve
+  digits after the point are written.
+- **One solid, one material**, linear and static. The part's weight is the solver's own
+  gravity load, from the material's density. At most 600,000 nodes.
+- **The solver is behind one module** (`tenon_fea::ccx`): a problem in, movements and
+  stresses out. Nothing else knows it is CalculiX.
+
+**How it is checked.** Four cases with answers in the textbooks, worked out through the real
+programs by `cargo xtask ci`: a bar in tension (within 0.1 % of Hooke's law), a cantilever
+(1.5 % of Timoshenko's beam), a thick tube under pressure (2 % of Lame), a plate with a hole
+(5 % of Heywood's formula). The gate sets `TENON_FEA_REQUIRED`, which makes the programs'
+absence a failure; without it (a plain `cargo test` on a machine that has not installed
+them) those tests say they did not run.
+
+Every result carries: "An engineering aid, not a certified analysis".

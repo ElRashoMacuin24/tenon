@@ -17,6 +17,7 @@ tenon-kernel-occt = { path = "crates/kernel-occt" }
 tenon-sketch = { path = "crates/sketch" }
 tenon-model = { path = "crates/model" }
 tenon-assembly = { path = "crates/assembly" }
+tenon-fea = { path = "crates/fea" }
 tenon-drawing = { path = "crates/drawing" }
 tenon-io = { path = "crates/io" }
 tenon-render = { path = "crates/render" }
