@@ -100,6 +100,20 @@ impl Workbench {
                     "view.previous",
                 ],
             )
+        } else if self.in_analysis() {
+            (
+                [
+                    repeat,
+                    entry("view.look_at"),
+                    entry("study.force"),
+                    entry("study.pressure"),
+                    entry("view.previous"),
+                    entry("view.home"),
+                    entry("study.fix"),
+                    entry("view.fit"),
+                ],
+                vec!["analysis.finish", "inspect.mass", "edit.undo", "edit.redo"],
+            )
         } else {
             (
                 [

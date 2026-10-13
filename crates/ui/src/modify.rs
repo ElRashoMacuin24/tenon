@@ -64,7 +64,7 @@ impl Workbench {
                 Some(Wants { edges: true, faces: false })
             }
             Some(Panel::Chamfer(p)) => Some(Wants { edges: true, faces: p.method != ChamferMethod::Distance }),
-            Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => {
+            Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_) | Panel::Support(_) | Panel::Load(_)) => {
                 Some(Wants { edges: false, faces: true })
             }
             Some(Panel::Pattern(p)) => Some(match p.slot {
@@ -132,6 +132,8 @@ impl Workbench {
                 v
             }
             Some(Panel::Shell(p)) => p.faces.iter().filter_map(face).collect(),
+            Some(Panel::Support(p)) => p.faces.iter().filter_map(face).collect(),
+            Some(Panel::Load(p)) => p.faces.iter().filter_map(face).collect(),
             Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => self.bodies_picks(),
             Some(Panel::Measure(m)) => m.a.into_iter().chain(m.b).collect(),
             Some(Panel::Pattern(p)) => {
@@ -317,6 +319,8 @@ impl Workbench {
                 }
             }
             (Some(Panel::Shell(s)), None, Some(r)) => edit_list(&mut s.faces, r, present, toggle, same_face),
+            (Some(Panel::Support(s)), None, Some(r)) => edit_list(&mut s.faces, r, present, toggle, same_face),
+            (Some(Panel::Load(l)), None, Some(r)) => edit_list(&mut l.faces, r, present, toggle, same_face),
             _ => return false,
         }
         if let Some(why) = refused {
@@ -535,6 +539,8 @@ impl Workbench {
             Some(Panel::ContourFlange(f)) => f.edges.clear(),
             Some(Panel::Chamfer(c)) => c.edges.clear(),
             Some(Panel::Shell(s)) => s.faces.clear(),
+            Some(Panel::Support(s)) => s.faces.clear(),
+            Some(Panel::Load(l)) => l.faces.clear(),
             Some(Panel::Hole(h)) => h.points.clear(),
             Some(Panel::Pattern(p)) => p.features.clear(),
             Some(Panel::Draft(d)) => d.faces.clear(),

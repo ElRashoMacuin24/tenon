@@ -94,6 +94,8 @@ pub struct Workbench {
     pub(crate) view: View,
     pub(crate) mode: Mode,
     pub(crate) panel: Option<Panel>,
+    /// The Stress Analysis environment, while it is entered.
+    pub(crate) analysis: Option<crate::analysis::Env>,
     pub(crate) status: String,
     pub(crate) status_error: bool,
     pub(crate) path: Option<PathBuf>,
@@ -162,6 +164,7 @@ impl Workbench {
             view: View::default(),
             mode: Mode::Model,
             panel: None,
+            analysis: None,
             status: "Ready. Start with New Sketch.".into(),
             status_error: false,
             path: None,
@@ -462,6 +465,9 @@ impl Workbench {
                 _ => {}
             }
         }
+        if let Some(done) = self.analysis_command(id) {
+            return done;
+        }
         if let Some(done) = self.sheet_command(id) {
             return done;
         }
@@ -501,6 +507,7 @@ impl Workbench {
                 self.panel = None;
                 self.view = View::default();
                 self.chrome.sheet = Default::default();
+                self.analysis = None;
                 self.set_status("New part.");
             }
             "file.open" => {
@@ -590,6 +597,7 @@ impl Workbench {
                 self.panel = None;
                 self.view = View::default();
                 self.chrome.sheet = Default::default();
+                self.analysis = None;
                 self.chrome.library = false;
                 self.set_status(format!("New part from {name}, {size}: save it under a name of its own."));
             }
@@ -665,6 +673,7 @@ impl Workbench {
         self.panel = None;
         self.view = View::default();
         self.chrome.sheet = Default::default();
+        self.analysis = None;
         self.chrome.tab = self.home_tab();
         self.set_status(format!("Opened {}", path.display()));
         Ok(())
@@ -992,6 +1001,8 @@ impl Workbench {
                                 self.drw_browser(ui, &t);
                             } else if self.in_assembly() {
                                 self.asm_browser(ui, &t);
+                            } else if self.in_analysis() {
+                                self.study_browser(ui, &t);
                             } else {
                                 self.browser(ui, &t);
                             }

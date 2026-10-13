@@ -207,6 +207,71 @@ impl Study {
         Ok(id)
     }
 
+    /// Changes the support or load `id`: what is given takes the place of what it had. A
+    /// force's `direction` is `Some(None)` for square to its faces. What does not belong to
+    /// the kind of thing it is (newtons of a pressure, anything but faces and a name of a
+    /// support) is refused.
+    pub fn set(
+        &mut self,
+        id: u32,
+        faces: Option<Vec<FaceRef>>,
+        name: Option<String>,
+        newtons: Option<f64>,
+        direction: Option<Option<Vec3>>,
+        megapascals: Option<f64>,
+    ) -> Result<(), String> {
+        let before = self.clone();
+        let change = |this: &mut Study| -> Result<(), String> {
+            if let Some(s) = this.supports.iter_mut().find(|s| s.id == id) {
+                if newtons.is_some() || direction.is_some() || megapascals.is_some() {
+                    return Err(format!("{} is a support: it has faces and a name, and nothing else to set", s.name));
+                }
+                if let Some(f) = faces {
+                    s.faces = f;
+                }
+                if let Some(n) = name {
+                    s.name = n.trim().to_owned();
+                }
+                return Ok(());
+            }
+            let Some(l) = this.loads.iter_mut().find(|l| l.id == id) else { return Err(format!("{} has no support or load {id}", this.name)) };
+            match &mut l.kind {
+                LoadKind::Force { newtons: n, direction: d } => {
+                    if megapascals.is_some() {
+                        return Err(format!("{} is a force: its size is in `newtons`", l.name));
+                    }
+                    if let Some(v) = newtons {
+                        *n = v;
+                    }
+                    if let Some(v) = direction {
+                        *d = v;
+                    }
+                }
+                LoadKind::Pressure { megapascals: m } => {
+                    if newtons.is_some() || direction.is_some() {
+                        return Err(format!("{} is a pressure: its size is in `megapascals`, and it is always square to its faces", l.name));
+                    }
+                    if let Some(v) = megapascals {
+                        *m = v;
+                    }
+                }
+            }
+            if let Some(f) = faces {
+                l.faces = f;
+            }
+            if let Some(n) = name {
+                l.name = n.trim().to_owned();
+            }
+            Ok(())
+        };
+        // (All of it or none: a change that leaves the study wrong is not made.)
+        if let Err(e) = change(self).and_then(|()| self.check()) {
+            *self = before;
+            return Err(e);
+        }
+        Ok(())
+    }
+
     /// Takes the support or load `id` away. False when there is none.
     pub fn remove(&mut self, id: u32) -> bool {
         let before = self.supports.len() + self.loads.len();
@@ -267,6 +332,26 @@ mod tests {
         refused(s.add_load(LoadKind::Pressure { megapascals: f64::INFINITY }, vec![face(2)], None), "megapascals");
         refused(s.add_load(LoadKind::Pressure { megapascals: 1.0 }, vec![face(2)], Some("  ".into())), "1 to 64 characters");
         assert_eq!(s.loads.len(), 3, "nothing was added by what was refused");
+
+        // Changed in place: what is given takes the place of what was there.
+        s.set(more, Some(vec![face(6), face(7)]), Some("Pull".into()), Some(-8.0), Some(Some(Vec3::X)), None).unwrap();
+        let pull = s.loads.iter().find(|l| l.id == more).unwrap();
+        assert_eq!((pull.name.as_str(), pull.faces.len(), pull.kind), ("Pull", 2, LoadKind::Force { newtons: -8.0, direction: Some(Vec3::X) }));
+        s.set(more, None, None, None, Some(None), None).unwrap();
+        assert_eq!(s.loads.iter().find(|l| l.id == more).unwrap().kind, LoadKind::Force { newtons: -8.0, direction: None });
+        s.set(press, None, None, None, None, Some(0.75)).unwrap();
+        s.set(fixed, Some(vec![face(9)]), None, None, None, None).unwrap();
+        assert_eq!(s.supports[0].faces, vec![face(9)]);
+        // What is not its to have is refused, and it is left as it was.
+        let was = s.clone();
+        let told = |r: Result<(), String>, what: &str| assert!(r.as_ref().is_err_and(|e| e.contains(what)), "{r:?}");
+        told(s.set(fixed, None, None, Some(1.0), None, None), "is a support");
+        told(s.set(press, None, None, Some(1.0), None, None), "is a pressure");
+        told(s.set(more, None, None, None, None, Some(1.0)), "is a force");
+        told(s.set(more, Some(vec![]), None, Some(3.0), None, None), "at least one face");
+        told(s.set(more, None, None, Some(0.0), None, None), "other than 0");
+        told(s.set(77, None, None, None, None, None), "no support or load 77");
+        assert_eq!(s, was);
     }
 
     #[test]

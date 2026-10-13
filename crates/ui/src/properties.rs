@@ -424,6 +424,8 @@ impl Workbench {
                     | Panel::CornerSeam(_)
                     | Panel::Bend(_)
                     | Panel::Primitive(_)
+                    | Panel::Support(_)
+                    | Panel::Load(_)
                     | Panel::Asm(_)
             )
         )
@@ -490,6 +492,8 @@ impl Workbench {
             Panel::CornerSeam(p) => (if p.rip { "Corner Rip" } else { "Corner Seam" }, p.editing.map(|f| self.feature_name(f))),
             Panel::Bend(p) => ("Bend", p.editing.map(|f| self.feature_name(f))),
             Panel::Primitive(p) => (p.shape.title(), None),
+            Panel::Support(p) => ("Fixed", p.editing.and_then(|id| self.study_item_name(id))),
+            Panel::Load(p) => (p.title(), p.editing.and_then(|id| self.study_item_name(id))),
             Panel::Asm(p) => {
                 (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
             }
@@ -509,6 +513,12 @@ impl Workbench {
             .show(ui, |ui| {
                 ui.spacing_mut().indent = 10.0;
                 match &mut panel {
+                    Panel::Support(p) => clear |= crate::analysis::support_fields(ui, p),
+                    Panel::Load(p) => {
+                        let (cleared, entered) = crate::analysis::load_fields(ui, p, t);
+                        clear |= cleared;
+                        enter |= entered;
+                    }
                     Panel::Primitive(p) => {
                         let plane = p.on.as_ref().map(|(plane, _)| self.plane_name(plane));
                         enter |= crate::primitive::fields(ui, p, plane.as_deref(), t);
@@ -1532,7 +1542,9 @@ impl Workbench {
                 | Panel::ContourFlange(_)
                 | Panel::Fold(_)
                 | Panel::CornerSeam(_)
-                | Panel::Bend(_),
+                | Panel::Bend(_)
+                | Panel::Support(_)
+                | Panel::Load(_),
             ) => self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center())),
             Some(Panel::Hole(p)) => p
                 .points
@@ -1691,6 +1703,12 @@ impl Workbench {
                             )
                             .entered
                             {
+                                request = Some(PanelRequest::Ok);
+                            }
+                        }
+                        Some(Panel::Load(p)) => {
+                            let (unit, range) = if p.pressure { ("MPa", -1.0e6..=1.0e6) } else { ("N", 0.001..=1.0e12) };
+                            if eq_field(ui, egui::Id::new("tn_mini_load"), &mut p.magnitude, None, unit, range, 80.0, t).entered {
                                 request = Some(PanelRequest::Ok);
                             }
                         }

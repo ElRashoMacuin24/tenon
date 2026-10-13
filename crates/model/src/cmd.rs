@@ -608,13 +608,27 @@ fn study_fix(s: &mut Session, p: &Value) -> CmdResult {
 fn study_force(s: &mut Session, p: &Value) -> CmdResult {
     let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
     let newtons = num(p, "newtons")?;
-    // (Adding 0 makes a -0 a 0: "down" is written 0, 0, -1.)
-    let direction = arg(p, "direction")
-        .filter(|v| !v.is_null())
-        .map(|v| said_direction(v, "direction"))
-        .transpose()?
-        .map(|d| tenon_geom::Vec3::new(d.x + 0.0, d.y + 0.0, d.z + 0.0));
+    let direction = force_direction(p)?.flatten();
     study_edit(s, id, "load", |st| st.add_load(LoadKind::Force { newtons, direction }, faces, name))
+}
+
+/// The way a force pushes, as a command says it: not said (None); "normal", square to its
+/// faces (Some(None)); or a direction.
+fn force_direction(p: &Value) -> Result<Option<Option<tenon_geom::Vec3>>, CmdError> {
+    match arg(p, "direction") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(w)) if w.eq_ignore_ascii_case("normal") => Ok(Some(None)),
+        // (Adding 0 makes a -0 a 0: "down" is written 0, 0, -1.)
+        Some(v) => said_direction(v, "direction").map(|d| Some(Some(tenon_geom::Vec3::new(d.x + 0.0, d.y + 0.0, d.z + 0.0)))),
+    }
+}
+
+/// Changes a support or a load of a study.
+fn study_set(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, item) = (study_of(s, p)?, id_u32(p, "item")?);
+    let faces: Option<Vec<FaceRef>> = if arg(p, "faces").is_some_and(|v| !v.is_null()) { Some(parse(p, "faces")?) } else { None };
+    let (name, newtons, megapascals, direction) = (opt_name(p)?, opt_num(p, "newtons")?, opt_num(p, "megapascals")?, force_direction(p)?);
+    study_edit(s, id, "item", |st| st.set(item, faces, name, newtons, direction, megapascals).map(|()| item))
 }
 
 fn study_pressure(s: &mut Session, p: &Value) -> CmdResult {
@@ -3756,7 +3770,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "study.force",
         "Force",
-        "A force spread over faces. study; faces: [face references]; newtons: the whole force; direction: the way it pushes, as +x, -z, top, bottom ... or [x, y, z] (default: square to each face, into it; negative newtons pull); name. Returns the study, and load: the new load's id",
+        "A force spread over faces. study; faces: [face references]; newtons: the whole force; direction: the way it pushes, as +x, -z, top, bottom ... or [x, y, z] (default, or normal: square to each face, into it; negative newtons pull); name. Returns the study, and load: the new load's id",
         true,
         study_force
     ),
@@ -3766,6 +3780,13 @@ static COMMANDS: &[CommandSpec] = &[
         "A pressure on faces, square to them and into them. study; faces: [face references]; megapascals (N/mm^2; negative pulls); name. Returns the study, and load: the new load's id",
         true,
         study_pressure
+    ),
+    doc_cmd!(
+        "study.set",
+        "Change Support or Load",
+        "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references]; name; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals",
+        true,
+        study_set
     ),
     doc_cmd!("study.remove", "Remove Support or Load", "study; item: the id of a support or a load of it", true, study_remove),
     doc_cmd!(

@@ -111,15 +111,18 @@ them, that comes back to the owner before anything else is built on it.
 - **Materials say how they answer to a load**: Young's modulus, Poisson's ratio and yield
   strength for the library's metals and plastics (typical values; woods have none, their
   strength follows the grain), and for a material of one's own.
+- **The Stress Analysis environment, as far as setting a study up** (DEC-095, added
+  2026-10-13): Environments > Stress Analysis; Fixed, Force and Pressure by clicks on the
+  part's faces; the study in the browser; supports and loads drawn on the part. Simulate is
+  on its ribbon as a command that has not arrived.
 
 ## What follows the answer
 
 - The pipeline: the part as STEP, to the mesher; its mesh read back and its boundary matched
   to the part's faces by where it lies (not by the order of faces, which a STEP file does not
   keep); the solver's input written; its results read.
-- The Stress Analysis environment in the app (Environments tab): a study's supports and loads
-  picked on the part, the mesh shown, Simulate, and von Mises stress, displacement and safety
-  factor shown in colour on the part with a scale.
+- In the Stress Analysis environment: the mesh shown, Simulate, and von Mises stress,
+  displacement and safety factor shown in colour on the part with a scale.
 - Checks against cases with known answers, in CI: a cantilever's deflection, the stress
   beside a hole in a plate, a thick tube under pressure.
 - Every result labelled as an engineering aid, not a certified analysis.

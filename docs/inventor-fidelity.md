@@ -216,9 +216,35 @@ Construction, Centerline and Driven Dimension; Center Point and Show Format are 
 | One flat pattern to a part; more than one sheet metal body disables it | done | the same rule, said in words when there are two solids |
 | A flat pattern that could not be worked out shows a mark in the browser and is looked into with Design Doctor | done differently | the window says why in place of the pattern: a solid that is not one thickness, a sheet that closes on itself and a pattern that overlaps itself are each refused as what they are: `what_cannot_be_laid_flat_is_refused_in_plain_words` |
 
+## Stress analysis
+
+Parts only, linear static (docs/plan.md M11). What works a study out waits on the choice of
+mesher and solver (docs/m11-proposal.md); what sets one up is here.
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| Stress Analysis is started from the Environments tab, or from the 3D Model tab's Simulation panel; the ribbon shows the Analysis tab | done | both buttons; the Analysis tab with Inspect, Tools and View: `a_bar_is_held_at_one_end_and_loaded_at_the_other_by_clicks` |
+| Panels of the tab: Manage, Material, Constraints, Loads, Contacts, Prepare, Mesh, Solve, Result, Display, Report, Settings | partial | Manage, Material, Constraints, Loads, Mesh, Solve, and Exit. No Contacts or Prepare (they are for assemblies and thin bodies: studies are of solid parts); Result, Display and Report come with results; no Settings |
+| Create Study (Manage) opens a dialog in which the new study is defined (static, or modal); Parametric Table beside it | partial | Create Study makes a static study at once (Study1, Study2 ...). No dialog, no modal analysis (not in the plan), no parametric table |
+| The browser shows the study, with nodes for its material, constraints, loads, contacts, mesh and results | done, for a part | the same nodes but contacts; the study worked on is a double-click on its row: `the_environment_is_of_a_part_with_a_solid_and_is_left_with_it` |
+| Assign (Material) overrides a component's material for the study | done differently | Assign opens the part's Properties: a study is of the part as it is made. No material of the study's own |
+| Fixed, Pin, Frictionless (Constraints): the command, then the geometry (faces, edges or vertices of one kind), OK; More gives a fixed constraint a displacement by vector components | partial | Fixed on faces: the command, clicks on faces (a second click takes one out), OK. Pin and Frictionless are on the ribbon as later commands. No edges or vertices; no displacement |
+| Force, Pressure, Bearing, Moment, Body, Gravity, Remote Force (Loads): where it is, how large, which way | partial | Force and Pressure on faces: a size typed, and for a force Normal to Face or Along X, Y, Z, either way. The others are on the ribbon as later commands. Gap: no direction picked from an edge or a face (any direction by command) |
+| A constraint is a node under Constraints: double-clicked or from its menu it is edited in its dialog; suppressed, deleted, copied to another study | partial, for supports and loads alike | double-click or Edit opens its panel, Delete deletes it, each one undo step. No suppress, no copy |
+| Glyphs on the part show the loads and constraints; Display > Boundary Conditions hides them | done, always shown | a ground mark on held faces, an arrow with its size on loaded ones; a row clicked in the browser picks its faces out. Gap: cannot be hidden |
+| Mesh View overlays the mesh; Mesh Settings, Local Mesh Control, Convergence Settings | partial | Mesh Settings sets the size of the elements (0: from the part's size). Mesh View comes with the mesher (M11). No local control, no convergence |
+| Simulate runs the study; the Results node holds Von Mises stress, displacement, safety factor and more, shown in colour with a colour bar; Probe, Animate, Report | missing | M11, after the mesher and solver are settled. Simulate is on the ribbon as a command that arrives in M11 |
+| (How the environment is left is not in the pages read) | Tenon: Finish Analysis on an Exit panel, as Finish Sketch leaves a sketch | opening or starting another document leaves it too: `the_environment_is_of_a_part_with_a_solid_and_is_left_with_it` |
+| (The part is edited outside the environment) | done | commands that change the part are refused inside it, with "Finish Analysis first" |
+
 ## Sources
 
 Behaviour described above is from Autodesk's help for Inventor:
+
+- [Stress Analysis tab reference](https://help.autodesk.com/cloudhelp/2021/ENU/Inventor-Help/files/GUID-658F1593-C1C5-4090-A416-C6B751187BFB.htm) (the panels and their commands; this page calls the first command Create Simulation, later releases Create Study)
+- [Add structural constraints for simulation](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-2E36EC5A-8C83-43F0-A58E-41744C5325A0.htm) (Fixed, Pin, Frictionless: what is selected, More, editing from the browser)
+- [About Stress Analysis](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-61F01A5D-7E54-45A1-9698-7BB11F0AEE94.htm) (the workflow: materials, loads and constraints, mesh, solve, results)
+- [Perform a stress analysis in Inventor](https://www-pt.autodesk.com/learn/ondemand/tutorial/perform-a-stress-analysis-in-inventor) (Autodesk's tutorial: 3D Model > Simulation > Stress Analysis, Analysis > Manage > Create Study. Read through a search engine's quotation of it: its steps could not be opened from here, and should be read again. How the environment is left was not found in any of these)
 
 - [About Sketch Constraints](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-FAF69614-E8F2-4763-975C-552E0BEA1DD1.htm) (normal and driven dimensions, dimension display, degrees of freedom, the status bar's count)
 - [To work with dimensions in sketches](https://help.autodesk.com/cloudhelp/2023/ENU/Inventor-Help/files/GUID-026FE8D3-AFBB-4834-BC18-73D9CFF78185.htm) (placing, editing, driven dimensions)

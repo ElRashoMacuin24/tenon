@@ -718,11 +718,15 @@ impl Workbench {
     pub(crate) fn part_tabs(&self) -> Vec<usize> {
         let all = 0..crate::commands::RIBBON.len();
         let named = |n: &str| crate::commands::RIBBON.iter().position(|t| t.name == n);
+        // In the Stress Analysis environment: its own tab, and those that do not change the part.
+        if self.in_analysis() {
+            return std::iter::once(crate::commands::ANALYSIS_TAB).chain(["Inspect", "Tools", "View"].iter().filter_map(|n| named(n))).collect();
+        }
         if self.flat_shown() {
             return std::iter::once(FLAT_TAB).chain(["Tools", "View"].iter().filter_map(|n| named(n))).collect();
         }
         let sheet = self.is_sheet_metal();
-        let rest = all.filter(|i| *i != SHEET_TAB && *i != FLAT_TAB);
+        let rest = all.filter(|i| *i != SHEET_TAB && *i != FLAT_TAB && *i != crate::commands::ANALYSIS_TAB);
         if sheet { std::iter::once(SHEET_TAB).chain(rest).collect() } else { rest.collect() }
     }
 
@@ -735,6 +739,8 @@ impl Workbench {
     /// undo, a flat pattern left).
     pub(crate) fn keep_tab_shown(&mut self) {
         if self.in_assembly() || self.in_drawing() {
+            // (The Stress Analysis environment was of a part that has been left.)
+            self.analysis = None;
             return;
         }
         if self.chrome.sheet.flat_view && !self.is_sheet_metal() {
@@ -780,6 +786,7 @@ impl Workbench {
                 self.panel = None;
                 self.view = Default::default();
                 self.chrome.sheet = SheetUi::default();
+                self.analysis = None;
                 self.chrome.tab = SHEET_TAB;
                 self.set_status("New sheet metal part, 1 mm thick: Sheet Metal Defaults changes that. Start with a sketch, then Face.");
             }

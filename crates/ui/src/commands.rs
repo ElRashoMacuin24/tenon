@@ -92,6 +92,8 @@ pub const SKETCH_TAB: usize = 1;
 pub const SHEET_TAB: usize = 7;
 /// The tab of the flat pattern; shown only while the pattern is.
 pub const FLAT_TAB: usize = 8;
+/// The tab of the Stress Analysis environment; shown only in it.
+pub const ANALYSIS_TAB: usize = 9;
 
 pub const RIBBON: &[RibbonTab] = &[
     RibbonTab {
@@ -156,6 +158,16 @@ pub const RIBBON: &[RibbonTab] = &[
                     small("model.pattern.circular", "Circular", "Repeat features around an axis", Icon::PatternCircular, 0),
                     small("model.mirror", "Mirror", "Mirror features across a plane", Icon::Mirror, 0),
                 ],
+            },
+            RibbonPanel {
+                title: "Simulation",
+                commands: &[large(
+                    "analysis.begin",
+                    "Stress\nAnalysis",
+                    "Say where the part is held and what pushes on it, to see whether it holds",
+                    Icon::Stress,
+                    0,
+                )],
             },
             RibbonPanel {
                 title: "Convert",
@@ -372,16 +384,28 @@ pub const RIBBON: &[RibbonTab] = &[
     },
     RibbonTab {
         name: "Environments",
-        panels: &[RibbonPanel {
-            title: "3D Print",
-            commands: &[large(
-                "inspect.print",
-                "3D Print\nCheck",
-                "How the part would print: a closed surface, overhangs, thin walls, and whether it fits the bed",
-                Icon::Print3d,
-                0,
-            )],
-        }],
+        panels: &[
+            RibbonPanel {
+                title: "Begin",
+                commands: &[large(
+                    "analysis.begin",
+                    "Stress\nAnalysis",
+                    "Say where the part is held and what pushes on it, to see whether it holds",
+                    Icon::Stress,
+                    0,
+                )],
+            },
+            RibbonPanel {
+                title: "3D Print",
+                commands: &[large(
+                    "inspect.print",
+                    "3D Print\nCheck",
+                    "How the part would print: a closed surface, overhangs, thin walls, and whether it fits the bed",
+                    Icon::Print3d,
+                    0,
+                )],
+            },
+        ],
     },
     RibbonTab {
         name: "Sheet Metal",
@@ -517,6 +541,66 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Folded Part",
                 commands: &[large("sheet.folded", "Go to\nFolded Part", "Back to the part as it is folded", Icon::FoldedPart, 0)],
+            },
+        ],
+    },
+    RibbonTab {
+        name: "Analysis",
+        panels: &[
+            RibbonPanel {
+                title: "Manage",
+                commands: &[large(
+                    "study.new",
+                    "Create\nStudy",
+                    "A new study of the part: where it is held and what pushes on it",
+                    Icon::StudyNew,
+                    0,
+                )],
+            },
+            RibbonPanel {
+                title: "Material",
+                commands: &[large(
+                    "analysis.material",
+                    "Assign",
+                    "The part's material: what it is made of says how it answers to a load",
+                    Icon::MassProps,
+                    0,
+                )],
+            },
+            RibbonPanel {
+                title: "Constraints",
+                commands: &[
+                    large("study.fix", "Fixed", "Faces that are held still", Icon::Fixed, 0),
+                    small("study.pin", "Pin", "Round faces held on a pin: free to turn, not to move off", Icon::Pin, LATER),
+                    small("study.frictionless", "Frictionless", "Faces that may slide along themselves but not leave", Icon::Frictionless, LATER),
+                ],
+            },
+            RibbonPanel {
+                title: "Loads",
+                commands: &[
+                    large("study.force", "Force", "A force spread over faces, square to them or along a direction", Icon::Force, 0),
+                    large("study.pressure", "Pressure", "A pressure on faces, square to them", Icon::Pressure, 0),
+                    small("study.bearing", "Bearing", "The load of a shaft in its bore", Icon::BearingLoad, LATER),
+                    small("study.moment", "Moment", "A turning load on faces", Icon::Moment, LATER),
+                    small("study.gravity", "Gravity", "The part's own weight", Icon::Gravity, LATER),
+                    small("study.remote_force", "Remote Force", "A force that acts on faces from a point away from them", Icon::RemoteForce, LATER),
+                    small("study.body", "Body", "A load on the whole body: an acceleration, or a spin", Icon::BodyLoad, LATER),
+                ],
+            },
+            RibbonPanel {
+                title: "Mesh",
+                commands: &[
+                    large("analysis.mesh_view", "Mesh\nView", "The part divided into the elements the study is worked out on", Icon::MeshGrid, 11),
+                    large("study.mesh_size", "Mesh\nSettings", "How large the elements are", Icon::MeshSettings, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Solve",
+                commands: &[large("analysis.simulate", "Simulate", "Work the study out", Icon::Simulate, 11)],
+            },
+            RibbonPanel {
+                title: "Exit",
+                commands: &[large("analysis.finish", "Finish\nAnalysis", "Leave the study and go back to the part", Icon::FinishSketch, 0)],
             },
         ],
     },
@@ -1032,8 +1116,8 @@ mod tests {
     #[test]
     fn ribbon_has_the_planned_tabs() {
         let names: Vec<_> = RIBBON.iter().map(|t| t.name).collect();
-        assert_eq!(names, ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View", "Environments", "Sheet Metal", "Flat Pattern"]);
-        assert_eq!((RIBBON[SHEET_TAB].name, RIBBON[FLAT_TAB].name), ("Sheet Metal", "Flat Pattern"));
+        assert_eq!(names, ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View", "Environments", "Sheet Metal", "Flat Pattern", "Analysis"]);
+        assert_eq!((RIBBON[SHEET_TAB].name, RIBBON[FLAT_TAB].name, RIBBON[ANALYSIS_TAB].name), ("Sheet Metal", "Flat Pattern", "Analysis"));
         assert_eq!(RIBBON[MODEL_TAB].name, "3D Model");
         assert_eq!(RIBBON[SKETCH_TAB].name, "Sketch");
         assert!(RIBBON.iter().all(|t| !t.panels.is_empty() && t.panels.iter().all(|p| !p.commands.is_empty())));

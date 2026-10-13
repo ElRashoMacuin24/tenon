@@ -40,7 +40,7 @@ pub(crate) enum BrowserDrag {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RowStyle {
+pub(crate) enum RowStyle {
     Normal,
     Active,
     Dim,
@@ -49,7 +49,7 @@ enum RowStyle {
 
 /// One browser row. `expand` draws a +/- box; returns the row response and whether the box was
 /// clicked.
-fn row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, expand: Option<bool>, style: RowStyle) -> (egui::Response, bool) {
+pub(crate) fn row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, expand: Option<bool>, style: RowStyle) -> (egui::Response, bool) {
     // Rows can be dragged (End of Part and features reorder that way).
     let (rr, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::CLICK | Sense::DRAG);
     if style == RowStyle::Active {

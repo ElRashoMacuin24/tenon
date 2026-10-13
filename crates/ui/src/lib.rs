@@ -9,6 +9,7 @@
 //! own.
 #![forbid(unsafe_code)]
 
+mod analysis;
 mod asm_browser;
 mod asm_panel;
 mod assembly;
@@ -45,6 +46,8 @@ mod workbench;
 pub use theme::ThemeName;
 pub use workbench::{Services, Workbench};
 
+#[cfg(test)]
+mod analysis_tests;
 #[cfg(test)]
 mod asm_tests;
 #[cfg(test)]

@@ -460,6 +460,7 @@ impl Workbench {
             self.draw_origin_planes(ui, rect, self.view.plane_hover, t);
         }
         self.primitive_overlay(ui, rect, t);
+        self.analysis_overlay(ui, rect, t);
         if self.has_properties() {
             self.hole_markers(ui, rect, t);
             self.profile_overlay(ui, rect, t);
@@ -833,6 +834,7 @@ impl Workbench {
             return self.asm_highlights();
         }
         let mut v: Vec<(Pick, Color32)> = self.print_flags();
+        v.extend(self.analysis_highlights());
         v.extend(self.view.selection.iter().map(|p| (*p, SELECTED)));
         v.extend(self.panel_picks().into_iter().map(|p| (p, SELECTED)));
         v.extend(self.repair_candidates().into_iter().map(|p| (p, crate::repair_ui::CANDIDATE)));

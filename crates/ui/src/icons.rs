@@ -134,6 +134,25 @@ pub enum Icon {
     FoldedPart,
     ASide,
     ConvertSheet,
+    // stress analysis
+    /// A loaded bar in bands, as a result is shown.
+    Stress,
+    StudyNew,
+    /// A face held still: the ground mark.
+    Fixed,
+    Pin,
+    Frictionless,
+    Force,
+    Pressure,
+    BearingLoad,
+    Moment,
+    Gravity,
+    /// A part divided into elements.
+    MeshGrid,
+    MeshSettings,
+    Simulate,
+    RemoteForce,
+    BodyLoad,
     // primitives
     PrimBox,
     PrimCylinder,
@@ -988,6 +1007,123 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.arrow_head((0.7, 0.5), (0.5, 0.5));
             pen.fill(&[(0.78, 0.2), (0.9, 0.2), (0.9, 0.8), (0.78, 0.8)], soft);
             pen.closed(&[(0.78, 0.2), (0.9, 0.2), (0.9, 0.8), (0.78, 0.8)]);
+        }
+        // A bar held at the left, in bands as a result is shown.
+        Icon::Stress => {
+            pen.line(&[(0.1, 0.14), (0.1, 0.86)]);
+            pen.fill(&[(0.1, 0.34), (0.36, 0.34), (0.36, 0.66), (0.1, 0.66)], color);
+            pen.fill(&[(0.36, 0.34), (0.62, 0.34), (0.62, 0.66), (0.36, 0.66)], soft);
+            pen.closed(&[(0.1, 0.34), (0.9, 0.34), (0.9, 0.66), (0.1, 0.66)]);
+            pen.line(&[(0.36, 0.34), (0.36, 0.66)]);
+            pen.line(&[(0.62, 0.34), (0.62, 0.66)]);
+        }
+        // A bar held at the left with a load on its end, and a plus: a new study of it.
+        Icon::StudyNew => {
+            pen.line(&[(0.1, 0.36), (0.1, 0.92)]);
+            pen.fill(&[(0.1, 0.56), (0.7, 0.56), (0.7, 0.74), (0.1, 0.74)], soft);
+            pen.closed(&[(0.1, 0.56), (0.7, 0.56), (0.7, 0.74), (0.1, 0.74)]);
+            pen.line(&[(0.62, 0.24), (0.62, 0.5)]);
+            pen.arrow_head((0.62, 0.54), (0.62, 0.3));
+            pen.line(&[(0.8, 0.08), (0.8, 0.32)]);
+            pen.line(&[(0.68, 0.2), (0.92, 0.2)]);
+        }
+        // The ground mark: a bar with strokes under it, and what stands on it.
+        Icon::Fixed => {
+            pen.fill(&[(0.3, 0.12), (0.7, 0.12), (0.7, 0.56), (0.3, 0.56)], soft);
+            pen.closed(&[(0.3, 0.12), (0.7, 0.12), (0.7, 0.56), (0.3, 0.56)]);
+            pen.line(&[(0.1, 0.56), (0.9, 0.56)]);
+            for x in [0.18, 0.38, 0.58, 0.78] {
+                pen.line(&[(x + 0.08, 0.6), (x - 0.06, 0.86)]);
+            }
+        }
+        // A round face on a pin, on the ground.
+        Icon::Pin => {
+            pen.circle((0.5, 0.36), 0.24);
+            pen.dot((0.5, 0.36), 0.07);
+            pen.line(&[(0.5, 0.6), (0.26, 0.84), (0.74, 0.84), (0.5, 0.6)]);
+            pen.line(&[(0.12, 0.9), (0.88, 0.9)]);
+        }
+        // A block on rollers.
+        Icon::Frictionless => {
+            pen.closed(&[(0.2, 0.14), (0.8, 0.14), (0.8, 0.54), (0.2, 0.54)]);
+            pen.circle((0.34, 0.68), 0.1);
+            pen.circle((0.66, 0.68), 0.1);
+            pen.line(&[(0.1, 0.84), (0.9, 0.84)]);
+        }
+        // An arrow onto a face.
+        Icon::Force => {
+            pen.fill(&[(0.12, 0.7), (0.88, 0.7), (0.88, 0.9), (0.12, 0.9)], soft);
+            pen.closed(&[(0.12, 0.7), (0.88, 0.7), (0.88, 0.9), (0.12, 0.9)]);
+            pen.line(&[(0.5, 0.08), (0.5, 0.6)]);
+            pen.arrow_head((0.5, 0.66), (0.5, 0.2));
+        }
+        // Arrows all over a face.
+        Icon::Pressure => {
+            pen.fill(&[(0.1, 0.72), (0.9, 0.72), (0.9, 0.9), (0.1, 0.9)], soft);
+            pen.closed(&[(0.1, 0.72), (0.9, 0.72), (0.9, 0.9), (0.1, 0.9)]);
+            pen.line(&[(0.16, 0.2), (0.84, 0.2)]);
+            for x in [0.2, 0.5, 0.8] {
+                pen.line(&[(x, 0.2), (x, 0.62)]);
+                pen.arrow_head((x, 0.68), (x, 0.3));
+            }
+        }
+        // A bore, and the load of the shaft in it.
+        Icon::BearingLoad => {
+            pen.circle((0.5, 0.5), 0.38);
+            pen.line(&[(0.5, 0.2), (0.5, 0.74)]);
+            pen.arrow_head((0.5, 0.8), (0.5, 0.3));
+            pen.line(&[(0.3, 0.3), (0.34, 0.62)]);
+            pen.line(&[(0.7, 0.3), (0.66, 0.62)]);
+        }
+        // An arrow going round.
+        Icon::Moment => {
+            pen.arc((0.5, 0.5), 0.34, 0.34, -0.25 * PI, 1.25 * PI);
+            pen.arrow_head((0.74, 0.26), (0.9, 0.5));
+            pen.dot((0.5, 0.5), 0.07);
+        }
+        // A weight, and the way it falls.
+        Icon::Gravity => {
+            pen.fill(&[(0.3, 0.1), (0.7, 0.1), (0.7, 0.42), (0.3, 0.42)], soft);
+            pen.closed(&[(0.3, 0.1), (0.7, 0.1), (0.7, 0.42), (0.3, 0.42)]);
+            pen.line(&[(0.5, 0.42), (0.5, 0.84)]);
+            pen.arrow_head((0.5, 0.9), (0.5, 0.5));
+        }
+        // A plate divided into triangles.
+        Icon::MeshGrid => {
+            pen.closed(&[(0.1, 0.14), (0.9, 0.14), (0.9, 0.86), (0.1, 0.86)]);
+            pen.line(&[(0.1, 0.5), (0.9, 0.5)]);
+            pen.line(&[(0.5, 0.14), (0.5, 0.86)]);
+            pen.line(&[(0.1, 0.86), (0.5, 0.5), (0.9, 0.86)]);
+            pen.line(&[(0.1, 0.14), (0.5, 0.5), (0.9, 0.14)]);
+        }
+        // A triangle of the mesh, and how long its side is.
+        Icon::MeshSettings => {
+            pen.fill(&[(0.12, 0.62), (0.5, 0.1), (0.88, 0.62)], soft);
+            pen.closed(&[(0.12, 0.62), (0.5, 0.1), (0.88, 0.62)]);
+            pen.line(&[(0.12, 0.84), (0.88, 0.84)]);
+            pen.line(&[(0.12, 0.76), (0.12, 0.92)]);
+            pen.line(&[(0.88, 0.76), (0.88, 0.92)]);
+        }
+        // Go: a triangle pointing on.
+        Icon::Simulate => {
+            pen.fill(&[(0.24, 0.12), (0.84, 0.5), (0.24, 0.88)], soft);
+            pen.closed(&[(0.24, 0.12), (0.84, 0.5), (0.24, 0.88)]);
+        }
+        // A force at a point off the part, tied to the face it acts on.
+        Icon::RemoteForce => {
+            pen.closed(&[(0.1, 0.62), (0.56, 0.62), (0.56, 0.9), (0.1, 0.9)]);
+            pen.line(&[(0.56, 0.62), (0.8, 0.44)]);
+            pen.dot((0.8, 0.44), 0.06);
+            pen.line(&[(0.8, 0.06), (0.8, 0.3)]);
+            pen.arrow_head((0.8, 0.38), (0.8, 0.1));
+        }
+        // A body, and the way all of it is pushed.
+        Icon::BodyLoad => {
+            pen.closed(&[(0.12, 0.2), (0.88, 0.2), (0.88, 0.8), (0.12, 0.8)]);
+            for y in [0.38, 0.62] {
+                pen.line(&[(0.26, y), (0.66, y)]);
+                pen.arrow_head((0.74, y), (0.4, y));
+            }
         }
         // A box seen from above one corner.
         Icon::PrimBox => {

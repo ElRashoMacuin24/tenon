@@ -2421,3 +2421,48 @@ licence analysis to the owner before any of them is bundled or recommended. The 
 developers and CI through a second pixi environment, not bundled; the solver behind a narrow
 interface so that it can be replaced. **Nothing has been installed, added to `pixi.toml` or
 recommended.** That waits for the owner's answer.
+
+## DEC-095 The Stress Analysis environment: a study is set up on the part itself (2026-10-13)
+
+The app's side of DEC-093: what does not depend on the mesher and solver (DEC-094). Laid out
+as the established workflow has it, from Autodesk's help (docs/inventor-fidelity.md).
+
+- **Entered** from Environments > Begin > Stress Analysis, or 3D Model > Simulation. The
+  ribbon becomes the Analysis tab (Manage, Material, Constraints, Loads, Mesh, Solve, Exit)
+  with Inspect, Tools and View; the browser shows the part's studies and, under the one
+  worked on, its material, its constraints, its loads and its mesh. Finish Analysis goes
+  back. The environment is the window's state: nothing of it is in the part's file but the
+  studies themselves.
+- **The part is not changed from inside it.** Sketch, feature, work feature and sheet metal
+  commands are refused with "Finish Analysis first", so a study's faces cannot be modelled
+  away under an open panel.
+- **Fixed, Force, Pressure** open a panel that takes clicks on faces (a second click takes a
+  face out). A force has its size and its direction: Normal to Face, or along X, Y or Z, and
+  the other way. OK is one undo step. With no study yet, the first of them makes one.
+- **Changing one** is a double-click on its row (or Edit in its menu): the same panel, and
+  OK is `study.set`, a tenth study command added for this: what is given takes the place of
+  what the support or load had, and what is not its to have (newtons of a pressure) is
+  refused. Delete is in the row's menu.
+- **Shown on the part:** a ground mark on each face that is held, an arrow on each face that
+  is loaded (three side by side for a pressure) with how large the load is. The faces
+  themselves are picked out only for the row clicked in the browser. The first version
+  coloured every held and loaded face in; a picture of it showed a part painted yellow with
+  its arrows lost on it, and that was changed.
+- **What is not there says so.** Simulate and Mesh View are drawn as the ribbon draws every
+  command whose milestone has not come, and say "arrives in milestone M11" when pressed.
+  Pin, Frictionless, Bearing, Moment, Gravity, Remote Force and Body are there as later
+  commands. Constraints(0) and Loads(0) are written in red while the study lacks them, and
+  say why when pointed at; so does a material that does not say how strong it is.
+
+Not done: results (they wait on DEC-094); a direction picked from an edge or a face (any
+direction can be given by command, and is shown as "As Set"); supports on edges or points;
+contacts (studies are of parts); turning the marks off.
+
+**Found on the way.** In the small value window (Sketch Fillet's radius, Offset's distance,
+and now Mesh Settings) Enter did nothing, and what was typed went in beside the value the
+window opened with (3.5 typed over a 2 made 23.5). Enter: the box was given the keyboard
+again each frame before it was asked whether it had lost it. Typing: a box that is given the
+keyboard after it is drawn does not select what it shows. It is now the value box of the
+panels, given the keyboard before it is drawn: what is typed takes the place of what was
+there, and Enter is OK. `a_fillets_radius_and_an_offsets_distance_are_typed_and_entered`;
+no test went through that window before.

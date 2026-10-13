@@ -52,6 +52,8 @@ const NEUTRAL_PLANE: [Param; 3] =
 /// A direction in words or numbers.
 const WAY: Ty =
     Either(&[Word(&["+x", "-x", "+y", "-y", "+z", "-z", "x", "y", "z", "top", "bottom", "up", "down", "left", "right", "front", "back"]), Vector(3)]);
+/// The way a force pushes: square to its faces, or a direction.
+const PUSH: Ty = Either(&[Word(&["normal"]), WAY]);
 const STUDY: Param = opt("study", Id, "which study (default: the part's only one)");
 const ITEM_NAME: Param = opt("name", Text, "its name (default Fixed1, Force1, Pressure1...)");
 const ON_PLANE: Param = opt("plane", ORIGIN_PLANE, "the origin plane its sketch is on (default xy)");
@@ -875,8 +877,8 @@ static SCHEMAS: &[C] = &[
             req("newtons", Number, "the whole force, N (negative: the other way)"),
             opt(
                 "direction",
-                WAY,
-                "the way it pushes: +x ... -z, top, bottom, left, right, front, back or [x, y, z]; default square to each face, into it",
+                PUSH,
+                "the way it pushes: +x ... -z, top, bottom, left, right, front, back or [x, y, z]; default (or normal) square to each face, into it",
             ),
             ITEM_NAME,
         ],
@@ -888,6 +890,18 @@ static SCHEMAS: &[C] = &[
             req("faces", List(&Face), "the faces it is on"),
             req("megapascals", Number, "N/mm^2, into the faces (negative: pulling)"),
             ITEM_NAME,
+        ],
+    ),
+    C::new(
+        "study.set",
+        &[
+            STUDY,
+            req("item", Id, "the id of the support or load to change"),
+            opt("faces", List(&Face), "the faces it is on, in place of those it had"),
+            opt("newtons", Number, "a force's size, N"),
+            opt("direction", PUSH, "a force's direction, as for study.force; normal: square to its faces"),
+            opt("megapascals", Number, "a pressure's size, N/mm^2"),
+            opt("name", Text, "its new name"),
         ],
     ),
     C::new("study.remove", &[STUDY, req("item", Id, "the id of a support or a load of the study")]),

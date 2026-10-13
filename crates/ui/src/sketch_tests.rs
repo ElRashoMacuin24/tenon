@@ -684,3 +684,56 @@ fn slots_rectangles_and_arcs_are_drawn_by_their_own_clicks() {
     d.click(&mut wb, nowhere);
     assert!(wb.status_error && wb.status().contains("end point of a line or an arc"), "{}", wb.status());
 }
+
+/// The small value window (Sketch Fillet's radius, Offset's distance): what is typed takes the
+/// place of the value it opens with, and Enter is OK.
+#[test]
+fn a_fillets_radius_and_an_offsets_distance_are_typed_and_entered() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+    let radii = |wb: &Workbench| -> Vec<f64> {
+        let sk = wb.document().sketch(f).unwrap();
+        let arcs = sk.entities().filter_map(|(_, e)| match &e.geometry {
+            Geometry::Arc { center, start, .. } => Some((sk.point(*center)?, sk.point(*start)?)),
+            _ => None,
+        });
+        arcs.map(|(c, s)| ((s.x - c.x).powi(2) + (s.y - c.y).powi(2)).sqrt()).collect()
+    };
+
+    // Fillet, a click on a corner: the window opens at 2 mm with the keyboard in its box.
+    wb.run_ui("sketch.fillet").unwrap();
+    let corner = at(&wb, 40.0, 20.0);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(corner)]);
+    d.click(&mut wb, corner);
+    assert!(matches!(&wb.panel, Some(Panel::Value(v)) if v.title == "Sketch Fillet" && v.value == 2.0), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![egui::Event::Text("3.5".into())]);
+    assert!(matches!(&wb.panel, Some(Panel::Value(v)) if v.value == 3.5), "what is typed takes the place of the 2");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "Enter is OK: {}", wb.status());
+    let made = radii(&wb);
+    assert!(matches!(made.as_slice(), [r] if (r - 3.5).abs() < 1e-9), "{made:?}");
+
+    // Offset of a selected line: a distance typed, Enter.
+    d.tap(&mut wb, egui::Key::Escape);
+    let lines = |wb: &Workbench| wb.document().sketch(f).unwrap().entities().filter(|(_, e)| matches!(e.geometry, Geometry::Line { .. })).count();
+    let before = lines(&wb);
+    let on_line = at(&wb, 15.0, 0.0);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(on_line)]);
+    d.click(&mut wb, on_line);
+    wb.run_ui("sketch.offset").unwrap();
+    assert!(matches!(&wb.panel, Some(Panel::Value(v)) if v.title == "Offset"), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![egui::Event::Text("4".into())]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(lines(&wb), before + 1, "a line beside the one selected: {}", wb.status());
+}

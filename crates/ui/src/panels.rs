@@ -75,6 +75,10 @@ pub(crate) enum ValueFor {
         sketch: FeatureId,
         curves: Vec<EntityId>,
     },
+    /// How large the elements of a stress study are.
+    MeshSize {
+        study: tenon_model::study::StudyId,
+    },
     /// A new dimension (its value is replaced by the entered one).
     Dimension {
         sketch: FeatureId,
@@ -459,6 +463,10 @@ pub(crate) enum Panel {
     Fold(crate::sheet::FoldPanel),
     /// A box, a cylinder, a sphere or a torus, set up by clicks on a plane.
     Primitive(crate::primitive::PrimitivePanel),
+    /// Fixed, in the Stress Analysis environment: the faces that are held.
+    Support(crate::analysis::SupportPanel),
+    /// Force or Pressure, in the Stress Analysis environment.
+    Load(crate::analysis::LoadPanel),
     Value(ValuePanel),
     /// A rectangular or circular pattern of sketch geometry.
     SketchPattern(crate::sketch_tools::SketchPatternPanel),
@@ -1274,6 +1282,22 @@ impl Workbench {
                     }
                 }
             }
+            Panel::Support(p) => {
+                if commit {
+                    keep = !self.commit_support(p);
+                    if !keep && again {
+                        reopen = Some("study.fix");
+                    }
+                }
+            }
+            Panel::Load(p) => {
+                if commit {
+                    keep = !self.commit_load(p);
+                    if !keep && again {
+                        reopen = Some(if p.pressure { "study.pressure" } else { "study.force" });
+                    }
+                }
+            }
             Panel::Revolve(p) => {
                 if commit {
                     let (editing, kind) = (p.editing, p.kind());
@@ -1603,9 +1627,15 @@ impl Workbench {
                 egui::Window::new(v.title).collapsible(false).resizable(false).anchor(Align2::CENTER_TOP, [0.0, 160.0]).show(&ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(v.label);
-                        let r = ui.add(egui::DragValue::new(&mut v.value).speed(0.1));
-                        r.request_focus();
-                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        // The value box of the panels: what is typed takes the place of what
+                        // was there, and Enter is OK. It has the keyboard as soon as it is open
+                        // (given before the box is drawn: a box that finds itself with the
+                        // keyboard selects what it shows, one given it afterwards does not).
+                        let id = egui::Id::new("tn_value_box");
+                        if ui.memory(|m| m.focused().is_none()) {
+                            ui.memory_mut(|m| m.request_focus(id));
+                        }
+                        if crate::properties::eq_field(ui, id, &mut v.value, None, "mm", -1.0e9..=1.0e9, 90.0, &t).entered {
                             ok = true;
                         }
                     });
@@ -1620,6 +1650,10 @@ impl Workbench {
                 });
                 if ok {
                     let done = match &v.what {
+                        ValueFor::MeshSize { study } => {
+                            let size = if v.value > 0.0 { json!(v.value) } else { Value::Null };
+                            self.exec_status("study.mesh_size", json!({ "study": study.0, "size": size }))
+                        }
                         ValueFor::Fillet { sketch, point } => {
                             self.exec_status("sketch.fillet", json!({ "sketch": sketch.0, "point": point.0, "radius": v.value }))
                         }

@@ -5021,7 +5021,7 @@
       "id": "study.force",
       "label": "Force",
       "undoable": true,
-      "description": "A force spread over faces. study; faces: [face references]; newtons: the whole force; direction: the way it pushes, as +x, -z, top, bottom ... or [x, y, z] (default: square to each face, into it; negative newtons pull); name. Returns the study, and load: the new load's id",
+      "description": "A force spread over faces. study; faces: [face references]; newtons: the whole force; direction: the way it pushes, as +x, -z, top, bottom ... or [x, y, z] (default, or normal: square to each face, into it; negative newtons pull); name. Returns the study, and load: the new load's id",
       "params": {
         "type": "object",
         "properties": {
@@ -5046,35 +5046,45 @@
               {
                 "type": "string",
                 "enum": [
-                  "+x",
-                  "-x",
-                  "+y",
-                  "-y",
-                  "+z",
-                  "-z",
-                  "x",
-                  "y",
-                  "z",
-                  "top",
-                  "bottom",
-                  "up",
-                  "down",
-                  "left",
-                  "right",
-                  "front",
-                  "back"
+                  "normal"
                 ]
               },
               {
-                "type": "array",
-                "items": {
-                  "type": "number"
-                },
-                "minItems": 3,
-                "maxItems": 3
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "+x",
+                      "-x",
+                      "+y",
+                      "-y",
+                      "+z",
+                      "-z",
+                      "x",
+                      "y",
+                      "z",
+                      "top",
+                      "bottom",
+                      "up",
+                      "down",
+                      "left",
+                      "right",
+                      "front",
+                      "back"
+                    ]
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                ]
               }
             ],
-            "description": "the way it pushes: +x ... -z, top, bottom, left, right, front, back or [x, y, z]; default square to each face, into it"
+            "description": "the way it pushes: +x ... -z, top, bottom, left, right, front, back or [x, y, z]; default (or normal) square to each face, into it"
           },
           "name": {
             "type": "string",
@@ -5121,6 +5131,95 @@
         "required": [
           "faces",
           "megapascals"
+        ]
+      }
+    },
+    {
+      "id": "study.set",
+      "label": "Change Support or Load",
+      "undoable": true,
+      "description": "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references]; name; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "item": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the id of the support or load to change"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "the faces it is on, in place of those it had"
+          },
+          "newtons": {
+            "type": "number",
+            "description": "a force's size, N"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "normal"
+                ]
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "+x",
+                      "-x",
+                      "+y",
+                      "-y",
+                      "+z",
+                      "-z",
+                      "x",
+                      "y",
+                      "z",
+                      "top",
+                      "bottom",
+                      "up",
+                      "down",
+                      "left",
+                      "right",
+                      "front",
+                      "back"
+                    ]
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                ]
+              }
+            ],
+            "description": "a force's direction, as for study.force; normal: square to its faces"
+          },
+          "megapascals": {
+            "type": "number",
+            "description": "a pressure's size, N/mm^2"
+          },
+          "name": {
+            "type": "string",
+            "description": "its new name"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "item"
         ]
       }
     },

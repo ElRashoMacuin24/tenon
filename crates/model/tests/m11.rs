@@ -77,6 +77,25 @@ fn a_study_says_where_a_part_is_held_and_what_pushes_on_it() {
     assert!(refused(&mut s, &mut k, "study.mesh_size", json!({ "size": 0 })).contains("more than 0"));
     assert_eq!(run(&mut s, &mut k, "study.rename", json!({ "name": " End load " }))["name"], "End load");
 
+    // Changed in place: what is given takes the place of what it had, and the rest stays.
+    let changed =
+        run(&mut s, &mut k, "study.set", json!({ "item": 2, "newtons": 220, "direction": "normal", "faces": [right, top], "name": "Pull" }));
+    assert_eq!(changed["item"], 2);
+    assert_eq!(changed["loads"][0], json!({ "id": 2, "name": "Pull", "faces": 2, "type": "force", "newtons": 220.0, "direction": null }));
+    let along = run(&mut s, &mut k, "study.set", json!({ "item": 2, "direction": "+x" }));
+    assert_eq!((along["loads"][0]["direction"].clone(), along["loads"][0]["newtons"].as_f64()), (json!([1.0, 0.0, 0.0]), Some(220.0)));
+    assert_eq!(run(&mut s, &mut k, "study.set", json!({ "item": 3, "megapascals": 0.35 }))["loads"][1]["megapascals"], 0.35);
+    assert_eq!(run(&mut s, &mut k, "study.set", json!({ "item": 1, "faces": [left, top] }))["supports"][0]["faces"], 2);
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    assert_eq!(s.document().study(StudyId(1)).unwrap().supports[0].faces.len(), 1, "one undo step");
+    // What is not its to have is refused in words, and it is left as it was.
+    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 1, "newtons": 5 })).contains("is a support"));
+    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 3, "direction": "down" })).contains("is a pressure"));
+    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 2, "megapascals": 1 })).contains("is a force"));
+    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 2, "faces": [], "newtons": 1 })).contains("at least one face"));
+    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 9, "name": "x" })).contains("no support or load 9"));
+    assert!(matches!(s.document().study(StudyId(1)).unwrap().loads[0].kind, LoadKind::Force { newtons, .. } if newtons == 220.0));
+
     // What is not a load is refused in words, and nothing is added.
     assert!(refused(&mut s, &mut k, "study.force", json!({ "faces": [right], "newtons": 0 })).contains("other than 0"));
     assert!(refused(&mut s, &mut k, "study.force", json!({ "faces": [], "newtons": 5 })).contains("at least one face"));
