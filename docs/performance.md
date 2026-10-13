@@ -3,7 +3,8 @@
 What Tenon takes to rebuild, mesh, open and draw the example models; what is done to keep
 that small; and where the time that is left goes. Milestone M9 (decisions DEC-078 to
 DEC-082), and what was filled in after it: one mesh for all the components of a part
-(DEC-089) and a tree over the bodies for picking (DEC-090).
+(DEC-089), a tree over the bodies for picking (DEC-090), and a part shown at once when it is
+opened again (DEC-091).
 
 In short: Tenon's own work is about a hundredth of a rebuild or less, and the rest is the
 kernel (OpenCASCADE, OCCT). So the work of M9 was to ask the kernel for less: not to sum, mesh
@@ -21,7 +22,8 @@ under [Where OCCT is the limit](#where-occt-is-the-limit) and
   after an edit of its last feature and of one half way up its history, as the app rebuilds
   it (with what it kept from the time before); meshed again after an edit;
 - a sheet metal part laid flat;
-- an assembly opened, every part rebuilt and meshed;
+- an assembly opened, every part rebuilt and meshed; and its parts read as the app keeps them
+  for the next time they are opened;
 - a large assembly in the view: the far meshes made, the triangles drawn, the face and the
   edge under the pointer found;
 - a drawing's views worked out;
@@ -140,15 +142,23 @@ Parts of an assembly are rebuilt one after another on the worker thread, not sid
 
 ## Assemblies
 
-| Assembly | Open, rebuild and mesh every part |
-|---|---|
-| m3-pivot (5 components, 4 parts) | 14 ms |
-| m6-fittings (bolt, nozzle, spring) | 499 ms |
-| A grid of 100 bolts and nozzles (2 parts) | 348 ms |
+| Assembly | Open, rebuild and mesh every part | Read every part as it was kept |
+|---|---|---|
+| m3-pivot (5 components, 4 parts) | 14 ms | 1.3 ms |
+| m6-fittings (bolt, nozzle, spring) | 499 ms | 2.9 ms |
+| A grid of 100 bolts and nozzles (2 parts) | 348 ms | 2.4 ms |
 
 An assembly opens by rebuilding each of its part files from its features, once for each
-part and each size of it, however many components there are of it. There is no geometry
-kept on disk to open from.
+part and each size of it, however many components there are of it.
+
+**Shown at once the second time** (DEC-091). What a part comes to when the app rebuilds it
+(its scene: meshes, the names and geometry of faces and edges, mass) is kept in the user's
+cache folder, and read and shown at once when the part is opened again as it is: the last
+column. The part is still rebuilt behind what is shown, as before, and the rebuild confirms
+what was read or puts the right scene in its place; until it is done the app is busy as it
+was, and commands that need the solids wait. So what is saved is the wait for something to
+look at, not the rebuild. The folder holds 256 MB at most and can be deleted at any time
+(`TENON_SCENE_CACHE=off` keeps none).
 
 ### In the view
 
@@ -247,8 +257,11 @@ These are the kernel's own costs, measured above, that Tenon can only avoid aski
   surfaces, curves and ends, moved to where it stands): 31 kB for a bolt with its thread,
   32 MB for the 1024 components. It is what the commands that pick faces and edges read,
   all over the app; it would have to be moved when asked for instead.
-- **No geometry kept on disk.** A part is rebuilt from its features when it is opened; an
-  assembly rebuilds every part it uses.
+- **The solids are not kept on disk.** A part opened again is shown at once from what was
+  kept of it, and is rebuilt from its features all the same, behind that; an assembly
+  rebuilds every part it uses. Keeping the solids would spare the rebuild; whether they
+  belong in the part file is a question of file format (DEC-091). A drawing's views are
+  worked out afresh each time.
 - **A change in sizes on screen is not smoothed.** A body changes between its far mesh and
   its full one at once, with a gap between the two limits so that it does not flicker.
 - **Without a graphics card** the software drawing takes 0.4 s for a frame of 400
@@ -275,6 +288,7 @@ These are the kernel's own costs, measured above, that Tenon can only avoid aski
 | Meshes left out are kept aside on the card; highlights only where there are any | `crates/render/src/tests.rs` `bodies_left_out_are_kept_aside_and_highlights_are_sent_only_where_there_are_any` |
 | Picking through the index and the tree over bodies gives what trying everything gives, for one mesh standing in many places | `crates/render/src/tests.rs` `picking_with_the_index_gives_what_trying_everything_gives`, `a_mesh_standing_somewhere_is_picked_as_a_copy_moved_there_is`; `crates/kernel/src/index.rs` |
 | One mesh on the card for every body drawn from it, each where it stands | `crates/render/src/tests.rs` `gpu_viewport_renders_when_an_adapter_exists` |
+| A part opened again is shown from what was kept of it, and the rebuild confirms it or puts it right | `crates/io/tests/scenes.rs` `a_part_opened_again_is_shown_at_once_from_what_was_kept_and_the_rebuild_confirms_it`; `crates/io/src/scenes.rs` (read back to the last bit; damaged files; the folder's limit); `crates/ui/src/asm_tests.rs` `an_assembly_opened_again_is_shown_from_what_was_kept_of_its_parts` |
 | The components of a part share its mesh | `crates/ui/src/asm_tests.rs` `a_large_assembly_is_drawn_by_level_of_detail` (a hundred components, two meshes) |
 | A large assembly in the app: levels, picking and an idle frame within budget | `crates/ui/src/asm_tests.rs` `a_large_assembly_is_drawn_by_level_of_detail` |
 | The browser lays out only the rows in sight | `crates/ui/src/asm_tests.rs` `the_browser_of_a_large_assembly_lays_out_only_the_rows_in_sight` |

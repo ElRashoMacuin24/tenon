@@ -187,6 +187,12 @@ The UI thread never calls the kernel in the app. It sends a snapshot whenever th
 changes, including live Extrude/Revolve previews, and keeps drawing the last `Scene` until the
 new one arrives.
 
+A part that is as it is on disk is shown at once from what was kept of it the last time it
+was rebuilt (a scene in the user's cache folder, `tenon_io::scenes`, DEC-091): the worker
+reports that first (`Response::Early`), rebuilds as ever, and then says that the rebuild came
+to the same (`Response::Confirmed`) or sends the scene it did come to. What is kept is never
+relied on for longer than a rebuild takes.
+
 The worker keeps one slot per document: slot 0 is the part being edited, and each part of an open
 assembly has its own slot. An edit cancels only its own slot's regeneration. A preview (a value
 being dragged or typed into a feature panel) never cancels: it waits, and only the latest waiting

@@ -36,6 +36,7 @@ mod layout;
 pub mod meshcheck;
 pub mod print;
 pub mod project;
+pub mod scenes;
 pub mod schemas;
 pub mod steps;
 pub mod stl;

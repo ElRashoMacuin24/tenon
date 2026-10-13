@@ -228,6 +228,7 @@ fn flat(rows: &mut Vec<Row>, make: Make, model: &str, doc: &Document, budget: f6
 fn assembly(rows: &mut Vec<Row>, make: Make, model: &str, file: &Path, budget: f64) -> Result<usize, String> {
     let mut took = Vec::new();
     let mut components = 0;
+    let mut last = None;
     for _ in 0..3 {
         let mut e = Engine::new(make(), file.parent().unwrap_or(Path::new(".")));
         let t = Instant::now();
@@ -235,8 +236,43 @@ fn assembly(rows: &mut Vec<Row>, make: Make, model: &str, file: &Path, budget: f
         e.asm.refresh(e.kernel.as_mut())?;
         took.push(ms(t));
         components = e.asm.assembly().components.len();
+        last = Some(e);
     }
     rows.push(Row { group: "assembly", model: model.to_owned(), what: "open, rebuild and mesh every part", value: median(took), unit: "ms", budget });
+    // The same parts read from what was kept of them when they were last rebuilt: what the
+    // app shows of an assembly that is opened again, while it rebuilds the parts behind that
+    // (DEC-091).
+    if let Some(e) = &last {
+        use tenon_model::worker::SceneStore;
+        let dir = std::env::temp_dir().join(format!("tenon-bench-scenes-{}", std::process::id()));
+        let store = tenon_io::scenes::SceneFiles::at(&dir);
+        let tol = tenon_kernel::MeshTol::default();
+        let parts: Vec<_> = e.asm.parts.values().filter_map(|p| Some((p.session.document(), p.scene.as_ref()?.1.as_ref()))).collect();
+        for (doc, scene) in &parts {
+            store.put(doc, &tol, true, scene);
+        }
+        let mut took = Vec::new();
+        for _ in 0..5 {
+            let t = Instant::now();
+            let read: Vec<_> = parts.iter().map(|(doc, _)| store.get(doc, &tol, true)).collect();
+            took.push(ms(t));
+            for ((doc, scene), kept) in parts.iter().zip(read) {
+                if !kept.is_some_and(|kept| kept.same_as(scene)) {
+                    let _ = std::fs::remove_dir_all(&dir);
+                    return Err(format!("{model}: what was kept of {} did not read back as it was", doc.name));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        rows.push(Row {
+            group: "assembly",
+            model: model.to_owned(),
+            what: "read every part as it was kept",
+            value: median(took),
+            unit: "ms",
+            budget: 100.0,
+        });
+    }
     Ok(components)
 }
 

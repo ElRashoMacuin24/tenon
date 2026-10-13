@@ -226,6 +226,12 @@ fn main() -> eframe::Result {
             {
                 eprintln!("warning: {e}");
             }
+            // What parts looked like when last rebuilt is kept in the user's cache folder, to
+            // show them at once when they are opened again. (Not in a screenshot run, which
+            // must be the same picture whatever was done on the machine before.)
+            if screenshot.is_none() {
+                wb.keep_scenes_in_cache();
+            }
             // The control port: off unless asked for, and never in a screenshot run.
             let mut announced = None;
             if let (Some(port), None) = (control, &screenshot) {

@@ -88,6 +88,9 @@ pub(crate) struct AsmDoc {
     pub editing: Option<Editing>,
     pub exploded: bool,
     pub show_dof: bool,
+    /// The worker's slots whose parts are shown from what was kept of them and are still
+    /// being rebuilt: until they are, the assembly is not done.
+    pub unconfirmed: std::collections::BTreeSet<u64>,
     pub selected: Vec<ComponentId>,
     pub hover: Option<ComponentId>,
     pub drag: Option<Drag>,
@@ -122,6 +125,7 @@ impl AsmDoc {
             editing: None,
             exploded: false,
             show_dof: false,
+            unconfirmed: std::collections::BTreeSet::new(),
             selected: Vec::new(),
             hover: None,
             drag: None,
@@ -447,7 +451,12 @@ impl Workbench {
                     if let Some(slot) = a.slots.get_mut(key)
                         && slot.1 != Some(rev)
                     {
-                        w.regenerate_slot(slot.0, rev, p.session.document().clone(), false);
+                        // (A part as it is on disk is shown at once from what was kept of it.)
+                        if self.scenes_kept && !p.session.is_dirty() {
+                            w.regenerate_kept(slot.0, rev, p.session.document().clone());
+                        } else {
+                            w.regenerate_slot(slot.0, rev, p.session.document().clone(), false);
+                        }
                         slot.1 = Some(rev);
                         self.waiting = true;
                     }
@@ -457,7 +466,7 @@ impl Workbench {
         }
         let Some(a) = self.asm.as_mut() else { return };
         let all_current = a.session.parts.iter().all(|(k, p)| p.is_current() || editing.as_ref() == Some(k));
-        if all_current && matches!(self.geo, Geo::Worker(_)) {
+        if all_current && a.unconfirmed.is_empty() && matches!(self.geo, Geo::Worker(_)) {
             self.waiting = false;
         }
         if a.needs_update && all_current && editing.is_none() {
@@ -478,6 +487,25 @@ impl Workbench {
         self.asm_panel_preview();
         if self.in_assembly() {
             self.flatten();
+        }
+    }
+
+    /// What was kept of a part from when it was last rebuilt arrived (it is being rebuilt
+    /// now): shown like any scene of it, and waited for until the rebuild is done.
+    pub(crate) fn asm_early(&mut self, slot: u64, revision: u64, scene: Scene) {
+        if self.asm_scene(slot, revision, scene)
+            && let Some(a) = self.asm.as_mut()
+        {
+            a.unconfirmed.insert(slot);
+            self.early_scenes += 1;
+        }
+    }
+
+    /// The rebuild of the part in `slot` is done (and came to what was shown, or sent
+    /// something else, or failed).
+    pub(crate) fn asm_rebuilt(&mut self, slot: u64) {
+        if let Some(a) = self.asm.as_mut() {
+            a.unconfirmed.remove(&slot);
         }
     }
 

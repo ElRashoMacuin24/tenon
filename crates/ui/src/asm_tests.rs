@@ -953,3 +953,86 @@ fn large_assembly_on_the_graphics_card() {
         }
     }
 }
+
+/// The app as it runs (the kernel on its own thread), keeping scenes in `cache`, with `file`
+/// opened and everything it started done.
+fn opened_keeping_scenes(cache: &Path, file: &Path) -> (Workbench, Driver) {
+    let mut wb = Workbench::new(|| Box::new(OcctKernel::new()) as Box<dyn tenon_kernel::Kernel>, None, crate::Services::default());
+    let mut d = Driver::new(vec2(1200.0, 800.0));
+    wb.keep_scenes(cache);
+    wb.open(file).unwrap();
+    for _ in 0..60_000 {
+        d.frame(&mut wb, vec![]);
+        if wb.is_settled() {
+            return (wb, d);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    panic!("{} was never done", file.display());
+}
+
+fn kept_scenes(cache: &Path) -> usize {
+    std::fs::read_dir(cache).map_or(0, |d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "scene")).count())
+}
+
+#[test]
+fn an_assembly_opened_again_is_shown_from_what_was_kept_of_its_parts() {
+    let file = pivot("kept-pivot");
+    let cache = scratch("kept-pivot-scenes");
+    // The first time every part is rebuilt, and what each comes to is kept.
+    let (wb, _) = opened_keeping_scenes(&cache, &file);
+    assert_eq!(wb.early_scenes, 0);
+    let first = wb.scene().bodies.clone();
+    assert_eq!(first.len(), 5);
+    drop(wb);
+    assert_eq!(kept_scenes(&cache), 4, "five components of four parts");
+
+    // Opened again in another run of the program: each part is shown from what was kept of
+    // it, and the assembly is the same to the last number once the parts are rebuilt (which
+    // is what `is_settled` waits for: until then commands that need the solids wait too).
+    let (wb, _) = opened_keeping_scenes(&cache, &file);
+    assert_eq!(wb.early_scenes, 4);
+    assert_eq!(wb.scene().bodies, first);
+    assert!(wb.asm.as_ref().unwrap().unconfirmed.is_empty() && !wb.is_busy());
+    // (The two pins are still one mesh.)
+    let meshes: std::collections::BTreeSet<*const tenon_kernel::Mesh> = wb.scene().bodies.iter().map(|b| std::sync::Arc::as_ptr(&b.mesh)).collect();
+    assert_eq!(meshes.len(), 4);
+    drop(wb);
+
+    // A part that was changed since is not found among what was kept: it is rebuilt, the
+    // others are shown as before.
+    let block = file.with_file_name("block.tenon");
+    let (doc, extra) = tenon_io::project::open(&block).unwrap();
+    let mut s = Session::new(doc);
+    s.exec("document.rename", &json!({ "name": "Block, renamed" }), None).unwrap();
+    tenon_io::project::save(&block, s.document(), &extra).unwrap();
+    let (wb, _) = opened_keeping_scenes(&cache, &file);
+    assert_eq!(wb.early_scenes, 3);
+    assert_eq!(wb.scene().bodies, first, "a new name is the same solid");
+    drop(wb);
+    assert_eq!(kept_scenes(&cache), 5, "the block as it is now is kept too");
+
+    // A part on its own likewise: rebuilt and kept the first time, shown at once the second.
+    let arm = file.with_file_name("arm.tenon");
+    let (wb, _) = opened_keeping_scenes(&cache, &arm);
+    assert_eq!(wb.early_scenes, 0, "a part on its own is kept apart from the part of an assembly (no mesh for drawing from far away)");
+    let alone = wb.scene().bodies.clone();
+    drop(wb);
+    let (mut wb, mut d) = opened_keeping_scenes(&cache, &arm);
+    assert_eq!(wb.early_scenes, 1);
+    assert_eq!(wb.scene().bodies, alone);
+    assert!(!wb.waiting);
+    // Once it is changed it is no longer the part on disk: rebuilt, with nothing shown early
+    // and nothing kept of what is only being tried.
+    let kept = kept_scenes(&cache);
+    wb.exec("document.rename", json!({ "name": "Arm, being worked on" })).unwrap();
+    for _ in 0..60_000 {
+        d.frame(&mut wb, vec![]);
+        if wb.is_settled() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!((wb.early_scenes, kept_scenes(&cache)), (1, kept));
+    assert_eq!(wb.scene().bodies, alone);
+}

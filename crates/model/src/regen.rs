@@ -95,7 +95,7 @@ pub struct ThreadMark {
 }
 
 /// Where a work feature is.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WorkGeom {
     Plane(Frame),
     Axis(Axis),
@@ -1745,14 +1745,16 @@ fn corners(b: &Aabb3) -> [Vec3; 8] {
 }
 
 /// Display data of one body.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BodyView {
     /// The body's triangles and edge lines, in the coordinates of `at`. Shared: every
     /// component of a part in an assembly is drawn and picked from the one mesh of its part
-    /// (DEC-089).
+    /// (DEC-089). (Written out apart from the rest, as numbers and not as text.)
+    #[serde(skip)]
     pub mesh: Arc<Mesh>,
     /// The body as drawn from far away: a much coarser mesh with the same faces and edges,
     /// where one was made ([`far_meshes`]: for the parts of an assembly, where it pays).
+    #[serde(skip)]
     pub far: Option<Arc<Mesh>>,
     /// Where the meshes stand in the scene: the frame their coordinates are in. None: they
     /// are in the scene's own coordinates (a part on its own). Everything else here (faces,
@@ -1796,14 +1798,14 @@ impl BodyView {
 
 /// A thread and where its face is among the bodies shown: (body, face), when the face is still
 /// there.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ThreadView {
     pub mark: ThreadMark,
     pub at: Option<(usize, u32)>,
 }
 
 /// Everything the UI needs to draw a regeneration result (no kernel handles).
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Scene {
     pub bodies: Vec<BodyView>,
     pub status: Vec<(FeatureId, FeatureStatus)>,
@@ -1825,6 +1827,19 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// Whether this is the same as `other` in everything but how long it took to make: what
+    /// is shown, picked and measured of the two cannot be told apart.
+    pub fn same_as(&self, other: &Scene) -> bool {
+        self.bodies == other.bodies
+            && self.status == other.status
+            && self.sketch_frames == other.sketch_frames
+            && self.sketches == other.sketches
+            && self.lost == other.lost
+            && self.work == other.work
+            && self.threads == other.threads
+            && self.far == other.far
+    }
+
     /// Every body's mesh with where it stands, in the order of the bodies.
     pub fn placed(&self) -> Vec<Placed<'_>> {
         self.bodies.iter().map(BodyView::placed).collect()

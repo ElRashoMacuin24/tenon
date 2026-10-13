@@ -84,6 +84,10 @@ pub struct Workbench {
     sent_revision: Option<u64>,
     seq: u64,
     pub(crate) waiting: bool,
+    /// Scenes are kept between runs of the program ([`Workbench::keep_scenes`]).
+    pub(crate) scenes_kept: bool,
+    /// How many parts have been shown from what was kept of them (tests).
+    pub(crate) early_scenes: u64,
     pub(crate) regen_note: Option<String>,
     /// The feature failure the status bar shows, until a rebuild without it.
     failure_shown: Option<String>,
@@ -151,6 +155,8 @@ impl Workbench {
             sent_revision: None,
             seq: 0,
             waiting: false,
+            scenes_kept: false,
+            early_scenes: 0,
             regen_note: None,
             failure_shown: None,
             view: View::default(),
@@ -225,6 +231,23 @@ impl Workbench {
     pub fn set_theme(&mut self, name: theme::ThemeName) {
         self.chrome.theme = name;
     }
+    /// Keeps, in `dir`, what each part looks like when it has been rebuilt, and shows a part
+    /// that is opened again at once from what was kept, while it is rebuilt behind that
+    /// (DEC-091). Only with the kernel on its own thread, as the app has it.
+    pub fn keep_scenes(&mut self, dir: &std::path::Path) {
+        if let Geo::Worker(w) = &self.geo {
+            w.keep_scenes(Box::new(tenon_io::scenes::SceneFiles::at(dir)));
+            self.scenes_kept = true;
+        }
+    }
+
+    /// [`Workbench::keep_scenes`], in the user's cache folder (where there is one).
+    pub fn keep_scenes_in_cache(&mut self) {
+        if let Some(dir) = tenon_io::scenes::SceneFiles::default_dir() {
+            self.keep_scenes(&dir);
+        }
+    }
+
     /// Shows an error in the status bar.
     pub fn report_error(&mut self, message: impl Into<String>) {
         self.set_error(message);
@@ -711,7 +734,20 @@ impl Workbench {
         for r in responses {
             match r {
                 Response::Scene { slot, revision, scene } if slot != 0 => {
+                    self.asm_rebuilt(slot);
                     self.asm_scene(slot, revision, *scene);
+                }
+                // What was kept of a part from when it was last rebuilt: shown at once, and
+                // still waited for (commands that need the solid wait for the rebuild, which
+                // confirms what is shown or sends another scene).
+                Response::Early { slot, revision, scene } if slot != 0 => self.asm_early(slot, revision, *scene),
+                Response::Confirmed { slot, .. } if slot != 0 => self.asm_rebuilt(slot),
+                Response::Early { revision, scene, .. } if revision == self.seq && !assembly => {
+                    self.early_scenes += 1;
+                    self.set_scene(*scene);
+                }
+                Response::Confirmed { slot: 0, revision } if revision == self.seq && !assembly => {
+                    self.waiting = false;
                 }
                 Response::Scene { revision, scene, .. } if revision == self.seq && !assembly => {
                     self.waiting = false;
@@ -722,6 +758,7 @@ impl Workbench {
                     self.regen_note = Some(message);
                 }
                 Response::Failed { slot, message, .. } if slot != 0 => {
+                    self.asm_rebuilt(slot);
                     self.regen_note = Some(message);
                 }
                 Response::Step { request, result } => {
@@ -798,7 +835,16 @@ impl Workbench {
                     // The document itself unchanged (a value being dragged or typed into a
                     // panel): a preview, which does not cut short the one being computed.
                     let edit = self.sent_revision != Some(self.session.revision());
-                    if edit || fresh {
+                    // A part as it is on disk (just opened, nothing being set up): what was
+                    // kept of it is shown at once, and what it comes to is kept.
+                    let as_saved = self.scenes_kept
+                        && self.path.is_some()
+                        && !self.session.is_dirty()
+                        && self.panel.is_none()
+                        && matches!(self.mode, Mode::Model);
+                    if edit && !fresh && as_saved {
+                        w.regenerate_kept(0, self.seq, doc.clone());
+                    } else if edit || fresh {
                         w.regenerate(self.seq, doc.clone(), fresh);
                     } else {
                         w.preview(self.seq, doc.clone());

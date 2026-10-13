@@ -20,17 +20,34 @@ use crate::Document;
 use crate::measure::{Entity, Measurement, measure};
 use crate::regen::{Regen, RegenCache, Scene, far_meshes, regenerate, regenerate_with, scene};
 
+/// Scenes kept from one run of the program to the next: what a part looked like when it was
+/// last rebuilt, to be shown at once when it is opened again, while it is rebuilt behind that
+/// (DEC-091). What is kept is only ever shown until the rebuild is done, which confirms it or
+/// puts what is right in its place.
+pub trait SceneStore: Send {
+    /// The scene kept for `doc` meshed to `tol` (`far`: with its meshes for drawing from far
+    /// away), if there is one.
+    fn get(&self, doc: &Document, tol: &MeshTol, far: bool) -> Option<Scene>;
+    /// Keeps `scene` as what `doc` comes to.
+    fn put(&self, doc: &Document, tol: &MeshTol, far: bool, scene: &Scene);
+}
+
 /// Work a job does with the kernel and the slots' last results (by slot).
 pub type Job = Box<dyn FnOnce(&mut dyn Kernel, &BTreeMap<u64, Regen>) -> Box<dyn Any + Send> + Send>;
 
 enum Request {
-    /// `fresh`: from scratch, not from the last checkpoint (Rebuild All).
+    /// `fresh`: from scratch, not from the last checkpoint (Rebuild All). `kept`: the
+    /// document is as it is on disk, so what was kept of it may be shown first, and what it
+    /// comes to is kept.
     Regenerate {
         slot: u64,
         revision: u64,
         doc: Box<Document>,
         fresh: bool,
+        kept: bool,
     },
+    /// Where scenes are kept from now on.
+    Keep(Box<dyn SceneStore>),
     ExportStep {
         request: u64,
         doc: Box<Document>,
@@ -57,6 +74,11 @@ pub enum Response {
     /// The scene of document revision `revision` in `slot` (feature errors are inside
     /// `scene.status`).
     Scene { slot: u64, revision: u64, scene: Box<Scene> },
+    /// What was kept of the document of `revision` in `slot` from when it was last rebuilt,
+    /// to show while it is rebuilt now: `Confirmed` or `Scene` follows.
+    Early { slot: u64, revision: u64, scene: Box<Scene> },
+    /// The rebuild of `revision` in `slot` came to what [`Response::Early`] showed.
+    Confirmed { slot: u64, revision: u64 },
     /// Regeneration of `revision` could not produce a scene at all.
     Failed { slot: u64, revision: u64, message: String },
     /// STEP data of the bodies of a document snapshot.
@@ -71,6 +93,8 @@ impl std::fmt::Debug for Response {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Response::Scene { slot, revision, .. } => write!(f, "Scene(slot {slot}, revision {revision})"),
+            Response::Early { slot, revision, .. } => write!(f, "Early(slot {slot}, revision {revision})"),
+            Response::Confirmed { slot, revision } => write!(f, "Confirmed(slot {slot}, revision {revision})"),
             Response::Failed { slot, revision, message } => write!(f, "Failed(slot {slot}, revision {revision}: {message})"),
             Response::Step { request, .. } => write!(f, "Step({request})"),
             Response::Measure { request, .. } => write!(f, "Measure({request})"),
@@ -104,6 +128,9 @@ fn bodies(r: &Regen) -> Vec<ShapeHandle> {
 struct Slots {
     current: BTreeMap<u64, Regen>,
     caches: BTreeMap<u64, RegenCache>,
+    /// What was shown of a slot from the store, until its rebuild is done.
+    early: BTreeMap<u64, Scene>,
+    store: Option<Box<dyn SceneStore>>,
 }
 
 impl Slots {
@@ -116,6 +143,7 @@ impl Slots {
         }
         self.current.clear();
         self.caches.clear();
+        self.early.clear();
     }
     fn drop_slot(&mut self, k: &mut dyn Kernel, slot: u64) {
         if let Some(mut r) = self.current.remove(&slot) {
@@ -124,6 +152,7 @@ impl Slots {
         if let Some(mut c) = self.caches.remove(&slot) {
             c.release(k);
         }
+        self.early.remove(&slot);
     }
 }
 
@@ -168,7 +197,8 @@ impl Worker {
                 let Some(req) = pending.pop_front() else { continue };
                 match req {
                     Request::Shutdown => break,
-                    Request::Regenerate { slot, revision, doc, fresh } => {
+                    Request::Keep(store) => slots.store = Some(store),
+                    Request::Regenerate { slot, revision, doc, fresh, kept } => {
                         // Only the newest regeneration of a slot matters, unless something else
                         // was asked for in between (it must see this one).
                         let newer = pending.iter_mut().take_while(|r| matches!(r, Request::Regenerate { .. })).find_map(|r| match r {
@@ -181,12 +211,12 @@ impl Worker {
                             continue;
                         }
                         running.store(slot, Ordering::SeqCst);
-                        let done = Self::run_regen(&mut *k, &mut slots, slot, revision, &doc, fresh, &tol, &token, &send);
+                        let done = Self::run_regen(&mut *k, &mut slots, slot, revision, &doc, fresh, kept, &tol, &token, &send);
                         running.store(IDLE, Ordering::SeqCst);
                         if !done {
                             // Cancelled: a newer request for this slot is coming; if not, this
                             // one runs again.
-                            pending.push_front(Request::Regenerate { slot, revision, doc, fresh });
+                            pending.push_front(Request::Regenerate { slot, revision, doc, fresh, kept });
                         }
                     }
                     other => Self::handle(&mut *k, &mut slots, other, &token, &send),
@@ -205,11 +235,22 @@ impl Worker {
         revision: u64,
         doc: &Document,
         fresh: bool,
+        kept: bool,
         tol: &MeshTol,
         token: &CancelToken,
         send: &dyn Fn(Response),
     ) -> bool {
         token.reset();
+        // A slot that shows nothing yet shows at once what was kept of this document when it
+        // was last rebuilt; the rebuild below then confirms it or puts it right.
+        if kept
+            && !slots.current.contains_key(&slot)
+            && !slots.early.contains_key(&slot)
+            && let Some(early) = slots.store.as_ref().and_then(|s| s.get(doc, tol, slot != 0))
+        {
+            send(Response::Early { slot, revision, scene: Box::new(early.clone()) });
+            slots.early.insert(slot, early);
+        }
         if let Some(mut old) = slots.current.remove(&slot) {
             old.release(k);
         }
@@ -232,8 +273,15 @@ impl Worker {
             s
         });
         slots.current.insert(slot, regen);
+        let early = slots.early.remove(&slot);
         match result {
-            Ok(s) => send(Response::Scene { slot, revision, scene: Box::new(s) }),
+            Ok(s) if early.as_ref().is_some_and(|e| e.same_as(&s)) => send(Response::Confirmed { slot, revision }),
+            Ok(s) => {
+                if kept && let Some(store) = &slots.store {
+                    store.put(doc, tol, slot != 0, &s);
+                }
+                send(Response::Scene { slot, revision, scene: Box::new(s) });
+            }
             Err(message) => send(Response::Failed { slot, revision, message }),
         }
         true
@@ -264,7 +312,7 @@ impl Worker {
                 send(Response::Job { request, result });
             }
             Request::Drop { slot } => slots.drop_slot(k, slot),
-            Request::Regenerate { .. } | Request::Shutdown => {}
+            Request::Regenerate { .. } | Request::Keep(_) | Request::Shutdown => {}
         }
     }
 
@@ -281,7 +329,23 @@ impl Worker {
         if self.running.load(Ordering::SeqCst) == slot {
             self.cancel.cancel();
         }
-        let _ = self.tx.send(Request::Regenerate { slot, revision, doc: Box::new(doc), fresh });
+        let _ = self.tx.send(Request::Regenerate { slot, revision, doc: Box::new(doc), fresh, kept: false });
+    }
+
+    /// Regenerates `doc` in `slot`, a document that is as it is on disk (just opened, or a
+    /// part of an assembly that has not been changed): if a scene was kept of it
+    /// ([`Worker::keep_scenes`]) and the slot shows nothing yet, that is reported first
+    /// ([`Response::Early`]), and what the rebuild comes to is kept for the next time.
+    pub fn regenerate_kept(&self, slot: u64, revision: u64, doc: Document) {
+        if self.running.load(Ordering::SeqCst) == slot {
+            self.cancel.cancel();
+        }
+        let _ = self.tx.send(Request::Regenerate { slot, revision, doc: Box::new(doc), fresh: false, kept: true });
+    }
+
+    /// Where scenes are kept between runs of the program, from now on.
+    pub fn keep_scenes(&self, store: Box<dyn SceneStore>) {
+        let _ = self.tx.send(Request::Keep(store));
     }
 
     /// Regenerates a preview of `doc` in slot 0 (a feature being set up, a value being dragged)
@@ -289,7 +353,7 @@ impl Worker {
     /// waiting preview runs. A stream of previews (one per frame of a drag) so shows a result
     /// every regeneration instead of none until the stream stops.
     pub fn preview(&self, revision: u64, doc: Document) {
-        let _ = self.tx.send(Request::Regenerate { slot: 0, revision, doc: Box::new(doc), fresh: false });
+        let _ = self.tx.send(Request::Regenerate { slot: 0, revision, doc: Box::new(doc), fresh: false, kept: false });
     }
 
     /// The slot being regenerated at this moment, if one is.

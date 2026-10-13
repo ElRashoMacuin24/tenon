@@ -2256,3 +2256,55 @@ same distance, the one of the earlier body is still the one found.
 With 1024 components: a face in 0.025 ms for 0.17, an edge in 1.7 ms for 2.8. What is left
 of the edge's time is not the bodies: a long edge (a thread's helix) is gone through point
 by point in every body whose box the pointer is over.
+
+## DEC-091 What a part looked like is kept on disk, and shown at once when it is opened again (2026-10-12)
+
+The third thing M9's report listed as not done: a part is rebuilt from its features when it
+is opened, an assembly rebuilds every part it uses, and until then there is nothing to see.
+The fittings example shows nothing for half a second; an assembly of thirty ordinary parts
+would for several.
+
+**What is kept.** When the app has rebuilt a part that is as it is on disk (just opened, or
+a part of an assembly that has not been changed), it writes what the part came to into the
+user's cache folder: the scene, which is everything the window shows and picks of the part
+(meshes, the names and geometry of faces and edges, mass, the features' status). When the
+part is opened again the scene is read and shown at once: 1 to 3 ms for the parts of the
+example assemblies, where rebuilding them takes 14 to 500.
+
+**It is never trusted.** The part is still rebuilt, behind what is shown, exactly as before.
+When the rebuild is done it is compared with what was shown: the same (as it has been in
+every case tried: a rebuild comes to the same scene to the last bit of every number), and
+nothing changes on the screen; different, and the right scene takes its place and is what
+is kept from then on. So a wrong or stale file can show a wrong picture only for as long as
+the rebuild takes, which is how long there was nothing to see before. Until the rebuild is
+done the app is busy as it was: commands that need the solid wait for it, and a picture
+taken of the window waits for it.
+
+**Found by what the document says.** A file's name is a sum over the part as its file
+would say it, how finely it is meshed, whether it carries meshes for drawing from far away,
+and which build of the program wrote it (its version, and the size and date of the program
+file). A part that changed, or another build of Tenon, finds nothing and writes its own.
+The file ends with a sum over its bytes; one that is cut short or damaged is no scene and is
+deleted. Numbers are written so that they read back to the last bit (the meshes as plain
+numbers, the rest as JSON with exact reading of numbers, which the workspace already had
+on).
+
+**Not a file format.** It lives in the cache folder (`%LOCALAPPDATA%\Tenon\cache\scenes`,
+`~/Library/Caches/Tenon/scenes`, `$XDG_CACHE_HOME/tenon/scenes`; `TENON_SCENE_CACHE` names
+another folder or, with `off`, none), holds 256 MB at most (the files unused longest go
+first), and can be deleted at any time. Nothing reads it but the app that wrote it. Part,
+assembly and drawing files are unchanged. It is off in tests unless a test turns it on, and
+in screenshot runs, which must give the same picture whatever was done on the machine
+before.
+
+**Considered.** Keeping the solids themselves (the kernel can write a shape with its
+triangles) would spare the rebuild and not only the wait for a picture: an assembly would
+open without any part being rebuilt until it is edited. That needs the kernel's own format
+read back with the names of every face, a way to tell that what was read is still right
+without rebuilding, and a decision on whether it belongs in the part file (as other CAD
+systems have it), which is a change of file format and the owner's to make. What is done
+here needs none of that and cannot show a wrong part for longer than a rebuild takes.
+
+**Not done.** Drawings: their views are worked out afresh each time. The command line:
+it rebuilds, as it must to do anything with the solids. A part being worked on: only parts
+as they are on disk are kept, not every state a part passes through while it is edited.
