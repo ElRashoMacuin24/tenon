@@ -161,7 +161,8 @@ Off unless the app is started with `--control [PORT]` (without a port, any that 
   request without it is refused, whoever on the machine sends it, before anything is looked at.
 - The app writes the port and the token to a file in the user's own settings folder, where
   `--attach` finds them, and takes the file away when it closes. On Unix the file is readable
-  by the user alone (mode 0600). The token is not printed.
+  by the user alone (mode 0600). The token is not printed (unless there is no settings folder
+  to write it in, when printing it is the only way left to say it).
   - Windows: `%APPDATA%\Tenon\control.json`
   - macOS: `~/Library/Application Support/Tenon/control.json`
   - elsewhere: `$XDG_RUNTIME_DIR/tenon/control.json`, or under `$XDG_CONFIG_HOME` (or

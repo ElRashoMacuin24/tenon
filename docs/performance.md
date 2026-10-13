@@ -266,9 +266,13 @@ These are the kernel's own costs, measured above, that Tenon can only avoid aski
   its full one at once, with a gap between the two limits so that it does not flicker.
 - **Without a graphics card** the software drawing takes 0.4 s for a frame of 400
   components. It is the fallback, and is drawn only when something changes.
-- **Finding an edge under the pointer** goes through every point of a long edge whose box
-  the pointer is over (a thread's helix, in each bolt near the pointer): most of the 1.7 ms
-  with 1024 components. A tree over the points of long edges would end that.
+- **Finding an edge under the pointer in a crowded view.** With 1024 components each a few
+  dozen pixels across, some 1,800 stretches of edges lie within reach of the pointer (a
+  bolt with its thread is 3,050 edge points in thirty pixels), and each is put on the
+  screen: 1.2 of the 1.5 ms, measured. Looking for edges in the mesh a small body is drawn
+  from (its far mesh, with a fraction of the points) would cut that; edges are still looked
+  for in the full mesh. On a part that fills the view an edge is found in 10 to 40
+  microseconds.
 - **An idle frame's own work grows with the components** (1.4 microseconds each): how each
   is drawn, its colours and what it is are worked out afresh every frame.
 - **Budgets are loose** (four times the slowest platform), for want of a machine of our own

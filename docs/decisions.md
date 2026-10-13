@@ -2156,7 +2156,7 @@ its own engine (`Host`), so every tool works the same in both places.
 - Off unless asked for, at each start. Never in a screenshot run.
 - Loopback only, and every request carries a token of 128 bits made at start-up. It is written
   to a file in the user's settings folder (mode 0600 on Unix) for `--attach` to find, taken
-  away on exit, and not printed.
+  away on exit, and not printed (unless that file cannot be written).
 - The token comes from the standard library's hasher keys, which it takes from the system's
   random numbers on the three platforms. That is the standard library's practice and not its
   promise; were it to change, the `getrandom` crate is the replacement. It was not added now
@@ -2254,8 +2254,14 @@ sides (`picking_with_the_index_gives_what_trying_everything_gives`). Of two face
 same distance, the one of the earlier body is still the one found.
 
 With 1024 components: a face in 0.025 ms for 0.17, an edge in 1.7 ms for 2.8. What is left
-of the edge's time is not the bodies: a long edge (a thread's helix) is gone through point
-by point in every body whose box the pointer is over.
+of the edge's time is not the bodies. Measured: where each component is a few dozen pixels
+across, some 1,800 stretches of edges lie within reach of the pointer, and putting each on
+the screen is 1.2 ms of it; the 34 of them tried for being hidden take 0.3.
+
+(This paragraph first said the time went on long edges, a thread's helix gone through point
+by point. That was a guess, and wrong: the longest edge of the bolt has 46 points. Boxes over
+runs of a long edge's points were tried on the strength of it, changed nothing that could
+be measured, and were taken out again.)
 
 ## DEC-091 What a part looked like is kept on disk, and shown at once when it is opened again (2026-10-12)
 

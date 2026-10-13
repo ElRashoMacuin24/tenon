@@ -17,6 +17,12 @@ undo step (DEC-085); MCP tools to find, repair and look, and a log of what was d
 and an agent working in the running app, where each step shows in the window and is undone
 like any other (DEC-087). See [docs/mcp.md](docs/mcp.md).
 
+With it, at the owner's word ("start filling in the gaps"), the three things M9's report
+listed as not done: one mesh for all the components of a part (DEC-089), a tree over the
+bodies for what is under the pointer (DEC-090), and a part shown at once when it is opened
+again, from what was kept of it on disk (DEC-091). They are in the M9 table below, with what
+each still leaves.
+
 **M9** performance was started 2026-10-12 (DEC-077), completed and confirmed by the owner the
 same day: benchmarks on the example models with budgets
 that CI holds (`tenon-cli bench`, a step of `cargo xtask ci`); the kernel asked only for what
@@ -421,7 +427,8 @@ edges), `corner_seam`, `corner_rip`, `bend`, `sharp_bend`, `fold`, `cut_normal` 
 
 ## M9 performance
 
-Complete 2026-10-12 and confirmed by the owner. Decisions: DEC-077 to DEC-082. The
+Complete 2026-10-12 and confirmed by the owner. Decisions: DEC-077 to DEC-082, and DEC-089
+to DEC-091 for what was filled in afterwards. The
 numbers, how they are measured, where OCCT is the limit and what is not done:
 [docs/performance.md](docs/performance.md). No change to files: format version 2 stands.
 
@@ -436,7 +443,7 @@ numbers, how they are measured, where OCCT is the limit and what is not done:
 | What is under the pointer found without trying every triangle | done | DEC-079. An index kept with each mesh; the same answers to the bit (`picking_with_the_index_gives_what_trying_everything_gives`, `the_index_finds_what_trying_every_triangle_finds`, `a_changed_mesh_gets_a_new_index_and_a_copy_starts_without`). 400 components: a face in 0.05 ms for 84, an edge in 1.4 ms for 695 |
 | A frame of a large assembly | done | DEC-081. The browser lays out only the rows in sight (`the_browser_of_a_large_assembly_lays_out_only_the_rows_in_sight`); components found by halving, highlights sent straight to their bodies. An idle frame with 400 components 0.55 ms for 1.4; held under 16 ms in `a_large_assembly_is_drawn_by_level_of_detail` |
 | One mesh for all the components of a part, in memory and on the graphics card (filled in after M9, at the owner's word) | done | DEC-089. A body is its mesh, shared, and where it stands (`a_placed_mesh_is_where_its_frame_puts_it`); the card holds a mesh once and draws all its bodies in one call, each where it stands and in its own colours, with highlights as stretches of the same mesh (`gpu_viewport_renders_when_an_adapter_exists`: the cube again, moved and turned, with no mesh sent; a highlight on the second alone; a twin mesh counted as another), meshes left out kept aside (`bodies_left_out_are_kept_aside_and_highlights_are_sent_only_where_there_are_any`); in the app a hundred components are two meshes (`a_large_assembly_is_drawn_by_level_of_detail`). 1024 components: 0.5 MB of meshes for 278, 0.63 MB on the card for 710, sent in 1.9 ms for 315. Gap: what is said of each component's faces and edges is still copied for it (32 MB for those 1024) |
-| A tree over the bodies for what is under the pointer (filled in after M9) | done | DEC-090. The same answers as trying every triangle of every body, for one mesh standing in thirty-six places, some turned and some on their sides, with the tree and without (`picking_with_the_index_gives_what_trying_everything_gives`); the same body and face as copies moved there gave (`a_mesh_standing_somewhere_is_picked_as_a_copy_moved_there_is`). 1024 components: a face in 0.025 ms for 0.17, an edge in 1.7 ms for 2.8. Gap: a long edge is still gone through point by point where the pointer is over its body |
+| A tree over the bodies for what is under the pointer (filled in after M9) | done | DEC-090. The same answers as trying every triangle of every body, for one mesh standing in thirty-six places, some turned and some on their sides, with the tree and without (`picking_with_the_index_gives_what_trying_everything_gives`); the same body and face as copies moved there gave (`a_mesh_standing_somewhere_is_picked_as_a_copy_moved_there_is`). 1024 components: a face in 0.025 ms for 0.17, an edge in 1.7 ms for 2.8. Gap: in a view crowded with small components the edges within reach of the pointer are many (1,800 stretches with 1024 components) and each is tried, which is most of the 1.5 ms left |
 | A part opened again is shown at once from what was kept of it on disk (filled in after M9) | done | DEC-091. A cache of scenes outside every file format, never trusted: the part is rebuilt behind what is shown, and the rebuild confirms it or puts it right. With the worker and the kernel: `a_part_opened_again_is_shown_at_once_from_what_was_kept_and_the_rebuild_confirms_it` (nothing kept the first time; shown then confirmed the second; a wrong scene under the part's name shown, put right and replaced; a part on its own kept apart from a part of an assembly; the examples' scenes read back to the last bit). The files: `a_scene_reads_back_as_it_was_written_to_the_last_bit` (cut short anywhere, a byte changed anywhere, a count that asks for too much), `scenes_are_kept_by_what_the_document_says_and_the_oldest_go_when_the_folder_is_full`. In the app: `an_assembly_opened_again_is_shown_from_what_was_kept_of_its_parts` (four parts shown early and the same assembly to the last number; a part changed since is rebuilt; a part on its own; a part being worked on is neither shown early nor kept). The parts of the examples are read in 1 to 3 ms, for 14 to 500 to rebuild. Gap: the rebuild still runs behind what is shown, so commands that need the solids wait as long as before; the solids themselves are not kept (in the part file they would be a change of format: the owner's call); not for drawings' views |
 | Published numbers in docs/performance.md, including where OCCT is the limit | done | docs/performance.md: the tables, the kernel's share call by call (`tenon-cli bench profile`), "Where OCCT is the limit" and "What is not done" |
 
