@@ -5464,6 +5464,23 @@
       }
     },
     {
+      "id": "study.check",
+      "label": "Check Study",
+      "undoable": false,
+      "description": "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "id": "model.box",
       "label": "Box",
       "undoable": true,

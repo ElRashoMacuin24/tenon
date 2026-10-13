@@ -107,6 +107,21 @@ nothing, and for each the nearest faces or edges of the kind it was, with:
 when that is `confident`, and otherwise refuses and lists the choices: a wrong guess here
 gives a part that rebuilds and is wrong, which is worse than one that fails.
 
+### A stress study
+
+Where a part is held and what pushes on it is set up by the `study.*` commands (through
+`run_command`), on faces found with `find_geometry`:
+
+- `study.new`; then `study.fix`, `study.pin` (round faces) or `study.frictionless` (flat
+  or round faces) to hold it, and `study.force`, `study.pressure` or `study.gravity` to
+  load it. `study.set` changes one of them, or suppresses it; `study.copy` makes the study
+  again, to change and compare.
+- `study.check` holds the study against the part as it now is and says whether it can be
+  worked out: `ready`, and in `needs` what it lacks in words (a support, a load, a material
+  that says how strong it is, faces that a later change took off the part).
+
+Working a study out is not there yet (ROADMAP, M11).
+
 ### What was done
 
 `session_log` gives the commands that changed something, in order, with their parameters, as a

@@ -934,6 +934,7 @@ static SCHEMAS: &[C] = &[
     C::new("study.remove", &[STUDY, req("item", Id, "the id of a support or a load of the study")]),
     C::new("study.mesh_size", &[STUDY, opt("size", Either(&[Length, Null]), "the size of an element, mm; null: chosen from the part's size")]),
     C::new("study.list", &[]),
+    C::new("study.check", &[STUDY]),
     C::new(
         "model.box",
         &[

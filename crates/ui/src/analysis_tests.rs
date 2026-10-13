@@ -646,3 +646,55 @@ fn a_feature_is_renamed_by_typing_its_name_and_enter() {
     assert!(wb.panel.is_none(), "{}", wb.status());
     assert_eq!(wb.document().features().last().map(|f| f.name.as_str()), Some("Bar"));
 }
+
+#[test]
+fn a_support_whose_face_the_part_no_longer_has_says_so_and_is_mended() {
+    let (mut wb, mut d) = bar_with_a_hole();
+    let find = |wb: &mut Workbench, with: serde_json::Value| wb.exec("model.find", with).unwrap()["found"][0]["reference"].clone();
+    let bore = find(&mut wb, json!({ "what": "faces", "kind": "cylinder" }));
+    let right = find(&mut wb, json!({ "what": "faces", "facing": "right" }));
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.pin", json!({ "faces": [bore] })).unwrap();
+    wb.exec("study.force", json!({ "faces": [right, bore], "newtons": 100, "direction": "down" })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Pin1");
+    browser_row(&d, "Force1 (100 N)");
+
+    // The hole goes (its feature suppressed): what was on its wall says so, in red.
+    let cut = wb.document().features().last().unwrap().id;
+    wb.exec("feature.suppress", json!({ "feature": cut.0, "suppressed": true })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let pin = browser_row(&d, "Pin1 (face lost)").center();
+    let force = browser_row(&d, "Force1 (100 N) (1 of 2 faces lost)").center();
+
+    // Opened, it is without the faces that are gone, and says which: the force is put right by OK.
+    double_click(&mut d, &mut wb, force);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(load_panel(&wb).faces.len(), 1);
+    assert!(wb.status_error && wb.status().starts_with("Force1: 1 of its 2 faces are no longer on the part, and left out"), "{}", wb.status());
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(study(&wb).loads[0].faces.len(), 1);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Force1 (100 N)");
+    // The pin has no face left: OK asks for one, and Cancel leaves it as it was.
+    double_click(&mut d, &mut wb, pin);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Support(p)) = &wb.panel else { panic!("no panel: {}", wb.status()) };
+    assert!(p.faces.is_empty());
+    assert!(wb.status().starts_with("Pin1: its face is no longer on the part"), "{}", wb.status());
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.status().contains("click at least one face"), "{}", wb.status());
+    click_text(&mut d, &mut wb, "Cancel");
+    assert_eq!(study(&wb).supports[0].faces.len(), 1, "kept: the hole may come back");
+
+    // The hole comes back: the pin is on its wall again, by the wall's name.
+    wb.exec("feature.suppress", json!({ "feature": cut.0, "suppressed": false })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Pin1");
+    assert!(marked(&d, &wb, "held", Vec3::new(50.0, 10.0, 5.0)));
+}

@@ -2524,6 +2524,16 @@ them is installed or named in the repository).
 Still greyed: Bearing, Moment, Remote Force, Body. Each needs deciding how it is spread
 over the elements, which is better done with the solver in hand.
 
+**A study is held against the part as it is.** A study names faces, and the part goes on
+changing under it. `study.check` (a fifteenth command; 219 in all) rebuilds the part and
+says whether the study can be worked out: `ready`, and what it lacks in words: a support, a
+load, a part that builds, one solid, a material that says how strong it is, and each support
+or load with faces the part no longer has or that have become faces its kind cannot hold. A
+suppressed one is not in the study and is not held against it. In the app the same is seen
+at once: a row whose faces are gone is written in red with how many ("1 of 2 faces lost");
+opened, it is without them and says so, and OK puts it right. The study keeps a lost face
+until then: a feature that was only suppressed gives it back, by its name.
+
 **Found on the way.** Enter did nothing in the Rename window of a feature either (the same
 fault as DEC-095's value window: the box took the keyboard back before it was asked whether
 it had lost it), and what was typed went in beside the old name. The Rename window is now

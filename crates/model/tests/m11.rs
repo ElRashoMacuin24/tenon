@@ -203,6 +203,62 @@ fn pins_sliding_supports_the_parts_weight_and_copies_of_a_study() {
 }
 
 #[test]
+fn a_study_is_checked_against_the_part_as_it_now_is() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    let hole = run(&mut s, &mut k, "model.cylinder", json!({ "x": 50, "y": 10, "diameter": 8, "height": 10, "operation": "cut" }));
+    let bore = run(&mut s, &mut k, "model.find", json!({ "what": "faces", "kind": "cylinder" }))["found"][0]["reference"].clone();
+    let (left, right) = (face(&mut s, &mut k, "left"), face(&mut s, &mut k, "right"));
+    run(&mut s, &mut k, "study.new", json!({}));
+    let needs = |c: &Value| c["needs"].as_array().unwrap().iter().map(|n| n.as_str().unwrap().to_owned()).collect::<Vec<_>>();
+
+    // Nothing in it, and a part of nothing in particular.
+    let empty = run(&mut s, &mut k, "study.check", json!({}));
+    assert_eq!(empty["ready"], false);
+    let said = needs(&empty);
+    assert!(said.iter().any(|n| n.starts_with("a support")) && said.iter().any(|n| n.starts_with("a load")), "{said:?}");
+    assert!(said.iter().any(|n| n.contains("a material that says how strong it is (the part has no material)")), "{said:?}");
+
+    // Held, loaded, of steel: ready.
+    run(&mut s, &mut k, "study.pin", json!({ "faces": [bore] }));
+    run(&mut s, &mut k, "study.fix", json!({ "faces": [left] }));
+    run(&mut s, &mut k, "study.force", json!({ "faces": [right, bore], "newtons": 100, "direction": "down" }));
+    run(&mut s, &mut k, "document.material", json!({ "name": "Oak" }));
+    let wooden = needs(&run(&mut s, &mut k, "study.check", json!({})));
+    assert!(matches!(wooden.as_slice(), [one] if one.contains("Oak does not say")), "{wooden:?}");
+    run(&mut s, &mut k, "document.material", json!({ "name": "Steel, mild" }));
+    let ready = run(&mut s, &mut k, "study.check", json!({}));
+    assert_eq!((ready["ready"].clone(), ready["needs"].clone(), ready["lost"].clone()), (json!(true), json!([]), json!([])));
+
+    // The hole taken out of the part: the pin's face and one of the force's two are gone, and
+    // the check says whose. (The study keeps them: the hole may come back.)
+    let cut = hole["feature"].as_u64().expect("the id of the feature that cuts the hole");
+    run(&mut s, &mut k, "feature.suppress", json!({ "feature": cut, "suppressed": true }));
+    let holed = run(&mut s, &mut k, "study.check", json!({}));
+    assert_eq!(holed["ready"], false);
+    assert_eq!(holed["lost"], json!([{ "item": 1, "name": "Pin1", "lost": 1, "of": 1 }, { "item": 3, "name": "Force1", "lost": 1, "of": 2 }]));
+    let said = needs(&holed);
+    assert!(said.iter().any(|n| n.starts_with("Pin1: its face is no longer on the part")), "{said:?}");
+    assert!(said.iter().any(|n| n.starts_with("Force1: 1 of its 2 faces are no longer on the part")), "{said:?}");
+    // A suppressed support is not in the study, and its lost face is not held against it.
+    run(&mut s, &mut k, "study.set", json!({ "item": 1, "suppressed": true }));
+    let quiet = run(&mut s, &mut k, "study.check", json!({}));
+    assert_eq!(quiet["lost"].as_array().map(Vec::len), Some(1), "{quiet}");
+    // The force given its faces again: ready.
+    run(&mut s, &mut k, "study.set", json!({ "item": 3, "faces": [right] }));
+    assert_eq!(run(&mut s, &mut k, "study.check", json!({}))["ready"], true);
+    // The hole back: the pin's face is there again, by its name.
+    run(&mut s, &mut k, "feature.suppress", json!({ "feature": cut, "suppressed": false }));
+    run(&mut s, &mut k, "study.set", json!({ "item": 1, "suppressed": false }));
+    assert_eq!(run(&mut s, &mut k, "study.check", json!({}))["ready"], true);
+
+    // A second solid: a study is of one.
+    run(&mut s, &mut k, "model.box", json!({ "x": 200, "width": 10, "depth": 10, "height": 10, "operation": "new_body" }));
+    let two = needs(&run(&mut s, &mut k, "study.check", json!({})));
+    assert!(matches!(two.as_slice(), [one] if one.contains("one solid: the part has 2")), "{two:?}");
+}
+
+#[test]
 fn a_material_says_how_it_answers_to_a_load() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     // No material: nothing to check stress against.

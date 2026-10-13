@@ -740,6 +740,65 @@ fn study_list(s: &mut Session, _: &Value) -> CmdResult {
     }))
 }
 
+/// A study held against the part as it now is: whether it can be worked out, and if not what
+/// it lacks. Its faces are looked for on the part: one that a later change took away, or
+/// turned into a face its support cannot hold, is said by name.
+fn study_check(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
+    let id = study_of(s, p)?;
+    let r = s.regen(k).clone();
+    let d = s.document();
+    let st = d.study(id).ok_or("no such study")?;
+    let mut needs: Vec<String> = st.missing().iter().map(|m| (*m).to_owned()).collect();
+    if let Some((feature, why)) = r.first_error() {
+        let name = d.feature(feature).map_or_else(|| feature.to_string(), |f| f.name.clone());
+        needs.push(format!("a part that builds: {name} fails ({why})"));
+    }
+    match r.bodies.len() {
+        0 => needs.push("a solid: the part has none".into()),
+        1 => {}
+        n => needs.push(format!("one solid: the part has {n}, and a study is of one")),
+    }
+    if d.strength().is_none() {
+        let what = d.material().map_or("the part has no material".to_owned(), |m| format!("{} does not say", m.name));
+        needs.push(format!("a material that says how strong it is ({what}): document.material, with youngs_modulus, poisson and yield_strength"));
+    }
+    // Each support and load that is in the study: its faces on the part as it is.
+    let surface = |body: usize, face: u32| -> Option<&'static str> {
+        let info = k.face_info(r.bodies.get(body)?.shape.face(face)).ok()?;
+        Some(match info.surface {
+            tenon_kernel::SurfaceKind::Plane { .. } => "plane",
+            tenon_kernel::SurfaceKind::Cylinder { .. } => "cylinder",
+            tenon_kernel::SurfaceKind::Cone { .. } => "cone",
+            tenon_kernel::SurfaceKind::Sphere { .. } => "sphere",
+            tenon_kernel::SurfaceKind::Torus { .. } => "torus",
+            _ => "other",
+        })
+    };
+    let mut lost = Vec::new();
+    let items = st
+        .supports
+        .iter()
+        .filter(|x| !x.suppressed)
+        .map(|x| (x.id, &x.name, &x.faces, Some(x.kind)))
+        .chain(st.loads.iter().filter(|l| !l.suppressed).map(|l| (l.id, &l.name, &l.faces, None)));
+    for (item, name, faces, kind) in items {
+        let found: Vec<Option<(usize, u32)>> = faces.iter().map(|f| r.resolve(f, k).ok()).collect();
+        let gone = found.iter().filter(|f| f.is_none()).count();
+        if gone > 0 {
+            lost.push(json!({ "item": item, "name": name, "lost": gone, "of": faces.len() }));
+            let which = if faces.len() == 1 { "its face is".to_owned() } else { format!("{gone} of its {} faces are", faces.len()) };
+            needs.push(format!("{name}: {which} no longer on the part. Give it its faces again (study.set, with faces)"));
+        }
+        // (A face that is still there may have become one its support cannot hold.)
+        if let Some(kind) = kind
+            && let Some(why) = found.iter().flatten().find_map(|(b, f)| surface(*b, *f).and_then(|s| kind.takes(s).err()))
+        {
+            needs.push(format!("{name}: {why}"));
+        }
+    }
+    Ok(json!({ "study": id.0, "name": st.name, "ready": needs.is_empty(), "needs": needs, "lost": lost }))
+}
+
 // ---- design table -----------------------------------------------------------------------------
 
 fn text(p: &Value, key: &str) -> Result<String, CmdError> {
@@ -3907,6 +3966,12 @@ static COMMANDS: &[CommandSpec] = &[
         "The part's studies: each with its supports and loads (ids, names, how many faces, how large), its element size and what it still needs before it can be worked out; and the part's material with how it answers to a load (Young's modulus in GPa, Poisson's ratio, yield strength in MPa), or null when it has none that says",
         false,
         study_list
+    ),
+    geo_cmd!(
+        "study.check",
+        "Check Study",
+        "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has",
+        study_check
     ),
     doc_cmd!(
         "model.box",

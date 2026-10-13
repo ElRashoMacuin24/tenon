@@ -370,6 +370,16 @@ fn load_text(kind: &LoadKind) -> String {
     }
 }
 
+/// What a row says of faces the part no longer has: " (face lost)", " (1 of 3 faces lost)".
+fn lost_note(lost: usize, of: usize) -> String {
+    match (lost, of) {
+        (0, _) => String::new(),
+        (1, 1) => " (face lost)".into(),
+        (lost, of) if lost == of => " (faces lost)".into(),
+        (lost, of) => format!(" ({lost} of {of} faces lost)"),
+    }
+}
+
 fn support_icon(kind: SupportKind) -> Icon {
     match kind {
         SupportKind::Fixed => Icon::Fixed,
@@ -516,21 +526,47 @@ impl Workbench {
         self.active_study().map(|s| s.id).ok_or_else(|| "there is no study".to_string())
     }
 
+    /// How many of `faces` the part no longer has (a feature that made them was deleted or
+    /// changed). Nothing is called lost while the part is still being built.
+    fn lost_faces(&self, faces: &[FaceRef]) -> usize {
+        if self.shown.is_none() || self.is_busy() || self.scene.bodies.is_empty() {
+            return 0;
+        }
+        faces.iter().filter(|r| crate::modify::find_face(&self.scene, r).is_none()).count()
+    }
+
+    /// The faces of a support or load that is opened to be changed: those the part still has.
+    /// The rest are left out, and the status bar says so.
+    fn faces_still_there(&mut self, name: &str, faces: &[FaceRef]) -> Vec<FaceRef> {
+        let lost = self.lost_faces(faces);
+        if lost == 0 {
+            return faces.to_vec();
+        }
+        let which = if faces.len() == 1 { "its face is".to_owned() } else { format!("{lost} of its {} faces are", faces.len()) };
+        self.set_error(format!("{name}: {which} no longer on the part, and left out. Click its faces again, then OK."));
+        faces.iter().filter(|r| crate::modify::find_face(&self.scene, r).is_some()).cloned().collect()
+    }
+
     /// Fixed, Pin or Frictionless: a new support, or (with `editing`) one of the study's
     /// changed.
     pub(crate) fn open_support(&mut self, kind: SupportKind, editing: Option<u32>) -> Result<(), String> {
         let study = self.study_for_new()?;
+        let mut told = false;
         let mut panel = match editing {
             Some(id) => {
-                let s = self.active_study().and_then(|s| s.supports.iter().find(|x| x.id == id)).ok_or("no such support")?;
-                SupportPanel { study, editing, kind: s.kind, faces: s.faces.clone() }
+                let s = self.active_study().and_then(|s| s.supports.iter().find(|x| x.id == id)).cloned().ok_or("no such support")?;
+                let faces = self.faces_still_there(&s.name, &s.faces);
+                told = faces.len() < s.faces.len();
+                SupportPanel { study, editing, kind: s.kind, faces }
             }
             None => SupportPanel { study, editing, kind, faces: self.picked_faces() },
         };
         // (Of what was selected beforehand, the faces this kind of support can hold.)
         panel.faces.retain(|f| panel.kind.takes(&f.fingerprint.surface).is_ok());
         self.view.selection.clear();
-        self.set_status(format!("{}: click {}, then OK.", panel.title(), panel.faces_are()));
+        if !told {
+            self.set_status(format!("{}: click {}, then OK.", panel.title(), panel.faces_are()));
+        }
         self.panel = Some(Panel::Support(panel));
         self.start_equations();
         Ok(())
@@ -550,16 +586,19 @@ impl Workbench {
             picking: false,
             components: None,
         };
+        let mut told = false;
         let panel = match editing {
             Some(id) => {
-                let load = self.active_study().and_then(|s| s.loads.iter().find(|l| l.id == id)).ok_or("no such load")?;
+                let load = self.active_study().and_then(|s| s.loads.iter().find(|l| l.id == id)).cloned().ok_or("no such load")?;
+                let faces = self.faces_still_there(&load.name, &load.faces);
+                told = faces.len() < load.faces.len();
                 match load.kind {
-                    LoadKind::Pressure { megapascals } => blank(What::Pressure, load.faces.clone(), megapascals),
+                    LoadKind::Pressure { megapascals } => blank(What::Pressure, faces, megapascals),
                     LoadKind::Force { newtons, direction } => {
                         let (way, flip) = Way::of(direction);
                         // (Square to its faces, a negative force pulls: shown as flipped.)
                         let pulls = direction.is_none() && newtons < 0.0;
-                        LoadPanel { way, flip: flip || pulls, ..blank(What::Force, load.faces.clone(), newtons.abs()) }
+                        LoadPanel { way, flip: flip || pulls, ..blank(What::Force, faces, newtons.abs()) }
                     }
                     LoadKind::Gravity { direction, acceleration } => {
                         let (way, flip) = Way::of(Some(direction));
@@ -580,11 +619,13 @@ impl Workbench {
             },
         };
         self.view.selection.clear();
-        self.set_status(match panel.what {
-            What::Pressure => "Pressure: click the faces it is on, set how large it is, then OK.",
-            What::Force => "Force: click the faces it is on, set how large it is and which way it pushes, then OK.",
-            What::Gravity => "Gravity: the part's own weight, from its material's density. Set which way it pulls, then OK.",
-        });
+        if !told {
+            self.set_status(match panel.what {
+                What::Pressure => "Pressure: click the faces it is on, set how large it is, then OK.",
+                What::Force => "Force: click the faces it is on, set how large it is and which way it pushes, then OK.",
+                What::Gravity => "Gravity: the part's own weight, from its material's density. Set which way it pulls, then OK.",
+            });
+        }
         self.panel = Some(Panel::Load(panel));
         self.start_equations();
         Ok(())
@@ -910,6 +951,14 @@ impl Workbench {
         let material = self.document().material().map(|m| m.name.clone());
         let strong = self.document().strength().is_some();
         let name = self.document().name.clone();
+        // (How many faces of each support and load of the study worked on the part no longer has.)
+        let lost: std::collections::BTreeMap<u32, usize> = studies
+            .iter()
+            .filter(|s| Some(s.id) == active)
+            .flat_map(|s| s.supports.iter().map(|x| (x.id, &x.faces)).chain(s.loads.iter().map(|l| (l.id, &l.faces))))
+            .map(|(id, faces)| (id, self.lost_faces(faces)))
+            .collect();
+        let lost = |id: u32| lost.get(&id).copied().unwrap_or(0);
         let mut action: Option<StudyAction> = None;
         egui::ScrollArea::vertical().id_salt("tn_study_scroll").auto_shrink([false, false]).show(ui, |ui| {
             row(ui, t, 0, Icon::Part, &name, None, RowStyle::Normal);
@@ -964,13 +1013,14 @@ impl Workbench {
                 let style = |id: u32, suppressed: bool| match (Some(id) == selected, suppressed) {
                     (true, _) => RowStyle::Active,
                     (false, true) => RowStyle::Dim,
+                    (false, false) if lost(id) > 0 => RowStyle::Error,
                     (false, false) => RowStyle::Normal,
                 };
                 let quiet = |suppressed: bool| if suppressed { " (suppressed)" } else { "" };
                 for s in &study.supports {
-                    let label = format!("{}{}", s.name, quiet(s.suppressed));
+                    let label = format!("{}{}{}", s.name, lost_note(lost(s.id), s.faces.len()), quiet(s.suppressed));
                     let (resp, _) = row(ui, t, 3, support_icon(s.kind), &label, None, style(s.id, s.suppressed));
-                    item_row(resp, study.id, s.id, &s.name, s.suppressed, &mut action);
+                    item_row(resp, study.id, s.id, &s.name, s.suppressed, lost(s.id) > 0, &mut action);
                 }
                 let unloaded = study.loads.iter().all(|l| l.suppressed);
                 let (resp, _) = row(ui, t, 2, Icon::Folder, &format!("Loads({})", study.loads.len()), None, needed(unloaded));
@@ -983,9 +1033,9 @@ impl Workbench {
                         LoadKind::Pressure { .. } => Icon::Pressure,
                         LoadKind::Gravity { .. } => Icon::Gravity,
                     };
-                    let label = format!("{} ({}){}", l.name, load_text(&l.kind), quiet(l.suppressed));
+                    let label = format!("{} ({}){}{}", l.name, load_text(&l.kind), lost_note(lost(l.id), l.faces.len()), quiet(l.suppressed));
                     let (resp, _) = row(ui, t, 3, icon, &label, None, style(l.id, l.suppressed));
-                    item_row(resp, study.id, l.id, &l.name, l.suppressed, &mut action);
+                    item_row(resp, study.id, l.id, &l.name, l.suppressed, lost(l.id) > 0, &mut action);
                 }
                 let mesh = match study.mesh_size {
                     Some(size) => format!("Mesh: {size} mm"),
@@ -1061,8 +1111,12 @@ impl Workbench {
 
 /// A support's or a load's row: a click picks its faces out, a double click opens it, the menu
 /// edits, renames, suppresses or deletes it.
-fn item_row(resp: egui::Response, study: StudyId, id: u32, name: &str, suppressed: bool, action: &mut Option<StudyAction>) {
-    let resp = resp.on_hover_text("Click to see its faces; double-click to change it; right-click for more");
+fn item_row(resp: egui::Response, study: StudyId, id: u32, name: &str, suppressed: bool, lost: bool, action: &mut Option<StudyAction>) {
+    let resp = resp.on_hover_text(if lost {
+        "It is on a face the part no longer has (a feature that made it was deleted or changed): double-click it and click its faces again"
+    } else {
+        "Click to see its faces; double-click to change it; right-click for more"
+    });
     if resp.double_clicked() {
         *action = Some(StudyAction::Edit(id));
     } else if resp.clicked() {

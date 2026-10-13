@@ -236,6 +236,7 @@ mesher and solver (docs/m11-proposal.md); what sets one up is here.
 | Mesh View overlays the mesh; Mesh Settings, Local Mesh Control, Convergence Settings | partial | Mesh Settings sets the size of the elements (0: from the part's size). Mesh View comes with the mesher (M11). No local control, no convergence |
 | Simulate runs the study; the Results node holds Von Mises stress, displacement, safety factor and more, shown in colour with a colour bar; Probe, Animate, Report | missing | M11, after the mesher and solver are settled. Simulate is on the ribbon as a command that arrives in M11 |
 | (How the environment is left is not in the pages read) | Tenon: Finish Analysis on an Exit panel, as Finish Sketch leaves a sketch | opening or starting another document leaves it too: `the_environment_is_of_a_part_with_a_solid_and_is_left_with_it` |
+| (A constraint or load whose geometry the part no longer has) | Tenon: its row is written in red with how many of its faces are lost; opened, it is without them and says so; `study.check` says the same to a script | `a_support_whose_face_the_part_no_longer_has_says_so_and_is_mended` |
 | (The part is edited outside the environment) | done | commands that change the part are refused inside it, with "Finish Analysis first" |
 
 ## Sources
