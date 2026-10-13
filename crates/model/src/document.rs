@@ -1081,6 +1081,28 @@ impl Document {
         self.studies.push(study);
         Ok(id)
     }
+    /// The study `id` again under another name ("Name copy", "Name copy 2" ... unless one is
+    /// said). Returns the copy's id.
+    pub(crate) fn copy_study(&mut self, id: crate::study::StudyId, name: Option<&str>) -> Result<crate::study::StudyId, String> {
+        if self.studies.len() >= crate::study::MAX_STUDIES {
+            return Err(format!("a part has at most {} studies", crate::study::MAX_STUDIES));
+        }
+        let Some(from) = self.study(id) else { return Err(format!("there is no study {}", id.0)) };
+        let taken = |n: &str| self.studies.iter().any(|s| s.name == n);
+        let name = match name {
+            Some(n) => n.trim().to_owned(),
+            None => {
+                let base: String = from.name.chars().take(56).collect();
+                std::iter::once(format!("{base} copy")).chain((2..).map(|i| format!("{base} copy {i}"))).find(|n| !taken(n)).unwrap_or_default()
+            }
+        };
+        let new = crate::study::StudyId(self.studies.iter().map(|s| s.id.0).max().map_or(1, |m| m.saturating_add(1)));
+        let copy = from.copied(new, name);
+        copy.check()?;
+        self.studies.push(copy);
+        Ok(new)
+    }
+
     /// Takes a study away. False when there is none of that id.
     pub(crate) fn remove_study(&mut self, id: crate::study::StudyId) -> bool {
         let before = self.studies.len();

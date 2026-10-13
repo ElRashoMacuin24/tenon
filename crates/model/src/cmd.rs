@@ -512,7 +512,7 @@ fn document_materials(s: &mut Session, _: &Value) -> CmdResult {
 
 // ---- stress studies ---------------------------------------------------------------------------
 
-use crate::study::{LoadKind, Study, StudyId, SupportKind};
+use crate::study::{ItemChange, LoadKind, Study, StudyId, SupportKind};
 
 /// The study a command is about: the one named, or the part's only one.
 fn study_of(s: &Session, p: &Value) -> Result<StudyId, CmdError> {
@@ -535,10 +535,29 @@ fn study_json(st: &Study) -> Value {
         "study": st.id.0,
         "name": st.name,
         "mesh_size": st.mesh_size,
-        "supports": st.supports.iter().map(|x| json!({ "id": x.id, "name": x.name, "kind": x.kind, "faces": x.faces.len() })).collect::<Vec<_>>(),
+        "supports": st.supports.iter().map(|x| {
+            let mut v = json!({ "id": x.id, "name": x.name, "kind": x.kind.key(), "faces": x.faces.len() });
+            if let SupportKind::Pin { radial, axial, tangential } = x.kind {
+                v["radial"] = json!(radial);
+                v["axial"] = json!(axial);
+                v["tangential"] = json!(tangential);
+            }
+            if x.suppressed {
+                v["suppressed"] = json!(true);
+            }
+            v
+        }).collect::<Vec<_>>(),
         "loads": st.loads.iter().map(|l| {
             let mut v = json!({ "id": l.id, "name": l.name, "faces": l.faces.len() });
+            if l.suppressed {
+                v["suppressed"] = json!(true);
+            }
             match l.kind {
+                LoadKind::Gravity { direction, acceleration } => {
+                    v["type"] = json!("gravity");
+                    v["direction"] = json!([direction.x, direction.y, direction.z]);
+                    v["acceleration"] = json!(acceleration);
+                }
                 LoadKind::Force { newtons, direction } => {
                     v["type"] = json!("force");
                     v["newtons"] = json!(newtons);
@@ -581,6 +600,17 @@ fn study_rename(s: &mut Session, p: &Value) -> CmdResult {
     })
 }
 
+/// The same study again under another name, to change and compare.
+fn study_copy(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, name) = (study_of(s, p)?, opt_name(p)?);
+    s.edit(|d| {
+        let copy = d.copy_study(id, name.as_deref()).map_err(CmdError)?;
+        let mut out = d.study(copy).map(study_json).unwrap_or_default();
+        out["copied"] = json!(id.0);
+        Ok(out)
+    })
+}
+
 fn study_delete(s: &mut Session, p: &Value) -> CmdResult {
     let id = study_of(s, p)?;
     s.edit(|d| {
@@ -605,6 +635,42 @@ fn study_fix(s: &mut Session, p: &Value) -> CmdResult {
     study_edit(s, id, "support", |st| st.add_support(SupportKind::Fixed, faces, name))
 }
 
+fn opt_bool(p: &Value, key: &str) -> Result<Option<bool>, CmdError> {
+    match arg(p, key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(_) => Err(CmdError(format!("`{key}` must be true or false"))),
+    }
+}
+
+fn study_pin(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
+    let SupportKind::Pin { radial, axial, tangential } = SupportKind::PIN else { return Err("no pin".into()) };
+    let kind = SupportKind::Pin {
+        radial: opt_bool(p, "radial")?.unwrap_or(radial),
+        axial: opt_bool(p, "axial")?.unwrap_or(axial),
+        tangential: opt_bool(p, "tangential")?.unwrap_or(tangential),
+    };
+    study_edit(s, id, "support", |st| st.add_support(kind, faces, name))
+}
+
+fn study_frictionless(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
+    study_edit(s, id, "support", |st| st.add_support(SupportKind::Frictionless, faces, name))
+}
+
+/// The part's own weight.
+fn study_gravity(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, name) = (study_of(s, p)?, opt_name(p)?);
+    let direction = match force_direction(p)? {
+        None => tenon_geom::Vec3::new(0.0, 0.0, -1.0),
+        Some(Some(d)) => d,
+        Some(None) => return Err("the part's weight pulls one way, whatever its faces: `direction` is down, +x ... or [x, y, z]".into()),
+    };
+    let acceleration = opt_num(p, "acceleration")?.unwrap_or(crate::study::EARTH);
+    study_edit(s, id, "load", |st| st.add_load(LoadKind::Gravity { direction, acceleration }, Vec::new(), name))
+}
+
 fn study_force(s: &mut Session, p: &Value) -> CmdResult {
     let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
     let newtons = num(p, "newtons")?;
@@ -627,8 +693,19 @@ fn force_direction(p: &Value) -> Result<Option<Option<tenon_geom::Vec3>>, CmdErr
 fn study_set(s: &mut Session, p: &Value) -> CmdResult {
     let (id, item) = (study_of(s, p)?, id_u32(p, "item")?);
     let faces: Option<Vec<FaceRef>> = if arg(p, "faces").is_some_and(|v| !v.is_null()) { Some(parse(p, "faces")?) } else { None };
-    let (name, newtons, megapascals, direction) = (opt_name(p)?, opt_num(p, "newtons")?, opt_num(p, "megapascals")?, force_direction(p)?);
-    study_edit(s, id, "item", |st| st.set(item, faces, name, newtons, direction, megapascals).map(|()| item))
+    let change = ItemChange {
+        faces,
+        name: opt_name(p)?,
+        suppressed: opt_bool(p, "suppressed")?,
+        newtons: opt_num(p, "newtons")?,
+        direction: force_direction(p)?,
+        megapascals: opt_num(p, "megapascals")?,
+        acceleration: opt_num(p, "acceleration")?,
+        radial: opt_bool(p, "radial")?,
+        axial: opt_bool(p, "axial")?,
+        tangential: opt_bool(p, "tangential")?,
+    };
+    study_edit(s, id, "item", |st| st.set(item, change).map(|()| item))
 }
 
 fn study_pressure(s: &mut Session, p: &Value) -> CmdResult {
@@ -3759,6 +3836,13 @@ static COMMANDS: &[CommandSpec] = &[
         study_new
     ),
     doc_cmd!("study.rename", "Rename Study", "study (default: the part's only one); name", true, study_rename),
+    doc_cmd!(
+        "study.copy",
+        "Copy Study",
+        "The same study again, with its supports, loads and element size, to change and compare. study (default: the part's only one); name (default: the study's name with \"copy\"). Returns the new study, and copied: the id of the one it is a copy of",
+        true,
+        study_copy
+    ),
     doc_cmd!("study.delete", "Delete Study", "study (default: the part's only one)", true, study_delete),
     doc_cmd!(
         "study.fix",
@@ -3766,6 +3850,27 @@ static COMMANDS: &[CommandSpec] = &[
         "Holds faces still. study (default: the part's only one); faces: [face references]; name. Returns the study, and support: the new support's id",
         true,
         study_fix
+    ),
+    doc_cmd!(
+        "study.pin",
+        "Pin Support",
+        "Holds round (cylindrical) faces as a pin does. study; faces: [face references]; radial: held across the pin (default true); axial: held along it (default true); tangential: held from turning (default false); name. Returns the study, and support: the new support's id",
+        true,
+        study_pin
+    ),
+    doc_cmd!(
+        "study.frictionless",
+        "Frictionless Support",
+        "Flat or round (cylindrical) faces that may slide along themselves but not leave or enter what they rest on. study; faces: [face references]; name. Returns the study, and support: the new support's id",
+        true,
+        study_frictionless
+    ),
+    doc_cmd!(
+        "study.gravity",
+        "Gravity",
+        "The part's own weight, from its material's density. A study has it once. study; direction: the way it pulls, as +x, -z, down ... or [x, y, z] (default down, -z); acceleration: mm/s^2 (default 9810, the Earth's); name. Returns the study, and load: the new load's id",
+        true,
+        study_gravity
     ),
     doc_cmd!(
         "study.force",
@@ -3784,7 +3889,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "study.set",
         "Change Support or Load",
-        "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references]; name; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals",
+        "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references]; name; suppressed: true leaves it out of the study for now, and keeps it; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals; of gravity: direction, acceleration; of a pin: radial, axial, tangential",
         true,
         study_set
     ),

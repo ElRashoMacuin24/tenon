@@ -338,6 +338,8 @@ impl Workbench {
             Some(Panel::Split(_)) => (true, false),
             Some(Panel::Primitive(p)) => (p.on.is_none(), false),
             Some(Panel::Revolve(_) | Panel::Coil(_)) => (false, true),
+            // A load's direction may be along a work axis.
+            Some(Panel::Load(_)) => (false, self.picking_direction()),
             _ => (false, false),
         }
     }
@@ -357,6 +359,17 @@ impl Workbench {
             Reference::Work(id) if is_axis(self, id) => Some(AxisSel::Work(id)),
             _ => None,
         };
+        if self.picking_direction() {
+            // (Read off the axis as it is now: a load keeps a direction, not what gave it.)
+            let d = match axis {
+                Some(AxisSel::Origin(tenon_model::OriginAxis::X)) => Some(tenon_geom::Vec3::X),
+                Some(AxisSel::Origin(tenon_model::OriginAxis::Y)) => Some(tenon_geom::Vec3::Y),
+                Some(AxisSel::Origin(tenon_model::OriginAxis::Z)) => Some(tenon_geom::Vec3::Z),
+                Some(AxisSel::Work(id)) => self.work_axis_direction(id),
+                _ => None,
+            };
+            return d.is_some_and(|d| self.set_load_direction(d));
+        }
         match &mut self.panel {
             Some(Panel::Work(w)) => {
                 match (w.slot, plane, axis) {

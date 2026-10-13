@@ -64,9 +64,13 @@ impl Workbench {
                 Some(Wants { edges: true, faces: false })
             }
             Some(Panel::Chamfer(p)) => Some(Wants { edges: true, faces: p.method != ChamferMethod::Distance }),
-            Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_) | Panel::Support(_) | Panel::Load(_)) => {
+            Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_) | Panel::Support(_)) => {
                 Some(Wants { edges: false, faces: true })
             }
+            // A load: its direction, from a straight edge or a flat face, while that selector is
+            // the active one; else its faces (the part's weight has none).
+            Some(Panel::Load(_)) if self.picking_direction() => Some(Wants { edges: true, faces: true }),
+            Some(Panel::Load(l)) => Some(Wants { edges: false, faces: l.what != crate::analysis::What::Gravity }),
             Some(Panel::Pattern(p)) => Some(match p.slot {
                 Slot::Features | Slot::Plane => Wants { edges: false, faces: true },
                 Slot::Dir1 | Slot::Dir2 => Wants { edges: true, faces: false },
@@ -207,6 +211,13 @@ impl Workbench {
             (Pick::Face { body, face }, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) => {
                 self.bodies_referable(body, face)
             }
+            // A direction is read off the edge or face as it is: it needs no name.
+            (pick, Some(Panel::Load(_))) if self.picking_direction() => self.direction_of(pick).is_some(),
+            // A support takes the faces its kind can hold: a pin round ones, a sliding one
+            // flat or round ones.
+            (Pick::Face { body, face }, Some(Panel::Support(s))) => {
+                wants.faces && self.face_ref_of(body, face).is_some_and(|r| s.kind.takes(&r.fingerprint.surface).is_ok())
+            }
             (Pick::Edge { body, edge }, _) => wants.edges && self.edge_ref_of(body, edge).is_some(),
             (Pick::Face { body, face }, _) => wants.faces && self.face_ref_of(body, face).is_some(),
         }
@@ -217,6 +228,9 @@ impl Workbench {
     pub(crate) fn pick_into_panel(&mut self, p: Pick, toggle: bool) -> bool {
         if matches!(self.panel, Some(Panel::Work(_))) {
             return self.work_pick(p);
+        }
+        if self.picking_direction() {
+            return self.direction_of(p).is_some_and(|d| self.set_load_direction(d));
         }
         if matches!(self.panel, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) {
             return self.bodies_pick(p, toggle);

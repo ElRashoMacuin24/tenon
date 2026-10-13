@@ -4970,6 +4970,27 @@
       }
     },
     {
+      "id": "study.copy",
+      "label": "Copy Study",
+      "undoable": true,
+      "description": "The same study again, with its supports, loads and element size, to change and compare. study (default: the part's only one); name (default: the study's name with \"copy\"). Returns the new study, and copied: the id of the one it is a copy of",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "name": {
+            "type": "string",
+            "description": "the copy's name (default: the study's name with \"copy\")"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "id": "study.delete",
       "label": "Delete Study",
       "undoable": true,
@@ -5015,6 +5036,140 @@
         "required": [
           "faces"
         ]
+      }
+    },
+    {
+      "id": "study.pin",
+      "label": "Pin Support",
+      "undoable": true,
+      "description": "Holds round (cylindrical) faces as a pin does. study; faces: [face references]; radial: held across the pin (default true); axial: held along it (default true); tangential: held from turning (default false); name. Returns the study, and support: the new support's id",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "the round (cylindrical) faces on the pin"
+          },
+          "radial": {
+            "type": "boolean",
+            "description": "held across the pin (default true)"
+          },
+          "axial": {
+            "type": "boolean",
+            "description": "held along the pin (default true)"
+          },
+          "tangential": {
+            "type": "boolean",
+            "description": "held from turning on the pin (default false)"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Fixed1, Force1, Pressure1...)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "faces"
+        ]
+      }
+    },
+    {
+      "id": "study.frictionless",
+      "label": "Frictionless Support",
+      "undoable": true,
+      "description": "Flat or round (cylindrical) faces that may slide along themselves but not leave or enter what they rest on. study; faces: [face references]; name. Returns the study, and support: the new support's id",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "the flat or round faces that may slide along themselves"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Fixed1, Force1, Pressure1...)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "faces"
+        ]
+      }
+    },
+    {
+      "id": "study.gravity",
+      "label": "Gravity",
+      "undoable": true,
+      "description": "The part's own weight, from its material's density. A study has it once. study; direction: the way it pulls, as +x, -z, down ... or [x, y, z] (default down, -z); acceleration: mm/s^2 (default 9810, the Earth's); name. Returns the study, and load: the new load's id",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "+x",
+                  "-x",
+                  "+y",
+                  "-y",
+                  "+z",
+                  "-z",
+                  "x",
+                  "y",
+                  "z",
+                  "top",
+                  "bottom",
+                  "up",
+                  "down",
+                  "left",
+                  "right",
+                  "front",
+                  "back"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            ],
+            "description": "the way it pulls: +x ... -z, down, up, left, right, front, back or [x, y, z]; default down (-z)"
+          },
+          "acceleration": {
+            "type": "number",
+            "description": "mm/s^2 (default 9810, the Earth's)"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Fixed1, Force1, Pressure1...)"
+          }
+        },
+        "additionalProperties": false
       }
     },
     {
@@ -5138,7 +5293,7 @@
       "id": "study.set",
       "label": "Change Support or Load",
       "undoable": true,
-      "description": "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references]; name; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals",
+      "description": "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references]; name; suppressed: true leaves it out of the study for now, and keeps it; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals; of gravity: direction, acceleration; of a pin: radial, axial, tangential",
       "params": {
         "type": "object",
         "properties": {
@@ -5211,6 +5366,26 @@
           "megapascals": {
             "type": "number",
             "description": "a pressure's size, N/mm^2"
+          },
+          "acceleration": {
+            "type": "number",
+            "description": "gravity's size, mm/s^2"
+          },
+          "radial": {
+            "type": "boolean",
+            "description": "a pin: held across it"
+          },
+          "axial": {
+            "type": "boolean",
+            "description": "a pin: held along it"
+          },
+          "tangential": {
+            "type": "boolean",
+            "description": "a pin: held from turning"
+          },
+          "suppressed": {
+            "type": "boolean",
+            "description": "true: left out of the study for now, and kept"
           },
           "name": {
             "type": "string",

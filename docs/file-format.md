@@ -425,17 +425,34 @@ supports = [
 loads = [
   { id = 2, name = "Force1", faces = [{ origin = { type = "side", feature = 2, curve = 7 }, fingerprint = { ... } }], type = "force", newtons = 150.0, direction = { x = 0.0, y = 0.0, z = -1.0 } },
   { id = 3, name = "Snow", faces = [{ origin = { type = "cap", feature = 2, end = "end" }, fingerprint = { ... } }], type = "pressure", megapascals = 0.25 },
+  { id = 6, name = "Gravity1", type = "gravity", direction = { x = 0.0, y = 0.0, z = -1.0 }, acceleration = 9810.0 },
 ]
 mesh_size = 2.5
 ```
 
+Other supports, as they are written in `supports`:
+
+```toml
+  { id = 4, name = "Pin1", kind = "pin", radial = true, axial = true, tangential = false, faces = [...] },
+  { id = 5, name = "Frictionless1", kind = "frictionless", faces = [...], suppressed = true },
+```
+
 - **`id`, `name`:** the study's id within the part, and its name (1 to 64 characters).
-- **`supports`:** faces that are held. `kind` is `"fixed"`: held still in every direction.
+- **`supports`:** faces that are held. `kind = "fixed"`: held still in every direction.
+  `kind = "pin"`: round (cylindrical) faces on a pin, with what the pin holds: `radial`
+  (across it), `axial` (along it), `tangential` (from turning), at least one of them true.
+  `kind = "frictionless"`: flat or round faces that may slide along themselves but not leave
+  or enter what they rest on.
 - **`loads`:** `type = "force"` is a force of `newtons` in all, spread evenly over its faces,
   along `direction` (in the part's coordinates; its length does not matter) or, without one,
   square to each face and into it. `type = "pressure"` is `megapascals` (N/mm²) on its faces,
-  square to them and into them; a negative value pulls.
-- **`faces`:** references to faces, as features have them (below). At least one.
+  square to them and into them; a negative value pulls. `type = "gravity"` is the part's own
+  weight: all of it pulled along `direction` at `acceleration` (mm/s²; the Earth's is 9810).
+  It has no `faces`, and a study has it once.
+- **`faces`:** references to faces, as features have them (below). At least one, but for
+  gravity, which has none.
+- **`suppressed`:** optional, on a support or a load: `true` leaves it out of the study for
+  now, and keeps it. Written only when true.
 - **`mesh_size`:** optional: the size of the elements the part is divided into, mm. Without it
   the size is chosen from the part's.
 - Supports and loads of one study share one run of ids. A study with no supports, no loads
@@ -768,7 +785,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   parameter `GapSize` (DEC-063, DEC-064, DEC-066), then `cut_across_bend` and a projection's
   `flat` (DEC-068), then `bend` (DEC-070), then `fold`, a contour flange's `edges` and
   `width`, `cut_normal` and `corner_rip` (DEC-071 to DEC-074), then `sharp_bend` (DEC-075), then a
-  material's optional `strength` and the `[[study]]` records (DEC-093).
+  material's optional `strength` and the `[[study]]` records (DEC-093); in them, the
+  `pin` and `frictionless` supports, the `gravity` load and `suppressed` (DEC-097).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

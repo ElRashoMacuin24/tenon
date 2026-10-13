@@ -571,8 +571,8 @@ pub const RIBBON: &[RibbonTab] = &[
                 title: "Constraints",
                 commands: &[
                     large("study.fix", "Fixed", "Faces that are held still", Icon::Fixed, 0),
-                    small("study.pin", "Pin", "Round faces held on a pin: free to turn, not to move off", Icon::Pin, LATER),
-                    small("study.frictionless", "Frictionless", "Faces that may slide along themselves but not leave", Icon::Frictionless, LATER),
+                    small("study.pin", "Pin", "Round faces held on a pin: free to turn, not to move off", Icon::Pin, 0),
+                    small("study.frictionless", "Frictionless", "Faces that may slide along themselves but not leave", Icon::Frictionless, 0),
                 ],
             },
             RibbonPanel {
@@ -580,9 +580,9 @@ pub const RIBBON: &[RibbonTab] = &[
                 commands: &[
                     large("study.force", "Force", "A force spread over faces, square to them or along a direction", Icon::Force, 0),
                     large("study.pressure", "Pressure", "A pressure on faces, square to them", Icon::Pressure, 0),
+                    small("study.gravity", "Gravity", "The part's own weight", Icon::Gravity, 0),
                     small("study.bearing", "Bearing", "The load of a shaft in its bore", Icon::BearingLoad, LATER),
                     small("study.moment", "Moment", "A turning load on faces", Icon::Moment, LATER),
-                    small("study.gravity", "Gravity", "The part's own weight", Icon::Gravity, LATER),
                     small("study.remote_force", "Remote Force", "A force that acts on faces from a point away from them", Icon::RemoteForce, LATER),
                     small("study.body", "Body", "A load on the whole body: an acceleration, or a spin", Icon::BodyLoad, LATER),
                 ],
@@ -597,6 +597,16 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Solve",
                 commands: &[large("analysis.simulate", "Simulate", "Work the study out", Icon::Simulate, 11)],
+            },
+            RibbonPanel {
+                title: "Display",
+                commands: &[large(
+                    "analysis.marks",
+                    "Boundary\nConditions",
+                    "Show or hide the supports and loads drawn on the part",
+                    Icon::BoundaryConditions,
+                    0,
+                )],
             },
             RibbonPanel {
                 title: "Exit",

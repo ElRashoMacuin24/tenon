@@ -2481,3 +2481,52 @@ and density alone, so a yield strength of one's own on a library material went b
 library's without a word, and a material of one's own lost its colour. Properties now sends
 what the material already says with what was changed; a test changes the density after the
 strength and looks.
+
+## DEC-097 More of a study: pins, sliding supports, the part's weight, directions that are picked (2026-10-13)
+
+At the owner's word on M11's first report ("keep closing the gaps"), the gaps that report
+listed and that do not wait on the mesher and solver (DEC-094, still unanswered: nothing of
+them is installed or named in the repository).
+
+**In the model** (additions to DEC-093; files without them are as they were):
+
+- **Pin**: round faces on a pin. Each of the three ways such a face could move is held or
+  left free: across the pin (radial), along it (axial), round it (tangential). Held across
+  and along and free to turn unless said otherwise; a pin that holds nothing is refused.
+- **Frictionless**: flat or round faces that may slide along themselves but not leave or
+  enter what they rest on.
+- A support says what faces it can hold from what each face is (a pin: cylinders; a
+  frictionless one: planes and cylinders), read off the reference to the face, so a command
+  is refused without the kernel being asked.
+- **Gravity**: the part's own weight, from its material's density: a direction (down, -Z,
+  unless said) and an acceleration (9810 mm/s²). On no faces, and once in a study.
+- **Suppressed**: a support or load left out of the study for now, and kept. A study whose
+  only support is suppressed lacks a support again.
+- **Copy Study**: the same study under another name, to change and compare.
+- Four commands (`study.pin`, `study.frictionless`, `study.gravity`, `study.copy`) and
+  more that `study.set` changes; 218 commands.
+
+**In the app:**
+
+- A force's (and the weight's) **direction is picked**: the Direction selector, then a
+  straight edge (along it), a flat face (square to it, into it) or a work axis; or an axis
+  of the part from its list. What is kept is the direction, not what gave it: it does not
+  follow the edge if the part changes. (Recorded as a gap.)
+- **Use Vector Components**: a force by its parts along X, Y and Z, in place of a size and
+  a direction. The same force either way: ticking and unticking turns one into the other.
+- Pin, Frictionless and Gravity on the ribbon, with panels, marks on the part (a pin seen
+  end on, a bar on rollers, an arrow from the centre of gravity) and rows in the browser.
+  A pin's panel has Fix Radial, Axial and Tangential Direction. The pointer offers a
+  support only the faces its kind can hold.
+- A row's menu has Edit, Rename, Suppress and Delete; a study's has Rename, Copy Study and
+  Delete Study. **Boundary Conditions** (Display panel) hides and shows the marks.
+
+Still greyed: Bearing, Moment, Remote Force, Body. Each needs deciding how it is spread
+over the elements, which is better done with the solver in hand.
+
+**Found on the way.** Enter did nothing in the Rename window of a feature either (the same
+fault as DEC-095's value window: the box took the keyboard back before it was asked whether
+it had lost it), and what was typed went in beside the old name. The Rename window is now
+one for features, studies, supports and loads, with the fault mended:
+`a_feature_is_renamed_by_typing_its_name_and_enter` (checked to fail with the fault put
+back).

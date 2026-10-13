@@ -465,8 +465,14 @@ pub(crate) enum Panel {
     Primitive(crate::primitive::PrimitivePanel),
     /// Fixed, in the Stress Analysis environment: the faces that are held.
     Support(crate::analysis::SupportPanel),
-    /// Force or Pressure, in the Stress Analysis environment.
+    /// Force, Pressure or Gravity, in the Stress Analysis environment.
     Load(crate::analysis::LoadPanel),
+    /// A study's name, or (with `item`) that of a support or a load of it.
+    RenameStudy {
+        study: tenon_model::study::StudyId,
+        item: Option<u32>,
+        name: String,
+    },
     Value(ValuePanel),
     /// A rectangular or circular pattern of sketch geometry.
     SketchPattern(crate::sketch_tools::SketchPatternPanel),
@@ -1286,15 +1292,24 @@ impl Workbench {
                 if commit {
                     keep = !self.commit_support(p);
                     if !keep && again {
-                        reopen = Some("study.fix");
+                        reopen = Some(match p.kind {
+                            tenon_model::study::SupportKind::Fixed => "study.fix",
+                            tenon_model::study::SupportKind::Pin { .. } => "study.pin",
+                            tenon_model::study::SupportKind::Frictionless => "study.frictionless",
+                        });
                     }
                 }
             }
             Panel::Load(p) => {
                 if commit {
                     keep = !self.commit_load(p);
+                    // (The part's weight is there once: there is no other to start.)
                     if !keep && again {
-                        reopen = Some(if p.pressure { "study.pressure" } else { "study.force" });
+                        reopen = match p.what {
+                            crate::analysis::What::Force => Some("study.force"),
+                            crate::analysis::What::Pressure => Some("study.pressure"),
+                            crate::analysis::What::Gravity => None,
+                        };
                     }
                 }
             }
@@ -1678,23 +1693,17 @@ impl Workbench {
             Panel::SketchPattern(p) => {
                 keep = self.sketch_pattern_window(&ctx, p, commit) && keep;
             }
+            Panel::RenameStudy { study, item, name } => {
+                if name_window(&ctx, name, &mut keep) || commit {
+                    let p = match item {
+                        Some(item) => ("study.set", json!({ "study": study.0, "item": *item, "name": name.trim() })),
+                        None => ("study.rename", json!({ "study": study.0, "name": name.trim() })),
+                    };
+                    keep = self.exec_status(p.0, p.1).is_none();
+                }
+            }
             Panel::Rename { feature, name } => {
-                let mut ok = commit;
-                egui::Window::new("Rename").collapsible(false).resizable(false).anchor(Align2::CENTER_TOP, [0.0, 160.0]).show(&ctx, |ui| {
-                    let r = ui.text_edit_singleline(name);
-                    r.request_focus();
-                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        ok = true;
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.button("OK").clicked() {
-                            ok = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            keep = false;
-                        }
-                    });
-                });
+                let ok = name_window(&ctx, name, &mut keep) || commit;
                 if ok {
                     keep = self.exec_status("feature.rename", json!({ "feature": feature.0, "name": name.trim() })).is_none();
                 }
@@ -1712,6 +1721,40 @@ impl Workbench {
             self.command(id);
         }
     }
+}
+
+/// The Rename window: a name in a box that has the keyboard, with what it shows selected, so
+/// that typing replaces it. Enter or OK returns true; Cancel clears `keep`.
+fn name_window(ctx: &egui::Context, name: &mut String, keep: &mut bool) -> bool {
+    let mut ok = false;
+    egui::Window::new("Rename").collapsible(false).resizable(false).anchor(Align2::CENTER_TOP, [0.0, 160.0]).show(ctx, |ui| {
+        let id = egui::Id::new("tn_rename_box");
+        // (Given the keyboard before it is drawn, and asked whether it lost it before it is
+        // given it again: else it selects nothing, and Enter does nothing.)
+        if ui.memory(|m| m.focused().is_none()) {
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+        let r = ui.add(egui::TextEdit::singleline(name).id(id).desired_width(220.0));
+        if r.gained_focus()
+            && let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), id)
+        {
+            let all = egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(name.chars().count()));
+            state.cursor.set_char_range(Some(all));
+            state.store(ui.ctx(), id);
+        }
+        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            ok = true;
+        }
+        ui.horizontal(|ui| {
+            if ui.button("OK").clicked() {
+                ok = true;
+            }
+            if ui.button("Cancel").clicked() {
+                *keep = false;
+            }
+        });
+    });
+    ok
 }
 
 /// The edit box placed on a dimension: the value (selected, so typing replaces it) and a check

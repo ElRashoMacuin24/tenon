@@ -129,6 +129,80 @@ fn a_study_says_where_a_part_is_held_and_what_pushes_on_it() {
 }
 
 #[test]
+fn pins_sliding_supports_the_parts_weight_and_copies_of_a_study() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    // A bar with a hole through it.
+    run(&mut s, &mut k, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    run(&mut s, &mut k, "model.cylinder", json!({ "x": 50, "y": 10, "diameter": 8, "height": 10, "operation": "cut" }));
+    let bore = run(&mut s, &mut k, "model.find", json!({ "what": "faces", "kind": "cylinder" }));
+    assert_eq!(bore["count"], 1, "{bore}");
+    let bore = bore["found"][0]["reference"].clone();
+    let (bottom, left) = (face(&mut s, &mut k, "bottom"), face(&mut s, &mut k, "left"));
+    run(&mut s, &mut k, "study.new", json!({}));
+
+    // A pin in the bore: held across and along, free to turn, unless said otherwise.
+    let pin = run(&mut s, &mut k, "study.pin", json!({ "faces": [bore] }));
+    assert_eq!(pin["support"], 1);
+    assert_eq!(pin["supports"][0], json!({ "id": 1, "name": "Pin1", "kind": "pin", "faces": 1, "radial": true, "axial": true, "tangential": false }));
+    assert!(refused(&mut s, &mut k, "study.pin", json!({ "faces": [left] })).contains("a pin holds round"));
+    assert!(refused(&mut s, &mut k, "study.pin", json!({ "faces": [bore], "radial": false, "axial": false })).contains("holds nothing"));
+    assert!(refused(&mut s, &mut k, "study.pin", json!({ "faces": [bore], "axial": "no" })).contains("true or false"));
+    let turned = run(&mut s, &mut k, "study.set", json!({ "item": 1, "axial": false, "tangential": true }));
+    assert_eq!((turned["supports"][0]["axial"].clone(), turned["supports"][0]["tangential"].clone()), (json!(false), json!(true)));
+
+    // The bar may slide on its bottom, and on the bore.
+    let slide = run(&mut s, &mut k, "study.frictionless", json!({ "faces": [bottom, bore] }));
+    assert_eq!(slide["supports"][1], json!({ "id": 2, "name": "Frictionless1", "kind": "frictionless", "faces": 2 }));
+    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 2, "radial": true })).contains("is a support"));
+
+    // Its own weight: down, at the Earth's pull, once.
+    let weight = run(&mut s, &mut k, "study.gravity", json!({}));
+    assert_eq!(weight["load"], 3);
+    assert_eq!(
+        weight["loads"][0],
+        json!({ "id": 3, "name": "Gravity1", "faces": 0, "type": "gravity", "direction": [0.0, 0.0, -1.0], "acceleration": 9810.0 })
+    );
+    assert_eq!(weight["needs"], json!([]), "held and loaded");
+    assert!(refused(&mut s, &mut k, "study.gravity", json!({ "direction": "left" })).contains("the part's weight already"));
+    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 3, "direction": "normal" })).contains("pulls one way"));
+    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 3, "faces": [left] })).contains("is the part's weight"));
+    let moon = run(&mut s, &mut k, "study.set", json!({ "item": 3, "direction": "-y", "acceleration": 1620 }));
+    assert_eq!((moon["loads"][0]["direction"].clone(), moon["loads"][0]["acceleration"].as_f64()), (json!([0.0, -1.0, 0.0]), Some(1620.0)));
+    run(&mut s, &mut k, "study.remove", json!({ "item": 3 }));
+    let told = refused(&mut s, &mut k, "study.gravity", json!({ "direction": "normal" }));
+    assert!(told.contains("direction"), "the weight pulls one way, whatever the faces: {told}");
+    assert!(refused(&mut s, &mut k, "study.gravity", json!({ "acceleration": 0 })).contains("more than 0"));
+    run(&mut s, &mut k, "study.gravity", json!({ "direction": [0, 0, -2], "name": "Weight" }));
+
+    // Suppressed: kept, and for now not there. With its only load suppressed the study lacks one.
+    let quiet = run(&mut s, &mut k, "study.set", json!({ "item": 3, "suppressed": true }));
+    assert_eq!(quiet["loads"][0]["suppressed"], true);
+    assert_eq!(quiet["needs"].as_array().map(Vec::len), Some(1), "{quiet}");
+    let heard = run(&mut s, &mut k, "study.set", json!({ "item": 3, "suppressed": false }));
+    assert_eq!((heard["loads"][0].get("suppressed"), heard["needs"].clone()), (None, json!([])));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    assert!(s.document().study(StudyId(1)).unwrap().loads[0].suppressed, "one undo step");
+    run(&mut s, &mut k, "edit.redo", json!({}));
+
+    // A copy of the study: the same supports and loads under another name, to change and compare.
+    let copy = run(&mut s, &mut k, "study.copy", json!({}));
+    assert_eq!((copy["study"].as_u64(), copy["name"].as_str(), copy["copied"].as_u64()), (Some(2), Some("Study1 copy"), Some(1)));
+    assert_eq!((copy["supports"].as_array().map(Vec::len), copy["loads"].as_array().map(Vec::len)), (Some(2), Some(1)));
+    let again = run(&mut s, &mut k, "study.copy", json!({ "study": 1 }));
+    assert_eq!(again["name"], "Study1 copy 2");
+    let named = run(&mut s, &mut k, "study.copy", json!({ "study": 2, "name": "On the Moon" }));
+    assert_eq!((named["study"].as_u64(), named["name"].as_str()), (Some(4), Some("On the Moon")));
+    assert!(refused(&mut s, &mut k, "study.copy", json!({ "study": 9 })).contains("no study 9"));
+    // The copy is its own: changing it leaves the first as it was.
+    run(&mut s, &mut k, "study.remove", json!({ "study": 2, "item": 1 }));
+    assert_eq!((s.document().study(StudyId(1)).unwrap().supports.len(), s.document().study(StudyId(2)).unwrap().supports.len()), (2, 1));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    assert_eq!(s.document().studies().len(), 3, "a copy is one undo step");
+    s.document().validate().unwrap();
+}
+
+#[test]
 fn a_material_says_how_it_answers_to_a_load() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     // No material: nothing to check stress against.

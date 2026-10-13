@@ -829,6 +829,14 @@ fn a_stress_study_and_a_materials_strength_are_written_as_text_and_read_back() {
     go(&mut s, "study.pressure", json!({ "faces": [top, right], "megapascals": 0.25, "name": "Snow" }));
     go(&mut s, "study.mesh_size", json!({ "size": 2.5 }));
     go(&mut s, "study.new", json!({}));
+    // A hole through it, for a pin; the bar free to slide on its bottom; its own weight.
+    go(&mut s, "model.cylinder", json!({ "x": 50, "y": 10, "diameter": 8, "height": 10, "operation": "cut" }));
+    let bore = go(&mut s, "model.find", json!({ "what": "faces", "kind": "cylinder" }))["found"][0]["reference"].clone();
+    let bottom = face(&mut s, &mut go, "bottom");
+    go(&mut s, "study.pin", json!({ "study": 2, "faces": [bore], "tangential": true }));
+    go(&mut s, "study.frictionless", json!({ "study": 2, "faces": [bottom] }));
+    go(&mut s, "study.gravity", json!({ "study": 2 }));
+    go(&mut s, "study.set", json!({ "study": 2, "item": 2, "suppressed": true }));
     let bytes = project::to_bytes(s.document(), &extra).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();
     // The material's strength with the material; each study a record of its own after the
@@ -848,7 +856,21 @@ fn a_stress_study_and_a_materials_strength_are_written_as_text_and_read_back() {
     ] {
         assert!(text.contains(said), "{said} is not in:\n{text}");
     }
-    assert!(text.contains("\n[[study]]\nid = 2\nname = \"Study1\"\n"), "a study with nothing in it is its id and its name:\n{text}");
+    assert!(text.contains("\n[[study]]\nid = 2\nname = \"Study1\"\n"), "{text}");
+    for said in [
+        "kind = \"pin\"",
+        "radial = true",
+        "axial = true",
+        "tangential = true",
+        "kind = \"frictionless\"",
+        "suppressed = true",
+        "type = \"gravity\"",
+        "acceleration = 9810.0",
+    ] {
+        assert!(text.contains(said), "{said} is not in:\n{text}");
+    }
+    let studies = &text[text.find("[[study]]").unwrap()..];
+    assert_eq!(studies.matches("suppressed").count(), 1, "a support or load that is not suppressed does not say so:\n{studies}");
     assert!(text.find("[[feature]]").unwrap() < text.find("[[study]]").unwrap(), "{text}");
     // Read back it is the same part (but for the rounding of what the kernel measured of
     // each face, as in every reference), and saves the same again.
@@ -863,6 +885,15 @@ fn a_stress_study_and_a_materials_strength_are_written_as_text_and_read_back() {
     };
     assert_eq!(origins(now), origins(was));
     assert_eq!(origins(now).len(), 4);
+    let (was, now) = (&s.document().studies()[1], &back.studies()[1]);
+    assert_eq!(
+        now.supports.iter().map(|x| (x.kind, x.suppressed)).collect::<Vec<_>>(),
+        was.supports.iter().map(|x| (x.kind, x.suppressed)).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        now.loads.iter().map(|l| (l.kind, l.faces.len())).collect::<Vec<_>>(),
+        was.loads.iter().map(|l| (l.kind, l.faces.len())).collect::<Vec<_>>()
+    );
     assert_eq!(back.strength().map(|m| m.yield_strength), Some(275.0));
 
     // A study damaged by hand is refused with what is wrong with it.
@@ -876,6 +907,9 @@ fn a_stress_study_and_a_materials_strength_are_written_as_text_and_read_back() {
     std::fs::write(dir.join("a.tenon"), &bytes).unwrap();
     std::fs::write(dir.join("b.tenon"), &later).unwrap();
     go(&mut s, "study.rename", json!({ "study": 2, "name": "Twisted" }));
+    go(&mut s, "study.set", json!({ "study": 2, "item": 2, "suppressed": false }));
+    go(&mut s, "study.set", json!({ "study": 2, "item": 1, "axial": false }));
+    go(&mut s, "study.set", json!({ "study": 2, "item": 3, "direction": "-y" }));
     go(&mut s, "study.remove", json!({ "study": 1, "item": 3 }));
     go(&mut s, "study.mesh_size", json!({ "study": 1, "size": null }));
     go(&mut s, "study.new", json!({ "name": "Third" }));
@@ -888,6 +922,9 @@ fn a_stress_study_and_a_materials_strength_are_written_as_text_and_read_back() {
     assert!(has("Studies ~ End load [1]") && has("element size 2.5 mm -> chosen from the part"), "{said:#?}");
     assert!(has("- Snow") && has("+ Force2 (force 40 N square to them on 1 face)"), "{said:#?}");
     assert!(has("Studies ~ Twisted [2] name Study1 -> Twisted"), "{said:#?}");
+    assert!(has("Pin1: pin held radial, axial, tangential on 1 face -> pin held radial, tangential on 1 face"), "{said:#?}");
+    assert!(has("Frictionless1: frictionless on 1 face, suppressed -> frictionless on 1 face"), "{said:#?}");
+    assert!(has("Gravity1: gravity 9810 mm/s^2 along (0, 0, -1) -> gravity 9810 mm/s^2 along (0, -1, 0)"), "{said:#?}");
     assert!(has("Studies + Third [3] 0 supports, 0 loads"), "{said:#?}");
     assert!(has("69 GPa, 0.33, 275 MPa") && has("69 GPa, 0.33, 240 MPa"), "{said:#?}");
     // The same file against itself: nothing.

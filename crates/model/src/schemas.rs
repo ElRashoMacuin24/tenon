@@ -867,8 +867,30 @@ static SCHEMAS: &[C] = &[
     ),
     C::new("study.new", &[opt("name", Text, "its name (default Study1, Study2...)")]),
     C::new("study.rename", &[STUDY, req("name", Text, "its new name (1 to 64 characters)")]),
+    C::new("study.copy", &[STUDY, opt("name", Text, "the copy's name (default: the study's name with \"copy\")")]),
     C::new("study.delete", &[STUDY]),
     C::new("study.fix", &[STUDY, req("faces", List(&Face), "the faces that are held still"), ITEM_NAME]),
+    C::new(
+        "study.pin",
+        &[
+            STUDY,
+            req("faces", List(&Face), "the round (cylindrical) faces on the pin"),
+            opt("radial", Bool, "held across the pin (default true)"),
+            opt("axial", Bool, "held along the pin (default true)"),
+            opt("tangential", Bool, "held from turning on the pin (default false)"),
+            ITEM_NAME,
+        ],
+    ),
+    C::new("study.frictionless", &[STUDY, req("faces", List(&Face), "the flat or round faces that may slide along themselves"), ITEM_NAME]),
+    C::new(
+        "study.gravity",
+        &[
+            STUDY,
+            opt("direction", WAY, "the way it pulls: +x ... -z, down, up, left, right, front, back or [x, y, z]; default down (-z)"),
+            opt("acceleration", Number, "mm/s^2 (default 9810, the Earth's)"),
+            ITEM_NAME,
+        ],
+    ),
     C::new(
         "study.force",
         &[
@@ -901,6 +923,11 @@ static SCHEMAS: &[C] = &[
             opt("newtons", Number, "a force's size, N"),
             opt("direction", PUSH, "a force's direction, as for study.force; normal: square to its faces"),
             opt("megapascals", Number, "a pressure's size, N/mm^2"),
+            opt("acceleration", Number, "gravity's size, mm/s^2"),
+            opt("radial", Bool, "a pin: held across it"),
+            opt("axial", Bool, "a pin: held along it"),
+            opt("tangential", Bool, "a pin: held from turning"),
+            opt("suppressed", Bool, "true: left out of the study for now, and kept"),
             opt("name", Text, "its new name"),
         ],
     ),

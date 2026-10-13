@@ -492,7 +492,7 @@ impl Workbench {
             Panel::CornerSeam(p) => (if p.rip { "Corner Rip" } else { "Corner Seam" }, p.editing.map(|f| self.feature_name(f))),
             Panel::Bend(p) => ("Bend", p.editing.map(|f| self.feature_name(f))),
             Panel::Primitive(p) => (p.shape.title(), None),
-            Panel::Support(p) => ("Fixed", p.editing.and_then(|id| self.study_item_name(id))),
+            Panel::Support(p) => (p.title(), p.editing.and_then(|id| self.study_item_name(id))),
             Panel::Load(p) => (p.title(), p.editing.and_then(|id| self.study_item_name(id))),
             Panel::Asm(p) => {
                 (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
@@ -500,6 +500,8 @@ impl Workbench {
             _ => return,
         };
         let mut clear = false;
+        // (For a force said by its parts: the way its first face looks.)
+        let face_normal = self.load_face_normal();
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             ui.label(egui::RichText::new(kind).font(theme::heading()).color(t.text));
@@ -515,7 +517,7 @@ impl Workbench {
                 match &mut panel {
                     Panel::Support(p) => clear |= crate::analysis::support_fields(ui, p),
                     Panel::Load(p) => {
-                        let (cleared, entered) = crate::analysis::load_fields(ui, p, t);
+                        let (cleared, entered) = crate::analysis::load_fields(ui, p, face_normal, t);
                         clear |= cleared;
                         enter |= entered;
                     }
@@ -1706,8 +1708,13 @@ impl Workbench {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
-                        Some(Panel::Load(p)) => {
-                            let (unit, range) = if p.pressure { ("MPa", -1.0e6..=1.0e6) } else { ("N", 0.001..=1.0e12) };
+                        // (A force said by its parts has no one size to show here.)
+                        Some(Panel::Load(p)) if p.components.is_none() => {
+                            let (unit, range) = match p.what {
+                                crate::analysis::What::Pressure => ("MPa", -1.0e6..=1.0e6),
+                                crate::analysis::What::Force => ("N", 0.001..=1.0e12),
+                                crate::analysis::What::Gravity => ("mm/s²", 0.001..=1.0e9),
+                            };
                             if eq_field(ui, egui::Id::new("tn_mini_load"), &mut p.magnitude, None, unit, range, 80.0, t).entered {
                                 request = Some(PanelRequest::Ok);
                             }

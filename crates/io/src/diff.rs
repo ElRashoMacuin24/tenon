@@ -181,7 +181,13 @@ fn part(a: &Value, b: &Value, out: &mut Vec<Change>) {
 fn study_item(v: &Value) -> String {
     let faces = v["faces"].as_array().map_or(0, Vec::len);
     let on = format!("on {faces} face{}", if faces == 1 { "" } else { "s" });
-    match (v["type"].as_str(), v["kind"].as_str()) {
+    let along = |d: &Value| format!("({}, {}, {})", show(&d["x"]), show(&d["y"]), show(&d["z"]));
+    let said = match (v["type"].as_str(), v["kind"].as_str()) {
+        (Some("gravity"), _) => format!("gravity {} mm/s^2 along {}", show(&v["acceleration"]), along(&v["direction"])),
+        (_, Some("pin")) => {
+            let held: Vec<&str> = ["radial", "axial", "tangential"].into_iter().filter(|k| v[*k] == true).collect();
+            format!("pin held {} {on}", held.join(", "))
+        }
         (Some("force"), _) => {
             let way = match &v["direction"] {
                 Value::Object(d) => format!(" along ({}, {}, {})", show(&d["x"]), show(&d["y"]), show(&d["z"])),
@@ -192,7 +198,8 @@ fn study_item(v: &Value) -> String {
         (Some("pressure"), _) => format!("pressure {} MPa {on}", show(&v["megapascals"])),
         (_, Some(kind)) => format!("{kind} {on}"),
         _ => on,
-    }
+    };
+    if v["suppressed"] == true { format!("{said}, suppressed") } else { said }
 }
 
 /// Stress studies: made, deleted, and what of each changed (its name, its element size, its

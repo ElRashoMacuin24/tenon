@@ -153,6 +153,8 @@ pub enum Icon {
     Simulate,
     RemoteForce,
     BodyLoad,
+    /// The marks of supports and loads on a part, shown or hidden.
+    BoundaryConditions,
     // primitives
     PrimBox,
     PrimCylinder,
@@ -1116,6 +1118,17 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.dot((0.8, 0.44), 0.06);
             pen.line(&[(0.8, 0.06), (0.8, 0.3)]);
             pen.arrow_head((0.8, 0.38), (0.8, 0.1));
+        }
+        // A part with its ground mark and its load arrow.
+        Icon::BoundaryConditions => {
+            pen.fill(&[(0.3, 0.4), (0.9, 0.4), (0.9, 0.62), (0.3, 0.62)], soft);
+            pen.closed(&[(0.3, 0.4), (0.9, 0.4), (0.9, 0.62), (0.3, 0.62)]);
+            pen.line(&[(0.3, 0.24), (0.3, 0.78)]);
+            for y in [0.3, 0.46, 0.62] {
+                pen.line(&[(0.3, y), (0.12, y + 0.14)]);
+            }
+            pen.line(&[(0.78, 0.06), (0.78, 0.3)]);
+            pen.arrow_head((0.78, 0.38), (0.78, 0.1));
         }
         // A body, and the way all of it is pushed.
         Icon::BodyLoad => {

@@ -7,9 +7,10 @@ use egui::vec2;
 use serde_json::json;
 use tenon_geom::Vec3;
 use tenon_kernel_occt::OcctKernel;
-use tenon_model::study::{LoadKind, Study};
+use tenon_model::study::{LoadKind, Study, SupportKind};
 
 use crate::Workbench;
+use crate::analysis::{LoadPanel, Way};
 use crate::commands::{ANALYSIS_TAB, RIBBON};
 use crate::panels::Panel;
 use crate::tests::{Driver, browser_row, ctrl, on_screen, pressable, type_into};
@@ -166,8 +167,10 @@ fn a_bar_is_held_at_one_end_and_loaded_at_the_other_by_clicks() {
     let Some(Panel::Load(p)) = &wb.panel else { panic!("no load panel: {}", wb.status()) };
     assert_eq!((p.editing, p.magnitude, p.faces.len()), (Some(load_id(&wb, "Force1")), 250.0, 1));
     d.frame(&mut wb, vec![]);
-    click_text(&mut d, &mut wb, "Normal to Face");
-    click_text(&mut d, &mut wb, "Along Z");
+    let list = pressable(&d, "tn_props_load_way");
+    d.click(&mut wb, list);
+    d.frame(&mut wb, vec![]);
+    click_text(&mut d, &mut wb, "Z Axis");
     d.frame(&mut wb, vec![]);
     let flipped = pressable(&d, "tn_glyph Flipped");
     d.click(&mut wb, flipped);
@@ -368,4 +371,278 @@ fn assign_opens_properties_where_a_material_says_how_strong_it_is() {
     let m = wb.document().material().unwrap();
     assert_eq!((m.name.as_str(), m.density, m.color.as_str()), ("Carbon PETG", 1.3, "#202428"), "it is otherwise as it was");
     browser_row(&d, "Material: Carbon PETG");
+}
+
+/// A bar 100 x 20 x 10 with a hole of 8 through its middle, in the environment.
+fn bar_with_a_hole() -> (Workbench, Driver) {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    wb.exec("model.box", json!({ "plane": "xy", "width": 100, "depth": 20, "height": 10 })).unwrap();
+    wb.exec("model.cylinder", json!({ "plane": "xy", "x": 50, "y": 10, "diameter": 8, "height": 10, "operation": "cut" })).unwrap();
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.scene().bodies.len(), 1, "{}", wb.status());
+    wb.run_ui("analysis.begin").unwrap();
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    (wb, d)
+}
+
+fn right_click(d: &mut Driver, wb: &mut Workbench, at: egui::Pos2) {
+    d.frame(wb, vec![egui::Event::PointerMoved(at)]);
+    d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, true)]);
+    d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, false)]);
+    d.frame(wb, vec![]);
+}
+
+fn load_panel(wb: &Workbench) -> &LoadPanel {
+    match &wb.panel {
+        Some(Panel::Load(p)) => p,
+        _ => panic!("no load panel: {}", wb.status()),
+    }
+}
+
+#[test]
+fn a_forces_direction_is_picked_in_the_part_or_given_by_its_parts() {
+    // A work axis along Y, made before the study, to push along later.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    wb.exec("model.box", json!({ "plane": "xy", "x": 10, "width": 100, "depth": 20, "height": 10 })).unwrap();
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("work.axis").unwrap();
+    wb.browser_action(crate::browser::BrowserAction::Reference(crate::work::Reference::Axis(tenon_model::OriginAxis::Y)));
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none() && wb.scene().work.len() == 1, "{}", wb.status());
+    wb.run_ui("analysis.begin").unwrap();
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+
+    // Force on the right end. Its faces take the clicks until the direction is asked for.
+    click_text(&mut d, &mut wb, "Force");
+    let right = on_screen(&wb, Vec3::new(110.0, 10.0, 5.0));
+    d.click(&mut wb, right);
+    assert_eq!((load_panel(&wb).faces.len(), load_panel(&wb).way, load_panel(&wb).picking), (1, Way::Normal, false));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+
+    // The direction selector, then a straight edge: along that edge. The faces stay as they were.
+    let selector = pressable(&d, "tn_props_load_pick");
+    d.click(&mut wb, selector);
+    assert!(load_panel(&wb).picking);
+    let long_edge = on_screen(&wb, Vec3::new(60.0, 0.0, 10.0));
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(long_edge)]);
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(wb.view.hover, Some(Pick::Edge { .. })), "the edge under the pointer is shown as what would be taken: {:?}", wb.view.hover);
+    d.click(&mut wb, long_edge);
+    assert_eq!((load_panel(&wb).way, load_panel(&wb).picking, load_panel(&wb).faces.len()), (Way::X, false, 1), "{}", wb.status());
+    // A flat face: square to it, into it.
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, selector);
+    let top = on_screen(&wb, Vec3::new(40.0, 10.0, 10.0));
+    d.click(&mut wb, top);
+    assert_eq!((load_panel(&wb).way, load_panel(&wb).flip, load_panel(&wb).faces.len()), (Way::Z, true, 1), "down, into the top");
+    // A work axis (drawn over the part): along it.
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, selector);
+    let on_axis = on_screen(&wb, Vec3::new(0.0, 12.0, 0.0));
+    d.click(&mut wb, on_axis);
+    assert_eq!((load_panel(&wb).way, load_panel(&wb).picking), (Way::Y, false), "{}", wb.status());
+    // A round edge gives no direction: the selector goes on waiting.
+    // (Chosen from the list instead: an axis of the part.)
+    d.frame(&mut wb, vec![]);
+    let list = pressable(&d, "tn_props_load_way");
+    d.click(&mut wb, list);
+    d.frame(&mut wb, vec![]);
+    click_text(&mut d, &mut wb, "Z Axis");
+    assert_eq!((load_panel(&wb).way, load_panel(&wb).flip), (Way::Z, false));
+
+    // Use Vector Components: the same force by its parts. 100 N along Z is 0, 0, 100.
+    click_text(&mut d, &mut wb, "Use Vector Components");
+    assert_eq!(load_panel(&wb).components.map(|v| (v.x, v.y, v.z)), Some((0.0, 0.0, 100.0)));
+    type_into(&mut d, &mut wb, "tn_props_load_fx", "30");
+    type_into(&mut d, &mut wb, "tn_props_load_fz", "-40");
+    d.frame(&mut wb, vec![]);
+    assert_eq!(load_panel(&wb).shown(), LoadKind::Force { newtons: 50.0, direction: Some(Vec3::new(0.6, 0.0, -0.8)) });
+    assert!(d.texts().iter().any(|t| t == "50 N"), "drawn as it will be: {:?}", d.texts());
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let LoadKind::Force { newtons, direction: Some(way) } = study(&wb).loads[0].kind else { panic!("{:?}", study(&wb).loads) };
+    assert!((newtons - 50.0).abs() < 1e-9 && (way - Vec3::new(0.6, 0.0, -0.8)).len() < 1e-9, "{newtons} {way:?}");
+
+    // Opened again it is that direction; by its parts it is 30, 0, -40. Unticked, 50 N that way.
+    let row = browser_row(&d, "Force1 (50 N)").center();
+    double_click(&mut d, &mut wb, row);
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(load_panel(&wb).way, Way::Other(_)) && load_panel(&wb).magnitude == 50.0, "{:?}", load_panel(&wb));
+    assert!(d.texts().iter().any(|t| t == "0.6, 0, -0.8"), "the selector says which way: {:?}", d.texts());
+    click_text(&mut d, &mut wb, "Use Vector Components");
+    assert_eq!(load_panel(&wb).components.map(|v| (v.x, v.y, v.z)), Some((30.0, 0.0, -40.0)));
+    type_into(&mut d, &mut wb, "tn_props_load_fx", "0");
+    click_text(&mut d, &mut wb, "Use Vector Components");
+    assert_eq!((load_panel(&wb).components, load_panel(&wb).magnitude, load_panel(&wb).way, load_panel(&wb).flip), (None, 40.0, Way::Z, true));
+    // No force at all is refused in words, and the panel stays.
+    click_text(&mut d, &mut wb, "Use Vector Components");
+    type_into(&mut d, &mut wb, "tn_props_load_fz", "0");
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.status_error && wb.status().contains("other than 0"), "{}", wb.status());
+    assert!(matches!(wb.panel, Some(Panel::Load(_))));
+}
+
+#[test]
+fn a_pin_a_sliding_support_and_the_parts_own_weight() {
+    let (mut wb, mut d) = bar_with_a_hole();
+    // (The wall of the hole that is seen through its mouth.)
+    let bore = Vec3::new(50.0 - 2.828, 10.0 + 2.828, 8.0);
+    let (in_bore, on_top) = (on_screen(&wb, bore), on_screen(&wb, Vec3::new(20.0, 10.0, 10.0)));
+    let middle = Vec3::new(50.0, 10.0, 5.0);
+
+    // Pin: round faces only. A flat face under the pointer is not offered, and a click on it
+    // takes nothing.
+    click_text(&mut d, &mut wb, "Pin");
+    assert_eq!(wb.status(), "Pin: click the round faces that are on the pin, then OK.");
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(on_top)]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.view.hover, None, "a flat face is not a pin's");
+    d.click(&mut wb, on_top);
+    d.click(&mut wb, in_bore);
+    let Some(Panel::Support(p)) = &wb.panel else { panic!("no panel: {}", wb.status()) };
+    assert_eq!((p.faces.len(), p.kind), (1, SupportKind::PIN));
+    // Free to move along the pin too.
+    d.frame(&mut wb, vec![]);
+    click_text(&mut d, &mut wb, "Fix Axial Direction");
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let pin = &study(&wb).supports[0];
+    assert_eq!((pin.name.as_str(), pin.kind, pin.faces.len()), ("Pin1", SupportKind::Pin { radial: true, axial: false, tangential: false }, 1));
+    d.frame(&mut wb, vec![]);
+    assert!(marked(&d, &wb, "held", middle), "the pin's mark is in the middle of the hole");
+
+    // Frictionless: flat or round faces (the hole's wall is taken, and given back).
+    click_text(&mut d, &mut wb, "Frictionless");
+    d.click(&mut wb, on_top);
+    d.click(&mut wb, in_bore);
+    let Some(Panel::Support(p)) = &wb.panel else { panic!("no panel: {}", wb.status()) };
+    assert_eq!(p.faces.len(), 2);
+    d.click(&mut wb, in_bore);
+    click_text(&mut d, &mut wb, "OK");
+    let slide = &study(&wb).supports[1];
+    assert_eq!((slide.name.as_str(), slide.kind, slide.faces.len()), ("Frictionless1", SupportKind::Frictionless, 1), "{}", wb.status());
+
+    // Gravity: on no faces, down at the Earth's pull, and drawn from the part's centre.
+    click_text(&mut d, &mut wb, "Gravity");
+    assert!(wb.status().starts_with("Gravity: the part's own weight"), "{}", wb.status());
+    assert_eq!(load_panel(&wb).shown(), LoadKind::Gravity { direction: Vec3::new(0.0, 0.0, -1.0), acceleration: 9810.0 });
+    d.click(&mut wb, on_top);
+    assert!(load_panel(&wb).faces.is_empty(), "it is on all of the part: a click on a face takes nothing");
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "g 9.81 m/s²"), "{:?}", d.texts());
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let weight = &study(&wb).loads[0];
+    assert_eq!(
+        (weight.name.as_str(), weight.faces.len(), weight.kind),
+        ("Gravity1", 0, LoadKind::Gravity { direction: Vec3::new(0.0, 0.0, -1.0), acceleration: 9810.0 })
+    );
+    assert!(study(&wb).missing().is_empty());
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Loads(1)");
+    // There is one: the button says so, and its row opens it. Along X, on the Moon.
+    click_text(&mut d, &mut wb, "Gravity");
+    assert!(wb.status_error && wb.status().contains("the part's weight already (Gravity1)"), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    let row = browser_row(&d, "Gravity1 (9.81 m/s²)").center();
+    double_click(&mut d, &mut wb, row);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let list = pressable(&d, "tn_props_load_way");
+    d.click(&mut wb, list);
+    d.frame(&mut wb, vec![]);
+    assert!(!d.texts().iter().any(|t| t == "Normal to Face"), "weight has no faces to be square to");
+    click_text(&mut d, &mut wb, "X Axis");
+    type_into(&mut d, &mut wb, "tn_props_load_mag", "1620");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(study(&wb).loads[0].kind, LoadKind::Gravity { direction: Vec3::X, acceleration: 1620.0 }, "{}", wb.status());
+
+    // Suppressed from its menu: kept, written dim, not drawn, and the study lacks a load again.
+    let row = browser_row(&d, "Pin1").center();
+    right_click(&mut d, &mut wb, row);
+    click_text(&mut d, &mut wb, "Suppress");
+    assert!(study(&wb).supports[0].suppressed, "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let quiet = browser_row(&d, "Pin1 (suppressed)").center();
+    assert!(!marked(&d, &wb, "held", middle), "the pin's mark is gone");
+    assert!(d.texts().iter().all(|t| t != "Pin1"), "{:?}", d.texts());
+    right_click(&mut d, &mut wb, quiet);
+    click_text(&mut d, &mut wb, "Unsuppress");
+    assert!(!study(&wb).supports[0].suppressed);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(marked(&d, &wb, "held", middle), "and back");
+
+    // Renamed from its menu: what is typed takes the place of the name; Enter.
+    d.frame(&mut wb, vec![]);
+    let row = browser_row(&d, "Frictionless1").center();
+    right_click(&mut d, &mut wb, row);
+    click_text(&mut d, &mut wb, "Rename");
+    assert!(matches!(wb.panel, Some(Panel::RenameStudy { item: Some(2), .. })), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![egui::Event::Text("Table".into())]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(study(&wb).supports[1].name, "Table");
+    d.frame(&mut wb, vec![]);
+    let row = browser_row(&d, "Study1").center();
+    right_click(&mut d, &mut wb, row);
+    click_text(&mut d, &mut wb, "Rename");
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![egui::Event::Text("Bench".into())]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(study(&wb).name, "Bench", "{}", wb.status());
+
+    // Copy Study: the same again, which becomes the one worked on.
+    d.frame(&mut wb, vec![]);
+    let row = browser_row(&d, "Bench").center();
+    right_click(&mut d, &mut wb, row);
+    click_text(&mut d, &mut wb, "Copy Study");
+    let names: Vec<&str> = wb.document().studies().iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["Bench", "Bench copy"], "{}", wb.status());
+    assert_eq!(wb.active_study().map(|s| (s.name.as_str(), s.supports.len(), s.loads.len())), Some(("Bench copy", 2, 1)));
+    assert!(wb.status().starts_with("Bench copy is a copy of the study"), "{}", wb.status());
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    assert_eq!(wb.document().studies().len(), 1, "one step, taken back");
+
+    // Boundary Conditions hides what is drawn on the part, and shows it again.
+    d.frame(&mut wb, vec![]);
+    assert!(marked(&d, &wb, "held", middle));
+    click_text(&mut d, &mut wb, "Boundary");
+    d.frame(&mut wb, vec![]);
+    assert!(!marked(&d, &wb, "held", middle) && !d.texts().iter().any(|t| t.starts_with("g ")), "{}", wb.status());
+    click_text(&mut d, &mut wb, "Boundary");
+    d.frame(&mut wb, vec![]);
+    assert!(marked(&d, &wb, "held", middle));
+}
+
+#[test]
+fn a_feature_is_renamed_by_typing_its_name_and_enter() {
+    let (mut wb, mut d) = bar();
+    let row = browser_row(&d, "Extrusion1").center();
+    right_click(&mut d, &mut wb, row);
+    click_text(&mut d, &mut wb, "Rename");
+    assert!(matches!(wb.panel, Some(Panel::Rename { .. })), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    // (What is typed takes the place of the name that is shown; Enter is OK.)
+    d.frame(&mut wb, vec![egui::Event::Text("Bar".into())]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(wb.document().features().last().map(|f| f.name.as_str()), Some("Bar"));
 }

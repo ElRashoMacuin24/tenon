@@ -1,7 +1,8 @@
 //! Stress studies (M11): where a part is held and what pushes on it.
 //!
-//! A study is the question "does this part hold?": faces that are held still (supports), and
-//! forces and pressures on other faces (loads). It is kept with the part, refers to faces by
+//! A study is the question "does this part hold?": faces that are held (supports: fixed, on a
+//! pin, or free to slide), and what pushes on the part (loads: forces and pressures on faces,
+//! and its own weight). It is kept with the part, refers to faces by
 //! their persistent names like any feature does, and is edited by commands (`study.*`) with
 //! undo. Working out the answer (dividing the part into elements, solving, showing stress) is
 //! not in this module.
@@ -23,6 +24,9 @@ pub const MAX_FACES: usize = 10_000;
 /// The largest force (N) and pressure (MPa) taken: beyond any part a study is for.
 pub const MAX_FORCE: f64 = 1.0e12;
 pub const MAX_PRESSURE: f64 = 1.0e6;
+/// The pull of the Earth, mm/s^2, and the largest acceleration taken.
+pub const EARTH: f64 = 9810.0;
+pub const MAX_ACCELERATION: f64 = 1.0e9;
 
 /// A study's id within its part.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -37,10 +41,65 @@ impl std::fmt::Display for StudyId {
 
 /// How faces are held.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SupportKind {
     /// Held still in every direction, as if welded to something that does not move.
     Fixed,
+    /// Round faces on a pin. Each of the three ways such a face could move is held or left
+    /// free: across the pin (`radial`), along it (`axial`), and round it (`tangential`).
+    Pin { radial: bool, axial: bool, tangential: bool },
+    /// Flat or round faces that may slide along themselves but not leave or enter what they
+    /// rest on.
+    Frictionless,
+}
+
+impl SupportKind {
+    /// A pin as it usually is: held across and along, free to turn.
+    pub const PIN: SupportKind = SupportKind::Pin { radial: true, axial: true, tangential: false };
+
+    /// "Fixed", "Pin" or "Frictionless": what its name starts with.
+    pub fn word(&self) -> &'static str {
+        match self {
+            SupportKind::Fixed => "Fixed",
+            SupportKind::Pin { .. } => "Pin",
+            SupportKind::Frictionless => "Frictionless",
+        }
+    }
+
+    /// The same in the words of files and commands.
+    pub fn key(&self) -> &'static str {
+        match self {
+            SupportKind::Fixed => "fixed",
+            SupportKind::Pin { .. } => "pin",
+            SupportKind::Frictionless => "frictionless",
+        }
+    }
+
+    pub fn check(&self) -> Result<(), String> {
+        match self {
+            SupportKind::Pin { radial: false, axial: false, tangential: false } => {
+                Err("a pin that holds nothing is no support: hold it across (radial), along (axial) or round (tangential)".into())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether a face of that surface ("plane", "cylinder" ...) can be held this way.
+    pub fn takes(&self, surface: &str) -> Result<(), String> {
+        match self {
+            SupportKind::Fixed => Ok(()),
+            SupportKind::Pin { .. } if surface == "cylinder" => Ok(()),
+            SupportKind::Pin { .. } => Err(format!("a pin holds round (cylindrical) faces, and one of these is a {surface}")),
+            SupportKind::Frictionless if surface == "plane" || surface == "cylinder" => Ok(()),
+            SupportKind::Frictionless => {
+                Err(format!("a frictionless support is on flat or round (cylindrical) faces, and one of these is a {surface}"))
+            }
+        }
+    }
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Faces of the part that are held.
@@ -48,11 +107,15 @@ pub enum SupportKind {
 pub struct Support {
     pub id: u32,
     pub name: String,
+    #[serde(flatten)]
     pub kind: SupportKind,
     pub faces: Vec<FaceRef>,
+    /// Left out of the study for now, and kept.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub suppressed: bool,
 }
 
-/// What pushes on faces.
+/// What pushes on the part.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LoadKind {
@@ -67,16 +130,62 @@ pub enum LoadKind {
     /// A pressure of `megapascals` on the faces, square to them, pushing into them (a negative
     /// one pulls).
     Pressure { megapascals: f64 },
+    /// The part's own weight: all of it pulled along `direction` at `acceleration` (mm/s^2;
+    /// 9810 on the Earth). It is on no faces, and a study has one at most.
+    Gravity { direction: Vec3, acceleration: f64 },
 }
 
-/// A load on faces of the part.
+/// A load on the part.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Load {
     pub id: u32,
     pub name: String,
+    /// The faces it is on (none for gravity, which is on all of the part).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub faces: Vec<FaceRef>,
     #[serde(flatten)]
     pub kind: LoadKind,
+    /// Left out of the study for now, and kept.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub suppressed: bool,
+}
+
+/// What a command changes of a support or a load: what is given takes the place of what it
+/// had.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ItemChange {
+    pub faces: Option<Vec<FaceRef>>,
+    pub name: Option<String>,
+    pub suppressed: Option<bool>,
+    /// A force's size.
+    pub newtons: Option<f64>,
+    /// The way a force pushes (`Some(None)`: square to its faces), or gravity pulls.
+    pub direction: Option<Option<Vec3>>,
+    /// A pressure's size.
+    pub megapascals: Option<f64>,
+    /// Gravity's size, mm/s^2.
+    pub acceleration: Option<f64>,
+    /// What a pin holds.
+    pub radial: Option<bool>,
+    pub axial: Option<bool>,
+    pub tangential: Option<bool>,
+}
+
+impl ItemChange {
+    /// The first of the named values that is given and is not for a thing of that kind.
+    fn stray(&self, allowed: &[&str]) -> Option<&'static str> {
+        let given = [
+            ("faces", self.faces.is_some()),
+            ("newtons", self.newtons.is_some()),
+            ("direction", self.direction.is_some()),
+            ("megapascals", self.megapascals.is_some()),
+            ("acceleration", self.acceleration.is_some()),
+            ("radial", self.radial.is_some()),
+            ("axial", self.axial.is_some()),
+            ("tangential", self.tangential.is_some()),
+        ];
+        given.into_iter().find(|(key, given)| *given && !allowed.contains(key)).map(|(key, _)| key)
+    }
 }
 
 /// A stress study of a part.
@@ -109,17 +218,42 @@ fn faces_ok(faces: &[FaceRef], of: &str) -> Result<(), String> {
     Ok(())
 }
 
+impl Support {
+    fn check(&self) -> Result<(), String> {
+        name_ok(&self.name)?;
+        faces_ok(&self.faces, &self.name)?;
+        self.kind.check().map_err(|e| format!("{}: {e}", self.name))?;
+        self.faces.iter().try_for_each(|f| self.kind.takes(&f.fingerprint.surface)).map_err(|e| format!("{}: {e}", self.name))
+    }
+}
+
+impl Load {
+    fn check(&self) -> Result<(), String> {
+        name_ok(&self.name)?;
+        if self.kind.on_faces() {
+            faces_ok(&self.faces, &self.name)?;
+        } else if !self.faces.is_empty() {
+            return Err(format!("{} is on the whole part: it has no faces", self.name));
+        }
+        self.kind.check()
+    }
+}
+
 impl LoadKind {
     pub fn check(&self) -> Result<(), String> {
+        let directed = |d: &Vec3, of: &str| {
+            if d.is_finite() && d.len() > tenon_geom::tol::LINEAR {
+                Ok(())
+            } else {
+                Err(format!("{of} direction has no direction: give three numbers that are not all 0"))
+            }
+        };
         match self {
             LoadKind::Force { newtons, direction } => {
                 if !(newtons.is_finite() && newtons.abs() > 0.0 && newtons.abs() <= MAX_FORCE) {
                     return Err(format!("a force must be a number of newtons other than 0, at most {MAX_FORCE:e}"));
                 }
-                if direction.is_some_and(|d| !(d.is_finite() && d.len() > tenon_geom::tol::LINEAR)) {
-                    return Err("a force's direction has no direction: give three numbers that are not all 0".into());
-                }
-                Ok(())
+                direction.as_ref().map_or(Ok(()), |d| directed(d, "a force's"))
             }
             LoadKind::Pressure { megapascals } => {
                 if megapascals.is_finite() && megapascals.abs() > 0.0 && megapascals.abs() <= MAX_PRESSURE {
@@ -128,15 +262,27 @@ impl LoadKind {
                     Err(format!("a pressure must be a number of megapascals other than 0, at most {MAX_PRESSURE:e}"))
                 }
             }
+            LoadKind::Gravity { direction, acceleration } => {
+                if !(acceleration.is_finite() && *acceleration > 0.0 && *acceleration <= MAX_ACCELERATION) {
+                    return Err(format!("gravity's acceleration must be more than 0 mm/s^2, at most {MAX_ACCELERATION:e} (the Earth's is {EARTH})"));
+                }
+                directed(direction, "gravity's")
+            }
         }
     }
 
-    /// "Force" or "Pressure": what its name starts with.
+    /// "Force", "Pressure" or "Gravity": what its name starts with.
     pub fn word(&self) -> &'static str {
         match self {
             LoadKind::Force { .. } => "Force",
             LoadKind::Pressure { .. } => "Pressure",
+            LoadKind::Gravity { .. } => "Gravity",
         }
+    }
+
+    /// Whether it is on faces (gravity is on all of the part).
+    pub fn on_faces(&self) -> bool {
+        !matches!(self, LoadKind::Gravity { .. })
     }
 }
 
@@ -158,10 +304,13 @@ impl Study {
             return Err(format!("{}: two of its supports and loads have the same id", self.name));
         }
         for s in &self.supports {
-            name_ok(&s.name).and_then(|()| faces_ok(&s.faces, &s.name)).map_err(|e| format!("{}: {e}", self.name))?;
+            s.check().map_err(|e| format!("{}: {e}", self.name))?;
         }
         for l in &self.loads {
-            name_ok(&l.name).and_then(|()| faces_ok(&l.faces, &l.name)).and_then(|()| l.kind.check()).map_err(|e| format!("{}: {e}", self.name))?;
+            l.check().map_err(|e| format!("{}: {e}", self.name))?;
+        }
+        if self.loads.iter().filter(|l| !l.kind.on_faces()).count() > 1 {
+            return Err(format!("{}: a study has the part's weight once", self.name));
         }
         if let Some(size) = self.mesh_size
             && !(size.is_finite() && size > 0.0)
@@ -185,91 +334,109 @@ impl Study {
         if self.supports.len() >= MAX_ITEMS {
             return Err(format!("a study has at most {MAX_ITEMS} supports"));
         }
-        let (id, auto) = self.next("Fixed");
-        let name = name.map_or(auto, |n| n.trim().to_owned());
-        name_ok(&name)?;
-        faces_ok(&faces, &name)?;
-        self.supports.push(Support { id, name, kind, faces });
+        let (id, auto) = self.next(kind.word());
+        let support = Support { id, name: name.map_or(auto, |n| n.trim().to_owned()), kind, faces, suppressed: false };
+        support.check()?;
+        self.supports.push(support);
         Ok(id)
     }
 
-    /// Puts a load on `faces`. Returns the load's id.
+    /// Puts a load on `faces` (none, for gravity). Returns the load's id.
     pub fn add_load(&mut self, kind: LoadKind, faces: Vec<FaceRef>, name: Option<String>) -> Result<u32, String> {
         if self.loads.len() >= MAX_ITEMS {
             return Err(format!("a study has at most {MAX_ITEMS} loads"));
         }
         kind.check()?;
+        if let Some(there) = self.loads.iter().find(|l| !kind.on_faces() && !l.kind.on_faces()) {
+            return Err(format!("{} has the part's weight already ({}): change that one", self.name, there.name));
+        }
         let (id, auto) = self.next(kind.word());
-        let name = name.map_or(auto, |n| n.trim().to_owned());
-        name_ok(&name)?;
-        faces_ok(&faces, &name)?;
-        self.loads.push(Load { id, name, faces, kind });
+        let load = Load { id, name: name.map_or(auto, |n| n.trim().to_owned()), faces, kind, suppressed: false };
+        load.check()?;
+        self.loads.push(load);
         Ok(id)
     }
 
-    /// Changes the support or load `id`: what is given takes the place of what it had. A
-    /// force's `direction` is `Some(None)` for square to its faces. What does not belong to
-    /// the kind of thing it is (newtons of a pressure, anything but faces and a name of a
-    /// support) is refused.
-    pub fn set(
-        &mut self,
-        id: u32,
-        faces: Option<Vec<FaceRef>>,
-        name: Option<String>,
-        newtons: Option<f64>,
-        direction: Option<Option<Vec3>>,
-        megapascals: Option<f64>,
-    ) -> Result<(), String> {
+    /// Changes the support or load `id`: what is given takes the place of what it had. What
+    /// does not belong to the kind of thing it is (newtons of a pressure, faces of gravity) is
+    /// refused, and so is a change that leaves it wrong: it is then as it was.
+    pub fn set(&mut self, id: u32, change: ItemChange) -> Result<(), String> {
         let before = self.clone();
-        let change = |this: &mut Study| -> Result<(), String> {
+        let stray = |name: &str, what: &str, has: &str, allowed: &[&str]| match change.stray(allowed) {
+            Some(key) => Err(format!("{name} is {what}: `{key}` is not its to have ({has})")),
+            None => Ok(()),
+        };
+        let alter = |this: &mut Study| -> Result<(), String> {
             if let Some(s) = this.supports.iter_mut().find(|s| s.id == id) {
-                if newtons.is_some() || direction.is_some() || megapascals.is_some() {
-                    return Err(format!("{} is a support: it has faces and a name, and nothing else to set", s.name));
+                match &mut s.kind {
+                    SupportKind::Pin { radial, axial, tangential } => {
+                        stray(
+                            &s.name,
+                            "a pin",
+                            "it has faces, a name, and what it holds: radial, axial, tangential",
+                            &["faces", "radial", "axial", "tangential"],
+                        )?;
+                        *radial = change.radial.unwrap_or(*radial);
+                        *axial = change.axial.unwrap_or(*axial);
+                        *tangential = change.tangential.unwrap_or(*tangential);
+                    }
+                    SupportKind::Fixed | SupportKind::Frictionless => stray(&s.name, "a support", "it has faces and a name", &["faces"])?,
                 }
-                if let Some(f) = faces {
-                    s.faces = f;
+                if let Some(f) = &change.faces {
+                    s.faces = f.clone();
                 }
-                if let Some(n) = name {
+                if let Some(n) = &change.name {
                     s.name = n.trim().to_owned();
                 }
+                s.suppressed = change.suppressed.unwrap_or(s.suppressed);
                 return Ok(());
             }
             let Some(l) = this.loads.iter_mut().find(|l| l.id == id) else { return Err(format!("{} has no support or load {id}", this.name)) };
             match &mut l.kind {
-                LoadKind::Force { newtons: n, direction: d } => {
-                    if megapascals.is_some() {
-                        return Err(format!("{} is a force: its size is in `newtons`", l.name));
-                    }
-                    if let Some(v) = newtons {
-                        *n = v;
-                    }
-                    if let Some(v) = direction {
-                        *d = v;
-                    }
+                LoadKind::Force { newtons, direction } => {
+                    stray(&l.name, "a force", "its size is in `newtons`, its way in `direction`", &["faces", "newtons", "direction"])?;
+                    *newtons = change.newtons.unwrap_or(*newtons);
+                    *direction = change.direction.unwrap_or(*direction);
                 }
-                LoadKind::Pressure { megapascals: m } => {
-                    if newtons.is_some() || direction.is_some() {
-                        return Err(format!("{} is a pressure: its size is in `megapascals`, and it is always square to its faces", l.name));
+                LoadKind::Pressure { megapascals } => {
+                    stray(&l.name, "a pressure", "its size is in `megapascals`, and it is always square to its faces", &["faces", "megapascals"])?;
+                    *megapascals = change.megapascals.unwrap_or(*megapascals);
+                }
+                LoadKind::Gravity { direction, acceleration } => {
+                    stray(
+                        &l.name,
+                        "the part's weight",
+                        "it has the way it pulls, `direction`, and its `acceleration`",
+                        &["direction", "acceleration"],
+                    )?;
+                    match change.direction {
+                        Some(Some(d)) => *direction = d,
+                        Some(None) => return Err(format!("{} pulls one way, whatever the faces: give its `direction`", l.name)),
+                        None => {}
                     }
-                    if let Some(v) = megapascals {
-                        *m = v;
-                    }
+                    *acceleration = change.acceleration.unwrap_or(*acceleration);
                 }
             }
-            if let Some(f) = faces {
-                l.faces = f;
+            if let Some(f) = &change.faces {
+                l.faces = f.clone();
             }
-            if let Some(n) = name {
+            if let Some(n) = &change.name {
                 l.name = n.trim().to_owned();
             }
+            l.suppressed = change.suppressed.unwrap_or(l.suppressed);
             Ok(())
         };
         // (All of it or none: a change that leaves the study wrong is not made.)
-        if let Err(e) = change(self).and_then(|()| self.check()) {
+        if let Err(e) = alter(self).and_then(|()| self.check()) {
             *self = before;
             return Err(e);
         }
         Ok(())
+    }
+
+    /// The same study under another id and name.
+    pub fn copied(&self, id: StudyId, name: String) -> Study {
+        Study { id, name, ..self.clone() }
     }
 
     /// Takes the support or load `id` away. False when there is none.
@@ -283,10 +450,11 @@ impl Study {
     /// What the study still needs before it can be solved, in words; empty when it is ready.
     pub fn missing(&self) -> Vec<&'static str> {
         let mut m = Vec::new();
-        if self.supports.is_empty() {
+        // (What is suppressed is not there, for now.)
+        if self.supports.iter().all(|s| s.suppressed) {
             m.push("a support: a part that is held nowhere moves off, however small the load");
         }
-        if self.loads.is_empty() {
+        if self.loads.iter().all(|l| l.suppressed) {
             m.push("a load: with nothing pushing on it there is no stress to find");
         }
         m
@@ -299,9 +467,17 @@ mod tests {
     use crate::naming::{FaceOrigin, Fingerprint};
     use crate::{CapEnd, FeatureId};
 
-    fn face(feature: u32) -> FaceRef {
-        let fingerprint = Fingerprint { surface: "plane".into(), direction: Vec3::Z, centroid: Vec3::ZERO, area: 1.0 };
+    fn face_of(feature: u32, surface: &str) -> FaceRef {
+        let fingerprint = Fingerprint { surface: surface.into(), direction: Vec3::Z, centroid: Vec3::ZERO, area: 1.0 };
         FaceRef { origin: FaceOrigin::Cap { feature: FeatureId(feature), end: CapEnd::End }, fingerprint }
+    }
+
+    fn face(feature: u32) -> FaceRef {
+        face_of(feature, "plane")
+    }
+
+    fn told<T: std::fmt::Debug>(r: Result<T, String>, what: &str) {
+        assert!(r.as_ref().is_err_and(|e| e.contains(what)), "{r:?}");
     }
 
     #[test]
@@ -324,7 +500,7 @@ mod tests {
         s.check().unwrap();
 
         // What is not a support or a load is refused in words.
-        let refused = |r: Result<u32, String>, what: &str| assert!(r.as_ref().is_err_and(|e| e.contains(what)), "{r:?}");
+        let refused = told::<u32>;
         refused(s.add_support(SupportKind::Fixed, vec![], None), "at least one face");
         refused(s.add_load(LoadKind::Force { newtons: 0.0, direction: None }, vec![face(2)], None), "other than 0");
         refused(s.add_load(LoadKind::Force { newtons: f64::NAN, direction: None }, vec![face(2)], None), "other than 0");
@@ -334,24 +510,101 @@ mod tests {
         assert_eq!(s.loads.len(), 3, "nothing was added by what was refused");
 
         // Changed in place: what is given takes the place of what was there.
-        s.set(more, Some(vec![face(6), face(7)]), Some("Pull".into()), Some(-8.0), Some(Some(Vec3::X)), None).unwrap();
+        let pull = ItemChange {
+            faces: Some(vec![face(6), face(7)]),
+            name: Some("Pull".into()),
+            newtons: Some(-8.0),
+            direction: Some(Some(Vec3::X)),
+            ..ItemChange::default()
+        };
+        s.set(more, pull).unwrap();
         let pull = s.loads.iter().find(|l| l.id == more).unwrap();
         assert_eq!((pull.name.as_str(), pull.faces.len(), pull.kind), ("Pull", 2, LoadKind::Force { newtons: -8.0, direction: Some(Vec3::X) }));
-        s.set(more, None, None, None, Some(None), None).unwrap();
+        s.set(more, ItemChange { direction: Some(None), ..ItemChange::default() }).unwrap();
         assert_eq!(s.loads.iter().find(|l| l.id == more).unwrap().kind, LoadKind::Force { newtons: -8.0, direction: None });
-        s.set(press, None, None, None, None, Some(0.75)).unwrap();
-        s.set(fixed, Some(vec![face(9)]), None, None, None, None).unwrap();
+        s.set(press, ItemChange { megapascals: Some(0.75), ..ItemChange::default() }).unwrap();
+        s.set(fixed, ItemChange { faces: Some(vec![face(9)]), ..ItemChange::default() }).unwrap();
         assert_eq!(s.supports[0].faces, vec![face(9)]);
         // What is not its to have is refused, and it is left as it was.
         let was = s.clone();
-        let told = |r: Result<(), String>, what: &str| assert!(r.as_ref().is_err_and(|e| e.contains(what)), "{r:?}");
-        told(s.set(fixed, None, None, Some(1.0), None, None), "is a support");
-        told(s.set(press, None, None, Some(1.0), None, None), "is a pressure");
-        told(s.set(more, None, None, None, None, Some(1.0)), "is a force");
-        told(s.set(more, Some(vec![]), None, Some(3.0), None, None), "at least one face");
-        told(s.set(more, None, None, Some(0.0), None, None), "other than 0");
-        told(s.set(77, None, None, None, None, None), "no support or load 77");
+        let newtons = |n: f64| ItemChange { newtons: Some(n), ..ItemChange::default() };
+        told(s.set(fixed, newtons(1.0)), "is a support: `newtons` is not its to have");
+        told(s.set(press, newtons(1.0)), "is a pressure");
+        told(s.set(more, ItemChange { megapascals: Some(1.0), ..ItemChange::default() }), "is a force");
+        told(s.set(more, ItemChange { radial: Some(true), ..ItemChange::default() }), "is a force: `radial`");
+        told(s.set(more, ItemChange { faces: Some(vec![]), ..newtons(3.0) }), "at least one face");
+        told(s.set(more, newtons(0.0)), "other than 0");
+        told(s.set(77, ItemChange::default()), "no support or load 77");
         assert_eq!(s, was);
+
+        // Suppressed: kept, and for now not there. A study with nothing else lacks it again.
+        s.set(fixed, ItemChange { suppressed: Some(true), ..ItemChange::default() }).unwrap();
+        assert!(s.supports[0].suppressed);
+        assert_eq!(s.missing().len(), 1, "its only support is suppressed");
+        s.set(fixed, ItemChange { suppressed: Some(false), ..ItemChange::default() }).unwrap();
+        assert!(s.missing().is_empty());
+    }
+
+    #[test]
+    fn pins_sliding_supports_and_the_parts_weight() {
+        let mut s = Study::new(StudyId(1), "Study1".into());
+        let (flat, round, ball) = (face_of(2, "plane"), face_of(3, "cylinder"), face_of(4, "sphere"));
+
+        // A pin is on round faces, and holds across and along unless told otherwise.
+        let pin = s.add_support(SupportKind::PIN, vec![round.clone()], None).unwrap();
+        assert_eq!((s.supports[0].name.as_str(), s.supports[0].kind), ("Pin1", SupportKind::Pin { radial: true, axial: true, tangential: false }));
+        told(s.add_support(SupportKind::PIN, vec![round.clone(), flat.clone()], None), "a pin holds round");
+        told(s.add_support(SupportKind::Pin { radial: false, axial: false, tangential: false }, vec![round.clone()], None), "holds nothing");
+        s.set(pin, ItemChange { axial: Some(false), tangential: Some(true), ..ItemChange::default() }).unwrap();
+        assert_eq!(s.supports[0].kind, SupportKind::Pin { radial: true, axial: false, tangential: true });
+        told(s.set(pin, ItemChange { radial: Some(false), tangential: Some(false), ..ItemChange::default() }), "holds nothing");
+        told(s.set(pin, ItemChange { faces: Some(vec![flat.clone()]), ..ItemChange::default() }), "a pin holds round");
+        assert_eq!(s.supports[0].kind, SupportKind::Pin { radial: true, axial: false, tangential: true }, "left as it was");
+
+        // A frictionless support is on flat or round faces.
+        let slide = s.add_support(SupportKind::Frictionless, vec![flat.clone(), round.clone()], None).unwrap();
+        assert_eq!(s.supports[1].name, "Frictionless1");
+        told(s.add_support(SupportKind::Frictionless, vec![ball.clone()], None), "flat or round");
+        told(s.set(slide, ItemChange { radial: Some(true), ..ItemChange::default() }), "is a support: `radial`");
+        // Fixed takes any face.
+        s.add_support(SupportKind::Fixed, vec![ball], None).unwrap();
+
+        // The part's weight is on no faces, pulls one way, and is there once.
+        let down = Vec3::new(0.0, 0.0, -1.0);
+        let weight = s.add_load(LoadKind::Gravity { direction: down, acceleration: EARTH }, vec![], None).unwrap();
+        assert_eq!(s.loads[0].name, "Gravity1");
+        told(s.add_load(LoadKind::Gravity { direction: down, acceleration: EARTH }, vec![], None), "the part's weight already (Gravity1)");
+        told(s.add_load(LoadKind::Gravity { direction: Vec3::ZERO, acceleration: EARTH }, vec![], None), "no direction");
+        told(s.add_load(LoadKind::Gravity { direction: down, acceleration: 0.0 }, vec![], None), "more than 0");
+        told(s.add_load(LoadKind::Force { newtons: 1.0, direction: None }, vec![], None), "at least one face");
+        s.set(weight, ItemChange { direction: Some(Some(Vec3::X)), acceleration: Some(1620.0), ..ItemChange::default() }).unwrap();
+        assert_eq!(s.loads[0].kind, LoadKind::Gravity { direction: Vec3::X, acceleration: 1620.0 });
+        told(s.set(weight, ItemChange { faces: Some(vec![flat]), ..ItemChange::default() }), "is the part's weight: `faces`");
+        told(s.set(weight, ItemChange { direction: Some(None), ..ItemChange::default() }), "pulls one way");
+        told(s.set(weight, ItemChange { newtons: Some(1.0), ..ItemChange::default() }), "is the part's weight: `newtons`");
+        s.check().unwrap();
+        assert!(s.missing().is_empty(), "held and loaded");
+
+        // As files have them, and read back.
+        let text = serde_json::to_value(&s).unwrap();
+        assert_eq!(text["supports"][0]["kind"], "pin");
+        assert_eq!(
+            (text["supports"][0]["radial"].clone(), text["supports"][0]["tangential"].clone()),
+            (serde_json::json!(true), serde_json::json!(true))
+        );
+        assert_eq!(
+            text["supports"][1],
+            serde_json::json!({ "id": 2, "name": "Frictionless1", "kind": "frictionless", "faces": text["supports"][1]["faces"] })
+        );
+        assert_eq!(
+            text["loads"][0],
+            serde_json::json!({ "id": 4, "name": "Gravity1", "type": "gravity", "direction": { "x": 1.0, "y": 0.0, "z": 0.0 }, "acceleration": 1620.0 })
+        );
+        let back: Study = serde_json::from_value(text).unwrap();
+        assert_eq!(back, s);
+        // A copy is the same study under another id and name.
+        let copy = s.copied(StudyId(2), "Study1 copy".into());
+        assert_eq!((copy.id, copy.name.as_str(), &copy.supports, &copy.loads), (StudyId(2), "Study1 copy", &s.supports, &s.loads));
     }
 
     #[test]

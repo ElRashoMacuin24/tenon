@@ -114,7 +114,9 @@ them, that comes back to the owner before anything else is built on it.
 - **The Stress Analysis environment, as far as setting a study up** (DEC-095, added
   2026-10-13): Environments > Stress Analysis; Fixed, Force and Pressure by clicks on the
   part's faces; the study in the browser; supports and loads drawn on the part. Simulate is
-  on its ribbon as a command that has not arrived.
+  on its ribbon as a command that has not arrived. Since then (DEC-097): pins, frictionless
+  supports and the part's own weight; a force's direction picked in the part or given by
+  its parts; supports and loads suppressed; a study copied.
 
 ## What follows the answer
 
