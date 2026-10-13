@@ -134,6 +134,11 @@ pub enum Icon {
     FoldedPart,
     ASide,
     ConvertSheet,
+    // primitives
+    PrimBox,
+    PrimCylinder,
+    PrimSphere,
+    PrimTorus,
     // drawings
     Drawing,
     BaseView,
@@ -154,7 +159,8 @@ fn category(icon: Icon) -> Option<Category> {
     Some(match icon {
         Extrude | Revolve | Sweep | Loft | Coil | Fillet | Chamfer | Shell | Hole | Rib | Draft | Thread | Combine | Split | Part | Body | Cube
         | MassProps | PatternRect | PatternCircular | Mirror | Assembly | Place | CreateComponent | Explode | BaseView | ProjectedView
-        | DetailView | SheetFace | Flange | SheetCut | FlatPattern | FoldedPart | ASide | SheetDefaults | ConvertSheet => Category::Solid,
+        | DetailView | SheetFace | Flange | SheetCut | FlatPattern | FoldedPart | ASide | SheetDefaults | ConvertSheet | PrimBox | PrimCylinder
+        | PrimSphere | PrimTorus => Category::Solid,
         Plane | Axis | Point | Ucs | LookAt => Category::Work,
         NewSketch | FinishSketch => Category::Sketch,
         _ => return None,
@@ -982,6 +988,31 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.arrow_head((0.7, 0.5), (0.5, 0.5));
             pen.fill(&[(0.78, 0.2), (0.9, 0.2), (0.9, 0.8), (0.78, 0.8)], soft);
             pen.closed(&[(0.78, 0.2), (0.9, 0.2), (0.9, 0.8), (0.78, 0.8)]);
+        }
+        // A box seen from above one corner.
+        Icon::PrimBox => {
+            pen.fill(&[(0.1, 0.36), (0.38, 0.12), (0.9, 0.12), (0.62, 0.36)], soft);
+            pen.closed(&[(0.1, 0.36), (0.62, 0.36), (0.62, 0.9), (0.1, 0.9)]);
+            pen.line(&[(0.1, 0.36), (0.38, 0.12), (0.9, 0.12), (0.62, 0.36)]);
+            pen.line(&[(0.9, 0.12), (0.9, 0.66), (0.62, 0.9)]);
+        }
+        Icon::PrimCylinder => {
+            pen.fill(&[(0.16, 0.24), (0.3, 0.14), (0.7, 0.14), (0.84, 0.24), (0.7, 0.34), (0.3, 0.34)], soft);
+            pen.arc((0.5, 0.24), 0.34, 0.12, 0.0, TAU);
+            pen.line(&[(0.16, 0.24), (0.16, 0.76)]);
+            pen.line(&[(0.84, 0.24), (0.84, 0.76)]);
+            pen.arc((0.5, 0.76), 0.34, 0.12, 0.0, PI);
+        }
+        Icon::PrimSphere => {
+            painter.circle_filled(pen.at(0.5, 0.5), 0.4 * rect.width(), soft);
+            pen.circle((0.5, 0.5), 0.4);
+            pen.arc((0.5, 0.5), 0.4, 0.13, 0.0, PI);
+        }
+        // A ring lying flat, seen from above its rim.
+        Icon::PrimTorus => {
+            pen.arc((0.5, 0.52), 0.44, 0.28, 0.0, TAU);
+            pen.arc((0.5, 0.46), 0.2, 0.08, 0.0, TAU);
+            pen.arc((0.5, 0.5), 0.2, 0.1, PI, TAU);
         }
         Icon::Centerline => {
             pen.circle((0.24, 0.76), 0.17);

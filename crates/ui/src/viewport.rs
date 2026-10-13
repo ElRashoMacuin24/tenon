@@ -456,9 +456,10 @@ impl Workbench {
                 self.sketch_wires(ui, rect, t);
             }
         }
-        if self.pick_plane {
+        if self.pick_plane || self.primitive_wants_plane() {
             self.draw_origin_planes(ui, rect, self.view.plane_hover, t);
         }
+        self.primitive_overlay(ui, rect, t);
         if self.has_properties() {
             self.hole_markers(ui, rect, t);
             self.profile_overlay(ui, rect, t);
@@ -575,7 +576,7 @@ impl Workbench {
     }
 
     /// Half the size of the origin planes shown while picking a sketch plane.
-    fn origin_plane_half(&self) -> f64 {
+    pub(crate) fn origin_plane_half(&self) -> f64 {
         self.scene_box().map_or(40.0, |b| (b.diagonal() * 0.4).max(20.0))
     }
 
@@ -657,6 +658,27 @@ impl Workbench {
             self.view.hover = None;
             return;
         };
+        let under = self.plane_under(p, rect);
+        if resp.clicked() {
+            let r = match under {
+                Some(tenon_model::PlaneRef::Work(id)) => self.create_sketch(json!({ "work_plane": id.0 })),
+                Some(tenon_model::PlaneRef::Face(fr)) => {
+                    self.view.selection = self.view.hover.into_iter().collect();
+                    self.create_sketch(json!({ "face": fr }))
+                }
+                Some(tenon_model::PlaneRef::Origin(pl)) => self.create_sketch(json!({ "plane": format!("{pl:?}").to_lowercase() })),
+                None => Ok(()),
+            };
+            if let Err(e) = r {
+                self.set_error(e);
+            }
+        }
+    }
+
+    /// The plane a click at `p` would take, for whatever is waiting for one (a new sketch, a
+    /// primitive): a work plane drawn there, else the flat face or the origin plane that is
+    /// nearer along the pointer's ray. What it is is shown as under the pointer.
+    pub(crate) fn plane_under(&mut self, p: Pos2, rect: Rect) -> Option<tenon_model::PlaneRef> {
         let (o, d) =
             self.view.camera.ray(f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
         let (meshes, tree) = (self.scene.placed(), self.body_tree());
@@ -669,6 +691,7 @@ impl Workbench {
                     .is_some_and(|(name, info)| name.is_some() && matches!(info.surface, SurfaceKind::Plane { .. }))
             })
             .map(|h| (Pick::Face { body: h.body, face: h.face }, (h.point - o).dot(d)));
+        drop(meshes);
         let plane = self.origin_plane_at(p, rect);
         // A work plane is drawn over the part, so it wins over faces and origin planes.
         let work = self.work_at(p, rect, true, false);
@@ -681,23 +704,15 @@ impl Workbench {
         self.view.work_hover = work.map(|w| w.0);
         self.view.hover = if face_first { face.map(|f| f.0) } else { None };
         self.view.plane_hover = if face_first || work.is_some() { None } else { plane.map(|p| p.0) };
-        if resp.clicked() {
-            let r = if let Some((id, _)) = work {
-                self.create_sketch(json!({ "work_plane": id.0 }))
-            } else if face_first {
-                self.view.selection = face.map(|f| vec![f.0]).unwrap_or_default();
-                match self.selected_face_ref() {
-                    Some(fr) => self.create_sketch(json!({ "face": fr })),
-                    None => Err("that face cannot hold a sketch".into()),
-                }
-            } else if let Some((pl, _)) = plane {
-                self.create_sketch(json!({ "plane": format!("{pl:?}").to_lowercase() }))
-            } else {
-                Ok(())
-            };
-            if let Err(e) = r {
-                self.set_error(e);
+        if let Some((id, _)) = work {
+            Some(tenon_model::PlaneRef::Work(id))
+        } else if face_first {
+            match face {
+                Some((Pick::Face { body, face }, _)) => self.face_ref_of(body, face).map(tenon_model::PlaneRef::Face),
+                _ => None,
             }
+        } else {
+            plane.map(|(pl, _)| tenon_model::PlaneRef::Origin(pl))
         }
     }
 
@@ -762,6 +777,9 @@ impl Workbench {
             return;
         }
         if self.repair_pointer(ui, resp, rect) {
+            return;
+        }
+        if self.primitive_pointer(resp, rect) {
             return;
         }
         if self.panel_pointer(resp, rect) {
@@ -1074,7 +1092,8 @@ impl Workbench {
                     t.text_dim,
                 );
             }
-        } else if self.document().features().is_empty() && !matches!(self.mode, Mode::Sketch(_)) {
+        } else if self.document().features().is_empty() && !matches!(self.mode, Mode::Sketch(_)) && !self.pick_plane && self.panel.is_none() {
+            // (Not over the planes while one is being picked, nor over a solid being set up.)
             p.text(rect.center() - vec2(0.0, 12.0), Align2::CENTER_CENTER, "Start with New Sketch (Model tab).", theme::heading(), t.viewport_text);
             p.text(
                 rect.center() + vec2(0.0, 12.0),

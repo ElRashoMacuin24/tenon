@@ -2314,3 +2314,52 @@ here needs none of that and cannot show a wrong part for longer than a rebuild t
 **Not done.** Drawings: their views are worked out afresh each time. The command line:
 it rebuilds, as it must to do anything with the solids. A part being worked on: only parts
 as they are on disk are kept, not every state a part passes through while it is edited.
+
+## DEC-092 The Primitives panel: a box, a cylinder, a sphere or a torus in a few clicks (2026-10-12)
+
+Asked for by the owner on M10's report ("do the Primitives panel then start M11"). The
+commands were there since M10 (`model.box`, `model.cylinder`, `model.sphere`, `model.torus`,
+DEC-084); this is their place on the ribbon and the clicks that fill them in.
+
+**What Inventor does** (from Autodesk's help for the torus and a reseller's description of the
+panel; nothing was copied): a Primitives panel on the 3D Model tab with Box, Cylinder, Sphere
+and Torus, hidden until it is ticked in the ribbon's list of panels. A shape is chosen, then a
+plane or flat face; the matching sketch tool starts by itself (a centre and a corner; a centre
+and a size; for the torus its centre, the centre of its section and the section's size); when
+the shape is drawn the matching feature command starts by itself, with Join, Cut, Intersect
+and New solid, and OK makes it. What is left is an ordinary sketch and an ordinary extrusion
+or revolution.
+
+**What Tenon does.** The same clicks in the same order, on a panel that is shown (Tenon has no
+list of panels to tick): a large button, Box, with the other three under its arrow, between
+Sketch and Create.
+
+1. The shape: its properties panel opens, the origin planes are shown, and a click takes a
+   plane or flat face (in the part, or an origin plane or work plane in the browser). A flat
+   face selected beforehand is taken at once.
+2. A click where its centre is. A click near the plane's origin, which is marked, is on it.
+3. The pointer sizes it and a click sets the size: a corner of the box, the rim of the
+   cylinder or the sphere; for the torus the middle of its ring and then how thick it is. The
+   solid is shown as it will be all the while.
+4. Height, direction and Join, Cut, Intersect or New solid in the panel; every size can be
+   typed instead of clicked. OK, or Enter.
+
+**Where it differs, and why.**
+
+- *One panel, not a sketch tool followed by a feature command.* The part is not turned to face
+  the sketch plane and back, and the solid is seen growing under the pointer, not a rectangle
+  that becomes a solid two steps later. The clicks are the same.
+- *The sketch is dimensioned.* What is made is the command's result: a rectangle or circle
+  held by its dimensions and by where its centre was clicked, so the sizes are parameters at
+  once. A shape drawn by clicks in a sketch has none until someone adds them.
+- *One undo step* for the sketch and its feature, as the command gives.
+- *Sizes set by the pointer are rounded to 0.1 mm*, so the dimensions read as typed.
+- *The torus stands as the command makes it:* its ring square to the plane it was clicked on,
+  about the plane's second direction. The second click gives how wide the ring is, not which
+  way it lies.
+
+**Small things done on the way.** The view no longer turns to fit a first solid while it is
+only a preview being sized (the clicks would land elsewhere). The floating toolbar beside a
+solid being set up stays away until its size is clicked. The hint in an empty part is not
+drawn over the planes while one is being picked. A large ribbon button with a list and a
+label of one line had two arrows; it has one.

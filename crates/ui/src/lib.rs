@@ -27,6 +27,7 @@ mod panels;
 mod params_dialog;
 mod part_dialogs;
 mod polyfill;
+mod primitive;
 mod print_dialog;
 mod properties;
 mod radial;
@@ -50,6 +51,8 @@ mod asm_tests;
 mod control_tests;
 #[cfg(test)]
 mod drw_tests;
+#[cfg(test)]
+mod primitive_tests;
 #[cfg(test)]
 mod print_tests;
 #[cfg(test)]

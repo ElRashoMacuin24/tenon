@@ -240,6 +240,9 @@ pub(crate) fn glyph_row(ui: &mut Ui, items: &[(Glyph, &str, bool)], selected: us
             let color = if *enabled { t.icon } else { t.icon_disabled };
             let fill = if *enabled { t.tint_solid.gamma_multiply(0.8) } else { t.icon_disabled.gamma_multiply(0.4) };
             paint_glyph(ui, r.shrink(4.0), *g, color, fill);
+            // (Tests press a glyph by what its tip says.)
+            #[cfg(test)]
+            crate::drawing::remember(ui, &format!("tn_glyph {tip}"), r);
             if resp.on_hover_text(*tip).clicked() && *enabled {
                 clicked = Some(i);
             }
@@ -420,6 +423,7 @@ impl Workbench {
                     | Panel::Fold(_)
                     | Panel::CornerSeam(_)
                     | Panel::Bend(_)
+                    | Panel::Primitive(_)
                     | Panel::Asm(_)
             )
         )
@@ -485,6 +489,7 @@ impl Workbench {
             Panel::Fold(p) => ("Fold", p.editing.map(|f| self.feature_name(f))),
             Panel::CornerSeam(p) => (if p.rip { "Corner Rip" } else { "Corner Seam" }, p.editing.map(|f| self.feature_name(f))),
             Panel::Bend(p) => ("Bend", p.editing.map(|f| self.feature_name(f))),
+            Panel::Primitive(p) => (p.shape.title(), None),
             Panel::Asm(p) => {
                 (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
             }
@@ -504,6 +509,10 @@ impl Workbench {
             .show(ui, |ui| {
                 ui.spacing_mut().indent = 10.0;
                 match &mut panel {
+                    Panel::Primitive(p) => {
+                        let plane = p.on.as_ref().map(|(plane, _)| self.plane_name(plane));
+                        enter |= crate::primitive::fields(ui, p, plane.as_deref(), t);
+                    }
                     Panel::Extrude(p) => {
                         section(ui, "Input Geometry", true, |ui| {
                             egui::Grid::new("tn_props_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
@@ -1533,6 +1542,11 @@ impl Workbench {
             Some(Panel::Pattern(_) | Panel::Work(_) | Panel::Rib(_) | Panel::Split(_) | Panel::Combine(_)) => {
                 self.scene.bbox().map(|b| Vec3::new(b.max.x, b.min.y, b.max.z))
             }
+            // (Beside the solid once it has a centre; not in the way of the clicks before.)
+            Some(Panel::Primitive(_)) => match self.primitive_anchor() {
+                Some(at) => Some(at),
+                None => return,
+            },
             _ => return,
         };
         let is_extrude = matches!(self.panel, Some(Panel::Extrude(_)));

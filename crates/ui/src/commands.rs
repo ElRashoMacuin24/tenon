@@ -104,6 +104,17 @@ pub const RIBBON: &[RibbonTab] = &[
                     .more(&["sketch.new_3d"])],
             },
             RibbonPanel {
+                title: "Primitives",
+                commands: &[large(
+                    "model.box",
+                    "Box",
+                    "A box in a few clicks: a plane or flat face, its centre, a corner, its height",
+                    Icon::PrimBox,
+                    0,
+                )
+                .more(&["model.box", "model.cylinder", "model.sphere", "model.torus"])],
+            },
+            RibbonPanel {
                 title: "Create",
                 commands: &[
                     large("model.extrude", "Extrude", "Add or cut material by sweeping a profile straight", Icon::Extrude, 0).key("E"),
@@ -789,6 +800,15 @@ pub const DRW_RETURN: UiCommand = large("drw.return", "Return", "Finish editing 
 
 /// Commands reachable from drop-down arrows, menus and keys but not shown on the ribbon itself.
 pub const EXTRA: &[UiCommand] = &[
+    small("model.cylinder", "Cylinder", "A cylinder in a few clicks: a plane or flat face, its centre, its size, its height", Icon::PrimCylinder, 0),
+    small("model.sphere", "Sphere", "A sphere in a few clicks: a plane or flat face, its centre, its size", Icon::PrimSphere, 0),
+    small(
+        "model.torus",
+        "Torus",
+        "A ring in a few clicks: a plane or flat face, its centre, the middle of the ring, how thick it is",
+        Icon::PrimTorus,
+        0,
+    ),
     small("sketch.spline", "Spline", "Click control points; Enter finishes", Icon::Spline, 0),
     small(
         "sketch.project_flat",

@@ -217,7 +217,8 @@ fn ribbon_button(ui: &Ui, rect: Rect, cmd: &UiCommand, active: bool, t: &Tokens)
             for (i, line) in lines.iter().enumerate() {
                 let y = rect.top() + 38.0 + i as f32 * 13.0;
                 let last = i + 1 == lines.len();
-                if last && has_more {
+                // (A label of one line has its arrow below it, drawn after this.)
+                if last && has_more && lines.len() > 1 {
                     let w = text_width(ui, line, theme::small());
                     p.text(pos2(rect.center().x - 5.0, y), Align2::CENTER_TOP, *line, theme::small(), text_color);
                     caret(ui, pos2(rect.center().x + w / 2.0, y + 7.0), text_color);

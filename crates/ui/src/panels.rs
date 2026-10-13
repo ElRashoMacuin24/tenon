@@ -457,6 +457,8 @@ pub(crate) enum Panel {
     Bend(crate::sheet::BendPanel),
     /// A face of the sheet folded along a line drawn across it.
     Fold(crate::sheet::FoldPanel),
+    /// A box, a cylinder, a sphere or a torus, set up by clicks on a plane.
+    Primitive(crate::primitive::PrimitivePanel),
     Value(ValuePanel),
     /// A rectangular or circular pattern of sketch geometry.
     SketchPattern(crate::sketch_tools::SketchPatternPanel),
@@ -679,6 +681,7 @@ impl Workbench {
         match &self.panel {
             Some(Panel::Extrude(p)) => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Revolve(p)) => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::Primitive(p)) => self.primitive_preview(p),
             Some(Panel::Hole(p)) if !p.points.is_empty() => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Hole(p)) => rolled(p.editing),
             Some(Panel::Rib(p)) if !p.lines.is_empty() => with_feature(self.document(), p.editing, p.kind()),
@@ -1251,6 +1254,23 @@ impl Workbench {
                     keep = !self.commit_panel(&ptrs, editing, kind);
                     if !keep && again {
                         reopen = Some("model.extrude");
+                    }
+                }
+            }
+            Panel::Primitive(p) => {
+                if commit {
+                    match p.params() {
+                        // (What it still needs is what its next click would be.)
+                        None => self.set_error(p.prompt()),
+                        Some(params) => {
+                            keep = self.exec_status(p.shape.command(), params).is_none();
+                            if !keep {
+                                self.set_status(format!("{} made: a sketch and its feature, in one step.", p.shape.title()));
+                                if again {
+                                    reopen = Some(p.shape.command());
+                                }
+                            }
+                        }
                     }
                 }
             }

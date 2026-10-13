@@ -553,6 +553,9 @@ impl Workbench {
             }
             "sketch.new" => self.new_sketch()?,
             "sketch.finish" => self.finish_sketch(),
+            "model.box" | "model.cylinder" | "model.sphere" | "model.torus" => {
+                self.open_primitive(crate::primitive::Shape::of_command(id).ok_or("not a primitive")?)?
+            }
             "model.extrude" => self.open_extrude(None)?,
             "model.revolve" => self.open_revolve(None)?,
             "model.fillet" => self.open_modify("fillet", None)?,
@@ -882,7 +885,9 @@ impl Workbench {
         self.scene = s;
         self.scene_seq += 1;
         self.regen_note = None;
-        if !self.view.fitted && !self.scene.bodies.is_empty() {
+        // (Not while a primitive is being sized by the pointer: the view must stay where it is
+        // under the clicks. The first solid is fitted once it is made.)
+        if !self.view.fitted && !self.scene.bodies.is_empty() && !matches!(self.panel, Some(Panel::Primitive(_))) {
             self.fit_view();
             self.view.fitted = true;
         }
