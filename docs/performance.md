@@ -228,7 +228,9 @@ These are the kernel's own costs, measured above, that Tenon can only avoid aski
 
 - **One mesh for all components of a part.** Each component has its own placed copy in
   memory and on the graphics card, and its own two draw calls. A thousand components are a
-  thousand copies. Level of detail makes the copies smaller; it does not make them one.
+  thousand copies. Level of detail makes the copies smaller; it does not make them one. (A
+  test that sent 33,000 small bodies, 66,000 buffers, ran out of memory on the software
+  adapters of CI's Windows and macOS runners; a real graphics card took them.)
 - **No geometry kept on disk.** A part is rebuilt from its features when it is opened; an
   assembly rebuilds every part it uses.
 - **A change in sizes on screen is not smoothed.** A body changes between its far mesh and

@@ -279,17 +279,18 @@ fn bodies_left_out_are_kept_aside_and_highlights_are_sent_only_where_there_are_a
     assert_eq!(vp.held_vertices(), (2 * 60, 60), "36 corners of triangles and 24 ends of edges each");
     assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &plain), (2, &m, &plain), (3, &m, &plain)]), 0, "body 2 was kept aside");
     assert_eq!(vp.held_vertices(), (3 * 60, 0));
-    // What is kept aside is bounded: the bodies left out longest go first.
-    let many: Vec<u64> = (10..10 + crate::gpu::SPARE_VERTICES / 60 + 50).collect();
+    // What is kept aside is bounded (here to five cubes): the bodies left out longest go first.
+    // (A dozen bodies, not the thousands the limit the app uses would need: CI's software
+    // adapters ran out of memory at 66,000 buffers.)
+    vp.set_spare_limit(5 * 60);
+    let many: Vec<u64> = (10..22).collect();
     let all: Vec<(u64, &Mesh, &crate::gpu::BodyColors)> = many.iter().map(|k| (*k, &m, &plain)).collect();
-    assert_eq!(vp.set_bodies_keyed(&device, &all), all.len());
+    assert_eq!(vp.set_bodies_keyed(&device, &all), 12);
     assert_eq!(vp.held_vertices().1, 3 * 60, "the three from before");
     assert_eq!(vp.set_bodies_keyed(&device, &all[..1]), 0);
-    let (drawn, aside) = vp.held_vertices();
-    assert_eq!(drawn, 60);
-    assert!(aside <= crate::gpu::SPARE_VERTICES && aside > crate::gpu::SPARE_VERTICES - 120, "{aside}");
+    assert_eq!(vp.held_vertices(), (60, 5 * 60), "the three from before went first, then six of the eleven");
     assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &plain)]), 1, "left out longest, so gone");
-    assert_eq!(vp.set_bodies_keyed(&device, &all[all.len() - 40..]), 0, "left out last, so still there");
+    assert_eq!(vp.set_bodies_keyed(&device, &all[8..]), 0, "left out last, so still there");
 
     // Highlights: a body with none sends nothing, and the picture is the base colour there.
     let red = crate::gpu::BodyColors { faces: vec![(1, [0.0, 0.0, 1.0]), (1, [1.0, 0.0, 0.0])], ..plain.clone() };

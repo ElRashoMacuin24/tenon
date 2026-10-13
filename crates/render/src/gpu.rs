@@ -123,6 +123,8 @@ pub struct Viewport {
     body_keys: Vec<u64>,
     /// Bodies uploaded and not drawn now, by key, with when each was last drawn.
     spare: std::collections::HashMap<u64, (u64, GpuBody)>,
+    /// The most vertices kept aside ([`SPARE_VERTICES`] unless set otherwise).
+    spare_limit: u64,
     /// Counts calls of `set_bodies_keyed`.
     clock: u64,
     /// Highlighted faces and edges (selection, hover), drawn over the base at the same depth;
@@ -280,6 +282,7 @@ impl Viewport {
             bodies: Vec::new(),
             body_keys: Vec::new(),
             spare: std::collections::HashMap::new(),
+            spare_limit: SPARE_VERTICES,
             clock: 0,
             highlights: Vec::new(),
             targets: None,
@@ -328,11 +331,11 @@ impl Viewport {
         self.spare.extend(old.into_iter().map(|(k, body)| (k, (self.clock, body))));
         let size = |b: &GpuBody| u64::from(b.face_vertices) + u64::from(b.line_vertices);
         let mut held: u64 = self.spare.values().map(|(_, b)| size(b)).sum();
-        if held > SPARE_VERTICES {
+        if held > self.spare_limit {
             let mut oldest: Vec<(u64, u64, u64)> = self.spare.iter().map(|(k, (at, b))| (*at, *k, size(b))).collect();
             oldest.sort_unstable();
             for (_, k, vertices) in oldest {
-                if held <= SPARE_VERTICES {
+                if held <= self.spare_limit {
                     break;
                 }
                 self.spare.remove(&k);
@@ -342,6 +345,11 @@ impl Viewport {
         let pairs: Vec<(&Mesh, &BodyColors)> = meshes.iter().map(|(_, m, c)| (*m, *c)).collect();
         self.set_highlights(device, &pairs);
         uploaded
+    }
+
+    /// Sets how many vertices of bodies not drawn are kept on the graphics card.
+    pub fn set_spare_limit(&mut self, vertices: u64) {
+        self.spare_limit = vertices;
     }
 
     /// Uploads only the highlighted faces and edges (the per-face and per-edge colours), of the
