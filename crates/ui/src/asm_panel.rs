@@ -11,7 +11,7 @@ use serde_json::json;
 use tenon_assembly::session::{self as asm_session, relate};
 use tenon_assembly::{ComponentId, Geom, JointKind, RelKind, RelationshipId, Target};
 use tenon_geom::{Frame, Vec3};
-use tenon_render::pick::{pick_edge, pick_face};
+use tenon_render::pick::{pick_edge_in, pick_face_in};
 
 use crate::panels::Panel;
 use crate::theme::{self, Tokens};
@@ -306,15 +306,15 @@ impl Workbench {
     /// Tweak).
     pub(crate) fn asm_panel_pointer(&mut self, _ui: &Ui, resp: &egui::Response, rect: Rect) {
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
-        let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
         let tweak = matches!(&self.panel, Some(Panel::Asm(p)) if p.tool == AsmTool::Tweak);
         self.view.hover = resp.hover_pos().and_then(|p| {
             let (x, y) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()));
-            if !tweak && let Some(e) = pick_edge(&meshes, &self.view.camera, w, h, x, y, 5.0) {
+            if !tweak && let Some(e) = pick_edge_in(tree.as_deref(), &meshes, &self.view.camera, w, h, x, y, 5.0) {
                 return Some(Pick::Edge { body: e.body, edge: e.edge });
             }
             let (o, d) = self.view.camera.ray(x, y, w, h);
-            pick_face(&meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
+            pick_face_in(tree.as_deref(), &meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
         });
         if !resp.clicked() {
             return;

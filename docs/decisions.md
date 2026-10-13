@@ -2194,3 +2194,65 @@ The headless engine made relative paths absolute for any parameter *named* `path
 reads as a relative path, so a repair from a script failed there with a folder joined onto it.
 The engine now resolves the parameters whose schema type is `Path`, whatever they are called,
 and no others.
+
+## DEC-089 One mesh for all the components of a part (2026-10-12)
+
+M9's report listed this as not done, and the owner said to start filling in what it listed.
+
+**What was there.** An assembly's scene was a list of bodies each with its own mesh: every
+component a copy of its part's mesh, moved to where the component stood, in single
+precision. The copy was what was drawn, what was sent to the graphics card (a buffer of
+corners with their colours for every body, and two draw calls each), and what picking made
+its tree of boxes over. A thousand bolts were a thousand meshes, a thousand trees and two
+thousand buffers: 278 MB in memory and 710 MB on the card (DEC-080).
+
+**Now.** A body's mesh stays in the coordinates it was made in, behind a shared pointer, and
+the body says where it stands (`BodyView::at`, a frame; `tenon_kernel::Placed` is the two
+together). A component's body is its part's mesh and a frame. Whoever needs the mesh where
+it stands takes both:
+
+- *Picking* brings the ray to the mesh (`Placed::ray_in`): distances along the ray are the
+  same, since a body is moved and not stretched. So the components of a part share one index
+  of their mesh, and a hit is worked out in double precision from the mesh as the kernel
+  made it, where the copies had been rounded a second time.
+- *The graphics card* holds each mesh once: its corners (position and normal), its
+  triangles as numbers of corners, its edge lines. A body is a record of 96 bytes: where it
+  stands (a matrix) and its two colours. All the bodies of a mesh are drawn in one call. A
+  highlighted face is a stretch of its mesh's triangles drawn again with a record of its
+  own, so a hover sends 96 bytes and nothing else, and comes to the same depth as the face
+  under it because it is the same corners through the same shader.
+- *The software renderer* moves each corner as it draws it.
+
+**What a mesh is known by.** The card keeps a mesh after the scene that held it has gone
+(for when it comes back into view), so it cannot be known by where it is in memory: a part
+rebuilt while a dimension is dragged gets its buffers where the last ones were. Each mesh's
+index now carries a number that is never given out twice (`MeshIndex::id`), new when the
+mesh is first asked for it and again if the mesh has changed since. Two meshes with the same
+triangles are two meshes; sharing comes from holding the same one, not from comparing.
+
+**Measured** (docs/performance.md): 1024 components of two parts are 0.5 MB of meshes in
+memory for 278, and 0.63 MB on the card for 710, sent in 1.9 ms for 315; a frame of them in
+full 0.66 ms for 1.43.
+
+**Not done.** What is said of each component's faces and edges (names, surfaces, curves,
+ends) is still a copy for each, moved to where it stands: 32 MB for those 1024 components,
+now the larger part of what the assembly holds. The commands that pick read it all over the
+app; moving it only when asked for is a change to each of them.
+
+## DEC-090 A tree over the bodies, for what is under the pointer (2026-10-12)
+
+Also listed in M9's report: finding the edge under the pointer still tried every body's box
+against the pointer, 2.7 microseconds a body.
+
+A tree of boxes over the bodies, each box round a body where it stands
+(`tenon_render::pick::Bodies`), made when the pointer first asks after the scene has changed
+and kept by the workbench until it changes again. A ray, or the pointer with its reach of a
+few pixels, passes over whole groups of bodies. Scenes of fewer than sixteen bodies are gone
+through one by one as before. The answers are the same as trying every triangle of every
+body, held by a test that does both over a field of bodies, some turned and some on their
+sides (`picking_with_the_index_gives_what_trying_everything_gives`). Of two faces hit at the
+same distance, the one of the earlier body is still the one found.
+
+With 1024 components: a face in 0.025 ms for 0.17, an edge in 1.7 ms for 2.8. What is left
+of the edge's time is not the bodies: a long edge (a thread's helix) is gone through point
+by point in every body whose box the pointer is over.

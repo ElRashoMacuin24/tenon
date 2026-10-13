@@ -99,6 +99,16 @@ impl Frame {
         Vec3::new(d.dot(self.x), d.dot(self.y), d.dot(self.z))
     }
 
+    /// A direction in local coordinates, in world coordinates (turned, not moved).
+    pub fn dir_to_world(&self, v: Vec3) -> Vec3 {
+        self.x * v.x + self.y * v.y + self.z * v.z
+    }
+
+    /// A direction in world coordinates, in local coordinates.
+    pub fn dir_to_local(&self, v: Vec3) -> Vec3 {
+        Vec3::new(v.dot(self.x), v.dot(self.y), v.dot(self.z))
+    }
+
     /// A point of the frame's XY plane (a sketch point) in world coordinates.
     pub fn plane_point(&self, p: Vec2) -> Vec3 {
         self.to_world(Vec3::new(p.x, p.y, 0.0))

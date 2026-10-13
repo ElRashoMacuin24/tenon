@@ -808,7 +808,7 @@ impl Workbench {
                     camera
                 }
             };
-            let meshes: Vec<&tenon_kernel::Mesh> = scene.bodies.iter().map(|b| &b.mesh).collect();
+            let meshes = scene.placed();
             let rgba = |c: egui::Color32| [c.r(), c.g(), c.b(), 255];
             let style = raster::Style {
                 body_colors: (0..meshes.len()).map(|bi| (bi, rgba(self.body_palette(bi).0))).collect(),

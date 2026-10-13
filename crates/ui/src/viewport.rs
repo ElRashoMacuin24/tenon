@@ -6,11 +6,12 @@ use std::hash::{Hash, Hasher};
 use egui::{Align2, Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
 use serde_json::json;
 use tenon_geom::{Aabb3, Vec3};
+use tenon_kernel::Placed;
 use tenon_kernel::SurfaceKind;
 use tenon_model::{FaceRef, Fingerprint, OriginPlane, Scene};
 use tenon_render::detail::{Detail, detail};
-use tenon_render::gpu::{BodyColors, Viewport};
-use tenon_render::pick::{pick_edge, pick_face};
+use tenon_render::gpu::{Body, BodyColors, Viewport};
+use tenon_render::pick::{pick_edge_in, pick_face_in};
 use tenon_render::raster::{self, Style};
 use tenon_render::{Camera, Projection};
 
@@ -536,12 +537,10 @@ impl Workbench {
         let crossing = b.x < a.x;
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
         let cam = &self.view.camera;
-        let screen = |p: [f32; 3]| {
-            cam.project(Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])), w, h).map(|(x, y, _)| rect.min + vec2(x as f32, y as f32))
-        };
         let mut out = Vec::new();
         for (bi, b) in self.scene.bodies.iter().enumerate() {
-            let m = &b.mesh;
+            let (m, placed) = (&b.mesh, b.placed());
+            let screen = |p: [f32; 3]| cam.project(placed.point(p), w, h).map(|(x, y, _)| rect.min + vec2(x as f32, y as f32));
             for range in &m.faces {
                 let idx = m.indices.get(range.first as usize..(range.first as usize).saturating_add(range.count as usize)).unwrap_or(&[]);
                 let pts: Vec<Option<Pos2>> = idx.iter().map(|i| m.positions.get(*i as usize).and_then(|p| screen(*p))).collect();
@@ -628,12 +627,22 @@ impl Workbench {
         }
     }
 
+    /// The tree of boxes over the bodies shown, which lets a ray or the pointer pass over
+    /// most of a large assembly: made when first asked for after the scene has changed.
+    pub(crate) fn body_tree(&self) -> Option<std::sync::Arc<tenon_render::pick::Bodies>> {
+        let mut slot = self.pick_tree.borrow_mut();
+        if slot.as_ref().is_none_or(|(seq, _)| *seq != self.scene_seq) {
+            *slot = Some((self.scene_seq, std::sync::Arc::new(tenon_render::pick::Bodies::of(&self.scene.placed()))));
+        }
+        slot.as_ref().map(|(_, tree)| std::sync::Arc::clone(tree))
+    }
+
     /// The model point under a screen position (face hit), if any.
     pub(crate) fn point_under(&self, p: Pos2, rect: Rect) -> Option<Vec3> {
         let (o, d) =
             self.view.camera.ray(f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
-        let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
-        pick_face(&meshes, o, d).map(|h| h.point)
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
+        pick_face_in(tree.as_deref(), &meshes, o, d).map(|h| h.point)
     }
 
     /// Start 2D Sketch: a click on an origin plane or a planar face starts the sketch there,
@@ -650,8 +659,8 @@ impl Workbench {
         };
         let (o, d) =
             self.view.camera.ray(f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
-        let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
-        let face = pick_face(&meshes, o, d)
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
+        let face = pick_face_in(tree.as_deref(), &meshes, o, d)
             .filter(|h| {
                 self.scene
                     .bodies
@@ -726,11 +735,11 @@ impl Workbench {
         }
         if self.chrome.sheet.pick_a_side {
             // Define A-Side: a flat face that can be referred to.
-            let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+            let (meshes, tree) = (self.scene.placed(), self.body_tree());
             let hover = resp.hover_pos().and_then(|p| {
                 let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
                 let (o, d) = self.view.camera.ray(x, y, w, h);
-                pick_face(&meshes, o, d).filter(|f| {
+                pick_face_in(tree.as_deref(), &meshes, o, d).filter(|f| {
                     self.scene
                         .bodies
                         .get(f.body)
@@ -758,14 +767,14 @@ impl Workbench {
         if self.panel_pointer(resp, rect) {
             return;
         }
-        let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
         self.view.hover = resp.hover_pos().and_then(|p| {
             let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
-            if let Some(e) = pick_edge(&meshes, &self.view.camera, w, h, x, y, 5.0) {
+            if let Some(e) = pick_edge_in(tree.as_deref(), &meshes, &self.view.camera, w, h, x, y, 5.0) {
                 return Some(Pick::Edge { body: e.body, edge: e.edge });
             }
             let (o, d) = self.view.camera.ray(x, y, w, h);
-            pick_face(&meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
+            pick_face_in(tree.as_deref(), &meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
         });
         if resp.clicked() {
             let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
@@ -919,8 +928,8 @@ impl Workbench {
         for (b, level) in self.scene.bodies.iter().zip(&levels) {
             let mesh = match level {
                 Detail::Hidden => continue,
-                Detail::Far => b.far.as_ref().unwrap_or(&b.mesh),
-                Detail::Near => &b.mesh,
+                Detail::Far => b.placed_at(true).mesh,
+                Detail::Near => b.placed_at(false).mesh,
             };
             sum = (sum.0 + 1, sum.1 + mesh.triangle_count(), sum.2 + mesh.edges.iter().map(|e| e.points.len()).sum::<usize>());
         }
@@ -939,17 +948,16 @@ impl Workbench {
         colors.extend(self.context_meshes().iter().map(|_| dim.clone()));
         let mut keys = self.body_keys(&colors);
         // (Borrowed field by field, so the view can be updated while it is in use.)
-        let context: Vec<(u64, &tenon_kernel::Mesh)> =
-            self.asm.as_ref().and_then(|a| a.editing.as_ref()).map(|e| e.context.iter().map(|(k, m)| (*k, m)).collect()).unwrap_or_default();
-        // The mesh each body is drawn from, and the bodies that are drawn at all.
-        let meshes: Vec<&tenon_kernel::Mesh> = self
-            .scene
-            .bodies
-            .iter()
-            .zip(&levels)
-            .map(|(b, level)| b.far.as_ref().filter(|_| *level != Detail::Near).unwrap_or(&b.mesh))
-            .chain(context.iter().map(|(_, m)| *m))
-            .collect();
+        let context: Vec<Placed> = self
+            .asm
+            .as_ref()
+            .and_then(|a| a.editing.as_ref())
+            .map(|e| e.context.iter().map(|(_, m, at)| Placed::new(m, Some(at))).collect())
+            .unwrap_or_default();
+        // The mesh each body is drawn from, with where it stands; and the bodies that are
+        // drawn at all. (The meshes are their parts' own: nothing is copied for a component.)
+        let meshes: Vec<Placed> =
+            self.scene.bodies.iter().zip(&levels).map(|(b, level)| b.placed_at(*level != Detail::Near)).chain(context.iter().copied()).collect();
         for ((key, body), level) in keys.iter_mut().zip(&self.scene.bodies).zip(&levels) {
             if body.far.is_some() && *level != Detail::Near {
                 *key ^= 0x5bd1_e995_9d2c_5681;
@@ -975,14 +983,17 @@ impl Workbench {
             Some(rs) => {
                 let gpu = self.view.gpu.get_or_insert_with(|| Gpu { viewport: Viewport::new(&rs.device), texture: None });
                 if self.view.uploaded != Some((base_key, key)) {
+                    let bodies: Vec<Body> = drawn
+                        .iter()
+                        .filter_map(|i| {
+                            let m = meshes.get(*i)?;
+                            Some(Body::new(m.mesh, m.at, colors.get(*i)?))
+                        })
+                        .collect();
                     if self.view.uploaded.is_some_and(|u| u.0 == base_key) {
-                        let pairs: Vec<(&tenon_kernel::Mesh, &BodyColors)> =
-                            drawn.iter().filter_map(|i| Some((*meshes.get(*i)?, colors.get(*i)?))).collect();
-                        gpu.viewport.set_highlights(&rs.device, &pairs);
+                        gpu.viewport.set_highlights(&rs.device, &bodies);
                     } else {
-                        let keyed: Vec<(u64, &tenon_kernel::Mesh, &BodyColors)> =
-                            drawn.iter().filter_map(|i| Some((*keys.get(*i)?, *meshes.get(*i)?, colors.get(*i)?))).collect();
-                        gpu.viewport.set_bodies_keyed(&rs.device, &keyed);
+                        gpu.viewport.set_bodies(&rs.device, &bodies);
                     }
                     self.view.uploaded = Some((base_key, key));
                 }

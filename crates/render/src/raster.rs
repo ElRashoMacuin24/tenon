@@ -2,7 +2,7 @@
 //! PNG renders without a GPU (CLI, MCP, CI), with the same camera as the interactive viewport.
 
 use tenon_geom::Vec3;
-use tenon_kernel::Mesh;
+use tenon_kernel::Placed;
 
 use crate::Camera;
 
@@ -55,10 +55,6 @@ pub struct Image {
 /// Largest image side rendered (hostile-input cap).
 pub const MAX_SIDE: u32 = 8192;
 
-fn v3(p: [f32; 3]) -> Vec3 {
-    Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))
-}
-
 fn lerp(a: Rgba, b: Rgba, t: f64) -> Rgba {
     let m = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * t).round().clamp(0.0, 255.0) as u8;
     [m(a[0], b[0]), m(a[1], b[1]), m(a[2], b[2]), m(a[3], b[3])]
@@ -82,8 +78,8 @@ pub fn shade(base: Rgba, n: Vec3, light: Vec3) -> Rgba {
     [c(base[0]), c(base[1]), c(base[2]), base[3]]
 }
 
-/// Renders `meshes` seen by `camera` into a `width x height` image.
-pub fn render(meshes: &[&Mesh], camera: &Camera, width: u32, height: u32, style: &Style) -> Image {
+/// Renders `meshes`, each where it stands, seen by `camera` into a `width x height` image.
+pub fn render(meshes: &[Placed], camera: &Camera, width: u32, height: u32, style: &Style) -> Image {
     let (w, h) = (width.clamp(1, MAX_SIDE), height.clamp(1, MAX_SIDE));
     let (wf, hf) = (f64::from(w), f64::from(h));
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
@@ -96,13 +92,14 @@ pub fn render(meshes: &[&Mesh], camera: &Camera, width: u32, height: u32, style:
     let mut depth = vec![f64::INFINITY; (w * h) as usize];
     let light = camera.key_light();
 
-    for (bi, m) in meshes.iter().enumerate().filter(|_| style.faces) {
+    for (bi, placed) in meshes.iter().enumerate().filter(|_| style.faces) {
+        let m = placed.mesh;
         let body = style.body_colors.iter().find(|(b, _)| *b == bi).map_or(style.body, |c| c.1);
         for range in &m.faces {
             let base = style.face_colors.iter().find(|(b, f, _)| *b == bi && *f == range.face).map_or(body, |c| c.2);
             let tris = m.indices.get(range.first as usize..(range.first as usize).saturating_add(range.count as usize)).unwrap_or(&[]);
             for t in tris.as_chunks::<3>().0 {
-                let pts: Option<Vec<Vec3>> = t.iter().map(|i| m.positions.get(*i as usize).map(|p| v3(*p))).collect();
+                let pts: Option<Vec<Vec3>> = t.iter().map(|i| m.positions.get(*i as usize).map(|p| placed.point(*p))).collect();
                 let Some(pts) = pts else { continue };
                 let n = (pts[1] - pts[0]).cross(pts[2] - pts[0]).normalized();
                 let color = shade(base, n, light);
@@ -114,14 +111,16 @@ pub fn render(meshes: &[&Mesh], camera: &Camera, width: u32, height: u32, style:
     }
     // Edges on top of their faces (small depth slack), hidden behind other faces.
     let slack = 1e-3 * camera.distance.max(1.0);
-    for (bi, m) in meshes.iter().enumerate() {
-        for e in &m.edges {
+    for (bi, placed) in meshes.iter().enumerate() {
+        for e in &placed.mesh.edges {
             let own = style.edge_colors.iter().find(|(b, edge, _)| *b == bi && *edge == e.edge).map(|c| c.2);
             if own.is_none() && !style.edges {
                 continue;
             }
             for seg in e.points.windows(2) {
-                let (Some(a), Some(b)) = (camera.project(v3(seg[0]), wf, hf), camera.project(v3(seg[1]), wf, hf)) else { continue };
+                let (Some(a), Some(b)) = (camera.project(placed.point(seg[0]), wf, hf), camera.project(placed.point(seg[1]), wf, hf)) else {
+                    continue;
+                };
                 match own {
                     None => draw_line(&mut rgba, &depth, w, h, a, b, style.edge, slack),
                     Some(color) => {

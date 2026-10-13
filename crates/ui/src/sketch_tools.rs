@@ -64,14 +64,14 @@ impl Workbench {
     /// while the tool has the pointer.
     pub(crate) fn project_tool(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect, feature: FeatureId, flat: bool) -> bool {
         let Some(frame) = self.sketch_frame(feature) else { return true };
-        let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
         let under = resp.hover_pos().and_then(|p| {
             let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
-            if !flat && let Some(e) = tenon_render::pick::pick_edge(&meshes, &self.view.camera, w, h, x, y, 6.0) {
+            if !flat && let Some(e) = tenon_render::pick::pick_edge_in(tree.as_deref(), &meshes, &self.view.camera, w, h, x, y, 6.0) {
                 return Some(Pick::Edge { body: e.body, edge: e.edge });
             }
             let (o, d) = self.view.camera.ray(x, y, w, h);
-            tenon_render::pick::pick_face(&meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
+            tenon_render::pick::pick_face_in(tree.as_deref(), &meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
         });
         self.view.hover = under;
         if !resp.clicked_by(egui::PointerButton::Primary) {

@@ -1,9 +1,16 @@
 //! The interactive viewport renderer (wgpu). Draws shaded faces and edges into an offscreen
 //! texture with its own depth buffer and multisampling; the UI shows that texture. Knows nothing
 //! about any UI toolkit.
+//!
+//! A mesh is sent to the graphics card once, however many bodies are drawn from it: the
+//! components of one part in an assembly are one set of buffers and a short record each of
+//! where it stands and in what colours, drawn in one call (DEC-089).
 
+use std::collections::HashMap;
 use std::num::NonZeroU64;
+use std::ops::Range;
 
+use tenon_geom::Frame;
 use tenon_kernel::Mesh;
 use wgpu::util::DeviceExt;
 
@@ -23,24 +30,44 @@ struct Uniforms {
 };
 @group(0) @binding(0) var<uniform> u: Uniforms;
 
+// A corner of the mesh, in the mesh's own coordinates.
 struct VIn {
     @location(0) pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) color: vec3<f32>,
+};
+// One body drawn from the mesh: where it stands, and its colours.
+struct IIn {
+    @location(2) m0: vec4<f32>,
+    @location(3) m1: vec4<f32>,
+    @location(4) m2: vec4<f32>,
+    @location(5) m3: vec4<f32>,
+    @location(6) face: vec4<f32>,
+    @location(7) edge: vec4<f32>,
 };
 struct VOut {
-    @builtin(position) clip: vec4<f32>,
+    // (Invariant: a highlight drawn over its face must come to the very same depth.)
+    @invariant @builtin(position) clip: vec4<f32>,
     @location(0) normal: vec3<f32>,
     @location(1) color: vec3<f32>,
 };
 
-@vertex
-fn vs_main(v: VIn) -> VOut {
+fn placed(v: VIn, i: IIn, color: vec3<f32>) -> VOut {
+    let model = mat4x4<f32>(i.m0, i.m1, i.m2, i.m3);
     var o: VOut;
-    o.clip = u.view_proj * vec4<f32>(v.pos, 1.0);
-    o.normal = v.normal;
-    o.color = v.color;
+    o.clip = u.view_proj * (model * vec4<f32>(v.pos, 1.0));
+    o.normal = (model * vec4<f32>(v.normal, 0.0)).xyz;
+    o.color = color;
     return o;
+}
+
+@vertex
+fn vs_face(v: VIn, i: IIn) -> VOut {
+    return placed(v, i, i.face.rgb);
+}
+
+@vertex
+fn vs_line(v: VIn, i: IIn) -> VOut {
+    return placed(v, i, i.edge.rgb);
 }
 
 fn srgb_from_linear(c: vec3<f32>) -> vec3<f32> {
@@ -63,12 +90,21 @@ fn fs_line(i: VOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// A corner of a mesh as the card holds it: 24 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
     pos: [f32; 3],
     normal: [f32; 3],
-    color: [f32; 3],
+}
+
+/// One body drawn from a mesh: where it stands and its colours. 96 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Instance {
+    model: [[f32; 4]; 4],
+    face: [f32; 4],
+    edge: [f32; 4],
 }
 
 #[repr(C)]
@@ -90,11 +126,56 @@ pub struct BodyColors {
     pub edges: Vec<(u32, Color)>,
 }
 
-struct GpuBody {
-    faces: wgpu::Buffer,
-    face_vertices: u32,
+/// A body to draw: its mesh, where it stands (None: where the mesh's own coordinates put it)
+/// and its colours. Bodies given the same mesh share its copy on the card.
+#[derive(Clone, Copy, Debug)]
+pub struct Body<'a> {
+    pub mesh: &'a Mesh,
+    pub at: Option<&'a Frame>,
+    pub colors: &'a BodyColors,
+}
+
+impl<'a> Body<'a> {
+    pub fn new(mesh: &'a Mesh, at: Option<&'a Frame>, colors: &'a BodyColors) -> Body<'a> {
+        Body { mesh, at, colors }
+    }
+
+    fn record(&self, face: Color, edge: Color) -> Instance {
+        let f = self.at.copied().unwrap_or(Frame::WORLD);
+        let col = |v: tenon_geom::Vec3, w: f32| [v.x as f32, v.y as f32, v.z as f32, w];
+        Instance {
+            model: [col(f.x(), 0.0), col(f.y(), 0.0), col(f.z(), 0.0), col(f.origin(), 1.0)],
+            face: [face[0], face[1], face[2], 1.0],
+            edge: [edge[0], edge[1], edge[2], 1.0],
+        }
+    }
+}
+
+/// A mesh on the graphics card: its corners once, its triangles as numbers of corners, and
+/// its edges as pairs of points.
+struct Geometry {
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    index_count: u32,
     lines: wgpu::Buffer,
     line_vertices: u32,
+    /// What it takes on the card.
+    bytes: u64,
+}
+
+/// The bodies drawn from one mesh: a run of the instance records.
+struct Group {
+    mesh: u64,
+    instances: Range<u32>,
+}
+
+/// One highlighted face or edge: a stretch of its mesh, drawn again in another colour.
+struct Highlight {
+    mesh: u64,
+    /// Corners of triangles (in the mesh's list of them) or points of edge lines.
+    range: Range<u32>,
+    lines: bool,
+    instance: u32,
 }
 
 struct Targets {
@@ -105,10 +186,9 @@ struct Targets {
     color: wgpu::TextureView,
 }
 
-/// How many vertices of bodies not drawn at the moment are kept on the graphics card (36
-/// bytes each: 72 MB), so that panning and zooming an assembly does not send the same
-/// bodies again and again.
-pub const SPARE_VERTICES: u64 = 2_000_000;
+/// How many bytes of meshes not drawn at the moment are kept on the graphics card, so that
+/// panning and zooming an assembly does not send the same meshes again and again.
+pub const SPARE_BYTES: u64 = 64 << 20;
 
 /// Offscreen viewport renderer.
 pub struct Viewport {
@@ -116,20 +196,23 @@ pub struct Viewport {
     lines: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
     bind: wgpu::BindGroup,
-    /// The meshes in their base colours, uploaded once per scene.
-    bodies: Vec<GpuBody>,
-    /// What each body was uploaded from (`set_bodies_keyed`): a body whose key is unchanged is
-    /// kept rather than sent again.
-    body_keys: Vec<u64>,
-    /// Bodies uploaded and not drawn now, by key, with when each was last drawn.
-    spare: std::collections::HashMap<u64, (u64, GpuBody)>,
-    /// The most vertices kept aside ([`SPARE_VERTICES`] unless set otherwise).
+    /// The meshes drawn now, by [`tenon_kernel::index::MeshIndex::id`].
+    meshes: HashMap<u64, Geometry>,
+    /// Meshes sent and not drawn now, with when each was last drawn.
+    spare: HashMap<u64, (u64, Geometry)>,
+    /// The most bytes kept aside ([`SPARE_BYTES`] unless set otherwise).
     spare_limit: u64,
-    /// Counts calls of `set_bodies_keyed`.
+    /// Counts calls of `set_bodies`.
     clock: u64,
+    /// The bodies in their base colours, mesh by mesh.
+    groups: Vec<Group>,
+    instances: Option<wgpu::Buffer>,
+    /// How many bodies `instances` holds.
+    bodies: u32,
     /// Highlighted faces and edges (selection, hover), drawn over the base at the same depth;
     /// small, rebuilt whenever the highlight changes.
-    highlights: Vec<GpuBody>,
+    highlights: Vec<Highlight>,
+    highlight_instances: Option<wgpu::Buffer>,
     targets: Option<Targets>,
     /// What to draw (visual style): shaded faces, edges.
     show_faces: bool,
@@ -144,79 +227,96 @@ fn last_of_each(overrides: &[(u32, Color)]) -> Vec<(u32, Color)> {
     kept
 }
 
-/// Vertex buffers for one body. Without `only`, every face and edge in the base colours; with
-/// `only` (face and edge colour overrides), just those faces and edges in their colours.
-fn upload(device: &wgpu::Device, m: &Mesh, face: Color, edge: Color, only: Option<(&[(u32, Color)], &[(u32, Color)])>) -> GpuBody {
-    let mut tri = Vec::new();
-    let mut fill = |range: &tenon_kernel::FaceRange, color: Color| {
-        let idx = m.indices.get(range.first as usize..(range.first as usize).saturating_add(range.count as usize)).unwrap_or(&[]);
-        for i in idx {
-            let (Some(p), n) = (m.positions.get(*i as usize), m.normals.get(*i as usize).copied().unwrap_or([0.0, 0.0, 1.0])) else {
-                continue;
-            };
-            tri.push(Vertex { pos: *p, normal: n, color });
-        }
-    };
-    match only {
-        None => m.faces.iter().for_each(|range| fill(range, face)),
-        // (Face `f` is the mesh's range `f` as the kernel makes them; looked for if it is not.)
-        Some((faces, _)) => {
-            for (f, color) in last_of_each(faces) {
-                match m.faces.get(f as usize).filter(|r| r.face == f) {
-                    Some(range) => fill(range, color),
-                    None => m.faces.iter().filter(|r| r.face == f).for_each(|range| fill(range, color)),
-                }
-            }
-        }
-    }
+/// The points of the edge lines of a mesh, two for each stretch, edge after edge; and where
+/// each edge's begin and end among them.
+fn line_points(m: &Mesh) -> (Vec<Vertex>, Vec<(u32, Range<u32>)>) {
     let mut lines = Vec::new();
-    let mut draw = |e: &tenon_kernel::EdgePolyline, color: Color| {
+    let mut ranges = Vec::with_capacity(m.edges.len());
+    for e in &m.edges {
+        let start = u32::try_from(lines.len()).unwrap_or(u32::MAX);
         for seg in e.points.windows(2) {
-            lines.push(Vertex { pos: seg[0], normal: [0.0; 3], color });
-            lines.push(Vertex { pos: seg[1], normal: [0.0; 3], color });
+            lines.push(Vertex { pos: seg[0], normal: [0.0; 3] });
+            lines.push(Vertex { pos: seg[1], normal: [0.0; 3] });
         }
-    };
-    match only {
-        None => m.edges.iter().for_each(|e| draw(e, edge)),
-        Some((_, edges)) => {
-            for (id, color) in last_of_each(edges) {
-                match m.edges.get(id as usize).filter(|e| e.edge == id) {
-                    Some(e) => draw(e, color),
-                    None => m.edges.iter().filter(|e| e.edge == id).for_each(|e| draw(e, color)),
-                }
-            }
-        }
+        ranges.push((e.edge, start..u32::try_from(lines.len()).unwrap_or(u32::MAX)));
     }
-    let make = |data: &[Vertex], label: &str| {
-        // wgpu rejects empty buffers; keep one zero vertex and draw none.
-        let fallback = [Vertex { pos: [0.0; 3], normal: [0.0; 3], color: [0.0; 3] }];
-        let contents: &[Vertex] = if data.is_empty() { &fallback } else { data };
+    (lines, ranges)
+}
+
+/// Where each edge's points are among a mesh's edge line points ([`line_points`]), without
+/// making them.
+fn line_ranges(m: &Mesh) -> Vec<(u32, Range<u32>)> {
+    let mut at = 0_u32;
+    m.edges
+        .iter()
+        .map(|e| {
+            let start = at;
+            at = at.saturating_add(u32::try_from(2 * e.points.len().saturating_sub(1)).unwrap_or(u32::MAX));
+            (e.edge, start..at)
+        })
+        .collect()
+}
+
+/// Sends a mesh to the card.
+fn upload(device: &wgpu::Device, m: &Mesh) -> Geometry {
+    let vertices: Vec<Vertex> =
+        m.positions.iter().enumerate().map(|(i, p)| Vertex { pos: *p, normal: m.normals.get(i).copied().unwrap_or([0.0, 0.0, 1.0]) }).collect();
+    // (A triangle with a corner that is not there is sent as three times the first corner:
+    // nothing is drawn of it, and the triangles after it keep their places in the list.)
+    let count = u32::try_from(vertices.len()).unwrap_or(u32::MAX);
+    let whole = |t: &[u32; 3]| if t.iter().all(|i| *i < count) { *t } else { [0; 3] };
+    let indices: Vec<u32> = if count == 0 { Vec::new() } else { m.indices.as_chunks::<3>().0.iter().flat_map(whole).collect() };
+    let (lines, _) = line_points(m);
+    let stride = std::mem::size_of::<Vertex>() as u64;
+    let make = |contents: &[u8], usage: wgpu::BufferUsages, label: &str| {
+        // wgpu rejects empty buffers; keep a few zero bytes and draw none.
+        let fallback = [0_u8; 24];
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(label),
-            contents: bytemuck::cast_slice(contents),
-            usage: wgpu::BufferUsages::VERTEX,
+            contents: if contents.is_empty() { &fallback } else { contents },
+            usage,
         })
     };
-    GpuBody {
-        faces: make(&tri, "tenon-faces"),
-        face_vertices: u32::try_from(tri.len()).unwrap_or(0),
-        lines: make(&lines, "tenon-lines"),
+    Geometry {
+        vertices: make(bytemuck::cast_slice(&vertices), wgpu::BufferUsages::VERTEX, "tenon-corners"),
+        indices: make(bytemuck::cast_slice(&indices), wgpu::BufferUsages::INDEX, "tenon-triangles"),
+        index_count: u32::try_from(indices.len()).unwrap_or(0),
+        lines: make(bytemuck::cast_slice(&lines), wgpu::BufferUsages::VERTEX, "tenon-lines"),
         line_vertices: u32::try_from(lines.len()).unwrap_or(0),
+        bytes: stride * (vertices.len() as u64 + lines.len() as u64) + 4 * indices.len() as u64,
     }
 }
 
-fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRS: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
-    wgpu::VertexBufferLayout { array_stride: std::mem::size_of::<Vertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &ATTRS }
+fn vertex_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
+    const CORNER: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+    const BODY: [wgpu::VertexAttribute; 6] =
+        wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4];
+    [
+        Some(wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &CORNER,
+        }),
+        Some(wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Instance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &BODY,
+        }),
+    ]
 }
 
 fn pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, module: &wgpu::ShaderModule, lines: bool) -> wgpu::RenderPipeline {
-    let buffers = [Some(vertex_layout())];
+    let buffers = vertex_layouts();
     let targets = [Some(wgpu::ColorTargetState { format: COLOR_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })];
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(if lines { "tenon-lines" } else { "tenon-faces" }),
         layout: Some(layout),
-        vertex: wgpu::VertexState { module, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &buffers },
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some(if lines { "vs_line" } else { "vs_face" }),
+            compilation_options: Default::default(),
+            buffers: &buffers,
+        },
         primitive: wgpu::PrimitiveState {
             topology: if lines { wgpu::PrimitiveTopology::LineList } else { wgpu::PrimitiveTopology::TriangleList },
             ..Default::default()
@@ -238,6 +338,16 @@ fn pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, module: &wgpu:
         }),
         multiview_mask: None,
         cache: None,
+    })
+}
+
+fn instance_buffer(device: &wgpu::Device, records: &[Instance], label: &str) -> Option<wgpu::Buffer> {
+    (!records.is_empty()).then(|| {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(records),
+            usage: wgpu::BufferUsages::VERTEX,
+        })
     })
 }
 
@@ -279,12 +389,15 @@ impl Viewport {
             lines: pipeline(device, &layout, &module, true),
             uniforms,
             bind,
-            bodies: Vec::new(),
-            body_keys: Vec::new(),
-            spare: std::collections::HashMap::new(),
-            spare_limit: SPARE_VERTICES,
+            meshes: HashMap::new(),
+            spare: HashMap::new(),
+            spare_limit: SPARE_BYTES,
             clock: 0,
+            groups: Vec::new(),
+            instances: None,
+            bodies: 0,
             highlights: Vec::new(),
+            highlight_instances: None,
             targets: None,
             show_faces: true,
             show_edges: true,
@@ -297,82 +410,135 @@ impl Viewport {
         self.show_edges = edges;
     }
 
-    /// Uploads meshes (one per body) in their base colours, and their highlights. Call when the
-    /// meshes or base colours change; for highlight changes alone, [`Viewport::set_highlights`]
-    /// is far cheaper.
-    pub fn set_bodies(&mut self, device: &wgpu::Device, meshes: &[(&Mesh, &BodyColors)]) {
-        self.bodies = meshes.iter().map(|(m, c)| upload(device, m, c.face, c.edge, None)).collect();
-        self.body_keys.clear();
-        self.spare.clear();
-        self.set_highlights(device, meshes);
-    }
-
-    /// Like [`Viewport::set_bodies`], but each body comes with a key saying what it is (its mesh,
-    /// placement and base colours): bodies whose key was uploaded before are kept, so moving one
-    /// component of an assembly sends only its triangles. Returns how many bodies were uploaded.
+    /// Sets what is drawn: the bodies in their base colours, and their highlights. Call when
+    /// the bodies, where they stand or their base colours change; for highlight changes alone,
+    /// [`Viewport::set_highlights`] is far cheaper. Returns how many meshes were sent to the
+    /// card.
     ///
-    /// Bodies that were drawn and are left out now (gone off the screen, or drawn at another
-    /// level of detail) are kept aside for when they come back, up to [`SPARE_VERTICES`], those
-    /// left out longest going first.
-    pub fn set_bodies_keyed(&mut self, device: &wgpu::Device, meshes: &[(u64, &Mesh, &BodyColors)]) -> usize {
+    /// A mesh is sent once however many bodies are drawn from it, and one that is on the card
+    /// already is not sent again: moving a component of an assembly sends a record of where it
+    /// stands and nothing else. Meshes that were drawn and are not now (their bodies gone off
+    /// the screen, or drawn at another level of detail) are kept aside for when they come
+    /// back, up to [`SPARE_BYTES`], those left out longest going first.
+    pub fn set_bodies(&mut self, device: &wgpu::Device, bodies: &[Body]) -> usize {
         self.clock += 1;
-        let mut old: std::collections::HashMap<u64, GpuBody> = self.body_keys.drain(..).zip(self.bodies.drain(..)).collect();
-        let mut uploaded = 0;
-        self.bodies = meshes
-            .iter()
-            .map(|(k, m, c)| {
-                old.remove(k).or_else(|| self.spare.remove(k).map(|(_, body)| body)).unwrap_or_else(|| {
-                    uploaded += 1;
-                    upload(device, m, c.face, c.edge, None)
+        // Mesh by mesh, in the order each is first met.
+        let ids: Vec<u64> = bodies.iter().map(|b| b.mesh.index().id()).collect();
+        let mut order: Vec<u64> = Vec::new();
+        let mut of_mesh: HashMap<u64, Vec<usize>> = HashMap::new();
+        for (i, id) in ids.iter().enumerate() {
+            of_mesh
+                .entry(*id)
+                .or_insert_with(|| {
+                    order.push(*id);
+                    Vec::new()
                 })
-            })
-            .collect();
-        self.body_keys = meshes.iter().map(|(k, _, _)| *k).collect();
-        self.spare.extend(old.into_iter().map(|(k, body)| (k, (self.clock, body))));
-        let size = |b: &GpuBody| u64::from(b.face_vertices) + u64::from(b.line_vertices);
-        let mut held: u64 = self.spare.values().map(|(_, b)| size(b)).sum();
+                .push(i);
+        }
+        let mut old = std::mem::take(&mut self.meshes);
+        let mut sent = 0;
+        let mut records: Vec<Instance> = Vec::with_capacity(bodies.len());
+        self.groups.clear();
+        for id in order {
+            let Some(which) = of_mesh.get(&id) else { continue };
+            let Some(first) = which.first().and_then(|i| bodies.get(*i)) else { continue };
+            let geometry = old.remove(&id).or_else(|| self.spare.remove(&id).map(|(_, g)| g)).unwrap_or_else(|| {
+                sent += 1;
+                upload(device, first.mesh)
+            });
+            self.meshes.insert(id, geometry);
+            let start = u32::try_from(records.len()).unwrap_or(u32::MAX);
+            records.extend(which.iter().filter_map(|i| bodies.get(*i)).map(|b| b.record(b.colors.face, b.colors.edge)));
+            self.groups.push(Group { mesh: id, instances: start..u32::try_from(records.len()).unwrap_or(u32::MAX) });
+        }
+        self.bodies = u32::try_from(records.len()).unwrap_or(u32::MAX);
+        self.instances = instance_buffer(device, &records, "tenon-bodies");
+        // What is no longer drawn is kept aside, the longest unused going first when there is
+        // too much of it.
+        self.spare.extend(old.into_iter().map(|(id, g)| (id, (self.clock, g))));
+        let mut held: u64 = self.spare.values().map(|(_, g)| g.bytes).sum();
         if held > self.spare_limit {
-            let mut oldest: Vec<(u64, u64, u64)> = self.spare.iter().map(|(k, (at, b))| (*at, *k, size(b))).collect();
+            let mut oldest: Vec<(u64, u64, u64)> = self.spare.iter().map(|(id, (at, g))| (*at, *id, g.bytes)).collect();
             oldest.sort_unstable();
-            for (_, k, vertices) in oldest {
+            for (_, id, bytes) in oldest {
                 if held <= self.spare_limit {
                     break;
                 }
-                self.spare.remove(&k);
-                held -= vertices;
+                self.spare.remove(&id);
+                held -= bytes;
             }
         }
-        let pairs: Vec<(&Mesh, &BodyColors)> = meshes.iter().map(|(_, m, c)| (*m, *c)).collect();
-        self.set_highlights(device, &pairs);
-        uploaded
+        self.set_highlights(device, bodies);
+        sent
     }
 
-    /// Sets how many vertices of bodies not drawn are kept on the graphics card.
-    pub fn set_spare_limit(&mut self, vertices: u64) {
-        self.spare_limit = vertices;
+    /// Sets how many bytes of meshes not drawn are kept on the graphics card.
+    pub fn set_spare_limit(&mut self, bytes: u64) {
+        self.spare_limit = bytes;
     }
 
-    /// Uploads only the highlighted faces and edges (the per-face and per-edge colours), of the
-    /// bodies that have any.
-    pub fn set_highlights(&mut self, device: &wgpu::Device, meshes: &[(&Mesh, &BodyColors)]) {
-        self.highlights = meshes
-            .iter()
-            .filter(|(_, c)| !c.faces.is_empty() || !c.edges.is_empty())
-            .map(|(m, c)| upload(device, m, c.face, c.edge, Some((&c.faces, &c.edges))))
-            .collect();
+    /// Sets only the highlighted faces and edges (the per-face and per-edge colours) of the
+    /// bodies last given to [`Viewport::set_bodies`]: a short record for each, and nothing of
+    /// the meshes sent again.
+    pub fn set_highlights(&mut self, device: &wgpu::Device, bodies: &[Body]) {
+        let mut records: Vec<Instance> = Vec::new();
+        self.highlights.clear();
+        for b in bodies.iter().filter(|b| !b.colors.faces.is_empty() || !b.colors.edges.is_empty()) {
+            let id = b.mesh.index().id();
+            let Some(geometry) = self.meshes.get(&id) else { continue };
+            let mut add = |range: Range<u32>, lines: bool, color: Color, records: &mut Vec<Instance>| {
+                if range.is_empty() {
+                    return;
+                }
+                let instance = u32::try_from(records.len()).unwrap_or(u32::MAX);
+                records.push(b.record(color, color));
+                self.highlights.push(Highlight { mesh: id, range, lines, instance });
+            };
+            // (Face `f` is the mesh's range `f` as the kernel makes them; looked for if it is not.)
+            for (f, color) in last_of_each(&b.colors.faces) {
+                let within = |r: &tenon_kernel::FaceRange| r.first..r.first.saturating_add(r.count).min(geometry.index_count);
+                match b.mesh.faces.get(f as usize).filter(|r| r.face == f) {
+                    Some(r) => add(within(r), false, color, &mut records),
+                    None => b.mesh.faces.iter().filter(|r| r.face == f).for_each(|r| add(within(r), false, color, &mut records)),
+                }
+            }
+            if !b.colors.edges.is_empty() {
+                let ranges = line_ranges(b.mesh);
+                for (e, color) in last_of_each(&b.colors.edges) {
+                    let within = |r: &Range<u32>| r.start..r.end.min(geometry.line_vertices);
+                    match ranges.get(e as usize).filter(|(edge, _)| *edge == e) {
+                        Some((_, r)) => add(within(r), true, color, &mut records),
+                        None => ranges.iter().filter(|(edge, _)| *edge == e).for_each(|(_, r)| add(within(r), true, color, &mut records)),
+                    }
+                }
+            }
+        }
+        self.highlight_instances = instance_buffer(device, &records, "tenon-highlights");
     }
 
     /// What a frame draws: bodies, triangles, and edge segments (highlights not counted).
     pub fn drawn(&self) -> (usize, u64, u64) {
-        let faces: u64 = if self.show_faces { self.bodies.iter().map(|b| u64::from(b.face_vertices)).sum() } else { 0 };
-        let lines: u64 = if self.show_edges { self.bodies.iter().map(|b| u64::from(b.line_vertices)).sum() } else { 0 };
-        (self.bodies.len(), faces / 3, lines / 2)
+        let (mut triangles, mut segments) = (0_u64, 0_u64);
+        for g in &self.groups {
+            if let Some(m) = self.meshes.get(&g.mesh) {
+                let n = u64::from(g.instances.end.saturating_sub(g.instances.start));
+                triangles += n * u64::from(m.index_count / 3);
+                segments += n * u64::from(m.line_vertices / 2);
+            }
+        }
+        (self.bodies as usize, if self.show_faces { triangles } else { 0 }, if self.show_edges { segments } else { 0 })
     }
 
-    /// How many vertices are held on the graphics card: those drawn, and those kept aside.
-    pub fn held_vertices(&self) -> (u64, u64) {
-        let size = |b: &GpuBody| u64::from(b.face_vertices) + u64::from(b.line_vertices);
-        (self.bodies.iter().map(size).sum(), self.spare.values().map(|(_, b)| size(b)).sum())
+    /// How many meshes are on the graphics card: those drawn, and those kept aside.
+    pub fn held_meshes(&self) -> (usize, usize) {
+        (self.meshes.len(), self.spare.len())
+    }
+
+    /// How many bytes are held on the graphics card: the meshes drawn with the records of
+    /// their bodies, and the meshes kept aside.
+    pub fn held_bytes(&self) -> (u64, u64) {
+        let records = (u64::from(self.bodies) + self.highlights.len() as u64) * std::mem::size_of::<Instance>() as u64;
+        (self.meshes.values().map(|g| g.bytes).sum::<u64>() + records, self.spare.values().map(|(_, g)| g.bytes).sum())
     }
 
     fn ensure_targets(&mut self, device: &wgpu::Device, w: u32, h: u32) {
@@ -443,22 +609,40 @@ impl Viewport {
                 ..Default::default()
             });
             pass.set_bind_group(0, &self.bind, &[]);
-            // Highlights come after the base at the same depth (LessEqual), so they replace it.
-            if self.show_faces {
-                pass.set_pipeline(&self.faces);
-                for b in self.bodies.iter().chain(&self.highlights) {
-                    if b.face_vertices > 0 {
-                        pass.set_vertex_buffer(0, b.faces.slice(..));
-                        pass.draw(0..b.face_vertices, 0..1);
+            // Each mesh once, for all the bodies drawn from it. Highlights come after the base
+            // at the same depth (LessEqual), so they replace it.
+            for lines in [false, true] {
+                if (lines && !self.show_edges) || (!lines && !self.show_faces) {
+                    continue;
+                }
+                pass.set_pipeline(if lines { &self.lines } else { &self.faces });
+                if let Some(records) = &self.instances {
+                    pass.set_vertex_buffer(1, records.slice(..));
+                    for g in &self.groups {
+                        let Some(m) = self.meshes.get(&g.mesh) else { continue };
+                        if lines && m.line_vertices > 0 {
+                            pass.set_vertex_buffer(0, m.lines.slice(..));
+                            pass.draw(0..m.line_vertices, g.instances.clone());
+                        } else if !lines && m.index_count > 0 {
+                            pass.set_vertex_buffer(0, m.vertices.slice(..));
+                            pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
+                            pass.draw_indexed(0..m.index_count, 0, g.instances.clone());
+                        }
                     }
                 }
-            }
-            if self.show_edges {
-                pass.set_pipeline(&self.lines);
-                for b in self.bodies.iter().chain(&self.highlights) {
-                    if b.line_vertices > 0 {
-                        pass.set_vertex_buffer(0, b.lines.slice(..));
-                        pass.draw(0..b.line_vertices, 0..1);
+                if let Some(records) = &self.highlight_instances {
+                    pass.set_vertex_buffer(1, records.slice(..));
+                    for hl in self.highlights.iter().filter(|hl| hl.lines == lines) {
+                        let Some(m) = self.meshes.get(&hl.mesh) else { continue };
+                        let one = hl.instance..hl.instance.saturating_add(1);
+                        if lines {
+                            pass.set_vertex_buffer(0, m.lines.slice(..));
+                            pass.draw(hl.range.clone(), one);
+                        } else {
+                            pass.set_vertex_buffer(0, m.vertices.slice(..));
+                            pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
+                            pass.draw_indexed(hl.range.clone(), 0, one);
+                        }
                     }
                 }
             }

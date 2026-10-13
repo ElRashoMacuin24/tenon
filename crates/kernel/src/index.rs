@@ -6,6 +6,7 @@
 //! took 80 ms to find the face under it and 700 ms to find the edge; with it, well under a
 //! millisecond (docs/performance.md).
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use tenon_geom::Vec3;
@@ -169,6 +170,7 @@ impl Stamp {
 /// The index of a mesh ([`Mesh::index`]).
 #[derive(Debug)]
 pub struct MeshIndex {
+    id: u64,
     stamp: Stamp,
     bounds: Box3,
     /// How far the boxes are grown when a ray is tried against them: a hit worked out in
@@ -268,11 +270,28 @@ impl Tree {
     }
 }
 
+/// The next number an index is given ([`MeshIndex::id`]).
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
 impl MeshIndex {
     fn new(m: &Mesh, stamp: Stamp) -> MeshIndex {
         let bounds = Box3::of(m.positions.iter().copied()).union(&Box3::of(m.edges.iter().flat_map(|e| e.points.iter().copied())));
         let size = if bounds.is_empty() { 0.0 } else { bounds.radius() + bounds.center().len() };
-        MeshIndex { stamp, bounds, pad: 1e-6 * size + 1e-9, tree: OnceLock::new(), edges: OnceLock::new() }
+        MeshIndex {
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            stamp,
+            bounds,
+            pad: 1e-6 * size + 1e-9,
+            tree: OnceLock::new(),
+            edges: OnceLock::new(),
+        }
+    }
+
+    /// A number no other mesh has had in this run of the program, nor this mesh before it was
+    /// last changed: what something kept elsewhere about the mesh (its copy on the graphics
+    /// card) is kept under. Unlike where the mesh is in memory, it is never given out twice.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     /// The box around the mesh: its triangles and its edges.
@@ -460,12 +479,17 @@ mod tests {
         let copy = m.clone();
         assert_eq!(copy, m);
         assert!(!Arc::ptr_eq(&first, &copy.index()));
+        // The number a mesh is known by elsewhere (its copy on the graphics card): the same
+        // while the mesh is the same, and another for another mesh, though it be a copy.
+        assert_eq!(m.index().id(), first.id());
+        assert_ne!(copy.index().id(), first.id());
         // Moved in place: the old index would send rays to where the mesh was.
         for p in &mut m.positions {
             p[0] += 100.0;
         }
         let moved = m.index();
         assert!(!Arc::ptr_eq(&first, &moved));
+        assert!(moved.id() > first.id() && moved.id() > copy.index().id(), "a new number, never one given before");
         assert_eq!(moved.bounds().max[0], 110.0);
         let d = -Vec3::Z;
         assert!(moved.ray(&m, Vec3::new(105.2, 5.3, 50.0), d, f64::INFINITY).is_some());

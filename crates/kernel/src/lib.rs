@@ -19,6 +19,7 @@ pub mod check;
 mod handle;
 mod history;
 pub mod index;
+mod placed;
 mod query;
 pub mod timed;
 mod types;
@@ -28,6 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use handle::{EdgeId, FaceId, ShapeHandle, TopoId, TopoKind, VertexId};
 pub use history::{Generated, History, Image, InputRef, Op, Origin, PrimitiveRole};
+pub use placed::Placed;
 pub use query::{
     CurveKind, Distance, EdgeInfo, EdgePolyline, FaceInfo, FaceRange, HlrCurve, HlrKind, MassProps, Mesh, MeshTol, ShapeKind, SubShape, SurfaceKind,
     Topology,

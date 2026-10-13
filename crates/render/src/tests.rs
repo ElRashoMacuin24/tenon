@@ -1,7 +1,8 @@
-use tenon_geom::{Aabb3, Vec3};
-use tenon_kernel::{EdgePolyline, FaceRange, Mesh};
+use tenon_geom::{Aabb3, Frame, Vec3};
+use tenon_kernel::{EdgePolyline, FaceRange, Mesh, Placed};
 
-use crate::pick::{pick_edge, pick_face};
+use crate::gpu::Body;
+use crate::pick::{Bodies, pick_edge, pick_edge_in, pick_face, pick_face_in};
 use crate::raster::{Style, encode_png, render};
 use crate::{Camera, StdView};
 
@@ -35,12 +36,12 @@ fn ray_through_the_centre_hits_the_facing_side() {
     for (view, face) in [(StdView::Front, 2), (StdView::Top, 1), (StdView::Right, 4), (StdView::Back, 3), (StdView::Left, 5), (StdView::Bottom, 0)] {
         let c = framed(view);
         let (o, d) = c.ray(400.0, 300.0, 800.0, 600.0);
-        let hit = pick_face(&[&m], o, d).unwrap_or_else(|| panic!("{view:?}: no hit"));
+        let hit = pick_face(&[Placed::from(&m)], o, d).unwrap_or_else(|| panic!("{view:?}: no hit"));
         assert_eq!(hit.face, face, "{view:?}");
     }
     let c = framed(StdView::Front);
     let (o, d) = c.ray(2.0, 2.0, 800.0, 600.0);
-    assert!(pick_face(&[&m], o, d).is_none(), "the corner of the viewport misses");
+    assert!(pick_face(&[Placed::from(&m)], o, d).is_none(), "the corner of the viewport misses");
 }
 
 #[test]
@@ -49,11 +50,11 @@ fn edges_are_picked_near_the_pointer_and_not_through_faces() {
     let c = framed(StdView::Front);
     // The front face's bottom edge (0-1, edge 0) projects to a horizontal line below the centre.
     let (x, y, _) = c.project(Vec3::new(5.0, 0.0, 0.0), 800.0, 600.0).unwrap();
-    let e = pick_edge(&[&m], &c, 800.0, 600.0, x, y + 2.0, 6.0).unwrap();
+    let e = pick_edge(&[Placed::from(&m)], &c, 800.0, 600.0, x, y + 2.0, 6.0).unwrap();
     assert_eq!(e.edge, 0);
     // The back bottom edge (2-3) projects nearby (perspective) but is hidden behind the front.
     let (x, y, _) = c.project(Vec3::new(5.0, 10.0, 0.0), 800.0, 600.0).unwrap();
-    let hidden = pick_edge(&[&m], &c, 800.0, 600.0, x, y, 1.0);
+    let hidden = pick_edge(&[Placed::from(&m)], &c, 800.0, 600.0, x, y, 1.0);
     assert!(hidden.is_none_or(|h| h.edge != 2), "{hidden:?}");
 }
 
@@ -78,7 +79,7 @@ fn every_visible_edge_is_picked_along_its_length_in_perspective() {
         for t in [0.25, 0.5, 0.75] {
             let p = pa.lerp(pb, t);
             let (x, y, _) = c.project(p, 800.0, 600.0).unwrap();
-            let e = pick_edge(&[&m], &c, 800.0, 600.0, x, y, 3.0).unwrap_or_else(|| panic!("edge {i} at {t}: not picked"));
+            let e = pick_edge(&[Placed::from(&m)], &c, 800.0, 600.0, x, y, 3.0).unwrap_or_else(|| panic!("edge {i} at {t}: not picked"));
             assert_eq!(e.edge, i as u32, "edge {i} at {t}");
             assert!(e.point.dist(p) < 1e-6, "edge {i} at {t}: {:?} vs {p:?}", e.point);
         }
@@ -91,7 +92,7 @@ fn software_render_draws_the_cube_and_encodes_png() {
     let m = cube();
     let c = framed(StdView::Home);
     let style = Style::default();
-    let img = render(&[&m], &c, 320, 240, &style);
+    let img = render(&[Placed::from(&m)], &c, 320, 240, &style);
     assert_eq!(img.rgba.len(), 320 * 240 * 4);
     let bg_top = style.background_top;
     // The centre pixel is the shaded body, not the background.
@@ -99,20 +100,20 @@ fn software_render_draws_the_cube_and_encodes_png() {
     let px = &img.rgba[i..i + 4];
     assert_ne!(&px[..3], &bg_top[..3]);
     // With a pure green body, every body pixel is clearly greener than red or blue.
-    let green = render(&[&m], &c, 320, 240, &Style { body: [0, 255, 0, 255], ..Style::default() });
+    let green = render(&[Placed::from(&m)], &c, 320, 240, &Style { body: [0, 255, 0, 255], ..Style::default() });
     let body = green.rgba.as_chunks::<4>().0.iter().filter(|p| p[1] > p[0].saturating_add(50) && p[1] > p[2].saturating_add(50)).count();
     assert!(body > 5000, "the cube covers a good part of the image: {body} pixels");
     // A body with a colour of its own (its part's material) is drawn in it, exactly as if it
     // were the colour of every body; a colour for some other body changes nothing.
-    let own = render(&[&m], &c, 320, 240, &Style { body_colors: vec![(0, [0, 255, 0, 255])], ..Style::default() });
+    let own = render(&[Placed::from(&m)], &c, 320, 240, &Style { body_colors: vec![(0, [0, 255, 0, 255])], ..Style::default() });
     assert_eq!(own.rgba, green.rgba);
-    let other = render(&[&m], &c, 320, 240, &Style { body_colors: vec![(1, [0, 255, 0, 255])], ..Style::default() });
+    let other = render(&[Placed::from(&m)], &c, 320, 240, &Style { body_colors: vec![(1, [0, 255, 0, 255])], ..Style::default() });
     assert_eq!(other.rgba, img.rgba);
     // Highlighting a face changes pixels, also on a body with its own colour.
-    let lit = render(&[&m], &c, 320, 240, &Style { face_colors: vec![(0, 1, [255, 0, 0, 255])], ..Style::default() });
+    let lit = render(&[Placed::from(&m)], &c, 320, 240, &Style { face_colors: vec![(0, 1, [255, 0, 0, 255])], ..Style::default() });
     assert_ne!(lit.rgba, img.rgba);
     let lit_own = render(
-        &[&m],
+        &[Placed::from(&m)],
         &c,
         320,
         240,
@@ -122,7 +123,7 @@ fn software_render_draws_the_cube_and_encodes_png() {
     let png = encode_png(&img).unwrap();
     assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
     // Degenerate sizes are clamped, not panics.
-    assert_eq!(render(&[&m], &c, 0, 0, &style).width, 1);
+    assert_eq!(render(&[Placed::from(&m)], &c, 0, 0, &style).width, 1);
 }
 
 fn pixel(rgba: &[u8], w: u32, x: f64, y: f64) -> [u8; 4] {
@@ -134,7 +135,7 @@ fn pixel(rgba: &[u8], w: u32, x: f64, y: f64) -> [u8; 4] {
 fn the_three_faces_of_an_iso_view_shade_differently() {
     // Regression: a headlight along the view direction lit +X, -Y and +Z equally in iso view.
     let (m, c) = (cube(), framed(StdView::Home));
-    let img = render(&[&m], &c, 320, 240, &Style::default());
+    let img = render(&[Placed::from(&m)], &c, 320, 240, &Style::default());
     let at = |p: Vec3| {
         let (x, y, _) = c.project(p, 320.0, 240.0).unwrap();
         pixel(&img.rgba, 320, x, y)[0]
@@ -167,7 +168,7 @@ fn gpu_viewport_renders_when_an_adapter_exists() {
     };
     let body = style.body;
     let colors = crate::gpu::BodyColors { face: [linear(body[0]), linear(body[1]), linear(body[2])], edge: [0.0; 3], ..Default::default() };
-    vp.set_bodies(&device, &[(&m, &colors)]);
+    assert_eq!(vp.set_bodies(&device, &[Body::new(&m, None, &colors)]), 1);
     let c = framed(StdView::Home);
     let (w, h) = (160, 120);
     let (_, recreated) = vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
@@ -183,7 +184,7 @@ fn gpu_viewport_renders_when_an_adapter_exists() {
     let (x, y, _) = c.project(Vec3::new(5.0, 5.0, 10.0), f64::from(w), f64::from(h)).unwrap();
     let g = pixel(&gpu, w, x, y);
     let expected = crate::raster::shade(body, Vec3::Z, c.key_light());
-    let soft = render(&[&m], &c, w, h, &style);
+    let soft = render(&[Placed::from(&m)], &c, w, h, &style);
     let s = pixel(&soft.rgba, w, x, y);
     for ch in 0..3 {
         assert!(g[ch].abs_diff(expected[ch]) <= 3, "GPU {g:?} vs shade() {expected:?}");
@@ -195,23 +196,58 @@ fn gpu_viewport_renders_when_an_adapter_exists() {
     // Highlights draw over the base at the same depth: the top face (1) turns red, and clearing
     // the highlight brings the base colour back, without uploading the geometry again.
     let red = crate::gpu::BodyColors { faces: vec![(1, [1.0, 0.0, 0.0])], ..colors.clone() };
-    vp.set_highlights(&device, &[(&m, &red)]);
+    vp.set_highlights(&device, &[Body::new(&m, None, &red)]);
     vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
     let (_, _, lit) = vp.read_pixels(&device, &queue).unwrap();
     let r = pixel(&lit, w, x, y);
     assert!(r[0] > 150 && r[1] < 40 && r[2] < 40, "highlighted top face: {r:?}");
-    vp.set_highlights(&device, &[(&m, &colors)]);
+    vp.set_highlights(&device, &[Body::new(&m, None, &colors)]);
     vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
     let (_, _, back) = vp.read_pixels(&device, &queue).unwrap();
     assert_eq!(pixel(&back, w, x, y), g, "the base colour again");
 
-    // Keyed bodies: only new keys are uploaded; the picture is the same.
-    assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &colors), (2, &m, &colors)]), 2);
-    assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &colors), (3, &m, &colors)]), 1, "body 1 is kept");
-    assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &colors)]), 0);
-    vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
-    let (_, _, keyed) = vp.read_pixels(&device, &queue).unwrap();
-    assert_eq!(pixel(&keyed, w, x, y), g);
+    // One mesh, many bodies (DEC-089): the cube again, moved aside and turned onto its side,
+    // is drawn from the copy already on the card, each where it stands.
+    let aside = Frame::new(Vec3::new(30.0, 0.0, 0.0), Vec3::X, Vec3::Y).unwrap();
+    assert_eq!(vp.set_bodies(&device, &[Body::new(&m, None, &colors), Body::new(&m, Some(&aside), &colors)]), 0, "the mesh is on the card");
+    assert_eq!(vp.held_meshes(), (1, 0));
+    assert_eq!(vp.drawn(), (2, 24, 24), "two bodies, twelve triangles and twelve edges each");
+    let mut both = Camera::default();
+    both.set_view(StdView::Home);
+    both.fit(&Aabb3::new(Vec3::ZERO, Vec3::new(40.0, 10.0, 10.0)));
+    vp.render(&device, &queue, &both, w, h, 40.0).unwrap();
+    let (_, _, two) = vp.read_pixels(&device, &queue).unwrap();
+    let at = |p: Vec3| {
+        let (x, y, _) = both.project(p, f64::from(w), f64::from(h)).unwrap();
+        pixel(&two, w, x, y)
+    };
+    let top = at(Vec3::new(5.0, 5.0, 10.0));
+    for ch in 0..3 {
+        assert!(top[ch].abs_diff(g[ch]) <= 3, "the first cube as before: {top:?} vs {g:?}");
+    }
+    // The second cube's own top (its +Z) now looks along X: the middle of it is at
+    // (30 + 10, 5, 5), and it is lit as a face that looks along X is.
+    let turned = at(Vec3::new(40.0, 5.0, 5.0));
+    let along_x = crate::raster::shade(body, Vec3::X, both.key_light());
+    for ch in 0..3 {
+        assert!(turned[ch].abs_diff(along_x[ch]) <= 3, "the turned cube's face: {turned:?} vs {along_x:?}");
+    }
+    assert_eq!(turned[3], 255);
+    // A highlight on the second body alone is drawn where that body stands.
+    vp.set_highlights(&device, &[Body::new(&m, None, &colors), Body::new(&m, Some(&aside), &red)]);
+    vp.render(&device, &queue, &both, w, h, 40.0).unwrap();
+    let (_, _, lit) = vp.read_pixels(&device, &queue).unwrap();
+    let px = |p: Vec3| {
+        let (x, y, _) = both.project(p, f64::from(w), f64::from(h)).unwrap();
+        pixel(&lit, w, x, y)
+    };
+    let r = px(Vec3::new(40.0, 5.0, 5.0));
+    assert!(r[0] > 150 && r[1] < 40 && r[2] < 40, "the turned cube's top is red: {r:?}");
+    assert_eq!(px(Vec3::new(5.0, 5.0, 10.0)), top, "and the first cube's is not");
+    // A mesh is what it is by being that mesh: another with the same triangles is sent too.
+    let twin = m.clone();
+    assert_eq!(vp.set_bodies(&device, &[Body::new(&m, None, &colors), Body::new(&twin, Some(&aside), &colors)]), 1);
+    assert_eq!(vp.held_meshes(), (2, 0));
 }
 
 #[test]
@@ -269,32 +305,38 @@ fn bodies_left_out_are_kept_aside_and_highlights_are_sent_only_where_there_are_a
         return;
     };
     let mut vp = crate::gpu::Viewport::new(&device);
-    let m = cube();
+    let cubes: Vec<Mesh> = (0..15).map(|_| cube()).collect();
     let plain = crate::gpu::BodyColors { face: [0.5; 3], edge: [0.0; 3], ..Default::default() };
-    // Three bodies; one goes off the screen and comes back: it is not sent again.
-    assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &plain), (2, &m, &plain), (3, &m, &plain)]), 3);
+    let of = |which: std::ops::Range<usize>| -> Vec<Body> { cubes[which].iter().map(|m| Body::new(m, None, &plain)).collect() };
+    // A cube on the card: 8 corners and 24 ends of edges at 24 bytes, 36 numbers of corners.
+    let cube_bytes = (8 + 24) * 24 + 36 * 4;
+    let record = 96;
+    // Three bodies of three meshes; one goes off the screen and comes back: its mesh is not
+    // sent again.
+    assert_eq!(vp.set_bodies(&device, &of(0..3)), 3);
     assert_eq!(vp.drawn(), (3, 36, 36));
-    assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &plain), (3, &m, &plain)]), 0);
+    assert_eq!(vp.set_bodies(&device, &[Body::new(&cubes[0], None, &plain), Body::new(&cubes[2], None, &plain)]), 0);
     assert_eq!(vp.drawn(), (2, 24, 24));
-    assert_eq!(vp.held_vertices(), (2 * 60, 60), "36 corners of triangles and 24 ends of edges each");
-    assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &plain), (2, &m, &plain), (3, &m, &plain)]), 0, "body 2 was kept aside");
-    assert_eq!(vp.held_vertices(), (3 * 60, 0));
-    // What is kept aside is bounded (here to five cubes): the bodies left out longest go first.
-    // (A dozen bodies, not the thousands the limit the app uses would need: CI's software
+    assert_eq!(vp.held_meshes(), (2, 1));
+    assert_eq!(vp.held_bytes(), (2 * cube_bytes + 2 * record, cube_bytes));
+    assert_eq!(vp.set_bodies(&device, &of(0..3)), 0, "the second was kept aside");
+    assert_eq!(vp.held_meshes(), (3, 0));
+    // What is kept aside is bounded (here to five cubes): the meshes left out longest go first.
+    // (A dozen meshes, not the thousands the limit the app uses would need: CI's software
     // adapters ran out of memory at 66,000 buffers.)
-    vp.set_spare_limit(5 * 60);
-    let many: Vec<u64> = (10..22).collect();
-    let all: Vec<(u64, &Mesh, &crate::gpu::BodyColors)> = many.iter().map(|k| (*k, &m, &plain)).collect();
-    assert_eq!(vp.set_bodies_keyed(&device, &all), 12);
-    assert_eq!(vp.held_vertices().1, 3 * 60, "the three from before");
-    assert_eq!(vp.set_bodies_keyed(&device, &all[..1]), 0);
-    assert_eq!(vp.held_vertices(), (60, 5 * 60), "the three from before went first, then six of the eleven");
-    assert_eq!(vp.set_bodies_keyed(&device, &[(1, &m, &plain)]), 1, "left out longest, so gone");
-    assert_eq!(vp.set_bodies_keyed(&device, &all[8..]), 0, "left out last, so still there");
+    vp.set_spare_limit(5 * cube_bytes);
+    let all = of(3..15);
+    assert_eq!(vp.set_bodies(&device, &all), 12);
+    assert_eq!(vp.held_meshes().1, 3, "the three from before");
+    assert_eq!(vp.set_bodies(&device, &all[..1]), 0);
+    assert_eq!(vp.held_meshes(), (1, 5), "the three from before went first, then six of the eleven");
+    assert_eq!(vp.set_bodies(&device, &of(0..1)), 1, "left out longest, so gone");
+    assert_eq!(vp.set_bodies(&device, &all[8..]), 0, "left out last, so still there");
 
     // Highlights: a body with none sends nothing, and the picture is the base colour there.
+    let m = &cubes[0];
     let red = crate::gpu::BodyColors { faces: vec![(1, [0.0, 0.0, 1.0]), (1, [1.0, 0.0, 0.0])], ..plain.clone() };
-    vp.set_bodies_keyed(&device, &[(1, &m, &plain), (2, &m, &red)]);
+    vp.set_bodies(&device, &[Body::new(m, None, &plain), Body::new(m, None, &red)]);
     let c = framed(StdView::Home);
     let (w, h) = (160, 120);
     vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
@@ -302,7 +344,7 @@ fn bodies_left_out_are_kept_aside_and_highlights_are_sent_only_where_there_are_a
     let (x, y, _) = c.project(Vec3::new(5.0, 5.0, 10.0), f64::from(w), f64::from(h)).unwrap();
     let r = pixel(&lit, w, x, y);
     assert!(r[0] > 150 && r[1] < 40 && r[2] < 40, "the later of two colours for a face: {r:?}");
-    vp.set_highlights(&device, &[(&m, &plain), (&m, &plain)]);
+    vp.set_highlights(&device, &[Body::new(m, None, &plain), Body::new(m, None, &plain)]);
     vp.render(&device, &queue, &c, w, h, 10.0).unwrap();
     let (_, _, back) = vp.read_pixels(&device, &queue).unwrap();
     let g = pixel(&back, w, x, y);
@@ -323,10 +365,11 @@ fn pollster_block<F: std::future::Future>(f: F) -> F::Output {
     }
 }
 
-/// Every triangle and every segment in turn, with no index: what picking must agree with.
+/// Every triangle and every segment of every body in turn, with no index and no tree: what
+/// picking must agree with.
 mod slow {
     use tenon_geom::Vec3;
-    use tenon_kernel::Mesh;
+    use tenon_kernel::Placed;
     use tenon_kernel::index::ray_triangle;
 
     use crate::Camera;
@@ -336,14 +379,17 @@ mod slow {
         Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))
     }
 
-    pub fn pick_face(meshes: &[&Mesh], o: Vec3, d: Vec3) -> Option<FaceHit> {
+    pub fn pick_face(meshes: &[Placed], o: Vec3, d: Vec3) -> Option<FaceHit> {
         let mut best: Option<FaceHit> = None;
-        for (bi, m) in meshes.iter().enumerate() {
+        for (bi, placed) in meshes.iter().enumerate() {
+            // (The ray is brought to the mesh, as picking does: the distances along it are
+            // then the same numbers to the last bit.)
+            let (m, (lo, ld)) = (placed.mesh, placed.ray_in(o, d));
             for range in &m.faces {
                 let tris = &m.indices[range.first as usize..(range.first + range.count) as usize];
                 for t in tris.as_chunks::<3>().0 {
                     let (a, b, c) = (m.positions[t[0] as usize], m.positions[t[1] as usize], m.positions[t[2] as usize]);
-                    if let Some(dist) = ray_triangle(o, d, v3(a), v3(b), v3(c))
+                    if let Some(dist) = ray_triangle(lo, ld, v3(a), v3(b), v3(c))
                         && best.is_none_or(|h| dist < h.t)
                     {
                         best = Some(FaceHit { body: bi, face: range.face, point: o + d * dist, t: dist });
@@ -354,13 +400,13 @@ mod slow {
         best
     }
 
-    pub fn pick_edge(meshes: &[&Mesh], camera: &Camera, w: f64, h: f64, x: f64, y: f64, radius: f64) -> Option<EdgeHit> {
+    pub fn pick_edge(meshes: &[Placed], camera: &Camera, w: f64, h: f64, x: f64, y: f64, radius: f64) -> Option<EdgeHit> {
         let (o, d) = camera.ray(x, y, w, h);
         let mut near: Vec<EdgeHit> = Vec::new();
         for (bi, m) in meshes.iter().enumerate() {
-            for e in &m.edges {
+            for e in &m.mesh.edges {
                 for seg in e.points.windows(2) {
-                    let (pa, pb) = (v3(seg[0]), v3(seg[1]));
+                    let (pa, pb) = (m.point(seg[0]), m.point(seg[1]));
                     let (Some(a), Some(b)) = (camera.project(pa, w, h), camera.project(pb, w, h)) else { continue };
                     // The nearest point of the segment on the screen, and the same in space.
                     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
@@ -420,18 +466,40 @@ fn drum(cx: f32, cy: f32, sides: u32) -> Mesh {
     m
 }
 
+/// Thirty-six places for a drum, as components stand in an assembly: in rows, some turned a
+/// quarter about their own axis, some lying on their sides.
+fn places() -> Vec<Frame> {
+    (0..36)
+        .map(|i| {
+            let origin = Vec3::new(f64::from(i % 6) * 14.0, f64::from(i / 6) * 14.0, 0.0);
+            match i % 5 {
+                1 => Frame::new(origin, Vec3::Z, Vec3::Y),
+                3 => Frame::new(origin + Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.6, 0.8), Vec3::X),
+                _ => Frame::new(origin, Vec3::Z, Vec3::X),
+            }
+            .unwrap()
+        })
+        .collect()
+}
+
 #[test]
 fn picking_with_the_index_gives_what_trying_everything_gives() {
-    // A field of drums, as an assembly is: most are nowhere near the ray or the pointer.
-    let drums: Vec<Mesh> = (0..36).map(|i| drum((i % 6) as f32 * 14.0, (i / 6) as f32 * 14.0, 24)).collect();
-    let meshes: Vec<&Mesh> = drums.iter().collect();
+    // A field of drums, as an assembly is: most are nowhere near the ray or the pointer. They
+    // are one mesh standing in thirty-six places (and one more mesh of its own, where it was
+    // made), found through the tree over the bodies and without it.
+    let (drum_mesh, own) = (drum(0.0, 0.0, 24), drum(84.0, 28.0, 24));
+    let frames = places();
+    let mut meshes: Vec<Placed> = frames.iter().map(|at| Placed::new(&drum_mesh, Some(at))).collect();
+    meshes.push(Placed::from(&own));
+    let tree = Bodies::of(&meshes);
+    assert_eq!(tree.len(), 37);
     let (w, h) = (900.0, 600.0);
-    let (mut faces, mut edges) = (0, 0);
+    let (mut faces, mut edges, mut bodies) = (0, 0, std::collections::BTreeSet::new());
     for (view, projection) in [(StdView::Home, crate::Projection::Perspective), (StdView::Front, crate::Projection::Orthographic)] {
         let mut c = Camera::default();
         c.set_view(view);
         c.projection = projection;
-        c.fit(&Aabb3::new(Vec3::new(-4.0, -4.0, 0.0), Vec3::new(74.0, 74.0, 12.0)));
+        c.fit(&Aabb3::new(Vec3::new(-4.0, -4.0, 0.0), Vec3::new(88.0, 74.0, 16.0)));
         // Close in as well, so that some drums are behind the eye and off the screen.
         for zoom in [1.0, 0.25] {
             c.distance *= zoom;
@@ -439,15 +507,81 @@ fn picking_with_the_index_gives_what_trying_everything_gives() {
                 for j in 0..30 {
                     let (x, y) = (f64::from(i) * 20.0 + 3.0, f64::from(j) * 20.0 + 7.0);
                     let (o, d) = c.ray(x, y, w, h);
-                    let face = pick_face(&meshes, o, d);
-                    assert_eq!(face, slow::pick_face(&meshes, o, d), "{view:?} x{zoom} at {x}, {y}");
-                    let edge = pick_edge(&meshes, &c, w, h, x, y, 5.0);
-                    assert_eq!(edge, slow::pick_edge(&meshes, &c, w, h, x, y, 5.0), "{view:?} x{zoom} at {x}, {y}");
+                    let face = pick_face_in(Some(&tree), &meshes, o, d);
+                    let slow_face = slow::pick_face(&meshes, o, d);
+                    assert_eq!(face, slow_face, "{view:?} x{zoom} at {x}, {y}");
+                    assert_eq!(pick_face(&meshes, o, d), slow_face, "without the tree: {view:?} x{zoom} at {x}, {y}");
+                    let edge = pick_edge_in(Some(&tree), &meshes, &c, w, h, x, y, 5.0);
+                    let slow_edge = slow::pick_edge(&meshes, &c, w, h, x, y, 5.0);
+                    assert_eq!(edge, slow_edge, "{view:?} x{zoom} at {x}, {y}");
+                    assert_eq!(pick_edge(&meshes, &c, w, h, x, y, 5.0), slow_edge, "without the tree: {view:?} x{zoom} at {x}, {y}");
                     faces += usize::from(face.is_some());
                     edges += usize::from(edge.is_some());
+                    bodies.extend(face.map(|f| f.body));
                 }
             }
         }
     }
     assert!(faces > 1500 && edges > 400, "{faces} faces, {edges} edges");
+    assert!(bodies.len() > 30 && bodies.contains(&36), "drums all over the field were found, the one of its own among them: {bodies:?}");
+}
+
+#[test]
+fn a_mesh_standing_somewhere_is_picked_as_a_copy_moved_there_is() {
+    // What the app did before DEC-089: a copy of the mesh for every place, moved there in
+    // single precision. The shared mesh with its place must give the same body and face, and
+    // the same point but for that rounding.
+    let drum_mesh = drum(0.0, 0.0, 24);
+    let frames = places();
+    let shared: Vec<Placed> = frames.iter().map(|at| Placed::new(&drum_mesh, Some(at))).collect();
+    let copies: Vec<Mesh> = frames
+        .iter()
+        .map(|at| {
+            let moved = |p: &[f32; 3]| {
+                let q = at.to_world(Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])));
+                [q.x as f32, q.y as f32, q.z as f32]
+            };
+            Mesh {
+                positions: drum_mesh.positions.iter().map(moved).collect(),
+                normals: drum_mesh.normals.clone(),
+                indices: drum_mesh.indices.clone(),
+                faces: drum_mesh.faces.clone(),
+                edges: drum_mesh.edges.iter().map(|e| EdgePolyline { edge: e.edge, points: e.points.iter().map(moved).collect() }).collect(),
+                ..Mesh::default()
+            }
+        })
+        .collect();
+    let moved: Vec<Placed> = copies.iter().map(Placed::from).collect();
+    let tree = Bodies::of(&shared);
+    let mut c = Camera::default();
+    c.set_view(StdView::Home);
+    c.fit(&Aabb3::new(Vec3::new(-4.0, -4.0, 0.0), Vec3::new(74.0, 74.0, 16.0)));
+    let (w, h) = (900.0, 600.0);
+    // (Where a ray grazes a rim, or the pointer is as near one edge as another, the rounding
+    // of the copies may tip it the other way: counted, and next to none.)
+    let (mut faces, mut edges, mut tipped) = (0, 0, 0);
+    for i in 0..45 {
+        for j in 0..30 {
+            let (x, y) = (f64::from(i) * 20.0 + 3.0, f64::from(j) * 20.0 + 7.0);
+            let (o, d) = c.ray(x, y, w, h);
+            match (pick_face_in(Some(&tree), &shared, o, d), pick_face(&moved, o, d)) {
+                (Some(a), Some(b)) if (a.body, a.face) == (b.body, b.face) => {
+                    assert!((a.point - b.point).len() < 1e-3, "at {x}, {y}: {a:?} vs {b:?}");
+                    faces += 1;
+                }
+                (None, None) => {}
+                _ => tipped += 1,
+            }
+            match (pick_edge_in(Some(&tree), &shared, &c, w, h, x, y, 5.0), pick_edge(&moved, &c, w, h, x, y, 5.0)) {
+                (Some(a), Some(b)) if (a.body, a.edge) == (b.body, b.edge) => {
+                    assert!((a.point - b.point).len() < 1e-3, "at {x}, {y}: {a:?} vs {b:?}");
+                    edges += 1;
+                }
+                (None, None) => {}
+                _ => tipped += 1,
+            }
+        }
+    }
+    assert!(faces > 150 && edges > 150, "{faces} faces and {edges} edges the same");
+    assert!(tipped <= 5, "{tipped} tipped the other way by rounding");
 }

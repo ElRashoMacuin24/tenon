@@ -674,7 +674,11 @@ fn a_large_assembly_is_drawn_by_level_of_detail() {
 
     // Finding it takes well under a frame, where trying every triangle of the half million
     // took 20 ms for a face and 130 ms for an edge on the machine this was written on.
-    let meshes: Vec<&tenon_kernel::Mesh> = wb.scene().bodies.iter().map(|b| &b.mesh).collect();
+    // (The components are drawn and picked from their parts' own meshes: a hundred
+    // components, the two meshes of the bolt and the nozzle.)
+    let own: std::collections::BTreeSet<*const tenon_kernel::Mesh> = wb.scene().bodies.iter().map(|b| std::sync::Arc::as_ptr(&b.mesh)).collect();
+    assert_eq!((wb.scene().bodies.len(), own.len()), (100, 2));
+    let (meshes, tree) = (wb.scene().placed(), wb.body_tree());
     let middles: Vec<(f64, f64)> = wb
         .scene()
         .bodies
@@ -689,10 +693,10 @@ fn a_large_assembly_is_drawn_by_level_of_detail() {
         for (x, y) in &middles {
             let t = Instant::now();
             let (o, dir) = wb.view.camera.ray(*x, *y, w, h);
-            let face = tenon_render::pick::pick_face(&meshes, o, dir);
+            let face = tenon_render::pick::pick_face_in(tree.as_deref(), &meshes, o, dir);
             let took = t.elapsed().as_secs_f64() * 1000.0;
             let t = Instant::now();
-            tenon_render::pick::pick_edge(&meshes, &wb.view.camera, w, h, *x, *y, 5.0);
+            tenon_render::pick::pick_edge_in(tree.as_deref(), &meshes, &wb.view.camera, w, h, *x, *y, 5.0);
             // (The first round makes the indices of the bodies the pointer comes over.)
             if round == 1 {
                 faces.push(took);
@@ -787,12 +791,24 @@ fn large_assembly_in_the_view() {
         d.settle(&mut wb);
         let (w, h) = (f64::from(wb.view.rect.width()), f64::from(wb.view.rect.height()));
         let all: usize = wb.scene().bodies.iter().map(|b| b.mesh.triangle_count()).sum();
-        // What the placed meshes hold in memory: points, normals, corners and edge points.
+        // What the meshes hold in memory: points, normals, corners and edge points.
         let bytes =
             |m: &tenon_kernel::Mesh| 24 * m.positions.len() + 4 * m.indices.len() + 12 * m.edges.iter().map(|e| e.points.len()).sum::<usize>();
-        let held: usize = wb.scene().bodies.iter().map(|b| bytes(&b.mesh)).sum();
-        let held_far: usize = wb.scene().bodies.iter().filter_map(|b| b.far.as_ref()).map(bytes).sum();
+        // (Each mesh once, however many components are drawn from it.)
+        let mut seen = std::collections::BTreeSet::new();
+        let mut once = |m: &std::sync::Arc<tenon_kernel::Mesh>| if seen.insert(std::sync::Arc::as_ptr(m)) { bytes(m) } else { 0 };
+        let held: usize = wb.scene().bodies.iter().map(|b| once(&b.mesh)).sum();
+        let held_far: usize = wb.scene().bodies.iter().filter_map(|b| b.far.as_ref()).map(&mut once).sum();
         let (held_mb, far_mb) = (held as f64 / 1e6, held_far as f64 / 1e6);
+        // What is said of each component's faces and edges, which is still moved for each.
+        let said = |b: &tenon_model::BodyView| {
+            std::mem::size_of_val(b.faces.as_slice())
+                + std::mem::size_of_val(b.edges.as_slice())
+                + std::mem::size_of_val(b.curves.as_slice())
+                + std::mem::size_of_val(b.ends.as_slice())
+                + std::mem::size_of_val(b.mids.as_slice())
+        };
+        let said_mb = wb.scene().bodies.iter().map(said).sum::<usize>() as f64 / 1e6;
         let whole = wb.drawn(w, h);
         let fitted = wb.view.camera.distance;
         wb.view.camera.distance = fitted / 6.0;
@@ -801,7 +817,7 @@ fn large_assembly_in_the_view() {
         wb.view.camera.distance = fitted;
         // The pointer over the middle of every component, twice (the first round makes the
         // indices of the bodies it comes over).
-        let meshes: Vec<&tenon_kernel::Mesh> = wb.scene().bodies.iter().map(|b| &b.mesh).collect();
+        let (meshes, tree) = (wb.scene().placed(), wb.body_tree());
         let middles: Vec<(f64, f64)> = wb
             .scene()
             .bodies
@@ -815,10 +831,10 @@ fn large_assembly_in_the_view() {
             for (x, y) in &middles {
                 let t = Instant::now();
                 let (o, dir) = wb.view.camera.ray(*x, *y, w, h);
-                tenon_render::pick::pick_face(&meshes, o, dir);
+                tenon_render::pick::pick_face_in(tree.as_deref(), &meshes, o, dir);
                 took[round].push(t.elapsed().as_secs_f64() * 1000.0);
                 let t = Instant::now();
-                tenon_render::pick::pick_edge(&meshes, &wb.view.camera, w, h, *x, *y, 5.0);
+                tenon_render::pick::pick_edge_in(tree.as_deref(), &meshes, &wb.view.camera, w, h, *x, *y, 5.0);
                 took[2 + round].push(t.elapsed().as_secs_f64() * 1000.0);
             }
         }
@@ -835,7 +851,7 @@ fn large_assembly_in_the_view() {
             })
             .collect();
         println!(
-            "{} components, {all} triangles ({held_mb:.0} MB of meshes and {far_mb:.0} MB of far meshes): drawn with all in view {} of them; close in {} in {} bodies ({hidden} off the screen); \
+            "{} components, {all} triangles ({held_mb:.2} MB of meshes and {far_mb:.2} MB of far meshes, each held once; {said_mb:.2} MB said of faces and edges): drawn with all in view {} of them; close in {} in {} bodies ({hidden} off the screen); \
              finding a face {:.3} ms (the first time over a body {:.3}), an edge {:.3} ms (the first time {:.3}); an idle frame {:.2} ms",
             side * side,
             whole.1,
@@ -871,7 +887,7 @@ fn large_assembly_on_the_graphics_card() {
     use egui_wgpu::wgpu;
     use std::time::Instant;
     use tenon_render::detail::Detail;
-    use tenon_render::gpu::{BodyColors, Viewport};
+    use tenon_render::gpu::{Body, BodyColors, Viewport};
     let _quiet = crate::tests::timing_lock();
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let Ok(adapter) = block(instance.request_adapter(&wgpu::RequestAdapterOptions { force_fallback_adapter: false, ..Default::default() })) else {
@@ -895,21 +911,20 @@ fn large_assembly_on_the_graphics_card() {
             let levels = wb.body_detail(f64::from(w), f64::from(h));
             let radius = wb.scene_radius();
             for with in [false, true] {
-                let bodies: Vec<(u64, &tenon_kernel::Mesh, &BodyColors)> = wb
+                let bodies: Vec<Body> = wb
                     .scene()
                     .bodies
                     .iter()
                     .zip(&levels)
-                    .enumerate()
-                    .filter(|(_, (_, level))| !with || **level != Detail::Hidden)
-                    .map(|(i, (b, level))| {
-                        let far = b.far.as_ref().filter(|_| with && *level == Detail::Far);
-                        (i as u64 * 2 + u64::from(far.is_some()), far.unwrap_or(&b.mesh), &plain)
+                    .filter(|(_, level)| !with || **level != Detail::Hidden)
+                    .map(|(b, level)| {
+                        let placed = b.placed_at(with && *level == Detail::Far);
+                        Body::new(placed.mesh, placed.at, &plain)
                     })
                     .collect();
                 let mut vp = Viewport::new(&device);
                 let t = Instant::now();
-                vp.set_bodies_keyed(&device, &bodies);
+                vp.set_bodies(&device, &bodies);
                 vp.render(&device, &queue, &wb.view.camera, w, h, radius).unwrap();
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 let first = t.elapsed().as_secs_f64() * 1000.0;
@@ -926,10 +941,11 @@ fn large_assembly_on_the_graphics_card() {
                 frames.sort_by(f64::total_cmp);
                 let (n, triangles, segments) = vp.drawn();
                 println!(
-                    "{} components, {view}, {}: {n} bodies, {triangles} triangles, {segments} edge segments, {:.0} MB on the card; sent and first drawn in {first:.0} ms; a frame {:.2} ms (90th {:.2})",
+                    "{} components, {view}, {}: {n} bodies of {} meshes, {triangles} triangles, {segments} edge segments, {:.2} MB on the card; sent and first drawn in {first:.1} ms; a frame {:.2} ms (90th {:.2})",
                     side * side,
                     if with { "with level of detail" } else { "every body in full" },
-                    vp.held_vertices().0 as f64 * 36.0 / 1e6,
+                    vp.held_meshes().0,
+                    vp.held_bytes().0 as f64 / 1e6,
                     frames[30],
                     frames[54]
                 );

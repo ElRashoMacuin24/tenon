@@ -66,6 +66,9 @@ pub struct Workbench {
     pub(crate) geo: Geo,
     pub(crate) scene: Scene,
     pub(crate) scene_seq: u64,
+    /// The tree of boxes over the bodies shown, for finding what is under the pointer, and the
+    /// scene it is of ([`Workbench::body_tree`]).
+    pub(crate) pick_tree: std::cell::RefCell<Option<(u64, std::sync::Arc<tenon_render::pick::Bodies>)>>,
     pub(crate) shown: Option<Document>,
     /// Document revision and open panel the shown document was made from: when neither
     /// changed, nothing needs comparing.
@@ -139,6 +142,7 @@ impl Workbench {
             geo,
             scene: Scene::default(),
             scene_seq: 0,
+            pick_tree: std::cell::RefCell::new(None),
             shown: None,
             shown_key: None,
             asm: None,

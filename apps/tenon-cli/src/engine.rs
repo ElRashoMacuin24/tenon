@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 use tenon_assembly::AsmSession;
 use tenon_drawing::DrwSession;
-use tenon_kernel::{Kernel, Mesh, MeshTol};
+use tenon_kernel::{Kernel, MeshTol};
 use tenon_model::Session;
 use tenon_model::schema::{CommandSchema, Ty, arg, opt};
 use tenon_render::{Camera, StdView, raster};
@@ -272,7 +272,7 @@ impl Engine {
 
     /// `colors`: per mesh, the colour of the part it is of, where that has one.
     fn render_meshes(
-        meshes: &[&Mesh],
+        meshes: &[tenon_kernel::Placed],
         colors: &[Option<[u8; 3]>],
         view: &str,
         width: u32,
@@ -325,7 +325,7 @@ impl Engine {
         } else if !(highlight.faces.is_empty() && highlight.edges.is_empty()) {
             return Err(format!("there is no body {} to pick faces or edges out on", highlight.body));
         }
-        let meshes: Vec<&Mesh> = scene.bodies.iter().map(|b| &b.mesh).collect();
+        let meshes = scene.placed();
         let colors = vec![self.session.document().color(); meshes.len()];
         Self::render_meshes(&meshes, &colors, view, width, height, scene.bbox(), highlight)
     }
@@ -350,39 +350,17 @@ impl Engine {
         self.asm.refresh(self.kernel.as_mut())?;
         let asm = self.asm.assembly();
         let frames = if exploded { tenon_assembly::session::exploded(asm) } else { asm.components.iter().map(|c| (c.id, c.placement)).collect() };
+        // Each body from its part's own mesh, where its component stands: nothing is copied.
         let (mut meshes, mut colors) = (Vec::new(), Vec::new());
         for c in asm.components.iter().filter(|c| c.visible) {
             let (Some(scene), Some(f)) = (tenon_assembly::session::scene_of(&self.asm.parts, c), frames.get(&c.id)) else { continue };
             for b in &scene.bodies {
-                meshes.push(placed_mesh(&b.mesh, f));
+                meshes.push(tenon_kernel::Placed::new(&b.mesh, Some(f)));
                 colors.push(self.asm.parts.get(&c.key()).and_then(|p| p.session.document().color()));
             }
         }
-        let bbox = tenon_geom::Aabb3::from_points(
-            meshes.iter().flat_map(|m| m.positions.iter().map(|p| tenon_geom::Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))),
-        );
-        let refs: Vec<&Mesh> = meshes.iter().collect();
-        Self::render_meshes(&refs, &colors, view, width, height, bbox, &Highlight::default())
-    }
-}
-
-/// A mesh moved by a placement.
-pub fn placed_mesh(m: &Mesh, f: &tenon_geom::Frame) -> Mesh {
-    use tenon_geom::Vec3;
-    let p = |v: &[f32; 3]| Vec3::new(f64::from(v[0]), f64::from(v[1]), f64::from(v[2]));
-    let out = |v: Vec3| [v.x as f32, v.y as f32, v.z as f32];
-    let turn = |v: Vec3| f.x() * v.x + f.y() * v.y + f.z() * v.z;
-    Mesh {
-        positions: m.positions.iter().map(|v| out(f.to_world(p(v)))).collect(),
-        normals: m.normals.iter().map(|v| out(turn(p(v)))).collect(),
-        indices: m.indices.clone(),
-        faces: m.faces.clone(),
-        edges: m
-            .edges
-            .iter()
-            .map(|e| tenon_kernel::EdgePolyline { edge: e.edge, points: e.points.iter().map(|v| out(f.to_world(p(v)))).collect() })
-            .collect(),
-        ..Mesh::default()
+        let bbox = tenon_geom::Aabb3::from_points(meshes.iter().flat_map(|m| m.mesh.positions.iter().map(|p| m.point(*p))));
+        Self::render_meshes(&meshes, &colors, view, width, height, bbox, &Highlight::default())
     }
 }
 

@@ -5,7 +5,7 @@
 use egui::{Pos2, Rect, Stroke, vec2};
 use tenon_kernel::SurfaceKind;
 use tenon_model::{AxisSel, DirectionRef, EdgeRef, FaceRef, FeatureId, Fingerprint, PlaneRef, Scene};
-use tenon_render::pick::{pick_edge, pick_face};
+use tenon_render::pick::{pick_edge_in, pick_face_in};
 use tenon_sketch::EntityId;
 
 use crate::panels::{ChamferMethod, CopyKind, Panel, Slot};
@@ -396,14 +396,14 @@ impl Workbench {
         if matches!(self.panel, Some(Panel::Measure(_))) {
             // Any face or edge: the first click is the first entity, the second the second, a
             // third starts over.
-            let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+            let (meshes, tree) = (self.scene.placed(), self.body_tree());
             let hover = resp.hover_pos().and_then(|p| {
                 let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
-                if let Some(e) = pick_edge(&meshes, &self.view.camera, w, h, x, y, 5.0) {
+                if let Some(e) = pick_edge_in(tree.as_deref(), &meshes, &self.view.camera, w, h, x, y, 5.0) {
                     return Some(Pick::Edge { body: e.body, edge: e.edge });
                 }
                 let (o, d) = self.view.camera.ray(x, y, w, h);
-                pick_face(&meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
+                pick_face_in(tree.as_deref(), &meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
             });
             self.view.hover = hover;
             if resp.clicked()
@@ -486,11 +486,11 @@ impl Workbench {
             }
             return true;
         }
-        let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
         let hover = resp.hover_pos().and_then(|p| {
             let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
             if wants.edges
-                && let Some(e) = pick_edge(&meshes, &self.view.camera, w, h, x, y, 5.0)
+                && let Some(e) = pick_edge_in(tree.as_deref(), &meshes, &self.view.camera, w, h, x, y, 5.0)
             {
                 let pick = Pick::Edge { body: e.body, edge: e.edge };
                 if self.referable(pick, wants) {
@@ -501,7 +501,7 @@ impl Workbench {
                 return None;
             }
             let (o, d) = self.view.camera.ray(x, y, w, h);
-            pick_face(&meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face }).filter(|p| self.referable(*p, wants))
+            pick_face_in(tree.as_deref(), &meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face }).filter(|p| self.referable(*p, wants))
         });
         self.view.hover = hover;
         if resp.clicked()

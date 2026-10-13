@@ -7,7 +7,7 @@ use egui::{Color32, Rect, Ui, pos2, vec2};
 use serde_json::json;
 use tenon_model::repair::{self, Broken, RefKind};
 use tenon_model::{FaceRef, FeatureId, FeatureStatus, Fingerprint};
-use tenon_render::pick::{pick_edge, pick_face};
+use tenon_render::pick::{pick_edge_in, pick_face_in};
 
 use crate::Workbench;
 use crate::viewport::Pick;
@@ -89,14 +89,16 @@ impl Workbench {
             self.set_status("Repair stopped.");
             return true;
         }
-        let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).collect();
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
         self.view.hover = resp.hover_pos().and_then(|p| {
             let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
             match kind {
-                RefKind::Edge => pick_edge(&meshes, &self.view.camera, w, h, x, y, 5.0).map(|e| Pick::Edge { body: e.body, edge: e.edge }),
+                RefKind::Edge => {
+                    pick_edge_in(tree.as_deref(), &meshes, &self.view.camera, w, h, x, y, 5.0).map(|e| Pick::Edge { body: e.body, edge: e.edge })
+                }
                 RefKind::Face => {
                     let (o, d) = self.view.camera.ray(x, y, w, h);
-                    pick_face(&meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
+                    pick_face_in(tree.as_deref(), &meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
                 }
             }
         });

@@ -244,8 +244,9 @@ fn assembly(rows: &mut Vec<Row>, make: Make, model: &str, file: &Path, budget: f
 /// away, what is then drawn of it with the whole assembly in sight, and how long it takes to
 /// find the face and the edge under the pointer.
 fn assembly_view(rows: &mut Vec<Row>, make: Make, model: &str, file: &Path, budget: [f64; 5]) -> Result<(), String> {
+    use tenon_kernel::Placed;
     use tenon_render::detail::{Detail, detail};
-    use tenon_render::pick::{pick_edge, pick_face};
+    use tenon_render::pick::{Bodies, pick_edge_in, pick_face_in};
     let mut e = Engine::new(make(), file.parent().unwrap_or(Path::new(".")));
     e.exec("asm.open", &json!({ "path": file.to_string_lossy() }))?;
     e.asm.refresh(e.kernel.as_mut())?;
@@ -253,47 +254,56 @@ fn assembly_view(rows: &mut Vec<Row>, make: Make, model: &str, file: &Path, budg
     let t = Instant::now();
     e.asm.refresh_shown(e.kernel.as_mut())?;
     let far = ms(t);
-    // Every body where its component is, in full and (where it has one) from far away.
+    // Every body where its component is, as the app shows them: from its part's own mesh, in
+    // full and (where it has one) from far away, with where it stands. Nothing is copied.
     let asm = e.asm.assembly();
-    let mut bodies: Vec<(tenon_kernel::Mesh, Option<tenon_kernel::Mesh>)> = Vec::new();
+    let mut bodies: Vec<(&tenon_kernel::Mesh, Option<&tenon_kernel::Mesh>, &tenon_geom::Frame)> = Vec::new();
     for c in asm.components.iter().filter(|c| c.visible) {
         let Some(scene) = tenon_assembly::session::scene_of(&e.asm.parts, c) else { continue };
         for b in &scene.bodies {
-            bodies.push((crate::engine::placed_mesh(&b.mesh, &c.placement), b.far.as_ref().map(|m| crate::engine::placed_mesh(m, &c.placement))));
+            bodies.push((&b.mesh, b.far.as_deref(), &c.placement));
         }
     }
-    let meshes: Vec<&tenon_kernel::Mesh> = bodies.iter().map(|(m, _)| m).collect();
-    let boxes: Vec<tenon_kernel::index::Box3> = meshes.iter().map(|m| m.index().bounds()).collect();
-    let whole = boxes.iter().fold(tenon_kernel::index::Box3::EMPTY, |all, b| all.union(b));
-    let corner = |p: [f32; 3]| tenon_geom::Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+    let meshes: Vec<Placed> = bodies.iter().map(|(m, _, at)| Placed::new(m, Some(at))).collect();
+    // (Each body's middle and reach, where it stands.)
+    let boxes: Vec<(tenon_geom::Vec3, f64)> = meshes
+        .iter()
+        .map(|m| {
+            let b = m.mesh.index().bounds();
+            (m.at.map_or(b.center(), |at| at.to_world(b.center())), b.radius())
+        })
+        .collect();
+    let whole =
+        tenon_geom::Aabb3::from_points(meshes.iter().flat_map(|m| m.corners(&m.mesh.index().bounds()))).ok_or("the assembly shows nothing")?;
     let mut camera = tenon_render::Camera::default();
     camera.set_view(tenon_render::StdView::Home);
-    camera.fit(&tenon_geom::Aabb3::new(corner(whole.min), corner(whole.max)));
+    camera.fit(&whole);
+    let tree = Bodies::of(&meshes);
     // (The view of a window 1440 by 900: what the ribbon and the browser leave of it.)
     let (w, h) = (1100.0, 700.0);
     let (mut full, mut drawn) = (0, 0);
-    for ((mesh, far), bounds) in bodies.iter().zip(&boxes) {
+    for ((mesh, far, _), (center, radius)) in bodies.iter().zip(&boxes) {
         full += mesh.triangle_count();
-        drawn += match detail(&camera, w, h, bounds.center(), bounds.radius(), None) {
+        drawn += match detail(&camera, w, h, *center, *radius, None) {
             Detail::Hidden => 0,
-            Detail::Far => far.as_ref().unwrap_or(mesh).triangle_count(),
+            Detail::Far => far.unwrap_or(mesh).triangle_count(),
             Detail::Near => mesh.triangle_count(),
         };
     }
     // The pointer over the middle of each body in turn (150 of them at most), twice: the first
     // round also makes the indices of the bodies it comes over, as the first movements of the
     // pointer do.
-    let places: Vec<(f64, f64)> = boxes.iter().take(150).filter_map(|b| camera.project(b.center(), w, h)).map(|(x, y, _)| (x, y)).collect();
+    let places: Vec<(f64, f64)> = boxes.iter().take(150).filter_map(|(center, _)| camera.project(*center, w, h)).map(|(x, y, _)| (x, y)).collect();
     let mut took = [Vec::new(), Vec::new()];
     let mut found = [0, 0];
     for round in 0..2 {
         for (x, y) in &places {
             let t = Instant::now();
             let (o, d) = camera.ray(*x, *y, w, h);
-            let face = pick_face(&meshes, o, d);
+            let face = pick_face_in(Some(&tree), &meshes, o, d);
             let at = ms(t);
             let t = Instant::now();
-            let edge = pick_edge(&meshes, &camera, w, h, *x, *y, 5.0);
+            let edge = pick_edge_in(Some(&tree), &meshes, &camera, w, h, *x, *y, 5.0);
             if round == 1 {
                 took[0].push(at);
                 took[1].push(ms(t));

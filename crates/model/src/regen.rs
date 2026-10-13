@@ -1,13 +1,14 @@
 //! Regeneration: rebuilding the part from its features through the kernel.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3};
 use tenon_kernel::{
     AngleExtent, BoolOp, ChamferSpec, Curve2, Curve3, CurveKind, Extent, FaceInfo, Kernel, KernelError, LoftOpts, Loop, MassProps, Mesh, MeshTol,
-    Path3, Profile, Region, ShapeHandle, SubShape, SurfaceKind, SweepOpts, SweepOrientation, TaggedCurve2, Transform,
+    Path3, Placed, Profile, Region, ShapeHandle, SubShape, SurfaceKind, SweepOpts, SweepOrientation, TaggedCurve2, Transform,
 };
 use tenon_sketch::{EntityId, Sketch, SketchRegion, default_regions, profile, regions};
 
@@ -1746,10 +1747,17 @@ fn corners(b: &Aabb3) -> [Vec3; 8] {
 /// Display data of one body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BodyView {
-    pub mesh: Mesh,
+    /// The body's triangles and edge lines, in the coordinates of `at`. Shared: every
+    /// component of a part in an assembly is drawn and picked from the one mesh of its part
+    /// (DEC-089).
+    pub mesh: Arc<Mesh>,
     /// The body as drawn from far away: a much coarser mesh with the same faces and edges,
     /// where one was made ([`far_meshes`]: for the parts of an assembly, where it pays).
-    pub far: Option<Mesh>,
+    pub far: Option<Arc<Mesh>>,
+    /// Where the meshes stand in the scene: the frame their coordinates are in. None: they
+    /// are in the scene's own coordinates (a part on its own). Everything else here (faces,
+    /// edges, the box) is in the scene's coordinates whatever this is.
+    pub at: Option<Frame>,
     /// Per face: its persistent name (if any) and geometry.
     pub faces: Vec<(Option<FaceOrigin>, FaceInfo)>,
     pub volume: f64,
@@ -1767,6 +1775,17 @@ pub struct BodyView {
 }
 
 impl BodyView {
+    /// The body's mesh with where it stands, for drawing and picking.
+    pub fn placed(&self) -> Placed<'_> {
+        Placed::new(&self.mesh, self.at.as_ref())
+    }
+
+    /// The mesh the body is drawn from when it is small on the screen (`far`: its far mesh if
+    /// it has one), with where it stands.
+    pub fn placed_at(&self, far: bool) -> Placed<'_> {
+        Placed::new(self.far.as_deref().filter(|_| far).unwrap_or(&self.mesh), self.at.as_ref())
+    }
+
     /// A persistent reference to edge `edge`, if both its faces are named.
     pub fn edge_ref(&self, edge: u32) -> Option<EdgeRef> {
         let (names, fp) = self.edges.get(edge as usize)?;
@@ -1806,6 +1825,11 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// Every body's mesh with where it stands, in the order of the bodies.
+    pub fn placed(&self) -> Vec<Placed<'_>> {
+        self.bodies.iter().map(BodyView::placed).collect()
+    }
+
     pub fn bbox(&self) -> Option<Aabb3> {
         self.bodies.iter().filter_map(|b| b.bbox).reduce(|a, b| a.union(&b))
     }
@@ -1835,8 +1859,9 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
         }
         let mass = k.mass_properties(b.shape, 1.0).map_err(kerr)?;
         bodies.push(BodyView {
-            mesh,
+            mesh: Arc::new(mesh),
             far: None,
+            at: None,
             faces,
             edges,
             curves,
@@ -1877,9 +1902,11 @@ pub fn far_meshes(scene: &mut Scene, regen: &Regen, k: &mut dyn Kernel) {
             continue;
         }
         // (A part that cannot be meshed again is drawn as it is.)
-        view.far = k.tessellate(body.shape, &MeshTol::far(size)).ok().filter(|far| {
-            far.faces.len() == view.mesh.faces.len() && far.edges.len() == view.mesh.edges.len() && 2 * drawn(far) <= drawn(&view.mesh)
-        });
+        view.far = k
+            .tessellate(body.shape, &MeshTol::far(size))
+            .ok()
+            .filter(|far| far.faces.len() == view.mesh.faces.len() && far.edges.len() == view.mesh.edges.len() && 2 * drawn(far) <= drawn(&view.mesh))
+            .map(Arc::new);
     }
 }
 

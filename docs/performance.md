@@ -2,7 +2,8 @@
 
 What Tenon takes to rebuild, mesh, open and draw the example models; what is done to keep
 that small; and where the time that is left goes. Milestone M9 (decisions DEC-078 to
-DEC-082).
+DEC-082), and what was filled in after it: one mesh for all the components of a part
+(DEC-089) and a tree over the bodies for picking (DEC-090).
 
 In short: Tenon's own work is about a hundredth of a rebuild or less, and the rest is the
 kernel (OpenCASCADE, OCCT). So the work of M9 was to ask the kernel for less: not to sum, mesh
@@ -159,21 +160,33 @@ nozzles in a window 1440 by 900:
 | Triangles in all bodies | 535,400 | 2,141,600 | 5,482,496 |
 | Drawn with the whole assembly in view | 182,100 | 586,400 | 1,501,184 |
 | Drawn close in (a sixth of the distance) | 344,368 in 74 bodies | 663,232 in 238 | 1,042,216 in 523 |
-| Find the face under the pointer | 0.02 ms | 0.05 ms | 0.17 ms |
-| Find the edge under the pointer | 0.7 ms | 1.4 ms | 2.8 ms |
-| An idle frame, the UI's own work | 0.2 ms | 0.55 ms | 1.3 ms |
-| Meshes held in memory, and far meshes | 21 + 6 MB | 84 + 24 MB | 216 + 62 MB |
+| Find the face under the pointer | 0.01 ms | 0.014 ms | 0.025 ms |
+| Find the edge under the pointer | 0.65 ms | 1.0 ms | 1.7 ms |
+| An idle frame, the UI's own work | 0.2 ms | 0.7 ms | 1.4 ms |
+| Meshes held in memory, and far meshes | 0.42 + 0.12 MB | 0.42 + 0.12 MB | 0.42 + 0.12 MB |
+| What is said of each component's faces and edges | 3.1 MB | 12 MB | 32 MB |
+
+**One mesh for all the components of a part** (DEC-089). A component is its part's own mesh
+and a record of where it stands: nothing is copied for it, in memory or on the graphics
+card, and what picking keeps about a mesh (its tree of boxes) is kept once. The grids above
+are two parts, so two meshes and their two far meshes however many components there are.
+Before, each component had a copy of its part's mesh moved to where it stood: 21 + 6 MB for
+100 components, 84 + 24 for 400, 216 + 62 for 1024. What is still kept for each component
+is what is said of its faces and edges (their names, surfaces, curves and ends, where the
+component stands): the last row, now the larger part of what an assembly holds.
 
 **Level of detail** (DEC-080). A component drawn smaller than 90 pixels across is drawn
 from a far mesh, made by the kernel to a hundredth of the part's size, which is under a
 pixel there: the bolt 2,700 triangles for 9,056, the nozzle 232 for 1,652. A component off
-the screen is not drawn and not sent to the graphics card. Making the far meshes of the
-bolt and the nozzle takes 21 ms.
+the screen is not drawn. Making the far meshes of the bolt and the nozzle takes 21 ms.
 
-**Finding what is under the pointer** (DEC-079) goes through a tree of boxes kept with each
-mesh, and gives exactly what trying every triangle gave. Before: 20 ms for a face and
-130 ms for an edge with 100 components, 84 and 695 ms with 400, every frame the pointer
-moved.
+**Finding what is under the pointer** (DEC-079, DEC-090) goes through a tree of boxes over
+the bodies, and then through the tree of boxes kept with the mesh of each body the ray comes
+near, and gives exactly what trying every triangle of every body gave. The ray is brought
+into the mesh's own coordinates, so the components of a part share one tree. Without any of
+it: 20 ms for a face and 130 ms for an edge with 100 components, 84 and 695 ms with 400,
+every frame the pointer moved. With the trees over the meshes alone (M9 as first reported):
+0.02, 0.05 and 0.17 ms for a face and 0.7, 1.4 and 2.8 ms for an edge.
 
 **A frame** (DEC-081): the browser lays out only the rows in sight, and nothing is looked
 for by going through every component. An idle frame with 400 components was 1.4 ms.
@@ -183,15 +196,19 @@ On the graphics card (one discrete card, 1440 by 900, four samples a pixel;
 
 | | on the card | sent and first drawn | a frame |
 |---|---|---|---|
-| 400 components in view, every body in full | 277 MB | 127 ms | 0.75 ms |
-| the same, with level of detail | 74 MB | 20 ms | 0.53 ms |
-| 1024 components in view, every body in full | 710 MB | 315 ms | 1.43 ms |
-| the same, with level of detail | 188 MB | 67 ms | 0.70 ms |
-| 1024 components, close in, with level of detail | 162 MB | 64 ms | 0.69 ms |
+| 400 components in view, every body in full | 0.57 MB | 1.7 ms | 0.39 ms |
+| the same, with level of detail | 0.18 MB | 1.2 ms | 0.20 ms |
+| 1024 components in view, every body in full | 0.63 MB | 1.9 ms | 0.66 ms |
+| the same, with level of detail | 0.24 MB | 1.0 ms | 0.31 ms |
+| 1024 components, close in, with level of detail | 0.73 MB | 1.3 ms | 0.33 ms |
 
-On this card the frame was never the limit: what level of detail buys here is a quarter of
-the memory and a fifth of the time to send. It has not been measured on integrated graphics,
-where the frame should gain as the triangles fall.
+Each mesh is on the card once (its corners, its triangles as numbers of corners, its edge
+lines), with a record of 96 bytes for every body drawn from it, and all the bodies of a mesh
+are drawn in one call. With a copy for every component the same rows were 277, 74, 710, 188
+and 162 MB, 127, 20, 315, 67 and 64 ms to send, and 0.75, 0.53, 1.43, 0.70 and 0.69 ms a
+frame. Level of detail no longer saves memory worth the name; it halves the frame, which is
+what it is for. Nothing here has been measured on integrated graphics, where the frame
+should gain most as the triangles fall.
 
 ## Drawings
 
@@ -201,9 +218,9 @@ lines are removed by the kernel; this has not been taken apart further.
 ## Memory
 
 The whole benchmark run (every example rebuilt several times, three assemblies, the grid
-placed in memory) ends holding 140 to 180 MB, differing from run to run. An assembly holds a placed copy of its part's mesh
-for every component (the table above), and the same on the graphics card for the
-components that are drawn.
+placed in memory) ends holding 140 to 180 MB, differing from run to run. An assembly holds each part's mesh
+once, with what is said of each component's faces and edges moved to where it stands (the
+table above), and the same on the graphics card.
 
 ## Where OCCT is the limit
 
@@ -226,19 +243,21 @@ These are the kernel's own costs, measured above, that Tenon can only avoid aski
 
 ## What is not done
 
-- **One mesh for all components of a part.** Each component has its own placed copy in
-  memory and on the graphics card, and its own two draw calls. A thousand components are a
-  thousand copies. Level of detail makes the copies smaller; it does not make them one. (A
-  test that sent 33,000 small bodies, 66,000 buffers, ran out of memory on the software
-  adapters of CI's Windows and macOS runners; a real graphics card took them.)
+- **What is said of a component's faces and edges is still copied for it** (their names,
+  surfaces, curves and ends, moved to where it stands): 31 kB for a bolt with its thread,
+  32 MB for the 1024 components. It is what the commands that pick faces and edges read,
+  all over the app; it would have to be moved when asked for instead.
 - **No geometry kept on disk.** A part is rebuilt from its features when it is opened; an
   assembly rebuilds every part it uses.
 - **A change in sizes on screen is not smoothed.** A body changes between its far mesh and
   its full one at once, with a gap between the two limits so that it does not flicker.
 - **Without a graphics card** the software drawing takes 0.4 s for a frame of 400
   components. It is the fallback, and is drawn only when something changes.
-- **Finding an edge under the pointer** still puts the corners of every body's box on the
-  screen: 2.7 microseconds a body.
+- **Finding an edge under the pointer** goes through every point of a long edge whose box
+  the pointer is over (a thread's helix, in each bolt near the pointer): most of the 1.7 ms
+  with 1024 components. A tree over the points of long edges would end that.
+- **An idle frame's own work grows with the components** (1.4 microseconds each): how each
+  is drawn, its colours and what it is are worked out afresh every frame.
 - **Budgets are loose** (four times the slowest platform), for want of a machine of our own
   to compare runs on.
 - **Nothing here was measured on integrated graphics, or beyond a thousand components.**
@@ -253,8 +272,10 @@ These are the kernel's own costs, measured above, that Tenon can only avoid aski
 | A far mesh is coarse and leaves the display's triangles alone | `crates/kernel-occt/tests/m6.rs` `a_far_mesh_is_coarse_and_leaves_the_displays_triangles_alone` |
 | Far meshes are made where they pay, and for an assembly's parts only | `crates/model/tests/model.rs` `far_meshes_are_made_where_they_pay`, `worker_regenerates_off_thread_and_reports_the_latest` |
 | Which level a body is drawn at | `crates/render/src/tests.rs` `a_body_is_drawn_in_full_from_its_far_mesh_or_not_at_all` |
-| Bodies left out are kept aside on the card; highlights only where there are any | `crates/render/src/tests.rs` `bodies_left_out_are_kept_aside_and_highlights_are_sent_only_where_there_are_any` |
-| Picking through the index gives what trying everything gives | `crates/render/src/tests.rs` `picking_with_the_index_gives_what_trying_everything_gives`; `crates/kernel/src/index.rs` |
+| Meshes left out are kept aside on the card; highlights only where there are any | `crates/render/src/tests.rs` `bodies_left_out_are_kept_aside_and_highlights_are_sent_only_where_there_are_any` |
+| Picking through the index and the tree over bodies gives what trying everything gives, for one mesh standing in many places | `crates/render/src/tests.rs` `picking_with_the_index_gives_what_trying_everything_gives`, `a_mesh_standing_somewhere_is_picked_as_a_copy_moved_there_is`; `crates/kernel/src/index.rs` |
+| One mesh on the card for every body drawn from it, each where it stands | `crates/render/src/tests.rs` `gpu_viewport_renders_when_an_adapter_exists` |
+| The components of a part share its mesh | `crates/ui/src/asm_tests.rs` `a_large_assembly_is_drawn_by_level_of_detail` (a hundred components, two meshes) |
 | A large assembly in the app: levels, picking and an idle frame within budget | `crates/ui/src/asm_tests.rs` `a_large_assembly_is_drawn_by_level_of_detail` |
 | The browser lays out only the rows in sight | `crates/ui/src/asm_tests.rs` `the_browser_of_a_large_assembly_lays_out_only_the_rows_in_sight` |
 | UI work per frame on a 40-feature part, and while dragging a component, under 16 ms | `crates/ui/src/tests.rs` `frame_time_stays_within_budget`; `crates/ui/src/asm_tests.rs` `assembly_drag_frame_time_stays_within_budget` |

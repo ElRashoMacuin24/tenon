@@ -20,10 +20,10 @@ use tenon_assembly::session::{self as asm_session, solve_assembly};
 use tenon_assembly::solve::{BodyDof, Motion};
 use tenon_assembly::{AsmSession, Assembly, ComponentId};
 use tenon_geom::{Aabb3, Axis, Frame, Vec3};
-use tenon_kernel::{CurveKind, EdgePolyline, FaceInfo, Mesh, SurfaceKind};
+use tenon_kernel::{CurveKind, FaceInfo, Mesh, SurfaceKind};
 use tenon_model::{BodyView, EdgeFingerprint, Scene};
 use tenon_render::Camera;
-use tenon_render::pick::pick_face;
+use tenon_render::pick::pick_face_in;
 
 use crate::theme::{self, Tokens};
 use crate::viewport::{Nav, Pick};
@@ -37,8 +37,9 @@ pub(crate) struct Editing {
     /// Where the component is: the part is shown in its own coordinates, the rest moved by the
     /// inverse of this.
     pub frame: Frame,
-    /// The other components, in the edited part's coordinates, with their keys.
-    pub context: Vec<(u64, Mesh)>,
+    /// The other components' bodies: a key, the part's own mesh (shared, not copied) and
+    /// where it stands in the edited part's coordinates.
+    pub context: Vec<(u64, Arc<Mesh>, Frame)>,
     /// The part's document revision when editing started.
     pub start_revision: u64,
 }
@@ -152,10 +153,6 @@ fn v3(p: [f32; 3]) -> Vec3 {
     Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))
 }
 
-fn f3(v: Vec3) -> [f32; 3] {
-    [v.x as f32, v.y as f32, v.z as f32]
-}
-
 /// A rigid map: rotation, then translation.
 #[derive(Clone, Copy)]
 struct Rigid {
@@ -181,14 +178,17 @@ impl Rigid {
     }
 }
 
-fn placed_mesh(m: &Mesh, x: &Rigid) -> Mesh {
-    Mesh {
-        positions: m.positions.iter().map(|p| f3(x.point(v3(*p)))).collect(),
-        normals: m.normals.iter().map(|n| f3(x.dir(v3(*n)))).collect(),
-        indices: m.indices.clone(),
-        faces: m.faces.clone(),
-        edges: m.edges.iter().map(|e| EdgePolyline { edge: e.edge, points: e.points.iter().map(|p| f3(x.point(v3(*p)))).collect() }).collect(),
-        ..Mesh::default()
+/// The frame `f` as it is seen from the frame `from`: where something standing at `f` stands
+/// in the coordinates of `from`.
+fn frame_seen_from(f: &Frame, from: &Frame) -> Frame {
+    Frame::new(from.to_local(f.origin()), from.dir_to_local(f.z()), from.dir_to_local(f.x())).unwrap_or(Frame::WORLD)
+}
+
+/// Where a mesh that stands at `at` in its part stands once the part is put at `f`.
+fn frame_of(f: &Frame, at: Option<&Frame>) -> Frame {
+    match at {
+        None => *f,
+        Some(at) => Frame::new(f.to_world(at.origin()), f.dir_to_world(at.z()), f.dir_to_world(at.x())).unwrap_or(*f),
     }
 }
 
@@ -221,7 +221,10 @@ pub(crate) fn arrived(asm: &Assembly, parts: &asm_session::Parts) -> (usize, boo
     (have, have >= can)
 }
 
-fn placed_body(b: &BodyView, x: &Rigid) -> BodyView {
+/// A body of a part where the component stands: its meshes are the part's own, shared with
+/// every other component of it, and what is said of its faces and edges is moved there.
+fn placed_body(b: &BodyView, f: &Frame) -> BodyView {
+    let x = &Rigid::of(f);
     let mut mass = b.mass.clone();
     mass.center_of_mass = x.point(mass.center_of_mass);
     // R I R^T
@@ -245,8 +248,9 @@ fn placed_body(b: &BodyView, x: &Rigid) -> BodyView {
         (0..8).map(move |k| Vec3::new(if k & 1 == 0 { l.x } else { h.x }, if k & 2 == 0 { l.y } else { h.y }, if k & 4 == 0 { l.z } else { h.z }))
     };
     BodyView {
-        mesh: placed_mesh(&b.mesh, x),
-        far: b.far.as_ref().map(|m| placed_mesh(m, x)),
+        mesh: Arc::clone(&b.mesh),
+        far: b.far.clone(),
+        at: Some(frame_of(f, b.at.as_ref())),
         faces: b.faces.iter().map(|(n, info)| (*n, placed_info(info, x))).collect(),
         volume: b.volume,
         mass,
@@ -549,10 +553,7 @@ impl Workbench {
                 _ => None,
             };
             let placed = kept.unwrap_or_else(|| match (asm_session::scene_of(&a.session.parts, c), frames.get(&id)) {
-                (Some(s), Some(f)) => {
-                    let x = Rigid::of(f);
-                    s.bodies.iter().map(|b| placed_body(b, &x)).collect()
-                }
+                (Some(s), Some(f)) => s.bodies.iter().map(|b| placed_body(b, f)).collect(),
                 _ => Vec::new(),
             });
             next_cache.insert(id, (k, bodies.len()..bodies.len() + placed.len()));
@@ -609,7 +610,7 @@ impl Workbench {
 
     /// The other components while a part is edited in place (drawn dimmed, not picked).
     pub(crate) fn context_meshes(&self) -> Vec<(u64, &Mesh)> {
-        self.asm.as_ref().and_then(|a| a.editing.as_ref()).map(|e| e.context.iter().map(|(k, m)| (*k, m)).collect()).unwrap_or_default()
+        self.asm.as_ref().and_then(|a| a.editing.as_ref()).map(|e| e.context.iter().map(|(k, m, _)| (*k, &**m)).collect()).unwrap_or_default()
     }
 
     /// Mouse in the viewport of an assembly: hover and select components, drag them (their
@@ -622,8 +623,8 @@ impl Workbench {
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
         let hit_at = |wb: &Self, p: Pos2| {
             let (o, d) = wb.view.camera.ray(f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), w, h);
-            let meshes: Vec<&Mesh> = wb.scene.bodies.iter().map(|b| &b.mesh).collect();
-            pick_face(&meshes, o, d).and_then(|hit| wb.component_of_body(hit.body).map(|c| (c, hit.point)))
+            let (meshes, tree) = (wb.scene.placed(), wb.body_tree());
+            pick_face_in(tree.as_deref(), &meshes, o, d).and_then(|hit| wb.component_of_body(hit.body).map(|c| (c, hit.point)))
         };
         let dragging = self.asm.as_ref().is_some_and(|a| a.drag.is_some());
         let hover = if dragging { None } else { resp.hover_pos().and_then(|p| hit_at(self, p)).map(|(c, _)| c) };
@@ -795,14 +796,14 @@ impl Workbench {
         let mut context = Vec::new();
         for o in a.session.assembly().components.iter().filter(|o| o.visible && o.id != id) {
             let Some(s) = asm_session::scene_of(&a.session.parts, o) else { continue };
-            let x = Rigid::between(&o.placement, &c.placement);
+            let seen = frame_seen_from(&o.placement, &c.placement);
             let mut kh = std::collections::hash_map::DefaultHasher::new();
             ("context", o.id.0, &o.part).hash(&mut kh);
             hash_frame(&o.placement, &mut kh);
             hash_frame(&c.placement, &mut kh);
             let k = kh.finish();
             for (i, b) in s.bodies.iter().enumerate() {
-                context.push((k ^ (i as u64), placed_mesh(&b.mesh, &x)));
+                context.push((k ^ (i as u64), Arc::clone(&b.mesh), frame_of(&seen, b.at.as_ref())));
             }
         }
         let start_revision = self.session.revision();

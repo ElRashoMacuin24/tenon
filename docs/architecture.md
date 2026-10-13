@@ -194,9 +194,12 @@ one runs, so a drag shows results all along instead of none until it stops
 (`a_stream_of_previews_shows_results_while_it_lasts`). Jobs (interference, assembly STEP, a
 drawing's views) run on the worker against the slots' latest solids.
 
-In an assembly, the viewport shows one `Scene` holding every visible component's bodies moved to
-where the component is, so picking and highlighting work unchanged. The GPU uploads bodies by key,
-so dragging one component re-sends only its triangles. The parts of a shown assembly come with
+In an assembly, the viewport shows one `Scene` holding every visible component's bodies, so
+picking and highlighting work unchanged. A component's body is its part's own mesh, shared, and
+the frame it stands at (`BodyView::at`; `tenon_kernel::Placed` is the two together): nothing
+of the mesh is copied for a component, in memory or on the card (DEC-089). The GPU holds each
+mesh once and a short record for each body drawn from it, so dragging a component sends its
+record and no triangles. The parts of a shown assembly come with
 a second, coarse mesh (`BodyView::far`, `MeshTol::far`), and every frame each body is drawn in
 full, from its far mesh, or not at all, by where it is on the screen
 (`tenon_render::detail`, DEC-080); bodies left out stay on the card for a while. STEP export and
@@ -216,9 +219,11 @@ window's model waits for the frame after the part as it now is has come back fro
 
 The viewport renders through wgpu into an offscreen MSAA texture that egui shows as an image. It
 falls back to the software rasteriser when the app has no wgpu render state. Picking casts rays
-against the full meshes of what the viewport shows, through an index each mesh keeps of itself
-(a box, a tree of boxes over its triangles, a box round each edge: `tenon_kernel::index`,
-DEC-079), so a pick costs what is under the pointer and not the whole scene. Face names come
+against the full meshes of what the viewport shows: through a tree of boxes over the bodies
+where they stand (`tenon_render::pick::Bodies`, DEC-090), then, with the ray brought into the
+mesh's own coordinates, through an index each mesh keeps of itself (a box, a tree of boxes
+over its triangles, a box round each edge: `tenon_kernel::index`, DEC-079). So a pick costs
+what is under the pointer and not the whole scene. Face names come
 with the `Scene`, so selecting a face yields a persistent `FaceRef` without asking the kernel.
 
 ## Tolerances
