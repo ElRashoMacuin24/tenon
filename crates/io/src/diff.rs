@@ -174,14 +174,75 @@ fn part(a: &Value, b: &Value, out: &mut Vec<Change>) {
     let detail = |x: &Value, y: &Value| feature_detail(x, y, params, &changed);
     records("Features", &a["features"], &b["features"], &label, &summary, &detail, out);
     design_table(&a["table"], &b["table"], out);
+    part_studies(&a["studies"], &b["studies"], out);
+}
+
+/// A support or a load of a study, in a few words: what it is, how large, on how many faces.
+fn study_item(v: &Value) -> String {
+    let faces = v["faces"].as_array().map_or(0, Vec::len);
+    let on = format!("on {faces} face{}", if faces == 1 { "" } else { "s" });
+    match (v["type"].as_str(), v["kind"].as_str()) {
+        (Some("force"), _) => {
+            let way = match &v["direction"] {
+                Value::Object(d) => format!(" along ({}, {}, {})", show(&d["x"]), show(&d["y"]), show(&d["z"])),
+                _ => " square to them".into(),
+            };
+            format!("force {} N{way} {on}", show(&v["newtons"]))
+        }
+        (Some("pressure"), _) => format!("pressure {} MPa {on}", show(&v["megapascals"])),
+        (_, Some(kind)) => format!("{kind} {on}"),
+        _ => on,
+    }
+}
+
+/// Stress studies: made, deleted, and what of each changed (its name, its element size, its
+/// supports and its loads).
+fn part_studies(a: &Value, b: &Value, out: &mut Vec<Change>) {
+    let count = |s: &Value, key: &str| s[key].as_array().map_or(0, Vec::len);
+    let summary = |s: &Value| format!("{} supports, {} loads", count(s, "supports"), count(s, "loads"));
+    let detail = |x: &Value, y: &Value| {
+        let mut d = Vec::new();
+        if x["name"] != y["name"] {
+            d.push(format!("name {} -> {}", show(&x["name"]), show(&y["name"])));
+        }
+        if !same(&x["mesh_size"], &y["mesh_size"]) {
+            let size = |v: &Value| if v.is_null() { "chosen from the part".to_owned() } else { format!("{} mm", show(v)) };
+            d.push(format!("element size {} -> {}", size(&x["mesh_size"]), size(&y["mesh_size"])));
+        }
+        for key in ["supports", "loads"] {
+            let mut items = Vec::new();
+            records(
+                "",
+                &x[key],
+                &y[key],
+                &|r| r["name"].as_str().unwrap_or("?").to_owned(),
+                &study_item,
+                &|p, q| if same(p, q) { Vec::new() } else { vec![format!("{} -> {}", study_item(p), study_item(q))] },
+                &mut items,
+            );
+            d.extend(items.into_iter().filter(|c| c.op != '>').map(|c| match c.op {
+                '+' => format!("+ {} ({})", c.item, c.detail),
+                '-' => format!("- {}", c.item),
+                _ => format!("{}: {}", c.item, c.detail),
+            }));
+        }
+        d
+    };
+    records("Studies", a, b, &|s| label(s), &summary, &detail, out);
 }
 
 /// What the part is made of and the colour it is shown in.
 fn part_material(a: &Value, b: &Value, out: &mut Vec<Change>) {
     let doc = |c: &mut Vec<Change>, detail: String| c.push(Change { section: "Document", op: '~', item: String::new(), detail });
     if !same(&a["material"], &b["material"]) {
+        // (How it answers to a load is said when it is known: stiffness, Poisson's ratio,
+        // yield strength.)
+        let strength = |v: &Value| match &v["strength"] {
+            Value::Object(s) => format!(", {} GPa, {}, {} MPa", show(&s["youngs_modulus"]), show(&s["poisson"]), show(&s["yield_strength"])),
+            _ => String::new(),
+        };
         let m = |v: &Value| match v["name"].as_str() {
-            Some(n) => format!("{n} ({} g/cm^3, {})", show(&v["density"]), show(&v["color"])),
+            Some(n) => format!("{n} ({} g/cm^3, {}{})", show(&v["density"]), show(&v["color"]), strength(v)),
             None => "none".into(),
         };
         doc(out, format!("material {} -> {}", m(&a["material"]), m(&b["material"])));

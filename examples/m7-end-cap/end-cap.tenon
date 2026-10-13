@@ -8,6 +8,7 @@ next_feature = 9
 name = "PLA"
 density = 1.24
 color = "#4f9fd8"
+strength = { youngs_modulus = 3.5, poisson = 0.36, yield_strength = 50.0 }
 
 [parameters]
 next = 5

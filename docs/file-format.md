@@ -143,12 +143,18 @@ appearance = "#d04030"
 name = "Brass"
 density = 8.5
 color = "#c9a64a"
+strength = { youngs_modulus = 110.0, poisson = 0.34, yield_strength = 125.0 }
 ```
 
 - **`name`:** 1 to 64 characters. It need not be a material of Tenon's library: the file
   carries the density and the colour itself, so it reads the same wherever it is opened.
 - **`density`:** grams per cubic centimetre, more than 0 and at most 30.
 - **`color`:** `"#rrggbb"`, lower case.
+- **`strength`:** optional: how the material answers to a load, for stress studies.
+  `youngs_modulus` in GPa (more than 0, at most 2000), `poisson` (from 0 to less than 0.5)
+  and `yield_strength` in MPa (the stress at which it stays bent, or for a brittle material
+  breaks). A material without it that has the name of a library material is taken to have
+  the library's values; any other cannot be checked for stress.
 
 The part is shown in `appearance` when it has one, else in its material's `color`.
 
@@ -404,6 +410,37 @@ edges = [
 - **The `fingerprint`** only breaks ties between pieces of a split face or edge. It is a computed
   value, so it is rounded and `tenon-cli diff` ignores it.
 
+### Stress studies (`[[study]]`)
+
+Optional, after the features: where the part is held and what pushes on it (DEC-093). What a
+study comes to is worked out when it is asked for and is not kept in the file.
+
+```toml
+[[study]]
+id = 1
+name = "End load"
+supports = [
+  { id = 1, name = "Fixed1", kind = "fixed", faces = [{ origin = { type = "side", feature = 2, curve = 9 }, fingerprint = { ... } }] },
+]
+loads = [
+  { id = 2, name = "Force1", faces = [{ origin = { type = "side", feature = 2, curve = 7 }, fingerprint = { ... } }], type = "force", newtons = 150.0, direction = { x = 0.0, y = 0.0, z = -1.0 } },
+  { id = 3, name = "Snow", faces = [{ origin = { type = "cap", feature = 2, end = "end" }, fingerprint = { ... } }], type = "pressure", megapascals = 0.25 },
+]
+mesh_size = 2.5
+```
+
+- **`id`, `name`:** the study's id within the part, and its name (1 to 64 characters).
+- **`supports`:** faces that are held. `kind` is `"fixed"`: held still in every direction.
+- **`loads`:** `type = "force"` is a force of `newtons` in all, spread evenly over its faces,
+  along `direction` (in the part's coordinates; its length does not matter) or, without one,
+  square to each face and into it. `type = "pressure"` is `megapascals` (N/mm²) on its faces,
+  square to them and into them; a negative value pulls.
+- **`faces`:** references to faces, as features have them (below). At least one.
+- **`mesh_size`:** optional: the size of the elements the part is divided into, mm. Without it
+  the size is chosen from the part's.
+- Supports and loads of one study share one run of ids. A study with no supports, no loads
+  and no size is its `id` and its `name`.
+
 ### Validation
 
 After reading, a part is checked:
@@ -411,7 +448,12 @@ After reading, a part is checked:
 - references point to earlier features;
 - sketch references point to entities of the right type;
 - numbers are finite and in range;
-- a material has a name, a density in range and a colour; an appearance is a colour;
+- a material has a name, a density in range and a colour, and if it says how it answers to a
+  load, a stiffness, a Poisson's ratio and a yield strength in range; an appearance is a
+  colour;
+- a study has a name; its supports and loads have names, ids of their own and at least one
+  face each; a force and a pressure are numbers other than 0 within range, and a force's
+  direction is one;
 - a design table names parameters of the part, each once; its rows have names of their own and
   one number for each parameter; its active row is one of them.
 
@@ -665,8 +707,9 @@ Features
 
 - **The markers:** `+` added, `-` removed, `~` changed, `>` moved.
 - **What is compared:**
-  - parts: the name, material and appearance, parameters, features, and the design table (its
-    active row, its parameters, and each row that was added, removed or changed);
+  - parts: the name, material (with its strength) and appearance, parameters, features, the
+    design table (its active row, its parameters, and each row that was added, removed or
+    changed), and stress studies (each support and load that was added, removed or changed);
   - assemblies: components (a changed placement shows as "moved"), relationships and explode
     steps;
   - drawings: the drawing's own fields, sheets, views and annotations.
@@ -724,7 +767,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   then `hem`, `contour_flange`, `corner_seam`, a flange's `miter` and corner options and the
   parameter `GapSize` (DEC-063, DEC-064, DEC-066), then `cut_across_bend` and a projection's
   `flat` (DEC-068), then `bend` (DEC-070), then `fold`, a contour flange's `edges` and
-  `width`, `cut_normal` and `corner_rip` (DEC-071 to DEC-074), then `sharp_bend` (DEC-075).
+  `width`, `cut_normal` and `corner_rip` (DEC-071 to DEC-074), then `sharp_bend` (DEC-075), then a
+  material's optional `strength` and the `[[study]]` records (DEC-093).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

@@ -431,6 +431,7 @@ fn material_json(d: &crate::Document) -> Value {
         "appearance": d.appearance(),
         "density": d.density(),
         "color": d.color().map(crate::materials::color_text),
+        "strength": d.strength(),
     })
 }
 
@@ -447,10 +448,28 @@ fn document_material(s: &mut Session, p: &Value) -> CmdResult {
                 Some(Value::String(c)) => Some(c.clone()),
                 Some(_) => return Err("`color` must be text like #rrggbb".into()),
             };
+            // How it answers to a load: the library's, with what is given in its place. A
+            // material of one's own has all three values or none.
+            let (e, nu, y) = (opt_num(p, "youngs_modulus")?, opt_num(p, "poisson")?, opt_num(p, "yield_strength")?);
+            let known = listed.as_ref().and_then(|m| m.strength);
+            let strength = match (known, e, nu, y) {
+                (known, None, None, None) => known,
+                (Some(k), e, nu, y) => Some(crate::materials::Strength {
+                    youngs_modulus: e.unwrap_or(k.youngs_modulus),
+                    poisson: nu.unwrap_or(k.poisson),
+                    yield_strength: y.unwrap_or(k.yield_strength),
+                }),
+                (None, Some(e), Some(nu), Some(y)) => Some(crate::materials::Strength { youngs_modulus: e, poisson: nu, yield_strength: y }),
+                (None, ..) => {
+                    return Err(
+                        format!("how `{name}` answers to a load takes all three: youngs_modulus (GPa), poisson and yield_strength (MPa)").into()
+                    );
+                }
+            };
             match (listed, density) {
-                (Some(m), d) => Some(crate::materials::Material { density: d.unwrap_or(m.density), color: color.unwrap_or(m.color), ..m }),
+                (Some(m), d) => Some(crate::materials::Material { density: d.unwrap_or(m.density), color: color.unwrap_or(m.color), strength, ..m }),
                 (None, Some(d)) => {
-                    Some(crate::materials::Material { name: name.clone(), density: d, color: color.unwrap_or_else(|| "#b8c0c8".into()) })
+                    Some(crate::materials::Material { name: name.clone(), density: d, color: color.unwrap_or_else(|| "#b8c0c8".into()), strength })
                 }
                 (None, None) => {
                     return Err(
@@ -476,11 +495,158 @@ fn document_appearance(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn document_materials(s: &mut Session, _: &Value) -> CmdResult {
-    let library: Vec<Value> =
-        crate::materials::LIBRARY.iter().map(|(name, density, color)| json!({ "name": name, "density": density, "color": color })).collect();
+    let library: Vec<Value> = crate::materials::LIBRARY
+        .iter()
+        .map(|(name, density, color)| {
+            let mut m = json!({ "name": name, "density": density, "color": color });
+            if let Some(s) = crate::materials::strength_of(name) {
+                m["strength"] = json!(s);
+            }
+            m
+        })
+        .collect();
     let mut out = material_json(s.document());
     out["library"] = json!(library);
     Ok(out)
+}
+
+// ---- stress studies ---------------------------------------------------------------------------
+
+use crate::study::{LoadKind, Study, StudyId, SupportKind};
+
+/// The study a command is about: the one named, or the part's only one.
+fn study_of(s: &Session, p: &Value) -> Result<StudyId, CmdError> {
+    match opt_id(p, "study")? {
+        Some(id) => s
+            .document()
+            .study(StudyId(id))
+            .map(|st| st.id)
+            .ok_or_else(|| CmdError(format!("there is no study {id}: study.list says which there are"))),
+        None => match s.document().studies() {
+            [only] => Ok(only.id),
+            [] => Err("the part has no study yet: study.new makes one".into()),
+            _ => Err("the part has several studies: say which with `study` (study.list says which there are)".into()),
+        },
+    }
+}
+
+fn study_json(st: &Study) -> Value {
+    json!({
+        "study": st.id.0,
+        "name": st.name,
+        "mesh_size": st.mesh_size,
+        "supports": st.supports.iter().map(|x| json!({ "id": x.id, "name": x.name, "kind": x.kind, "faces": x.faces.len() })).collect::<Vec<_>>(),
+        "loads": st.loads.iter().map(|l| {
+            let mut v = json!({ "id": l.id, "name": l.name, "faces": l.faces.len() });
+            match l.kind {
+                LoadKind::Force { newtons, direction } => {
+                    v["type"] = json!("force");
+                    v["newtons"] = json!(newtons);
+                    v["direction"] = json!(direction.map(|d| [d.x, d.y, d.z]));
+                }
+                LoadKind::Pressure { megapascals } => {
+                    v["type"] = json!("pressure");
+                    v["megapascals"] = json!(megapascals);
+                }
+            }
+            v
+        }).collect::<Vec<_>>(),
+        "needs": st.missing(),
+    })
+}
+
+fn opt_name(p: &Value) -> Result<Option<String>, CmdError> {
+    match arg(p, "name") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(n)) => Ok(Some(n.clone())),
+        Some(_) => Err("`name` must be text".into()),
+    }
+}
+
+fn study_new(s: &mut Session, p: &Value) -> CmdResult {
+    let name = opt_name(p)?;
+    s.edit(|d| {
+        let id = d.add_study(name.as_deref()).map_err(CmdError)?;
+        Ok(d.study(id).map(study_json).unwrap_or_default())
+    })
+}
+
+fn study_rename(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, name) = (study_of(s, p)?, text(p, "name")?);
+    s.edit(|d| {
+        let st = d.study_mut(id).ok_or("no such study")?;
+        st.name = name.trim().to_owned();
+        st.check().map_err(CmdError)?;
+        Ok(study_json(st))
+    })
+}
+
+fn study_delete(s: &mut Session, p: &Value) -> CmdResult {
+    let id = study_of(s, p)?;
+    s.edit(|d| {
+        d.remove_study(id);
+        Ok(json!({ "studies": d.studies().len() }))
+    })
+}
+
+/// Changes a study and says how it then stands, with what was added under `key`.
+fn study_edit(s: &mut Session, id: StudyId, key: &str, change: impl FnOnce(&mut Study) -> Result<u32, String>) -> CmdResult {
+    s.edit(|d| {
+        let st = d.study_mut(id).ok_or("no such study")?;
+        let made = change(st).map_err(CmdError)?;
+        let mut out = study_json(st);
+        out[key] = json!(made);
+        Ok(out)
+    })
+}
+
+fn study_fix(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
+    study_edit(s, id, "support", |st| st.add_support(SupportKind::Fixed, faces, name))
+}
+
+fn study_force(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
+    let newtons = num(p, "newtons")?;
+    // (Adding 0 makes a -0 a 0: "down" is written 0, 0, -1.)
+    let direction = arg(p, "direction")
+        .filter(|v| !v.is_null())
+        .map(|v| said_direction(v, "direction"))
+        .transpose()?
+        .map(|d| tenon_geom::Vec3::new(d.x + 0.0, d.y + 0.0, d.z + 0.0));
+    study_edit(s, id, "load", |st| st.add_load(LoadKind::Force { newtons, direction }, faces, name))
+}
+
+fn study_pressure(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
+    let megapascals = num(p, "megapascals")?;
+    study_edit(s, id, "load", |st| st.add_load(LoadKind::Pressure { megapascals }, faces, name))
+}
+
+fn study_remove(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, item) = (study_of(s, p)?, id_u32(p, "item")?);
+    study_edit(s, id, "removed", |st| if st.remove(item) { Ok(item) } else { Err(format!("{} has no support or load {item}", st.name)) })
+}
+
+fn study_mesh_size(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, size) = (study_of(s, p)?, opt_num(p, "size")?);
+    if size.is_some_and(|v| v <= 0.0) {
+        return Err("`size` must be more than 0 (or null, to have it chosen from the part's size)".into());
+    }
+    s.edit(|d| {
+        let st = d.study_mut(id).ok_or("no such study")?;
+        st.mesh_size = size;
+        Ok(study_json(st))
+    })
+}
+
+fn study_list(s: &mut Session, _: &Value) -> CmdResult {
+    let d = s.document();
+    Ok(json!({
+        "studies": d.studies().iter().map(study_json).collect::<Vec<_>>(),
+        "material": d.material().map(|m| m.name.clone()),
+        "strength": d.strength(),
+    }))
 }
 
 // ---- design table -----------------------------------------------------------------------------
@@ -3570,6 +3736,51 @@ static COMMANDS: &[CommandSpec] = &[
         "Find Geometry",
         "Faces or edges of the part by what they are and where, each with a reference to it. what: faces | edges; body (default: every body); kind: plane | cylinder | cone | sphere | torus | other (faces), line | circle | arc | other (edges); facing: the way a flat face looks, as +x, -x, +y, -y, +z, -z, top, bottom, left, right, front, back or [x, y, z]; along: the direction of a straight edge, or of the axis of a round face or edge; feature: made by that feature; hole: true for the walls of holes, false for shafts; radius; most: of what is found, only the furthest that way (top, -x, ...), or the largest or smallest. Returns count and found: each with body, its number (face or edge), name, reference (null when it cannot be referred to yet), kind and its measures; and, when a feature fails, error (feature, message): what is found is then of the part as far as it rebuilt",
         model_find
+    ),
+    doc_cmd!(
+        "study.new",
+        "New Study",
+        "A stress study of the part: where it is held and what pushes on it. name (default Study1, Study2...). Returns the study as study.list gives it",
+        true,
+        study_new
+    ),
+    doc_cmd!("study.rename", "Rename Study", "study (default: the part's only one); name", true, study_rename),
+    doc_cmd!("study.delete", "Delete Study", "study (default: the part's only one)", true, study_delete),
+    doc_cmd!(
+        "study.fix",
+        "Fixed Support",
+        "Holds faces still. study (default: the part's only one); faces: [face references]; name. Returns the study, and support: the new support's id",
+        true,
+        study_fix
+    ),
+    doc_cmd!(
+        "study.force",
+        "Force",
+        "A force spread over faces. study; faces: [face references]; newtons: the whole force; direction: the way it pushes, as +x, -z, top, bottom ... or [x, y, z] (default: square to each face, into it; negative newtons pull); name. Returns the study, and load: the new load's id",
+        true,
+        study_force
+    ),
+    doc_cmd!(
+        "study.pressure",
+        "Pressure",
+        "A pressure on faces, square to them and into them. study; faces: [face references]; megapascals (N/mm^2; negative pulls); name. Returns the study, and load: the new load's id",
+        true,
+        study_pressure
+    ),
+    doc_cmd!("study.remove", "Remove Support or Load", "study; item: the id of a support or a load of it", true, study_remove),
+    doc_cmd!(
+        "study.mesh_size",
+        "Element Size",
+        "How large the elements are that the part is divided into to work the study out. study; size (mm; null: chosen from the part's size)",
+        true,
+        study_mesh_size
+    ),
+    doc_cmd!(
+        "study.list",
+        "Studies",
+        "The part's studies: each with its supports and loads (ids, names, how many faces, how large), its element size and what it still needs before it can be worked out; and the part's material with how it answers to a load (Young's modulus in GPa, Poisson's ratio, yield strength in MPa), or null when it has none that says",
+        false,
+        study_list
     ),
     doc_cmd!(
         "model.box",

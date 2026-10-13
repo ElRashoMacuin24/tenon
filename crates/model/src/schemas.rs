@@ -52,6 +52,8 @@ const NEUTRAL_PLANE: [Param; 3] =
 /// A direction in words or numbers.
 const WAY: Ty =
     Either(&[Word(&["+x", "-x", "+y", "-y", "+z", "-z", "x", "y", "z", "top", "bottom", "up", "down", "left", "right", "front", "back"]), Vector(3)]);
+const STUDY: Param = opt("study", Id, "which study (default: the part's only one)");
+const ITEM_NAME: Param = opt("name", Text, "its name (default Fixed1, Force1, Pressure1...)");
 const ON_PLANE: Param = opt("plane", ORIGIN_PLANE, "the origin plane its sketch is on (default xy)");
 const ON_FACE: Param = opt("face", Face, "or a flat face to sketch on");
 const ON_WORK_PLANE: Param = opt("work_plane", Id, "or a work plane's feature id");
@@ -66,6 +68,9 @@ static SCHEMAS: &[C] = &[
             opt("name", Either(&[Text, Null]), "a material of the library (see document.materials) or of one's own; null for none"),
             opt("density", Number, "g/cm^3: changes the library's, or describes a material of one's own"),
             opt("color", Either(&[Text, Null]), "\"#rrggbb\""),
+            opt("youngs_modulus", Number, "GPa: how stiff it is (changes the library's, or with the two below describes a material of one's own)"),
+            opt("poisson", Number, "Poisson's ratio, from 0 to less than 0.5"),
+            opt("yield_strength", Number, "MPa: the stress at which it stays bent, or breaks"),
         ],
     ),
     C::new("document.appearance", &[req("color", Either(&[Text, Null]), "\"#rrggbb\", the part's own colour; null for its material's")]),
@@ -858,6 +863,36 @@ static SCHEMAS: &[C] = &[
             ),
         ],
     ),
+    C::new("study.new", &[opt("name", Text, "its name (default Study1, Study2...)")]),
+    C::new("study.rename", &[STUDY, req("name", Text, "its new name (1 to 64 characters)")]),
+    C::new("study.delete", &[STUDY]),
+    C::new("study.fix", &[STUDY, req("faces", List(&Face), "the faces that are held still"), ITEM_NAME]),
+    C::new(
+        "study.force",
+        &[
+            STUDY,
+            req("faces", List(&Face), "the faces the force is spread over"),
+            req("newtons", Number, "the whole force, N (negative: the other way)"),
+            opt(
+                "direction",
+                WAY,
+                "the way it pushes: +x ... -z, top, bottom, left, right, front, back or [x, y, z]; default square to each face, into it",
+            ),
+            ITEM_NAME,
+        ],
+    ),
+    C::new(
+        "study.pressure",
+        &[
+            STUDY,
+            req("faces", List(&Face), "the faces it is on"),
+            req("megapascals", Number, "N/mm^2, into the faces (negative: pulling)"),
+            ITEM_NAME,
+        ],
+    ),
+    C::new("study.remove", &[STUDY, req("item", Id, "the id of a support or a load of the study")]),
+    C::new("study.mesh_size", &[STUDY, opt("size", Either(&[Length, Null]), "the size of an element, mm; null: chosen from the part's size")]),
+    C::new("study.list", &[]),
     C::new(
         "model.box",
         &[

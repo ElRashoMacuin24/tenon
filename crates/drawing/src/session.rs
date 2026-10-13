@@ -26,7 +26,7 @@ impl DrwModel {
     /// What the kernel builds it from.
     pub fn source(&self) -> Option<ModelSource> {
         match self {
-            DrwModel::Part(s) => Some(ModelSource::Part(s.document().clone())),
+            DrwModel::Part(s) => Some(ModelSource::Part(Box::new(s.document().clone()))),
             DrwModel::Assembly(a) => Some(ModelSource::Assembly {
                 asm: a.assembly().clone(),
                 parts: a.parts.iter().filter(|(_, p)| p.missing.is_none()).map(|(k, p)| (k.clone(), p.session.document().clone())).collect(),

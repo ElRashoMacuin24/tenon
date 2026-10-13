@@ -100,3 +100,5 @@ taken away), without a check.
 ### Changes
 
 - **1** (2026-10-12): the first version. 204 commands.
+  - Since, without a new version (only more is taken): the nine `study.*` commands and the
+    optional `youngs_modulus`, `poisson` and `yield_strength` of `document.material` (M11).

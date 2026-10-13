@@ -9,6 +9,7 @@ appearance = "#d04030"
 name = "ABS"
 density = 1.04
 color = "#e8e4d8"
+strength = { youngs_modulus = 2.2, poisson = 0.35, yield_strength = 40.0 }
 
 [parameters]
 next = 0

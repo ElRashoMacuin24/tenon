@@ -421,7 +421,7 @@ fn material_appearance_and_design_table_are_written_as_text_and_read_back() {
     run(&mut s, "table.activate", json!({ "row": "Large" }));
     let d = diff::diff_documents("part", &before, &serde_json::to_value(s.document()).unwrap()).text();
     for line in [
-        "~ material Brass (8.5 g/cm^3, #c9a64a) -> PLA (1.24 g/cm^3, #4f9fd8)",
+        "~ material Brass (8.5 g/cm^3, #c9a64a, 110 GPa, 0.34, 125 MPa) -> PLA (1.24 g/cm^3, #4f9fd8, 3.5 GPa, 0.36, 50 MPa)",
         "~ appearance #d04030 -> the material's",
         "~ active row  Small -> Large",
         "~ Large       d0 60 -> 70",
@@ -805,4 +805,91 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     assert!(e.contains("the contour flange's distance must be more than 0"), "{e}");
     let e = project::from_bytes(text.replace("overlap = 0.5", "overlap = 2.0").as_bytes()).unwrap_err().to_string();
     assert!(e.contains("from 0 to 1"), "{e}");
+}
+
+#[test]
+fn a_stress_study_and_a_materials_strength_are_written_as_text_and_read_back() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let mut go =
+        |s: &mut Session, id: &str, p: Value| tenon_io::cmd::run(s, id, &p, Some(&mut k as &mut dyn Kernel)).unwrap_or_else(|e| panic!("{id}: {e}"));
+    go(&mut s, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    let extra = Map::new();
+    // A part with no study says nothing of studies: files written before are as they were.
+    let plain = String::from_utf8(project::to_bytes(s.document(), &extra).unwrap()).unwrap();
+    assert!(!plain.contains("study") && !plain.contains("strength"), "{plain}");
+
+    let face = |s: &mut Session, go: &mut dyn FnMut(&mut Session, &str, Value) -> Value, way: &str| {
+        go(s, "model.find", json!({ "what": "faces", "facing": way }))["found"][0]["reference"].clone()
+    };
+    let (left, right, top) = (face(&mut s, &mut go, "left"), face(&mut s, &mut go, "right"), face(&mut s, &mut go, "top"));
+    go(&mut s, "document.material", json!({ "name": "Aluminium 6061" }));
+    go(&mut s, "study.new", json!({ "name": "End load" }));
+    go(&mut s, "study.fix", json!({ "faces": [left] }));
+    go(&mut s, "study.force", json!({ "faces": [right], "newtons": 150, "direction": "down" }));
+    go(&mut s, "study.pressure", json!({ "faces": [top, right], "megapascals": 0.25, "name": "Snow" }));
+    go(&mut s, "study.mesh_size", json!({ "size": 2.5 }));
+    go(&mut s, "study.new", json!({}));
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    // The material's strength with the material; each study a record of its own after the
+    // features, its supports and loads within it.
+    assert!(text.contains("\n[material]\nname = \"Aluminium 6061\"\ndensity = 2.7\ncolor = \"#c3c8ce\"\n"), "{text}");
+    assert!(text.contains("youngs_modulus = 69.0") && text.contains("poisson = 0.33") && text.contains("yield_strength = 275.0"), "{text}");
+    assert!(text.contains("\n[[study]]\nid = 1\nname = \"End load\"\n"), "{text}");
+    assert!(text.contains("mesh_size = 2.5"), "{text}");
+    for said in [
+        "kind = \"fixed\"",
+        "name = \"Fixed1\"",
+        "type = \"force\"",
+        "newtons = 150.0",
+        "name = \"Snow\"",
+        "type = \"pressure\"",
+        "megapascals = 0.25",
+    ] {
+        assert!(text.contains(said), "{said} is not in:\n{text}");
+    }
+    assert!(text.contains("\n[[study]]\nid = 2\nname = \"Study1\"\n"), "a study with nothing in it is its id and its name:\n{text}");
+    assert!(text.find("[[feature]]").unwrap() < text.find("[[study]]").unwrap(), "{text}");
+    // Read back it is the same part (but for the rounding of what the kernel measured of
+    // each face, as in every reference), and saves the same again.
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+    assert_eq!(back.studies().len(), 2);
+    let (was, now) = (&s.document().studies()[0], &back.studies()[0]);
+    assert_eq!((now.id, &now.name, now.mesh_size), (was.id, &was.name, was.mesh_size));
+    assert_eq!(now.loads.iter().map(|l| l.kind).collect::<Vec<_>>(), was.loads.iter().map(|l| l.kind).collect::<Vec<_>>());
+    let origins = |st: &tenon_model::study::Study| {
+        st.supports.iter().map(|x| &x.faces).chain(st.loads.iter().map(|l| &l.faces)).flatten().map(|f| f.origin).collect::<Vec<_>>()
+    };
+    assert_eq!(origins(now), origins(was));
+    assert_eq!(origins(now).len(), 4);
+    assert_eq!(back.strength().map(|m| m.yield_strength), Some(275.0));
+
+    // A study damaged by hand is refused with what is wrong with it.
+    let broken = text.replace("newtons = 150.0", "newtons = 0.0");
+    let err = project::from_bytes(broken.as_bytes()).unwrap_err().to_string();
+    assert!(err.contains("other than 0"), "{err}");
+    // What changed between two saves of the part is said by diff.
+    go(&mut s, "study.force", json!({ "study": 1, "faces": [top], "newtons": 40 }));
+    let later = project::to_bytes(s.document(), &extra).unwrap();
+    let dir = scratch("study-diff");
+    std::fs::write(dir.join("a.tenon"), &bytes).unwrap();
+    std::fs::write(dir.join("b.tenon"), &later).unwrap();
+    go(&mut s, "study.rename", json!({ "study": 2, "name": "Twisted" }));
+    go(&mut s, "study.remove", json!({ "study": 1, "item": 3 }));
+    go(&mut s, "study.mesh_size", json!({ "study": 1, "size": null }));
+    go(&mut s, "study.new", json!({ "name": "Third" }));
+    go(&mut s, "document.material", json!({ "name": "Aluminium 6061", "yield_strength": 240 }));
+    let later = project::to_bytes(s.document(), &extra).unwrap();
+    std::fs::write(dir.join("b.tenon"), &later).unwrap();
+    let d = diff::diff_files(&dir.join("a.tenon"), &dir.join("b.tenon")).unwrap();
+    let said: Vec<String> = d.changes.iter().map(|c| format!("{} {} {} {}", c.section, c.op, c.item, c.detail)).collect();
+    let has = |what: &str| said.iter().any(|l| l.contains(what));
+    assert!(has("Studies ~ End load [1]") && has("element size 2.5 mm -> chosen from the part"), "{said:#?}");
+    assert!(has("- Snow") && has("+ Force2 (force 40 N square to them on 1 face)"), "{said:#?}");
+    assert!(has("Studies ~ Twisted [2] name Study1 -> Twisted"), "{said:#?}");
+    assert!(has("Studies + Third [3] 0 supports, 0 loads"), "{said:#?}");
+    assert!(has("69 GPa, 0.33, 275 MPa") && has("69 GPa, 0.33, 240 MPa"), "{said:#?}");
+    // The same file against itself: nothing.
+    assert!(diff::diff_files(&dir.join("b.tenon"), &dir.join("b.tenon")).unwrap().same());
 }

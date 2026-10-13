@@ -65,6 +65,18 @@
               }
             ],
             "description": "\"#rrggbb\""
+          },
+          "youngs_modulus": {
+            "type": "number",
+            "description": "GPa: how stiff it is (changes the library's, or with the two below describes a material of one's own)"
+          },
+          "poisson": {
+            "type": "number",
+            "description": "Poisson's ratio, from 0 to less than 0.5"
+          },
+          "yield_strength": {
+            "type": "number",
+            "description": "MPa: the stress at which it stays bent, or breaks"
           }
         },
         "additionalProperties": false
@@ -4915,6 +4927,266 @@
         "required": [
           "what"
         ]
+      }
+    },
+    {
+      "id": "study.new",
+      "label": "New Study",
+      "undoable": true,
+      "description": "A stress study of the part: where it is held and what pushes on it. name (default Study1, Study2...). Returns the study as study.list gives it",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "its name (default Study1, Study2...)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "study.rename",
+      "label": "Rename Study",
+      "undoable": true,
+      "description": "study (default: the part's only one); name",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "name": {
+            "type": "string",
+            "description": "its new name (1 to 64 characters)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "id": "study.delete",
+      "label": "Delete Study",
+      "undoable": true,
+      "description": "study (default: the part's only one)",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "study.fix",
+      "label": "Fixed Support",
+      "undoable": true,
+      "description": "Holds faces still. study (default: the part's only one); faces: [face references]; name. Returns the study, and support: the new support's id",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "the faces that are held still"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Fixed1, Force1, Pressure1...)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "faces"
+        ]
+      }
+    },
+    {
+      "id": "study.force",
+      "label": "Force",
+      "undoable": true,
+      "description": "A force spread over faces. study; faces: [face references]; newtons: the whole force; direction: the way it pushes, as +x, -z, top, bottom ... or [x, y, z] (default: square to each face, into it; negative newtons pull); name. Returns the study, and load: the new load's id",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "the faces the force is spread over"
+          },
+          "newtons": {
+            "type": "number",
+            "description": "the whole force, N (negative: the other way)"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "+x",
+                  "-x",
+                  "+y",
+                  "-y",
+                  "+z",
+                  "-z",
+                  "x",
+                  "y",
+                  "z",
+                  "top",
+                  "bottom",
+                  "up",
+                  "down",
+                  "left",
+                  "right",
+                  "front",
+                  "back"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            ],
+            "description": "the way it pushes: +x ... -z, top, bottom, left, right, front, back or [x, y, z]; default square to each face, into it"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Fixed1, Force1, Pressure1...)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "faces",
+          "newtons"
+        ]
+      }
+    },
+    {
+      "id": "study.pressure",
+      "label": "Pressure",
+      "undoable": true,
+      "description": "A pressure on faces, square to them and into them. study; faces: [face references]; megapascals (N/mm^2; negative pulls); name. Returns the study, and load: the new load's id",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "the faces it is on"
+          },
+          "megapascals": {
+            "type": "number",
+            "description": "N/mm^2, into the faces (negative: pulling)"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Fixed1, Force1, Pressure1...)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "faces",
+          "megapascals"
+        ]
+      }
+    },
+    {
+      "id": "study.remove",
+      "label": "Remove Support or Load",
+      "undoable": true,
+      "description": "study; item: the id of a support or a load of it",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "item": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the id of a support or a load of the study"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "item"
+        ]
+      }
+    },
+    {
+      "id": "study.mesh_size",
+      "label": "Element Size",
+      "undoable": true,
+      "description": "How large the elements are that the part is divided into to work the study out. study; size (mm; null: chosen from the part's size)",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "number",
+                "x-unit": "mm"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the size of an element, mm; null: chosen from the part's size"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "study.list",
+      "label": "Studies",
+      "undoable": false,
+      "description": "The part's studies: each with its supports and loads (ids, names, how many faces, how large), its element size and what it still needs before it can be worked out; and the part's material with how it answers to a load (Young's modulus in GPa, Poisson's ratio, yield strength in MPa), or null when it has none that says",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
       }
     },
     {

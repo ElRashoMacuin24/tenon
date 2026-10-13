@@ -22,6 +22,7 @@ pub mod repair;
 pub mod schema;
 pub mod schemas;
 pub mod sheet;
+pub mod study;
 pub mod table;
 pub mod threads;
 pub mod worker;

@@ -53,7 +53,9 @@ fn a_material_gives_the_part_its_mass_and_its_colour() {
     assert!(s.document().color().is_none());
     // From the library, whatever the capitals: mild steel is 7.85 g/cm^3.
     let r = run(&mut s, &mut k, "document.material", json!({ "name": "steel, mild" }));
-    assert_eq!(r["material"], json!({ "name": "Steel, mild", "density": 7.85, "color": "#8a9199" }));
+    // (With how it answers to a load, which the library also says since M11.)
+    let steel = json!({ "name": "Steel, mild", "density": 7.85, "color": "#8a9199", "strength": { "youngs_modulus": 200.0, "poisson": 0.29, "yield_strength": 250.0 } });
+    assert_eq!(r["material"], steel);
     let m = mass(&mut s, &mut k);
     assert!(near(m["mass"].as_f64().unwrap(), 62.8) && m["material"] == "Steel, mild", "{m}");
     assert!(near(m["bodies"][0]["mass"].as_f64().unwrap(), 62.8));

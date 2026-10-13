@@ -101,7 +101,7 @@ pub fn seen_size(m: &ModelGeometry, f: &Frame) -> Option<Vec2> {
 /// part documents (by part key).
 #[derive(Clone, Debug)]
 pub enum ModelSource {
-    Part(Document),
+    Part(Box<Document>),
     Assembly { asm: Assembly, parts: BTreeMap<String, Document> },
 }
 
@@ -177,7 +177,7 @@ fn build_model(k: &mut dyn Kernel, key: &str, src: &ModelSource) -> (ModelGeomet
     let mut g = ModelGeometry::default();
     let mut solids = Vec::new();
     let docs: Vec<(String, Document, Vec<(Option<ComponentId>, Frame)>)> = match src {
-        ModelSource::Part(doc) => vec![(key.to_owned(), doc.clone(), vec![(None, Frame::WORLD)])],
+        ModelSource::Part(doc) => vec![(key.to_owned(), (**doc).clone(), vec![(None, Frame::WORLD)])],
         ModelSource::Assembly { asm, parts } => {
             g.assembly = Some(asm.clone());
             parts

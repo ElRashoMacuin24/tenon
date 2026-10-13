@@ -8,6 +8,7 @@ next_feature = 8
 name = "Steel, mild"
 density = 7.85
 color = "#8a9199"
+strength = { youngs_modulus = 200.0, poisson = 0.29, yield_strength = 250.0 }
 
 [table]
 active = "M8x30"

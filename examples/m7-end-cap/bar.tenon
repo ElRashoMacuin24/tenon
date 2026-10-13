@@ -8,6 +8,7 @@ next_feature = 7
 name = "Aluminium 6061"
 density = 2.7
 color = "#c3c8ce"
+strength = { youngs_modulus = 69.0, poisson = 0.33, yield_strength = 275.0 }
 
 [table]
 active = "20x20 slot 6"

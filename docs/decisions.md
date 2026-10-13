@@ -2363,3 +2363,61 @@ only a preview being sized (the clicks would land elsewhere). The floating toolb
 solid being set up stays away until its size is clicked. The hint in an empty part is not
 drawn over the planes while one is being picked. A large ribbon button with a list and a
 label of one line had two arrows; it has one.
+
+## DEC-093 Stress studies are kept with the part, and materials say how they answer to a load (2026-10-12)
+
+The part of M11 that does not depend on which mesher and solver are used (DEC-094), done
+while that is asked.
+
+**A study** is the question "does this part hold?": faces that are held still (fixed
+supports), and forces and pressures on other faces. A part has any number of them. They are
+in the part document, so they are undone and redone with everything else, saved in the
+part's file (`[[study]]`, an addition to version 2 that files without studies do not see)
+and reported by `tenon-cli diff`. They refer to faces by their persistent names, as
+features do, so a study follows the part as it changes. What a study comes to is not kept:
+it is worked out when asked for.
+
+- A **force** is so many newtons in all, spread evenly over its faces, along a direction
+  said as for `model.find` ("down", "-x", three numbers), or square to each face and into it.
+- A **pressure** is so many megapascals, square to its faces and into them.
+- Units are the part's: millimetres and newtons, so megapascals for pressure and stress.
+
+Nine commands (`study.new`, `study.rename`, `study.delete`, `study.fix`, `study.force`,
+`study.pressure`, `study.remove`, `study.mesh_size`, `study.list`), each with its schema.
+A command says which study it means, or means the part's only one. `study.list` says what
+each study still needs before it can be worked out.
+
+**Materials.** A material may now say how it answers to a load: Young's modulus (GPa),
+Poisson's ratio and yield strength (MPa). The library has them for its metals and plastics,
+as typical values typed in from general knowledge, like its densities: mild steel as rolled,
+304 stainless annealed, 6061-T6, soft brass, bronze and copper, Ti-6Al-4V, plastics as
+moulded. For cast iron, acrylic and resin, which break before they bend, the figure is the
+stress at which they break. Woods and boards have none (their strength follows the grain),
+nor has TPU (it stretches far beyond what a linear check can speak of). A part saved before
+this, whose material has a library name, is taken to have the library's values. A material
+of one's own has all three or none.
+
+Not decided here: pins, sliding supports, moments, gravity, bearing loads. The plan asks for
+fixed supports, forces and pressures.
+
+## DEC-094 M11's mesher and solver: analysed, and asked of the owner (2026-10-12)
+
+The plan has meshing by Gmsh or Netgen and solving by CalculiX, as separate programs, with a
+licence analysis to the owner before any of them is bundled or recommended. The analysis is
+[docs/m11-proposal.md](m11-proposal.md). In short:
+
+- Gmsh is GPL 2 or later, CalculiX GPL 2, Netgen LGPL 2.1. Run as separate programs that
+  are handed files and write files, they are not combined with Tenon, and Tenon's licence is
+  as it was. Duties (their licences passed on, their source offered) begin only if Tenon
+  hands their binaries out, which it does not yet do.
+- Gmsh and CalculiX are on conda-forge for the three platforms; Netgen is not, and has no
+  documented way to be driven without its Python.
+- conda-forge's Gmsh is built against OpenCASCADE 7.9 and cannot share an environment with
+  Tenon's 8.0: it needs an environment of its own, or the user's own install.
+- Writing a solver of our own was weighed and is not recommended: weeks of work the user
+  does not see, and numbers that would be ours to stand behind.
+
+**Recommended:** Gmsh and CalculiX as separate programs, found on the machine, got by
+developers and CI through a second pixi environment, not bundled; the solver behind a narrow
+interface so that it can be replaced. **Nothing has been installed, added to `pixi.toml` or
+recommended.** That waits for the owner's answer.

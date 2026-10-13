@@ -40,6 +40,7 @@ pub(crate) const PART: Shape = Shape {
         ("sheet", "sheet_metal"),
         ("params", "parameters"),
         ("features", "feature"),
+        ("studies", "study"),
     ],
     kinds: &[("features", &["id", "name", "suppressed"])],
     computed: &[],

@@ -1022,6 +1022,9 @@ pub struct Document {
     /// The sheet metal rule, when the part is a sheet metal part (see `sheet.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) sheet: Option<Box<crate::sheet::SheetMetal>>,
+    /// Stress studies of the part: where it is held and what pushes on it (see `study.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) studies: Vec<crate::study::Study>,
 }
 
 impl Default for Document {
@@ -1036,6 +1039,7 @@ impl Default for Document {
             appearance: None,
             table: None,
             sheet: None,
+            studies: Vec::new(),
         }
     }
 }
@@ -1047,6 +1051,41 @@ impl Document {
     /// What the part is made of, if that has been said.
     pub fn material(&self) -> Option<&crate::materials::Material> {
         self.material.as_ref()
+    }
+    /// How the part's material answers to a load, when it has a material that says.
+    pub fn strength(&self) -> Option<crate::materials::Strength> {
+        self.material.as_ref().and_then(crate::materials::Material::strength)
+    }
+    /// The part's stress studies.
+    pub fn studies(&self) -> &[crate::study::Study] {
+        &self.studies
+    }
+    pub fn study(&self, id: crate::study::StudyId) -> Option<&crate::study::Study> {
+        self.studies.iter().find(|s| s.id == id)
+    }
+    pub(crate) fn study_mut(&mut self, id: crate::study::StudyId) -> Option<&mut crate::study::Study> {
+        self.studies.iter_mut().find(|s| s.id == id)
+    }
+    /// A new, empty study, named as said or "Study1", "Study2"...
+    pub(crate) fn add_study(&mut self, name: Option<&str>) -> Result<crate::study::StudyId, String> {
+        if self.studies.len() >= crate::study::MAX_STUDIES {
+            return Err(format!("a part has at most {} studies", crate::study::MAX_STUDIES));
+        }
+        let id = crate::study::StudyId(self.studies.iter().map(|s| s.id.0).max().map_or(1, |m| m.saturating_add(1)));
+        let name = match name {
+            Some(n) => n.trim().to_owned(),
+            None => (1..).map(|i| format!("Study{i}")).find(|n| !self.studies.iter().any(|s| &s.name == n)).unwrap_or_default(),
+        };
+        let study = crate::study::Study::new(id, name);
+        study.check()?;
+        self.studies.push(study);
+        Ok(id)
+    }
+    /// Takes a study away. False when there is none of that id.
+    pub(crate) fn remove_study(&mut self, id: crate::study::StudyId) -> bool {
+        let before = self.studies.len();
+        self.studies.retain(|s| s.id != id);
+        self.studies.len() < before
     }
     /// Gives the part a material, or with `None` takes it away.
     pub fn set_material(&mut self, material: Option<crate::materials::Material>) -> Result<(), String> {
@@ -1169,6 +1208,8 @@ impl Document {
             appearance: self.appearance.clone(),
             table: self.table.clone(),
             sheet: self.sheet.clone(),
+            // (A part as it was part way up its history is looked at, not studied.)
+            studies: Vec::new(),
         }
     }
 
@@ -1354,6 +1395,15 @@ impl Document {
         }
         if let Some(m) = &self.material {
             m.check()?;
+        }
+        if self.studies.len() > crate::study::MAX_STUDIES {
+            return Err(format!("a part has at most {} studies", crate::study::MAX_STUDIES));
+        }
+        for (i, s) in self.studies.iter().enumerate() {
+            s.check()?;
+            if self.studies.iter().take(i).any(|o| o.id == s.id) {
+                return Err(format!("two studies have the id {}", s.id.0));
+            }
         }
         if self.appearance.as_deref().is_some_and(|c| crate::materials::parse_color(c).is_none()) {
             return Err("the part's appearance is not a colour: write it as #rrggbb".into());
