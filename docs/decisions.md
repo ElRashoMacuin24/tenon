@@ -2032,3 +2032,165 @@ with lips, changed or not). A shape's box is the box round its faces' boxes, whi
 the kernel reckons it, so each face's is now kept by the face with its sums. The same boxes
 to the last bit: checked once against the kernel's own over the kernel, model, assembly and
 command line tests, with both worked out and compared in every call.
+
+## DEC-083 Command schemas: declared beside the commands, held true by the tests, one version (2026-10-12)
+
+M10 asks for versioned JSON schemas for every command. Until now a command said what it took
+in a sentence of help, and read its parameters out of the JSON one `get` at a time.
+
+**Declared by hand.** Each command has a `CommandSchema` in a `schemas.rs` beside its registry:
+its parameters by name, with a type (`Length`, `Angle`, `Id`, `Word` of a set, `Face`, `Path`,
+...), whether each must be given, a line of what it is, and where one of several must be given,
+which. The other way was to make every command's parameters a struct and derive the schema from
+it. That is the tidier end state, and it means rewriting how 204 commands read their input, with
+their error messages (which say what was wrong in the command's own terms, and are tested)
+replaced by a deserialiser's. Not at this milestone.
+
+**Kept true by the tests, both ways.** A schema written by hand goes stale the first time a
+parameter is added. So in builds with debug assertions, which is every test, each command that
+runs is held to its schema: what it is *given* must be declared, and what it *reads* must be
+declared (commands read parameters through `schema::arg`, which notes each name; reading one
+the schema does not have fails the run). A parameter cannot be added to a command and tested
+without its schema. A registry test in each crate holds that every command has a schema and
+every schema a command. When version 1 was written, twelve commands that no test ran were
+found by logging what the suite ran, and given tests.
+
+**Outside and inside.** What comes from outside is checked before it runs, in every build:
+scripts, the MCP server, `batch.run`, the app's control port. A wrong name is refused with the
+one that was probably meant, and nothing is changed. The app's own calls are not checked in a
+release build: they are covered by the tests, and a check there could only turn a working
+button into an error.
+
+**Where the schema says less than the command.** Where a command's own message for a missing
+parameter is better than the checker's ("a draft needs a pull direction or a parting plane"),
+the schema leaves the choice to the command. Parameters that are whole structures (a sketch
+constraint, a feature's definition, a relationship's target) are declared as objects, with
+their shape in words. What commands *return* is not in the schemas.
+
+**One version.** `version` is one number for the whole set. Within a version the schemas only
+grow (commands, optional parameters, words, wider types); anything that could break a caller
+raises it. `schema::breaking(old, new)` lists what would break, and `tenon-cli commands --schema
+--out` refuses to write over a published file of the same version with one that breaks it. The
+published file is `docs/schemas/commands.json`, and a test fails when it is not the
+registry's, so a change to any command's parameters is a change to that file in review.
+
+## DEC-084 Words to features: helpers on the registry, and no language model inside Tenon (2026-10-12)
+
+The plan asks for "natural-language-to-feature helpers ... on the command registry".
+
+**What was built.** Commands that take what a person says and make ordinary features of it:
+
+- `model.box`, `model.cylinder`, `model.sphere`, `model.torus`: a dimensioned sketch and its
+  extrusion or revolution, as one undo step. The tree afterwards is what drawing it by hand
+  leaves, so the sizes are parameters and the sketch can be edited.
+- `model.find`: faces and edges by what they are and where ("the top face", "the upright
+  edges", "the wall of the 6 mm hole", "the largest flat face", "what Extrusion2 made"), each
+  with a reference that other commands take. Seam edges are left out. On a part that fails
+  part way it searches what was rebuilt and says so.
+
+With these, "a 60 by 40 plate 8 thick with a 10 mm hole in the middle and its corners rounded"
+is four commands, with no coordinates of faces worked out by the caller.
+
+**What was not, and why.**
+
+- *No parser of sentences in Tenon.* Rules that turn English into commands would be brittle,
+  English only, and a poor copy of what the model on the other end of the MCP connection
+  already does well. Tenon's part is to make the translation short and hard to get wrong, and
+  to check it (DEC-083).
+- *No client of a hosted language model in the app* (a prompt box that builds the part). That
+  needs a third party's service: an account and a key, a cost per use, and the user's model
+  and words sent to somebody's servers. That is the owner's decision, and no code was written
+  towards it. With `tenon-cli mcp --attach` (DEC-087) an agent the user already has works in
+  the app's window, which gives the same thing to anyone with an MCP client.
+
+## DEC-085 Several commands as one undo step (2026-10-12)
+
+An agent that builds a plate in four commands should not leave half a plate when the third
+fails, nor four entries to undo. Each session (part, assembly, drawing) now counts its undo
+steps and has `mark`, `squash_since(mark)` (the steps since are one) and `roll_back_to(mark)`
+(they are taken back, and are not left to redo).
+
+`batch.run` runs the steps of a script on that: as one (the default), or with `as_one: false`
+letting the steps before a failure stand. Run as one, the steps may not open or start a
+document, nor undo or redo, since those could not be taken back with the rest; a file a step
+wrote stays written, and the refusal says so. The primitives (DEC-084) use the same marks, so
+a box whose extrusion fails leaves no sketch behind.
+
+## DEC-086 The MCP server's tools: finding, repairing, looking, and a log (2026-10-12)
+
+**Tools.** To the tools of M1 were added: `describe_command` (one command's schema),
+`run_commands` (`batch.run`), `find_geometry` (`model.find`), `broken_references` and
+`repair_reference` (`model.broken`, `model.repair` of DEC-034), and `session_log`. The schemas
+are also a resource. Each tool that changes anything runs a registry command, so there is
+nothing an agent can do that is not in the undo history.
+
+**Repair.** `model.broken` now says of each candidate what it is (body, number, surface or
+curve, size, where its middle is), and of each broken reference whether the nearest candidate
+is clearly the one meant: within 5 mm of where the old one was, and the next nearest more
+than four times as far. `repair_reference` without a choice takes the nearest only then. The
+alternative, always taking the nearest, would make a part that rebuilds with a fillet on the
+wrong edge, which is worse than one that says it is broken. Otherwise the agent is told to
+look: `render_png` picks faces and edges out in colour by their numbers.
+
+**The log.** `session_log` is what was done, as a script that `tenon-cli run` replays. The
+person whose part it is can read what an agent did, keep it, and run it again. Steps run as
+one are one `batch.run` entry; steps not run as one are logged one by one, so that a batch
+that failed half way is on record as far as it went.
+
+## DEC-087 The control port: an agent works in the running app (2026-10-12)
+
+"Every AI-made edit is a normal, undoable command the user can inspect" is only half met by a
+server with a document of its own: the user sees the result when the file is opened. So the app
+can be driven.
+
+**How.** Started with `--control`, the app listens on the loopback address. A request is a
+line of JSON with a command id, its parameters and a token; the answer is a line of JSON.
+Requests are taken on the UI thread once a frame, one at a time, and run as the registry's
+commands on the open document. One that needs the kernel runs as a worker job on a copy of the
+part, and the changed part is put in as one edit when it comes back, so the UI thread still
+never waits for geometry. `tenon-cli mcp --attach` is the MCP server with the app in place of
+its own engine (`Host`), so every tool works the same in both places.
+
+**Safety.**
+
+- Off unless asked for, at each start. Never in a screenshot run.
+- Loopback only, and every request carries a token of 128 bits made at start-up. It is written
+  to a file in the user's settings folder (mode 0600 on Unix) for `--attach` to find, taken
+  away on exit, and not printed.
+- The token comes from the standard library's hasher keys, which it takes from the system's
+  random numbers on the three platforms. That is the standard library's practice and not its
+  promise; were it to change, the `getrandom` crate is the replacement. It was not added now
+  because the app does not otherwise link it.
+- Over the port the app refuses what would take something from the person at it: a change
+  while a command's panel is open; New or Open with unsaved changes; and it does nothing with
+  a command whose result came back after the person changed the part.
+- Whoever has the token can do what commands can, including writing files as the user. The
+  port is a way for the user's own tools to reach their own app. It is not a sandbox, and the
+  documentation says so.
+
+**Other ways considered.** A Unix socket or a named pipe would take the file system's
+permissions in place of a token, and needs code per platform that the standard library does
+not have for Windows. An HTTP MCP server inside the app would save the second program and add
+an HTTP server to the app, open to whatever a browser on the machine can be made to send.
+Lines over loopback with a token needed neither.
+
+**Assemblies and drawings.** Their parts are rebuilt and their views drawn on the geometry
+thread after each change. A command sent straight after another would have met an assembly
+whose new part had no geometry yet, or a drawing whose views were not drawn (a count of
+nothing, an empty export). So each step on an assembly or a drawing waits until the app has
+caught up with the one before. A base view with no scale has its model built there first, to
+pick the scale that fits, as the app's own Base View does.
+
+**Not done.** Four assembly commands need the kernel where they run and have no job of their
+own for the port yet: `asm.interference` and the three exports (`asm.export_step`,
+`asm.export_stl`, `asm.export_3mf`). Over the port they say so, and that they run in the
+app or on the saved file. There is no indicator in the window that the port is open beyond
+the status bar naming each command as it runs.
+
+## DEC-088 A path is what the schema says is a path (2026-10-12)
+
+The headless engine made relative paths absolute for any parameter *named* `path`.
+`model.repair`'s `path` is a place in a feature's definition (`/edges/0`), which on Windows
+reads as a relative path, so a repair from a script failed there with a folder joined onto it.
+The engine now resolves the parameters whose schema type is `Path`, whatever they are called,
+and no others.

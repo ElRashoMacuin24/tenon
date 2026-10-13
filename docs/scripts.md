@@ -36,7 +36,10 @@ A bare list of steps is accepted too. Each step has:
 | `within` | The relative tolerance of this step's numeric expectations in place of 1e-6, at most 0.1. For values the kernel approximates (a coil's volume, a cut thread): say in the `note` why |
 | `note` | A comment; ignored |
 
-Unknown keys are errors, so typos do not pass silently.
+Unknown keys are errors, so typos do not pass silently. The same holds inside `with`: every
+step's parameters are checked against the command's schema ([schemas](schemas/README.md))
+before it runs, and a parameter the command does not have is refused with the name that was
+probably meant.
 
 **References.** A string `"$name.path"` anywhere in `with` is replaced by that part of the result
 saved as `name`: object keys and array indices separated by dots, e.g. `"$r.lines.0"`. The
@@ -47,11 +50,26 @@ replacement keeps its JSON type, so `"$face"` can stand for a whole face-referen
 and the command, and the exit code is non-zero. Steps before the failure have taken effect;
 nothing after it runs.
 
-**Paths.** A relative `path` parameter resolves against `--out` (default: the current directory),
-which is created if missing.
+**Paths.** A relative path resolves against `--out` (default: the current directory), which is
+created if missing. That goes for every parameter the command's schema marks as a file or a
+folder, whatever it is called, and for no other.
+
+**Several steps as one.** `batch.run` takes `steps` like a script's and runs them as a single
+undo step, or, when one fails, takes back what the steps before it did and leaves the document
+as it was (a file a step wrote stays written). Its steps have names of their own, so in a script
+their references are written with two dollar signs (`"$s.feature"`): one would be looked up
+among the outer script's names. With `as_one: false` the steps before a failure stand. Steps
+run as one may not open or start a document, nor undo or redo. The MCP server's `run_commands`
+is this command.
 
 Besides the registry, scripts can use `render.png`, which renders the part with the software
-rasteriser (no GPU needed).
+rasteriser (no GPU needed), and can pick faces and edges out in colour by their numbers
+(`highlight_faces`, `highlight_edges`).
+
+**Helpers.** `model.box`, `model.cylinder`, `model.sphere` and `model.torus` make a
+dimensioned sketch and the feature on it in one step, and `model.find` finds faces and edges by
+what they are and where (`{"what": "faces", "facing": "top"}`), each with a reference to pass
+to a later step. See [mcp.md](mcp.md#building) for an example.
 
 The format is a tooling convenience, not a stored document format: it may change between
 milestones, with the change noted in [decisions.md](decisions.md). See

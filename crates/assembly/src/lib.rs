@@ -13,6 +13,7 @@ pub mod geometry;
 pub mod interfere;
 pub mod math;
 mod model;
+pub mod schemas;
 pub mod session;
 pub mod solve;
 

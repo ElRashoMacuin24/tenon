@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use tenon_assembly::ComponentId;
 use tenon_geom::{Vec2, tol};
 use tenon_kernel::Kernel;
+use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult, EdgeFingerprint, EdgeRef, FaceOrigin};
 
 use crate::annotate::{self, format_number, from_sheet, hole_rows, parts_rows, to_sheet};
@@ -40,7 +41,7 @@ impl std::fmt::Debug for DrwCommand {
 // ---- parameters -------------------------------------------------------------------------------
 
 fn field<'v>(p: &'v Value, key: &str) -> Result<&'v Value, CmdError> {
-    p.get(key).filter(|v| !v.is_null()).ok_or_else(|| CmdError(format!("missing parameter `{key}`")))
+    arg(p, key).filter(|v| !v.is_null()).ok_or_else(|| CmdError(format!("missing parameter `{key}`")))
 }
 
 fn num(p: &Value, key: &str) -> Result<f64, CmdError> {
@@ -49,14 +50,14 @@ fn num(p: &Value, key: &str) -> Result<f64, CmdError> {
 }
 
 fn opt_num(p: &Value, key: &str) -> Result<Option<f64>, CmdError> {
-    match p.get(key) {
+    match arg(p, key) {
         None | Some(Value::Null) => Ok(None),
         Some(_) => num(p, key).map(Some),
     }
 }
 
 fn opt_bool(p: &Value, key: &str) -> Result<Option<bool>, CmdError> {
-    match p.get(key) {
+    match arg(p, key) {
         None | Some(Value::Null) => Ok(None),
         Some(v) => v.as_bool().map(Some).ok_or_else(|| CmdError(format!("`{key}` must be true or false"))),
     }
@@ -85,14 +86,14 @@ fn vec2(v: &Value, key: &str) -> Result<Vec2, CmdError> {
 }
 
 fn opt_vec2(p: &Value, key: &str) -> Result<Option<Vec2>, CmdError> {
-    match p.get(key) {
+    match arg(p, key) {
         None | Some(Value::Null) => Ok(None),
         Some(v) => vec2(v, key).map(Some),
     }
 }
 
 fn scale_param(p: &Value) -> Result<Option<f64>, CmdError> {
-    let s = match p.get("scale") {
+    let s = match arg(p, "scale") {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::String(t)) => {
             // "1:2" or "2:1"
@@ -110,7 +111,7 @@ fn pick(p: &Value, key: &str) -> Result<GeomPick, CmdError> {
 }
 
 fn opt_pick(p: &Value, key: &str) -> Result<Option<GeomPick>, CmdError> {
-    match p.get(key) {
+    match arg(p, key) {
         None | Some(Value::Null) => Ok(None),
         Some(_) => pick(p, key).map(Some),
     }
@@ -228,7 +229,7 @@ fn drw_pick(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
     let v = view(d, vid)?;
     let ev = s.current()?;
     let m = ev.models.get(&v.model).ok_or("the model is not loaded")?;
-    let point = match p.get("point").and_then(Value::as_str) {
+    let point = match arg(p, "point").and_then(Value::as_str) {
         Some(t) => PickPoint::from_id(t).ok_or("`point` must be start, end, mid, center or whole")?,
         None => PickPoint::Whole,
     };
@@ -241,7 +242,7 @@ fn drw_pick(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
         let hit = annotate::edge_at(d, ev, vid, at, PICK_REACH).ok_or("no edge is drawn there")?;
         return pick_result(d, ev, vid, GeomPick { component: hit.component, edge: hit.edge, point });
     }
-    let component = match p.get("component") {
+    let component = match arg(p, "component") {
         None | Some(Value::Null) => None,
         Some(c) => Some(ComponentId(id(c, "component")?)),
     };
@@ -322,11 +323,11 @@ pub fn fitting_scale(size: Vec2, sheet: Vec2) -> f64 {
 /// Places a base view of a model already loaded in the session (`model`: its key). Used by
 /// `drw.view.base` in `tenon_io::drw`, which loads the file first.
 pub fn add_base_view(s: &mut DrwSession, model: &str, p: &Value) -> CmdResult {
-    let orientation = match p.get("orientation").and_then(Value::as_str) {
+    let orientation = match arg(p, "orientation").and_then(Value::as_str) {
         Some(o) => Orientation::from_id(o).ok_or("`orientation` must be front, back, top, bottom, left, right or iso")?,
         None => Orientation::Front,
     };
-    let sheet = match p.get("sheet") {
+    let sheet = match arg(p, "sheet") {
         None | Some(Value::Null) => s.drawing().sheets[0].id,
         Some(v) => SheetId(id(v, "sheet")?),
     };
@@ -573,8 +574,8 @@ fn drw_dimension(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
             annotate::dimension_anchor(&v, g, m, dim, &a, b.as_ref()).map_err(CmdError)? + by
         }
     };
-    let text = p.get("text").and_then(Value::as_str).map(str::to_owned);
-    let precision = match p.get("precision") {
+    let text = arg(p, "text").and_then(Value::as_str).map(str::to_owned);
+    let precision = match arg(p, "precision") {
         None | Some(Value::Null) => 2,
         Some(x) => x.as_u64().and_then(|n| u8::try_from(n).ok()).filter(|n| *n <= 6).ok_or("`precision` must be 0 to 6")?,
     };
@@ -605,7 +606,7 @@ fn drw_dimension_auto(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value
     let vid = view_id(p, "view")?;
     let v = view(s.drawing(), vid)?.clone();
     let list = crate::suggest::suggest(s.drawing(), s.current()?, vid).map_err(CmdError)?;
-    let chosen: Vec<usize> = match p.get("accept") {
+    let chosen: Vec<usize> = match arg(p, "accept") {
         None | Some(Value::Null) => (0..list.len()).collect(),
         Some(Value::Array(a)) => a
             .iter()
@@ -734,7 +735,7 @@ fn drw_balloon(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cm
         Some(q) => Some(annotate::edge_at(s.drawing(), s.current()?, vid, q, PICK_REACH).ok_or("no edge is drawn where the balloon attaches")?),
         None => None,
     };
-    let component = match (p.get("component").filter(|c| !c.is_null()), &hit) {
+    let component = match (arg(p, "component").filter(|c| !c.is_null()), &hit) {
         (Some(c), _) => ComponentId(id(c, "component")?),
         (None, Some(h)) => h.component.ok_or("balloons are for assembly views")?,
         (None, None) => return Err("give `component` or `attach_at`".into()),
@@ -792,7 +793,7 @@ fn drw_note(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
         return Err("`text` must be 1 to 10000 characters".into());
     }
     let at = vec2(field(p, "at")?, "at")?;
-    let sheet = match p.get("sheet") {
+    let sheet = match arg(p, "sheet") {
         None | Some(Value::Null) => s.drawing().sheets[0].id,
         Some(v) => SheetId(id(v, "sheet")?),
     };
@@ -805,8 +806,8 @@ fn drw_note(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
 fn drw_annotation_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let aid = annot_id(p, "annotation")?;
     let by = opt_vec2(p, "by")?.unwrap_or(Vec2::new(0.0, 0.0));
-    let text = p.get("text").map(|t| t.as_str().map(str::to_owned));
-    let precision = match p.get("precision") {
+    let text = arg(p, "text").map(|t| t.as_str().map(str::to_owned));
+    let precision = match arg(p, "precision") {
         None | Some(Value::Null) => None,
         Some(x) => Some(x.as_u64().and_then(|n| u8::try_from(n).ok()).filter(|n| *n <= 6).ok_or("`precision` must be 0 to 6")?),
     };
@@ -853,7 +854,7 @@ fn drw_delete(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
 
 fn drw_props(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let get = |k: &str| -> Result<Option<String>, CmdError> {
-        match p.get(k) {
+        match arg(p, k) {
             None | Some(Value::Null) => Ok(None),
             Some(v) => v
                 .as_str()
@@ -884,7 +885,7 @@ fn drw_props(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
 }
 
 fn drw_sheet_add(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
-    let size = match p.get("size").and_then(Value::as_str) {
+    let size = match arg(p, "size").and_then(Value::as_str) {
         Some(n) => crate::sheets::size_named(n).ok_or("unknown sheet size (A, B, C, D, A4, A3, A2, A1)")?,
         None => crate::sheets::default_size(s.drawing().standard),
     };
@@ -1140,6 +1141,19 @@ pub fn find(id: &str) -> Option<&'static DrwCommand> {
 
 /// Runs a drawing command. With a kernel, the views are computed first when out of date.
 pub fn run(s: &mut DrwSession, spec: &DrwCommand, params: &Value, kernel: Option<&mut dyn Kernel>) -> CmdResult {
+    run_as(s, spec, crate::schemas::schema(spec.id), params, kernel)
+}
+
+/// Runs a drawing command whose schema is `schema` (the file commands have theirs in their
+/// own crate). In builds with debug assertions the command is held to it both ways
+/// (`tenon_model::schema::held`).
+pub fn run_as(
+    s: &mut DrwSession,
+    spec: &DrwCommand,
+    schema: Option<&'static tenon_model::schema::CommandSchema>,
+    params: &Value,
+    kernel: Option<&mut dyn Kernel>,
+) -> CmdResult {
     let params = if params.is_null() { &Value::Object(Default::default()) } else { params };
     if !params.is_object() {
         return Err("parameters must be a JSON object".into());
@@ -1147,12 +1161,12 @@ pub fn run(s: &mut DrwSession, spec: &DrwCommand, params: &Value, kernel: Option
     match kernel {
         Some(k) => {
             s.refresh(k);
-            let r = (spec.run)(s, Some(&mut *k), params);
+            let r = tenon_model::schema::held(spec.id, schema, params, || (spec.run)(s, Some(&mut *k), params));
             // Answers about the drawing reflect the change at once.
             s.refresh(k);
             r
         }
         None if spec.views && s.evaluation().is_none() => Err(CmdError(format!("{} needs the views computed", spec.id))),
-        None => (spec.run)(s, None, params),
+        None => tenon_model::schema::held(spec.id, schema, params, || (spec.run)(s, None, params)),
     }
 }

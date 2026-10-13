@@ -20,6 +20,9 @@ pub struct Style {
     pub edge: Rgba,
     /// Per body and face, an override colour (e.g. a selection).
     pub face_colors: Vec<(usize, u32, Rgba)>,
+    /// Per body and edge, an override colour: such an edge is drawn three pixels wide, to be
+    /// seen in a picture (what a command found, what a broken reference could be).
+    pub edge_colors: Vec<(usize, u32, Rgba)>,
     /// Visual style: draw shaded faces, edges.
     pub faces: bool,
     pub edges: bool,
@@ -34,6 +37,7 @@ impl Default for Style {
             edge: [0x15, 0x18, 0x1c, 255],
             body_colors: Vec::new(),
             face_colors: Vec::new(),
+            edge_colors: Vec::new(),
             faces: true,
             edges: true,
         }
@@ -109,11 +113,23 @@ pub fn render(meshes: &[&Mesh], camera: &Camera, width: u32, height: u32, style:
         }
     }
     // Edges on top of their faces (small depth slack), hidden behind other faces.
-    for m in meshes.iter().filter(|_| style.edges) {
+    let slack = 1e-3 * camera.distance.max(1.0);
+    for (bi, m) in meshes.iter().enumerate() {
         for e in &m.edges {
+            let own = style.edge_colors.iter().find(|(b, edge, _)| *b == bi && *edge == e.edge).map(|c| c.2);
+            if own.is_none() && !style.edges {
+                continue;
+            }
             for seg in e.points.windows(2) {
                 let (Some(a), Some(b)) = (camera.project(v3(seg[0]), wf, hf), camera.project(v3(seg[1]), wf, hf)) else { continue };
-                draw_line(&mut rgba, &depth, w, h, a, b, style.edge, 1e-3 * camera.distance.max(1.0));
+                match own {
+                    None => draw_line(&mut rgba, &depth, w, h, a, b, style.edge, slack),
+                    Some(color) => {
+                        for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                            draw_line(&mut rgba, &depth, w, h, (a.0 + dx, a.1 + dy, a.2), (b.0 + dx, b.1 + dy, b.2), color, 4.0 * slack);
+                        }
+                    }
+                }
             }
         }
     }

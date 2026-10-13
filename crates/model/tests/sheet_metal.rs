@@ -779,7 +779,8 @@ fn an_edge_or_a_face_is_named_by_a_point_on_it() {
     assert!(e.contains("edges meet at (40, 0, 20)") && e.contains("away from its ends"), "{e}");
     let e = refused(&mut s, &mut k, "model.face_ref", json!({ "at": [40, 15, 20] }));
     assert!(e.contains("faces meet at") && e.contains("inside the face"), "{e}");
-    assert!(refused(&mut s, &mut k, "model.face_ref", json!({ "at": [1, 2] })).contains("`at` is a point [x, y, z]"));
+    let e = refused(&mut s, &mut k, "model.face_ref", json!({ "at": [1, 2] }));
+    assert!(e.contains("`at` is a point [x, y, z]") || e.contains("`at` must be a list of 3 numbers"), "{e}");
 }
 
 /// The corners of the box that holds the part: (min, max).
@@ -883,7 +884,7 @@ fn hems_fold_an_edge_back_once_twice_or_into_a_roll() {
     let e = refused(&mut s, &mut k, "sheet.hem", json!({ "edges": [edge], "type": "teardrop", "angle": 100f64.to_radians() }));
     assert!(e.contains("181 to 270 degrees"), "{e}");
     let e = refused(&mut s, &mut k, "sheet.hem", json!({ "edges": [edge], "type": "pressed" }));
-    assert!(e.contains("unknown hem type `pressed`"), "{e}");
+    assert!(e.contains("unknown hem type `pressed`") || e.contains("must be one of single | double | rolled | teardrop"), "{e}");
     let e = refused(&mut s, &mut k, "sheet.hem", json!({ "edges": [], "gap": 1, "length": 10 }));
     assert!(e.contains("`edges` needs 1 to"), "{e}");
     run(&mut s, &mut k, "sheet.hem", json!({ "edges": [edge], "type": "rolled", "radius": 1, "angle": 340f64.to_radians() }));

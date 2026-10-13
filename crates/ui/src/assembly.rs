@@ -99,7 +99,7 @@ pub(crate) struct AsmDoc {
     /// A part changed after it was shown: solve once its geometry is current.
     pub needs_update: bool,
     /// Degrees of freedom and what they were computed from.
-    dof: Option<(u64, Vec<BodyDof>, usize)>,
+    pub(crate) dof: Option<(u64, Vec<BodyDof>, usize)>,
     /// Relationships open in the browser.
     pub relationships_open: bool,
     pub expanded: std::collections::BTreeSet<ComponentId>,

@@ -7,6 +7,7 @@
 use serde_json::{Value, json};
 use tenon_geom::{Frame, Vec3, tol};
 use tenon_kernel::Kernel;
+use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult, FaceOrigin, FeatureId, OriginAxis, OriginPlane};
 
 use crate::model::{ComponentId, Geom, JointKind, RelKind, RelationshipId, Target, Tweak};
@@ -36,7 +37,7 @@ impl std::fmt::Debug for AsmCommand {
 // ---- parameters -------------------------------------------------------------------------------
 
 fn field<'v>(p: &'v Value, key: &str) -> Result<&'v Value, CmdError> {
-    p.get(key).filter(|v| !v.is_null()).ok_or_else(|| CmdError(format!("missing parameter `{key}`")))
+    arg(p, key).filter(|v| !v.is_null()).ok_or_else(|| CmdError(format!("missing parameter `{key}`")))
 }
 
 fn num(p: &Value, key: &str) -> Result<f64, CmdError> {
@@ -45,14 +46,14 @@ fn num(p: &Value, key: &str) -> Result<f64, CmdError> {
 }
 
 fn opt_num(p: &Value, key: &str) -> Result<Option<f64>, CmdError> {
-    match p.get(key) {
+    match arg(p, key) {
         None | Some(Value::Null) => Ok(None),
         Some(_) => num(p, key).map(Some),
     }
 }
 
 fn opt_bool(p: &Value, key: &str) -> Result<Option<bool>, CmdError> {
-    match p.get(key) {
+    match arg(p, key) {
         None | Some(Value::Null) => Ok(None),
         Some(v) => v.as_bool().map(Some).ok_or_else(|| CmdError(format!("`{key}` must be true or false"))),
     }
@@ -97,7 +98,7 @@ fn vec3(v: &Value, key: &str) -> Result<Vec3, CmdError> {
 }
 
 fn opt_vec3(p: &Value, key: &str) -> Result<Option<Vec3>, CmdError> {
-    match p.get(key) {
+    match arg(p, key) {
         None | Some(Value::Null) => Ok(None),
         Some(v) => vec3(v, key).map(Some),
     }
@@ -203,11 +204,11 @@ fn asm_mass(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
 
 /// Builds a target from a component and a way to name its geometry.
 fn asm_geom(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
-    let comp = match p.get("component") {
+    let comp = match arg(p, "component") {
         None | Some(Value::Null) => None,
         Some(_) => Some(component(p, "component")?),
     };
-    let plain = if let Some(v) = p.get("plane").filter(|v| !v.is_null()) {
+    let plain = if let Some(v) = arg(p, "plane").filter(|v| !v.is_null()) {
         let plane = match v.as_str().map(str::to_ascii_lowercase).as_deref() {
             Some("xy") => OriginPlane::XY,
             Some("yz") => OriginPlane::YZ,
@@ -215,7 +216,7 @@ fn asm_geom(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
             _ => return Err("`plane` must be \"xy\", \"yz\" or \"xz\"".into()),
         };
         Some(Geom::Plane { plane })
-    } else if let Some(v) = p.get("axis").filter(|v| !v.is_null()) {
+    } else if let Some(v) = arg(p, "axis").filter(|v| !v.is_null()) {
         let axis = match v.as_str().map(str::to_ascii_lowercase).as_deref() {
             Some("x") => OriginAxis::X,
             Some("y") => OriginAxis::Y,
@@ -223,9 +224,9 @@ fn asm_geom(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
             _ => return Err("`axis` must be \"x\", \"y\" or \"z\"".into()),
         };
         Some(Geom::Axis { axis })
-    } else if p.get("origin").is_some_and(|v| v.as_bool() == Some(true)) {
+    } else if arg(p, "origin").is_some_and(|v| v.as_bool() == Some(true)) {
         Some(Geom::Origin)
-    } else if let Some(v) = p.get("work").filter(|v| !v.is_null()) {
+    } else if let Some(v) = arg(p, "work").filter(|v| !v.is_null()) {
         Some(Geom::Work { feature: FeatureId(id(v, "work")?) })
     } else {
         None
@@ -237,7 +238,7 @@ fn asm_geom(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
             (None, Some(cid)) => {
                 let c = s.component(cid)?;
                 let scene = scene_of(&s.parts, c).ok_or("the part's geometry is not available")?;
-                if let Some(f) = p.get("face").filter(|v| !v.is_null()) {
+                if let Some(f) = arg(p, "face").filter(|v| !v.is_null()) {
                     let (body, face) = if let Some(origin) = f.get("type").map(|_| f) {
                         let origin: FaceOrigin =
                             serde_json::from_value(origin.clone()).map_err(|e| CmdError(format!("`face` is not a face origin: {e}")))?;
@@ -255,7 +256,7 @@ fn asm_geom(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
                         (b, i)
                     };
                     session::face_target(scene, cid, body, face).map_err(CmdError)?
-                } else if let Some(e) = p.get("edge").filter(|v| !v.is_null()) {
+                } else if let Some(e) = arg(p, "edge").filter(|v| !v.is_null()) {
                     let (body, edge) = if let Some(faces) = e.as_array() {
                         let names: Vec<FaceOrigin> = faces
                             .iter()
@@ -365,7 +366,7 @@ fn solve_or_refuse(asm: &mut crate::model::Assembly, parts: &session::Parts, dra
 fn asm_edit_relationship(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let rid = relationship(p, "relationship")?;
     let (offset, angle, flip, aligned) = (opt_num(p, "offset")?, opt_num(p, "angle")?, opt_bool(p, "flip")?, opt_bool(p, "aligned")?);
-    let joint = match p.get("type").and_then(Value::as_str) {
+    let joint = match arg(p, "type").and_then(Value::as_str) {
         Some(t) => Some(JointKind::from_id(t).ok_or_else(|| CmdError(format!("unknown joint type `{t}`")))?),
         None => None,
     };
@@ -402,7 +403,7 @@ fn asm_suppress(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> C
 }
 
 fn asm_delete(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
-    if p.get("relationship").is_some_and(|v| !v.is_null()) {
+    if arg(p, "relationship").is_some_and(|v| !v.is_null()) {
         let rid = relationship(p, "relationship")?;
         s.edit(|asm, _| {
             let before = asm.relationships.len();
@@ -442,7 +443,7 @@ pub fn check_row(parts: &crate::Parts, part: &str, row: &str) -> Result<(), CmdE
 /// as its file has it.
 fn asm_set_row(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let cid = component(p, "component")?;
-    let row = match p.get("row") {
+    let row = match arg(p, "row") {
         None | Some(Value::Null) => None,
         Some(Value::String(r)) => Some(r.clone()),
         Some(_) => return Err("`row` must be the name of a row, or null".into()),
@@ -466,13 +467,13 @@ fn asm_set_row(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
 fn asm_rename(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let name =
         field(p, "name")?.as_str().map(str::trim).filter(|n| !n.is_empty() && n.len() <= 256).ok_or("`name` must be 1 to 256 characters")?.to_owned();
-    if p.get("relationship").is_some_and(|v| !v.is_null()) {
+    if arg(p, "relationship").is_some_and(|v| !v.is_null()) {
         let rid = relationship(p, "relationship")?;
         s.edit(|asm, _| {
             asm.relationship_mut(rid).ok_or_else(|| CmdError(format!("{rid} does not exist")))?.name = name.clone();
             Ok(())
         })?;
-    } else if p.get("component").is_some_and(|v| !v.is_null()) {
+    } else if arg(p, "component").is_some_and(|v| !v.is_null()) {
         let cid = component(p, "component")?;
         s.edit(|asm, _| {
             asm.component_mut(cid).ok_or_else(|| CmdError(format!("{cid} does not exist")))?.name = name.clone();
@@ -512,7 +513,7 @@ fn asm_visible(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cm
 fn asm_move(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let cid = component(p, "component")?;
     let by = opt_vec3(p, "by")?.unwrap_or(Vec3::ZERO);
-    let turn = match p.get("turn").filter(|v| !v.is_null()) {
+    let turn = match arg(p, "turn").filter(|v| !v.is_null()) {
         Some(t) => {
             let axis = direction(t, "axis")?;
             let angle = num(t, "angle")?;
@@ -621,7 +622,7 @@ fn asm_explode_auto(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) 
 }
 
 fn asm_explode_clear(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
-    let step = match p.get("step") {
+    let step = match arg(p, "step") {
         None | Some(Value::Null) => None,
         Some(v) => Some(v.as_u64().ok_or("`step` must be a whole number")? as usize),
     };
@@ -653,7 +654,7 @@ fn asm_explode_positions(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &V
 
 fn asm_interference(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let k = k.ok_or("asm.interference needs the geometry kernel")?;
-    let only = match p.get("components") {
+    let only = match arg(p, "components") {
         None | Some(Value::Null) => None,
         Some(_) => Some(components_param(s, p)?),
     };
@@ -673,7 +674,7 @@ fn asm_edit_part(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> C
     if run.starts_with("asm.") || run.starts_with("file.") {
         return Err("`run` must be a part command".into());
     }
-    let params = p.get("with").cloned().unwrap_or_else(|| json!({}));
+    let params = arg(p, "with").cloned().unwrap_or_else(|| json!({}));
     let result = match k {
         Some(k) => {
             let r = s.part_of(cid)?.session.exec(&run, &params, Some(&mut *k))?;
@@ -852,6 +853,19 @@ pub fn find(id: &str) -> Option<&'static AsmCommand> {
 /// Runs an assembly command. With a kernel, parts whose geometry is out of date are
 /// regenerated first.
 pub fn run(s: &mut AsmSession, spec: &AsmCommand, params: &Value, kernel: Option<&mut dyn Kernel>) -> CmdResult {
+    run_as(s, spec, crate::schemas::schema(spec.id), params, kernel)
+}
+
+/// Runs an assembly command whose schema is `schema` (the file commands have theirs in their
+/// own crate). In builds with debug assertions the command is held to it both ways
+/// (`tenon_model::schema::held`).
+pub fn run_as(
+    s: &mut AsmSession,
+    spec: &AsmCommand,
+    schema: Option<&'static tenon_model::schema::CommandSchema>,
+    params: &Value,
+    kernel: Option<&mut dyn Kernel>,
+) -> CmdResult {
     let params = if params.is_null() { &Value::Object(Default::default()) } else { params };
     if !params.is_object() {
         return Err("parameters must be a JSON object".into());
@@ -862,7 +876,7 @@ pub fn run(s: &mut AsmSession, spec: &AsmCommand, params: &Value, kernel: Option
     } else if spec.kernel {
         return Err(CmdError(format!("{} needs the geometry kernel", spec.id)));
     }
-    (spec.run)(s, kernel, params)
+    tenon_model::schema::held(spec.id, schema, params, || (spec.run)(s, kernel, params))
 }
 
 /// Runs an assembly command by id.

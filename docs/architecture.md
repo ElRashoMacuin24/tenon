@@ -20,7 +20,7 @@ rules are enforced by `cargo xtask layers` (table in `xtask/src/layers.rs`) and
 | L7 | `render` | camera, picking, software rasteriser, wgpu viewport renderer, drawing sheets to images (no UI toolkit) | M4 |
 | L8 | `ui` | egui workbench: ribbon, browser, sketcher, feature panels, properties panel, viewport, dialogs; the assembly environment and editing parts in place; the drawing environment; the Sheet Metal tab and the flat pattern view | M8 |
 | exempt | `apps/tenon` | desktop binary (eframe + wgpu, OCCT, native file dialogs) | M1 |
-| exempt | `apps/tenon-cli` | headless CLI: command scripts, MCP server, PNG render, STEP tools | M1 |
+| exempt | `apps/tenon-cli` | headless CLI: command scripts, MCP server (on its own or attached to the app), PNG render, STEP tools | M1 |
 | exempt | `xtask` | workspace tooling and the CI gate | M0 |
 
 Rules:
@@ -78,10 +78,24 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
   export commands live in `tenon_io::cmd`, and `tenon_io::cmd::run` dispatches over both.
 - **Session.** `Session` owns the document with snapshot undo (200 steps). A command either
   succeeds as one undo step or leaves the document unchanged. Regeneration is cached per revision.
+- **Schemas (M10).** Every command has a `CommandSchema` beside it (`schemas.rs` in the model,
+  assembly, drawing and io crates; `tenon_model::schema` holds the types and the checks): its
+  parameters by name, type and whether they must be given. They are published as JSON Schema
+  with one version number ([schemas](schemas/README.md), DEC-083). What comes from outside (a
+  script, the MCP server, the app's control port) is checked before it runs, in every build. In
+  builds with debug assertions every command that runs is held to its schema both ways: what
+  it is given must be declared, and what it reads (through `schema::arg`, which notes the
+  names) must be declared, so a schema cannot fall behind its command without a test failing.
+- **Several as one.** Each session (part, assembly, drawing) counts its undo steps and can fold
+  those since a mark into one, or take them back (`mark`, `squash_since`, `roll_back_to`).
+  `batch.run`, and the commands that make a sketch and a feature together (`model.box`), are
+  built on that (DEC-085).
 - **Front ends.** The ribbon (`ui::commands`) maps buttons to registry commands or interactive
   tools; commands whose milestone has not arrived say so. Scripts (`tenon-cli run`,
   [scripts.md](scripts.md)) and the MCP server ([mcp.md](mcp.md)) call the registry directly. The
-  headless host adds `render.png`.
+  headless host adds `render.png` and `batch.run`. The MCP server drives a `Host`: the
+  headless engine with a document of its own, or a running app through its control port
+  (`tenon-cli mcp --attach`).
 
 ## Regeneration (M2)
 
@@ -190,6 +204,15 @@ measuring also run on the worker. In a drawing, the central panel is the sheet; 
 computed by one worker job at a time, and the sheet keeps showing the last ones meanwhile. Tests
 and tools can run the same workbench synchronously with a kernel on the calling thread
 (`Workbench::headless`).
+
+**The control port (M10, DEC-087).** Started with `--control`, the app listens on the loopback
+address for commands from outside (one JSON object a line, each with the token the app made
+up; [mcp.md](mcp.md#the-control-port)). A thread per connection only reads lines and hands
+them over; they are taken on the UI thread once a frame, one at a time. A command that needs
+no kernel runs there and then, as a button's would. One that does runs as a worker job on a
+copy of the part, and the changed document comes back and is put in as one edit, so the rule
+above holds: the window goes on drawing while an agent's boolean is computed. A picture of the
+window's model waits for the frame after the part as it now is has come back from the worker.
 
 The viewport renders through wgpu into an offscreen MSAA texture that egui shows as an image. It
 falls back to the software rasteriser when the app has no wgpu render state. Picking casts rays

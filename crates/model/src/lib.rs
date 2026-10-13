@@ -19,6 +19,8 @@ pub mod params;
 pub mod project;
 pub mod regen;
 pub mod repair;
+pub mod schema;
+pub mod schemas;
 pub mod sheet;
 pub mod table;
 pub mod threads;

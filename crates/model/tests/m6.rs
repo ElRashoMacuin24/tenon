@@ -319,7 +319,8 @@ fn combine_joins_cuts_and_intersects_bodies_and_keeps_their_face_names() {
     assert!(failure(&mut s, &mut k).starts_with("A body cannot be combined with itself"));
     run(&mut s, &mut k, "edit.undo", json!({}));
     let e = s.exec("model.combine", &json!({ "base": base, "tools": [lid], "operation": "new_body" }), Some(&mut k)).unwrap_err().0;
-    assert!(e.contains("cannot make a new body"), "{e}");
+    // (Said by the command, or before it runs by the check of its parameters.)
+    assert!(e.contains("cannot make a new body") || e.contains("must be one of join | cut | intersect"), "{e}");
 }
 
 /// The threads on the part.

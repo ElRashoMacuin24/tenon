@@ -104,7 +104,8 @@ fn call(id: u64, tool: &str, args: Value) -> Value {
 
 #[test]
 fn mcp_server_builds_measures_and_renders_a_part() {
-    let mut server = Server::new(Engine::new(kernel(), scratch("mcp")));
+    let dir = scratch("mcp");
+    let mut server = Server::new(Engine::new(kernel(), &dir));
     let replies = session(
         &mut server,
         &[
@@ -122,7 +123,7 @@ fn mcp_server_builds_measures_and_renders_a_part() {
             call(11, "run_command", json!({ "command": "model.extrude", "params": { "sketch": 99, "distance": 5 } })),
             call(12, "no_such_tool", json!({})),
             json!({ "jsonrpc": "2.0", "id": 13, "method": "ping" }),
-            json!({ "jsonrpc": "2.0", "id": 14, "method": "resources/list" }),
+            json!({ "jsonrpc": "2.0", "id": 14, "method": "prompts/list" }),
         ],
     );
     assert_eq!(replies.len(), 14, "one reply per request, none for the notification");
@@ -147,7 +148,7 @@ fn mcp_server_builds_measures_and_renders_a_part() {
     assert_eq!(image["type"], "image");
     assert_eq!(image["mimeType"], "image/png");
     assert!(image["data"].as_str().unwrap().starts_with("iVBORw0KGgo"), "base64 of the PNG signature");
-    assert!(server.engine.base.join("box.step").exists());
+    assert!(dir.join("box.step").exists());
 
     // A failing command is a tool error the agent can read, not a protocol error.
     assert_eq!(by_id(11)["result"]["isError"], true);

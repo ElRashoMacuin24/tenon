@@ -93,6 +93,13 @@ pub struct Workbench {
     pub(crate) services: Services,
     exit: bool,
     pub(crate) step_seq: u64,
+    /// The control port, when it was asked for (`tenon --control`): a running Tenon driven
+    /// from outside ([`crate::control`]).
+    pub(crate) control: Option<crate::control::Control>,
+    /// The number of the frame the control port's requests are being taken in.
+    pub(crate) control_frame: u64,
+    /// The frame in which a control port step last changed or opened an assembly or a drawing.
+    pub(crate) control_touched: u64,
     step_export: Option<(u64, PathBuf)>,
     /// Mesh exports and print checks sent to the worker, by request.
     pub(crate) part_jobs: std::collections::BTreeMap<u64, crate::print_dialog::PartJob>,
@@ -151,6 +158,9 @@ impl Workbench {
             services,
             exit: false,
             step_seq: 0,
+            control: None,
+            control_frame: 0,
+            control_touched: 0,
             step_export: None,
             part_jobs: Default::default(),
             last_command: None,
@@ -731,6 +741,10 @@ impl Workbench {
                     }
                 }
                 Response::Job { request, result } => {
+                    let result = match self.control_job_done(request, result) {
+                        Ok(()) => continue,
+                        Err(result) => result,
+                    };
                     if self.owns_drw_job(request) {
                         self.drw_job(request, result);
                     } else if let Err(result) = self.part_job_done(request, result) {
@@ -869,6 +883,7 @@ impl Workbench {
         };
         self.view.now = ui.input(|i| i.time);
         self.sync_geometry();
+        self.serve_control();
         if self.in_assembly() {
             self.refresh_dof();
         }
@@ -942,7 +957,9 @@ impl Workbench {
         self.save_prompt(ui);
         self.recover_prompt(ui);
         self.autosave();
-        if self.waiting || self.is_busy() {
+        // (Requests of the control port that wait for the geometry thread are looked at again
+        // every frame.)
+        if self.waiting || self.is_busy() || self.control_busy() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }
     }

@@ -11,6 +11,7 @@ use tenon_assembly::AsmSession;
 use tenon_drawing::cmd::{DrwCommand, DrwFn};
 use tenon_drawing::{Drawing, DrwModel, DrwSession, Standard};
 use tenon_kernel::Kernel;
+use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult, Session};
 
 use crate::asm::{normalize, part_key, relative};
@@ -224,7 +225,7 @@ pub fn save_models(s: &mut DrwSession, kept: &mut Vec<String>) -> Result<Vec<Str
 // ---- commands ---------------------------------------------------------------------------------
 
 fn path(p: &Value) -> Result<PathBuf, CmdError> {
-    let s = p.get("path").and_then(Value::as_str).ok_or("missing parameter `path`")?;
+    let s = arg(p, "path").and_then(Value::as_str).ok_or("missing parameter `path`")?;
     if s.is_empty() || s.len() > 4096 || s.contains('\0') {
         return Err("invalid path".into());
     }
@@ -251,13 +252,13 @@ pub fn read_drawing_template(path: &Path, name: &str) -> Result<Drawing, Project
 }
 
 fn drw_new(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
-    let name = p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).unwrap_or("Drawing1");
+    let name = arg(p, "name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).unwrap_or("Drawing1");
     if name.len() > 256 {
         return Err("`name` is too long".into());
     }
-    if let Some(t) = p.get("template").filter(|t| !t.is_null()) {
+    if let Some(t) = arg(p, "template").filter(|t| !t.is_null()) {
         let path = PathBuf::from(t.as_str().ok_or("`template` must be a path")?);
-        if p.get("standard").is_some() || p.get("size").is_some() {
+        if arg(p, "standard").is_some() || arg(p, "size").is_some() {
             return Err("a template brings its own standard and sheets: give `template` or `standard` and `size`".into());
         }
         let d = read_drawing_template(&path, name).map_err(|e| CmdError(format!("cannot read the template {}: {e}", path.display())))?;
@@ -266,14 +267,14 @@ fn drw_new(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
         let sizes: Vec<&str> = d.sheets.iter().map(|x| x.size.name.as_str()).collect();
         return Ok(json!({ "name": name, "sheet": d.sheets[0].id.0, "size": d.sheets[0].size.name, "sheets": sizes, "standard": d.standard }));
     }
-    let standard = match p.get("standard").and_then(Value::as_str) {
+    let standard = match arg(p, "standard").and_then(Value::as_str) {
         None => Standard::Ansi,
         Some("ansi") => Standard::Ansi,
         Some("iso") => Standard::Iso,
         Some(_) => return Err("`standard` must be ansi or iso".into()),
     };
     let mut d = Drawing::new(name, standard);
-    if let Some(size) = p.get("size").and_then(Value::as_str) {
+    if let Some(size) = arg(p, "size").and_then(Value::as_str) {
         let size = tenon_drawing::sheets::size_named(size).ok_or("unknown sheet size (A, B, C, D, A4, A3, A2, A1)")?;
         d.sheets[0].title_block = tenon_drawing::sheets::title_block(standard, &size);
         d.sheets[0].size = size;
@@ -304,7 +305,7 @@ fn drw_open(s: &mut DrwSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
 /// Saves the drawing as a template: sheets, standard, properties and notes, no views.
 fn drw_save_template(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let path = path(p)?;
-    let name = p.get("name").and_then(Value::as_str).map_or_else(|| s.drawing().name.clone(), str::to_owned);
+    let name = arg(p, "name").and_then(Value::as_str).map_or_else(|| s.drawing().name.clone(), str::to_owned);
     let t = as_template(s.drawing(), &name);
     save(&path, &t).map_err(|e| CmdError(e.to_string()))?;
     Ok(json!({ "path": path.display().to_string(), "sheets": t.sheets.len(), "notes": t.annotations.len() }))
@@ -344,7 +345,7 @@ pub fn probe(s: &DrwSession, key: &str) -> (BTreeMap<String, tenon_drawing::Mode
 
 /// A base view of a part or assembly file (read if the drawing does not have it yet).
 fn drw_base(s: &mut DrwSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
-    let file = PathBuf::from(p.get("model").and_then(Value::as_str).ok_or("missing parameter `model` (a .tenon or .tenonasm file)")?);
+    let file = PathBuf::from(arg(p, "model").and_then(Value::as_str).ok_or("missing parameter `model` (a .tenon or .tenonasm file)")?);
     let key = part_key(&file);
     if !s.models.contains_key(&key) {
         let m = load_model(&file);
@@ -480,7 +481,7 @@ pub fn sheets_graphics(s: &DrwSession, sheet: Option<u32>) -> Result<Vec<tenon_d
 }
 
 fn sheet_param(p: &Value) -> Result<Option<u32>, CmdError> {
-    match p.get("sheet") {
+    match arg(p, "sheet") {
         None | Some(Value::Null) => Ok(None),
         Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()).map(Some).ok_or_else(|| CmdError("`sheet` must be a sheet id".into())),
     }
@@ -594,5 +595,5 @@ pub fn all_commands() -> impl Iterator<Item = &'static DrwCommand> {
 pub fn run(s: &mut DrwSession, id: &str, params: &Value, kernel: Option<&mut dyn Kernel>) -> CmdResult {
     let spec =
         COMMANDS.iter().find(|c| c.id == id).or_else(|| tenon_drawing::cmd::find(id)).ok_or_else(|| CmdError(format!("unknown command `{id}`")))?;
-    tenon_drawing::cmd::run(s, spec, params, kernel)
+    tenon_drawing::cmd::run_as(s, spec, crate::schemas::schema(id), params, kernel)
 }

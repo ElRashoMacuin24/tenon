@@ -4,7 +4,7 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestones M0 to M9 are done (M9, performance, awaits the owner's confirmation; the numbers are in [docs/performance.md](docs/performance.md)); M10 (agent-native workflow) is next.**
+**Status: milestones M0 to M10 are done (M10, the agent-native workflow, awaits the owner's confirmation: [docs/mcp.md](docs/mcp.md)); M11 (quick stress checks) is next.**
 CI runs on Linux, macOS and Windows.
 
 Tenon is for makers, students and small shops. It aims to win on reliability, coherence and speed
@@ -58,8 +58,9 @@ In drawings (`.tenondrw` files that show your parts and assemblies), you can:
 
 The workbench follows the familiar mechanical-CAD layout and workflow (ribbon, model browser,
 properties panel, orientation cube, radial menu). The same commands drive scripts and an MCP
-server for AI agents. What works, with the test that proves each item, is in
-[ROADMAP.md](ROADMAP.md).
+server for AI agents, which can work on its own or in the running app, where each step shows
+in the window and is undone like any other. What works, with the test that proves each item,
+is in [ROADMAP.md](ROADMAP.md).
 
 ![The M3 demo assembly in the Tenon workbench](examples/m3-pivot/workbench.png)
 
@@ -82,9 +83,11 @@ server for AI agents. What works, with the test that proves each item, is in
   from, so features can refer to geometry in a way that survives upstream edits
   ([docs/persistent-naming.md](docs/persistent-naming.md)).
 - **Everything is a command.** Every change to a part is a named command with JSON parameters
-  ([docs/commands.md](docs/commands.md)). The ribbon, command scripts
+  ([docs/commands.md](docs/commands.md)) and a versioned schema of them
+  ([docs/schemas](docs/schemas/README.md)). The ribbon, command scripts
   ([docs/scripts.md](docs/scripts.md)) and the MCP server for AI agents
-  ([docs/mcp.md](docs/mcp.md)) all use the same registry.
+  ([docs/mcp.md](docs/mcp.md)) all use the same registry, so what an agent does is what a
+  person could have done, and is undone the same way.
 - **The UI thread never waits for geometry.** Regeneration runs on a worker thread; the viewport
   keeps drawing the last result.
 - **Strict layering.** `cargo xtask layers` enforces the crate graph: nothing below `ui` knows
@@ -112,6 +115,7 @@ pixi run ci                        # the full gate CI runs
 pixi run cargo run -p tenon-cli -- run examples/m2-enclosure/enclosure.json --out out
 pixi run cargo run -p tenon-cli -- render out/enclosure.tenon out/enclosure.png --view front
 pixi run mcp                       # MCP server on stdio (docs/mcp.md)
+pixi run app --control             # the app with its control port open, for tenon-cli mcp --attach
 ```
 
 `pixi run` puts the OpenCASCADE libraries on the library path, so start Tenon through it.

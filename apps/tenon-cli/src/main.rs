@@ -15,11 +15,14 @@ usage:
   tenon-cli run SCRIPT.json [--out DIR] [--json]
                                               run a command script (docs/scripts.md); relative
                                               paths in it resolve against DIR (default: .)
-  tenon-cli commands [--json | --markdown [--out FILE]]
-                                              list every command and its parameters
+  tenon-cli commands [--json | --markdown [--out FILE] | --schema [--out FILE]]
+                                              list every command and its parameters; --schema: each
+                                              command's parameters as JSON Schema (docs/schemas)
   tenon-cli render PROJECT.tenon OUT.png [--view iso|front|top|...] [--size WIDTHxHEIGHT]
                                               render a project to PNG without a GPU
   tenon-cli mcp [PROJECT.tenon]               Model Context Protocol server on stdin/stdout
+  tenon-cli mcp --attach                      the same, driving the Tenon that is running (started with
+                                              `tenon --control`): what is done shows in its window
   tenon-cli demo m0|m1|m2|m2-mount|m3|m4|m6|m7|m8 [--out DIR] [--json]
                                               build a milestone demo into DIR (default: out)
   tenon-cli diff A B [--json]                 what changed from document A to B (parts, assemblies or
@@ -49,6 +52,8 @@ fn parse_size(s: &str) -> Option<[u32; 2]> {
 fn main() -> ExitCode {
     let mut json = false;
     let mut markdown = false;
+    let mut schema = false;
+    let mut attach = false;
     let mut check = false;
     let mut out: Option<PathBuf> = None;
     let mut view = "iso".to_owned();
@@ -59,6 +64,8 @@ fn main() -> ExitCode {
         match a.as_str() {
             "--json" => json = true,
             "--markdown" => markdown = true,
+            "--schema" => schema = true,
+            "--attach" => attach = true,
             "--check" => check = true,
             "--out" => match args.next() {
                 Some(dir) => out = Some(PathBuf::from(dir)),
@@ -91,6 +98,13 @@ fn main() -> ExitCode {
             Ok(text) => tenon_cli::run_script(kernel(), &text, &out.clone().unwrap_or_else(|| PathBuf::from("."))),
             Err(e) => Err(format!("cannot read {file}: {e}")),
         },
+        ["commands"] if schema => match &out {
+            Some(file) => tenon_cli::write_commands_schema(file),
+            None => {
+                print!("{}", tenon_cli::commands_schema_text());
+                return ExitCode::SUCCESS;
+            }
+        },
         ["commands"] if markdown => {
             let md = tenon_cli::commands_markdown();
             match &out {
@@ -104,6 +118,7 @@ fn main() -> ExitCode {
         }
         ["commands"] => Ok(tenon_cli::commands()),
         ["render", project, png] => tenon_cli::render(kernel(), Path::new(project), Path::new(png), &view, size),
+        ["mcp"] if attach => return mcp_attached(),
         ["mcp"] | ["mcp", _] => return mcp(pos.get(1).copied()),
         ["demo", "m0"] => tenon_cli::demo_m0(&mut OcctKernel::new(), &demo_dir()),
         ["demo", "m1"] => tenon_cli::demo_m1(kernel(), &demo_dir()),
@@ -157,6 +172,20 @@ fn bench(json: bool, check: bool, work: Option<&Path>) -> ExitCode {
             if check && rows.iter().any(tenon_cli::bench::Row::over) { ExitCode::FAILURE } else { ExitCode::SUCCESS }
         }
         Err(e) => fail(&e),
+    }
+}
+
+/// The MCP server driving a running Tenon through its control port.
+fn mcp_attached() -> ExitCode {
+    let remote = match tenon_cli::remote::Remote::attach() {
+        Ok(remote) => remote,
+        Err(e) => return fail(&e),
+    };
+    let mut server = tenon_cli::mcp::Server::on(Box::new(remote));
+    eprintln!("tenon {} MCP server on stdio, attached to the running app", env!("CARGO_PKG_VERSION"));
+    match tenon_cli::mcp::serve(&mut server, std::io::stdin().lock(), std::io::stdout().lock()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => fail(&format!("MCP transport: {e}")),
     }
 }
 

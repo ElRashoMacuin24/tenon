@@ -9,8 +9,16 @@ tools and find the free ones rough. It wins on reliability, coherence and speed,
 count: when two tasks compete, the one that makes existing features more dependable and pleasant
 goes first.
 
-Current milestone: **M9 performance**, started 2026-10-12 (DEC-077) and complete the same day,
-awaiting the owner's confirmation before M10: benchmarks on the example models with budgets
+Current milestone: **M10 agent-native workflow**, started on the owner's confirmation of M9
+(2026-10-12) and complete, awaiting the owner's confirmation before M11: a versioned schema
+of every command, held true by the tests (DEC-083); commands that make features from what a
+person would say, and find faces and edges by description (DEC-084); several commands as one
+undo step (DEC-085); MCP tools to find, repair and look, and a log of what was done (DEC-086);
+and an agent working in the running app, where each step shows in the window and is undone
+like any other (DEC-087). See [docs/mcp.md](docs/mcp.md).
+
+**M9** performance was started 2026-10-12 (DEC-077), completed and confirmed by the owner the
+same day: benchmarks on the example models with budgets
 that CI holds (`tenon-cli bench`, a step of `cargo xtask ci`); the kernel asked only for what
 a feature changed (DEC-078); what is under the pointer found through an index (DEC-079);
 level of detail for large assemblies (DEC-080); and the numbers, with where OCCT is the limit,
@@ -154,7 +162,7 @@ events, the way the windowing layer does.
 | Command registry shared by UI, scripts and MCP | done | `every_available_command_has_a_handler`, `command_docs_are_generated_from_the_registry` (docs/commands.md) |
 | Command scripts (`tenon-cli run`) | done | `a_failing_script_names_the_step_and_keeps_going_no_further`, `references_resolve_into_nested_values`, `expectations_compare_numbers_relatively` |
 | MCP server (stdio): run command, tree, topology, measure, render PNG, export | done | `mcp_server_builds_measures_and_renders_a_part`, `mcp_transport_survives_garbage`; docs/mcp.md |
-| MCP control of a running desktop app | missing | the server drives its own headless session (DEC-014) |
+| MCP control of a running desktop app | done (M10) | DEC-087: `tenon --control` and `tenon-cli mcp --attach`; the M10 table below |
 | PNG rendering without a GPU (CLI, MCP) | done | `tenon-cli render`; `mcp_server_builds_measures_and_renders_a_part` |
 | Performance budget in CI | done | `m1_demo_part_regenerates_and_tessellates_within_budget` (500 ms each; measured 7 and 3 ms), and since M9 the benchmarks of every example with budgets four times what CI's slowest platform took (`tenon-cli bench --check`; docs/performance.md) |
 | Demo: bracket with holes | done | `examples/m1-bracket`; `the_m1_demo_script_builds_a_verified_bracket_and_writes_its_files` |
@@ -413,7 +421,7 @@ edges), `corner_seam`, `corner_rip`, `bend`, `sharp_bend`, `fold`, `cut_normal` 
 
 ## M9 performance
 
-Complete 2026-10-12, awaiting the owner's confirmation. Decisions: DEC-077 to DEC-082. The
+Complete 2026-10-12 and confirmed by the owner. Decisions: DEC-077 to DEC-082. The
 numbers, how they are measured, where OCCT is the limit and what is not done:
 [docs/performance.md](docs/performance.md). No change to files: format version 2 stands.
 
@@ -431,11 +439,19 @@ numbers, how they are measured, where OCCT is the limit and what is not done:
 
 ## M10 agent-native workflow
 
+Complete 2026-10-12, awaiting the owner's confirmation. Decisions: DEC-083 to DEC-088. How an
+agent uses it: [docs/mcp.md](docs/mcp.md); the schemas: [docs/schemas](docs/schemas/README.md).
+No change to files: format version 2 stands.
+
 | Feature | Status | Proof / gap |
 |---|---|---|
-| Versioned JSON schemas for every command | missing | commands document their parameters in prose (docs/commands.md) |
-| MCP tools for build, inspect, render | partial | `mcp_server_builds_measures_and_renders_a_part`; no repair-reference tool |
-| Natural-language-to-feature helpers and AI-assisted reference repair (as normal undoable commands) | missing | waits for M5's reliability gates |
+| Versioned JSON schemas for every command | done | DEC-083. All 204 commands, published as [docs/schemas/commands.json](docs/schemas/commands.json), version 1. Every command has a schema and every schema a command (`every_command_has_a_schema_and_every_schema_a_command` in the model, assembly, drawing and io crates); the published file is the registry's (`every_command_has_a_schema_and_the_published_document_is_the_registrys`). In every test run each command is held to its schema both ways, what it is given and what it reads (`what_a_command_reads_is_held_against_its_schema`), and the twelve commands no test ran were given tests (`the_sketch_commands_no_other_test_runs`, `the_assembly_drawing_and_render_commands_no_other_test_runs`). Names, presence and types: `parameters_are_checked_for_names_presence_and_types`, `near_names_are_told_apart_from_far_ones`, `the_json_schema_says_the_same`. Versions: `a_change_that_would_break_a_caller_is_told_from_one_that_would_not`. Gap: what commands return is not in the schemas; parameters that are whole structures (a constraint, a feature's definition, a relationship's target) are declared as objects with their shape in words |
+| What comes from outside is checked before it runs | done | Scripts, the MCP server, `batch.run` and the control port, in every build: a wrong name is refused with the one probably meant and nothing is changed (`what_comes_from_outside_is_held_to_the_schema_before_anything_runs`) |
+| MCP tools for build, inspect, repair-reference and render | done | DEC-086. Thirteen tools and the schemas as a resource (`the_server_says_what_it_offers_and_what_every_command_takes`). Build: `run_command`, `run_commands`; inspect: `model_tree`, `query_topology`, `find_geometry`, `measure`; repair: `broken_references`, `repair_reference`; render: `render_png`, with faces and edges picked out in colour by number. `an_agent_builds_in_words_as_one_step_and_reads_back_what_it_did` (a plate with a hole and rounded corners in four steps, its volume by hand; a failure among steps run as one leaves nothing; the session log replayed by `tenon-cli run` gives the same part) |
+| Several commands as one undo step, or none of them | done | DEC-085. `batch.run` (the MCP server's `run_commands`), on marks in each session's history; the same tests, and over the control port `what_needs_the_kernel_runs_on_the_geometry_thread_and_comes_back_as_one_edit`. A file a step wrote stays written |
+| Natural-language-to-feature helpers, as normal undoable commands | done | DEC-084. `model.box`, `model.cylinder`, `model.sphere`, `model.torus`: a dimensioned sketch and its feature in one undo step, volumes by hand, on a plane, a face or a work plane, joined or cut (`a_box_a_cylinder_a_sphere_and_a_torus_are_ordinary_features_made_in_one_step`). `model.find`: faces and edges by kind, direction, feature, radius, hole or shaft, and the furthest, largest or smallest (`faces_and_edges_are_found_by_what_they_are_and_where`). Gap: no parser of sentences and no language model inside Tenon: the words are turned into these commands by the agent's own model (an in-app prompt box would need a hosted service, which is the owner's decision). The primitives have no ribbon buttons yet |
+| AI-assisted reference repair, as a normal undoable command | done | DEC-086. `an_agent_sees_a_broken_reference_and_repairs_it`: a fillet whose edge went when the side of the sketch it came from was drawn again; the candidates with what and where they are, and one picked out in a picture; the nearest taken because it is clearly the one meant; the repair an ordinary edit, undone and made again by choice, or with a reference of one's own. `an_agent_is_made_to_choose_when_no_replacement_is_clearly_the_one_meant`: the side drawn again as two lines, so two halves equally near: no guess is made, nothing is changed, and it is mended once the agent says which. Gap: the first failing feature at a time; "clearly" is by distance (within 5 mm, the next four times as far), so where like edges lie close together the agent must choose |
+| An agent works in the running app: each step shows in the window and is undone like any other | done | DEC-087. `tenon --control` opens a port on the loopback address; every request carries a token; `tenon-cli mcp --attach` drives it with the same tools. The port itself: `the_control_port_runs_commands_in_the_open_part_for_whoever_has_the_token` (no token or a wrong one refused; a wrong parameter refused by name; steps as one; refused while a panel is open and when New or Open would lose unsaved work; a picture of the window's own view), `what_needs_the_kernel_runs_on_the_geometry_thread_and_comes_back_as_one_edit` (the kernel on its own thread, the window still drawing), `an_assembly_and_a_drawing_are_driven_once_their_geometry_has_come_back` (a part put into an assembly and weighed in one step; a view added, counted and exported; a base view at the scale that fits). The whole way, MCP to window: `an_agent_attached_to_the_running_app_works_in_its_window`. Where the port is announced: `a_control_port_is_announced_found_and_withdrawn`. Gap: `asm.interference` and the three assembly exports are not run over the port yet and say so; nothing in the window says the port is open until a command runs; the app's own start-up with `--control` is checked by hand (it built a plate from an attached agent), not by a test |
 
 ## M11 quick stress checks (linear static)
 

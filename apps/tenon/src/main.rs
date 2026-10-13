@@ -1,6 +1,6 @@
 //! Tenon desktop application.
 //!
-//! Usage: `tenon [FILE] [--theme light|dark] [--edit-sketch NAME] [--run COMMAND]... [--tab NAME] [--screenshot OUT.png] [--size WIDTHxHEIGHT] [--version]`
+//! Usage: `tenon [FILE] [--theme light|dark] [--edit-sketch NAME] [--run COMMAND]... [--tab NAME] [--screenshot OUT.png] [--size WIDTHxHEIGHT] [--control [PORT]] [--version]`
 //!
 //! FILE is a part (`.tenon`), an assembly (`.tenonasm`) or a drawing (`.tenondrw`). `--run` runs a
 //! ribbon command (e.g. `model.extrude`) after it opens; `--edit-sketch` opens one of the part's
@@ -9,6 +9,10 @@
 //! `--screenshot` renders the window (after the model has regenerated), saves it as PNG and exits,
 //! so agents and CI can check the UI without screen capture. It never stops to ask about unsaved
 //! changes.
+//!
+//! `--control` opens the control port (on the loopback address; on PORT, or on any that is free):
+//! an agent can then run commands in this window, which shows each as it is done
+//! (`tenon-cli mcp --attach`, docs/mcp.md). It is off unless asked for.
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 
@@ -28,6 +32,8 @@ struct App {
     screenshot: Option<PathBuf>,
     frames: u32,
     requested: bool,
+    /// The control port, when it is open: taken back from where it was announced on the way out.
+    control: Option<u16>,
 }
 
 /// Settings kept between sessions (eframe storage).
@@ -58,6 +64,9 @@ impl eframe::App for App {
     // Closing properly: the copies kept against a crash are not needed (DEC-033).
     fn on_exit(&mut self) {
         self.wb.shutdown();
+        if let Some(port) = self.control {
+            tenon_ui::control::withdraw(port);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -156,7 +165,8 @@ fn main() -> eframe::Result {
     let mut run: Vec<String> = Vec::new();
     let (mut edit_sketch, mut tab): (Option<String>, Option<String>) = (None, None);
     let mut size = [1440.0, 900.0];
-    let mut args = std::env::args().skip(1);
+    let mut control: Option<u16> = None;
+    let mut args = std::env::args().skip(1).peekable();
     while let Some(a) = args.next() {
         match a.as_str() {
             "--version" | "-V" => {
@@ -166,6 +176,8 @@ fn main() -> eframe::Result {
             "--screenshot" => screenshot = args.next().map(PathBuf::from),
             "--edit-sketch" => edit_sketch = args.next(),
             "--tab" => tab = args.next(),
+            // (A number after it is the port; without one, any port that is free.)
+            "--control" => control = Some(args.next_if(|a| a.parse::<u16>().is_ok()).and_then(|a| a.parse().ok()).unwrap_or(0)),
             "--run" => match args.next() {
                 Some(id) => run.push(id),
                 None => eprintln!("warning: --run expects a command id, e.g. model.extrude"),
@@ -214,6 +226,28 @@ fn main() -> eframe::Result {
             {
                 eprintln!("warning: {e}");
             }
+            // The control port: off unless asked for, and never in a screenshot run.
+            let mut announced = None;
+            if let (Some(port), None) = (control, &screenshot) {
+                let ctx = cc.egui_ctx.clone();
+                match wb.listen(port, Some(std::sync::Arc::new(move || ctx.request_repaint()))) {
+                    Ok((port, token)) => {
+                        // The token is kept out of what is printed (a terminal's scrollback and a
+                        // launcher's log are read more widely than the user's settings): it is in
+                        // the file, and said here only when there is no file to say it in.
+                        println!("tenon control port: 127.0.0.1:{port}");
+                        match tenon_ui::control::announce(port, &token) {
+                            Ok(file) => println!("announced, with its token, in {}", file.display()),
+                            Err(e) => eprintln!("warning: {e}; the token is {token}"),
+                        }
+                        announced = Some(port);
+                    }
+                    Err(e) => {
+                        eprintln!("error: --control: cannot listen on 127.0.0.1:{port}: {e}");
+                        wb.report_error(format!("The control port could not be opened: {e}"));
+                    }
+                }
+            }
             if let Some(p) = project
                 && let Err(e) = wb.open(&p)
             {
@@ -238,7 +272,7 @@ fn main() -> eframe::Result {
                 eprintln!("error: --tab: {e}");
                 wb.report_error(e);
             }
-            Ok(Box::new(App { wb, screenshot, frames: 0, requested: false }))
+            Ok(Box::new(App { wb, screenshot, frames: 0, requested: false, control: announced }))
         }),
     )
 }

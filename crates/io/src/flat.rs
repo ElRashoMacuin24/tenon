@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use tenon_dxf::Tag;
 use tenon_geom::Vec2;
 use tenon_kernel::Kernel;
+use tenon_model::schema::arg;
 use tenon_model::sheet::{FlatCurve, FlatLoop, FlatPattern};
 use tenon_model::{CmdError, CmdResult, Session};
 
@@ -199,7 +200,7 @@ pub fn svg(flat: &FlatPattern, marks: Marks) -> String {
 }
 
 fn marks(p: &Value) -> Marks {
-    let flag = |key: &str| p.get(key).and_then(Value::as_bool).unwrap_or(true);
+    let flag = |key: &str| arg(p, key).and_then(Value::as_bool).unwrap_or(true);
     Marks { bends: flag("bends"), extents: flag("extents") }
 }
 

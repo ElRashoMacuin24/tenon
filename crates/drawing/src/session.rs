@@ -62,6 +62,9 @@ impl DrwModel {
 pub struct DrwSession {
     drawing: Drawing,
     undo: Vec<Drawing>,
+    /// How many steps have been put on `undo`, less those taken off: where a group of steps
+    /// began is told by this even when the oldest steps have been dropped.
+    steps: u64,
     redo: Vec<Drawing>,
     revision: u64,
     saved_revision: u64,
@@ -87,6 +90,7 @@ impl DrwSession {
         DrwSession {
             drawing,
             undo: Vec::new(),
+            steps: 0,
             redo: Vec::new(),
             revision: 1,
             saved_revision: 1,
@@ -115,6 +119,7 @@ impl DrwSession {
         self.models = models;
         self.stamps.clear();
         self.undo.clear();
+        self.steps = 0;
         self.redo.clear();
         self.revision += 1;
         self.saved_revision = self.revision;
@@ -129,6 +134,7 @@ impl DrwSession {
             Ok(v) => {
                 if self.drawing != before {
                     self.undo.push(before);
+                    self.steps += 1;
                     if self.undo.len() > MAX_UNDO {
                         self.undo.remove(0);
                     }
@@ -144,10 +150,46 @@ impl DrwSession {
         }
     }
 
+    /// A mark to come back to: everything done after it can be made one undo step
+    /// ([`Self::squash_since`]) or taken back ([`Self::roll_back_to`]).
+    pub fn mark(&self) -> u64 {
+        self.steps
+    }
+
+    /// Where on `undo` the document as it was at `mark` is, if steps were added since.
+    fn at_mark(&self, mark: u64) -> Option<usize> {
+        let since = usize::try_from(self.steps.checked_sub(mark)?).ok()?;
+        (since > 0 && since <= self.undo.len()).then(|| self.undo.len() - since)
+    }
+
+    /// Makes everything done since `mark` one undo step: a command made of several edits, or
+    /// the commands an agent ran as one request, is undone as a whole.
+    pub fn squash_since(&mut self, mark: u64) {
+        if let Some(first) = self.at_mark(mark) {
+            self.undo.truncate(first + 1);
+            self.steps = mark + 1;
+        }
+    }
+
+    /// Takes back everything done since `mark`, as if it had not been done (it is not there
+    /// to redo): for a run of commands of which one failed.
+    pub fn roll_back_to(&mut self, mark: u64) {
+        if let Some(first) = self.at_mark(mark)
+            && let Some(before) = self.undo.get(first).cloned()
+        {
+            self.drawing = before;
+            self.undo.truncate(first);
+            self.redo.clear();
+            self.steps = mark;
+            self.revision += 1;
+        }
+    }
+
     pub fn undo(&mut self) -> bool {
         match self.undo.pop() {
             Some(d) => {
                 self.redo.push(std::mem::replace(&mut self.drawing, d));
+                self.steps = self.steps.saturating_sub(1);
                 self.revision += 1;
                 true
             }
@@ -158,6 +200,7 @@ impl DrwSession {
         match self.redo.pop() {
             Some(d) => {
                 self.undo.push(std::mem::replace(&mut self.drawing, d));
+                self.steps += 1;
                 self.revision += 1;
                 true
             }

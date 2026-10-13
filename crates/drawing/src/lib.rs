@@ -15,6 +15,7 @@ pub mod cmd;
 pub mod export;
 pub mod graphics;
 mod model;
+pub mod schemas;
 pub mod session;
 pub mod sheets;
 pub mod stroke;

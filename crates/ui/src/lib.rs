@@ -16,6 +16,7 @@ mod bodies;
 mod browser;
 mod chrome;
 pub mod commands;
+pub mod control;
 mod cube;
 mod dims;
 mod drawing;
@@ -45,6 +46,8 @@ pub use workbench::{Services, Workbench};
 
 #[cfg(test)]
 mod asm_tests;
+#[cfg(test)]
+mod control_tests;
 #[cfg(test)]
 mod drw_tests;
 #[cfg(test)]

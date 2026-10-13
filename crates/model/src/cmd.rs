@@ -18,6 +18,7 @@ use crate::document::{
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
 use crate::regen::{Regen, regenerate};
+use crate::schema::arg;
 use crate::{Document, FeatureId};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -86,6 +87,9 @@ const MAX_FOLLOW: usize = 4;
 pub struct Session {
     doc: Document,
     undo: Vec<Document>,
+    /// How many steps have been put on `undo`, less those taken off: where a group of steps
+    /// began is told by this even when the oldest steps have been dropped.
+    steps: u64,
     redo: Vec<Document>,
     revision: u64,
     saved_revision: u64,
@@ -100,7 +104,7 @@ impl Default for Session {
 
 impl Session {
     pub fn new(doc: Document) -> Self {
-        Session { doc, undo: Vec::new(), redo: Vec::new(), revision: 1, saved_revision: 1, regen: None }
+        Session { doc, undo: Vec::new(), steps: 0, redo: Vec::new(), revision: 1, saved_revision: 1, regen: None }
     }
     pub fn document(&self) -> &Document {
         &self.doc
@@ -129,9 +133,16 @@ impl Session {
         doc.name_values();
         self.doc = doc;
         self.undo.clear();
+        self.steps = 0;
         self.redo.clear();
         self.revision += 1;
         self.saved_revision = self.revision;
+    }
+
+    /// Frees the kernel shapes of the cached regeneration: for a session that is done with
+    /// (one made to run a single command on a copy of a part).
+    pub fn release(&mut self, k: &mut dyn Kernel) {
+        self.release_regen(Some(k));
     }
 
     fn release_regen(&mut self, k: Option<&mut dyn Kernel>) {
@@ -158,6 +169,7 @@ impl Session {
             Ok(v) => {
                 if self.doc != before {
                     self.undo.push(before);
+                    self.steps += 1;
                     if self.undo.len() > MAX_UNDO {
                         self.undo.remove(0);
                     }
@@ -173,10 +185,46 @@ impl Session {
         }
     }
 
+    /// A mark to come back to: everything done after it can be made one undo step
+    /// ([`Self::squash_since`]) or taken back ([`Self::roll_back_to`]).
+    pub fn mark(&self) -> u64 {
+        self.steps
+    }
+
+    /// Where on `undo` the document as it was at `mark` is, if steps were added since.
+    fn at_mark(&self, mark: u64) -> Option<usize> {
+        let since = usize::try_from(self.steps.checked_sub(mark)?).ok()?;
+        (since > 0 && since <= self.undo.len()).then(|| self.undo.len() - since)
+    }
+
+    /// Makes everything done since `mark` one undo step: a command made of several edits, or
+    /// the commands an agent ran as one request, is undone as a whole.
+    pub fn squash_since(&mut self, mark: u64) {
+        if let Some(first) = self.at_mark(mark) {
+            self.undo.truncate(first + 1);
+            self.steps = mark + 1;
+        }
+    }
+
+    /// Takes back everything done since `mark`, as if it had not been done (it is not there
+    /// to redo): for a run of commands of which one failed.
+    pub fn roll_back_to(&mut self, mark: u64) {
+        if let Some(first) = self.at_mark(mark)
+            && let Some(before) = self.undo.get(first).cloned()
+        {
+            self.doc = before;
+            self.undo.truncate(first);
+            self.redo.clear();
+            self.steps = mark;
+            self.revision += 1;
+        }
+    }
+
     pub fn undo(&mut self) -> bool {
         match self.undo.pop() {
             Some(d) => {
                 self.redo.push(std::mem::replace(&mut self.doc, d));
+                self.steps = self.steps.saturating_sub(1);
                 self.revision += 1;
                 true
             }
@@ -188,6 +236,7 @@ impl Session {
         match self.redo.pop() {
             Some(d) => {
                 self.undo.push(std::mem::replace(&mut self.doc, d));
+                self.steps += 1;
                 self.revision += 1;
                 true
             }
@@ -246,20 +295,38 @@ impl Session {
         more
     }
 
-    /// Runs a command. `kernel` is required for geometry commands.
+    /// Runs a command of this crate's registry. `kernel` is required for geometry commands.
     pub fn run(&mut self, spec: &CommandSpec, params: &Value, kernel: Option<&mut dyn Kernel>) -> CmdResult {
+        self.run_as(spec, crate::schemas::schema(spec.id), params, kernel)
+    }
+
+    /// Runs a command whose schema is `schema` (the file commands have theirs in their own
+    /// crate).
+    ///
+    /// In builds with debug assertions, which is every test run, the command is held to its
+    /// schema both ways: what it is given must be declared, and so must what it reads
+    /// ([`crate::schema`]). That is what keeps the published schemas true. In a release build
+    /// nothing is checked here: the app's own calls are trusted, and whoever takes commands
+    /// from outside (scripts, the MCP server) checks them first with [`crate::schema::check`].
+    pub fn run_as(
+        &mut self,
+        spec: &CommandSpec,
+        schema: Option<&'static crate::schema::CommandSchema>,
+        params: &Value,
+        kernel: Option<&mut dyn Kernel>,
+    ) -> CmdResult {
         let params = if params.is_null() { &Value::Object(Default::default()) } else { params };
         if !params.is_object() {
             return Err("parameters must be a JSON object".into());
         }
-        match spec.run {
+        crate::schema::held(spec.id, schema, params, || match spec.run {
             Run::Doc(f) => f(self, params),
             Run::Opt(f) => f(self, kernel, params),
-            Run::Geo(f) => {
-                let k = kernel.ok_or_else(|| CmdError(format!("{} needs the geometry kernel", spec.id)))?;
-                f(self, k, params)
-            }
-        }
+            Run::Geo(f) => match kernel {
+                Some(k) => f(self, k, params),
+                None => Err(CmdError(format!("{} needs the geometry kernel", spec.id))),
+            },
+        })
     }
 
     /// Runs a command of this crate's registry by id.
@@ -278,7 +345,7 @@ fn unreachable_regen() -> &'static Regen {
 // ---- parameter helpers ------------------------------------------------------------------------
 
 fn field<'v>(p: &'v Value, key: &str) -> Result<&'v Value, CmdError> {
-    p.get(key).ok_or_else(|| CmdError(format!("missing parameter `{key}`")))
+    arg(p, key).ok_or_else(|| CmdError(format!("missing parameter `{key}`")))
 }
 
 fn num(p: &Value, key: &str) -> Result<f64, CmdError> {
@@ -287,7 +354,7 @@ fn num(p: &Value, key: &str) -> Result<f64, CmdError> {
 }
 
 fn opt_num(p: &Value, key: &str) -> Result<Option<f64>, CmdError> {
-    if p.get(key).is_none_or(Value::is_null) { Ok(None) } else { num(p, key).map(Some) }
+    if arg(p, key).is_none_or(Value::is_null) { Ok(None) } else { num(p, key).map(Some) }
 }
 
 fn id_u32(p: &Value, key: &str) -> Result<u32, CmdError> {
@@ -295,7 +362,7 @@ fn id_u32(p: &Value, key: &str) -> Result<u32, CmdError> {
 }
 
 fn opt_id(p: &Value, key: &str) -> Result<Option<u32>, CmdError> {
-    if p.get(key).is_none_or(Value::is_null) { Ok(None) } else { id_u32(p, key).map(Some) }
+    if arg(p, key).is_none_or(Value::is_null) { Ok(None) } else { id_u32(p, key).map(Some) }
 }
 
 fn ids(p: &Value, key: &str) -> Result<Vec<EntityId>, CmdError> {
@@ -368,14 +435,14 @@ fn material_json(d: &crate::Document) -> Value {
 }
 
 fn document_material(s: &mut Session, p: &Value) -> CmdResult {
-    let material = match p.get("name") {
+    let material = match arg(p, "name") {
         None | Some(Value::Null) => None,
         Some(Value::String(name)) => {
             // From the library, unless a density is given: then it is a material of one's own,
             // which may start from a library one.
             let listed = crate::materials::find(name);
             let density = opt_num(p, "density")?;
-            let color = match p.get("color") {
+            let color = match arg(p, "color") {
                 None | Some(Value::Null) => None,
                 Some(Value::String(c)) => Some(c.clone()),
                 Some(_) => return Err("`color` must be text like #rrggbb".into()),
@@ -442,7 +509,7 @@ fn table_show(s: &mut Session, _: &Value) -> CmdResult {
 
 fn table_create(s: &mut Session, p: &Value) -> CmdResult {
     let columns: Vec<String> = parse(p, "columns")?;
-    let row = p.get("row").and_then(Value::as_str).unwrap_or("Size 1").to_owned();
+    let row = arg(p, "row").and_then(Value::as_str).unwrap_or("Size 1").to_owned();
     s.edit(|d| d.table_create(&columns, &row).map_err(CmdError))?;
     Ok(table_json(s.document()))
 }
@@ -455,7 +522,7 @@ fn table_delete(s: &mut Session, _: &Value) -> CmdResult {
 fn table_add_row(s: &mut Session, p: &Value) -> CmdResult {
     let name = text(p, "name")?;
     // values: {"column": number, ...}
-    let values: Vec<(String, f64)> = match p.get("values") {
+    let values: Vec<(String, f64)> = match arg(p, "values") {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::Object(o)) => o
             .iter()
@@ -505,13 +572,13 @@ fn table_activate(s: &mut Session, p: &Value) -> CmdResult {
 
 /// `face: <face reference>` or `plane: "xy" | "yz" | "xz"` (default xy).
 fn plane_param(p: &Value) -> Result<PlaneRef, CmdError> {
-    if p.get("work_plane").is_some() {
+    if arg(p, "work_plane").is_some() {
         return Ok(PlaneRef::Work(FeatureId(id_u32(p, "work_plane")?)));
     }
-    if let Some(face) = p.get("face") {
+    if let Some(face) = arg(p, "face") {
         return Ok(PlaneRef::Face(serde_json::from_value::<FaceRef>(face.clone()).map_err(|e| CmdError(format!("`face`: {e}")))?));
     }
-    let name = p.get("plane").and_then(Value::as_str).unwrap_or("xy");
+    let name = arg(p, "plane").and_then(Value::as_str).unwrap_or("xy");
     Ok(PlaneRef::Origin(match name.to_ascii_lowercase().as_str() {
         "xy" => OriginPlane::XY,
         "yz" => OriginPlane::YZ,
@@ -615,7 +682,7 @@ fn check_work_refs(s: &Session, kind: &FeatureKind) -> Result<(), CmdError> {
 }
 
 fn work_plane(s: &mut Session, p: &Value) -> CmdResult {
-    let def = match p.get("by").and_then(Value::as_str).unwrap_or("offset") {
+    let def = match arg(p, "by").and_then(Value::as_str).unwrap_or("offset") {
         "offset" => WorkPlane::Offset { base: plane_value(p, "base")?, distance: num(p, "distance")? },
         "angle" => WorkPlane::Angle { base: plane_value(p, "base")?, axis: axis_param(p, "axis")?, angle: num(p, "angle")? },
         "midplane" => WorkPlane::Midplane { a: plane_value(p, "a")?, b: plane_value(p, "b")? },
@@ -627,7 +694,7 @@ fn work_plane(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn work_axis(s: &mut Session, p: &Value) -> CmdResult {
-    let def = if p.get("a").is_some() {
+    let def = if arg(p, "a").is_some() {
         WorkAxis::Planes { a: plane_value(p, "a")?, b: plane_value(p, "b")? }
     } else {
         WorkAxis::Along { axis: axis_param(p, "axis")? }
@@ -638,7 +705,7 @@ fn work_axis(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn work_point(s: &mut Session, p: &Value) -> CmdResult {
-    let def = if p.get("edge").is_some() {
+    let def = if arg(p, "edge").is_some() {
         WorkPoint::Center { edge: parse(p, "edge")? }
     } else {
         WorkPoint::Intersection { axis: axis_param(p, "axis")?, plane: plane_value(p, "plane")? }
@@ -653,7 +720,7 @@ fn feature_list(p: &Value) -> Result<Vec<FeatureId>, CmdError> {
 }
 
 fn count(p: &Value, key: &str, default: Option<u32>) -> Result<u32, CmdError> {
-    match (p.get(key), default) {
+    match (arg(p, key), default) {
         (None | Some(Value::Null), Some(d)) => Ok(d),
         _ => id_u32(p, key).map_err(|_| CmdError(format!("`{key}` must be a whole number"))),
     }
@@ -667,8 +734,8 @@ fn add_copy(s: &mut Session, kind: FeatureKind, p: &Value) -> CmdResult {
 }
 
 fn model_pattern_rect(s: &mut Session, p: &Value) -> CmdResult {
-    let flag = |k: &str| p.get(k).and_then(Value::as_bool).unwrap_or(false);
-    let dir2 = if p.get("direction2").is_some_and(|v| !v.is_null()) { Some(direction_param(p, "direction2")?) } else { None };
+    let flag = |k: &str| arg(p, k).and_then(Value::as_bool).unwrap_or(false);
+    let dir2 = if arg(p, "direction2").is_some_and(|v| !v.is_null()) { Some(direction_param(p, "direction2")?) } else { None };
     let pat = RectPattern {
         features: feature_list(p)?,
         dir1: direction_param(p, "direction")?,
@@ -690,7 +757,7 @@ fn model_pattern_circular(s: &mut Session, p: &Value) -> CmdResult {
         axis: axis_param(p, "axis")?,
         count: count(p, "count", None)?,
         angle: opt_num(p, "angle")?.unwrap_or(std::f64::consts::TAU),
-        reverse: p.get("reverse").and_then(Value::as_bool).unwrap_or(false),
+        reverse: arg(p, "reverse").and_then(Value::as_bool).unwrap_or(false),
     };
     pat.check().map_err(CmdError)?;
     add_copy(s, FeatureKind::PatternCircular(pat), p)
@@ -714,7 +781,7 @@ fn sketch_create(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
     // The part origin projected into the sketch: a fixed construction point at (0, 0) that
     // geometry can snap and be constrained to.
     let mut sketch = Sketch::new();
-    let origin = if p.get("project_origin").and_then(Value::as_bool).unwrap_or(true) {
+    let origin = if arg(p, "project_origin").and_then(Value::as_bool).unwrap_or(true) {
         let o = sketch.add_point(Vec2::new(0.0, 0.0))?;
         sketch.set_construction(o, true)?;
         sketch.add_constraint(Constraint::Fix { point: o })?;
@@ -724,8 +791,8 @@ fn sketch_create(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
     };
     // A sketch on a face may show the face's edges from the start (DEC-055): looked up by the
     // kernel, or as the caller says they are.
-    let project = p.get("project_edges").and_then(Value::as_bool).unwrap_or(false);
-    let found: Vec<Found> = match (&plane, k, p.get("geometry")) {
+    let project = arg(p, "project_edges").and_then(Value::as_bool).unwrap_or(false);
+    let found: Vec<Found> = match (&plane, k, arg(p, "geometry")) {
         (_, _, Some(_)) => said(p, parse(p, "edges")?)?,
         (PlaneRef::Face(f), Some(k), None) if project => {
             let r = s.regen(k).clone();
@@ -848,10 +915,10 @@ fn sketch_constrain(s: &mut Session, p: &Value) -> CmdResult {
     // A dimension may come with an equation that drives it (`d0 / 2`).
     let eq = param_value(p, "equation")?.filter(|e| e.trim().parse::<f64>().is_err());
     // Where a dimension's value is shown, when it was placed by hand.
-    let at = if p.get("at_x").is_some() || p.get("at_y").is_some() { Some(pos(p, "at_x", "at_y")?) } else { None };
+    let at = if arg(p, "at_x").is_some() || arg(p, "at_y").is_some() { Some(pos(p, "at_x", "at_y")?) } else { None };
     // A driven dimension follows the sketch instead of setting it: asked for (`true`), or taken
     // when a driving one would be one too many (`"auto"`).
-    let (driven, auto) = match p.get("driven") {
+    let (driven, auto) = match arg(p, "driven") {
         None | Some(Value::Null) | Some(Value::Bool(false)) => (false, false),
         Some(Value::Bool(true)) => (true, false),
         Some(Value::String(a)) if a == "auto" => (false, true),
@@ -990,7 +1057,7 @@ fn sketch_delete(s: &mut Session, p: &Value) -> CmdResult {
 
 fn sketch_construction(s: &mut Session, p: &Value) -> CmdResult {
     let e = EntityId(id_u32(p, "entity")?);
-    let on = p.get("on").and_then(Value::as_bool).unwrap_or(true);
+    let on = arg(p, "on").and_then(Value::as_bool).unwrap_or(true);
     on_sketch(s, p, |sk| Ok(sk.set_construction(e, on)?))?;
     Ok(json!({}))
 }
@@ -1026,7 +1093,7 @@ fn entity_ids(list: &[EntityId]) -> Vec<u32> {
 /// Moves, turns or scales sketch geometry, or copies it so (`copy`).
 fn sketch_transform(s: &mut Session, p: &Value, motion: tenon_sketch::Motion) -> CmdResult {
     let list = ids(p, "entities")?;
-    let copy = p.get("copy").and_then(Value::as_bool).unwrap_or(false);
+    let copy = arg(p, "copy").and_then(Value::as_bool).unwrap_or(false);
     let out = on_sketch(s, p, |sk| Ok(sk.transform(&list, motion, copy)?))?;
     Ok(json!({ "entities": entity_ids(&out) }))
 }
@@ -1102,7 +1169,7 @@ fn sketch_slot(s: &mut Session, p: &Value) -> CmdResult {
     let (a, b, width) = (pos(p, "x1", "y1")?, pos(p, "x2", "y2")?, num(p, "width")?);
     // The two points are the centres of the ends, the ends themselves, or the middle and one
     // centre.
-    let (a, b) = match p.get("by").and_then(Value::as_str).unwrap_or("centers") {
+    let (a, b) = match arg(p, "by").and_then(Value::as_str).unwrap_or("centers") {
         "centers" => (a, b),
         "overall" => {
             let (d, len) = ((b - a).normalized(), a.dist(b));
@@ -1241,12 +1308,12 @@ pub fn projected(
 fn sketch_project(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let id = sketch_id(p)?;
     let index = s.document().index_of(id).filter(|_| s.document().sketch(id).is_some()).ok_or_else(|| CmdError(format!("{id} is not a sketch")))?;
-    let mut edges: Vec<EdgeRef> = match (p.get("edge"), p.get("edges")) {
+    let mut edges: Vec<EdgeRef> = match (arg(p, "edge"), arg(p, "edges")) {
         (Some(_), _) => vec![parse(p, "edge")?],
         (None, Some(_)) => parse(p, "edges")?,
         _ => Vec::new(),
     };
-    let face: Option<FaceRef> = if p.get("face").is_some() { Some(parse(p, "face")?) } else { None };
+    let face: Option<FaceRef> = if arg(p, "face").is_some() { Some(parse(p, "face")?) } else { None };
     let flat = flag(p, "flat");
     if edges.is_empty() && face.is_none() {
         return Err("give `edge` or `edges` (from model.edge_ref), or `face`: a face whose edges are all projected".into());
@@ -1254,7 +1321,7 @@ fn sketch_project(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
     // An edge asked for by itself must be had; of a face's edges those that cannot be shown
     // (a curve sketches do not have) are left out, and said.
     let lenient = face.is_some();
-    let found: Vec<Found> = match (k, p.get("geometry")) {
+    let found: Vec<Found> = match (k, arg(p, "geometry")) {
         (_, Some(_)) if face.is_some() => return Err("with `geometry`, name the edges themselves: `face` is for the kernel to look up".into()),
         (_, Some(_)) => said(p, edges)?,
         (Some(k), None) => projected(s.document(), k, id, std::mem::take(&mut edges), face.as_ref(), flat).map_err(CmdError)?,
@@ -1285,7 +1352,7 @@ fn sketch_break_link(s: &mut Session, p: &Value) -> CmdResult {
 
 fn sketch_centerline(s: &mut Session, p: &Value) -> CmdResult {
     let e = EntityId(id_u32(p, "entity")?);
-    let on = p.get("on").and_then(Value::as_bool).unwrap_or(true);
+    let on = arg(p, "on").and_then(Value::as_bool).unwrap_or(true);
     on_sketch(s, p, |sk| Ok(sk.set_centerline(e, on)?))?;
     Ok(json!({}))
 }
@@ -1374,7 +1441,7 @@ fn sketch_info(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn operation(p: &Value) -> Result<Operation, CmdError> {
-    match p.get("operation").and_then(Value::as_str).unwrap_or("join") {
+    match arg(p, "operation").and_then(Value::as_str).unwrap_or("join") {
         "join" => Ok(Operation::Join),
         "cut" => Ok(Operation::Cut),
         "new_body" => Ok(Operation::NewBody),
@@ -1384,7 +1451,7 @@ fn operation(p: &Value) -> Result<Operation, CmdError> {
 }
 
 fn region_sel(p: &Value) -> Result<RegionSel, CmdError> {
-    match p.get("regions") {
+    match arg(p, "regions") {
         None | Some(Value::Null) => Ok(RegionSel::Default),
         Some(_) => Ok(RegionSel::Keys(parse(p, "regions")?)),
     }
@@ -1405,7 +1472,7 @@ fn add_feature(s: &mut Session, kind: FeatureKind, p: &Value) -> CmdResult {
 
 fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
-    let extent = if p.get("through_all").and_then(Value::as_bool).unwrap_or(false) {
+    let extent = if arg(p, "through_all").and_then(Value::as_bool).unwrap_or(false) {
         ExtrudeExtent::ThroughAll
     } else if let Some(d) = opt_num(p, "symmetric")? {
         ExtrudeExtent::Symmetric(d)
@@ -1414,7 +1481,7 @@ fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
     } else {
         ExtrudeExtent::Distance(num(p, "distance")?)
     };
-    let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);
+    let reverse = arg(p, "reverse").and_then(Value::as_bool).unwrap_or(false);
     let extrude =
         Extrude { sketch, regions: region_sel(p)?, extent, reverse, operation: operation(p)?, taper: opt_num(p, "taper")?.filter(|t| *t != 0.0) };
     extrude.check().map_err(CmdError)?;
@@ -1423,7 +1490,7 @@ fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
 
 fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
-    let axis = match p.get("axis") {
+    let axis = match arg(p, "axis") {
         // Without an axis, the sketch's centre line is it.
         None | Some(Value::Null) => {
             let sk = s.document().sketch(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
@@ -1438,7 +1505,7 @@ fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
     };
     let angle = match opt_num(p, "angle")? {
         None => RevolveAngle::Full,
-        Some(a) if p.get("symmetric").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::Symmetric(a),
+        Some(a) if arg(p, "symmetric").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::Symmetric(a),
         Some(a) => RevolveAngle::Angle(a),
     };
     add_feature(s, FeatureKind::Revolve(Revolve { sketch, regions: region_sel(p)?, axis, angle, operation: operation(p)? }), p)
@@ -1469,20 +1536,20 @@ fn model_chamfer(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn model_shell(s: &mut Session, p: &Value) -> CmdResult {
-    let remove: Vec<FaceRef> = if p.get("remove").is_some() { parse(p, "remove")? } else { Vec::new() };
-    let outside = p.get("outside").and_then(Value::as_bool).unwrap_or(false);
+    let remove: Vec<FaceRef> = if arg(p, "remove").is_some() { parse(p, "remove")? } else { Vec::new() };
+    let outside = arg(p, "outside").and_then(Value::as_bool).unwrap_or(false);
     add_feature(s, FeatureKind::Shell(Shell { remove, thickness: num(p, "thickness")?, outside }), p)
 }
 
 fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
     let sk = s.document().sketch(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
-    let points = if p.get("points").is_some() { ids(p, "points")? } else { hole_centres(sk) };
+    let points = if arg(p, "points").is_some() { ids(p, "points")? } else { hole_centres(sk) };
     if let Some(bad) = points.iter().find(|e| sk.point(**e).is_none()) {
         return Err(format!("{} is not a point of {sketch}", bad.0).into());
     }
     let diameter = num(p, "diameter")?;
-    let kind = match p.get("type").and_then(Value::as_str).unwrap_or("simple") {
+    let kind = match arg(p, "type").and_then(Value::as_str).unwrap_or("simple") {
         "simple" => HoleType::Simple,
         "counterbore" => HoleType::Counterbore { diameter: num(p, "counterbore_diameter")?, depth: num(p, "counterbore_depth")? },
         "countersink" => HoleType::Countersink {
@@ -1492,10 +1559,10 @@ fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
         other => return Err(format!("unknown hole type `{other}` (simple, counterbore, countersink)").into()),
     };
     let extent =
-        if p.get("through_all").and_then(Value::as_bool).unwrap_or(false) { HoleExtent::ThroughAll } else { HoleExtent::Distance(num(p, "depth")?) };
+        if arg(p, "through_all").and_then(Value::as_bool).unwrap_or(false) { HoleExtent::ThroughAll } else { HoleExtent::Distance(num(p, "depth")?) };
     let tip_angle =
-        if p.get("flat_bottom").and_then(Value::as_bool).unwrap_or(false) { None } else { Some(opt_num(p, "tip_angle")?.unwrap_or(DRILL_POINT)) };
-    let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);
+        if arg(p, "flat_bottom").and_then(Value::as_bool).unwrap_or(false) { None } else { Some(opt_num(p, "tip_angle")?.unwrap_or(DRILL_POINT)) };
+    let reverse = arg(p, "reverse").and_then(Value::as_bool).unwrap_or(false);
     let hole = Hole { sketch, points, diameter, kind, extent, tip_angle, reverse };
     hole.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::Hole(hole), p)
@@ -1503,7 +1570,7 @@ fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
 
 /// `equations: {field pointer: equation}` for a feature's values.
 fn equations_param(p: &Value) -> Result<Vec<(String, String)>, CmdError> {
-    match p.get("equations") {
+    match arg(p, "equations") {
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(Value::Object(o)) => o
             .iter()
@@ -1567,7 +1634,7 @@ fn feature_add(s: &mut Session, p: &Value) -> CmdResult {
 fn model_rib(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
     let sk = s.document().sketch(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
-    let lines = if p.get("lines").is_some() { ids(p, "lines")? } else { open_lines(sk) };
+    let lines = if arg(p, "lines").is_some() { ids(p, "lines")? } else { open_lines(sk) };
     if let Some(bad) = lines.iter().find(|l| !sk.is_line(**l)) {
         return Err(format!("{} is not a line of {sketch}", bad.0).into());
     }
@@ -1575,7 +1642,7 @@ fn model_rib(s: &mut Session, p: &Value) -> CmdResult {
         Some(d) => RibExtent::Distance(d),
         None => RibExtent::ToNext,
     };
-    let rib = Rib { sketch, lines, thickness: num(p, "thickness")?, extent, flip: p.get("flip").and_then(Value::as_bool).unwrap_or(false) };
+    let rib = Rib { sketch, lines, thickness: num(p, "thickness")?, extent, flip: arg(p, "flip").and_then(Value::as_bool).unwrap_or(false) };
     rib.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::Rib(rib), p)
 }
@@ -1603,7 +1670,7 @@ fn model_sweep(s: &mut Session, p: &Value) -> CmdResult {
     let path_sketch = FeatureId(id_u32(p, "path_sketch")?);
     let sk = s.document().sketch(path_sketch).ok_or_else(|| CmdError(format!("{path_sketch} is not a sketch")))?;
     // By default, every line and arc of the path's sketch that is not construction.
-    let curves = if p.get("path").is_some() {
+    let curves = if arg(p, "path").is_some() {
         ids(p, "path")?
     } else {
         sk.entities()
@@ -1615,7 +1682,7 @@ fn model_sweep(s: &mut Session, p: &Value) -> CmdResult {
         sketch,
         regions: region_sel(p)?,
         path: SketchCurves { sketch: path_sketch, curves },
-        fixed: p.get("fixed").and_then(Value::as_bool).unwrap_or(false),
+        fixed: arg(p, "fixed").and_then(Value::as_bool).unwrap_or(false),
         operation: operation(p)?,
     };
     sweep.check().map_err(CmdError)?;
@@ -1629,7 +1696,7 @@ fn model_coil(s: &mut Session, p: &Value) -> CmdResult {
         axis: axis_ref(s, p)?,
         pitch: num(p, "pitch")?,
         turns: num(p, "turns")?,
-        left: p.get("left").and_then(Value::as_bool).unwrap_or(false),
+        left: arg(p, "left").and_then(Value::as_bool).unwrap_or(false),
         operation: operation(p)?,
     };
     coil.check().map_err(CmdError)?;
@@ -1639,7 +1706,7 @@ fn model_coil(s: &mut Session, p: &Value) -> CmdResult {
 fn model_loft(s: &mut Session, p: &Value) -> CmdResult {
     let loft = Loft {
         sections: ids(p, "sections")?.into_iter().map(|e| FeatureId(e.0)).collect(),
-        ruled: p.get("ruled").and_then(Value::as_bool).unwrap_or(false),
+        ruled: arg(p, "ruled").and_then(Value::as_bool).unwrap_or(false),
         operation: operation(p)?,
     };
     loft.check().map_err(CmdError)?;
@@ -1652,7 +1719,7 @@ fn model_loft(s: &mut Session, p: &Value) -> CmdResult {
 /// A plane that must be named: plane ("xy" | "yz" | "xz"), face (a planar face reference) or
 /// work_plane (a work plane id).
 fn plane_named(s: &Session, p: &Value) -> Result<PlaneRef, CmdError> {
-    if !["plane", "face", "work_plane"].iter().any(|k| p.get(*k).is_some()) {
+    if !["plane", "face", "work_plane"].iter().any(|k| arg(p, k).is_some()) {
         return Err("name the plane: plane (xy, yz or xz), face (a planar face reference) or work_plane (a work plane id)".into());
     }
     let plane = plane_param(p)?;
@@ -1669,20 +1736,20 @@ fn model_draft(s: &mut Session, p: &Value) -> CmdResult {
         faces: parse(p, "faces")?,
         plane: plane_named(s, p)?,
         angle: num(p, "angle")?,
-        reverse: p.get("reverse").and_then(Value::as_bool).unwrap_or(false),
+        reverse: arg(p, "reverse").and_then(Value::as_bool).unwrap_or(false),
     };
     draft.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::Draft(draft), p)
 }
 
 fn model_split(s: &mut Session, p: &Value) -> CmdResult {
-    let keep = match p.get("keep").and_then(Value::as_str).unwrap_or("both") {
+    let keep = match arg(p, "keep").and_then(Value::as_str).unwrap_or("both") {
         "both" => SplitKeep::Both,
         "front" => SplitKeep::Front,
         "back" => SplitKeep::Back,
         other => return Err(format!("unknown keep `{other}` (both, front, back)").into()),
     };
-    let body = if p.get("body").is_some() { Some(parse(p, "body")?) } else { None };
+    let body = if arg(p, "body").is_some() { Some(parse(p, "body")?) } else { None };
     add_feature(s, FeatureKind::Split(Split { plane: plane_named(s, p)?, keep, body }), p)
 }
 
@@ -1691,25 +1758,25 @@ fn model_combine(s: &mut Session, p: &Value) -> CmdResult {
         base: parse(p, "base")?,
         tools: parse(p, "tools")?,
         operation: operation(p)?,
-        keep_tools: p.get("keep_tools").and_then(Value::as_bool).unwrap_or(false),
+        keep_tools: arg(p, "keep_tools").and_then(Value::as_bool).unwrap_or(false),
     };
     combine.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::Combine(combine), p)
 }
 
 fn model_thread(s: &mut Session, p: &Value) -> CmdResult {
-    let length = match p.get("length") {
+    let length = match arg(p, "length") {
         None | Some(Value::Null) => ThreadLength::Full,
         Some(_) => ThreadLength::Distance(num(p, "length")?),
     };
     let thread = Thread {
         face: parse(p, "face")?,
-        pitch: if p.get("pitch").is_some_and(|v| !v.is_null()) { Some(num(p, "pitch")?) } else { None },
-        designation: p.get("designation").and_then(Value::as_str).map(str::to_owned),
+        pitch: if arg(p, "pitch").is_some_and(|v| !v.is_null()) { Some(num(p, "pitch")?) } else { None },
+        designation: arg(p, "designation").and_then(Value::as_str).map(str::to_owned),
         length,
-        reverse: p.get("reverse").and_then(Value::as_bool).unwrap_or(false),
-        left: p.get("left").and_then(Value::as_bool).unwrap_or(false),
-        modelled: p.get("modelled").and_then(Value::as_bool).unwrap_or(false),
+        reverse: arg(p, "reverse").and_then(Value::as_bool).unwrap_or(false),
+        left: arg(p, "left").and_then(Value::as_bool).unwrap_or(false),
+        modelled: arg(p, "modelled").and_then(Value::as_bool).unwrap_or(false),
     };
     thread.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::Thread(thread), p)
@@ -1759,7 +1826,7 @@ fn feature_update(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn param_value(p: &Value, key: &str) -> Result<Option<String>, CmdError> {
-    match p.get(key) {
+    match arg(p, key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(e)) if e.trim().is_empty() => Ok(None),
         Some(Value::String(e)) => Ok(Some(e.clone())),
@@ -1790,7 +1857,7 @@ fn param_list(s: &mut Session, _p: &Value) -> CmdResult {
 }
 
 fn param_unit(p: &Value) -> Result<ParamUnit, CmdError> {
-    match p.get("unit").and_then(Value::as_str).unwrap_or("mm") {
+    match arg(p, "unit").and_then(Value::as_str).unwrap_or("mm") {
         "mm" => Ok(ParamUnit::Mm),
         "deg" => Ok(ParamUnit::Deg),
         "ul" => Ok(ParamUnit::Ul),
@@ -1801,7 +1868,7 @@ fn param_unit(p: &Value) -> Result<ParamUnit, CmdError> {
 fn param_add(s: &mut Session, p: &Value) -> CmdResult {
     let name = field(p, "name")?.as_str().ok_or("`name` must be text")?.trim().to_owned();
     let equation = param_value(p, "equation")?.ok_or("a user parameter needs an equation")?;
-    let comment = p.get("comment").and_then(Value::as_str).unwrap_or("").to_owned();
+    let comment = arg(p, "comment").and_then(Value::as_str).unwrap_or("").to_owned();
     let param = UserParam { name: name.clone(), equation, unit: param_unit(p)?, comment };
     s.edit(|d| d.add_user_parameter(param).map_err(CmdError))?;
     Ok(json!({ "name": name, "value": s.document().parameter_values().get(&name) }))
@@ -1809,9 +1876,9 @@ fn param_add(s: &mut Session, p: &Value) -> CmdResult {
 
 fn param_set(s: &mut Session, p: &Value) -> CmdResult {
     let name = field(p, "name")?.as_str().ok_or("`name` must be text")?.to_owned();
-    let has_equation = p.get("equation").is_some();
+    let has_equation = arg(p, "equation").is_some();
     let equation = param_value(p, "equation")?;
-    let comment = match p.get("comment") {
+    let comment = match arg(p, "comment") {
         None => None,
         Some(Value::String(c)) => Some(c.clone()),
         Some(_) => return Err("`comment` must be text".into()),
@@ -1866,7 +1933,7 @@ fn feature_rename(s: &mut Session, p: &Value) -> CmdResult {
 
 fn feature_suppress(s: &mut Session, p: &Value) -> CmdResult {
     let id = feature_id(p)?;
-    let on = p.get("suppressed").and_then(Value::as_bool).unwrap_or(true);
+    let on = arg(p, "suppressed").and_then(Value::as_bool).unwrap_or(true);
     s.edit(|d| {
         d.feature_mut(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?.suppressed = on;
         Ok(json!({}))
@@ -2023,7 +2090,7 @@ fn entity_param(r: &Regen, k: &dyn Kernel, v: &Value, key: &str) -> Result<crate
 fn model_measure(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let r = s.regen(k).clone();
     let a = entity_param(&r, k, field(p, "a")?, "a")?;
-    let b = match p.get("b") {
+    let b = match arg(p, "b") {
         None | Some(Value::Null) => None,
         Some(v) => Some(entity_param(&r, k, v, "b")?),
     };
@@ -2072,6 +2139,10 @@ fn model_edges(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
 }
 
 /// The broken references of the failing feature, with the nearest replacements (DEC-034).
+/// How near (mm) the nearest replacement for a broken reference must be to where the reference
+/// was for it to be offered as the one meant.
+const CONFIDENT_WITHIN: f64 = 5.0;
+
 fn model_broken(s: &mut Session, k: &mut dyn Kernel, _p: &Value) -> CmdResult {
     let r = s.regen(k).clone();
     let Some((feature, message)) = r.first_error().map(|(f, m)| (f, m.to_owned())) else {
@@ -2081,8 +2152,42 @@ fn model_broken(s: &mut Session, k: &mut dyn Kernel, _p: &Value) -> CmdResult {
     let broken: Vec<Value> = crate::repair::broken(s.document(), &scene, feature)
         .into_iter()
         .map(|b| {
-            let candidates: Vec<Value> = b.candidates.into_iter().map(|c| json!({ "reference": c.reference, "distance": c.distance })).collect();
-            json!({ "path": b.path, "kind": if b.kind == crate::repair::RefKind::Edge { "edge" } else { "face" }, "candidates": candidates })
+            let edge = b.kind == crate::repair::RefKind::Edge;
+            // The nearest is taken for the one meant when nothing else is anywhere near as close:
+            // on its own, or at under a quarter of the next one's distance.
+            let confident = match b.candidates.as_slice() {
+                [only] => only.distance <= CONFIDENT_WITHIN,
+                [first, second, ..] => first.distance <= CONFIDENT_WITHIN && first.distance * 4.0 < second.distance,
+                [] => false,
+            };
+            let candidates: Vec<Value> = b
+                .candidates
+                .into_iter()
+                .map(|c| {
+                    // What it is, for whoever has to choose: said as model.find says it.
+                    let mut said = json!({ "reference": c.reference, "distance": c.distance, "body": c.body });
+                    let body = scene.bodies.get(c.body);
+                    if edge {
+                        said["edge"] = json!(c.index);
+                        if let Some((_, fp)) = body.and_then(|b| b.edges.get(c.index as usize)) {
+                            said["length"] = json!(fp.length);
+                            said["mid"] = json!([fp.mid.x, fp.mid.y, fp.mid.z]);
+                        }
+                        if let Some(curve) = body.and_then(|b| b.curves.get(c.index as usize)) {
+                            said["curve"] = json!(curve);
+                        }
+                    } else {
+                        said["face"] = json!(c.index);
+                        if let Some((_, info)) = body.and_then(|b| b.faces.get(c.index as usize)) {
+                            said["surface"] = json!(info.surface);
+                            said["area"] = json!(info.area);
+                            said["centroid"] = json!([info.centroid.x, info.centroid.y, info.centroid.z]);
+                        }
+                    }
+                    said
+                })
+                .collect();
+            json!({ "path": b.path, "kind": if edge { "edge" } else { "face" }, "candidates": candidates, "confident": confident })
         })
         .collect();
     let name = s.document().feature(feature).map(|f| f.name.clone()).unwrap_or_default();
@@ -2092,8 +2197,8 @@ fn model_broken(s: &mut Session, k: &mut dyn Kernel, _p: &Value) -> CmdResult {
 /// Puts a reference in place of a broken one, as one undoable edit.
 fn model_repair(s: &mut Session, p: &Value) -> CmdResult {
     let id = feature_id(p)?;
-    let path = p.get("path").and_then(Value::as_str).ok_or("missing parameter `path`")?.to_owned();
-    let with = p.get("with").cloned().ok_or("missing parameter `with`: an edge or face reference")?;
+    let path = arg(p, "path").and_then(Value::as_str).ok_or("missing parameter `path`")?.to_owned();
+    let with = arg(p, "with").cloned().ok_or("missing parameter `with`: an edge or face reference")?;
     s.edit(|d| crate::repair::replace(d, id, &path, with).map(|()| json!({})).map_err(CmdError))
 }
 
@@ -2146,7 +2251,7 @@ fn sub_shape_at(r: &Regen, k: &mut dyn Kernel, p: &Value, edges: bool) -> Result
 
 fn model_edge_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let r = s.regen(k).clone();
-    let er = if let Some(faces) = p.get("faces") {
+    let er = if let Some(faces) = arg(p, "faces") {
         // By the names of its two faces; there must be exactly one such edge.
         let [a, b]: [FaceOrigin; 2] = serde_json::from_value(faces.clone()).map_err(|e| CmdError(format!("`faces`: {e}")))?;
         let want = naming::EdgeRef::new(a, b, naming::EdgeFingerprint { mid: tenon_geom::Vec3::ZERO, length: 0.0 }).faces;
@@ -2165,7 +2270,7 @@ fn model_edge_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
             _ => Err("several edges join those two faces; choose one with `body` and `edge`".into()),
         }
     } else {
-        match p.get("at") {
+        match arg(p, "at") {
             Some(v) if !v.is_null() => {
                 let (body, edge) = sub_shape_at(&r, k, p, true)?;
                 r.edge_ref(body, edge, k)
@@ -2179,10 +2284,10 @@ fn model_edge_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
 
 fn model_face_ref(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let r = s.regen(k).clone();
-    let fr = if p.get("origin").is_some() {
+    let fr = if arg(p, "origin").is_some() {
         r.face_ref_by_origin(parse(p, "origin")?, k)
     } else {
-        match p.get("at") {
+        match arg(p, "at") {
             Some(v) if !v.is_null() => {
                 let (body, face) = sub_shape_at(&r, k, p, false)?;
                 r.face_ref(body, face, k)
@@ -2233,16 +2338,16 @@ const SHEET_KEYS: [(&str, &str); 8] = [
 
 fn sheet_defaults(s: &mut Session, p: &Value) -> CmdResult {
     let mut rule = s.document().sheet_metal().cloned().unwrap_or_default();
-    if p.get("relief").is_some_and(|v| !v.is_null()) {
+    if arg(p, "relief").is_some_and(|v| !v.is_null()) {
         rule.relief = parse(p, "relief")?;
     }
-    if p.get("corner").is_some_and(|v| !v.is_null()) {
+    if arg(p, "corner").is_some_and(|v| !v.is_null()) {
         rule.corner = parse(p, "corner")?;
     }
     // Each size: a number (mm; the K factor a plain number) or an equation.
     let mut equations: Vec<(&str, String)> = Vec::new();
     for (key, name) in SHEET_KEYS {
-        match p.get(key) {
+        match arg(p, key) {
             None | Some(Value::Null) => {}
             Some(Value::String(e)) => equations.push((name, e.clone())),
             Some(v) => {
@@ -2264,14 +2369,14 @@ fn sheet_defaults(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn flag(p: &Value, key: &str) -> bool {
-    p.get(key).and_then(Value::as_bool).unwrap_or(false)
+    arg(p, key).and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn sheet_face(s: &mut Session, p: &Value) -> CmdResult {
     if s.document().sheet_metal().is_none() {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
     }
-    let operation = match p.get("operation").and_then(Value::as_str).unwrap_or("join") {
+    let operation = match arg(p, "operation").and_then(Value::as_str).unwrap_or("join") {
         "join" => Operation::Join,
         "new_body" => Operation::NewBody,
         other => return Err(CmdError(format!("unknown operation `{other}` for a sheet metal face (join, new_body)"))),
@@ -2282,7 +2387,7 @@ fn sheet_face(s: &mut Session, p: &Value) -> CmdResult {
 
 /// What a corner has of its own: `seam`, `overlap`, `gap`, `relief` and `relief_size`.
 fn corner_options(p: &Value) -> Result<crate::sheet::CornerOptions, CmdError> {
-    let given = |key: &str| p.get(key).is_some_and(|v| !v.is_null());
+    let given = |key: &str| arg(p, key).is_some_and(|v| !v.is_null());
     let mut c = crate::sheet::CornerOptions::default();
     if given("seam") {
         c.seam = parse(p, "seam")?;
@@ -2303,7 +2408,7 @@ fn sheet_flange(s: &mut Session, p: &Value) -> CmdResult {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
     }
     let width = sheet_width(p)?;
-    let named = |key: &str| p.get(key).filter(|v| !v.is_null());
+    let named = |key: &str| arg(p, key).filter(|v| !v.is_null());
     let flange = Flange {
         edges: edge_refs(p)?,
         angle: opt_num(p, "angle")?.unwrap_or(std::f64::consts::FRAC_PI_2),
@@ -2319,7 +2424,7 @@ fn sheet_flange(s: &mut Session, p: &Value) -> CmdResult {
         flip: flag(p, "flip"),
         radius: opt_num(p, "radius")?,
         width,
-        miter: p.get("miter").and_then(Value::as_bool).unwrap_or(true),
+        miter: arg(p, "miter").and_then(Value::as_bool).unwrap_or(true),
         corner: corner_options(p)?,
     };
     flange.check().map_err(CmdError)?;
@@ -2329,7 +2434,7 @@ fn sheet_flange(s: &mut Session, p: &Value) -> CmdResult {
 /// How much of its edge a flange or a hem takes: `width` (in the middle) or `offsets`.
 fn sheet_width(p: &Value) -> Result<crate::sheet::FlangeWidth, CmdError> {
     use crate::sheet::FlangeWidth;
-    Ok(match (opt_num(p, "width")?, p.get("offsets")) {
+    Ok(match (opt_num(p, "width")?, arg(p, "offsets")) {
         (Some(_), Some(o)) if !o.is_null() => return Err("give `width` (in the middle of the edge) or `offsets`, not both".into()),
         (Some(width), _) => FlangeWidth::Centered { width },
         (None, Some(o)) if !o.is_null() => {
@@ -2352,7 +2457,7 @@ fn sheet_hem(s: &mut Session, p: &Value) -> CmdResult {
     let (gap, length) = (opt_num(p, "gap")?.unwrap_or(sizes.thickness * 0.5), opt_num(p, "length")?.unwrap_or(sizes.thickness * 4.0));
     let radius = opt_num(p, "radius")?.unwrap_or(sizes.bend_radius);
     let turn = |degrees: f64| opt_num(p, "angle").map(|a| a.unwrap_or(degrees.to_radians()));
-    let shape = match p.get("type").and_then(Value::as_str).unwrap_or("single") {
+    let shape = match arg(p, "type").and_then(Value::as_str).unwrap_or("single") {
         "single" => HemShape::Single { gap, length },
         "double" => HemShape::Double { gap, length },
         "rolled" => HemShape::Rolled { radius, angle: turn(270.0)? },
@@ -2371,18 +2476,18 @@ fn sheet_contour_flange(s: &mut Session, p: &Value) -> CmdResult {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
     }
     let sides = |key: &str| -> Result<Sides, CmdError> {
-        match p.get(key) {
+        match arg(p, key) {
             Some(v) if !v.is_null() => parse(p, key),
             _ => Ok(Sides::default()),
         }
     };
-    let operation = match p.get("operation").and_then(Value::as_str).unwrap_or("join") {
+    let operation = match arg(p, "operation").and_then(Value::as_str).unwrap_or("join") {
         "join" => Operation::Join,
         "new_body" => Operation::NewBody,
         other => return Err(CmdError(format!("unknown operation `{other}` for a contour flange (join, new_body)"))),
     };
     // Along edges of the sheet, when any are given: the distance then says nothing.
-    let edges = if p.get("edges").is_some_and(|v| !v.is_null()) { edge_refs(p)? } else { Vec::new() };
+    let edges = if arg(p, "edges").is_some_and(|v| !v.is_null()) { edge_refs(p)? } else { Vec::new() };
     let flange = ContourFlange {
         sketch: sketch_id(p)?,
         distance: if edges.is_empty() { num(p, "distance")? } else { opt_num(p, "distance")?.unwrap_or(0.0) },
@@ -2441,7 +2546,7 @@ fn sheet_bend(s: &mut Session, p: &Value) -> CmdResult {
     }
     let edges: [crate::naming::EdgeRef; 2] =
         edge_refs(p)?.try_into().map_err(|_| CmdError("a bend takes two edges: an edge of each of the two faces it joins".into()))?;
-    let double = match p.get("double") {
+    let double = match arg(p, "double") {
         Some(v) if !v.is_null() => parse(p, "double")?,
         _ => crate::sheet::DoubleBend::default(),
     };
@@ -2463,7 +2568,7 @@ fn sheet_fold(s: &mut Session, p: &Value) -> CmdResult {
     if s.document().sheet_metal().is_none() {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
     }
-    let given = |key: &str| p.get(key).is_some_and(|v| !v.is_null());
+    let given = |key: &str| arg(p, key).is_some_and(|v| !v.is_null());
     let fold = crate::sheet::Fold {
         sketch: sketch_id(p)?,
         line: if given("line") { Some(EntityId(id_u32(p, "line")?)) } else { None },
@@ -2478,7 +2583,7 @@ fn sheet_fold(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn sheet_a_side(s: &mut Session, p: &Value) -> CmdResult {
-    let face: Option<FaceRef> = match p.get("face") {
+    let face: Option<FaceRef> = match arg(p, "face") {
         None | Some(Value::Null) => None,
         Some(_) => Some(parse(p, "face")?),
     };
@@ -2491,7 +2596,7 @@ fn sheet_a_side(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn sheet_flat_pattern(s: &mut Session, p: &Value) -> CmdResult {
-    let on = p.get("on").and_then(Value::as_bool).unwrap_or(true);
+    let on = arg(p, "on").and_then(Value::as_bool).unwrap_or(true);
     s.edit(|d| {
         let rule = d.sheet_metal_mut().ok_or("This is not a sheet metal part yet: set its thickness in Sheet Metal Defaults first.")?;
         rule.flat = on;
@@ -2502,7 +2607,7 @@ fn sheet_flat_pattern(s: &mut Session, p: &Value) -> CmdResult {
 
 /// The flat pattern of the part as it now regenerates.
 pub fn flat_pattern(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> Result<crate::sheet::FlatPattern, CmdError> {
-    let face: Option<FaceRef> = match p.get("face") {
+    let face: Option<FaceRef> = match arg(p, "face") {
         None | Some(Value::Null) => None,
         Some(_) => Some(parse(p, "face")?),
     };
@@ -2549,6 +2654,353 @@ pub fn flat_value(f: &crate::sheet::FlatPattern, curves: bool) -> Value {
 fn sheet_flat(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let f = flat_pattern(s, k, p)?;
     Ok(flat_value(&f, flag(p, "curves")))
+}
+
+// ---- helpers for whoever drives Tenon in words (M10) -------------------------------------------
+
+/// A direction said as people say it: "+z", "-x", "top", "left", "front" ..., or `[x, y, z]`.
+/// Up is +Z, right is +X, and the front of a part is the side seen in the Front view (-Y).
+fn said_direction(v: &Value, key: &str) -> Result<tenon_geom::Vec3, CmdError> {
+    use tenon_geom::Vec3;
+    match v {
+        Value::String(word) => Ok(match word.to_ascii_lowercase().as_str() {
+            "+x" | "x" | "right" => Vec3::X,
+            "-x" | "left" => -Vec3::X,
+            "+y" | "y" | "back" => Vec3::Y,
+            "-y" | "front" => -Vec3::Y,
+            "+z" | "z" | "top" | "up" => Vec3::Z,
+            "-z" | "bottom" | "down" => -Vec3::Z,
+            other => {
+                return Err(
+                    format!("`{key}` is `{other}`: it must be +x, -x, +y, -y, +z, -z, top, bottom, left, right, front, back or [x, y, z]").into()
+                );
+            }
+        }),
+        Value::Array(_) => {
+            let [x, y, z]: [f64; 3] = serde_json::from_value(v.clone()).map_err(|_| CmdError(format!("`{key}` must be three numbers [x, y, z]")))?;
+            let d = Vec3::new(x, y, z);
+            if !(d.is_finite() && d.len() > tol::LINEAR) {
+                return Err(format!("`{key}` has no direction").into());
+            }
+            Ok(d.normalized())
+        }
+        _ => Err(format!("`{key}` must be a direction: a word such as top or -x, or [x, y, z]").into()),
+    }
+}
+
+/// How nearly two directions must agree to count as the same (about 0.003 degrees).
+const SAME_WAY: f64 = 1.0 - 1e-9;
+
+/// Faces or edges of the part by what they are and where, each with a reference to it:
+/// "the top face", "the vertical edges", "the wall of the 6 mm hole", "the largest flat face".
+fn model_find(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
+    let faces = match arg(p, "what").and_then(Value::as_str) {
+        Some("faces") => true,
+        Some("edges") => false,
+        _ => return Err("`what` must be faces or edges".into()),
+    };
+    let only_body = opt_id(p, "body")?.map(|b| b as usize);
+    let kind = arg(p, "kind").and_then(Value::as_str).map(str::to_ascii_lowercase);
+    let way = |key: &str| arg(p, key).filter(|v| !v.is_null()).map(|v| said_direction(v, key)).transpose();
+    let (facing, along) = (way("facing")?, way("along")?);
+    let feature = opt_id(p, "feature")?.map(FeatureId);
+    let hole = arg(p, "hole").and_then(Value::as_bool);
+    let radius = opt_num(p, "radius")?;
+    if !faces && (facing.is_some() || hole.is_some()) {
+        return Err("`facing` and `hole` are said of faces: an edge has a direction (`along`) and a radius".into());
+    }
+    // Of what is found, the one furthest some way, or the largest or smallest.
+    enum Most {
+        Way(tenon_geom::Vec3),
+        Largest,
+        Smallest,
+    }
+    let most = match arg(p, "most").filter(|v| !v.is_null()) {
+        None => None,
+        Some(Value::String(w)) if w.eq_ignore_ascii_case("largest") => Some(Most::Largest),
+        Some(Value::String(w)) if w.eq_ignore_ascii_case("smallest") => Some(Most::Smallest),
+        Some(v) => Some(Most::Way(said_direction(v, "most").map_err(|e| CmdError(format!("{} (or largest, smallest)", e.0)))?)),
+    };
+    let same = |a: f64, b: f64| (a - b).abs() <= 1e-6 * b.abs().max(1.0);
+    let v3 = |v: tenon_geom::Vec3| json!([v.x, v.y, v.z]);
+    let r = s.regen(k).clone();
+    // (A part with a feature that fails is searched as far as it was rebuilt: that is the
+    // part a broken reference is repaired on. The result says that it is not whole.)
+    let failing = r.first_error().map(|(feature, why)| json!({ "feature": feature.0, "message": why }));
+    // (where it is, how large it is, what is said of it)
+    let mut found: Vec<(tenon_geom::Vec3, f64, Value)> = Vec::new();
+    for (bi, b) in r.bodies.iter().enumerate().filter(|(bi, _)| only_body.is_none_or(|only| only == *bi)) {
+        if faces {
+            for (i, name) in b.names.iter().enumerate() {
+                let i = u32::try_from(i).map_err(|_| "too many faces")?;
+                let info = k.face_info(b.shape.face(i)).map_err(|e| CmdError(e.to_string()))?;
+                use tenon_kernel::SurfaceKind as S;
+                let (what, normal, axis, size) = match &info.surface {
+                    S::Plane { normal, .. } => ("plane", Some(*normal), None, None),
+                    S::Cylinder { axis, radius } => ("cylinder", None, Some(axis.dir()), Some(*radius)),
+                    S::Cone { axis, .. } => ("cone", None, Some(axis.dir()), None),
+                    S::Sphere { radius, .. } => ("sphere", None, None, Some(*radius)),
+                    S::Torus { axis, major_radius, .. } => ("torus", None, Some(axis.dir()), Some(*major_radius)),
+                    _ => ("other", None, None, None),
+                };
+                let round = !matches!(what, "plane" | "other");
+                let fits = kind.as_deref().is_none_or(|k| k == what)
+                    && facing.is_none_or(|d| normal.is_some_and(|n| n.dot(d) >= SAME_WAY))
+                    && along.is_none_or(|d| axis.is_some_and(|a| a.dot(d).abs() >= SAME_WAY))
+                    && feature.is_none_or(|f| name.is_some_and(|n| n.feature() == f))
+                    && hole.is_none_or(|h| round && info.reversed == h)
+                    && radius.is_none_or(|want| size.is_some_and(|have| same(have, want)));
+                if !fits {
+                    continue;
+                }
+                let mut said = json!({
+                    "body": bi,
+                    "face": i,
+                    "name": name,
+                    "reference": r.face_ref(bi, i, k).ok(),
+                    "kind": what,
+                    "area": info.area,
+                    "centroid": v3(info.centroid),
+                });
+                if let Some(n) = normal {
+                    said["normal"] = v3(n);
+                }
+                if let Some(a) = axis {
+                    said["axis"] = v3(a);
+                }
+                if let Some(size) = size {
+                    said["radius"] = json!(size);
+                }
+                if round {
+                    said["hole"] = json!(info.reversed);
+                }
+                found.push((info.centroid, info.area, said));
+            }
+        } else {
+            let topo = k.topology(b.shape).map_err(|e| CmdError(e.to_string()))?;
+            for (i, adj) in topo.edge_faces.iter().enumerate() {
+                let i = u32::try_from(i).map_err(|_| "too many edges")?;
+                let info = k.edge_info(b.shape.edge(i)).map_err(|e| CmdError(e.to_string()))?;
+                // (Not the seam of a round face: it is where the kernel closes the face on itself,
+                // with the same face on both sides, and no edge of the part.)
+                let seam = adj.first().is_none_or(|f| adj.iter().all(|other| other == f));
+                if info.degenerate || seam {
+                    continue;
+                }
+                use tenon_kernel::CurveKind as C;
+                let (what, direction, size) = match &info.curve {
+                    C::Line { dir, .. } => ("line", Some(*dir), None),
+                    // (A whole circle comes back to where it starts.)
+                    C::Circle { axis, radius } if info.start.near(info.end, tol::LINEAR) => ("circle", Some(axis.dir()), Some(*radius)),
+                    C::Circle { axis, radius } => ("arc", Some(axis.dir()), Some(*radius)),
+                    _ => ("other", None, None),
+                };
+                let made_by = |f: FeatureId| adj.iter().any(|face| b.names.get(*face as usize).copied().flatten().is_some_and(|n| n.feature() == f));
+                let fits = kind.as_deref().is_none_or(|k| k == what)
+                    && along.is_none_or(|d| direction.is_some_and(|a| a.dot(d).abs() >= SAME_WAY))
+                    && feature.is_none_or(made_by)
+                    && radius.is_none_or(|want| size.is_some_and(|have| same(have, want)));
+                if !fits {
+                    continue;
+                }
+                let mut said = json!({
+                    "body": bi,
+                    "edge": i,
+                    "faces": naming::edge_names(&b.names, adj),
+                    "reference": r.edge_ref(bi, i, k).ok(),
+                    "kind": what,
+                    "length": info.length,
+                    "start": v3(info.start),
+                    "end": v3(info.end),
+                    "mid": v3(info.mid),
+                });
+                match (what, direction) {
+                    ("line", Some(d)) => said["direction"] = v3(d),
+                    (_, Some(a)) => said["axis"] = v3(a),
+                    _ => {}
+                }
+                if let Some(size) = size {
+                    said["radius"] = json!(size);
+                }
+                found.push((info.mid, info.length, said));
+            }
+        }
+    }
+    if let Some(most) = most {
+        let key = |(at, size, _): &(tenon_geom::Vec3, f64, Value)| match &most {
+            Most::Way(d) => at.dot(*d),
+            Most::Largest => *size,
+            Most::Smallest => -*size,
+        };
+        let best = found.iter().map(key).fold(f64::NEG_INFINITY, f64::max);
+        // (Those level with the furthest count as furthest too: the four top edges of a block.)
+        found.retain(|f| key(f) >= best - 1e-6 * best.abs().max(1.0));
+    }
+    let count = found.len();
+    let mut out = json!({ "what": if faces { "faces" } else { "edges" }, "count": count, "found": found.into_iter().map(|(_, _, said)| said).collect::<Vec<_>>() });
+    if let Some(failing) = failing {
+        out["error"] = failing;
+    }
+    Ok(out)
+}
+
+/// Runs several edits as one undo step: all of them, or (when one fails) none.
+fn as_one_step<T>(s: &mut Session, f: impl FnOnce(&mut Session) -> Result<T, CmdError>) -> Result<T, CmdError> {
+    let mark = s.mark();
+    match f(s) {
+        Ok(v) => {
+            s.squash_since(mark);
+            Ok(v)
+        }
+        Err(e) => {
+            s.roll_back_to(mark);
+            Err(e)
+        }
+    }
+}
+
+/// The plane a primitive's sketch goes on, said as for sketch.create.
+fn primitive_plane(p: &Value) -> Value {
+    let mut on = json!({});
+    for key in ["plane", "face", "work_plane"] {
+        if let Some(v) = arg(p, key).filter(|v| !v.is_null()) {
+            on[key] = v.clone();
+        }
+    }
+    on
+}
+
+fn made(v: &Value, key: &str) -> Result<u32, CmdError> {
+    v[key].as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| CmdError(format!("no `{key}` was made")))
+}
+
+/// Holds `point` at (x, y) from the sketch's origin point: on it, or by two dimensions.
+fn hold_at(s: &mut Session, sketch: u32, origin: u32, point: u32, at: Vec2) -> Result<(), CmdError> {
+    if at.len() < tol::LINEAR {
+        sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": "coincident", "a": origin, "b": point } }))?;
+    } else {
+        for (kind, value) in [("horizontal_distance", at.x), ("vertical_distance", at.y)] {
+            sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": kind, "a": origin, "b": point, "value": value } }))?;
+        }
+    }
+    Ok(())
+}
+
+fn positive(p: &Value, key: &str) -> Result<f64, CmdError> {
+    let v = num(p, key)?;
+    if v > tol::LINEAR { Ok(v) } else { Err(format!("`{key}` must be more than 0").into()) }
+}
+
+/// The features a primitive made, as its result.
+fn primitive_made(s: &Session, sketch: u32, feature: &Value) -> CmdResult {
+    let name = |id: u32| s.document().feature(FeatureId(id)).map(|f| f.name.clone()).unwrap_or_default();
+    let id = made(feature, "feature")?;
+    Ok(json!({ "sketch": sketch, "sketch_name": name(sketch), "feature": id, "name": name(id) }))
+}
+
+/// A box: a rectangle drawn and dimensioned on a plane, and pushed out. Two ordinary features,
+/// made in one step.
+fn model_box(s: &mut Session, p: &Value) -> CmdResult {
+    let (width, depth, height) = (positive(p, "width")?, positive(p, "depth")?, positive(p, "height")?);
+    let at = Vec2::new(opt_num(p, "x")?.unwrap_or(0.0), opt_num(p, "y")?.unwrap_or(0.0));
+    let centered = flag(p, "centered");
+    let corner = if centered { at - Vec2::new(width, depth) * 0.5 } else { at };
+    let (on, operation, reverse) = (primitive_plane(p), operation_word(p)?, flag(p, "reverse"));
+    as_one_step(s, |s| {
+        let sk = sketch_create(s, None, &on)?;
+        let (sketch, origin) = (made(&sk, "feature")?, made(&sk, "origin")?);
+        let r = sketch_rectangle(s, &json!({ "sketch": sketch, "x1": corner.x, "y1": corner.y, "x2": corner.x + width, "y2": corner.y + depth }))?;
+        let (lines, corners) = (r["lines"].as_array().cloned().unwrap_or_default(), r["corners"].as_array().cloned().unwrap_or_default());
+        let (Some(bottom), Some(right), Some(first)) = (lines.first(), lines.get(1), corners.first().and_then(Value::as_u64)) else {
+            return Err("the rectangle was not made".into());
+        };
+        sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": "length", "line": bottom, "value": width } }))?;
+        sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": "length", "line": right, "value": depth } }))?;
+        hold_at(s, sketch, origin, first as u32, corner)?;
+        let feature = model_extrude(s, &json!({ "sketch": sketch, "distance": height, "operation": operation, "reverse": reverse }))?;
+        primitive_made(s, sketch, &feature)
+    })
+}
+
+/// A cylinder: a circle drawn and dimensioned on a plane, and pushed out.
+fn model_cylinder(s: &mut Session, p: &Value) -> CmdResult {
+    let (diameter, height) = (positive(p, "diameter")?, positive(p, "height")?);
+    let at = Vec2::new(opt_num(p, "x")?.unwrap_or(0.0), opt_num(p, "y")?.unwrap_or(0.0));
+    let (on, operation, reverse) = (primitive_plane(p), operation_word(p)?, flag(p, "reverse"));
+    as_one_step(s, |s| {
+        let sk = sketch_create(s, None, &on)?;
+        let (sketch, origin) = (made(&sk, "feature")?, made(&sk, "origin")?);
+        let c = sketch_circle(s, &json!({ "sketch": sketch, "cx": at.x, "cy": at.y, "r": diameter / 2.0 }))?;
+        sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": "diameter", "curve": made(&c, "circle")?, "value": diameter } }))?;
+        hold_at(s, sketch, origin, made(&c, "center")?, at)?;
+        let feature = model_extrude(s, &json!({ "sketch": sketch, "distance": height, "operation": operation, "reverse": reverse }))?;
+        primitive_made(s, sketch, &feature)
+    })
+}
+
+/// The operation as the command was given it, once it is known to be one.
+fn operation_word(p: &Value) -> Result<Value, CmdError> {
+    operation(p)?;
+    Ok(arg(p, "operation").filter(|v| !v.is_null()).cloned().unwrap_or_else(|| json!("join")))
+}
+
+/// A circle and the axis it is turned about, drawn and dimensioned: a sphere when the axis
+/// goes through the circle's centre, a torus when it stands `off` from it.
+fn turned_circle(s: &mut Session, p: &Value, section: f64, off: f64) -> CmdResult {
+    let at = Vec2::new(opt_num(p, "x")?.unwrap_or(0.0), opt_num(p, "y")?.unwrap_or(0.0));
+    let (on, operation) = (primitive_plane(p), operation_word(p)?);
+    as_one_step(s, |s| {
+        let sk = sketch_create(s, None, &on)?;
+        let (sketch, origin) = (made(&sk, "feature")?, made(&sk, "origin")?);
+        // The point the solid is about: the sketch's origin, or a point held where it was asked.
+        let about = if at.len() < tol::LINEAR {
+            origin
+        } else {
+            let point = made(&sketch_point(s, &json!({ "sketch": sketch, "x": at.x, "y": at.y }))?, "point")?;
+            hold_at(s, sketch, origin, point, at)?;
+            point
+        };
+        // The axis: an upright construction line with that point in its middle, as long as the
+        // solid is tall.
+        let half = section / 2.0;
+        let axis = sketch_line(s, &json!({ "sketch": sketch, "x1": at.x, "y1": at.y - half, "x2": at.x, "y2": at.y + half }))?;
+        let line = made(&axis, "line")?;
+        sketch_construction(s, &json!({ "sketch": sketch, "entity": line }))?;
+        sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": "vertical", "line": line } }))?;
+        sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": "length", "line": line, "value": section } }))?;
+        sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": "midpoint", "point": about, "line": line } }))?;
+        // The circle: about that point (a sphere), or out to its right at the end of a level
+        // construction line as long as the ring's radius (a torus).
+        let circle = if off > tol::LINEAR {
+            let c = sketch_circle(s, &json!({ "sketch": sketch, "cx": at.x + off, "cy": at.y, "r": half }))?;
+            let out = sketch_line(s, &json!({ "sketch": sketch, "start": about, "end": made(&c, "center")? }))?;
+            let out = made(&out, "line")?;
+            sketch_construction(s, &json!({ "sketch": sketch, "entity": out }))?;
+            sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": "horizontal", "line": out } }))?;
+            sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": "length", "line": out, "value": off } }))?;
+            made(&c, "circle")?
+        } else {
+            made(&sketch_circle(s, &json!({ "sketch": sketch, "center": about, "r": half }))?, "circle")?
+        };
+        sketch_constrain(s, &json!({ "sketch": sketch, "constraint": { "type": "diameter", "curve": circle, "value": section } }))?;
+        let feature = model_revolve(s, &json!({ "sketch": sketch, "axis": line, "operation": operation }))?;
+        primitive_made(s, sketch, &feature)
+    })
+}
+
+/// A sphere: a circle turned about a line through its centre.
+fn model_sphere(s: &mut Session, p: &Value) -> CmdResult {
+    let diameter = positive(p, "diameter")?;
+    turned_circle(s, p, diameter, 0.0)
+}
+
+/// A torus: a circle turned about a line beside it.
+fn model_torus(s: &mut Session, p: &Value) -> CmdResult {
+    let (diameter, section) = (positive(p, "diameter")?, positive(p, "section")?);
+    if section >= diameter {
+        return Err("a torus's `section` (how thick the ring is) must be less than its `diameter` (across the ring, centre to centre)".into());
+    }
+    turned_circle(s, p, section, diameter / 2.0)
 }
 
 macro_rules! doc_cmd {
@@ -3112,6 +3564,40 @@ static COMMANDS: &[CommandSpec] = &[
         "Face Reference",
         "origin: {\"type\": \"cap\", \"feature\": id, \"end\": \"start\" | \"end\"} or {\"type\": \"side\", \"feature\": id, \"curve\": id}; or at: [x, y, z], a point inside the face; or body (default 0) and face (index from model.faces)",
         model_face_ref
+    ),
+    geo_cmd!(
+        "model.find",
+        "Find Geometry",
+        "Faces or edges of the part by what they are and where, each with a reference to it. what: faces | edges; body (default: every body); kind: plane | cylinder | cone | sphere | torus | other (faces), line | circle | arc | other (edges); facing: the way a flat face looks, as +x, -x, +y, -y, +z, -z, top, bottom, left, right, front, back or [x, y, z]; along: the direction of a straight edge, or of the axis of a round face or edge; feature: made by that feature; hole: true for the walls of holes, false for shafts; radius; most: of what is found, only the furthest that way (top, -x, ...), or the largest or smallest. Returns count and found: each with body, its number (face or edge), name, reference (null when it cannot be referred to yet), kind and its measures; and, when a feature fails, error (feature, message): what is found is then of the part as far as it rebuilt",
+        model_find
+    ),
+    doc_cmd!(
+        "model.box",
+        "Box",
+        "A box as two ordinary features: a sketch of a dimensioned rectangle, and its extrusion, made in one undo step. plane: xy | yz | xz (default xy), or face, or work_plane, as sketch.create; x, y: a corner in the sketch (default the origin), or with centered: true its centre; width (along the sketch's x), depth (along its y), height; operation (default join); reverse. Returns sketch, feature and their names",
+        true,
+        model_box
+    ),
+    doc_cmd!(
+        "model.cylinder",
+        "Cylinder",
+        "A cylinder as two ordinary features: a sketch of a dimensioned circle, and its extrusion, made in one undo step. plane, face or work_plane, as sketch.create; x, y: its centre in the sketch (default the origin); diameter; height; operation (default join); reverse. Returns sketch, feature and their names",
+        true,
+        model_cylinder
+    ),
+    doc_cmd!(
+        "model.sphere",
+        "Sphere",
+        "A sphere as two ordinary features: a sketch of a dimensioned circle with a centre line through it, and its revolution, made in one undo step. plane, face or work_plane, as sketch.create; x, y: its centre in the sketch (default the origin); diameter; operation (default join). Returns sketch, feature and their names",
+        true,
+        model_sphere
+    ),
+    doc_cmd!(
+        "model.torus",
+        "Torus",
+        "A torus as two ordinary features: a sketch of a dimensioned circle beside an axis, and its revolution, made in one undo step. plane, face or work_plane, as sketch.create (the ring stands square to it, about the sketch's upright); x, y: its centre in the sketch (default the origin); diameter: across the ring, from the middle of its section to the middle opposite; section: how thick the ring is; operation (default join). Returns sketch, feature and their names",
+        true,
+        model_torus
     ),
 ];
 

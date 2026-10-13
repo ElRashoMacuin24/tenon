@@ -71,7 +71,8 @@ fn the_catalogue_lists_the_standard_parts_and_a_part_is_started_from_one() {
     assert!(err.contains("there is no standard part `widget`") && err.contains("hex-nut-iso-4032"), "{err}");
     let err = e.exec("library.new", &json!({ "part": "washer-iso-7089", "size": "M7" })).unwrap_err();
     assert!(err.contains("Plain Washer does not come in `M7`") && err.contains("M6, M8"), "{err}");
-    assert!(e.exec("library.new", &json!({})).unwrap_err().contains("missing parameter `part`"));
+    // (Said by the command, or before it runs by the check of its parameters.)
+    assert!(e.exec("library.new", &json!({})).unwrap_err().contains("`part`"));
 }
 
 #[test]
@@ -251,8 +252,8 @@ fn the_print_check_reads_a_part_as_a_printer_would() {
     for (bad, what) in [
         (json!({ "min_wall": 0 }), "`min_wall` must be more than 0"),
         (json!({ "overhang": 100 }), "`overhang` must be more than 0 and at most 90"),
-        (json!({ "up": "w" }), "`up` is `w`"),
-        (json!({ "bed": [200, 200] }), "`bed` must be three sizes"),
+        (json!({ "up": "w" }), "`up` "),
+        (json!({ "bed": [200, 200] }), "`bed` must be "),
     ] {
         let err = e.exec("print.check", &bad).unwrap_err();
         assert!(err.contains(what), "{bad}: {err}");

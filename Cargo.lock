@@ -2967,6 +2967,7 @@ dependencies = [
 name = "tenon-cli"
 version = "0.1.0"
 dependencies = [
+ "egui",
  "quick-xml",
  "serde",
  "serde_json",
@@ -2980,6 +2981,7 @@ dependencies = [
  "tenon-model",
  "tenon-render",
  "tenon-sketch",
+ "tenon-ui",
  "zip",
 ]
 

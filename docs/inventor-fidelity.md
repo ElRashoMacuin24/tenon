@@ -52,6 +52,7 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 | A sketch stays visible until a feature uses it; a used sketch can be shared and shown again | partial | unused sketches show (DEC-037); a used sketch cannot be shared with a second feature from the browser yet |
 | A feature previews as it is set up, with a mini-toolbar at the pointer and a Properties panel | done (M2) | |
 | Extrude tapers from its panel | done | DEC-040, `an_extrusion_is_tapered_from_its_advanced_properties` |
+| Primitives (Box, Cylinder, Sphere, Torus): a sketch and its feature made in one go | partial | The commands `model.box`, `model.cylinder`, `model.sphere` and `model.torus` leave what Inventor leaves, a dimensioned sketch and an extrusion or revolution, as one undo step (DEC-084, `a_box_a_cylinder_a_sphere_and_a_torus_are_ordinary_features_made_in_one_step`). Gap: no Primitives panel on the 3D Model tab, and none is drawn by clicks on a plane |
 
 ## What to do next, in order
 

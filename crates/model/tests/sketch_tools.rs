@@ -157,7 +157,7 @@ fn slots_rectangles_and_tangent_arcs_are_profiles() {
     );
     assert!(
         refused(&mut s, &mut k, "sketch.slot", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 5, "y2": 0, "width": 8, "by": "ends" }))
-            .contains("centers, overall or center")
+            .contains("overall")
     );
 
     // A rectangle about its centre and one at an angle.

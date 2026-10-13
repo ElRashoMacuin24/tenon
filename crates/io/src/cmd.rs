@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use serde_json::{Map, Value, json};
 use tenon_kernel::{Kernel, Mesh, MeshTol};
+use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult, CommandSpec, Run, Session};
 
 use crate::meshcheck::Welded;
@@ -14,7 +15,7 @@ pub(crate) fn path(p: &Value) -> Result<PathBuf, CmdError> {
 }
 
 fn path_in(p: &Value, key: &str) -> Result<PathBuf, CmdError> {
-    let s = p.get(key).and_then(Value::as_str).ok_or_else(|| CmdError(format!("missing parameter `{key}`")))?;
+    let s = arg(p, key).and_then(Value::as_str).ok_or_else(|| CmdError(format!("missing parameter `{key}`")))?;
     if s.is_empty() || s.len() > 4096 || s.contains('\0') {
         return Err(format!("invalid path in `{key}`").into());
     }
@@ -38,7 +39,7 @@ fn file_diff(_s: &mut Session, p: &Value) -> CmdResult {
 
 fn file_new(s: &mut Session, p: &Value) -> CmdResult {
     let mut doc = tenon_model::Document::default();
-    if let Some(name) = p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()) {
+    if let Some(name) = arg(p, "name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()) {
         if name.len() > 256 {
             return Err("`name` is too long".into());
         }
@@ -51,7 +52,7 @@ fn file_new(s: &mut Session, p: &Value) -> CmdResult {
 
 /// The standard parts there are: each with its sizes.
 fn library_list(_s: &mut Session, p: &Value) -> CmdResult {
-    let category = p.get("category").and_then(Value::as_str);
+    let category = arg(p, "category").and_then(Value::as_str);
     let parts: Vec<Value> = tenon_model::library::families()
         .iter()
         .filter(|f| category.is_none_or(|c| c.eq_ignore_ascii_case(f.category)))
@@ -81,8 +82,8 @@ pub fn standard_part(id: &str, size: Option<&str>) -> Result<tenon_model::Docume
 /// Starts a part from a standard one: a part like any other, with the standard's sizes in its
 /// design table.
 fn library_new(s: &mut Session, p: &Value) -> CmdResult {
-    let id = p.get("part").and_then(Value::as_str).ok_or("missing parameter `part`: a standard part's id (see library.list)")?;
-    let size = p.get("size").and_then(Value::as_str);
+    let id = arg(p, "part").and_then(Value::as_str).ok_or("missing parameter `part`: a standard part's id (see library.list)")?;
+    let size = arg(p, "size").and_then(Value::as_str);
     let doc = standard_part(id, size)?;
     let (name, active) = (doc.name.clone(), doc.table().map(|t| t.active.clone()));
     s.replace_document(doc, None);
@@ -120,10 +121,10 @@ fn export_step(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
 /// The mesh tolerances a command asks for (`linear`, `angular`), or the usual ones.
 pub(crate) fn mesh_tol(p: &Value) -> MeshTol {
     let mut tol = MeshTol::exact();
-    if let Some(l) = p.get("linear").and_then(Value::as_f64) {
+    if let Some(l) = arg(p, "linear").and_then(Value::as_f64) {
         tol.linear = l;
     }
-    if let Some(a) = p.get("angular").and_then(Value::as_f64) {
+    if let Some(a) = arg(p, "angular").and_then(Value::as_f64) {
         tol.angular = a;
     }
     tol
@@ -173,7 +174,7 @@ pub(crate) fn stl_of(mesh: &Mesh, name: &str, solids: usize, watertight: bool, a
 fn export_stl(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let path = path(p)?;
     let shapes = bodies(s, k)?;
-    let ascii = p.get("ascii").and_then(Value::as_bool).unwrap_or(false);
+    let ascii = arg(p, "ascii").and_then(Value::as_bool).unwrap_or(false);
     let w = stl_data(k, &shapes, &s.document().name, &mesh_tol(p), ascii)?;
     std::fs::write(&path, &w.data).map_err(|e| CmdError(format!("cannot write {}: {e}", path.display())))?;
     Ok(json!({ "path": path.display().to_string(), "triangles": w.triangles, "watertight": w.watertight }))
@@ -222,16 +223,16 @@ fn print_setup(p: &Value) -> Result<print::Setup, CmdError> {
     let mut setup = print::Setup::default();
     // (A value that is not a number is out of range like any other: the check says how.)
     let number = |key: &str, into: &mut f64| {
-        if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
+        if let Some(v) = arg(p, key).filter(|v| !v.is_null()) {
             *into = v.as_f64().unwrap_or(f64::NAN);
         }
     };
     number("min_wall", &mut setup.min_wall);
     number("overhang", &mut setup.overhang);
-    if let Some(up) = p.get("up").and_then(Value::as_str) {
+    if let Some(up) = arg(p, "up").and_then(Value::as_str) {
         setup.up = print::Up::parse(up).ok_or_else(|| CmdError(format!("`up` is `{up}`: it must be x, y, z, -x, -y or -z")))?;
     }
-    setup.bed = match p.get("bed") {
+    setup.bed = match arg(p, "bed") {
         None | Some(Value::Null) => None,
         Some(v) => {
             let b: Vec<f64> = v.as_array().map(|a| a.iter().map(|x| x.as_f64().unwrap_or(f64::NAN)).collect()).unwrap_or_default();
@@ -331,5 +332,5 @@ pub fn all_commands() -> impl Iterator<Item = &'static CommandSpec> {
 /// Runs any command (model or file) by id.
 pub fn run(s: &mut Session, id: &str, params: &Value, kernel: Option<&mut dyn Kernel>) -> CmdResult {
     let spec = find(id).ok_or_else(|| CmdError(format!("unknown command `{id}`")))?;
-    s.run(spec, params, kernel)
+    s.run_as(spec, crate::schemas::schema(id), params, kernel)
 }

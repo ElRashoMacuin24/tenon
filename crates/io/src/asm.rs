@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use tenon_assembly::cmd::{AsmCommand, AsmFn};
 use tenon_assembly::{AsmSession, Assembly, Part, Parts};
 use tenon_kernel::Kernel;
+use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult};
 
 use crate::layout;
@@ -137,7 +138,7 @@ pub fn open(path: &Path) -> Result<(Assembly, Parts), ProjectError> {
 // ---- commands ---------------------------------------------------------------------------------
 
 fn path(p: &Value) -> Result<PathBuf, CmdError> {
-    let s = p.get("path").and_then(Value::as_str).ok_or("missing parameter `path`")?;
+    let s = arg(p, "path").and_then(Value::as_str).ok_or("missing parameter `path`")?;
     if s.is_empty() || s.len() > 4096 || s.contains('\0') {
         return Err("invalid path".into());
     }
@@ -145,7 +146,7 @@ fn path(p: &Value) -> Result<PathBuf, CmdError> {
 }
 
 fn asm_new(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
-    let name = p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).unwrap_or("Assembly1");
+    let name = arg(p, "name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).unwrap_or("Assembly1");
     if name.len() > 256 {
         return Err("`name` is too long".into());
     }
@@ -197,7 +198,7 @@ fn asm_insert(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> 
     if let Some(k) = k.as_deref_mut() {
         s.refresh(k).map_err(CmdError)?;
     }
-    let at = match p.get("at").filter(|v| !v.is_null()) {
+    let at = match arg(p, "at").filter(|v| !v.is_null()) {
         Some(v) => {
             let a = v.as_array().filter(|a| a.len() == 3).ok_or("`at` must be [x, y, z]")?;
             let c = |i: usize| {
@@ -207,9 +208,9 @@ fn asm_insert(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> 
         }
         None => None,
     };
-    let grounded = p.get("grounded").and_then(Value::as_bool);
+    let grounded = arg(p, "grounded").and_then(Value::as_bool);
     // In one size of the part: a row of its design table.
-    let row = match p.get("row") {
+    let row = match arg(p, "row") {
         None | Some(Value::Null) => None,
         Some(Value::String(r)) => Some(r.clone()),
         Some(_) => return Err("`row` must be the name of a row of the part's design table".into()),
@@ -244,14 +245,14 @@ pub fn standard_file(folder: &Path, part: &str) -> PathBuf {
 /// component names the size.
 fn asm_insert_standard(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let folder = path(p)?;
-    let part = p.get("part").and_then(Value::as_str).ok_or("missing parameter `part`: a standard part's id (see library.list)")?;
+    let part = arg(p, "part").and_then(Value::as_str).ok_or("missing parameter `part`: a standard part's id (see library.list)")?;
     let family = tenon_model::library::family(part).ok_or_else(|| {
         CmdError(format!(
             "there is no standard part `{part}`: there are {}",
             tenon_model::library::families().iter().map(|f| f.id).collect::<Vec<_>>().join(", ")
         ))
     })?;
-    let size = match p.get("size").and_then(Value::as_str) {
+    let size = match arg(p, "size").and_then(Value::as_str) {
         Some(size) if family.sizes().iter().any(|x| x == size) => size.to_owned(),
         Some(size) => return Err(CmdError(format!("{} does not come in `{size}`: it comes in {}", family.name, family.sizes().join(", ")))),
         None => return Err(CmdError(format!("missing parameter `size`: {} comes in {}", family.name, family.sizes().join(", ")))),
@@ -265,7 +266,7 @@ fn asm_insert_standard(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value
     }
     let mut place = json!({ "path": file.to_string_lossy(), "row": size });
     for key in ["at", "grounded"] {
-        if let Some(v) = p.get(key) {
+        if let Some(v) = arg(p, key) {
             place[key] = v.clone();
         }
     }
@@ -278,7 +279,7 @@ fn asm_insert_standard(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value
 fn asm_export_step(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let k = k.ok_or("asm.export_step needs the geometry kernel")?;
     let path = path(p)?;
-    let exploded = p.get("exploded").and_then(Value::as_bool).unwrap_or(false);
+    let exploded = arg(p, "exploded").and_then(Value::as_bool).unwrap_or(false);
     let asm = s.assembly().clone();
     let frames = exploded.then(|| tenon_assembly::session::exploded(&asm));
     let data = tenon_assembly::interfere::export_step(k, &asm, &mut s.parts, frames.as_ref()).map_err(CmdError)?;
@@ -362,7 +363,7 @@ fn asm_export_3mf(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> 
     let k = k.ok_or("asm.export_3mf needs the geometry kernel")?;
     let path = path(p)?;
     s.sync_variants();
-    let exploded = p.get("exploded").and_then(Value::as_bool).unwrap_or(false);
+    let exploded = arg(p, "exploded").and_then(Value::as_bool).unwrap_or(false);
     let asm = s.assembly().clone();
     let frames = exploded.then(|| tenon_assembly::session::exploded(&asm));
     let placed = tenon_assembly::interfere::placed_parts(k, &asm, &mut s.parts, frames.as_ref()).map_err(CmdError)?;
@@ -407,11 +408,11 @@ fn asm_export_stl(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> 
     let k = k.ok_or("asm.export_stl needs the geometry kernel")?;
     let path = path(p)?;
     s.sync_variants();
-    let exploded = p.get("exploded").and_then(Value::as_bool).unwrap_or(false);
+    let exploded = arg(p, "exploded").and_then(Value::as_bool).unwrap_or(false);
     let asm = s.assembly().clone();
     let frames = exploded.then(|| tenon_assembly::session::exploded(&asm));
     let placed = tenon_assembly::interfere::placed_parts(k, &asm, &mut s.parts, frames.as_ref()).map_err(CmdError)?;
-    let ascii = p.get("ascii").and_then(Value::as_bool).unwrap_or(false);
+    let ascii = arg(p, "ascii").and_then(Value::as_bool).unwrap_or(false);
     let w = placed_stl(k, &asm.name, &placed, &crate::cmd::mesh_tol(p), ascii).map_err(CmdError)?;
     std::fs::write(&path, &w.data).map_err(|e| CmdError(format!("cannot write {}: {e}", path.display())))?;
     Ok(json!({ "path": path.display().to_string(), "solids": w.objects, "triangles": w.triangles, "watertight": w.watertight }))
@@ -502,7 +503,7 @@ pub fn all_commands() -> impl Iterator<Item = &'static AsmCommand> {
 pub fn run(s: &mut AsmSession, id: &str, params: &Value, kernel: Option<&mut dyn Kernel>) -> CmdResult {
     let spec =
         COMMANDS.iter().find(|c| c.id == id).or_else(|| tenon_assembly::cmd::find(id)).ok_or_else(|| CmdError(format!("unknown command `{id}`")))?;
-    tenon_assembly::cmd::run(s, spec, params, kernel)
+    tenon_assembly::cmd::run_as(s, spec, crate::schemas::schema(id), params, kernel)
 }
 
 #[cfg(test)]
