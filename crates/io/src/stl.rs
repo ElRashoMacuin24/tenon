@@ -104,7 +104,7 @@ mod tests {
         for q in quads {
             indices.extend_from_slice(&[q[0], q[1], q[2], q[0], q[2], q[3]]);
         }
-        Mesh { normals: vec![[0.0; 3]; 8], positions, faces: vec![FaceRange { face: 0, first: 0, count: 36 }], indices, edges: vec![] }
+        Mesh { normals: vec![[0.0; 3]; 8], positions, faces: vec![FaceRange { face: 0, first: 0, count: 36 }], indices, ..Mesh::default() }
     }
 
     #[test]

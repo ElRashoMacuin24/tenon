@@ -2,7 +2,8 @@
 //! budgets (`cargo xtask ci` runs it with `--check`).
 //!
 //! Every row is one thing a user waits for: a part rebuilt from nothing, rebuilt after an
-//! edit, meshed for the screen; a flat pattern; an assembly opened; a drawing's views worked
+//! edit, meshed for the screen; a flat pattern; an assembly opened; what is drawn of a large
+//! assembly and how long it takes to find what is under the pointer; a drawing's views worked
 //! out. Each has a budget, set loosely enough that a slow shared runner passes and tightly
 //! enough that a change which makes something several times slower does not. The numbers and
 //! what they mean are in `docs/performance.md`.
@@ -22,14 +23,13 @@ pub type Make<'a> = &'a dyn Fn() -> Box<dyn Kernel>;
 /// One measurement.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
-    /// What kind of thing was measured: `part`, `flat`, `assembly`, `drawing`, `example`,
-    /// `memory`.
+    /// What kind of thing was measured: `part`, `flat`, `assembly`, `view`, `drawing`, `memory`.
     pub group: &'static str,
     /// The model it was measured on.
     pub model: String,
     pub what: &'static str,
     pub value: f64,
-    /// `ms`, or `MB`.
+    /// `ms`, `MB`, or `k` (thousands, of triangles).
     pub unit: &'static str,
     /// The most it may be before CI fails.
     pub budget: f64,
@@ -240,6 +240,81 @@ fn assembly(rows: &mut Vec<Row>, make: Make, model: &str, file: &Path, budget: f
     Ok(components)
 }
 
+/// A large assembly in the view: its parts made ready with their meshes for drawing from far
+/// away, what is then drawn of it with the whole assembly in sight, and how long it takes to
+/// find the face and the edge under the pointer.
+fn assembly_view(rows: &mut Vec<Row>, make: Make, model: &str, file: &Path, budget: [f64; 5]) -> Result<(), String> {
+    use tenon_render::detail::{Detail, detail};
+    use tenon_render::pick::{pick_edge, pick_face};
+    let mut e = Engine::new(make(), file.parent().unwrap_or(Path::new(".")));
+    e.exec("asm.open", &json!({ "path": file.to_string_lossy() }))?;
+    e.asm.refresh(e.kernel.as_mut())?;
+    // (Each part once, however many components are of it.)
+    let t = Instant::now();
+    e.asm.refresh_shown(e.kernel.as_mut())?;
+    let far = ms(t);
+    // Every body where its component is, in full and (where it has one) from far away.
+    let asm = e.asm.assembly();
+    let mut bodies: Vec<(tenon_kernel::Mesh, Option<tenon_kernel::Mesh>)> = Vec::new();
+    for c in asm.components.iter().filter(|c| c.visible) {
+        let Some(scene) = tenon_assembly::session::scene_of(&e.asm.parts, c) else { continue };
+        for b in &scene.bodies {
+            bodies.push((crate::engine::placed_mesh(&b.mesh, &c.placement), b.far.as_ref().map(|m| crate::engine::placed_mesh(m, &c.placement))));
+        }
+    }
+    let meshes: Vec<&tenon_kernel::Mesh> = bodies.iter().map(|(m, _)| m).collect();
+    let boxes: Vec<tenon_kernel::index::Box3> = meshes.iter().map(|m| m.index().bounds()).collect();
+    let whole = boxes.iter().fold(tenon_kernel::index::Box3::EMPTY, |all, b| all.union(b));
+    let corner = |p: [f32; 3]| tenon_geom::Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+    let mut camera = tenon_render::Camera::default();
+    camera.set_view(tenon_render::StdView::Home);
+    camera.fit(&tenon_geom::Aabb3::new(corner(whole.min), corner(whole.max)));
+    // (The view of a window 1440 by 900: what the ribbon and the browser leave of it.)
+    let (w, h) = (1100.0, 700.0);
+    let (mut full, mut drawn) = (0, 0);
+    for ((mesh, far), bounds) in bodies.iter().zip(&boxes) {
+        full += mesh.triangle_count();
+        drawn += match detail(&camera, w, h, bounds.center(), bounds.radius(), None) {
+            Detail::Hidden => 0,
+            Detail::Far => far.as_ref().unwrap_or(mesh).triangle_count(),
+            Detail::Near => mesh.triangle_count(),
+        };
+    }
+    // The pointer over the middle of each body in turn (150 of them at most), twice: the first
+    // round also makes the indices of the bodies it comes over, as the first movements of the
+    // pointer do.
+    let places: Vec<(f64, f64)> = boxes.iter().take(150).filter_map(|b| camera.project(b.center(), w, h)).map(|(x, y, _)| (x, y)).collect();
+    let mut took = [Vec::new(), Vec::new()];
+    let mut found = [0, 0];
+    for round in 0..2 {
+        for (x, y) in &places {
+            let t = Instant::now();
+            let (o, d) = camera.ray(*x, *y, w, h);
+            let face = pick_face(&meshes, o, d);
+            let at = ms(t);
+            let t = Instant::now();
+            let edge = pick_edge(&meshes, &camera, w, h, *x, *y, 5.0);
+            if round == 1 {
+                took[0].push(at);
+                took[1].push(ms(t));
+                found[0] += usize::from(face.is_some());
+                found[1] += usize::from(edge.is_some());
+            }
+        }
+    }
+    if 2 * found[0] < places.len() || found[1] < 5 {
+        return Err(format!("{model}: the pointer found {} faces and {} edges in {} places", found[0], found[1], places.len()));
+    }
+    let [faces, edges] = took;
+    let row = |what, value, unit, budget| Row { group: "view", model: model.to_owned(), what, value, unit, budget };
+    rows.push(row("mesh its parts again for drawing from far away", far, "ms", budget[0]));
+    rows.push(row("triangles in all its bodies (thousands)", full as f64 / 1000.0, "k", budget[4]));
+    rows.push(row("triangles drawn with all of it in view (thousands)", drawn as f64 / 1000.0, "k", budget[1]));
+    rows.push(row("find the face under the pointer", median(faces), "ms", budget[2]));
+    rows.push(row("find the edge under the pointer", median(edges), "ms", budget[3]));
+    Ok(())
+}
+
 /// A grid of `side` by `side` components, alternately two of the example parts, written to
 /// `dir` beside copies of those parts: an assembly large enough to show what many components
 /// cost.
@@ -296,16 +371,19 @@ pub fn resident_mb() -> Option<f64> {
     }
 }
 
-/// The example parts that are measured, and their budgets.
+/// The example parts that are measured, and their budgets: four times what the slowest of CI's
+/// three platforms took when they were set (a shared runner has slow minutes), and no less
+/// than 100 ms. A change that makes something several times slower fails CI; one that makes
+/// it half as slow again does not, and shows in the table that every run prints.
 const PARTS: [(&str, &str, PartBudget); 8] = [
-    ("m1-bracket", "bracket.tenon", PartBudget { rebuild: 400.0, mesh: 400.0, edit_last: 300.0, edit_middle: 400.0 }),
-    ("m2-enclosure", "enclosure.tenon", PartBudget { rebuild: 1500.0, mesh: 800.0, edit_last: 800.0, edit_middle: 1500.0 }),
-    ("m2-mount", "mount.tenon", PartBudget { rebuild: 800.0, mesh: 600.0, edit_last: 500.0, edit_middle: 800.0 }),
-    ("m6-fittings", "nozzle.tenon", PartBudget { rebuild: 3000.0, mesh: 1500.0, edit_last: 1500.0, edit_middle: 3000.0 }),
-    ("m6-fittings", "bolt.tenon", PartBudget { rebuild: 6000.0, mesh: 3000.0, edit_last: 6000.0, edit_middle: 6000.0 }),
-    ("m6-fittings", "spring.tenon", PartBudget { rebuild: 6000.0, mesh: 6000.0, edit_last: 6000.0, edit_middle: 6000.0 }),
-    ("m7-end-cap", "end-cap.tenon", PartBudget { rebuild: 1500.0, mesh: 800.0, edit_last: 800.0, edit_middle: 1500.0 }),
-    ("m8-tray", "tray.tenon", PartBudget { rebuild: 3000.0, mesh: 1500.0, edit_last: 1500.0, edit_middle: 3000.0 }),
+    ("m1-bracket", "bracket.tenon", PartBudget { rebuild: 100.0, mesh: 100.0, edit_last: 100.0, edit_middle: 100.0 }),
+    ("m2-enclosure", "enclosure.tenon", PartBudget { rebuild: 300.0, mesh: 100.0, edit_last: 100.0, edit_middle: 150.0 }),
+    ("m2-mount", "mount.tenon", PartBudget { rebuild: 250.0, mesh: 100.0, edit_last: 100.0, edit_middle: 200.0 }),
+    ("m6-fittings", "nozzle.tenon", PartBudget { rebuild: 250.0, mesh: 100.0, edit_last: 100.0, edit_middle: 200.0 }),
+    ("m6-fittings", "bolt.tenon", PartBudget { rebuild: 3200.0, mesh: 320.0, edit_last: 3400.0, edit_middle: 3000.0 }),
+    ("m6-fittings", "spring.tenon", PartBudget { rebuild: 100.0, mesh: 1600.0, edit_last: 100.0, edit_middle: 100.0 }),
+    ("m7-end-cap", "end-cap.tenon", PartBudget { rebuild: 100.0, mesh: 100.0, edit_last: 100.0, edit_middle: 100.0 }),
+    ("m8-tray", "tray.tenon", PartBudget { rebuild: 2000.0, mesh: 120.0, edit_last: 100.0, edit_middle: 300.0 }),
 ];
 
 /// Everything, in order. `examples` is the repository's `examples` folder; `work` takes what
@@ -326,7 +404,7 @@ pub fn run(make: Make, examples: &Path, work: &Path) -> Result<Vec<Row>, String>
         make,
         "a plate with 40 holes (42 features)",
         &holes,
-        PartBudget { rebuild: 4000.0, mesh: 2000.0, edit_last: 1000.0, edit_middle: 4000.0 },
+        PartBudget { rebuild: 1100.0, mesh: 480.0, edit_last: 100.0, edit_middle: 700.0 },
     )?;
     let lipped = lipped_tray(make, work)?;
     part(
@@ -334,21 +412,23 @@ pub fn run(make: Make, examples: &Path, work: &Path) -> Result<Vec<Row>, String>
         make,
         "a tray with four mitred lips",
         &lipped,
-        PartBudget { rebuild: 20000.0, mesh: 6000.0, edit_last: 20000.0, edit_middle: 20000.0 },
+        PartBudget { rebuild: 4000.0, mesh: 150.0, edit_last: 3200.0, edit_middle: 4400.0 },
     )?;
 
-    flat(&mut rows, make, "m8-tray/tray.tenon", &open("m8-tray", "tray.tenon")?, 3000.0)?;
-    flat(&mut rows, make, "a tray with four mitred lips", &lipped, 10000.0)?;
+    flat(&mut rows, make, "m8-tray/tray.tenon", &open("m8-tray", "tray.tenon")?, 100.0)?;
+    flat(&mut rows, make, "a tray with four mitred lips", &lipped, 100.0)?;
 
-    assembly(&mut rows, make, "m3-pivot/pivot.tenonasm", &examples.join("m3-pivot").join("pivot.tenonasm"), 3000.0)?;
-    assembly(&mut rows, make, "m6-fittings/fittings.tenonasm", &examples.join("m6-fittings").join("fittings.tenonasm"), 20000.0)?;
+    assembly(&mut rows, make, "m3-pivot/pivot.tenonasm", &examples.join("m3-pivot").join("pivot.tenonasm"), 100.0)?;
+    assembly(&mut rows, make, "m6-fittings/fittings.tenonasm", &examples.join("m6-fittings").join("fittings.tenonasm"), 5000.0)?;
     let grid = grid_assembly(make, examples, &work.join("grid"), 10)?;
-    let n = assembly(&mut rows, make, "a grid of 100 bolts and nozzles", &grid, 20000.0)?;
+    let n = assembly(&mut rows, make, "a grid of 100 bolts and nozzles", &grid, 3400.0)?;
     if n != 100 {
         return Err(format!("the grid assembly has {n} components, not 100"));
     }
 
-    drawing(&mut rows, make, "m4-plate/plate.tenondrw", &examples.join("m4-plate").join("plate.tenondrw"), 10000.0)?;
+    assembly_view(&mut rows, make, "a grid of 100 bolts and nozzles", &grid, [400.0, 250.0, 5.0, 10.0, 700.0])?;
+
+    drawing(&mut rows, make, "m4-plate/plate.tenondrw", &examples.join("m4-plate").join("plate.tenondrw"), 600.0)?;
 
     if let Some(mb) = resident_mb() {
         rows.push(Row {
@@ -357,7 +437,7 @@ pub fn run(make: Make, examples: &Path, work: &Path) -> Result<Vec<Row>, String>
             what: "held at the end of all of the above",
             value: mb,
             unit: "MB",
-            budget: 2000.0,
+            budget: 800.0,
         });
     }
     Ok(rows)
@@ -370,7 +450,9 @@ pub fn report(rows: &[Row]) -> Report {
     let mut text = format!("{:<9} {:<wide$}  {:<long$}  {:>10}  {:>8}\n", "", "model", "what", "measured", "budget");
     for r in rows {
         let mark = if r.over() { "  OVER" } else { "" };
-        text.push_str(&format!("{:<9} {:<wide$}  {:<long$}  {:>7.1} {:<2}  {:>8.0}{mark}\n", r.group, r.model, r.what, r.value, r.unit, r.budget));
+        // (What takes under ten of its unit is given to a hundredth.)
+        let value = if r.value < 10.0 { format!("{:.2}", r.value) } else { format!("{:.1}", r.value) };
+        text.push_str(&format!("{:<9} {:<wide$}  {:<long$}  {value:>7} {:<2}  {:>8.0}{mark}\n", r.group, r.model, r.what, r.unit, r.budget));
     }
     let over = rows.iter().filter(|r| r.over()).count();
     text.push_str(&if over == 0 {

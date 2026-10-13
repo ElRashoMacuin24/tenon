@@ -226,9 +226,41 @@ fn axis_or_z(origin: &sys::V3, dir: &sys::V3) -> Axis {
     Axis::new(vec3(origin), vec3(dir)).unwrap_or(Axis::Z)
 }
 
+/// See [`OcctKernel::counters`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counters {
+    pub faces_summed: u64,
+    pub sums_kept: u64,
+    pub faces_meshed: u64,
+    pub meshes_kept: u64,
+}
+
+impl Counters {
+    /// What was done between `earlier` and this.
+    pub fn since(&self, earlier: &Counters) -> Counters {
+        Counters {
+            faces_summed: self.faces_summed - earlier.faces_summed,
+            sums_kept: self.sums_kept - earlier.sums_kept,
+            faces_meshed: self.faces_meshed - earlier.faces_meshed,
+            meshes_kept: self.meshes_kept - earlier.meshes_kept,
+        }
+    }
+}
+
 impl OcctKernel {
     pub fn new() -> Self {
         OcctKernel { slots: Vec::new(), free: Vec::new(), cancel: CancelToken::new() }
+    }
+
+    /// Work the backend has done and saved since the program started, in every kernel there is:
+    /// how many faces had their share of a solid's volume summed, and how many had it taken
+    /// from what is kept by the face; how many faces a mesh gave triangles, and how many had
+    /// theirs kept. For tests of that keeping, and for docs/performance.md.
+    pub fn counters() -> Counters {
+        let mut v: Vec<u64> = Vec::new();
+        sys::counters(&mut v);
+        let at = |i: usize| v.get(i).copied().unwrap_or(0);
+        Counters { faces_summed: at(0), sums_kept: at(1), faces_meshed: at(2), meshes_kept: at(3) }
     }
 
     /// Version of the linked OpenCASCADE library, e.g. "8.0.1".
@@ -682,7 +714,8 @@ impl Kernel for OcctKernel {
         self.not_cancelled()?;
         check::mesh_tol(mesh_tol)?;
         let mut o = sys::MeshOut::default();
-        sys::tessellate(self.get(shape)?, mesh_tol.linear, mesh_tol.angular, mesh_tol.relaxed, &mut o).map_err(failed("tessellate"))?;
+        sys::tessellate(self.get(shape)?, mesh_tol.linear, mesh_tol.angular, mesh_tol.relaxed, mesh_tol.apart, &mut o)
+            .map_err(failed("tessellate"))?;
         let triples = |v: &[f32]| v.as_chunks::<3>().0.to_vec();
         let faces = o.face_ranges.as_chunks::<3>().0.iter().map(|&[face, first, count]| FaceRange { face, first, count }).collect();
         let edge_points = triples(&o.edge_points);
@@ -699,7 +732,7 @@ impl Kernel for OcctKernel {
                     .unwrap_or_default(),
             })
             .collect();
-        Ok(Mesh { positions: triples(&o.positions), normals: triples(&o.normals), indices: o.indices.to_vec(), faces, edges })
+        Ok(Mesh { positions: triples(&o.positions), normals: triples(&o.normals), indices: o.indices.to_vec(), faces, edges, ..Mesh::default() })
     }
 
     fn mass_properties(&self, shape: ShapeHandle, density: f64) -> KResult<MassProps> {

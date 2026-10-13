@@ -1888,3 +1888,147 @@ On the development machine, in the profile CI builds with (milliseconds, before 
 | m6 fittings assembly: open | 1160 | 553 |
 
 What is left is the kernel's own work: of the tray's 237 ms, booleans are about 140.
+
+## DEC-079 What is under the pointer is found through an index kept with the mesh (2026-10-12)
+
+With an assembly of 400 components (two million triangles) on screen, finding the face under
+the pointer took 84 ms and the edge 695 ms, every frame the pointer moved: every triangle
+was tried against the ray, every edge segment was put on the screen, and each edge that
+came near was then tried against every triangle again to see whether it was hidden. A part
+of half a million triangles on its own cost the same as an assembly of that many.
+
+A mesh now keeps an index of itself (`tenon_kernel::index`, `Mesh::index`): a box around
+it, a tree of boxes over its triangles (halved at the median, eight to a leaf), and a box
+around each edge. It is made when first asked for (the tree and the edge boxes only for a
+mesh the ray or the pointer comes over) and stays with the mesh, so it moves with a body
+from one scene to the next. Faces: a mesh whose box the ray misses is passed over, and in
+the others the tree is walked nearest first. Edges: a mesh, and in it an edge, is passed
+over when the pointer is clear of where the corners of its box are on the screen.
+
+- **The answers are those of trying everything**, to the bit: the nearest hit, and of two at
+  the same distance the earlier body and the earlier triangle; the same edges in the same
+  order. Tested against the old code kept as the reference, over ten thousand rays and
+  pointer positions on a field of bodies, in perspective and not, with bodies behind the eye
+  (`picking_with_the_index_gives_what_trying_everything_gives`,
+  `the_index_finds_what_trying_every_triangle_finds`).
+- **A mesh is plain data that anyone may change**, so the index carries a stamp of the mesh
+  (its sizes, where its buffers are, its first and last point, corner and edge point) and
+  is made again when the mesh no longer matches; a copy of a mesh starts without one. Two
+  meshes are equal whether or not they have one, and it is not written out. The stamp was
+  first a sample of eighty values spread through the mesh; taking it was then most of the
+  cost of a pick in a large assembly, each value a part of memory not otherwise touched,
+  and it is now the few that a mesh moved or added to cannot keep.
+- Not done: one tree over all the bodies. Each body's box is still tried in turn (a fifth
+  of a microsecond a body for a face; for an edge the corners of each box are put on the
+  screen, 2.7 microseconds a body).
+
+On the development machine, pointer over the middle of each component in turn (ms):
+
+| | face, before | face, after | edge, before | edge, after |
+|---|---|---|---|---|
+| 100 components, 0.5 million triangles | 20 | 0.02 | 130 | 0.7 |
+| 400 components, 2.1 million | 84 | 0.05 | 695 | 1.4 |
+| 1024 components, 5.5 million | | 0.17 | | 2.8 |
+
+## DEC-080 Level of detail: far meshes, and nothing drawn that is off the screen (2026-10-12)
+
+**What was there.** Every component of an assembly was sent to the graphics card in full
+and drawn in full every frame, wherever it was: 400 bolts and nozzles were 277 MB on the
+card and 2.1 million triangles a frame, though each was drawn 40 pixels across.
+
+**The far mesh.** The kernel makes a second, coarse mesh of a part: off the surface by at
+most a hundredth of the part's size (the diagonal of its box) and with facets up to 0.8 rad
+apart (`MeshTol::far`), so a round hole has eight sides. It is made *apart*: on a copy of
+the shape's faces and edges that shares their surfaces and has no triangles yet. Meshed on
+the shape itself it would have been the finer triangles handed back (OCCT keeps a face's
+triangles when they already meet the tolerance), and put in their place it would have had
+the display mesh everything again. The bolt with a modelled thread is 2,700 triangles for
+9,056, the nozzle 232 for 1,652. A body gets one only where it at least halves what is
+drawn and the body has 200 triangles or more (`tenon_model::far_meshes`). They are made for
+the parts of an assembly that is shown (the worker's slots other than the part being worked
+on; `AsmSession::refresh_shown`), not for a part on its own, which fills the view, and not
+for assemblies the command line opens to export. Making them for the bolt and the nozzle
+takes 21 ms, where making the two parts ready takes 350.
+
+Considered and not taken: thinning the display mesh in Rust (no kernel, but a worse mesh for
+the same triangles, and silhouettes that wander); and turning off the mesher's check of the
+inside of faces, which gave a coil 450 triangles for 16,618 and lost 61 % of its volume.
+
+**Which is drawn** is chosen for every body every frame, from where the ball round its box
+is on the screen (`tenon_render::detail`):
+
+- off the screen (or behind the eye): not drawn, and not sent to the card;
+- drawn with a radius under 45 pixels: from its far mesh, which is then within a pixel of
+  the fine one. It changes back above 55, so a body near the limit does not flicker as the
+  view moves;
+- otherwise, and always when it has no far mesh, in full.
+
+What is picked is always the full mesh, and a highlight is drawn from the mesh its body is
+drawn from, so the two lie at the same depth.
+
+**On the card.** A body is uploaded when it is first drawn at a level. Bodies drawn before
+and left out now are kept aside, two million vertices of them at most (72 MB), those left
+out longest going first, so that panning and zooming do not send the same bodies again and
+again. Highlights are sent only for the bodies that have any: before, every hover made two
+buffers for every body on the screen.
+
+**Not done, and said in docs/performance.md:** one copy of a part's mesh on the card for all
+its components (each component still has its own, placed, in memory and on the card); and
+drawing many small bodies in one call (each body is two draw calls).
+
+Measured on a discrete graphics card, 1440 by 900, four samples a pixel
+(`large_assembly_on_the_graphics_card`):
+
+| | on the card | sent and first drawn | a frame |
+|---|---|---|---|
+| 400 components in view, before | 277 MB | 127 ms | 0.75 ms |
+| the same, with level of detail | 74 MB | 20 ms | 0.53 ms |
+| 1024 components in view, before | 710 MB | 315 ms | 1.43 ms |
+| the same, with level of detail | 188 MB | 67 ms | 0.70 ms |
+| 1024 components, close in, with level of detail (507 on screen) | 162 MB | 64 ms | 0.69 ms |
+
+On this card the frame was never the limit; what it buys here is memory and the time to
+send. On a card that draws a tenth as fast it is the frame too.
+
+## DEC-081 A frame of a large assembly: only what is in sight, nothing looked for twice (2026-10-12)
+
+An idle frame of 400 components took 1.4 ms of the UI's own work, growing with the assembly
+and in places with its square. Three things, found by timing a frame piece by piece:
+
+- **The browser laid out every row every frame**, and for each component looked through
+  every relationship for those that hold it. It now lists its rows first and lays out only
+  those in sight (`the_browser_of_a_large_assembly_lays_out_only_the_rows_in_sight`); the
+  relationships of each component are found in one pass.
+- **Every body asked for its component every frame**, and `Assembly::component` looked
+  through all of them: a thousand components, a million comparisons a frame. Components are
+  kept in the order of their ids, so it is now found by halving (and looked for the old way
+  if that misses).
+- **Every body looked through every highlight** for its own. Each highlight now goes
+  straight to its body.
+
+An idle frame is now 0.2 ms with 100 components, 0.55 with 400 and 1.3 with 1024: about a
+microsecond a component, against a 16 ms frame.
+
+## DEC-082 Budgets from CI's own numbers, and counters that prove what is kept (2026-10-12)
+
+**Budgets.** The first run of the benchmarks on CI's three platforms gave their numbers
+(they are two to three times slower than the development machine). Each budget is now four
+times what the slowest platform took, and no less than 100 ms: a shared runner has slow
+minutes, and a budget that fails for those teaches people to run CI again. So a change that
+makes something several times slower fails CI; one that makes it half as slow again does
+not, and is seen only by someone reading the table every run prints. The counts (triangles
+drawn of the grid assembly) do not vary and are held more closely. Tighter than this needs
+a machine of our own to compare runs on, which there is not.
+
+**Counters.** That only the faces a feature changed are summed and meshed again was shown
+by the clock alone. The backend now counts faces summed, sums kept, faces meshed and meshes
+kept (`OcctKernel::counters`), and a test in a program of its own holds the counts: a plate
+with ten holes, one more hole cut: 3 faces summed and 14 kept, 3 meshed and 14 kept
+(`after_a_feature_only_what_it_changed_is_summed_and_meshed_again`).
+
+**Boxes.** The profile of meshing showed one more thing done over each time: the exact box
+of a part with faces on free surfaces (4 to 11 ms for the bolt, the spring and the tray
+with lips, changed or not). A shape's box is the box round its faces' boxes, which is how
+the kernel reckons it, so each face's is now kept by the face with its sums. The same boxes
+to the last bit: checked once against the kernel's own over the kernel, model, assembly and
+command line tests, with both worked out and compared in every call.

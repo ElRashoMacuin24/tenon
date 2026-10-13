@@ -6,9 +6,11 @@
 #include "tenon-kernel-occt/src/ffi.rs.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -38,6 +40,7 @@
 #include <gp_Pln.hxx>
 #include <gp_Pnt2d.hxx>
 #include <TopTools_ListOfShape.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -1683,6 +1686,9 @@ struct FaceSums {
   bool has_volume = false;
   gp_Pnt about;
   GProp_GProps volume;
+  // The box round the face, as exact as the kernel makes it (slow for a face of a free surface).
+  bool has_box = false;
+  Bnd_Box box;
 };
 
 struct FaceKey {
@@ -1700,6 +1706,14 @@ struct FaceKeyHash {
 std::mutex g_sums_lock;
 std::unordered_map<FaceKey, FaceSums, FaceKeyHash> g_sums;
 std::size_t g_sums_swept = 0;
+
+// Work done and work saved since the program started, for tests and docs/performance.md:
+// faces whose share of a volume was summed, and was taken from the table; faces a mesh gave
+// triangles, and faces whose triangles it found there and kept.
+std::atomic<std::uint64_t> g_faces_summed{0};
+std::atomic<std::uint64_t> g_faces_sums_kept{0};
+std::atomic<std::uint64_t> g_faces_meshed{0};
+std::atomic<std::uint64_t> g_faces_mesh_kept{0};
 
 // The sums of faces that nothing but this table holds any more are dropped, each time the
 // table has grown to twice what the last sweep left. (Call with the lock held.)
@@ -1931,7 +1945,7 @@ void edge_points(const Shape& s, std::uint32_t index, double deflection, rust::V
   });
 }
 
-void tessellate(const Shape& s, double linear, double angular, bool relaxed, MeshOut& out) {
+void tessellate(const Shape& s, double linear, double angular, bool relaxed, bool apart, MeshOut& out) {
   guarded("tessellate", [&] {
     // Faces are meshed in parallel (OCCT's own thread pool). Edges keep the full tolerance; for
     // the display (`relaxed`) the inside of a freeform face (a sweep, loft or blend) may deviate
@@ -1961,16 +1975,39 @@ void tessellate(const Shape& s, double linear, double angular, bool relaxed, Mes
           BRepTools::Clean(shape);
         }
       }
-    } fresh(s.shape, !relaxed);
-    BRepMesh_IncrementalMesh mesher(s.shape, mp);
+    } fresh(s.shape, !relaxed && !apart);
+    // A mesh apart from the shape's own (a coarser one, for drawing the part from far away)
+    // is made on a copy of the shape's faces and edges, which shares their surfaces and
+    // curves and has no triangles yet. Meshed on the shape itself, a coarser mesh would be
+    // the finer triangles already there, handed back; and a coarser one put in their place
+    // would have the display mesh everything again.
+    std::optional<BRepBuilderAPI_Copy> copy;
+    if (apart) {
+      copy.emplace(s.shape, false, false);
+    }
+    // (The triangles each face has before, to tell afterwards which the mesher kept.)
+    std::vector<const Poly_Triangulation*> before;
+    if (!apart) {
+      for (int fi = 1; fi <= s.faces.Extent(); ++fi) {
+        TopLoc_Location loc;
+        before.push_back(BRep_Tool::Triangulation(TopoDS::Face(s.faces(fi)), loc).get());
+      }
+    }
+    BRepMesh_IncrementalMesh mesher(apart ? copy->Shape() : s.shape, mp);
     if (!mesher.IsDone()) {
       throw std::runtime_error("meshing did not complete");
     }
     for (int fi = 1; fi <= s.faces.Extent(); ++fi) {
-      const TopoDS_Face& face = TopoDS::Face(s.faces(fi));
+      const TopoDS_Face& own = TopoDS::Face(s.faces(fi));
+      const TopoDS_Face face = apart ? TopoDS::Face(copy->ModifiedShape(own).Oriented(own.Orientation())) : own;
       const std::uint32_t first = static_cast<std::uint32_t>(out.indices.size());
       TopLoc_Location loc;
       const occ::handle<Poly_Triangulation>& tri = BRep_Tool::Triangulation(face, loc);
+      if (!apart && before[static_cast<std::size_t>(fi - 1)] != nullptr && before[static_cast<std::size_t>(fi - 1)] == tri.get()) {
+        ++g_faces_mesh_kept;
+      } else {
+        ++g_faces_meshed;
+      }
       if (!tri.IsNull()) {
         if (!tri->HasNormals()) {
           BRepLib_ToolTriangulatedShape::ComputeNormals(face, tri);
@@ -2022,6 +2059,13 @@ void tessellate(const Shape& s, double linear, double angular, bool relaxed, Mes
   });
 }
 
+void counters(rust::Vec<std::uint64_t>& out) {
+  out.push_back(g_faces_summed.load());
+  out.push_back(g_faces_sums_kept.load());
+  out.push_back(g_faces_meshed.load());
+  out.push_back(g_faces_mesh_kept.load());
+}
+
 void mass_properties(const Shape& s, MassOut& out) {
   guarded("mass_properties", [&] {
     const gp_Pnt about = sum_point(s.shape);
@@ -2038,6 +2082,7 @@ void mass_properties(const Shape& s, MassOut& out) {
         }
         FaceSums& sums = g_sums[FaceKey{face}];
         if (!sums.has_volume || sums.about.SquareDistance(about) > 0.0) {
+          ++g_faces_summed;
           // To a precision asked for, face by face: the plain sum is off where a face of a
           // round surface has a rim that curves back on itself (a hole drilled across a shaft:
           // by a millionth of the part; half a circle cut across a bend: by a five hundredth
@@ -2081,6 +2126,8 @@ void mass_properties(const Shape& s, MassOut& out) {
           sums.volume = one;
           sums.about = about;
           sums.has_volume = true;
+        } else {
+          ++g_faces_sums_kept;
         }
         vol.Add(sums.volume);
       }
@@ -2102,7 +2149,31 @@ void mass_properties(const Shape& s, MassOut& out) {
 void bounding_box(const Shape& s, BoxOut& out) {
   guarded("bounding_box", [&] {
     Bnd_Box box;
-    BRepBndLib::AddOptimal(s.shape, box, false, false);
+    // The box of a shape is the box round the boxes of its faces (and of what is in no face:
+    // the edges of a wire, loose points), and that is how the kernel reckons it. Each face's
+    // is kept by the face, like its sums: the exact box of a coil or a thread took 5 to 10 ms
+    // every time the part was shown again, changed or not.
+    {
+      std::lock_guard<std::mutex> hold(g_sums_lock);
+      for (TopExp_Explorer ex(s.shape, TopAbs_FACE); ex.More(); ex.Next()) {
+        const TopoDS_Face& face = TopoDS::Face(ex.Current());
+        FaceSums& sums = g_sums[FaceKey{face}];
+        if (!sums.has_box) {
+          BRepBndLib::AddOptimal(face, sums.box, false, false);
+          sums.has_box = true;
+        }
+        if (!sums.box.IsVoid()) {
+          box.Add(sums.box);
+        }
+      }
+      sweep_sums();
+    }
+    for (TopExp_Explorer ex(s.shape, TopAbs_EDGE, TopAbs_FACE); ex.More(); ex.Next()) {
+      BRepBndLib::AddOptimal(ex.Current(), box, false, false);
+    }
+    for (TopExp_Explorer ex(s.shape, TopAbs_VERTEX, TopAbs_EDGE); ex.More(); ex.Next()) {
+      box.Add(BRep_Tool::Pnt(TopoDS::Vertex(ex.Current())));
+    }
     out.is_void = box.IsVoid();
     if (!out.is_void) {
       double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;

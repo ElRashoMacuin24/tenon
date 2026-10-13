@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod camera;
+pub mod detail;
 pub mod gpu;
 pub mod pick;
 pub mod raster;

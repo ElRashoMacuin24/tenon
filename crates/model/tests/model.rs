@@ -183,9 +183,13 @@ fn worker_regenerates_off_thread_and_reports_the_latest() {
     w.regenerate_slot(5, 1, s.document().clone(), false);
     w.regenerate_slot(6, 1, thick.document().clone(), false);
     let mut volumes = std::collections::BTreeMap::new();
+    // (The parts of an assembly, which are what the other slots hold, come with their meshes
+    // for drawing from far away; the part being worked on, in slot 0 above, did not.)
+    assert!(!scene.far);
     while volumes.len() < 2 {
         match w.recv_timeout(Duration::from_secs(30)) {
             Some(Response::Scene { slot, scene, .. }) => {
+                assert!(scene.far, "slot {slot}");
                 volumes.insert(slot, scene.bodies[0].volume);
             }
             other => panic!("{other:?}"),
@@ -342,4 +346,39 @@ fn documents_round_trip_through_json() {
     let back: Document = serde_json::from_str(&text).unwrap();
     assert_eq!(&back, s.document());
     back.validate().unwrap();
+}
+
+/// Meshes for drawing from far away are made for the bodies they pay for, and only when asked.
+#[test]
+fn far_meshes_are_made_where_they_pay() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    // A plain block: twelve triangles, drawn as it is from any distance.
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 8 }));
+    let regen = s.regen(&mut k).clone();
+    let mut scene = tenon_model::scene(&regen, &mut k, &MeshTol::default()).unwrap();
+    assert!(!scene.far && scene.bodies[0].far.is_none(), "not unless asked");
+    tenon_model::far_meshes(&mut scene, &regen, &mut k);
+    assert!(scene.far);
+    assert!(scene.bodies[0].mesh.triangle_count() < tenon_model::FAR_WORTH && scene.bodies[0].far.is_none());
+
+    // A plate with two holes: hundreds of triangles in full, a few dozen from afar.
+    let mut s = Session::default();
+    bracket(&mut s, &mut k, 8.0);
+    let regen = s.regen(&mut k).clone();
+    assert!(regen.first_error().is_none(), "{:?}", regen.first_error());
+    let mut scene = tenon_model::scene(&regen, &mut k, &MeshTol::default()).unwrap();
+    let shown = scene.bodies[0].mesh.clone();
+    tenon_model::far_meshes(&mut scene, &regen, &mut k);
+    let far = scene.bodies[0].far.as_ref().expect("a far mesh");
+    assert!(far.triangle_count() * 3 < shown.triangle_count(), "{} of {}", far.triangle_count(), shown.triangle_count());
+    assert_eq!((far.faces.len(), far.edges.len()), (shown.faces.len(), shown.edges.len()));
+    // It is the same part, coarser: a closed mesh of all but the same volume (its holes have
+    // eight sides, inside the round ones).
+    let kept = far.signed_volume() / scene.bodies[0].volume;
+    assert!(kept > 1.0 && kept < 1.02, "{kept}");
+    // The display's mesh is as it was, and asking again gives the same.
+    assert_eq!(scene.bodies[0].mesh, shown);
+    assert_eq!(tenon_model::scene(&regen, &mut k, &MeshTol::default()).unwrap().bodies[0].mesh, shown);
 }

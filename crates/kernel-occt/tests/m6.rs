@@ -216,6 +216,44 @@ fn an_exact_mesh_keeps_the_tolerance_inside_freeform_faces() {
     assert_eq!(again.triangle_count(), shown.triangle_count());
 }
 
+/// A mesh for drawing a part from far away is much coarser, has every face still, and leaves
+/// the display's own triangles on the shape as they were.
+#[test]
+fn a_far_mesh_is_coarse_and_leaves_the_displays_triangles_alone() {
+    let mut k = OcctKernel::new();
+    let at = Frame::new(Vec3::new(10.0, 0.0, 0.0), Vec3::Y, Vec3::X).unwrap();
+    let helix = Path3 { curves: vec![Curve3::Helix { frame: Frame::WORLD, radius: 10.0, pitch: 4.0, turns: 2.0, left: false }] };
+    let wire = k.sweep(&circle(at, 1.0), &helix, &solid()).unwrap().shape;
+    let exact = k.mass_properties(wire, 1.0).unwrap().volume;
+    let shown = k.tessellate(wire, &tenon_kernel::MeshTol::default()).unwrap();
+    let b = k.bounding_box(wire).unwrap().unwrap();
+    let size = (b.max - b.min).len();
+    let far = k.tessellate(wire, &tenon_kernel::MeshTol::far(size)).unwrap();
+    assert!(far.triangle_count() * 4 < shown.triangle_count(), "{} of {}", far.triangle_count(), shown.triangle_count());
+    // The same faces and edges, each with something to draw, the right way out.
+    assert_eq!(far.faces.len(), shown.faces.len());
+    assert_eq!(far.edges.len(), shown.edges.len());
+    assert!(far.faces.iter().all(|f| f.count >= 3));
+    assert!(far.faces.iter().zip(&shown.faces).all(|(a, b)| a.face == b.face));
+    assert!(far.edges.iter().zip(&shown.edges).all(|(a, b)| a.edge == b.edge && a.points.len() >= 2 && a.points.len() <= b.points.len()));
+    let kept = far.signed_volume() / exact;
+    assert!(kept > 0.5 && kept < 1.0, "{kept}");
+    // No further from the surface than a hundredth of the size: every corner is on the wire,
+    // which is 1 from the helix's centre line, itself 10 from the axis.
+    for p in &far.positions {
+        let (r, z) = (f64::from(p[0]).hypot(f64::from(p[1])), f64::from(p[2]));
+        assert!((9.0 - 1e-3..=11.0 + 1e-3).contains(&r) && (-1.0 - 1e-3..=9.0 + 1e-3).contains(&z), "{p:?}");
+    }
+    // The display's mesh is what it was: the same triangles, not the far ones and not new ones.
+    let again = k.tessellate(wire, &tenon_kernel::MeshTol::default()).unwrap();
+    assert_eq!(again, shown);
+    // And a far mesh asked for first does not stand in for the display's.
+    let other = k.sweep(&circle(at, 1.0), &helix, &solid()).unwrap().shape;
+    let far_first = k.tessellate(other, &tenon_kernel::MeshTol::far(size)).unwrap();
+    assert_eq!(far_first.triangle_count(), far.triangle_count());
+    assert_eq!(k.tessellate(other, &tenon_kernel::MeshTol::default()).unwrap().triangle_count(), shown.triangle_count());
+}
+
 /// Threads need to know a shaft from a hole: a round face says which side its material is on.
 #[test]
 fn a_round_face_says_whether_it_is_a_shaft_or_a_hole() {

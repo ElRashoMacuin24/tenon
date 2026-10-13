@@ -18,7 +18,7 @@ use tenon_kernel::{CancelToken, Kernel, MeshTol, ShapeHandle};
 
 use crate::Document;
 use crate::measure::{Entity, Measurement, measure};
-use crate::regen::{Regen, RegenCache, Scene, regenerate, regenerate_with, scene};
+use crate::regen::{Regen, RegenCache, Scene, far_meshes, regenerate, regenerate_with, scene};
 
 /// Work a job does with the kernel and the slots' last results (by slot).
 pub type Job = Box<dyn FnOnce(&mut dyn Kernel, &BTreeMap<u64, Regen>) -> Box<dyn Any + Send> + Send>;
@@ -223,7 +223,14 @@ impl Worker {
             r.release(k);
             return false;
         }
-        let result = scene(&regen, k, tol);
+        // Slot 0 is the part being worked on, which fills the view; the others are the parts
+        // of an assembly, most of them drawn small.
+        let result = scene(&regen, k, tol).map(|mut s| {
+            if slot != 0 {
+                far_meshes(&mut s, &regen, k);
+            }
+            s
+        });
         slots.current.insert(slot, regen);
         match result {
             Ok(s) => send(Response::Scene { slot, revision, scene: Box::new(s) }),

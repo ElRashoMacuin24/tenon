@@ -1,7 +1,14 @@
 //! Picking faces (ray against mesh triangles) and edges (screen distance to edge polylines).
+//!
+//! Neither looks at all of every mesh: each mesh keeps a box around itself, a tree of boxes
+//! over its triangles and a box around each edge ([`Mesh::index`]), and what the ray or the
+//! pointer is clear of is passed over. The answers are those of trying everything.
+
+use std::sync::Arc;
 
 use tenon_geom::Vec3;
 use tenon_kernel::Mesh;
+use tenon_kernel::index::{Box3, MeshIndex};
 
 use crate::Camera;
 
@@ -29,46 +36,22 @@ fn v3(p: [f32; 3]) -> Vec3 {
     Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))
 }
 
-/// Moller-Trumbore ray/triangle intersection; distance along the ray.
-fn ray_triangle(o: Vec3, d: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f64> {
-    let (e1, e2) = (b - a, c - a);
-    let p = d.cross(e2);
-    let det = e1.dot(p);
-    if det.abs() < 1e-14 {
-        return None;
-    }
-    let inv = 1.0 / det;
-    let s = o - a;
-    let u = s.dot(p) * inv;
-    if !(0.0..=1.0).contains(&u) {
-        return None;
-    }
-    let q = s.cross(e1);
-    let v = d.dot(q) * inv;
-    if v < 0.0 || u + v > 1.0 {
-        return None;
-    }
-    let t = e2.dot(q) * inv;
-    (t > 0.0).then_some(t)
+/// Nearest face hit by the ray `(o, d)` (unit direction) among `meshes`. Of two hit at the
+/// same distance, the one in the earlier mesh, and in it the earlier triangle.
+pub fn pick_face(meshes: &[&Mesh], o: Vec3, d: Vec3) -> Option<FaceHit> {
+    let indices: Vec<Arc<MeshIndex>> = meshes.iter().map(|m| m.index()).collect();
+    face_along(meshes, &indices, o, d)
 }
 
-/// Nearest face hit by the ray `(o, d)` (unit direction) among `meshes`.
-pub fn pick_face(meshes: &[&Mesh], o: Vec3, d: Vec3) -> Option<FaceHit> {
+fn face_along(meshes: &[&Mesh], indices: &[Arc<MeshIndex>], o: Vec3, d: Vec3) -> Option<FaceHit> {
     let mut best: Option<FaceHit> = None;
-    for (bi, m) in meshes.iter().enumerate() {
-        for range in &m.faces {
-            let tris = m.indices.get(range.first as usize..(range.first as usize).saturating_add(range.count as usize)).unwrap_or(&[]);
-            for t in tris.as_chunks::<3>().0 {
-                let (Some(a), Some(b), Some(c)) = (m.positions.get(t[0] as usize), m.positions.get(t[1] as usize), m.positions.get(t[2] as usize))
-                else {
-                    continue;
-                };
-                if let Some(dist) = ray_triangle(o, d, v3(*a), v3(*b), v3(*c))
-                    && best.is_none_or(|h| dist < h.t)
-                {
-                    best = Some(FaceHit { body: bi, face: range.face, point: o + d * dist, t: dist });
-                }
-            }
+    for (bi, (m, index)) in meshes.iter().zip(indices).enumerate() {
+        let within = best.map_or(f64::INFINITY, |h| h.t);
+        if let Some((triangle, dist)) = index.ray(m, o, d, within)
+            && best.is_none_or(|h| dist < h.t)
+            && let Some(face) = m.face_of_triangle(triangle)
+        {
+            best = Some(FaceHit { body: bi, face, point: o + d * dist, t: dist });
         }
     }
     best
@@ -95,10 +78,33 @@ fn nearest_on_segment(o: Vec3, d: Vec3, a: Vec3, b: Vec3) -> Vec3 {
 /// Nearest edge within `radius` pixels of `(x, y)` that is not hidden behind a face.
 pub fn pick_edge(meshes: &[&Mesh], camera: &Camera, w: f64, h: f64, x: f64, y: f64, radius: f64) -> Option<EdgeHit> {
     let (o, d) = camera.ray(x, y, w, h);
+    let indices: Vec<Arc<MeshIndex>> = meshes.iter().map(|m| m.index()).collect();
+    // Whether anything in a box can be within reach of the pointer: not when the pointer is
+    // clear of where the corners of the box are on the screen. (A box that is partly behind
+    // the eye is not ruled out.)
+    let reach = radius + 1.0;
+    let near_box = |b: &Box3| {
+        if b.is_empty() {
+            return false;
+        }
+        let (mut low, mut high) = ((f64::INFINITY, f64::INFINITY), (f64::NEG_INFINITY, f64::NEG_INFINITY));
+        for corner in b.corners() {
+            let Some((px, py, _)) = camera.project(corner, w, h) else { return true };
+            low = (low.0.min(px), low.1.min(py));
+            high = (high.0.max(px), high.1.max(py));
+        }
+        x >= low.0 - reach && x <= high.0 + reach && y >= low.1 - reach && y <= high.1 + reach
+    };
     // Every segment near the pointer (cheap: projection only), nearest first.
     let mut near: Vec<EdgeHit> = Vec::new();
-    for (bi, m) in meshes.iter().enumerate() {
-        for e in &m.edges {
+    for (bi, (m, index)) in meshes.iter().zip(&indices).enumerate() {
+        if !near_box(&index.bounds()) {
+            continue;
+        }
+        for (e, bounds) in m.edges.iter().zip(index.edge_bounds(m)) {
+            if e.points.len() > 4 && !near_box(bounds) {
+                continue;
+            }
             for seg in e.points.windows(2) {
                 let (pa, pb) = (v3(seg[0]), v3(seg[1]));
                 let (Some(a), Some(b)) = (camera.project(pa, w, h), camera.project(pb, w, h)) else { continue };
@@ -112,13 +118,12 @@ pub fn pick_edge(meshes: &[&Mesh], camera: &Camera, w: f64, h: f64, x: f64, y: f
         }
     }
     near.sort_by(|a, b| a.pixels.total_cmp(&b.pixels));
-    // The nearest one not hidden by a face clearly in front of it along its own ray. Each test
-    // casts a ray through the whole mesh, so only as many as needed are tested.
+    // The nearest one not hidden by a face clearly in front of it along its own ray.
     let slack = 1e-3 * camera.distance.max(1.0);
     near.into_iter().find(|hit| match camera.project(hit.point, w, h) {
         Some((px, py, _)) => {
             let (o2, d2) = camera.ray(px, py, w, h);
-            !pick_face(meshes, o2, d2).is_some_and(|f| f.t + slack < (hit.point - o2).dot(d2))
+            !face_along(meshes, &indices, o2, d2).is_some_and(|f| f.t + slack < (hit.point - o2).dot(d2))
         }
         None => true,
     })

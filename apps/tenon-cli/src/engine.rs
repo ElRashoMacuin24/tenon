@@ -220,6 +220,7 @@ pub fn placed_mesh(m: &Mesh, f: &tenon_geom::Frame) -> Mesh {
             .iter()
             .map(|e| tenon_kernel::EdgePolyline { edge: e.edge, points: e.points.iter().map(|v| out(f.to_world(p(v)))).collect() })
             .collect(),
+        ..Mesh::default()
     }
 }
 

@@ -97,11 +97,18 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
 - **Work geometry.** Work planes, axes and points are computed in history order into
   `Regen::work`; sketches, mirrors, patterns and revolves look them up there.
 - **End of Part.** Features at and below the marker get `RolledBack` and are not computed.
-- **Checkpoints.** `RegenCache` keeps the state just before the first feature the last edit
-  changed: second handles to its shapes (`Kernel::duplicate`, no geometry copied). The next run
-  starts there if the prefix hash of the history before it is unchanged. A prefix hash covers each
-  feature's definition, whether it is rolled back and whether a pattern copies it. Editing the
-  last of 42 features takes 9.3 ms instead of 166 ms (release build, `regeneration_speed`). Rebuild All starts from scratch.
+- **Checkpoints.** `RegenCache` keeps the part as it stood before each feature (in a history
+  longer than 128, before every few): second handles to its shapes (`Kernel::duplicate`, no
+  geometry copied). The next run starts from the furthest checkpoint whose prefix hash of the
+  history before it is unchanged. A prefix hash covers each feature's definition, whether it
+  is rolled back and whether a pattern copies it. An edit half way up the sheet metal tray's
+  history rebuilds in 40 ms instead of 228 (docs/performance.md). Rebuild All starts from
+  scratch.
+- **What the kernel keeps.** The OCCT backend keeps, by the face, what each face adds to a
+  solid's volume, its area, its exact box and (OCCT's own doing) its triangles, so after a
+  feature only the faces it made or changed are summed, boxed and meshed (DEC-078, DEC-082;
+  `OcctKernel::counters` counts both, for the test that holds it). Nothing of this is in the
+  `Kernel` trait: another backend may do it otherwise or not at all.
 - **Measuring** needs the exact B-rep, so it runs where the kernel is: the worker answers
   `Measure` requests on the part it last regenerated (`tenon_model::measure`).
 
@@ -175,7 +182,10 @@ drawing's views) run on the worker against the slots' latest solids.
 
 In an assembly, the viewport shows one `Scene` holding every visible component's bodies moved to
 where the component is, so picking and highlighting work unchanged. The GPU uploads bodies by key,
-so dragging one component re-sends only its triangles (`tenon_model::worker`). STEP export and
+so dragging one component re-sends only its triangles. The parts of a shown assembly come with
+a second, coarse mesh (`BodyView::far`, `MeshTol::far`), and every frame each body is drawn in
+full, from its far mesh, or not at all, by where it is on the screen
+(`tenon_render::detail`, DEC-080); bodies left out stay on the card for a while. STEP export and
 measuring also run on the worker. In a drawing, the central panel is the sheet; its views are
 computed by one worker job at a time, and the sheet keeps showing the last ones meanwhile. Tests
 and tools can run the same workbench synchronously with a kernel on the calling thread
@@ -183,8 +193,10 @@ and tools can run the same workbench synchronously with a kernel on the calling 
 
 The viewport renders through wgpu into an offscreen MSAA texture that egui shows as an image. It
 falls back to the software rasteriser when the app has no wgpu render state. Picking casts rays
-against the same meshes the viewport shows. Face names come with the `Scene`, so selecting a
-face yields a persistent `FaceRef` without asking the kernel.
+against the full meshes of what the viewport shows, through an index each mesh keeps of itself
+(a box, a tree of boxes over its triangles, a box round each edge: `tenon_kernel::index`,
+DEC-079), so a pick costs what is under the pointer and not the whole scene. Face names come
+with the `Scene`, so selecting a face yields a persistent `FaceRef` without asking the kernel.
 
 ## Tolerances
 

@@ -9,9 +9,12 @@ tools and find the free ones rough. It wins on reliability, coherence and speed,
 count: when two tasks compete, the one that makes existing features more dependable and pleasant
 goes first.
 
-Current milestone: **M9 performance**, started 2026-10-12 (DEC-077): benchmarks on the example
-models with budgets that CI holds (`tenon-cli bench`, a step of `cargo xtask ci`), and the first
-changes they pointed to (DEC-078). Not finished: see the M9 section below.
+Current milestone: **M9 performance**, started 2026-10-12 (DEC-077) and complete the same day,
+awaiting the owner's confirmation before M10: benchmarks on the example models with budgets
+that CI holds (`tenon-cli bench`, a step of `cargo xtask ci`); the kernel asked only for what
+a feature changed (DEC-078); what is under the pointer found through an index (DEC-079);
+level of detail for large assemblies (DEC-080); and the numbers, with where OCCT is the limit,
+in [docs/performance.md](docs/performance.md).
 
 M8 sheet metal basics was started 2026-10-11 and reported to the owner the
 same day. The owner asked for the gap with Inventor's sheet metal to be closed before going
@@ -153,7 +156,7 @@ events, the way the windowing layer does.
 | MCP server (stdio): run command, tree, topology, measure, render PNG, export | done | `mcp_server_builds_measures_and_renders_a_part`, `mcp_transport_survives_garbage`; docs/mcp.md |
 | MCP control of a running desktop app | missing | the server drives its own headless session (DEC-014) |
 | PNG rendering without a GPU (CLI, MCP) | done | `tenon-cli render`; `mcp_server_builds_measures_and_renders_a_part` |
-| Performance budget in CI | partial | `m1_demo_part_regenerates_and_tessellates_within_budget` (500 ms each; measured 6 ms); docs/performance.md. Gap: the budget is 80 times the measured time, so it catches only gross regressions (real benchmarks with tight budgets are M9) |
+| Performance budget in CI | done | `m1_demo_part_regenerates_and_tessellates_within_budget` (500 ms each; measured 7 and 3 ms), and since M9 the benchmarks of every example with budgets four times what CI's slowest platform took (`tenon-cli bench --check`; docs/performance.md) |
 | Demo: bracket with holes | done | `examples/m1-bracket`; `the_m1_demo_script_builds_a_verified_bracket_and_writes_its_files` |
 
 ## M2 parametric modelling
@@ -410,13 +413,21 @@ edges), `corner_seam`, `corner_rip`, `bend`, `sharp_bend`, `fold`, `cut_normal` 
 
 ## M9 performance
 
+Complete 2026-10-12, awaiting the owner's confirmation. Decisions: DEC-077 to DEC-082. The
+numbers, how they are measured, where OCCT is the limit and what is not done:
+[docs/performance.md](docs/performance.md). No change to files: format version 2 stands.
+
 | Feature | Status | Proof / gap |
 |---|---|---|
-| Benchmarks in CI with budgets that fail on regression (regeneration, tessellation, assembly load, memory) | partial | DEC-078. `tenon-cli bench --check` is a step of `cargo xtask ci`: 57 rows on the example models. Gap: the budgets are still loose (to be set from the three CI platforms' own numbers) |
-| Per-feature regeneration caching | done | DEC-078: a checkpoint before every feature. `regeneration_resumes_from_the_feature_being_edited` (M2), `a_change_of_the_rule_rebuilds_the_part_from_its_first_sheet_metal_feature`; the bench rows "rebuild after an edit half way up the history" |
-| Per-face tessellation caching, parallel tessellation | partial | the kernel meshes faces in parallel and keeps each face's triangles, and now keeps each face's measures too (DEC-078); shown by the bench (`tenon-cli bench profile`: "the same again"). Gap: no test of its own yet |
-| Level of detail for large assemblies | missing | |
-| Published numbers in docs/performance.md, including where OCCT is the limit | partial | M1 and M2 numbers only |
+| Benchmarks in CI with budgets that fail on regression (regeneration, tessellation, assembly load, memory) | done | DEC-078, DEC-082. `tenon-cli bench --check` is a step of `cargo xtask ci` on the three platforms: 62 rows on the example models and three made for the purpose (parts rebuilt, meshed, rebuilt after edits; flat patterns; assemblies opened; a large assembly in the view; a drawing; memory). Each budget is four times what the slowest platform took, and at least 100 ms. Gap: that is loose (a change that makes something half as slow again passes); tighter needs a machine of our own to compare runs on |
+| Per-feature regeneration caching | done | DEC-078: a checkpoint before every feature, so an edit starts from the feature it changes. `regeneration_resumes_from_the_feature_being_edited` (M2), `a_change_of_the_rule_rebuilds_the_part_from_its_first_sheet_metal_feature`; the bench rows "rebuild after an edit half way up the history" (the tray 40 ms for 228) |
+| What each face adds to a solid's volume, its area and its box, kept by the face | done | DEC-078, DEC-082. Summing volumes was up to 60 % of a rebuild; after a feature only the faces it made or changed are summed: `after_a_feature_only_what_it_changed_is_summed_and_meshed_again` (a plate with ten holes, one more cut: 3 summed, 14 kept; a part moved far is summed afresh and comes to the same) |
+| Per-face tessellation caching | done | OCCT keeps a face's triangles on the face; the same test holds that after one more hole 3 faces are meshed and 14 kept, and that a mesh asked for again is the same mesh. Gap: a face that changes is meshed whole again (a plate's top with 40 holes, each time a hole changes): OCCT's |
+| Parallel tessellation, and booleans on every core | done | OCCT's own switches, with the same results (the whole suite; builds of three examples compared file by file). Measured with each off: meshing 2 to 4 times faster on 32 processors, booleans up to 2.7 times on large solids and no faster on small ones (docs/performance.md). Gap: features, and the parts of an assembly, are still worked on one after another |
+| Level of detail for large assemblies | done | DEC-080. A far mesh of each part of a shown assembly, made by the kernel apart from the display's triangles (`a_far_mesh_is_coarse_and_leaves_the_displays_triangles_alone`, `far_meshes_are_made_where_they_pay`, slots in `worker_regenerates_off_thread_and_reports_the_latest`); each body drawn in full, from its far mesh or not at all by where it is on the screen (`a_body_is_drawn_in_full_from_its_far_mesh_or_not_at_all`); bodies left out kept aside on the card and highlights sent only where there are any (`bodies_left_out_are_kept_aside_and_highlights_are_sent_only_where_there_are_any`); in the app, a hundred components (`a_large_assembly_is_drawn_by_level_of_detail`). 400 components: 586 thousand triangles drawn for 2.1 million, 74 MB on the card for 277. Gap: each component still has its own placed copy of the mesh, in memory and on the card, and its own draw calls; not measured on integrated graphics or beyond a thousand components |
+| What is under the pointer found without trying every triangle | done | DEC-079. An index kept with each mesh; the same answers to the bit (`picking_with_the_index_gives_what_trying_everything_gives`, `the_index_finds_what_trying_every_triangle_finds`, `a_changed_mesh_gets_a_new_index_and_a_copy_starts_without`). 400 components: a face in 0.05 ms for 84, an edge in 1.4 ms for 695 |
+| A frame of a large assembly | done | DEC-081. The browser lays out only the rows in sight (`the_browser_of_a_large_assembly_lays_out_only_the_rows_in_sight`); components found by halving, highlights sent straight to their bodies. An idle frame with 400 components 0.55 ms for 1.4; held under 16 ms in `a_large_assembly_is_drawn_by_level_of_detail` |
+| Published numbers in docs/performance.md, including where OCCT is the limit | done | docs/performance.md: the tables, the kernel's share call by call (`tenon-cli bench profile`), "Where OCCT is the limit" and "What is not done" |
 
 ## M10 agent-native workflow
 

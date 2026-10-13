@@ -105,6 +105,11 @@ struct Targets {
     color: wgpu::TextureView,
 }
 
+/// How many vertices of bodies not drawn at the moment are kept on the graphics card (36
+/// bytes each: 72 MB), so that panning and zooming an assembly does not send the same
+/// bodies again and again.
+pub const SPARE_VERTICES: u64 = 2_000_000;
+
 /// Offscreen viewport renderer.
 pub struct Viewport {
     faces: wgpu::RenderPipeline,
@@ -116,6 +121,10 @@ pub struct Viewport {
     /// What each body was uploaded from (`set_bodies_keyed`): a body whose key is unchanged is
     /// kept rather than sent again.
     body_keys: Vec<u64>,
+    /// Bodies uploaded and not drawn now, by key, with when each was last drawn.
+    spare: std::collections::HashMap<u64, (u64, GpuBody)>,
+    /// Counts calls of `set_bodies_keyed`.
+    clock: u64,
     /// Highlighted faces and edges (selection, hover), drawn over the base at the same depth;
     /// small, rebuilt whenever the highlight changes.
     highlights: Vec<GpuBody>,
@@ -125,18 +134,19 @@ pub struct Viewport {
     show_edges: bool,
 }
 
+/// The colour overrides to draw, one per face or edge: where one is listed twice, the later.
+fn last_of_each(overrides: &[(u32, Color)]) -> Vec<(u32, Color)> {
+    let mut seen = std::collections::HashSet::new();
+    let mut kept: Vec<(u32, Color)> = overrides.iter().rev().filter(|(id, _)| seen.insert(*id)).copied().collect();
+    kept.sort_by_key(|(id, _)| *id);
+    kept
+}
+
 /// Vertex buffers for one body. Without `only`, every face and edge in the base colours; with
 /// `only` (face and edge colour overrides), just those faces and edges in their colours.
 fn upload(device: &wgpu::Device, m: &Mesh, face: Color, edge: Color, only: Option<(&[(u32, Color)], &[(u32, Color)])>) -> GpuBody {
     let mut tri = Vec::new();
-    for range in &m.faces {
-        let color = match only {
-            None => face,
-            Some((faces, _)) => match faces.iter().rev().find(|(f, _)| *f == range.face) {
-                Some(c) => c.1,
-                None => continue,
-            },
-        };
+    let mut fill = |range: &tenon_kernel::FaceRange, color: Color| {
         let idx = m.indices.get(range.first as usize..(range.first as usize).saturating_add(range.count as usize)).unwrap_or(&[]);
         for i in idx {
             let (Some(p), n) = (m.positions.get(*i as usize), m.normals.get(*i as usize).copied().unwrap_or([0.0, 0.0, 1.0])) else {
@@ -144,19 +154,35 @@ fn upload(device: &wgpu::Device, m: &Mesh, face: Color, edge: Color, only: Optio
             };
             tri.push(Vertex { pos: *p, normal: n, color });
         }
+    };
+    match only {
+        None => m.faces.iter().for_each(|range| fill(range, face)),
+        // (Face `f` is the mesh's range `f` as the kernel makes them; looked for if it is not.)
+        Some((faces, _)) => {
+            for (f, color) in last_of_each(faces) {
+                match m.faces.get(f as usize).filter(|r| r.face == f) {
+                    Some(range) => fill(range, color),
+                    None => m.faces.iter().filter(|r| r.face == f).for_each(|range| fill(range, color)),
+                }
+            }
+        }
     }
     let mut lines = Vec::new();
-    for e in &m.edges {
-        let color = match only {
-            None => edge,
-            Some((_, edges)) => match edges.iter().rev().find(|(id, _)| *id == e.edge) {
-                Some(c) => c.1,
-                None => continue,
-            },
-        };
+    let mut draw = |e: &tenon_kernel::EdgePolyline, color: Color| {
         for seg in e.points.windows(2) {
             lines.push(Vertex { pos: seg[0], normal: [0.0; 3], color });
             lines.push(Vertex { pos: seg[1], normal: [0.0; 3], color });
+        }
+    };
+    match only {
+        None => m.edges.iter().for_each(|e| draw(e, edge)),
+        Some((_, edges)) => {
+            for (id, color) in last_of_each(edges) {
+                match m.edges.get(id as usize).filter(|e| e.edge == id) {
+                    Some(e) => draw(e, color),
+                    None => m.edges.iter().filter(|e| e.edge == id).for_each(|e| draw(e, color)),
+                }
+            }
         }
     }
     let make = |data: &[Vertex], label: &str| {
@@ -253,6 +279,8 @@ impl Viewport {
             bind,
             bodies: Vec::new(),
             body_keys: Vec::new(),
+            spare: std::collections::HashMap::new(),
+            clock: 0,
             highlights: Vec::new(),
             targets: None,
             show_faces: true,
@@ -272,33 +300,71 @@ impl Viewport {
     pub fn set_bodies(&mut self, device: &wgpu::Device, meshes: &[(&Mesh, &BodyColors)]) {
         self.bodies = meshes.iter().map(|(m, c)| upload(device, m, c.face, c.edge, None)).collect();
         self.body_keys.clear();
+        self.spare.clear();
         self.set_highlights(device, meshes);
     }
 
     /// Like [`Viewport::set_bodies`], but each body comes with a key saying what it is (its mesh,
     /// placement and base colours): bodies whose key was uploaded before are kept, so moving one
     /// component of an assembly sends only its triangles. Returns how many bodies were uploaded.
+    ///
+    /// Bodies that were drawn and are left out now (gone off the screen, or drawn at another
+    /// level of detail) are kept aside for when they come back, up to [`SPARE_VERTICES`], those
+    /// left out longest going first.
     pub fn set_bodies_keyed(&mut self, device: &wgpu::Device, meshes: &[(u64, &Mesh, &BodyColors)]) -> usize {
+        self.clock += 1;
         let mut old: std::collections::HashMap<u64, GpuBody> = self.body_keys.drain(..).zip(self.bodies.drain(..)).collect();
         let mut uploaded = 0;
         self.bodies = meshes
             .iter()
             .map(|(k, m, c)| {
-                old.remove(k).unwrap_or_else(|| {
+                old.remove(k).or_else(|| self.spare.remove(k).map(|(_, body)| body)).unwrap_or_else(|| {
                     uploaded += 1;
                     upload(device, m, c.face, c.edge, None)
                 })
             })
             .collect();
         self.body_keys = meshes.iter().map(|(k, _, _)| *k).collect();
+        self.spare.extend(old.into_iter().map(|(k, body)| (k, (self.clock, body))));
+        let size = |b: &GpuBody| u64::from(b.face_vertices) + u64::from(b.line_vertices);
+        let mut held: u64 = self.spare.values().map(|(_, b)| size(b)).sum();
+        if held > SPARE_VERTICES {
+            let mut oldest: Vec<(u64, u64, u64)> = self.spare.iter().map(|(k, (at, b))| (*at, *k, size(b))).collect();
+            oldest.sort_unstable();
+            for (_, k, vertices) in oldest {
+                if held <= SPARE_VERTICES {
+                    break;
+                }
+                self.spare.remove(&k);
+                held -= vertices;
+            }
+        }
         let pairs: Vec<(&Mesh, &BodyColors)> = meshes.iter().map(|(_, m, c)| (*m, *c)).collect();
         self.set_highlights(device, &pairs);
         uploaded
     }
 
-    /// Uploads only the highlighted faces and edges (the per-face and per-edge colours).
+    /// Uploads only the highlighted faces and edges (the per-face and per-edge colours), of the
+    /// bodies that have any.
     pub fn set_highlights(&mut self, device: &wgpu::Device, meshes: &[(&Mesh, &BodyColors)]) {
-        self.highlights = meshes.iter().map(|(m, c)| upload(device, m, c.face, c.edge, Some((&c.faces, &c.edges)))).collect();
+        self.highlights = meshes
+            .iter()
+            .filter(|(_, c)| !c.faces.is_empty() || !c.edges.is_empty())
+            .map(|(m, c)| upload(device, m, c.face, c.edge, Some((&c.faces, &c.edges))))
+            .collect();
+    }
+
+    /// What a frame draws: bodies, triangles, and edge segments (highlights not counted).
+    pub fn drawn(&self) -> (usize, u64, u64) {
+        let faces: u64 = if self.show_faces { self.bodies.iter().map(|b| u64::from(b.face_vertices)).sum() } else { 0 };
+        let lines: u64 = if self.show_edges { self.bodies.iter().map(|b| u64::from(b.line_vertices)).sum() } else { 0 };
+        (self.bodies.len(), faces / 3, lines / 2)
+    }
+
+    /// How many vertices are held on the graphics card: those drawn, and those kept aside.
+    pub fn held_vertices(&self) -> (u64, u64) {
+        let size = |b: &GpuBody| u64::from(b.face_vertices) + u64::from(b.line_vertices);
+        (self.bodies.iter().map(size).sum(), self.spare.values().map(|(_, b)| size(b)).sum())
     }
 
     fn ensure_targets(&mut self, device: &wgpu::Device, w: u32, h: u32) {

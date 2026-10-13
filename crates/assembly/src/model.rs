@@ -309,11 +309,22 @@ fn frame_ok(f: &Frame) -> bool {
 }
 
 impl Assembly {
+    /// Where the component `id` is among the components. They are kept in the order they were
+    /// placed, which is the order of their ids, so it is looked for by halving first: every
+    /// body drawn asks for its component every frame, and looking through all of them for
+    /// each made a frame of a thousand components cost a million comparisons.
+    fn component_at(&self, id: ComponentId) -> Option<usize> {
+        match self.components.binary_search_by_key(&id, |c| c.id) {
+            Ok(i) => Some(i),
+            // (Not found so: not there, or the components are not in the order of their ids.)
+            Err(_) => self.components.iter().position(|c| c.id == id),
+        }
+    }
     pub fn component(&self, id: ComponentId) -> Option<&Component> {
-        self.components.iter().find(|c| c.id == id)
+        self.component_at(id).and_then(|i| self.components.get(i))
     }
     pub fn component_mut(&mut self, id: ComponentId) -> Option<&mut Component> {
-        self.components.iter_mut().find(|c| c.id == id)
+        self.component_at(id).and_then(|i| self.components.get_mut(i))
     }
     pub fn relationship(&self, id: RelationshipId) -> Option<&Relationship> {
         self.relationships.iter().find(|r| r.id == id)

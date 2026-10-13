@@ -137,7 +137,22 @@ pub struct MeshTol {
     /// itself the result, such as an STL or 3MF file ([`MeshTol::exact`]).
     #[serde(default = "relaxed")]
     pub relaxed: bool,
+    /// Whether the mesh is made apart from the shape, leaving the triangles the kernel keeps
+    /// on the shape's faces as they are. A coarser mesh for drawing a part from far away is
+    /// made so ([`MeshTol::far`]): asked for in the ordinary way after the display's mesh, the
+    /// kernel would hand back the finer triangles it has, and asked for first, it would have
+    /// to throw its own away for the display's.
+    #[serde(default)]
+    pub apart: bool,
 }
+
+/// How far a mesh for drawing from far away may depart from the surface, as a share of the
+/// size of what is meshed ([`MeshTol::far`]).
+pub const FAR_DEVIATION: f64 = 0.01;
+
+/// The angle between neighbouring facets of a mesh for drawing from far away (radians, about
+/// 46 degrees: a round hole is drawn with eight sides).
+pub const FAR_ANGULAR: f64 = 0.8;
 
 fn relaxed() -> bool {
     true
@@ -148,11 +163,19 @@ impl MeshTol {
     pub fn exact() -> Self {
         MeshTol { relaxed: false, ..MeshTol::default() }
     }
+
+    /// A coarse mesh of something `size` across (the diagonal of its box), for drawing it
+    /// small: it departs from the surface by at most a hundredth of the size, so by under a
+    /// pixel while the thing is drawn less than a hundred pixels across. Made apart from the
+    /// shape's own triangles.
+    pub fn far(size: f64) -> Self {
+        MeshTol { linear: (FAR_DEVIATION * size).max(tol::MESH_LINEAR), angular: FAR_ANGULAR, relaxed: true, apart: true }
+    }
 }
 
 impl Default for MeshTol {
     fn default() -> Self {
-        MeshTol { linear: tol::MESH_LINEAR, angular: tol::MESH_ANGULAR, relaxed: true }
+        MeshTol { linear: tol::MESH_LINEAR, angular: tol::MESH_ANGULAR, relaxed: true, apart: false }
     }
 }
 
@@ -180,6 +203,10 @@ pub struct Mesh {
     pub indices: Vec<u32>,
     pub faces: Vec<FaceRange>,
     pub edges: Vec<EdgePolyline>,
+    /// What the mesh has worked out about itself for picking ([`Mesh::index`]): not part of
+    /// what it is. Leave it out when making a mesh (`..Mesh::default()`).
+    #[serde(skip)]
+    pub index: crate::index::IndexSlot,
 }
 
 impl Mesh {
@@ -225,7 +252,7 @@ mod tests {
             faces.push(FaceRange { face: f as u32, first: indices.len() as u32, count: 6 });
             indices.extend_from_slice(&[q[0], q[1], q[2], q[0], q[2], q[3]]);
         }
-        Mesh { normals: vec![[0.0, 0.0, 1.0]; 8], positions, indices, faces, edges: vec![] }
+        Mesh { normals: vec![[0.0, 0.0, 1.0]; 8], positions, indices, faces, ..Mesh::default() }
     }
 
     #[test]

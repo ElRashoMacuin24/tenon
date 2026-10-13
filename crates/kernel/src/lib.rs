@@ -18,6 +18,7 @@
 pub mod check;
 mod handle;
 mod history;
+pub mod index;
 mod query;
 pub mod timed;
 mod types;

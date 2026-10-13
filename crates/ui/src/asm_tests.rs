@@ -589,3 +589,351 @@ fn standard_parts_are_placed_from_the_library_in_the_size_picked() {
     assert!(std::fs::read_to_string(&file).unwrap().contains("row = \"M8x16\""));
     assert!(!wb.status_error, "{}", wb.status());
 }
+
+/// An assembly file of `side` by `side` components, bolts (a modelled thread) and nozzles (a
+/// loft) in turn: the fittings of examples/m6-fittings.
+fn grid(name: &str, side: u32) -> PathBuf {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m6-fittings");
+    let dir = scratch(name);
+    for f in ["bolt.tenon", "nozzle.tenon"] {
+        std::fs::copy(src.join(f), dir.join(f)).unwrap();
+    }
+    let mut a = tenon_assembly::AsmSession::default();
+    let mut k = OcctKernel::new();
+    for i in 0..side {
+        for j in 0..side {
+            let part = dir.join(if (i + j) % 2 == 0 { "bolt.tenon" } else { "nozzle.tenon" }).to_string_lossy().into_owned();
+            tenon_io::asm::run(&mut a, "asm.insert", &json!({ "path": part, "at": [f64::from(i) * 40.0, f64::from(j) * 40.0, 0.0] }), Some(&mut k))
+                .unwrap();
+        }
+    }
+    let file = dir.join("grid.tenonasm");
+    tenon_io::asm::run(&mut a, "asm.save", &json!({ "path": file.to_string_lossy() }), None).unwrap();
+    file
+}
+
+/// Level of detail: components drawn small are drawn from their far meshes, components off the
+/// screen are not drawn, and what is under the pointer is found without trying every triangle.
+///
+/// The medians are what is held to the budgets (tests run in parallel; see
+/// `assembly_drag_frame_time_stays_within_budget`). Numbers for larger assemblies:
+/// `cargo test -p tenon-ui large_assembly -- --ignored --nocapture`.
+#[test]
+fn a_large_assembly_is_drawn_by_level_of_detail() {
+    use std::time::Instant;
+    use tenon_render::detail::Detail;
+    let _quiet = crate::tests::timing_lock();
+    let path = grid("detail", 10);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1440.0, 900.0));
+    wb.open(&path).unwrap();
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 100);
+    let (w, h) = (f64::from(wb.view.rect.width()), f64::from(wb.view.rect.height()));
+    let all: usize = wb.scene().bodies.iter().map(|b| b.mesh.triangle_count()).sum();
+    // Every part came with a far mesh: the same faces and edges, far fewer triangles.
+    for b in &wb.scene().bodies {
+        let far = b.far.as_ref().expect("a far mesh");
+        assert!(far.triangle_count() * 3 < b.mesh.triangle_count(), "{} of {}", far.triangle_count(), b.mesh.triangle_count());
+        assert_eq!((far.faces.len(), far.edges.len()), (b.mesh.faces.len(), b.mesh.edges.len()));
+    }
+
+    // The whole assembly in view: a hundred components, each a few dozen pixels across.
+    // (All but the nearest of the larger ones, the nozzles.)
+    let whole = wb.body_detail(w, h);
+    assert!(whole.iter().filter(|l| **l == Detail::Far).count() >= 60 && !whole.contains(&Detail::Hidden), "{whole:?}");
+    let (bodies, triangles, _) = wb.drawn(w, h);
+    assert_eq!(bodies, 100);
+    assert!(triangles * 5 < all * 2, "{triangles} of {all} triangles drawn");
+
+    // Close in: the components in front of the eye in full, those off the screen not at all.
+    let fitted = wb.view.camera.distance;
+    wb.view.camera.distance = fitted / 6.0;
+    let levels = wb.body_detail(w, h);
+    let count = |l: Detail| levels.iter().filter(|x| **x == l).count();
+    assert!(count(Detail::Near) >= 4 && count(Detail::Hidden) >= 20, "{} near, {} hidden", count(Detail::Near), count(Detail::Hidden));
+    let (bodies, _, _) = wb.drawn(w, h);
+    assert_eq!(bodies, 100 - count(Detail::Hidden));
+    // A component that is drawn is on the screen, and one that is not is off it.
+    for (b, level) in wb.scene().bodies.iter().zip(&levels) {
+        let bb = b.bbox.unwrap();
+        let mid = wb.view.camera.project((bb.min + bb.max) * 0.5, w, h);
+        let on_screen = mid.is_some_and(|(x, y, _)| (0.0..=w).contains(&x) && (0.0..=h).contains(&y));
+        assert!(!(on_screen && *level == Detail::Hidden), "a component in view is drawn");
+    }
+    // Back out, and it is drawn from afar again.
+    wb.view.camera.distance = fitted;
+    assert_eq!(wb.body_detail(w, h), whole);
+
+    // What is under the pointer is still the component itself, found in the full mesh.
+    let bolt = wb.scene().bodies[0].bbox.unwrap();
+    let over = on_screen(&wb, (bolt.min + bolt.max) * 0.5);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(over)]);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(over)]);
+    assert!(wb.asm.as_ref().unwrap().hover.is_some(), "the component under the pointer is found");
+
+    // Finding it takes well under a frame, where trying every triangle of the half million
+    // took 20 ms for a face and 130 ms for an edge on the machine this was written on.
+    let meshes: Vec<&tenon_kernel::Mesh> = wb.scene().bodies.iter().map(|b| &b.mesh).collect();
+    let middles: Vec<(f64, f64)> = wb
+        .scene()
+        .bodies
+        .iter()
+        .filter_map(|b| b.bbox)
+        .filter_map(|bb| wb.view.camera.project((bb.min + bb.max) * 0.5, w, h))
+        .map(|(x, y, _)| (x, y))
+        .collect();
+    let (mut faces, mut edges) = (Vec::new(), Vec::new());
+    let mut found = 0;
+    for round in 0..2 {
+        for (x, y) in &middles {
+            let t = Instant::now();
+            let (o, dir) = wb.view.camera.ray(*x, *y, w, h);
+            let face = tenon_render::pick::pick_face(&meshes, o, dir);
+            let took = t.elapsed().as_secs_f64() * 1000.0;
+            let t = Instant::now();
+            tenon_render::pick::pick_edge(&meshes, &wb.view.camera, w, h, *x, *y, 5.0);
+            // (The first round makes the indices of the bodies the pointer comes over.)
+            if round == 1 {
+                faces.push(took);
+                edges.push(t.elapsed().as_secs_f64() * 1000.0);
+                found += usize::from(face.is_some());
+            }
+        }
+    }
+    assert!(found > 50, "{found} of {} components found under the pointer", middles.len());
+    faces.sort_by(f64::total_cmp);
+    edges.sort_by(f64::total_cmp);
+    let (face, edge) = (faces[faces.len() / 2], edges[edges.len() / 2]);
+    let mut frames: Vec<f64> = (0..40)
+        .map(|_| {
+            let t = Instant::now();
+            d.frame(&mut wb, vec![]);
+            t.elapsed().as_secs_f64() * 1000.0
+        })
+        .collect();
+    frames.sort_by(f64::total_cmp);
+    let idle = frames[20];
+    println!("100 components: finding a face {face:.3} ms, an edge {edge:.3} ms; an idle frame {idle:.2} ms; {triangles} of {all} triangles drawn");
+    assert!(face < 4.0 && edge < 8.0, "finding what is under the pointer: a face {face:.2} ms, an edge {edge:.2} ms");
+    assert!(idle < 16.0, "over the 16 ms frame budget: {idle:.2} ms");
+}
+
+/// The browser of an assembly lays out only the rows in sight: a thousand components cost a
+/// frame no more than a dozen.
+#[test]
+fn the_browser_of_a_large_assembly_lays_out_only_the_rows_in_sight() {
+    let path = grid("rows", 10);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1440.0, 900.0));
+    wb.open(&path).unwrap();
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    let rows: Vec<(String, egui::Rect)> = d.ctx.data(|data| data.get_temp(egui::Id::new("tn_browser_rows"))).unwrap_or_default();
+    // The assembly, two folders, and the first components: not all hundred.
+    assert!(rows.len() > 10 && rows.len() < 60, "{} rows laid out", rows.len());
+    let name = wb.assembly().unwrap().assembly().name.clone();
+    assert_eq!(rows[0].0, name);
+    assert!(rows.iter().any(|(label, _)| label == "bolt:1"), "{:?}", rows.iter().map(|r| &r.0).collect::<Vec<_>>());
+    assert!(!rows.iter().any(|(label, _)| label == "nozzle:100" || label == "bolt:99"));
+    // Rows are where they would be if all were laid out: evenly apart, in order.
+    let pitch = rows[1].1.top() - rows[0].1.top();
+    assert!(pitch >= crate::browser::ROW_H);
+    for pair in rows.windows(2) {
+        assert!((pair[1].1.top() - pair[0].1.top() - pitch).abs() < 0.01, "{pair:?}");
+    }
+    // Scrolled to the end, the last components are there and the first are not.
+    let at = rows[5].1.center();
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(at)]);
+    for _ in 0..40 {
+        d.frame(
+            &mut wb,
+            vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -400.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+    }
+    d.frame(&mut wb, vec![]);
+    let rows: Vec<(String, egui::Rect)> = d.ctx.data(|data| data.get_temp(egui::Id::new("tn_browser_rows"))).unwrap_or_default();
+    let labels: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    assert!(labels.len() < 60 && !labels.contains(&name.as_str()), "{labels:?}");
+    let last = wb.assembly().unwrap().assembly().components.last().unwrap().name.clone();
+    assert!(labels.contains(&last.as_str()), "{last} in {labels:?}");
+    // Clicking a row there selects that component.
+    let (_, rect) = rows.iter().find(|(label, _)| *label == last).unwrap();
+    d.click(&mut wb, rect.center());
+    let picked = wb.asm.as_ref().unwrap().selected.clone();
+    assert_eq!(picked.len(), 1);
+    assert_eq!(wb.assembly().unwrap().assembly().component(picked[0]).unwrap().name, last);
+}
+
+/// Timing, not a check: assemblies of a hundred, four hundred and a thousand components in the
+/// view. The numbers in docs/performance.md are from here.
+/// `cargo test -p tenon-ui large_assembly_in_the_view -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn large_assembly_in_the_view() {
+    use std::time::Instant;
+    use tenon_render::detail::Detail;
+    let _quiet = crate::tests::timing_lock();
+    for side in [10, 20, 32] {
+        let path = grid(&format!("grid-{side}"), side);
+        let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+        let mut d = Driver::new(vec2(1440.0, 900.0));
+        wb.open(&path).unwrap();
+        d.settle(&mut wb);
+        let (w, h) = (f64::from(wb.view.rect.width()), f64::from(wb.view.rect.height()));
+        let all: usize = wb.scene().bodies.iter().map(|b| b.mesh.triangle_count()).sum();
+        // What the placed meshes hold in memory: points, normals, corners and edge points.
+        let bytes =
+            |m: &tenon_kernel::Mesh| 24 * m.positions.len() + 4 * m.indices.len() + 12 * m.edges.iter().map(|e| e.points.len()).sum::<usize>();
+        let held: usize = wb.scene().bodies.iter().map(|b| bytes(&b.mesh)).sum();
+        let held_far: usize = wb.scene().bodies.iter().filter_map(|b| b.far.as_ref()).map(bytes).sum();
+        let (held_mb, far_mb) = (held as f64 / 1e6, held_far as f64 / 1e6);
+        let whole = wb.drawn(w, h);
+        let fitted = wb.view.camera.distance;
+        wb.view.camera.distance = fitted / 6.0;
+        let close = wb.drawn(w, h);
+        let hidden = wb.body_detail(w, h).iter().filter(|l| **l == Detail::Hidden).count();
+        wb.view.camera.distance = fitted;
+        // The pointer over the middle of every component, twice (the first round makes the
+        // indices of the bodies it comes over).
+        let meshes: Vec<&tenon_kernel::Mesh> = wb.scene().bodies.iter().map(|b| &b.mesh).collect();
+        let middles: Vec<(f64, f64)> = wb
+            .scene()
+            .bodies
+            .iter()
+            .filter_map(|b| b.bbox)
+            .filter_map(|bb| wb.view.camera.project((bb.min + bb.max) * 0.5, w, h))
+            .map(|(x, y, _)| (x, y))
+            .collect();
+        let mut took = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        for round in 0..2 {
+            for (x, y) in &middles {
+                let t = Instant::now();
+                let (o, dir) = wb.view.camera.ray(*x, *y, w, h);
+                tenon_render::pick::pick_face(&meshes, o, dir);
+                took[round].push(t.elapsed().as_secs_f64() * 1000.0);
+                let t = Instant::now();
+                tenon_render::pick::pick_edge(&meshes, &wb.view.camera, w, h, *x, *y, 5.0);
+                took[2 + round].push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+        let median = |v: &mut Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        let [face_first, face, edge_first, edge] = &mut took;
+        let mut frames: Vec<f64> = (0..40)
+            .map(|_| {
+                let t = Instant::now();
+                d.frame(&mut wb, vec![]);
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        println!(
+            "{} components, {all} triangles ({held_mb:.0} MB of meshes and {far_mb:.0} MB of far meshes): drawn with all in view {} of them; close in {} in {} bodies ({hidden} off the screen); \
+             finding a face {:.3} ms (the first time over a body {:.3}), an edge {:.3} ms (the first time {:.3}); an idle frame {:.2} ms",
+            side * side,
+            whole.1,
+            close.1,
+            close.0,
+            median(face),
+            median(face_first),
+            median(edge),
+            median(edge_first),
+            median(&mut frames),
+        );
+    }
+}
+
+fn block<F: std::future::Future>(f: F) -> F::Output {
+    use std::task::{Context, Poll, Waker};
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut f = std::pin::pin!(f);
+    loop {
+        if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
+            return v;
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// Timing, not a check: a large assembly drawn on the graphics card, every body in full and
+/// then at each body's level of detail.
+/// `cargo test --release -p tenon-ui large_assembly_on_the_graphics_card -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn large_assembly_on_the_graphics_card() {
+    use egui_wgpu::wgpu;
+    use std::time::Instant;
+    use tenon_render::detail::Detail;
+    use tenon_render::gpu::{BodyColors, Viewport};
+    let _quiet = crate::tests::timing_lock();
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let Ok(adapter) = block(instance.request_adapter(&wgpu::RequestAdapterOptions { force_fallback_adapter: false, ..Default::default() })) else {
+        println!("no graphics adapter");
+        return;
+    };
+    let info = adapter.get_info();
+    println!("adapter: {:?} ({:?})", info.device_type, info.backend);
+    let Ok((device, queue)) = block(adapter.request_device(&wgpu::DeviceDescriptor::default())) else { return };
+    let (w, h) = (1440_u32, 900_u32);
+    for side in [10, 20, 32] {
+        let path = grid(&format!("gpu-{side}"), side);
+        let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+        let mut d = Driver::new(vec2(w as f32, h as f32));
+        wb.open(&path).unwrap();
+        d.settle(&mut wb);
+        let plain = BodyColors { face: [0.6; 3], edge: [0.02; 3], ..Default::default() };
+        let fitted = wb.view.camera.distance;
+        for (view, zoom) in [("the whole assembly", 1.0), ("close in", 1.0 / 6.0)] {
+            wb.view.camera.distance = fitted * zoom;
+            let levels = wb.body_detail(f64::from(w), f64::from(h));
+            let radius = wb.scene_radius();
+            for with in [false, true] {
+                let bodies: Vec<(u64, &tenon_kernel::Mesh, &BodyColors)> = wb
+                    .scene()
+                    .bodies
+                    .iter()
+                    .zip(&levels)
+                    .enumerate()
+                    .filter(|(_, (_, level))| !with || **level != Detail::Hidden)
+                    .map(|(i, (b, level))| {
+                        let far = b.far.as_ref().filter(|_| with && *level == Detail::Far);
+                        (i as u64 * 2 + u64::from(far.is_some()), far.unwrap_or(&b.mesh), &plain)
+                    })
+                    .collect();
+                let mut vp = Viewport::new(&device);
+                let t = Instant::now();
+                vp.set_bodies_keyed(&device, &bodies);
+                vp.render(&device, &queue, &wb.view.camera, w, h, radius).unwrap();
+                device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+                let first = t.elapsed().as_secs_f64() * 1000.0;
+                let mut frames: Vec<f64> = (0..60)
+                    .map(|i| {
+                        let mut c = wb.view.camera;
+                        c.orbit(f64::from(i) * 0.002, 0.0);
+                        let t = Instant::now();
+                        vp.render(&device, &queue, &c, w, h, radius).unwrap();
+                        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+                        t.elapsed().as_secs_f64() * 1000.0
+                    })
+                    .collect();
+                frames.sort_by(f64::total_cmp);
+                let (n, triangles, segments) = vp.drawn();
+                println!(
+                    "{} components, {view}, {}: {n} bodies, {triangles} triangles, {segments} edge segments, {:.0} MB on the card; sent and first drawn in {first:.0} ms; a frame {:.2} ms (90th {:.2})",
+                    side * side,
+                    if with { "with level of detail" } else { "every body in full" },
+                    vp.held_vertices().0 as f64 * 36.0 / 1e6,
+                    frames[30],
+                    frames[54]
+                );
+            }
+        }
+    }
+}

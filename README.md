@@ -4,7 +4,7 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestones M0 to M8 are done (M8, sheet metal, and the round of work after it await the owner's confirmation); M9 (performance) is next.**
+**Status: milestones M0 to M9 are done (M9, performance, awaits the owner's confirmation; the numbers are in [docs/performance.md](docs/performance.md)); M10 (agent-native workflow) is next.**
 CI runs on Linux, macOS and Windows.
 
 Tenon is for makers, students and small shops. It aims to win on reliability, coherence and speed

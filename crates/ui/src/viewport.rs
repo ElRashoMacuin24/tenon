@@ -8,6 +8,7 @@ use serde_json::json;
 use tenon_geom::{Aabb3, Vec3};
 use tenon_kernel::SurfaceKind;
 use tenon_model::{FaceRef, Fingerprint, OriginPlane, Scene};
+use tenon_render::detail::{Detail, detail};
 use tenon_render::gpu::{BodyColors, Viewport};
 use tenon_render::pick::{pick_edge, pick_face};
 use tenon_render::raster::{self, Style};
@@ -134,6 +135,8 @@ pub(crate) struct View {
     /// Input time of the current frame (seconds).
     pub now: f64,
     gpu: Option<Gpu>,
+    /// How each body of the scene was drawn last (level of detail), and the scene it was.
+    detail: (u64, Vec<Detail>),
     /// What the GPU holds: (geometry and base colours, highlights) keys.
     uploaded: Option<(u64, u64)>,
     soft: Option<(egui::TextureHandle, u64)>,
@@ -167,6 +170,7 @@ impl Default for View {
             aim_at: None,
             now: 0.0,
             gpu: None,
+            detail: (0, Vec::new()),
             uploaded: None,
             soft: None,
             rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)),
@@ -316,7 +320,7 @@ impl Workbench {
     }
 
     /// Radius of everything the camera may need in its depth range.
-    fn scene_radius(&self) -> f64 {
+    pub(crate) fn scene_radius(&self) -> f64 {
         let c = &self.view.camera;
         match self.scene_box() {
             Some(b) => b.diagonal() / 2.0 + b.center().dist(c.target) + 1.0,
@@ -827,8 +831,8 @@ impl Workbench {
 
     fn colors(&self) -> Vec<BodyColors> {
         let dim = matches!(self.mode, Mode::Sketch(_));
-        let lit = self.highlights();
-        (0..self.scene.bodies.len())
+        let threads = self.thread_faces();
+        let mut colors: Vec<BodyColors> = (0..self.scene.bodies.len())
             .map(|bi| {
                 let (face, edge, thread) = self.body_palette(bi);
                 let face = if !dim {
@@ -840,17 +844,27 @@ impl Workbench {
                 };
                 let mut c = BodyColors { face: srgb(face), edge: srgb(edge), ..Default::default() };
                 // Cosmetic threads first: a highlight on the same face goes over the tint.
-                c.faces.extend(self.thread_faces().into_iter().filter(|(body, _)| *body == bi).map(|(_, face)| (face, srgb(thread))));
-                for (p, color) in lit.iter().map(|(p, c)| (p, *c)) {
-                    match p {
-                        Pick::Face { body, face } if *body == bi => c.faces.push((*face, srgb(color))),
-                        Pick::Edge { body, edge } if *body == bi => c.edges.push((*edge, srgb(color))),
-                        _ => {}
-                    }
-                }
+                c.faces.extend(threads.iter().filter(|(body, _)| *body == bi).map(|(_, face)| (*face, srgb(thread))));
                 c
             })
-            .collect()
+            .collect();
+        // (Each highlight straight to its body: a thousand bodies do not each look through
+        // all of them.)
+        for (p, color) in self.highlights() {
+            match p {
+                Pick::Face { body, face } => {
+                    if let Some(c) = colors.get_mut(body) {
+                        c.faces.push((face, srgb(color)));
+                    }
+                }
+                Pick::Edge { body, edge } => {
+                    if let Some(c) = colors.get_mut(body) {
+                        c.edges.push((edge, srgb(color)));
+                    }
+                }
+            }
+        }
+        colors
     }
 
     /// What each body is, for the GPU upload: in an assembly, the component's part and placement
@@ -868,44 +882,106 @@ impl Workbench {
                     _ => (self.scene_seq, i).hash(&mut h),
                 }
                 if let Some(c) = colors.get(i) {
-                    format!("{:?}{:?}", c.face, c.edge).hash(&mut h);
+                    (c.face.map(f32::to_bits), c.edge.map(f32::to_bits)).hash(&mut h);
                 }
                 h.finish()
             })
             .collect()
     }
 
+    /// How each body of the scene is drawn in a view `w` by `h` pixels: not at all if it is off
+    /// the screen, from its far mesh if it is drawn small (and has one), else in full. Kept
+    /// from frame to frame, so that a body near the limit does not change back and forth.
+    pub(crate) fn body_detail(&mut self, w: f64, h: f64) -> Vec<Detail> {
+        let was = std::mem::take(&mut self.view.detail);
+        let same = was.0 == self.scene_seq && was.1.len() == self.scene.bodies.len();
+        let now: Vec<Detail> = self
+            .scene
+            .bodies
+            .iter()
+            .enumerate()
+            .map(|(i, b)| match b.bbox {
+                Some(bb) => {
+                    detail(&self.view.camera, w, h, (bb.min + bb.max) * 0.5, (bb.max - bb.min).len() * 0.5, was.1.get(i).copied().filter(|_| same))
+                }
+                None => Detail::Near,
+            })
+            .collect();
+        self.view.detail = (self.scene_seq, now.clone());
+        now
+    }
+
+    /// What a frame draws of the scene: (bodies, triangles, edge points), at each body's
+    /// level of detail in a view `w` by `h` pixels.
+    pub fn drawn(&mut self, w: f64, h: f64) -> (usize, usize, usize) {
+        let levels = self.body_detail(w, h);
+        let mut sum = (0, 0, 0);
+        for (b, level) in self.scene.bodies.iter().zip(&levels) {
+            let mesh = match level {
+                Detail::Hidden => continue,
+                Detail::Far => b.far.as_ref().unwrap_or(&b.mesh),
+                Detail::Near => &b.mesh,
+            };
+            sum = (sum.0 + 1, sum.1 + mesh.triangle_count(), sum.2 + mesh.edges.iter().map(|e| e.points.len()).sum::<usize>());
+        }
+        sum
+    }
+
     fn draw_scene(&mut self, ui: &Ui, rect: Rect, render: Option<&egui_wgpu::RenderState>) {
+        let ppp = ui.ctx().pixels_per_point();
+        let (w, hgt) = ((rect.width() * ppp).round().max(1.0) as u32, (rect.height() * ppp).round().max(1.0) as u32);
+        // Level of detail: bodies off the screen are not drawn, bodies drawn small are drawn
+        // from their far meshes.
+        let levels = self.body_detail(f64::from(w), f64::from(hgt));
         let mut colors = self.colors();
         // While a part is edited in place, the rest of the assembly is drawn after it, dimmed.
         let dim = BodyColors { face: srgb(CONTEXT), edge: srgb(BODY_DIM), ..Default::default() };
         colors.extend(self.context_meshes().iter().map(|_| dim.clone()));
-        let keys = self.body_keys(&colors);
+        let mut keys = self.body_keys(&colors);
         // (Borrowed field by field, so the view can be updated while it is in use.)
         let context: Vec<(u64, &tenon_kernel::Mesh)> =
             self.asm.as_ref().and_then(|a| a.editing.as_ref()).map(|e| e.context.iter().map(|(k, m)| (*k, m)).collect()).unwrap_or_default();
+        // The mesh each body is drawn from, and the bodies that are drawn at all.
+        let meshes: Vec<&tenon_kernel::Mesh> = self
+            .scene
+            .bodies
+            .iter()
+            .zip(&levels)
+            .map(|(b, level)| b.far.as_ref().filter(|_| *level != Detail::Near).unwrap_or(&b.mesh))
+            .chain(context.iter().map(|(_, m)| *m))
+            .collect();
+        for ((key, body), level) in keys.iter_mut().zip(&self.scene.bodies).zip(&levels) {
+            if body.far.is_some() && *level != Detail::Near {
+                *key ^= 0x5bd1_e995_9d2c_5681;
+            }
+        }
+        let drawn: Vec<usize> = (0..meshes.len()).filter(|i| levels.get(*i) != Some(&Detail::Hidden)).collect();
         // Geometry (with base colours) and highlights are uploaded separately: hovering only
         // re-sends the few triangles of what is highlighted.
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        keys.hash(&mut h);
+        for i in &drawn {
+            keys.get(*i).hash(&mut h);
+        }
         let base_key = h.finish();
-        format!("{colors:?}").hash(&mut h);
+        for i in &drawn {
+            if let Some(c) = colors.get(*i).filter(|c| !c.faces.is_empty() || !c.edges.is_empty()) {
+                (i, format!("{:?}{:?}", c.faces, c.edges)).hash(&mut h);
+            }
+        }
         let key = h.finish();
         let radius = self.scene_radius();
-        let ppp = ui.ctx().pixels_per_point();
-        let (w, hgt) = ((rect.width() * ppp).round().max(1.0) as u32, (rect.height() * ppp).round().max(1.0) as u32);
         let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
         match render {
             Some(rs) => {
                 let gpu = self.view.gpu.get_or_insert_with(|| Gpu { viewport: Viewport::new(&rs.device), texture: None });
                 if self.view.uploaded != Some((base_key, key)) {
-                    let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).chain(context.iter().map(|(_, m)| *m)).collect();
                     if self.view.uploaded.is_some_and(|u| u.0 == base_key) {
-                        let pairs: Vec<(&tenon_kernel::Mesh, &BodyColors)> = meshes.iter().copied().zip(colors.iter()).collect();
+                        let pairs: Vec<(&tenon_kernel::Mesh, &BodyColors)> =
+                            drawn.iter().filter_map(|i| Some((*meshes.get(*i)?, colors.get(*i)?))).collect();
                         gpu.viewport.set_highlights(&rs.device, &pairs);
                     } else {
                         let keyed: Vec<(u64, &tenon_kernel::Mesh, &BodyColors)> =
-                            keys.iter().copied().zip(meshes.iter().copied()).zip(colors.iter()).map(|((k, m), c)| (k, m, c)).collect();
+                            drawn.iter().filter_map(|i| Some((*keys.get(*i)?, *meshes.get(*i)?, colors.get(*i)?))).collect();
                         gpu.viewport.set_bodies_keyed(&rs.device, &keyed);
                     }
                     self.view.uploaded = Some((base_key, key));
@@ -933,7 +1009,6 @@ impl Workbench {
                 format!("{:?}", self.view.camera).hash(&mut kh);
                 let skey = kh.finish();
                 if self.view.soft.as_ref().is_none_or(|(_, k)| *k != skey) {
-                    let meshes: Vec<&tenon_kernel::Mesh> = self.scene.bodies.iter().map(|b| &b.mesh).chain(context.iter().map(|(_, m)| *m)).collect();
                     let to8 = |c: Color32| [c.r(), c.g(), c.b(), 255];
                     let face_colors: Vec<_> = self
                         .highlights()

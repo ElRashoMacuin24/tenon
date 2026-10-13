@@ -546,15 +546,35 @@ impl AsmSession {
 
     /// Regenerates every part whose geometry is out of date, with `k`.
     pub fn refresh(&mut self, k: &mut dyn Kernel) -> Result<(), String> {
+        self.refresh_as(k, false)
+    }
+
+    /// Like [`AsmSession::refresh`], and gives the parts their meshes for drawing from far
+    /// away ([`tenon_model::far_meshes`]): for an assembly that is shown.
+    pub fn refresh_shown(&mut self, k: &mut dyn Kernel) -> Result<(), String> {
+        self.refresh_as(k, true)
+    }
+
+    fn refresh_as(&mut self, k: &mut dyn Kernel, shown: bool) -> Result<(), String> {
         self.sync_variants();
         for (key, p) in self.parts.iter_mut() {
             if p.is_current() {
+                // (Made ready before it was to be shown: only the far meshes are still to make.)
+                if shown && p.missing.is_none() && p.scene.as_ref().is_some_and(|(_, s)| !s.far) {
+                    let regen = p.session.regen(k).clone();
+                    if let Some((_, s)) = p.scene.as_mut() {
+                        tenon_model::far_meshes(Arc::make_mut(s), &regen, k);
+                    }
+                }
                 continue;
             }
             let rev = p.session.revision();
             // A part with a failing feature still shows what it has (its status says what fails).
             let regen = p.session.regen(k).clone();
-            let s = tenon_model::scene(&regen, k, &MeshTol::default()).map_err(|e| format!("{key}: {e}"))?;
+            let mut s = tenon_model::scene(&regen, k, &MeshTol::default()).map_err(|e| format!("{key}: {e}"))?;
+            if shown {
+                tenon_model::far_meshes(&mut s, &regen, k);
+            }
             p.scene = Some((rev, Arc::new(s)));
         }
         Ok(())

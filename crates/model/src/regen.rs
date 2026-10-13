@@ -1747,6 +1747,9 @@ fn corners(b: &Aabb3) -> [Vec3; 8] {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BodyView {
     pub mesh: Mesh,
+    /// The body as drawn from far away: a much coarser mesh with the same faces and edges,
+    /// where one was made ([`far_meshes`]: for the parts of an assembly, where it pays).
+    pub far: Option<Mesh>,
     /// Per face: its persistent name (if any) and geometry.
     pub faces: Vec<(Option<FaceOrigin>, FaceInfo)>,
     pub volume: f64,
@@ -1795,6 +1798,9 @@ pub struct Scene {
     pub work: Vec<(FeatureId, WorkGeom)>,
     /// The threads on the part.
     pub threads: Vec<ThreadView>,
+    /// Whether the bodies have been given their meshes for drawing from far away, where those
+    /// pay ([`far_meshes`]).
+    pub far: bool,
     pub regen_ms: f64,
     pub mesh_ms: f64,
 }
@@ -1828,7 +1834,18 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
             curves.push(info.curve);
         }
         let mass = k.mass_properties(b.shape, 1.0).map_err(kerr)?;
-        bodies.push(BodyView { mesh, faces, edges, curves, ends, mids, volume: mass.volume, mass, bbox: k.bounding_box(b.shape).map_err(kerr)? });
+        bodies.push(BodyView {
+            mesh,
+            far: None,
+            faces,
+            edges,
+            curves,
+            ends,
+            mids,
+            volume: mass.volume,
+            mass,
+            bbox: k.bounding_box(b.shape).map_err(kerr)?,
+        });
     }
     Ok(Scene {
         bodies,
@@ -1838,9 +1855,32 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
         lost: regen.lost.clone(),
         work: regen.work.iter().map(|(id, g)| (*id, *g)).collect(),
         threads: regen.threads.iter().map(|m| ThreadView { at: regen.resolve(&m.face, &*k).ok(), mark: m.clone() }).collect(),
+        far: false,
         regen_ms: regen.millis,
         mesh_ms: t0.elapsed().as_secs_f64() * 1000.0,
     })
+}
+
+/// A body with fewer triangles than this is drawn as it is from any distance.
+pub const FAR_WORTH: usize = 200;
+
+/// Gives the bodies of `scene` (made from `regen`) their meshes for drawing from far away
+/// ([`BodyView::far`]), where that at least halves what is drawn. An assembly of hundreds of
+/// components draws most of them a few dozen pixels across; at that size the coarse mesh is
+/// within a pixel of the fine one ([`MeshTol::far`]).
+pub fn far_meshes(scene: &mut Scene, regen: &Regen, k: &mut dyn Kernel) {
+    scene.far = true;
+    for (view, body) in scene.bodies.iter_mut().zip(&regen.bodies) {
+        let drawn = |m: &Mesh| m.triangle_count() + m.edges.iter().map(|e| e.points.len()).sum::<usize>();
+        let Some(size) = view.bbox.map(|b| (b.max - b.min).len()).filter(|s| *s > 0.0) else { continue };
+        if view.mesh.triangle_count() < FAR_WORTH {
+            continue;
+        }
+        // (A part that cannot be meshed again is drawn as it is.)
+        view.far = k.tessellate(body.shape, &MeshTol::far(size)).ok().filter(|far| {
+            far.faces.len() == view.mesh.faces.len() && far.edges.len() == view.mesh.edges.len() && 2 * drawn(far) <= drawn(&view.mesh)
+        });
+    }
 }
 
 /// Points along a profile's outer boundaries, in space (arcs and circles sampled; splines by

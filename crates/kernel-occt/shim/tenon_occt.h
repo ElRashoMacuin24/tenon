@@ -93,8 +93,11 @@ void topology(const Shape& shape, TopoOut& out);
 void face_info(const Shape& shape, std::uint32_t index, FaceOut& out);
 void edge_info(const Shape& shape, std::uint32_t index, EdgeOut& out);
 void edge_points(const Shape& shape, std::uint32_t index, double deflection, rust::Vec<double>& out);
-void tessellate(const Shape& shape, double linear, double angular, bool relaxed, MeshOut& out);
+void tessellate(const Shape& shape, double linear, double angular, bool relaxed, bool apart, MeshOut& out);
 void mass_properties(const Shape& shape, MassOut& out);
+// Work done and saved since the program started: faces summed, sums kept, faces meshed,
+// meshes kept.
+void counters(rust::Vec<std::uint64_t>& out);
 void bounding_box(const Shape& shape, BoxOut& out);
 bool is_valid(const Shape& shape);
 // Solid `index` of a shape (TopExp order), with the images of the shape's faces and edges.

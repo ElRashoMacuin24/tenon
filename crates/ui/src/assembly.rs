@@ -188,6 +188,7 @@ fn placed_mesh(m: &Mesh, x: &Rigid) -> Mesh {
         indices: m.indices.clone(),
         faces: m.faces.clone(),
         edges: m.edges.iter().map(|e| EdgePolyline { edge: e.edge, points: e.points.iter().map(|p| f3(x.point(v3(*p)))).collect() }).collect(),
+        ..Mesh::default()
     }
 }
 
@@ -245,6 +246,7 @@ fn placed_body(b: &BodyView, x: &Rigid) -> BodyView {
     };
     BodyView {
         mesh: placed_mesh(&b.mesh, x),
+        far: b.far.as_ref().map(|m| placed_mesh(m, x)),
         faces: b.faces.iter().map(|(n, info)| (*n, placed_info(info, x))).collect(),
         volume: b.volume,
         mass,
@@ -423,7 +425,7 @@ impl Workbench {
             Geo::Sync(k) => {
                 // The part being edited in place is regenerated as the workbench's own document.
                 if editing.is_none()
-                    && let Err(e) = a.session.refresh(k.as_mut())
+                    && let Err(e) = a.session.refresh_shown(k.as_mut())
                 {
                     self.regen_note = Some(e);
                 }

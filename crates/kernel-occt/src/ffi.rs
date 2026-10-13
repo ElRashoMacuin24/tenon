@@ -281,8 +281,11 @@ pub(crate) mod bridge {
         fn edge_info(shape: &Shape, index: u32, out: &mut EdgeOut) -> Result<()>;
         /// Points along an edge from its start to its end, x, y, z each, within `deflection` of it.
         fn edge_points(shape: &Shape, index: u32, deflection: f64, out: &mut Vec<f64>) -> Result<()>;
-        fn tessellate(shape: &Shape, linear: f64, angular: f64, relaxed: bool, out: &mut MeshOut) -> Result<()>;
+        fn tessellate(shape: &Shape, linear: f64, angular: f64, relaxed: bool, apart: bool, out: &mut MeshOut) -> Result<()>;
         fn mass_properties(shape: &Shape, out: &mut MassOut) -> Result<()>;
+        /// Work done and saved since the program started: faces summed, sums kept, faces meshed,
+        /// meshes kept.
+        fn counters(out: &mut Vec<u64>);
         fn bounding_box(shape: &Shape, out: &mut BoxOut) -> Result<()>;
         fn is_valid(shape: &Shape) -> Result<bool>;
         /// Solid `index` of a shape, with the images of the shape's faces and edges.
