@@ -14,6 +14,13 @@ use crate::workbench::Workbench;
 const SWATCHES: [&str; 12] =
     ["#b8c0c8", "#3c3f44", "#f2f0ea", "#d04030", "#e8952c", "#e6c84a", "#4c9a4f", "#3fa7a0", "#4f8fd8", "#6a5acd", "#c0588f", "#8a6a4a"];
 
+/// The rows of a material's strength in Properties: label, what it means, unit, the cell's id.
+const STRENGTH_ROWS: [(&str, &str, &str, &str); 3] = [
+    ("Young's modulus", "How stiff the material is", "GPa", "tn_partprops_youngs"),
+    ("Poisson's ratio", "How much it thins as it is stretched: from 0 to less than 0.5", "", "tn_partprops_poisson"),
+    ("Yield strength", "The stress at which it stays bent (or, for a material that breaks first, breaks)", "MPa", "tn_partprops_yield"),
+];
+
 /// A mass in grams as it reads: grams below a kilogram, kilograms from there.
 pub(crate) fn mass_text(grams: f64) -> String {
     if grams.abs() >= 1000.0 { format!("{} kg", fmt_value(grams / 1000.0)) } else { format!("{} g", fmt_value(grams)) }
@@ -50,6 +57,7 @@ impl Workbench {
         // In an assembly the window is a summary of what is shown; a part's material is set in the part.
         let part = !self.in_assembly();
         let density = self.document().density();
+        let strength = self.document().strength();
         // Each shown component's name, material and mass in grams.
         let mut components: Vec<(tenon_assembly::ComponentId, String, String, f64)> = Vec::new();
         if let Some(a) = self.asm.as_ref().filter(|_| !part) {
@@ -94,17 +102,73 @@ impl Workbench {
                         ui.horizontal(|ui| {
                             if let Some(typed) = edit_cell(ui, egui::Id::new("tn_partprops_density"), &fmt_value(density), 70.0, t) {
                                 match typed.parse::<f64>() {
-                                    // A density of one's own keeps the material's name, or names it Custom.
-                                    Ok(d) => changes.push((
-                                        "document.material",
-                                        json!({ "name": material.as_ref().map_or("Custom", |m| m.name.as_str()), "density": d }),
-                                    )),
+                                    // A density of one's own keeps the material's name, or names it Custom;
+                                    // and what it says of its strength.
+                                    Ok(d) => {
+                                        let mut p = json!({ "name": material.as_ref().map_or("Custom", |m| m.name.as_str()), "density": d });
+                                        if let Some(m) = &material {
+                                            p["color"] = json!(m.color);
+                                        }
+                                        if let Some(s) = strength {
+                                            p["youngs_modulus"] = json!(s.youngs_modulus);
+                                            p["poisson"] = json!(s.poisson);
+                                            p["yield_strength"] = json!(s.yield_strength);
+                                        }
+                                        changes.push(("document.material", p));
+                                    }
                                     Err(_) => changes.push(("", json!(format!("`{typed}` is not a density: type a number of g/cm³")))),
                                 }
                             }
                             ui.label("g/cm³");
                         });
                         ui.end_row();
+                        // How it answers to a load: what a stress check needs of it. A material
+                        // that does not say is given all three; they are sent once all are there.
+                        match &material {
+                            None => {
+                                ui.label("Strength");
+                                ui.label(RichText::new("a material says how strong the part is").font(theme::small()).color(t.text_dim));
+                                ui.end_row();
+                            }
+                            Some(m) => {
+                                let draft_id = egui::Id::new(("tn_partprops_strength_draft", m.name.as_str()));
+                                let draft: [Option<f64>; 3] = ui.data(|d| d.get_temp(draft_id)).unwrap_or_default();
+                                let shown = match strength {
+                                    Some(s) => [Some(s.youngs_modulus), Some(s.poisson), Some(s.yield_strength)],
+                                    None => draft,
+                                };
+                                let mut typed_in = shown;
+                                for (i, (label, tip, unit, id)) in STRENGTH_ROWS.iter().enumerate() {
+                                    ui.label(*label).on_hover_text(*tip);
+                                    ui.horizontal(|ui| {
+                                        let now = shown[i].map(fmt_value).unwrap_or_default();
+                                        if let Some(typed) = edit_cell(ui, egui::Id::new(*id), &now, 70.0, t) {
+                                            match typed.parse::<f64>() {
+                                                Ok(v) => typed_in[i] = Some(v),
+                                                Err(_) => changes.push(("", json!(format!("`{typed}` is not a number")))),
+                                            }
+                                        }
+                                        ui.label(*unit);
+                                    });
+                                    ui.end_row();
+                                }
+                                if typed_in != shown {
+                                    if let [Some(e), Some(nu), Some(y)] = typed_in {
+                                        changes.push((
+                                            "document.material",
+                                            json!({ "name": m.name, "density": density, "color": m.color, "youngs_modulus": e, "poisson": nu, "yield_strength": y }),
+                                        ));
+                                    }
+                                    ui.data_mut(|d| d.insert_temp(draft_id, typed_in));
+                                }
+                                if strength.is_none() {
+                                    ui.label("");
+                                    let note = "not given: a stress check needs all three";
+                                    ui.label(RichText::new(note).font(theme::small()).color(t.text_dim));
+                                    ui.end_row();
+                                }
+                            }
+                        }
                         ui.label("Appearance");
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);

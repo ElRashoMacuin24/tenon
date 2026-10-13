@@ -2466,3 +2466,18 @@ keyboard after it is drawn does not select what it shows. It is now the value bo
 panels, given the keyboard before it is drawn: what is typed takes the place of what was
 there, and Enter is OK. `a_fillets_radius_and_an_offsets_distance_are_typed_and_entered`;
 no test went through that window before.
+
+## DEC-096 Properties shows how strong the material is, and takes it (2026-10-13)
+
+Assign in the Stress Analysis environment opens the part's Properties (DEC-095). Under the
+material and its density it now has Young's modulus (GPa), Poisson's ratio and yield strength
+(MPa): the library's for a material of the library, changed there like the density; for a
+material of one's own that says nothing of them, three empty boxes, which become the
+material's once all three are filled (a material has all three or none, DEC-093). What cannot
+be (a Poisson's ratio of 0.7) is refused in the command's words.
+
+**Found on the way.** A density typed in Properties described the material again by its name
+and density alone, so a yield strength of one's own on a library material went back to the
+library's without a word, and a material of one's own lost its colour. Properties now sends
+what the material already says with what was changed; a test changes the density after the
+strength and looks.

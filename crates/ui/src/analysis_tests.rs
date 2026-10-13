@@ -303,3 +303,69 @@ fn the_environment_is_of_a_part_with_a_solid_and_is_left_with_it() {
     let refused = wb.run_ui("analysis.begin").unwrap_err();
     assert!(refused.contains("of a part"), "{refused}");
 }
+
+/// The part's strength as the document has it: Young's modulus (GPa), Poisson's ratio, yield
+/// strength (MPa).
+fn strength(wb: &Workbench) -> Option<(f64, f64, f64)> {
+    wb.document().strength().map(|s| (s.youngs_modulus, s.poisson, s.yield_strength))
+}
+
+/// Types a value into a cell of the Properties window; Enter.
+fn cell(d: &mut Driver, wb: &mut Workbench, id: &str, text: &str) {
+    type_into(d, wb, id, text);
+    d.tap(wb, egui::Key::Enter);
+    d.frame(wb, vec![]);
+    d.frame(wb, vec![]);
+}
+
+#[test]
+fn assign_opens_properties_where_a_material_says_how_strong_it_is() {
+    let (mut wb, mut d) = bar();
+    wb.run_ui("analysis.begin").unwrap();
+    d.frame(&mut wb, vec![]);
+    click_text(&mut d, &mut wb, "Assign");
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.mass, "{}", wb.status());
+    let shows = |d: &Driver, text: &str| d.texts().iter().any(|t| t == text);
+    assert!(shows(&d, "a material says how strong the part is"), "{:?}", d.texts());
+
+    // A material from the list brings what the library says of it.
+    click_text(&mut d, &mut wb, "Generic");
+    click_text(&mut d, &mut wb, "Brass");
+    d.frame(&mut wb, vec![]);
+    assert_eq!(strength(&wb), Some((110.0, 0.34, 125.0)), "{}", wb.status());
+    assert!(shows(&d, "Young's modulus") && shows(&d, "110") && shows(&d, "0.34") && shows(&d, "125"), "{:?}", d.texts());
+    // One of them of one's own: the others stay. A density of one's own keeps all three.
+    cell(&mut d, &mut wb, "tn_partprops_yield", "200");
+    assert_eq!(strength(&wb), Some((110.0, 0.34, 200.0)), "{}", wb.status());
+    cell(&mut d, &mut wb, "tn_partprops_density", "8.4");
+    assert_eq!((wb.document().density(), strength(&wb)), (8.4, Some((110.0, 0.34, 200.0))), "{}", wb.status());
+    assert_eq!(wb.document().material().map(|m| (m.name.as_str(), m.color.as_str())), Some(("Brass", "#c9a64a")));
+    // What cannot be is refused in words, and nothing changes.
+    cell(&mut d, &mut wb, "tn_partprops_poisson", "0.7");
+    assert!(wb.status_error && wb.status().contains("Poisson"), "{}", wb.status());
+    assert_eq!(strength(&wb), Some((110.0, 0.34, 200.0)));
+    cell(&mut d, &mut wb, "tn_partprops_youngs", "stiff");
+    assert!(wb.status_error && wb.status().contains("is not a number"), "{}", wb.status());
+
+    // A material of one's own that says nothing of its strength: the study's browser says so.
+    wb.exec("document.material", json!({ "name": "Carbon PETG", "density": 1.3, "color": "#202428" })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(strength(&wb), None);
+    assert!(shows(&d, "not given: a stress check needs all three"), "{:?}", d.texts());
+    wb.run_ui("study.new").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Material: Carbon PETG (no strength known)");
+    // Its three values typed: they are the material's once all three are there.
+    cell(&mut d, &mut wb, "tn_partprops_youngs", "6");
+    assert_eq!(strength(&wb), None, "one of three is not yet a strength");
+    cell(&mut d, &mut wb, "tn_partprops_poisson", "0.35");
+    assert_eq!(strength(&wb), None);
+    cell(&mut d, &mut wb, "tn_partprops_yield", "50");
+    assert_eq!(strength(&wb), Some((6.0, 0.35, 50.0)), "{}", wb.status());
+    let m = wb.document().material().unwrap();
+    assert_eq!((m.name.as_str(), m.density, m.color.as_str()), ("Carbon PETG", 1.3, "#202428"), "it is otherwise as it was");
+    browser_row(&d, "Material: Carbon PETG");
+}
