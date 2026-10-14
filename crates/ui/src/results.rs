@@ -249,7 +249,7 @@ impl Workbench {
         };
         let outcome = match outcome {
             Ok(o) => o,
-            Err(e) if e == "stopped" => {
+            Err(e) if e == tenon_fea::tools::STOPPED => {
                 self.set_status(format!("{name}: stopped."));
                 return;
             }
@@ -307,6 +307,13 @@ impl Workbench {
             env.mesh_view = !env.mesh_view;
         }
         Ok(())
+    }
+
+    /// The keys of a study being worked out: Esc stops it.
+    pub(crate) fn study_keys(&mut self, ui: &Ui) {
+        if self.analysis.as_ref().is_some_and(|e| e.running.is_some()) && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.stop_study();
+        }
     }
 
     /// Esc while a study is being worked out stops it. True when there was one to stop.

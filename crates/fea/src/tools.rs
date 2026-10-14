@@ -20,6 +20,9 @@ pub struct Tools {
 /// Set to stop a program that is running: looked at while it runs.
 pub type Cancel = Arc<AtomicBool>;
 
+/// What a run that was asked to stop returns as its error: told apart from a failure.
+pub const STOPPED: &str = "stopped";
+
 /// The variables that say where the programs are, when they are not where they are looked for.
 pub const GMSH_VAR: &str = "TENON_GMSH";
 pub const CCX_VAR: &str = "TENON_CCX";
@@ -133,7 +136,7 @@ pub fn run(program: &Path, args: &[&str], dir: &Path, log: &str, cancel: &Cancel
             Err(e) => return Err(format!("{name} could not be waited for: {e}")),
         }
         let stop = if cancel.load(Ordering::Relaxed) {
-            Some("stopped".to_owned())
+            Some(STOPPED.to_owned())
         } else if started.elapsed() > limit {
             Some(format!("{name} ran for more than {} minutes and was stopped: a quick check is of fewer, larger elements", limit.as_secs() / 60))
         } else {
@@ -232,7 +235,7 @@ mod tests {
         // Asked to stop before it starts: stopped. A program that is not there says so.
         cancel.store(true, Ordering::Relaxed);
         let e = run(&me, &["--list"], &scratch.dir, "out.log", &cancel, Duration::from_secs(60));
-        assert!(e.is_ok() || e.as_ref().is_err_and(|e| e == "stopped"), "{e:?}");
+        assert!(e.is_ok() || e.as_ref().is_err_and(|e| e == STOPPED), "{e:?}");
         let e = run(&scratch.dir.join("nothing-here"), &[], &scratch.dir, "out.log", &Cancel::default(), Duration::from_secs(1)).unwrap_err();
         assert!(e.contains("cannot start"), "{e}");
         assert_eq!(tail("a\n\nb\nc\n \n", 2), "b\nc");

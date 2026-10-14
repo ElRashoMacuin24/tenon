@@ -856,3 +856,68 @@ fn mesh_view_divides_the_part_and_shows_its_elements() {
     let (triangles, _) = drawn(&d).expect("the finer mesh is drawn");
     assert!(triangles > before * 2, "{triangles} triangles of 2.5 mm, {before} of 5");
 }
+
+#[test]
+fn a_study_is_worked_out_on_the_geometry_thread_and_esc_stops_it() {
+    if !programs("Simulate on the geometry thread") {
+        return;
+    }
+    let _quiet = crate::tests::timing_lock();
+    // The app as it runs: the kernel on a thread of its own.
+    let mut wb = Workbench::new(|| Box::new(OcctKernel::new()) as Box<dyn tenon_kernel::Kernel>, None, crate::Services::default());
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    let settle = |d: &mut Driver, wb: &mut Workbench| {
+        for _ in 0..6000 {
+            d.frame(wb, vec![]);
+            if !wb.is_busy() {
+                d.frame(wb, vec![]);
+                if !wb.is_busy() {
+                    return;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("the geometry thread never finished");
+    };
+    wb.exec("model.box", json!({ "plane": "xy", "width": 100, "depth": 20, "height": 10 })).unwrap();
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    settle(&mut d, &mut wb);
+    // (The faces by where they are on the part that is shown.)
+    let on = |wb: &Workbench, at: Vec3| {
+        let b = &wb.scene().bodies[0];
+        let face = b.faces.iter().position(|(_, info)| (info.centroid - at).len() < 1e-6).expect("a face there");
+        serde_json::to_value(wb.face_ref_of(0, face as u32).expect("a face that can be named")).unwrap()
+    };
+    let (left, right) = (on(&wb, LEFT), on(&wb, RIGHT));
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
+    settle(&mut d, &mut wb);
+
+    // Simulate: set going, and the window goes on while it is worked out.
+    wb.run_ui("analysis.simulate").unwrap();
+    assert!(wb.is_busy() && wb.outcome().is_none() && wb.status().starts_with("Simulating"), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Results: being worked out...");
+    // A second one meanwhile is refused.
+    assert!(wb.run_ui("analysis.simulate").unwrap_err().contains("is being worked out"));
+    settle(&mut d, &mut wb);
+    let solved = wb.outcome().and_then(|o| o.solved.clone()).unwrap_or_else(|| panic!("not worked out: {}", wb.status()));
+    assert!((solved.results.max_displacement.value - 0.1008).abs() < 0.004, "{}", solved.results.max_displacement.value);
+    assert!(wb.status().starts_with("Study1: at most "), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    assert!(drawn(&d).is_some_and(|(triangles, _)| triangles > 200));
+
+    // A finer mesh takes longer: Esc stops it, and what was shown before is out of date.
+    wb.exec("study.mesh_size", json!({ "size": 0.6 })).unwrap();
+    wb.run_ui("analysis.simulate").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert_eq!(wb.status(), "Stopping...");
+    settle(&mut d, &mut wb);
+    assert_eq!(wb.status(), "Study1: stopped.");
+    assert!(!wb.status_error && wb.outcome().is_none());
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Results: out of date (Simulate)");
+}

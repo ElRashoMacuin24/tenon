@@ -41,6 +41,11 @@ pub fn element_size_for(extent: f64) -> f64 {
     extent / 20.0
 }
 
+/// A program's failure with what it was for; a run that was stopped is left as that.
+fn said(what: &str, e: String) -> String {
+    if e == tools::STOPPED { e } else { format!("{what} {e}") }
+}
+
 /// Divides a part into ten-node tetrahedra about `size` across. `step` is the part as a STEP
 /// file's bytes. The mesher's files are left in `dir`.
 pub fn mesh_part(tools: &Tools, step: &[u8], size: f64, dir: &Path, cancel: &Cancel) -> Result<TetMesh, String> {
@@ -55,7 +60,7 @@ pub fn mesh_part(tools: &Tools, step: &[u8], size: f64, dir: &Path, cancel: &Can
     // answer twice.
     let args =
         ["part.step", "-3", "-order", "2", "-clmax", &largest, "-clmin", &smallest, "-clcurv", "12", "-nt", "1", "-format", "msh2", "-o", "part.msh"];
-    tools::run(&tools.gmsh, &args, dir, "mesher.log", cancel, MESH_LIMIT).map_err(|e| format!("The part could not be divided into elements. {e}"))?;
+    tools::run(&tools.gmsh, &args, dir, "mesher.log", cancel, MESH_LIMIT).map_err(|e| said("The part could not be divided into elements.", e))?;
     let text = std::fs::read_to_string(dir.join("part.msh")).map_err(|_| {
         let said = std::fs::read_to_string(dir.join("mesher.log")).unwrap_or_default();
         format!("The mesher wrote no mesh. It said:\n{}", tools::tail(&said, 12))
@@ -66,8 +71,7 @@ pub fn mesh_part(tools: &Tools, step: &[u8], size: f64, dir: &Path, cancel: &Can
 /// Has the solver work a problem out. Its files are left in `dir`.
 pub fn solve(tools: &Tools, problem: &Problem, dir: &Path, cancel: &Cancel) -> Result<Solution, String> {
     std::fs::write(dir.join("study.inp"), ccx::write_inp(problem)).map_err(|e| format!("cannot write the study for the solver: {e}"))?;
-    let said =
-        tools::run(&tools.ccx, &["study"], dir, "solver.log", cancel, SOLVE_LIMIT).map_err(|e| format!("The study could not be solved. {e}"))?;
+    let said = tools::run(&tools.ccx, &["study"], dir, "solver.log", cancel, SOLVE_LIMIT).map_err(|e| said("The study could not be solved.", e))?;
     let text =
         std::fs::read_to_string(dir.join("study.frd")).map_err(|_| format!("The solver wrote no results. It said:\n{}", tools::tail(&said, 12)))?;
     ccx::read_frd(&text, problem.mesh.nodes.len()).map_err(|e| {

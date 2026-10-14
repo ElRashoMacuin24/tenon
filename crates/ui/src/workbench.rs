@@ -957,6 +957,7 @@ impl Workbench {
         }
         crate::properties::set_param_env(ui.ctx(), self.param_env.1.clone());
         self.keep_tab_shown();
+        self.study_keys(ui);
         self.shortcuts(ui);
         let theme = self.chrome.theme;
         if self.chrome.applied_theme != Some(theme) {
