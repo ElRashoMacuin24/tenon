@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod assets;
+mod dist;
 mod layers;
 mod stats;
 mod unsafe_audit;
@@ -24,6 +25,9 @@ commands:
   ci              fmt --check, clippy -D warnings, test, bench, assets, layers, unsafe-audit, wasm
                   (stops at first failure)
   corpus          show where test corpora live
+  dist            release build, as a folder that runs without pixi (its libraries and their
+                  licences beside it), tried with nothing of the environment on the search
+                  path, and archived (--no-build, --no-check, --no-archive)
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
 
 Crates that link OpenCASCADE need the pixi environment: run `pixi run cargo xtask ci`.
@@ -44,6 +48,7 @@ fn main() -> ExitCode {
         }
         Some("ci") => cmd_ci(),
         Some("corpus") => cmd_corpus(),
+        Some("dist") => dist::run_dist(&rest),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");

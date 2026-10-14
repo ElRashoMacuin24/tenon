@@ -2706,3 +2706,67 @@ a cantilever loaded along an edge and held by its edges (docs/stress.md has the 
 Gaps: no vertices; a moment and a remote force do not make their faces rigid; no angular
 acceleration; where a remote force acts is typed, not picked; a direction, an axis or a
 point that was picked is kept as numbers and does not follow what it was picked from.
+
+## DEC-101 The first release: what it is, how it is made, and what it carries (2026-10-13)
+
+The owner asked to close the gaps that can be closed and get ready for the first release
+("CLose all the gaps you can let's get ready for the first release version").
+
+**Version 0.1.0.** The workspace already says 0.1.0; a first release of a young program is a
+0.x. Publishing it (a tag, and the draft release it makes) is the owner's step.
+
+**A folder that runs on its own** (`cargo xtask dist`, `xtask/src/dist.rs`). Until now Tenon
+ran only inside the pixi environment, which puts OpenCASCADE's libraries on the search path.
+The release build of `tenon` and `tenon-cli` is put beside the shared libraries it needs,
+found by reading each binary's own list of imports (PE, ELF and Mach-O, read by xtask itself:
+no tool and no new dependency), and the libraries those need in turn, from the environment.
+What is not in the environment is the system's (the C runtime's own DLLs on Windows 10 and
+later are counted as the system's though conda has copies). Linux and macOS programs are
+linked to look beside themselves (`$ORIGIN/../lib`, `@executable_path/../Frameworks`), so
+nothing is rewritten after linking and every signature stays good; the macOS app is given
+one ad-hoc signature over the whole bundle. Layouts: a flat folder on Windows; `bin` and
+`lib` on Linux; `Tenon.app` on macOS (Apple silicon: Intel Macs build from source).
+
+**Every licence goes with it.** For each bundled library, the conda package that installed
+it and that package's licence texts (from the package cache; a package split off another,
+as freetype's runtime library is, takes the texts of the one it was split from). For each
+Rust crate built into the programs (normal dependencies of `tenon` and `tenon-cli` for that
+platform; not build tools, not procedural macros), its published licence files, or, where it
+publishes none, its licence and its authors. All listed in `licenses/THIRD-PARTY.txt`. The
+libraries are under permissive licences, the LGPL (OpenCASCADE, LibRaw: separate files, so
+they can be replaced) or a choice that includes a permissive one (FreeImage, FreeType).
+
+**Tried as a user would have it.** `dist` runs the packaged `tenon-cli version`, `tenon-cli
+demo m1` (which builds a part through OpenCASCADE and checks its volumes) and `tenon
+--version` with nothing of the build environment on their search paths. The archive is a zip
+on Windows and a gzipped tar elsewhere.
+
+**Release workflow** (`.github/workflows/release.yml`): by hand, or on a tag `v*`, the three
+platforms are packaged and tried (Linux on the older runner, ubuntu-22.04, so that glibc 2.35
+is enough); a tag then makes a *draft* release with the three archives and the changelog's
+section for that version. Nothing is published without a person.
+
+**Not signed.** Windows SmartScreen and macOS Gatekeeper warn on first start; the README in
+the archive and the user guide say what to do. Signing needs certificates the project does
+not have: a question for the owner when it matters.
+
+**Gmsh and CalculiX are not in the archive** (DEC-098: asked again when there are
+installers). The user installs them; where they are can now be chosen in Tools > Application
+Options as well as on the search path or by `TENON_GMSH` / `TENON_CCX`.
+
+**Also for the release:**
+
+- *Application Options are kept* between sessions (they were not, but for the theme):
+  `tenon_ui::Settings`, kept by eframe as one JSON string; a screenshot run neither reads nor
+  writes them.
+- *A fault of Tenon's own is reported.* A panic writes `crash-<time>.txt` (what, where in
+  the code, the thread, a backtrace, the version and system; no part of the user's work) in
+  the data folder; the next start says where it is and how to report it. At most twenty are
+  kept.
+- *The geometry thread survives a fault.* A panic while rebuilding or doing a job used to
+  end that thread, leaving the window waiting for ever. It is now caught: the rebuild fails
+  with words that say it is a fault in Tenon, a job answers with them, what the thread kept
+  is let go, and the next request is served.
+- *For users:* `docs/user-guide.md` (installing, the window, keys, a first part, each
+  environment, files, faults, what Tenon does not do yet), `CHANGELOG.md`, a README in the
+  archive, and the README's "Getting Tenon".

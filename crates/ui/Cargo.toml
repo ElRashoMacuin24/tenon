@@ -20,6 +20,7 @@ tenon-fea = { workspace = true }
 tenon-render = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]

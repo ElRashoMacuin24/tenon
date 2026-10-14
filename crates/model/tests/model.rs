@@ -131,6 +131,33 @@ fn revolve_about_an_origin_axis() {
 }
 
 #[test]
+fn a_fault_on_the_geometry_thread_is_answered_and_the_thread_goes_on() {
+    let w = Worker::spawn(|| Box::new(OcctKernel::new()) as Box<dyn Kernel>, MeshTol::default(), None).unwrap();
+    // A job that fails inside Tenon (a panic): its answer says so, in words.
+    w.job(1, Box::new(|_, _| panic!("a fault planted by the test")));
+    match w.recv_timeout(Duration::from_secs(30)) {
+        Some(Response::Job { request: 1, result }) => {
+            let said = result.downcast::<tenon_model::worker::Panicked>().expect("the fault is the answer");
+            assert!(said.0.starts_with("Tenon failed while working: a fault planted by the test. This is a fault in Tenon"), "{}", said.0);
+        }
+        other => panic!("{other:?}"),
+    }
+    // The thread is still there: the next job is done, and a part is rebuilt.
+    w.job(2, Box::new(|_, _| Box::new(42u32)));
+    match w.recv_timeout(Duration::from_secs(30)) {
+        Some(Response::Job { request: 2, result }) => assert_eq!(*result.downcast::<u32>().unwrap(), 42),
+        other => panic!("{other:?}"),
+    }
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    bracket(&mut s, &mut k, 8.0);
+    w.regenerate(3, s.document().clone(), true);
+    match w.recv_timeout(Duration::from_secs(60)) {
+        Some(Response::Scene { revision: 3, scene, .. }) => assert_eq!(scene.bodies.len(), 1),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn worker_regenerates_off_thread_and_reports_the_latest() {
     let w = Worker::spawn(|| Box::new(OcctKernel::new()) as Box<dyn Kernel>, MeshTol::default(), None).unwrap();
     let mut s = Session::default();

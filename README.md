@@ -4,11 +4,20 @@ Tenon is a free, open-source, cross-platform parametric 3D CAD application writt
 workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
 then document in drawings.
 
-**Status: milestones M0 to M11 are done. In M11 (quick stress checks) a study is set up on the part in the Stress Analysis environment (supports and forces on faces or edges; pressure, weight, moments, bearing loads, remote forces and turning), worked out by Gmsh and CalculiX (programs of their own, not shipped with Tenon), checked against textbook cases, and shown in colour on the part ([docs/stress.md](docs/stress.md)). What it takes to rebuild, open and draw the examples is in [docs/performance.md](docs/performance.md).**
+**Status: the first release, 0.1.0, is being prepared ([CHANGELOG.md](CHANGELOG.md)). Milestones M0 to M11 are done. In M11 (quick stress checks) a study is set up on the part in the Stress Analysis environment (supports and forces on faces or edges; pressure, weight, moments, bearing loads, remote forces and turning), worked out by Gmsh and CalculiX (programs of their own, not shipped with Tenon), checked against textbook cases, and shown in colour on the part ([docs/stress.md](docs/stress.md)). What it takes to rebuild, open and draw the examples is in [docs/performance.md](docs/performance.md).**
 CI runs on Linux, macOS and Windows.
 
 Tenon is for makers, students and small shops. It aims to win on reliability, coherence and speed
 rather than feature count.
+
+## Getting Tenon
+
+Download the archive for your system from the
+[Releases](https://github.com/ElRashoMacuin24/tenon/releases) page, unpack it, and start
+`tenon` (Windows 10 and 11, macOS 11 or later on Apple silicon, 64-bit Linux). Nothing else
+needs installing. [docs/user-guide.md](docs/user-guide.md) is the place to start;
+[CHANGELOG.md](CHANGELOG.md) says what each release brings. To build Tenon from its source,
+see [Building](#building) below.
 
 In parts, you can:
 

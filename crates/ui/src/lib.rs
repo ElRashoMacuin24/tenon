@@ -18,6 +18,7 @@ mod browser;
 mod chrome;
 pub mod commands;
 pub mod control;
+pub mod crash;
 mod cube;
 mod dims;
 mod drawing;
@@ -35,6 +36,7 @@ mod radial;
 mod recovery;
 mod repair_ui;
 mod results;
+pub mod settings;
 mod sheet;
 mod sketch_tools;
 mod sketcher;
@@ -44,6 +46,7 @@ mod viewport;
 mod work;
 mod workbench;
 
+pub use settings::Settings;
 pub use theme::ThemeName;
 pub use workbench::{Services, Workbench};
 

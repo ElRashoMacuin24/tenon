@@ -25,21 +25,26 @@ either program on to someone else, their terms apply to that.
 
 ### Getting them
 
-Working from a checkout of Tenon:
+Install them any way you like:
 
-```sh
-pixi install -e fea        # once: downloads both into .pixi/envs/fea
-```
+- **Linux:** your distribution's packages (on Debian and Ubuntu, `sudo apt install gmsh
+  calculix-ccx`);
+- **macOS and Linux:** conda-forge (`conda install -c conda-forge gmsh calculix`), or
+  Homebrew's `gmsh` and a CalculiX build;
+- **Windows:** Gmsh from <https://gmsh.info> (a zip with `gmsh.exe`), and CalculiX from
+  conda-forge (`conda install -c conda-forge calculix`) or a build of `ccx` of your choice;
+- **from a checkout of Tenon:** `pixi install -e fea` puts both into `.pixi/envs/fea`.
 
-Otherwise install them any way you like (your system's packages, conda-forge, or the
-authors' own downloads) so that `gmsh` and `ccx` are on your search path.
+Then either put them on your search path, or tell Tenon where each is in **Tools >
+Application Options** (Stress Analysis: Gmsh, CalculiX), which says which it is using.
 
 Tenon looks, in this order:
 
 1. where the environment variables `TENON_GMSH` and `TENON_CCX` say (the full path of each
    program);
-2. in a checkout's `.pixi/envs/fea`;
-3. on the search path.
+2. where Application Options says, if the program is there;
+3. in a checkout's `.pixi/envs/fea`;
+4. on the search path.
 
 When one is missing, the study says which, and everything else in Tenon works as before.
 

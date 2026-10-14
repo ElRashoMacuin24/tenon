@@ -67,6 +67,10 @@ pub(crate) struct Chrome {
     pub dropdown: Option<(&'static str, Pos2)>,
     /// "Save changes?" waiting for an answer.
     pub save_prompt: Option<SavePrompt>,
+    /// Application Options: where Gmsh and CalculiX are, as typed (empty: on the search path).
+    pub programs: [String; 2],
+    /// The report of the fault Tenon met last time, to tell of once.
+    pub crash: Option<std::path::PathBuf>,
 }
 
 /// New, Open or Exit waiting on "Save changes?".
@@ -97,6 +101,8 @@ impl Default for Chrome {
             mass: false,
             options: false,
             autoproject: true,
+            programs: Default::default(),
+            crash: None,
             params: false,
             table: false,
             table_pick: Default::default(),
@@ -879,8 +885,11 @@ impl Workbench {
             r.on_hover_text(
                 "A new sketch on a face shows the face's edges as reference geometry: dimension and constrain to them, or use them as a profile",
             );
+            ui.add_space(6.0);
+            self.program_options(ui);
         });
         self.chrome.options = options;
+        self.crash_window(ui);
 
         let t = crate::theme::Tokens::of(self.chrome.theme);
         self.parameters_window(ui, &t);

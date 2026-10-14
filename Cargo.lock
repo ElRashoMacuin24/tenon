@@ -3104,6 +3104,7 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "egui-wgpu",
+ "serde",
  "serde_json",
  "tenon-assembly",
  "tenon-drawing",

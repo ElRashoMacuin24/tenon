@@ -36,8 +36,9 @@ struct App {
     control: Option<u16>,
 }
 
-/// Settings kept between sessions (eframe storage).
+/// Settings kept between sessions (eframe storage): the theme, and Application Options.
 const THEME_KEY: &str = "tenon.theme";
+const SETTINGS_KEY: &str = "tenon.settings";
 
 fn parse_theme(s: &str) -> Option<ThemeName> {
     match s {
@@ -52,6 +53,7 @@ impl eframe::App for App {
         // Screenshot runs never change the user's settings.
         if self.screenshot.is_none() {
             storage.set_string(THEME_KEY, if self.wb.theme() == ThemeName::Light { "light".into() } else { "dark".into() });
+            storage.set_string(SETTINGS_KEY, self.wb.settings().to_text());
         }
     }
 
@@ -155,6 +157,10 @@ fn services() -> Services {
             // Some platforms return the name without the chosen filter's extension.
             Some(if path.extension().is_none() { path.with_extension(ext) } else { path })
         })),
+        pick_program: Some(Box::new(|| {
+            let dialog = rfd::FileDialog::new();
+            if cfg!(windows) { dialog.add_filter("Programs", &["exe"]) } else { dialog }.pick_file()
+        })),
     }
 }
 
@@ -194,6 +200,12 @@ fn main() -> eframe::Result {
             other => eprintln!("warning: ignoring unknown argument `{other}`"),
         }
     }
+    // A fault of Tenon's own is written to a report beside its settings, and told of at the
+    // next start (DEC-101).
+    let crashes = eframe::storage_dir("Tenon").map(|d| d.join("crashes"));
+    if let Some(dir) = &crashes {
+        tenon_ui::crash::install(dir.clone());
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_title("Tenon").with_inner_size(size).with_min_inner_size([900.0, 560.0]),
         persist_window: screenshot.is_none(),
@@ -217,6 +229,16 @@ fn main() -> eframe::Result {
             let saved = cc.storage.and_then(|s| s.get_string(THEME_KEY)).and_then(|s| parse_theme(&s));
             if let Some(t) = theme.or(saved) {
                 wb.set_theme(t);
+            }
+            // Application Options as they were left, and last time's fault, if there was one.
+            // (A screenshot shows the app as it starts, and tells of nothing.)
+            if screenshot.is_none() {
+                if let Some(kept) = cc.storage.and_then(|s| s.get_string(SETTINGS_KEY)) {
+                    wb.apply_settings(&tenon_ui::Settings::from_text(&kept));
+                }
+                if let Some(dir) = &crashes {
+                    wb.enable_crash_reports(dir);
+                }
             }
             // Unsaved work is kept against a crash beside the app's settings, and work a Tenon
             // that crashed left there is offered back. Screenshot runs neither keep nor offer.

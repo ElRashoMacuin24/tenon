@@ -106,6 +106,17 @@ impl std::fmt::Debug for Response {
 /// No regeneration is running.
 const IDLE: u64 = u64::MAX;
 
+/// What a job answers with when Tenon itself failed while doing it (a panic on the geometry
+/// thread): what failed, in words for the user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Panicked(pub String);
+
+/// The words for a fault of Tenon's own while it was doing `what`.
+fn fault(what: &str, payload: &(dyn Any + Send)) -> String {
+    let said = payload.downcast_ref::<&str>().map(|s| (*s).to_owned()).or_else(|| payload.downcast_ref::<String>().cloned()).unwrap_or_default();
+    format!("Tenon failed while {what}: {said}. This is a fault in Tenon, not in your work: save it, and please report the fault.")
+}
+
 /// Handle to the regeneration thread.
 pub struct Worker {
     tx: Sender<Request>,
@@ -211,7 +222,18 @@ impl Worker {
                             continue;
                         }
                         running.store(slot, Ordering::SeqCst);
-                        let done = Self::run_regen(&mut *k, &mut slots, slot, revision, &doc, fresh, kept, &tol, &token, &send);
+                        // (A fault in Tenon while rebuilding is said as this rebuild's failure,
+                        // and the thread goes on: what it kept is let go, as it may be half made.)
+                        let done = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            Self::run_regen(&mut *k, &mut slots, slot, revision, &doc, fresh, kept, &tol, &token, &send)
+                        })) {
+                            Ok(done) => done,
+                            Err(payload) => {
+                                slots = Slots { store: slots.store.take(), ..Slots::default() };
+                                send(Response::Failed { slot, revision, message: fault("rebuilding", &*payload) });
+                                true
+                            }
+                        };
                         running.store(IDLE, Ordering::SeqCst);
                         if !done {
                             // Cancelled: a newer request for this slot is coming; if not, this
@@ -219,7 +241,27 @@ impl Worker {
                             pending.push_front(Request::Regenerate { slot, revision, doc, fresh, kept });
                         }
                     }
-                    other => Self::handle(&mut *k, &mut slots, other, &token, &send),
+                    other => {
+                        // (A fault in Tenon while doing it is said as its answer.)
+                        let answer = match &other {
+                            Request::Job { request, .. } => Some((*request, 0)),
+                            Request::ExportStep { request, .. } => Some((*request, 1)),
+                            Request::Measure { request, .. } => Some((*request, 2)),
+                            _ => None,
+                        };
+                        if let Err(payload) =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Self::handle(&mut *k, &mut slots, other, &token, &send)))
+                        {
+                            slots = Slots { store: slots.store.take(), ..Slots::default() };
+                            let message = fault("working", &*payload);
+                            match answer {
+                                Some((request, 0)) => send(Response::Job { request, result: Box::new(Panicked(message)) }),
+                                Some((request, 1)) => send(Response::Step { request, result: Err(message) }),
+                                Some((request, _)) => send(Response::Measure { request, result: Err(message) }),
+                                None => {}
+                            }
+                        }
+                    }
                 }
             }
             slots.release(&mut *k);

@@ -29,6 +29,8 @@ pub struct Services {
     pub pick_open_ext: Option<Box<dyn Fn(&str) -> Option<PathBuf>>>,
     /// Choose where to save: `(suggested file name, extension without dot)`.
     pub pick_save: Option<Box<dyn Fn(&str, &str) -> Option<PathBuf>>>,
+    /// Choose a program (Application Options: where Gmsh and CalculiX are).
+    pub pick_program: Option<Box<dyn Fn() -> Option<PathBuf>>>,
 }
 
 /// Where geometry comes from.
@@ -794,14 +796,18 @@ impl Workbench {
                     }
                 }
                 Response::Job { request, result } => {
-                    let result = match self.control_job_done(request, result) {
-                        Ok(()) => continue,
-                        Err(result) => result,
-                    };
-                    if self.owns_drw_job(request) {
-                        self.drw_job(request, result);
-                    } else if let Err(result) = self.part_job_done(request, result) {
-                        self.asm_job(request, result);
+                    // (A job Tenon failed in: whoever waits for it is told as of any job that
+                    // failed, and then the status bar says what failed.)
+                    let fault = result.downcast_ref::<tenon_model::worker::Panicked>().map(|p| p.0.clone());
+                    if let Err(result) = self.control_job_done(request, result) {
+                        if self.owns_drw_job(request) {
+                            self.drw_job(request, result);
+                        } else if let Err(result) = self.part_job_done(request, result) {
+                            self.asm_job(request, result);
+                        }
+                    }
+                    if let Some(message) = fault {
+                        self.set_error(message);
                     }
                 }
                 _ => {}

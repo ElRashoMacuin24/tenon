@@ -42,11 +42,30 @@ fn checkout_environment(start: &Path) -> Option<PathBuf> {
     start.ancestors().take(8).map(|dir| dir.join(".pixi").join("envs").join("fea")).find(|env| env.is_dir())
 }
 
-fn find_one(var: &str, name: &str) -> Option<PathBuf> {
+/// Where the user said the programs are (Tools > Application Options), if they said.
+static CHOSEN: std::sync::RwLock<(Option<PathBuf>, Option<PathBuf>)> = std::sync::RwLock::new((None, None));
+
+/// Says where the programs are, as the user chose them (None: look for it as usual). A
+/// program that is not where it was chosen is looked for as usual.
+pub fn choose(gmsh: Option<PathBuf>, ccx: Option<PathBuf>) {
+    *CHOSEN.write().unwrap_or_else(std::sync::PoisonError::into_inner) = (gmsh, ccx);
+}
+
+/// Where each program would be taken from now, if it is found.
+pub fn located() -> (Option<PathBuf>, Option<PathBuf>) {
+    let chosen = CHOSEN.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    (find_one(GMSH_VAR, "gmsh", chosen.0.as_deref()), find_one(CCX_VAR, "ccx", chosen.1.as_deref()))
+}
+
+fn find_one(var: &str, name: &str, chosen: Option<&Path>) -> Option<PathBuf> {
     // Where the variable says, and nowhere else when it says.
     if let Some(said) = std::env::var_os(var).filter(|v| !v.is_empty()) {
         let said = PathBuf::from(said);
         return said.is_file().then_some(said);
+    }
+    // Where the user chose, if it is there.
+    if let Some(chosen) = chosen.filter(|p| p.is_file()) {
+        return Some(chosen.to_path_buf());
     }
     let file = exe(name);
     // A checkout's own environment: from the working folder, and from the running program.
@@ -61,10 +80,11 @@ fn find_one(var: &str, name: &str) -> Option<PathBuf> {
 }
 
 impl Tools {
-    /// Finds both programs: where `TENON_GMSH` and `TENON_CCX` say, in a checkout's `fea`
-    /// environment, or on the search path. The error says which is missing and what to do.
+    /// Finds both programs: where `TENON_GMSH` and `TENON_CCX` say, where the user chose
+    /// them, in a checkout's `fea` environment, or on the search path. The error says which
+    /// is missing and what to do.
     pub fn find() -> Result<Tools, String> {
-        let (gmsh, ccx) = (find_one(GMSH_VAR, "gmsh"), find_one(CCX_VAR, "ccx"));
+        let (gmsh, ccx) = located();
         match (gmsh, ccx) {
             (Some(gmsh), Some(ccx)) => Ok(Tools { gmsh, ccx }),
             (gmsh, ccx) => {
@@ -75,7 +95,7 @@ impl Tools {
                         .map(|(_, what)| what)
                         .collect();
                 Err(format!(
-                    "Working a study out takes two programs that are not part of Tenon, and {} not found: {}. Install them (docs/stress.md says how), or say where they are with {GMSH_VAR} and {CCX_VAR}.",
+                    "Working a study out takes two programs that are not part of Tenon, and {} not found: {}. Install them (docs/stress.md says how), and choose them in Tools > Application Options if they are not on the search path.",
                     if missing.len() == 1 { "one was" } else { "they were" },
                     missing.join("; ")
                 ))
