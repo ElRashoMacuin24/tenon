@@ -33,6 +33,8 @@ impl SweepPanel {
 /// A coil being made or edited.
 #[derive(Clone, Debug)]
 pub(crate) struct CoilPanel {
+    /// Which two of pitch, turns and height are given; the third follows.
+    pub method: CoilMethod,
     pub editing: Option<FeatureId>,
     pub sketch: FeatureId,
     pub regions: RegionSel,
@@ -41,6 +43,24 @@ pub(crate) struct CoilPanel {
     pub turns: f64,
     pub left: bool,
     pub operation: Operation,
+}
+
+/// Which two of a coil's sizes are given (the coil keeps its pitch and turns).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CoilMethod {
+    PitchTurns,
+    TurnsHeight,
+    PitchHeight,
+}
+
+impl CoilMethod {
+    fn name(self) -> &'static str {
+        match self {
+            CoilMethod::PitchTurns => "Pitch and Turns",
+            CoilMethod::TurnsHeight => "Turns and Height",
+            CoilMethod::PitchHeight => "Pitch and Height",
+        }
+    }
 }
 
 impl CoilPanel {
@@ -156,6 +176,7 @@ impl Workbench {
         let panel = match editing {
             Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
                 FeatureKind::Coil(c) => CoilPanel {
+                    method: CoilMethod::PitchTurns,
                     editing,
                     sketch: c.sketch,
                     regions: c.regions.clone(),
@@ -187,6 +208,7 @@ impl Workbench {
                     (None, None) => AxisChoice::Origin(OriginAxis::Z),
                 };
                 CoilPanel {
+                    method: CoilMethod::PitchTurns,
                     editing: None,
                     sketch,
                     regions: RegionSel::Default,
@@ -338,13 +360,64 @@ impl Workbench {
                 });
                 section(ui, "Behavior", true, |ui| {
                     egui::Grid::new("tn_props_coil_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        // (Two of pitch, turns and height are typed; the third follows from them,
+                        // and is shown. The coil keeps its pitch and its turns.)
+                        ui.label("Type").on_hover_text("Which two sizes are given: the third follows");
+                        egui::ComboBox::from_id_salt("tn_props_coil_method").selected_text(p.method.name()).show_ui(ui, |ui| {
+                            for m in [CoilMethod::PitchTurns, CoilMethod::TurnsHeight, CoilMethod::PitchHeight] {
+                                ui.selectable_value(&mut p.method, m, m.name());
+                            }
+                        });
+                        ui.end_row();
+                        let mut height = p.pitch * p.turns;
+                        let derived = |ui: &mut egui::Ui, v: f64, unit: &str| {
+                            ui.label(format!("{} {unit}", crate::properties::fmt_value(v))).on_hover_text("Follows from the other two");
+                        };
                         ui.label("Pitch");
-                        enter |= eq_value_field(ui, egui::Id::new("tn_props_pitch"), &mut p.pitch, eqs, "pitch", "mm", 0.001..=1e6, 110.0, t).entered;
+                        if p.method == CoilMethod::TurnsHeight {
+                            derived(ui, p.pitch, "mm");
+                        } else {
+                            enter |=
+                                eq_value_field(ui, egui::Id::new("tn_props_pitch"), &mut p.pitch, eqs, "pitch", "mm", 0.001..=1e6, 110.0, t).entered;
+                        }
                         ui.end_row();
                         ui.label("Turns");
-                        enter |=
-                            eq_value_field(ui, egui::Id::new("tn_props_turns"), &mut p.turns, eqs, "turns", "", 0.01..=10_000.0, 110.0, t).entered;
+                        if p.method == CoilMethod::PitchHeight {
+                            derived(ui, p.turns, "");
+                        } else {
+                            enter |= eq_value_field(ui, egui::Id::new("tn_props_turns"), &mut p.turns, eqs, "turns", "", 0.01..=10_000.0, 110.0, t)
+                                .entered;
+                        }
                         ui.end_row();
+                        ui.label("Height").on_hover_text("From the first turn's start to the last turn's end, along the axis");
+                        if p.method == CoilMethod::PitchTurns {
+                            derived(ui, height, "mm");
+                        } else {
+                            enter |= crate::properties::eq_field(
+                                ui,
+                                egui::Id::new("tn_props_coil_height"),
+                                &mut height,
+                                None,
+                                "mm",
+                                0.001..=1e7,
+                                110.0,
+                                t,
+                            )
+                            .entered;
+                        }
+                        ui.end_row();
+                        // The one that follows, as a number: an equation for it would no longer say it.
+                        match p.method {
+                            CoilMethod::PitchTurns => {}
+                            CoilMethod::TurnsHeight => {
+                                p.pitch = height / p.turns;
+                                eqs.remove("pitch");
+                            }
+                            CoilMethod::PitchHeight => {
+                                p.turns = height / p.pitch;
+                                eqs.remove("turns");
+                            }
+                        }
                         ui.label("Rotation");
                         egui::ComboBox::from_id_salt("tn_props_coil_hand")
                             .selected_text(if p.left { "Left-handed" } else { "Right-handed" })

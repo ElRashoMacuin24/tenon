@@ -286,6 +286,63 @@ impl Workbench {
         over.chain(thin).collect()
     }
 
+    /// The printer's build space, drawn round the part as it would stand on the bed, while the
+    /// bed is ticked in the 3D Print Check window: a box the bed's size and the printer's
+    /// height, its long side along the part's (the part may be turned on the bed).
+    pub(crate) fn print_overlay(&self, ui: &Ui, rect: egui::Rect, t: &Tokens) {
+        #[cfg(test)]
+        ui.data_mut(|d| d.remove::<Vec<tenon_geom::Vec3>>(egui::Id::new("tn_print_space")));
+        let print = &self.chrome.print;
+        if !print.open || !print.bed_on || self.in_assembly() || self.in_drawing() || self.is_sketching() {
+            return;
+        }
+        let Some(b) = self.scene.bbox() else { return };
+        use tenon_geom::Vec3;
+        let up = print.setup.up.dir();
+        // The bed's two sides: the part's axes square to up.
+        let (mut side, mut across) = match print.setup.up {
+            Up::X | Up::NegX => (Vec3::Y, Vec3::Z),
+            Up::Y | Up::NegY => (Vec3::X, Vec3::Z),
+            Up::Z | Up::NegZ => (Vec3::X, Vec3::Y),
+        };
+        let size = b.max - b.min;
+        let [mut long, mut short, height] = print.bed;
+        if short > long {
+            (long, short) = (short, long);
+        }
+        if size.dot(across) > size.dot(side) {
+            (side, across) = (across, side);
+        }
+        // Where the part stands: its lowest point, as it is printed.
+        let corners = [b.min, b.max];
+        let low = (0..8).map(|i| Vec3::new(corners[i & 1].x, corners[(i >> 1) & 1].y, corners[(i >> 2) & 1].z).dot(up)).fold(f64::MAX, f64::min);
+        let centre = b.center();
+        let floor = centre + up * (low - centre.dot(up));
+        let at = |i: usize| {
+            let s = if i & 1 == 0 { -0.5 } else { 0.5 };
+            let a = if i & 2 == 0 { -0.5 } else { 0.5 };
+            let h = if i & 4 == 0 { 0.0 } else { height };
+            floor + side * (s * long) + across * (a * short) + up * h
+        };
+        let space: Vec<Vec3> = (0..8).map(at).collect();
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let screen = |p: Vec3| self.view.camera.project(p, w, h).map(|(x, y, _)| rect.min + egui::vec2(x as f32, y as f32));
+        let painter = ui.painter().with_clip_rect(rect);
+        let ink = t.accent.gamma_multiply(0.8);
+        for (i, j) in [(0, 1), (1, 3), (3, 2), (2, 0), (4, 5), (5, 7), (7, 6), (6, 4), (0, 4), (1, 5), (2, 6), (3, 7)] {
+            if let (Some(p), Some(q)) = (screen(space[i]), screen(space[j])) {
+                // (The bed itself a little heavier than the walls of the space.)
+                painter.line_segment([p, q], egui::Stroke::new(if j < 4 { 1.6 } else { 1.0 }, ink));
+            }
+        }
+        if let Some(p) = screen(space[0]) {
+            let text = format!("Build space {} x {} x {} mm", fmt_value(long), fmt_value(short), fmt_value(height));
+            painter.text(p + egui::vec2(6.0, 4.0), egui::Align2::LEFT_TOP, text, theme::small(), ink);
+        }
+        #[cfg(test)]
+        ui.data_mut(|d| d.insert_temp(egui::Id::new("tn_print_space"), space));
+    }
+
     pub(crate) fn print_window(&mut self, ui: &mut Ui, t: &Tokens) {
         if !self.chrome.print.open {
             return;

@@ -1534,7 +1534,35 @@ fn sweep_coil_and_loft_from_the_ribbon() {
     wb.edit_feature(coil).unwrap();
     let Some(Panel::Coil(p)) = wb.panel.clone() else { panic!() };
     assert_eq!((p.pitch, p.turns), (10.0, 3.0));
-    wb.panel = None;
+    // Turns and Height: 4 turns in 20 mm is a pitch of 5. Pitch and Height: 30 mm of a pitch of
+    // 5 is 6 turns.
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let pick = |d: &mut Driver, wb: &mut Workbench, shown: &str, wanted: &str| {
+        let at = d.text_pos(shown).unwrap_or_else(|| panic!("no {shown}: {:?}", d.texts()));
+        d.click(wb, at);
+        d.frame(wb, vec![]);
+        let at = d.text_pos(wanted).unwrap_or_else(|| panic!("no {wanted}: {:?}", d.texts()));
+        d.click(wb, at);
+        d.frame(wb, vec![]);
+        d.frame(wb, vec![]);
+    };
+    assert!(d.texts().iter().any(|t| t == "30 mm"), "the height follows: {:?}", d.texts());
+    pick(&mut d, &mut wb, "Pitch and Turns", "Turns and Height");
+    type_into(&mut d, &mut wb, "tn_props_turns", "4");
+    type_into(&mut d, &mut wb, "tn_props_coil_height", "20");
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Coil(p)) = wb.panel.clone() else { panic!() };
+    assert_eq!((p.pitch, p.turns), (5.0, 4.0));
+    pick(&mut d, &mut wb, "Turns and Height", "Pitch and Height");
+    type_into(&mut d, &mut wb, "tn_props_coil_height", "30");
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Coil(p)) = wb.panel.clone() else { panic!() };
+    assert_eq!((p.pitch, p.turns), (5.0, 6.0));
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - 6.0 * per_turn).abs() < 1e-3 * per_turn, "{}", volume(&wb));
 
     // Loft: two squares 10 apart; both sections are picked.
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));

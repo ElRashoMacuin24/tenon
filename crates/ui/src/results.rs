@@ -442,17 +442,28 @@ impl Workbench {
         };
         if let Some((x, y, _)) = cam.project(moved(peak.node), w, h) {
             let at = rect.min + vec2(x as f32, y as f32);
-            let text = match env.field {
+            // (On the far side of the part when no triangle of it that faces the eye has it: then
+            // the mark is faint and says so, where it used to show through as if in front.)
+            let index = o.nodes.iter().position(|n| *n == peak.node).and_then(|i| u32::try_from(i).ok());
+            let in_sight = index.is_some_and(|i| facing.iter().any(|(_, t)| o.tris[*t].contains(&i)));
+            let mut text = match env.field {
                 Field::Safety => format!("Min: {}", figures(lo)),
                 field => format!("Max: {} {}", figures(hi), field.unit()),
             };
-            let edge = Color32::from_black_alpha(160);
+            if !in_sight {
+                text += " (behind)";
+            }
+            let (ink, edge) = if in_sight {
+                (Color32::WHITE, Color32::from_black_alpha(160))
+            } else {
+                (Color32::from_white_alpha(150), Color32::from_black_alpha(70))
+            };
             painter.circle_stroke(at, 5.0, Stroke::new(3.5, edge));
-            painter.circle_stroke(at, 5.0, Stroke::new(1.5, Color32::WHITE));
-            painter.line_segment([at + vec2(4.0, -4.0), at + vec2(22.0, -22.0)], Stroke::new(1.5, Color32::WHITE));
+            painter.circle_stroke(at, 5.0, Stroke::new(1.5, ink));
+            painter.line_segment([at + vec2(4.0, -4.0), at + vec2(22.0, -22.0)], Stroke::new(1.5, ink));
             let label = at + vec2(26.0, -26.0);
             painter.text(label + vec2(1.0, 1.0), Align2::LEFT_BOTTOM, &text, theme::body(), edge);
-            painter.text(label, Align2::LEFT_BOTTOM, &text, theme::body(), Color32::WHITE);
+            painter.text(label, Align2::LEFT_BOTTOM, &text, theme::body(), ink);
         }
 
         // The scale: ten bands, the top one the most (the least, for a safety factor: the

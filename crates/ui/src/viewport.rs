@@ -462,6 +462,7 @@ impl Workbench {
         self.primitive_overlay(ui, rect, t);
         self.results_overlay(ui, rect, t);
         self.analysis_overlay(ui, rect, t);
+        self.print_overlay(ui, rect, t);
         if self.has_properties() {
             self.hole_markers(ui, rect, t);
             self.profile_overlay(ui, rect, t);

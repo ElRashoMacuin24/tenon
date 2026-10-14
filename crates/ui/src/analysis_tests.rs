@@ -1071,6 +1071,18 @@ fn a_study_is_worked_out_and_shown_in_colour_on_the_part() {
     d.click(&mut wb, displacement);
     d.frame(&mut wb, vec![]);
     assert!(said(&d, "Displacement (mm)") && said(&d, &format!("Max: {} mm", figures(moved))), "{:?}", d.texts());
+    // Seen from the other side of the bar, the most is behind it, and the mark says so.
+    let (peak, centre) = (solved.results.max_displacement.at, Vec3::new(50.0, 10.0, 5.0));
+    wb.look_from(centre - peak);
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    assert!(said(&d, &format!("Max: {} mm (behind)", figures(moved))), "{:?}", d.texts());
+    wb.look_from(peak - centre);
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    assert!(said(&d, &format!("Max: {} mm", figures(moved))), "{:?}", d.texts());
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
     d.click(&mut wb, factor);
     d.frame(&mut wb, vec![]);
     assert!(said(&d, "Safety Factor") && said(&d, &format!("Min: {}", figures(250.0 / stress))) && said(&d, "15 or more"), "{:?}", d.texts());

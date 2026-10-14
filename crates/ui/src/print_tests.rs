@@ -142,9 +142,25 @@ fn the_print_check_window_reads_the_part_and_marks_what_it_finds() {
     assert_eq!((wb.chrome.print.setup.min_wall, wb.chrome.print.setup.overhang), (3.0, 45.0));
 
     // The bed: it fits the usual one, and not one 30 square (it is 40 long).
+    let space = |d: &Driver| d.ctx.data(|x| x.get_temp::<Vec<tenon_geom::Vec3>>(egui::Id::new("tn_print_space")));
+    assert!(space(&d).is_none(), "no build space until the bed is ticked");
     d.click(&mut wb, pressable(&d, "tn_print_bed"));
     frames(&mut d, &mut wb);
     assert!(shows(&d, "40 x 20 x 22 mm, 22 high: fits the bed"), "{:?}", d.texts());
+    // The build space is drawn round the part as it stands on the bed: 220 square, 250 up from
+    // where the part stands (printed upside down, as -Z was chosen above: from its top), its
+    // middle under the part's.
+    let box_of = |d: &Driver| {
+        let s = space(d).expect("the build space is drawn");
+        let (lo, hi) = s.iter().fold((s[0], s[0]), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        (hi - lo, lo.z, (lo + hi) * 0.5)
+    };
+    let part = wb.scene().bbox().unwrap();
+    let (extent, floor, middle) = box_of(&d);
+    assert_eq!(wb.chrome.print.setup.up, tenon_io::print::Up::NegZ);
+    assert_eq!((extent.x, extent.y, extent.z, floor), (220.0, 220.0, 250.0, part.max.z - 250.0));
+    assert!((middle.x - part.center().x).abs() < 1e-9 && (middle.y - part.center().y).abs() < 1e-9, "{middle:?}");
+    assert!(shows(&d, "Build space 220 x 220 x 250 mm"), "{:?}", d.texts());
     for axis in ["x", "y"] {
         let at = d.ctx.read_response(egui::Id::new(("tn_print_bed", axis))).expect("the bed's size").rect.center();
         d.click(&mut wb, at);
@@ -157,6 +173,7 @@ fn the_print_check_window_reads_the_part_and_marks_what_it_finds() {
         frames(&mut d, &mut wb);
     }
     assert_eq!(wb.chrome.print.bed, [30.0, 30.0, 250.0]);
+    assert_eq!(box_of(&d).0.x, 30.0, "the box follows the bed");
     assert!(shows(&d, "40 x 20 x 22 mm, 22 high: does not fit the bed"), "{:?}", d.texts());
     assert_eq!(wb.print_report().map(|r| r.fits), Some(Some(false)));
 

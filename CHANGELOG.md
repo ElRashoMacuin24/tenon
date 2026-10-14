@@ -79,3 +79,5 @@ without installing anything else.
 - Holes sized for M3 to M20 screws: clearance (close or normal fit) or tap drill, with a
   counterbore or countersink for the head. Polygons of 3 to 64 sides. Moments of inertia in
   the Properties window. Solids picked in the browser. A thread's size in its browser row.
+  Coils by turns and height, or pitch and height. The 3D Print Check draws the printer's build
+  space. A stress result's mark says when the peak is behind the part.
