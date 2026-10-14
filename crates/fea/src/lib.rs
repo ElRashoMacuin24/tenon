@@ -49,27 +49,12 @@ pub fn mesh_part(tools: &Tools, step: &[u8], size: f64, dir: &Path, cancel: &Can
     }
     std::fs::write(dir.join("part.step"), step).map_err(|e| format!("cannot write the part for the mesher: {e}"))?;
     let (largest, smallest) = (format!("{size}"), format!("{}", size / 10.0));
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).to_string();
     // Second-order tetrahedra, sized `size` at most and finer round small curves (twelve to a
-    // full turn), written in the 2.2 format as text.
-    let args = [
-        "part.step",
-        "-3",
-        "-order",
-        "2",
-        "-clmax",
-        &largest,
-        "-clmin",
-        &smallest,
-        "-clcurv",
-        "12",
-        "-nt",
-        &threads,
-        "-format",
-        "msh2",
-        "-o",
-        "part.msh",
-    ];
+    // full turn), written in the 2.2 format as text. On one thread: with more the mesher
+    // gives a slightly different mesh each time, and the same part would not give the same
+    // answer twice.
+    let args =
+        ["part.step", "-3", "-order", "2", "-clmax", &largest, "-clmin", &smallest, "-clcurv", "12", "-nt", "1", "-format", "msh2", "-o", "part.msh"];
     tools::run(&tools.gmsh, &args, dir, "mesher.log", cancel, MESH_LIMIT).map_err(|e| format!("The part could not be divided into elements. {e}"))?;
     let text = std::fs::read_to_string(dir.join("part.msh")).map_err(|_| {
         let said = std::fs::read_to_string(dir.join("mesher.log")).unwrap_or_default();

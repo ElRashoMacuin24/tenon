@@ -48,7 +48,8 @@ When one is missing, the study says which, and everything else in Tenon works as
 1. The part is rebuilt and written as a STEP file.
 2. Gmsh divides it into ten-node tetrahedra. Their size is the study's (Mesh Settings,
    `study.mesh_size`), or a twentieth of the part's size; round holes and fillets get
-   smaller ones.
+   smaller ones. It runs on one thread, so that the same part gives the same mesh, and the
+   same answer, every time.
 3. Tenon reads the mesh and tells which face of the part each of its surfaces is, by where
    it lies (a STEP file keeps neither the order of faces nor their names).
 4. The study is put onto the mesh: every node of a held face gets the directions it may not
@@ -72,6 +73,20 @@ Reading a result:
 - Halve the element size and solve again. If the answer barely changes, the mesh was fine
   enough.
 - A support is rigid. A real fixture gives a little, which lowers the stress beside it.
+
+## In the app
+
+Environments > Stress Analysis (or 3D Model > Simulation). Create Study; say where the part
+is held (Fixed, Pin, Frictionless) and what pushes on it (Force, Pressure, Gravity) by
+clicking its faces; Assign gives it a material that says how strong it is. Then **Simulate**.
+
+The status bar says what the study comes to. The browser's Results have a row for von Mises
+stress, displacement and safety factor: click one to see it in colour on the part, with a
+scale and a mark where the most is. The part is drawn bent, large enough to see
+(Displacement Display changes that, and the scale says how many times over it is drawn).
+Mesh View shows the elements.
+
+Change a load, a face or the part, and the results are out of date: Simulate again.
 
 ## How it is checked
 

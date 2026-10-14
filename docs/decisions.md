@@ -2601,3 +2601,42 @@ absence a failure; without it (a plain `cargo test` on a machine that has not in
 them) those tests say they did not run.
 
 Every result carries: "An engineering aid, not a certified analysis".
+
+## DEC-099 Simulate in the app: a study's results in colour on the part (2026-10-13)
+
+The app's side of DEC-098.
+
+- **Simulate** works the study out where the kernel is (its own thread in the app, so the
+  window stays alive; Esc stops the program that is running). What a study lacks is said in
+  the study's own words, before anything is started. When it is done the status bar says
+  what it comes to in one sentence: the most the material is worked against what it yields
+  at, how many times over it holds (or, in the colour of a fault, that it yields), how far it
+  moves, and that this is an engineering aid.
+- **The results are drawn over the part**: the boundary of the mesh, each six-node triangle
+  as four, coloured by the result that is chosen (von Mises stress, displacement, safety
+  factor: a row each in the browser), with a scale of ten bands to read the colours by and a
+  mark where the most is. They are drawn by the window's own painter, furthest triangle
+  first, not by the 3D renderer: that needed no new kind of vertex in two renderers, and it
+  is fast enough for the meshes a quick check has. Where two parts of a part overlap on the
+  screen at nearly one depth the order can be wrong for a triangle or two. (A gap.)
+- **The part bends on the screen.** Displacement Display goes round three ways of drawing
+  it: large enough to see (so that the most it moves is a twentieth of the part's size; the
+  scale says how many times over), as far as it really moves, and not at all. Under results
+  the part itself is drawn as edges only, so the bent shape is seen against the straight one.
+- A safety factor's scale stops at 15 ("or more"), and its colours run the other way: red is
+  the bad end of every scale.
+- **Mesh View** draws the elements' sides over the results. With no mesh yet it divides the
+  part without solving, so the mesh can be looked at before a study is ready.
+- **Results are of the part and the study as they were.** Any change to either (a load, a
+  face, a feature, the material) puts them out of date: they are no longer drawn, and the
+  browser says so and that Simulate works them out again. They are not kept in the file.
+
+The mark for the most is drawn where that node is, also when it is on the far side of the
+part: it is then seen through it.
+
+**Found on the way: the same part gave a different answer each time.** Two pictures of one
+study showed 3,129 nodes in one and 3,123 in the other. The mesher was given every thread of
+the machine, and with more than one it does not make the same mesh twice. It now runs on
+one: the same part gives the same mesh and the same answer to the last figure, which
+`a_cantilever_bends_as_beam_theory_says` holds it to. A quick check's mesh takes a fraction
+of a second either way.

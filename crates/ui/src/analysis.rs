@@ -35,6 +35,15 @@ pub(crate) struct Env {
     pub selected: Option<u32>,
     /// Boundary Conditions is off: supports and loads are not drawn on the part.
     pub hide_marks: bool,
+    /// What there is to show of a study: its mesh, and its results when it was solved.
+    pub outcome: Option<crate::results::Outcome>,
+    /// Which result is shown in colour, and how the part's bending is drawn.
+    pub field: crate::results::Field,
+    pub deform: crate::results::Deform,
+    /// Mesh View: the mesh's lines are drawn.
+    pub mesh_view: bool,
+    /// A study is being worked out.
+    pub running: Option<crate::results::Running>,
 }
 
 /// Fixed, Pin or Frictionless: the faces that are held.
@@ -399,6 +408,8 @@ enum StudyAction {
     Copy(StudyId),
     Delete(StudyId),
     Run(&'static str),
+    /// Shows a result in colour on the part.
+    Show(crate::results::Field),
 }
 
 impl Workbench {
@@ -416,6 +427,10 @@ impl Workbench {
     /// The environment's own commands. While it is entered, the commands that change the part
     /// are refused: the part is changed in the part environment.
     pub(crate) fn analysis_command(&mut self, id: &str) -> Option<Result<(), String>> {
+        // (Esc stops a study that is being worked out, before it is anything else.)
+        if id == "ui.cancel" && self.stop_study() {
+            return Some(Ok(()));
+        }
         if !id.starts_with("analysis.") && !id.starts_with("study.") {
             let changes = ["sketch.", "work.", "sheet."].iter().any(|p| id.starts_with(p)) || (id.starts_with("model.") && id != "model.rebuild");
             return (self.in_analysis() && changes).then(|| Err("That changes the part: Finish Analysis first.".into()));
@@ -434,6 +449,9 @@ impl Workbench {
                 Ok(())
             }
             "analysis.marks" => self.toggle_marks(),
+            "analysis.simulate" => self.work_study_out(true),
+            "analysis.mesh_view" => self.toggle_mesh_view(),
+            "analysis.deform" | "analysis.deform.undeformed" | "analysis.deform.adjusted" | "analysis.deform.actual" => self.set_deform(id),
             "study.new" => self.study_create(),
             "study.fix" => self.open_support(SupportKind::Fixed, None),
             "study.pin" => self.open_support(SupportKind::PIN, None),
@@ -477,6 +495,32 @@ impl Workbench {
         self.analysis = None;
         self.chrome.tab = self.home_tab();
         self.set_status("Ready");
+    }
+
+    /// Displacement Display: how the part's bending is drawn (the button goes round the three).
+    fn set_deform(&mut self, id: &str) -> Result<(), String> {
+        use crate::results::Deform;
+        if !self.in_analysis() {
+            return Err("Displacement Display is of the Stress Analysis environment (Environments > Stress Analysis).".into());
+        }
+        let Some(env) = self.analysis.as_mut() else { return Ok(()) };
+        env.deform = match id {
+            "analysis.deform.undeformed" => Deform::Undeformed,
+            "analysis.deform.adjusted" => Deform::Adjusted,
+            "analysis.deform.actual" => Deform::Actual,
+            _ => match env.deform {
+                Deform::Adjusted => Deform::Actual,
+                Deform::Actual => Deform::Undeformed,
+                Deform::Undeformed => Deform::Adjusted,
+            },
+        };
+        let said = match env.deform {
+            Deform::Undeformed => "Results are shown on the part as it is, not bent.",
+            Deform::Adjusted => "The part's bending is shown large enough to see (the scale says how many times over).",
+            Deform::Actual => "The part is shown bent as far as it really moves.",
+        };
+        self.set_status(said);
+        Ok(())
     }
 
     /// Boundary Conditions: supports and loads drawn on the part, or not.
@@ -959,6 +1003,24 @@ impl Workbench {
             .map(|(id, faces)| (id, self.lost_faces(faces)))
             .collect();
         let lost = |id: u32| lost.get(&id).copied().unwrap_or(0);
+        // What there is to show of the study worked on: its mesh's size, and its results in words.
+        use crate::results::{Field, figures};
+        let shown: Option<(usize, usize, Option<Vec<(Field, String)>>)> = self.outcome().and_then(|o| {
+            let mesh = o.mesh()?;
+            let results = o.solved.as_ref().map(|s| {
+                let factor = s.safety_factor().map_or("none: nothing works it".to_owned(), figures);
+                vec![
+                    (Field::VonMises, format!("Von Mises Stress: {} MPa", figures(s.results.max_von_mises.value))),
+                    (Field::Displacement, format!("Displacement: {} mm", figures(s.results.max_displacement.value))),
+                    (Field::Safety, format!("Safety Factor: {factor}")),
+                ]
+            });
+            Some((mesh.nodes.len(), mesh.tets.len(), results))
+        });
+        let (field, stale) = (self.analysis.as_ref().map(|e| e.field).unwrap_or_default(), self.outcome_is_stale());
+        // (What is being worked out of the study worked on: Some(true) its answer, Some(false)
+        // its mesh alone.)
+        let running: Option<bool> = self.analysis.as_ref().and_then(|e| e.running.as_ref()).filter(|r| Some(r.study) == active).map(|r| r.solving);
         let mut action: Option<StudyAction> = None;
         egui::ScrollArea::vertical().id_salt("tn_study_scroll").auto_shrink([false, false]).show(ui, |ui| {
             row(ui, t, 0, Icon::Part, &name, None, RowStyle::Normal);
@@ -1037,16 +1099,47 @@ impl Workbench {
                     let (resp, _) = row(ui, t, 3, icon, &label, None, style(l.id, l.suppressed));
                     item_row(resp, study.id, l.id, &l.name, l.suppressed, lost(l.id) > 0, &mut action);
                 }
-                let mesh = match study.mesh_size {
-                    Some(size) => format!("Mesh: {size} mm"),
-                    None => "Mesh: sized from the part".to_owned(),
+                let mesh = match (&shown, study.mesh_size) {
+                    _ if running == Some(false) => "Mesh: being made...".to_owned(),
+                    (Some((_, elements, _)), _) => format!("Mesh: {elements} elements"),
+                    (None, Some(size)) => format!("Mesh: {size} mm"),
+                    (None, None) => "Mesh: sized from the part".to_owned(),
                 };
                 let (resp, _) = row(ui, t, 2, Icon::MeshGrid, &mesh, None, RowStyle::Normal);
-                if resp.on_hover_text("Double-click to set the size of the elements").double_clicked() {
+                let about = match &shown {
+                    Some((nodes, elements, _)) => {
+                        format!("{elements} ten-node tetrahedra with {nodes} nodes. Double-click to set the size of the elements")
+                    }
+                    None => "Double-click to set the size of the elements".to_owned(),
+                };
+                if resp.on_hover_text(about).double_clicked() {
                     action = Some(StudyAction::Run("study.mesh_size"));
                 }
-                let (resp, _) = row(ui, t, 2, Icon::Simulate, "Results: none yet", None, RowStyle::Dim);
-                resp.on_hover_text("Working a study out (Simulate) arrives with milestone M11's mesher and solver");
+                // The results: each a row that shows it in colour on the part when clicked.
+                match &shown {
+                    Some((_, _, Some(results))) => {
+                        row(ui, t, 2, Icon::Folder, "Results", None, RowStyle::Normal);
+                        for (f, text) in results {
+                            let (resp, _) = row(ui, t, 3, Icon::Stress, text, None, if *f == field { RowStyle::Active } else { RowStyle::Normal });
+                            if resp.on_hover_text("Click to show it in colour on the part").clicked() {
+                                action = Some(StudyAction::Show(*f));
+                            }
+                        }
+                    }
+                    _ => {
+                        let (text, tip) = if running == Some(true) {
+                            ("Results: being worked out...", "Esc stops it")
+                        } else if stale {
+                            ("Results: out of date (Simulate)", "The part or the study has changed since it was worked out")
+                        } else {
+                            ("Results: none yet (Simulate)", "Simulate works the study out")
+                        };
+                        let (resp, _) = row(ui, t, 2, Icon::Simulate, text, None, RowStyle::Dim);
+                        if resp.on_hover_text(tip).double_clicked() {
+                            action = Some(StudyAction::Run("analysis.simulate"));
+                        }
+                    }
+                }
             }
         });
         let study = self.active_study().map(|s| s.id.0);
@@ -1078,6 +1171,12 @@ impl Workbench {
             }),
             Some(StudyAction::Delete(id)) => self.exec("study.delete", json!({ "study": id.0 })).map(|_| ()),
             Some(StudyAction::Run(id)) => self.run_ui(id),
+            Some(StudyAction::Show(field)) => {
+                if let Some(env) = &mut self.analysis {
+                    env.field = field;
+                }
+                Ok(())
+            }
         };
         if let Err(e) = done {
             self.set_error(e);

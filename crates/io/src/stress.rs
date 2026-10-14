@@ -99,22 +99,45 @@ pub fn work_out(s: &mut Session, k: &mut dyn Kernel, id: StudyId, keep: Option<&
     let material = Material::of(strength.youngs_modulus, strength.poisson, d.density());
     let setup = Setup { held, pushed, surfaces, material };
 
-    // The part as the mesher reads it, and as it is drawn (to tell its faces on the mesh).
-    let step = k.export_step(&[body.shape]).map_err(|e| e.to_string())?;
-    let drawn = k.tessellate(body.shape, &MeshTol::exact()).map_err(|e| e.to_string())?;
-    let extent = {
-        let at = |p: &[f32; 3]| tenon_geom::Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
-        let Some(first) = drawn.positions.first().map(at) else { return Err("the part has nothing to divide into elements".into()) };
-        let (lo, hi) = drawn.positions.iter().map(at).fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p)));
-        (hi - lo).len()
-    };
-    let element_size = st.mesh_size.unwrap_or_else(|| tenon_fea::element_size_for(extent));
+    let (step, drawn, element_size) = for_the_mesher(k, body.shape, st.mesh_size)?;
     let scratch = match keep {
         Some(dir) => Scratch::in_folder(dir)?,
         None => Scratch::new()?,
     };
     let (results, took) = tenon_fea::work_out(&tools, &step, &drawn, &setup, element_size, &scratch.dir, cancel)?;
     Ok(Solved { study: id, results, took, element_size, yield_strength: strength.yield_strength })
+}
+
+/// The solid as the mesher reads it (a STEP file's bytes), as it is drawn (to tell its faces on
+/// the mesh), and how large its elements are to be: `size`, or from the part's own size.
+fn for_the_mesher(k: &mut dyn Kernel, shape: tenon_kernel::ShapeHandle, size: Option<f64>) -> Result<(Vec<u8>, tenon_kernel::Mesh, f64), String> {
+    let step = k.export_step(&[shape]).map_err(|e| e.to_string())?;
+    let drawn = k.tessellate(shape, &MeshTol::exact()).map_err(|e| e.to_string())?;
+    let at = |p: &[f32; 3]| tenon_geom::Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+    let Some(first) = drawn.positions.first().map(at) else { return Err("the part has nothing to divide into elements".into()) };
+    let (lo, hi) = drawn.positions.iter().map(at).fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p)));
+    let element_size = size.unwrap_or_else(|| tenon_fea::element_size_for((hi - lo).len()));
+    Ok((step, drawn, element_size))
+}
+
+/// The part divided into elements as study `id` sizes them, and no more (Mesh View): the
+/// study need not be ready to be solved. Returns the mesh and the size its elements were
+/// asked to be.
+pub fn mesh(s: &mut Session, k: &mut dyn Kernel, id: StudyId, cancel: &Cancel) -> Result<(tenon_fea::TetMesh, f64), String> {
+    let tools = Tools::find()?;
+    let r = s.regen(k).clone();
+    if let Some((_, why)) = r.first_error() {
+        return Err(format!("the part does not build: {why}"));
+    }
+    let body = match r.bodies.as_slice() {
+        [one] => one,
+        [] => return Err("the part has no solid to divide into elements".into()),
+        many => return Err(format!("the part has {} solids, and a study is of one", many.len())),
+    };
+    let size = s.document().study(id).ok_or("no such study")?.mesh_size;
+    let (step, _, element_size) = for_the_mesher(k, body.shape, size)?;
+    let scratch = Scratch::new()?;
+    Ok((tenon_fea::mesh_part(&tools, &step, element_size, &scratch.dir, cancel)?, element_size))
 }
 
 /// `study.solve`: works a study out and says what it comes to.

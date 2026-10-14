@@ -590,23 +590,33 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Mesh",
                 commands: &[
-                    large("analysis.mesh_view", "Mesh\nView", "The part divided into the elements the study is worked out on", Icon::MeshGrid, 11),
+                    large("analysis.mesh_view", "Mesh\nView", "The part divided into the elements the study is worked out on", Icon::MeshGrid, 0),
                     large("study.mesh_size", "Mesh\nSettings", "How large the elements are", Icon::MeshSettings, 0),
                 ],
             },
             RibbonPanel {
                 title: "Solve",
-                commands: &[large("analysis.simulate", "Simulate", "Work the study out", Icon::Simulate, 11)],
+                commands: &[large(
+                    "analysis.simulate",
+                    "Simulate",
+                    "Work the study out: how hard the material is worked, how far the part moves, and whether it holds",
+                    Icon::Simulate,
+                    0,
+                )],
             },
             RibbonPanel {
                 title: "Display",
-                commands: &[large(
-                    "analysis.marks",
-                    "Boundary\nConditions",
-                    "Show or hide the supports and loads drawn on the part",
-                    Icon::BoundaryConditions,
-                    0,
-                )],
+                commands: &[
+                    large("analysis.marks", "Boundary\nConditions", "Show or hide the supports and loads drawn on the part", Icon::BoundaryConditions, 0),
+                    large(
+                        "analysis.deform",
+                        "Displacement\nDisplay",
+                        "How the part's bending is drawn with its results: large enough to see, as far as it really moves, or not at all",
+                        Icon::Displacement,
+                        0,
+                    )
+                    .more(&["analysis.deform.adjusted", "analysis.deform.actual", "analysis.deform.undeformed"]),
+                ],
             },
             RibbonPanel {
                 title: "Exit",
@@ -894,6 +904,9 @@ pub const DRW_RETURN: UiCommand = large("drw.return", "Return", "Finish editing 
 
 /// Commands reachable from drop-down arrows, menus and keys but not shown on the ribbon itself.
 pub const EXTRA: &[UiCommand] = &[
+    small("analysis.deform.adjusted", "Adjusted", "The part's bending drawn large enough to see", Icon::Displacement, 0),
+    small("analysis.deform.actual", "Actual", "The part drawn bent as far as it really moves", Icon::Displacement, 0),
+    small("analysis.deform.undeformed", "Undeformed", "Results on the part as it is, not bent", Icon::Displacement, 0),
     small("model.cylinder", "Cylinder", "A cylinder in a few clicks: a plane or flat face, its centre, its size, its height", Icon::PrimCylinder, 0),
     small("model.sphere", "Sphere", "A sphere in a few clicks: a plane or flat face, its centre, its size", Icon::PrimSphere, 0),
     small(

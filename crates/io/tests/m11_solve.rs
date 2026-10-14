@@ -130,6 +130,11 @@ fn a_cantilever_bends_as_beam_theory_says() {
     assert!(vm > root * 0.95 && vm < root * 2.0 && at < 5.0, "{vm} MPa at x = {at}; bending gives {root} at the root: {r}");
     assert!(r["safety_factor"].as_f64().unwrap() < 250.0 / (root * 0.95) && r["holds"] == true, "{r}");
 
+    // Worked out again it is the same to the last figure: the same part gives the same mesh
+    // and the same answer, every time.
+    let again = p.run("study.solve", json!({}));
+    assert_eq!((&again["nodes"], &again["max_displacement"], &again["max_von_mises"]), (&r["nodes"], &r["max_displacement"], &r["max_von_mises"]));
+
     // Twice the load, twice the drop: it is linear.
     p.run("study.set", json!({ "item": 2, "newtons": 200 }));
     let twice = p.run("study.solve", json!({}))["max_displacement"]["millimetres"].as_f64().unwrap();

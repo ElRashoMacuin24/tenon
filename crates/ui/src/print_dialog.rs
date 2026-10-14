@@ -65,6 +65,12 @@ pub(crate) enum PartJob {
     Flat {
         revision: u64,
     },
+    /// A stress study of this revision of the part: worked out (`solving`), or its mesh alone.
+    Study {
+        study: tenon_model::study::StudyId,
+        revision: u64,
+        solving: bool,
+    },
 }
 
 /// What the window keeps.
@@ -184,6 +190,7 @@ impl Workbench {
                 }
             }
             PartJob::Flat { revision } => self.flat_done(revision, result),
+            PartJob::Study { study, revision, solving } => self.study_job_done(study, revision, solving, result),
             PartJob::FlatEdges { sketch } => self.flat_edges_done(sketch, result),
             PartJob::Print { revision, setup } => {
                 let report = result.downcast::<Result<Report, String>>().map_or_else(|_| unexpected(), |b| *b);

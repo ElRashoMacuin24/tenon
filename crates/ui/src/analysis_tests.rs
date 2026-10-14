@@ -211,9 +211,12 @@ fn a_bar_is_held_at_one_end_and_loaded_at_the_other_by_clicks() {
     // The part is not changed from here: Extrude's key says so.
     d.tap(&mut wb, egui::Key::E);
     assert!(wb.panel.is_none() && wb.status().contains("Finish Analysis first"), "{}", wb.status());
-    // What cannot be worked out yet says when it comes.
-    let simulate = wb.run_ui("analysis.simulate").unwrap_err();
-    assert!(simulate.contains("milestone M11"), "{simulate}");
+    // Simulate, with a part of no material: it says what the study still needs.
+    wb.run_ui("analysis.simulate").unwrap();
+    assert!(wb.status_error && wb.status().contains("cannot be worked out yet. It needs a material that says how strong it is"), "{}", wb.status());
+    // What is not there yet says when it comes.
+    let later = wb.run_ui("study.moment").unwrap_err();
+    assert!(later.contains("not available yet"), "{later}");
 
     // Finish Analysis: the part's ribbon and browser again; the study stays with the part.
     click_text(&mut d, &mut wb, "Finish");
@@ -697,4 +700,159 @@ fn a_support_whose_face_the_part_no_longer_has_says_so_and_is_mended() {
     d.frame(&mut wb, vec![]);
     browser_row(&d, "Pin1");
     assert!(marked(&d, &wb, "held", Vec3::new(50.0, 10.0, 5.0)));
+}
+
+/// True when the mesher and the solver are there. When they are not: a failure where they are
+/// required (the gate sets TENON_FEA_REQUIRED), and otherwise a line saying the test did not run.
+fn programs(test: &str) -> bool {
+    match tenon_fea::Tools::find() {
+        Ok(_) => true,
+        Err(why) => {
+            let required = std::env::var("TENON_FEA_REQUIRED").is_ok_and(|v| !v.is_empty() && v != "0");
+            assert!(!required, "{test} needs the mesher and the solver, and they are required here: {why}");
+            eprintln!("NOT RUN: {test}: {why}");
+            false
+        }
+    }
+}
+
+/// How many triangles and how many mesh lines the last frame drew of a study's outcome.
+fn drawn(d: &Driver) -> Option<(usize, usize)> {
+    d.ctx.data(|x| x.get_temp(egui::Id::new("tn_results_drawn")))
+}
+
+#[test]
+fn a_study_is_worked_out_and_shown_in_colour_on_the_part() {
+    if !programs("Simulate in the app") {
+        return;
+    }
+    // A steel bar held at its left end with 100 N down on its right.
+    let (mut wb, mut d) = bar();
+    let find =
+        |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Results: none yet (Simulate)");
+    assert_eq!(drawn(&d), None);
+
+    // Simulate with nothing holding the part: said in the study's own words, and nothing is shown.
+    click_text(&mut d, &mut wb, "Simulate");
+    assert!(wb.status_error && wb.status().starts_with("Study1 cannot be worked out yet. It needs a support"), "{}", wb.status());
+    assert!(wb.outcome().is_none());
+
+    // Held: worked out. The status bar says what it comes to, and that it is an aid.
+    wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
+    click_text(&mut d, &mut wb, "Simulate");
+    let solved = wb.outcome().and_then(|o| o.solved.clone()).unwrap_or_else(|| panic!("not worked out: {}", wb.status()));
+    let (stress, moved) = (solved.results.max_von_mises.value, solved.results.max_displacement.value);
+    assert!((moved - 0.1008).abs() < 0.004, "beam theory gives 0.1 mm, and a little for shear: {moved}");
+    assert!(stress > 25.0 && stress < 60.0, "bending gives 30 MPa at the root: {stress}");
+    assert!(!wb.status_error && wb.status().starts_with("Study1: at most "), "{}", wb.status());
+    assert!(
+        wb.status().contains("Steel, mild yields at 250") && wb.status().contains("it holds") && wb.status().contains("not a certified analysis"),
+        "{}",
+        wb.status()
+    );
+
+    // Shown on the part: the mesh's boundary in colour, the scale, where the most is.
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let (triangles, lines) = drawn(&d).expect("the results are drawn");
+    assert!(triangles > 200 && lines == 0, "{triangles} triangles, {lines} lines");
+    let said = |d: &Driver, what: &str| d.texts().iter().any(|t| t == what);
+    let figures = crate::results::figures;
+    assert!(said(&d, "Von Mises Stress (MPa)") && said(&d, &format!("Max: {} MPa", figures(stress))), "{:?}", d.texts());
+    assert!(said(&d, "An engineering aid,") && said(&d, "not a certified analysis."), "{:?}", d.texts());
+    assert!(d.texts().iter().any(|t| t.starts_with("Bending shown ")), "{:?}", d.texts());
+    // In the browser: the mesh, and each result as a row.
+    assert!(d.texts().iter().any(|t| t.starts_with("Mesh: ") && t.ends_with(" elements")), "{:?}", d.texts());
+    browser_row(&d, &format!("Von Mises Stress: {} MPa", figures(stress)));
+    let factor = browser_row(&d, &format!("Safety Factor: {}", figures(250.0 / stress))).center();
+    let displacement = browser_row(&d, &format!("Displacement: {} mm", figures(moved))).center();
+
+    // A row clicked shows that result: the scale is its own, and so is where the most is.
+    d.click(&mut wb, displacement);
+    d.frame(&mut wb, vec![]);
+    assert!(said(&d, "Displacement (mm)") && said(&d, &format!("Max: {} mm", figures(moved))), "{:?}", d.texts());
+    d.click(&mut wb, factor);
+    d.frame(&mut wb, vec![]);
+    assert!(said(&d, "Safety Factor") && said(&d, &format!("Min: {}", figures(250.0 / stress))) && said(&d, "15 or more"), "{:?}", d.texts());
+
+    // Displacement Display goes round: as far as it moves, not at all, large enough to see.
+    for now in ["Bent as far as it moves", "Shown as it is, not bent"] {
+        click_text(&mut d, &mut wb, "Displacement");
+        d.frame(&mut wb, vec![]);
+        assert!(said(&d, now), "{now}: {:?}", d.texts());
+    }
+    click_text(&mut d, &mut wb, "Displacement");
+
+    // Mesh View: the elements' lines over it. Again, and they are gone.
+    click_text(&mut d, &mut wb, "Mesh");
+    d.frame(&mut wb, vec![]);
+    let (_, lines) = drawn(&d).unwrap();
+    assert!(lines > 300, "{lines} lines");
+    wb.run_ui("analysis.mesh_view").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert_eq!(drawn(&d).map(|(_, lines)| lines), Some(0));
+
+    // The load changed: the results are of what was, and say so; nothing is drawn of them.
+    wb.exec("study.set", json!({ "item": 1, "newtons": 200 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.outcome().is_none() && wb.outcome_is_stale());
+    browser_row(&d, "Results: out of date (Simulate)");
+    assert_eq!(drawn(&d), None);
+    // Worked out again: twice the load, twice the movement.
+    click_text(&mut d, &mut wb, "Simulate");
+    let twice = wb.outcome().and_then(|o| o.solved.clone()).unwrap_or_else(|| panic!("{}", wb.status())).results.max_displacement.value;
+    assert!((twice / moved - 2.0).abs() < 1e-3, "{twice} for twice the load, {moved} for once");
+
+    // Too much for it: 30 kN. It says that it yields, in the colour of a fault.
+    wb.exec("study.set", json!({ "item": 1, "newtons": 30000 })).unwrap();
+    click_text(&mut d, &mut wb, "Simulate");
+    assert!(wb.status_error && wb.status().contains("IT YIELDS: the safety factor is 0."), "{}", wb.status());
+
+    // Left and entered again, the results are gone with the environment.
+    wb.run_ui("analysis.finish").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert_eq!(drawn(&d), None);
+}
+
+#[test]
+fn mesh_view_divides_the_part_and_shows_its_elements() {
+    if !programs("Mesh View") {
+        return;
+    }
+    // A study with nothing in it yet: the mesh can be looked at all the same.
+    let (mut wb, mut d) = bar();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    d.frame(&mut wb, vec![]);
+    click_text(&mut d, &mut wb, "Mesh");
+    let o = wb.outcome().unwrap_or_else(|| panic!("no mesh: {}", wb.status()));
+    assert!(o.solved.is_none() && o.mesh().is_some_and(|m| m.tets.len() > 20));
+    assert!(wb.status().starts_with("Study1: divided into ") && wb.status().contains("elements of about 5.12 mm"), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let (triangles, lines) = drawn(&d).expect("the mesh is drawn");
+    assert!(triangles > 100 && lines > 100, "{triangles} triangles, {lines} lines");
+    assert!(!d.texts().iter().any(|t| t.contains("MPa")), "there is no result to give a scale to: {:?}", d.texts());
+    assert!(d.texts().iter().any(|t| t.starts_with("Mesh: ") && t.ends_with(" elements")), "{:?}", d.texts());
+    browser_row(&d, "Results: none yet (Simulate)");
+
+    // Smaller elements: the mesh is of the study as it was, so Mesh View divides the part again.
+    wb.exec("study.mesh_size", json!({ "size": 2.5 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(wb.outcome().is_none());
+    let before = triangles;
+    wb.run_ui("analysis.mesh_view").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let (triangles, _) = drawn(&d).expect("the finer mesh is drawn");
+    assert!(triangles > before * 2, "{triangles} triangles of 2.5 mm, {before} of 5");
 }

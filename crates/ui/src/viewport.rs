@@ -460,6 +460,7 @@ impl Workbench {
             self.draw_origin_planes(ui, rect, self.view.plane_hover, t);
         }
         self.primitive_overlay(ui, rect, t);
+        self.results_overlay(ui, rect, t);
         self.analysis_overlay(ui, rect, t);
         if self.has_properties() {
             self.hole_markers(ui, rect, t);
@@ -848,13 +849,19 @@ impl Workbench {
         self.scene.threads.iter().filter(|t| !t.mark.modelled).filter_map(|t| t.at).collect()
     }
 
+    /// The style the part is drawn in: its own, but as edges only under a study's results,
+    /// which are drawn over it in its place (bent, they would not cover it).
+    fn shown_style(&self) -> VisualStyle {
+        if self.results_shown() { VisualStyle::Wireframe } else { self.view.style }
+    }
+
     /// The colours body `bi` is drawn in: (faces, edges, faces with a cosmetic thread). A part
     /// with a material or an appearance is drawn in that colour.
     pub(crate) fn body_palette(&self, bi: usize) -> (Color32, Color32, Color32) {
         let own = self.body_part(bi).1.map(|[r, g, b]| Color32::from_rgb(r, g, b));
         let face = own.unwrap_or(BODY);
         // In wireframe the edges are all there is, so they take the body colour.
-        let edge = if self.view.style == VisualStyle::Wireframe { face } else { edge_on(face) };
+        let edge = if self.shown_style() == VisualStyle::Wireframe { face } else { edge_on(face) };
         (face, edge, own.map_or(THREAD, |c| shaded(c, 0.7)))
     }
 
@@ -999,6 +1006,7 @@ impl Workbench {
         let key = h.finish();
         let radius = self.scene_radius();
         let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+        let style = self.shown_style();
         match render {
             Some(rs) => {
                 let gpu = self.view.gpu.get_or_insert_with(|| Gpu { viewport: Viewport::new(&rs.device), texture: None });
@@ -1017,7 +1025,7 @@ impl Workbench {
                     }
                     self.view.uploaded = Some((base_key, key));
                 }
-                gpu.viewport.set_visible(self.view.style.faces(), self.view.style.edges());
+                gpu.viewport.set_visible(style.faces(), style.edges());
                 if let Some((view, recreated)) = gpu.viewport.render(&rs.device, &rs.queue, &self.view.camera, w, hgt, radius) {
                     let mut r = rs.renderer.write();
                     match gpu.texture {
@@ -1036,7 +1044,7 @@ impl Workbench {
                 let mut kh = std::collections::hash_map::DefaultHasher::new();
                 key.hash(&mut kh);
                 (sw, sh).hash(&mut kh);
-                self.view.style.hash(&mut kh);
+                self.shown_style().hash(&mut kh);
                 format!("{:?}", self.view.camera).hash(&mut kh);
                 let skey = kh.finish();
                 if self.view.soft.as_ref().is_none_or(|(_, k)| *k != skey) {
@@ -1057,8 +1065,8 @@ impl Workbench {
                         // (One edge colour here: the first body's.)
                         edge: to8(self.body_palette(0).1),
                         face_colors,
-                        faces: self.view.style.faces(),
-                        edges: self.view.style.edges(),
+                        faces: self.shown_style().faces(),
+                        edges: self.shown_style().edges(),
                         ..Style::default()
                     };
                     let img = raster::render(&meshes, &self.view.camera, sw, sh, &style);

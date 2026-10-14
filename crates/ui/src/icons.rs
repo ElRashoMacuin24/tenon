@@ -155,6 +155,8 @@ pub enum Icon {
     BodyLoad,
     /// The marks of supports and loads on a part, shown or hidden.
     BoundaryConditions,
+    /// A bar as it was, and as it bends.
+    Displacement,
     // primitives
     PrimBox,
     PrimCylinder,
@@ -1118,6 +1120,16 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.dot((0.8, 0.44), 0.06);
             pen.line(&[(0.8, 0.06), (0.8, 0.3)]);
             pen.arrow_head((0.8, 0.38), (0.8, 0.1));
+        }
+        // A bar held at the left: straight as it was, and drooping as it bends.
+        Icon::Displacement => {
+            pen.line(&[(0.1, 0.1), (0.1, 0.9)]);
+            pen.line(&[(0.1, 0.3), (0.3, 0.3)]);
+            pen.line(&[(0.42, 0.3), (0.62, 0.3)]);
+            pen.line(&[(0.74, 0.3), (0.9, 0.3)]);
+            pen.line(&[(0.1, 0.3), (0.3, 0.33), (0.5, 0.42), (0.7, 0.58), (0.88, 0.8)]);
+            pen.line(&[(0.88, 0.4), (0.88, 0.68)]);
+            pen.arrow_head((0.88, 0.76), (0.88, 0.5));
         }
         // A part with its ground mark and its load arrow.
         Icon::BoundaryConditions => {
