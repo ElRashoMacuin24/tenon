@@ -132,6 +132,15 @@ fn is_boolean(e: &KernelError) -> bool {
     matches!(e, KernelError::OperationFailed { op: "boolean", .. })
 }
 
+/// A size to three figures, rounded down (so that what is said to fit does).
+pub(crate) fn figures_down(x: f64) -> f64 {
+    if !(x.is_finite() && x > 0.0) {
+        return 0.0;
+    }
+    let step = 10f64.powi(x.log10().floor() as i32 - 2);
+    (x / step).floor() * step
+}
+
 /// `3`, `2.5`: a length as typed.
 pub(crate) fn mm(x: f64) -> String {
     let s = format!("{x:.4}");

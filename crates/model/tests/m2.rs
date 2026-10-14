@@ -896,6 +896,21 @@ fn kernel_failures_are_explained_in_plain_words_and_never_pass_silently() {
     let m = failure(&mut s, &mut k);
     assert!(m.starts_with("The 25 mm fillet could not be made on this edge. The radius is probably too large"), "{m}");
     assert!(m.contains("try a smaller radius") && m.contains(" (Kernel: fillet failed: "), "{m}");
+    // And how large a fillet does fit: the faces beside the edge are 20 wide, and the radius
+    // said fits, where one a fifth larger does not.
+    let fits: f64 = m
+        .split("The largest radius that fits is about ")
+        .nth(1)
+        .and_then(|r| r.split(' ').next())
+        .and_then(|r| r.parse().ok())
+        .unwrap_or_else(|| panic!("{m}"));
+    assert!(fits > 15.0 && fits < 20.0, "{fits}: {m}");
+    let last = s.document().features().last().unwrap().clone();
+    let mut kind = serde_json::to_value(&last.kind).unwrap();
+    kind["radius"] = json!(fits);
+    run(&mut s, &mut k, "feature.update", json!({ "feature": last.id.0, "kind": kind }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"].is_null(), "{fits} fits: {r}");
     // A cut that takes the whole block away.
     let mut s = Session::default();
     block(&mut s, &mut k, 20.0, 20.0, 10.0);

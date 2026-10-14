@@ -458,7 +458,34 @@ impl<'a> Ctx<'a> {
             FeatureKind::Fillet(fi) => {
                 let (bi, edges) = self.resolve_edges(&fi.edges)?;
                 let shape = self.body_shape(bi)?;
-                let op = self.k.fillet(shape, &edges.iter().map(|e| shape.edge(*e)).collect::<Vec<_>>(), fi.radius)?;
+                let ids: Vec<_> = edges.iter().map(|e| shape.edge(*e)).collect();
+                let op = match self.k.fillet(shape, &ids, fi.radius) {
+                    Ok(op) => op,
+                    Err(e @ KernelError::OperationFailed { .. }) => {
+                        // How large a fillet these edges do take: tried smaller, six times (the
+                        // kernel only says that it failed), so that the message can say.
+                        let (mut fits, mut fails) = (0.0, fi.radius);
+                        for _ in 0..6 {
+                            let r = (fits + fails) / 2.0;
+                            match self.k.fillet(shape, &ids, r) {
+                                Ok(trial) => {
+                                    self.k.release(trial.shape);
+                                    fits = r;
+                                }
+                                Err(KernelError::Cancelled) => return Err(Stop::Cancelled),
+                                Err(_) => fails = r,
+                            }
+                        }
+                        let said = crate::explain::explain(&f.kind, &e);
+                        return Err(Stop::Failed(if fits > 0.0 {
+                            let fits = crate::explain::mm(crate::explain::figures_down(fits));
+                            said.replacen(" (Kernel:", &format!(" The largest radius that fits is about {fits} mm. (Kernel:"), 1)
+                        } else {
+                            said
+                        }));
+                    }
+                    Err(e) => return Err(e.into()),
+                };
                 self.replace_body(f.id, bi, op)
             }
             FeatureKind::Chamfer(c) => {
