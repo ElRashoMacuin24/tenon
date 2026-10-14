@@ -499,7 +499,14 @@ pub fn parts_rows(m: &ModelGeometry) -> Vec<PartsRow> {
     let Some(asm) = &m.assembly else { return Vec::new() };
     tenon_assembly::session::bom_with(asm, |key| m.documents.get(key).map(|d| d.name.clone()), |_| None)
         .into_iter()
-        .map(|r| PartsRow { item: r.item, quantity: r.quantity, part_number: r.part, description: r.name, part: r.key })
+        .map(|mut r| {
+            // (A part's own number and description, when it says them.)
+            if let Some(d) = m.documents.get(&r.key) {
+                r.part_number.clone_from(&d.part_number);
+                r.description.clone_from(&d.description);
+            }
+            PartsRow { item: r.item, quantity: r.quantity, part_number: r.number(), description: r.what(), part: r.key }
+        })
         .collect()
 }
 

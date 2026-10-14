@@ -128,6 +128,8 @@ operation = "join"
 | `format` | `"tenon"` |
 | `version` | `2` |
 | `name` | The part's name. |
+| `part_number` | Optional: the part's number, for parts lists (one line, at most 200 characters). Absent: its file's name stands in. |
+| `description` | Optional: what the part is, for parts lists (the same). Absent: its name stands in. |
 | `next_feature` | The id the next feature gets. |
 | `end_before` | Optional: the End of Part marker sits just before this feature, so it and the features after it are not computed. Absent: after the last feature. |
 | `appearance` | Optional: the part's own colour, `"#rrggbb"`, shown in place of its material's. |
@@ -811,7 +813,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   `width`, `cut_normal` and `corner_rip` (DEC-071 to DEC-074), then `sharp_bend` (DEC-075), then a
   material's optional `strength` and the `[[study]]` records (DEC-093); in them, the
   `pin` and `frictionless` supports, the `gravity` load and `suppressed` (DEC-097), then
-  `edges` and the `moment`, `bearing`, `remote_force` and `body` loads (DEC-100).
+  `edges` and the `moment`, `bearing`, `remote_force` and `body` loads (DEC-100), then a
+  part's `part_number` and `description` (DEC-101).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

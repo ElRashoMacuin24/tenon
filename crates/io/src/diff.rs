@@ -158,6 +158,12 @@ fn part(a: &Value, b: &Value, out: &mut Vec<Change>) {
     if a["name"] != b["name"] {
         doc(out, format!("name {} -> {}", show(&a["name"]), show(&b["name"])));
     }
+    for (key, what) in [("part_number", "part number"), ("description", "description")] {
+        if a[key] != b[key] {
+            let said = |v: &Value| if v.is_null() { "none".to_owned() } else { show(v) };
+            doc(out, format!("{what} {} -> {}", said(&a[key]), said(&b[key])));
+        }
+    }
     if a["end_before"] != b["end_before"] {
         let at = |d: &Value| match d["end_before"].as_u64() {
             Some(id) => format!("before {}", feature_label(d, id)),

@@ -7,6 +7,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | Command | Name | Parameters | Undoable |
 |---|---|---|---|
 | `document.rename` | Rename Part | name: text | yes |
+| `document.properties` | Part Properties | part_number, description: text for parts lists, or null for none (the file's name and the part's name stand in) | yes |
 | `document.material` | Material | name: a material of the library (see document.materials), or null for none; density (g/cm^3) and color ("#rrggbb") to change them or to describe a material of one's own | yes |
 | `document.appearance` | Appearance | color: "#rrggbb", the part's own colour in place of its material's; or null to go back to the material's | yes |
 | `document.materials` | Materials | the material library (name, density in g/cm^3, colour) and the part's material, appearance, density and colour | no |

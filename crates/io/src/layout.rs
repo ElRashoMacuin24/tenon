@@ -32,6 +32,8 @@ pub(crate) const PART: Shape = Shape {
     body: "document",
     fields: &[
         ("name", "name"),
+        ("part_number", "part_number"),
+        ("description", "description"),
         ("next_feature", "next_feature"),
         ("end_before", "end_before"),
         ("appearance", "appearance"),

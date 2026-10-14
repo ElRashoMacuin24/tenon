@@ -2770,3 +2770,16 @@ Options as well as on the search path or by `TENON_GMSH` / `TENON_CCX`.
 - *For users:* `docs/user-guide.md` (installing, the window, keys, a first part, each
   environment, files, faults, what Tenon does not do yet), `CHANGELOG.md`, a README in the
   archive, and the README's "Getting Tenon".
+- *A part's number and description*, for parts lists (the roadmap's gap since M3): two
+  optional fields of the part, an addition to format version 2 (`part_number`,
+  `description`, after its name); `document.properties`; Inspect > Properties. The bill of
+  materials and drawings' parts lists show them, and the file's name and the part's name where
+  a part has none, as they always did. The CSV gains two columns at its end, so that scripts
+  that read it by position read what they read before. A part in several sizes shows its
+  number with the size. (A number for each size, in its design table row, is a gap.)
+- *Holes for screws.* The Hole panel's Clearance and Tapped choices were greyed. They now size
+  the hole for an M3 to M20 screw, from a table in the library beside the screws' own: the
+  close and normal clearances of ISO 273, the tap drill, and typical seats for a socket head
+  (a counterbore, after DIN 974-1) and a countersunk head (ISO 10642). The hole keeps only its
+  sizes; opened again, a size that is a screw's says so. Tapping is still a Thread put on the
+  hole; the choice is called Tap Drill, for that is what it gives.

@@ -95,12 +95,29 @@ impl Workbench {
             }
         }
         let appearance = self.document().appearance().map(str::to_owned);
+        let (number, description) = (self.document().part_number.clone(), self.document().description.clone());
         let shown = self.document().color().map(tenon_model::materials::color_text);
         let mut changes: Vec<(&'static str, Value)> = Vec::new();
         egui::Window::new("Properties").open(&mut open).collapsible(false).resizable(false).default_width(360.0).default_pos([300.0, 170.0]).show(
             ui.ctx(),
             |ui| {
                 if part {
+                    // For parts lists: the part's number and what it is.
+                    ui.label(RichText::new("Project").font(theme::body()).strong());
+                    egui::Grid::new("tn_partprops_project").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                        for (label, key, id, tip) in [
+                            ("Part Number", "part_number", "tn_partprops_number", "For parts lists; without one, the file's name stands in"),
+                            ("Description", "description", "tn_partprops_description", "For parts lists; without one, the part's name stands in"),
+                        ] {
+                            ui.label(label).on_hover_text(tip);
+                            let now = if key == "part_number" { number.clone() } else { description.clone() }.unwrap_or_default();
+                            if let Some(typed) = edit_cell(ui, egui::Id::new(id), &now, 190.0, t) {
+                                changes.push(("document.properties", json!({ key: typed })));
+                            }
+                            ui.end_row();
+                        }
+                    });
+                    ui.add_space(4.0);
                     ui.label(RichText::new("Physical").font(theme::body()).strong());
                     egui::Grid::new("tn_partprops_physical").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                         ui.label("Material");

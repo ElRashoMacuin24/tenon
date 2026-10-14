@@ -33,6 +33,40 @@
       }
     },
     {
+      "id": "document.properties",
+      "label": "Part Properties",
+      "undoable": true,
+      "description": "part_number, description: text for parts lists, or null for none (the file's name and the part's name stand in)",
+      "params": {
+        "type": "object",
+        "properties": {
+          "part_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the part's number, for parts lists (up to 200 characters); null for none: its file's name stands in"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "what the part is, for parts lists (up to 200 characters); null for none: its name stands in"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "id": "document.material",
       "label": "Material",
       "undoable": true,

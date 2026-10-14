@@ -313,7 +313,28 @@ pub struct BomRow {
     pub mass: Option<f64>,
     /// Of one part (mm^3), when its geometry is known.
     pub volume: Option<f64>,
+    /// The part's own number and description, when it says them (parts lists show the file's
+    /// name and the part's name in their place).
+    pub part_number: Option<String>,
+    pub description: Option<String>,
     pub components: Vec<String>,
+}
+
+impl BomRow {
+    /// What a parts list says the part's number is: its own, with the size when it comes in
+    /// several, or its file's name.
+    pub fn number(&self) -> String {
+        match (&self.part_number, &self.row) {
+            (Some(n), Some(row)) => format!("{n} ({row})"),
+            (Some(n), None) => n.clone(),
+            (None, _) => self.part.clone(),
+        }
+    }
+
+    /// What a parts list says the part is: its description, or its name.
+    pub fn what(&self) -> String {
+        self.description.clone().unwrap_or_else(|| self.name.clone())
+    }
 }
 
 /// The parts list, in the order parts were first placed.
@@ -328,6 +349,8 @@ pub fn bom(asm: &Assembly, parts: &Parts) -> Vec<BomRow> {
         let Some(doc) = parts.get(&r.key).filter(|p| p.missing.is_none()).map(|p| p.session.document()) else { continue };
         r.material = doc.material().map(|m| m.name.clone());
         r.mass = r.volume.map(|v| v * doc.density() / 1000.0);
+        r.part_number.clone_from(&doc.part_number);
+        r.description.clone_from(&doc.description);
     }
     rows
 }
@@ -361,6 +384,8 @@ pub fn bom_with(asm: &Assembly, name: impl Fn(&str) -> Option<String>, volume: i
             material: None,
             mass: None,
             volume: volume(c),
+            part_number: None,
+            description: None,
             components: vec![c.name.clone()],
         });
     }

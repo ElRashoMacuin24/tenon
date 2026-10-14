@@ -459,9 +459,13 @@ fn the_m7_demo_script_checks_a_printed_cap_and_screws_it_to_a_bar_from_the_libra
     }
     let csv = std::fs::read_to_string(dir.join("capped-bar-bom.csv")).unwrap();
     let lines: Vec<&str> = csv.lines().collect();
-    assert_eq!(lines[1], "1,bar,T-Slot Profile,1,37041.836,Aluminium 6061,100.013", "{csv}");
-    assert_eq!(lines[2], "2,end-cap,End Cap,1,5992.928,PLA,7.431", "{csv}");
-    assert_eq!(lines[3], "3,socket-screw-iso-4762 (M5x16),\"Socket Head Cap Screw, M5x16\",1,563.243,\"Steel, mild\",4.421", "{csv}");
+    assert_eq!(lines[1], "1,bar,T-Slot Profile,1,37041.836,Aluminium 6061,100.013,bar,T-Slot Profile", "{csv}");
+    assert_eq!(lines[2], "2,end-cap,End Cap,1,5992.928,PLA,7.431,end-cap,End Cap", "{csv}");
+    assert_eq!(
+        lines[3],
+        "3,socket-screw-iso-4762 (M5x16),\"Socket Head Cap Screw, M5x16\",1,563.243,\"Steel, mild\",4.421,socket-screw-iso-4762 (M5x16),\"Socket Head Cap Screw, M5x16\"",
+        "{csv}"
+    );
     for png in ["bar.png", "end-cap.png", "capped-bar.png"] {
         assert!(std::fs::read(dir.join(png)).unwrap().starts_with(&[0x89, b'P', b'N', b'G']), "{png}");
     }

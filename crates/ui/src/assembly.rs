@@ -1241,14 +1241,14 @@ impl Workbench {
                 .default_pos([300.0, 170.0])
                 .show(ui.ctx(), |ui| {
                     egui::Grid::new("tn_bom").num_columns(7).striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
-                        for h in ["Item", "Part", "Name", "Qty", "Material", "Mass", "Volume (mm³)"] {
+                        for h in ["Item", "Part Number", "Description", "Qty", "Material", "Mass", "Volume (mm³)"] {
                             ui.strong(h);
                         }
                         ui.end_row();
                         for r in &rows {
                             ui.label(r.item.to_string());
-                            ui.label(&r.part);
-                            ui.label(&r.name);
+                            ui.label(r.number()).on_hover_text(format!("{}.tenon", r.key.trim_end_matches(".tenon")));
+                            ui.label(r.what());
                             ui.label(r.quantity.to_string());
                             ui.label(r.material.as_deref().unwrap_or("Generic"));
                             // (Of one part, as the volume is.)

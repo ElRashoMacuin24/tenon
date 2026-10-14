@@ -351,7 +351,7 @@ fn an_assembly_weighs_and_shows_each_component_in_its_parts_material() {
     assert!((rows[1].mass.unwrap() - arm_volume * 8.5 / 1000.0).abs() < 1e-9, "{:?}", rows[1]);
     assert!((rows[2].mass.unwrap() - rows[2].volume.unwrap() / 1000.0).abs() < 1e-9, "one pin, not both: {:?}", rows[2]);
     let csv = tenon_io::asm::bom_csv(wb.assembly().unwrap().assembly(), &wb.assembly().unwrap().parts);
-    assert!(csv.lines().nth(2).unwrap().ends_with(&format!(",Brass,{:.3}", arm_volume * 8.5 / 1000.0)), "{csv}");
+    assert!(csv.lines().nth(2).unwrap().ends_with(&format!(",Brass,{:.3},arm,Arm", arm_volume * 8.5 / 1000.0)), "{csv}");
     let total = wb.asm_exec("asm.mass", json!({})).unwrap();
     assert!((total["mass"].as_f64().unwrap() - grams).abs() < 1e-9, "{total}");
     assert_eq!(total["components"][1]["material"], "Brass");

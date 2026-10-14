@@ -459,6 +459,81 @@ fn material_appearance_and_design_table_are_written_as_text_and_read_back() {
 }
 
 #[test]
+fn a_part_says_its_number_and_what_it_is_for_parts_lists() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 40, "y2": 20 }));
+    run(&mut s, "model.extrude", json!({ "sketch": sk, "distance": 10 }));
+    let extra = Map::new();
+    // None at first: the file says nothing of them.
+    let plain = String::from_utf8(project::to_bytes(s.document(), &extra).unwrap()).unwrap();
+    assert!(!plain.contains("part_number") && !plain.contains("description"), "{plain}");
+    let before = serde_json::to_value(s.document()).unwrap();
+
+    // Said; one undo step; said again in part.
+    let said = run(&mut s, "document.properties", json!({ "part_number": " BR-0042 ", "description": "Mounting bracket, 3 mm steel" }));
+    assert_eq!(said, json!({ "part_number": "BR-0042", "description": "Mounting bracket, 3 mm steel" }));
+    s.undo();
+    assert_eq!((s.document().part_number.as_deref(), s.document().description.as_deref()), (None, None));
+    s.redo();
+    run(&mut s, "document.properties", json!({ "description": "Mounting bracket" }));
+    assert_eq!((s.document().part_number.as_deref(), s.document().description.as_deref()), (Some("BR-0042"), Some("Mounting bracket")));
+    // Refused in words: nothing to say, more than a line, more than 200 characters, a number.
+    for (p, told) in [
+        (json!({}), "part_number"),
+        (json!({ "part_number": "BR\n42" }), "one line"),
+        (json!({ "description": "x".repeat(201) }), "200 characters"),
+        (json!({ "part_number": 42 }), "must be text"),
+    ] {
+        let e = s.exec("document.properties", &p, None).unwrap_err().to_string();
+        assert!(e.contains(told), "{p}: {e}");
+    }
+
+    // In the file after the name, read back the same; the diff says what changed.
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(
+        text.contains(
+            "
+part_number = \"BR-0042\"
+description = \"Mounting bracket\"
+"
+        ),
+        "{text}"
+    );
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(&back, s.document());
+    let d = diff::diff_documents("part", &before, &serde_json::to_value(s.document()).unwrap()).text();
+    assert!(d.contains("part number none -> BR-0042") && d.contains("description none -> Mounting bracket"), "{d}");
+    // Null takes one away; a file with one on two lines is damaged.
+    run(&mut s, "document.properties", json!({ "part_number": null }));
+    assert_eq!(s.document().part_number, None);
+    let m = damaged(&text.replace("part_number = \"BR-0042\"", "part_number = \"BR\\n0042\""));
+    assert!(m.contains("part number"), "{m}");
+
+    // A parts list shows the part's own number and description, and the file's name and the
+    // part's name where it has none.
+    let row = |number: Option<&str>, description: Option<&str>, row: Option<&str>| tenon_assembly::session::BomRow {
+        item: 1,
+        part: "bracket".into(),
+        key: "bracket.tenon".into(),
+        name: "Bracket".into(),
+        row: row.map(str::to_owned),
+        quantity: 2,
+        material: None,
+        mass: None,
+        volume: None,
+        part_number: number.map(str::to_owned),
+        description: description.map(str::to_owned),
+        components: Vec::new(),
+    };
+    assert_eq!((row(None, None, None).number(), row(None, None, None).what()), ("bracket".to_owned(), "Bracket".to_owned()));
+    let own = row(Some("BR-0042"), Some("Mounting bracket"), None);
+    assert_eq!((own.number(), own.what()), ("BR-0042".to_owned(), "Mounting bracket".to_owned()));
+    assert_eq!(row(Some("SC-5"), None, Some("M5x16")).number(), "SC-5 (M5x16)");
+}
+
+#[test]
 fn a_region_of_a_divided_sketch_is_named_by_side_in_the_file() {
     let mut s = Session::default();
     let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();

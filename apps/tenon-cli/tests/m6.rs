@@ -50,11 +50,11 @@ fn the_m6_demo_script_builds_four_verified_fittings_and_weighs_their_assembly() 
     // The parts list: a material and a mass for each part.
     let csv = std::fs::read_to_string(dir.join("fittings-bom.csv")).unwrap();
     let lines: Vec<&str> = csv.lines().collect();
-    assert_eq!(lines[0], "Item,Part,Name,Quantity,Volume (mm^3),Material,Mass (g)");
-    assert_eq!(lines[1], "1,nozzle,Nozzle,1,34993.304,PLA,43.392", "{csv}");
+    assert_eq!(lines[0], "Item,Part,Name,Quantity,Volume (mm^3),Material,Mass (g),Part Number,Description");
+    assert_eq!(lines[1], "1,nozzle,Nozzle,1,34993.304,PLA,43.392,nozzle,Nozzle", "{csv}");
     assert!(lines[2].starts_with("2,bolt,Bolt,1,21") && lines[2].contains(",\"Steel, mild\",16."), "{csv}");
-    assert!(lines[3].starts_with("3,spring,Spring,1,947.48") && lines[3].ends_with(",Stainless steel,7.580"), "{csv}");
-    assert_eq!(lines[4], "4,handle,Handle,1,1857.849,ABS,1.932", "{csv}");
+    assert!(lines[3].starts_with("3,spring,Spring,1,947.48") && lines[3].ends_with(",Stainless steel,7.580,spring,Spring"), "{csv}");
+    assert_eq!(lines[4], "4,handle,Handle,1,1857.849,ABS,1.932,handle,Handle", "{csv}");
     assert_eq!(lines.len(), 5);
 
     // The saved spring reopens with its material and its table; the other size is one command away.

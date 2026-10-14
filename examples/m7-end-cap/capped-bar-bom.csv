@@ -1,4 +1,4 @@
-Item,Part,Name,Quantity,Volume (mm^3),Material,Mass (g)
-1,bar,T-Slot Profile,1,37041.836,Aluminium 6061,100.013
-2,end-cap,End Cap,1,5992.928,PLA,7.431
-3,socket-screw-iso-4762 (M5x16),"Socket Head Cap Screw, M5x16",1,563.243,"Steel, mild",4.421
+Item,Part,Name,Quantity,Volume (mm^3),Material,Mass (g),Part Number,Description
+1,bar,T-Slot Profile,1,37041.836,Aluminium 6061,100.013,bar,T-Slot Profile
+2,end-cap,End Cap,1,5992.928,PLA,7.431,end-cap,End Cap
+3,socket-screw-iso-4762 (M5x16),"Socket Head Cap Screw, M5x16",1,563.243,"Steel, mild",4.421,socket-screw-iso-4762 (M5x16),"Socket Head Cap Screw, M5x16"

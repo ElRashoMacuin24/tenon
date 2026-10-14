@@ -2088,6 +2088,19 @@ fn a_part_is_given_a_material_a_density_and_a_colour_in_its_properties() {
     // 10 of 8 g turns about X as m(20² + 10²)/12, and so on.
     assert!(shows(&d, "8 g") && shows(&d, "8000 mm³"), "{:?}", d.texts());
     assert_eq!(d.texts().iter().filter(|t| *t == "333, 1133, 1333 g mm²").count(), 2, "moments, and principal moments: {:?}", d.texts());
+    // Its number and what it is, for parts lists, typed in; Enter keeps each.
+    type_into(&mut d, &mut wb, "tn_partprops_number", "BR-0042");
+    d.tap(&mut wb, egui::Key::Enter);
+    open_window(&mut d, &mut wb);
+    type_into(&mut d, &mut wb, "tn_partprops_description", "Mounting bracket");
+    d.tap(&mut wb, egui::Key::Enter);
+    open_window(&mut d, &mut wb);
+    assert_eq!(
+        (wb.document().part_number.as_deref(), wb.document().description.as_deref()),
+        (Some("BR-0042"), Some("Mounting bracket")),
+        "{}",
+        wb.status()
+    );
 
     // The material is picked from the list: brass is 8.5 g/cm^3 and brass-coloured.
     let combo = d.text_pos("Generic").expect("the material box");

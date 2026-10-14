@@ -421,6 +421,35 @@ fn document_rename(s: &mut Session, p: &Value) -> CmdResult {
     })
 }
 
+/// The part's number and its description, for parts lists: text, or null to have none.
+fn document_properties(s: &mut Session, p: &Value) -> CmdResult {
+    let take = |key: &str| -> Result<Option<Option<String>>, String> {
+        match p.get(key) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(Value::String(t)) if t.trim().is_empty() => Ok(Some(None)),
+            Some(Value::String(t)) => {
+                crate::document::prop_ok(t).map_err(|e| format!("`{key}`: {e}"))?;
+                Ok(Some(Some(t.trim().to_owned())))
+            }
+            Some(_) => Err(format!("`{key}` must be text, or null")),
+        }
+    };
+    let (number, description) = (take("part_number")?, take("description")?);
+    if number.is_none() && description.is_none() {
+        return Err("say the part's `part_number` or its `description` (null for none)".into());
+    }
+    s.edit(|d| {
+        if let Some(n) = number {
+            d.part_number = n;
+        }
+        if let Some(t) = description {
+            d.description = t;
+        }
+        Ok(json!({ "part_number": d.part_number, "description": d.description }))
+    })
+}
+
 // ---- materials and appearance ----------------------------------------------------------------
 
 /// What the part is made of now: its material (or null), its own colour (or null), its density
@@ -3439,6 +3468,13 @@ macro_rules! geo_cmd {
 
 static COMMANDS: &[CommandSpec] = &[
     doc_cmd!("document.rename", "Rename Part", "name: text", true, document_rename),
+    doc_cmd!(
+        "document.properties",
+        "Part Properties",
+        "part_number, description: text for parts lists, or null for none (the file's name and the part's name stand in)",
+        true,
+        document_properties
+    ),
     doc_cmd!(
         "document.material",
         "Material",

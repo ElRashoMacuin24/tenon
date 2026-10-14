@@ -105,8 +105,9 @@ Fillet, Chamfer, Shell, Draft, Split, Combine; rectangular and circular patterns
 work planes, axes and points; Box, Cylinder, Sphere and Torus. Every one opens its panel
 again when its row is double-clicked.
 
-**Inspect > Properties** gives the part its material (its colour, density and how strong
-it is), and says its mass, volume and centre of gravity. **Inspect > Measure** measures
+**Inspect > Properties** gives the part its number and description (for parts lists) and
+its material (its colour, density and how strong it is), and says its mass, volume, centre
+of gravity and moments of inertia. **Inspect > Measure** measures
 distances, angles, lengths and areas.
 
 ## Sheet metal

@@ -67,6 +67,17 @@ const AT_Y: Param = opt("y", Length, "where it is in the sketch (default 0)");
 static SCHEMAS: &[C] = &[
     C::new("document.rename", &[req("name", Text, "the part's new name (1 to 200 characters)")]),
     C::new(
+        "document.properties",
+        &[
+            opt(
+                "part_number",
+                Either(&[Text, Null]),
+                "the part's number, for parts lists (up to 200 characters); null for none: its file's name stands in",
+            ),
+            opt("description", Either(&[Text, Null]), "what the part is, for parts lists (up to 200 characters); null for none: its name stands in"),
+        ],
+    ),
+    C::new(
         "document.material",
         &[
             opt("name", Either(&[Text, Null]), "a material of the library (see document.materials) or of one's own; null for none"),

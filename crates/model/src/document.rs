@@ -993,6 +993,16 @@ pub struct Feature {
     pub kind: FeatureKind,
 }
 
+/// Whether a part number or a description can be one: some text, on one line, of at most 200
+/// characters.
+pub fn prop_ok(text: &str) -> Result<(), String> {
+    if text.trim().is_empty() || text.chars().count() > 200 || text.contains(['\n', '\r']) {
+        Err("it is some text, on one line, of at most 200 characters".into())
+    } else {
+        Ok(())
+    }
+}
+
 /// Most features one document may hold (hostile-input cap).
 pub const MAX_FEATURES: usize = 10_000;
 
@@ -1000,6 +1010,12 @@ pub const MAX_FEATURES: usize = 10_000;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub name: String,
+    /// The part's number, for parts lists. Without one, its file's name stands in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part_number: Option<String>,
+    /// What the part is, for parts lists. Without one, its name stands in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     features: Vec<Feature>,
     next_feature: u32,
     /// Parameter names and equations.
@@ -1031,6 +1047,8 @@ impl Default for Document {
     fn default() -> Self {
         Document {
             name: "Part1".into(),
+            part_number: None,
+            description: None,
             features: Vec::new(),
             next_feature: 0,
             params: Default::default(),
@@ -1222,6 +1240,8 @@ impl Document {
         let n = self.index_of(id).unwrap_or(self.features.len());
         Document {
             name: self.name.clone(),
+            part_number: self.part_number.clone(),
+            description: self.description.clone(),
             features: self.features[..n].to_vec(),
             next_feature: self.next_feature,
             params: self.params.clone(),
@@ -1336,6 +1356,11 @@ impl Document {
     pub fn validate(&self) -> Result<(), String> {
         if self.features.len() > MAX_FEATURES {
             return Err("too many features".into());
+        }
+        for (what, said) in [("part number", &self.part_number), ("description", &self.description)] {
+            if let Some(text) = said {
+                prop_ok(text).map_err(|e| format!("the {what}: {e}"))?;
+            }
         }
         if let Some(e) = self.end_before
             && self.feature(e).is_none()

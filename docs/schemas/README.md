@@ -103,4 +103,5 @@ taken away), without a check.
   - Since, without a new version (only more is taken): the twenty `study.*` commands and the
     optional `youngs_modulus`, `poisson` and `yield_strength` of `document.material` (M11).
     Of them, `study.fix` and `study.force` at first required `faces`; they now take `faces`
-    or `edges`, so what was valid still is. 224 commands.
+    or `edges`, so what was valid still is. Then `document.properties` (a part's number and
+    description, for 0.1.0). 225 commands.
