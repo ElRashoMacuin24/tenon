@@ -537,6 +537,9 @@ fn study_json(st: &Study) -> Value {
         "mesh_size": st.mesh_size,
         "supports": st.supports.iter().map(|x| {
             let mut v = json!({ "id": x.id, "name": x.name, "kind": x.kind.key(), "faces": x.faces.len() });
+            if !x.edges.is_empty() {
+                v["edges"] = json!(x.edges.len());
+            }
             if let SupportKind::Pin { radial, axial, tangential } = x.kind {
                 v["radial"] = json!(radial);
                 v["axial"] = json!(axial);
@@ -549,10 +552,36 @@ fn study_json(st: &Study) -> Value {
         }).collect::<Vec<_>>(),
         "loads": st.loads.iter().map(|l| {
             let mut v = json!({ "id": l.id, "name": l.name, "faces": l.faces.len() });
+            if !l.edges.is_empty() {
+                v["edges"] = json!(l.edges.len());
+            }
             if l.suppressed {
                 v["suppressed"] = json!(true);
             }
+            let xyz = |d: tenon_geom::Vec3| json!([d.x, d.y, d.z]);
             match l.kind {
+                LoadKind::Moment { newton_millimetres, axis } => {
+                    v["type"] = json!("moment");
+                    v["newton_millimetres"] = json!(newton_millimetres);
+                    v["axis"] = json!(axis.map(xyz));
+                }
+                LoadKind::Bearing { newtons, direction } => {
+                    v["type"] = json!("bearing");
+                    v["newtons"] = json!(newtons);
+                    v["direction"] = xyz(direction);
+                }
+                LoadKind::RemoteForce { newtons, direction, point } => {
+                    v["type"] = json!("remote_force");
+                    v["newtons"] = json!(newtons);
+                    v["direction"] = xyz(direction);
+                    v["point"] = xyz(point);
+                }
+                LoadKind::Body { axis, point, rpm } => {
+                    v["type"] = json!("body");
+                    v["axis"] = xyz(axis);
+                    v["point"] = xyz(point);
+                    v["rpm"] = json!(rpm);
+                }
                 LoadKind::Gravity { direction, acceleration } => {
                     v["type"] = json!("gravity");
                     v["direction"] = json!([direction.x, direction.y, direction.z]);
@@ -630,9 +659,80 @@ fn study_edit(s: &mut Session, id: StudyId, key: &str, change: impl FnOnce(&mut 
     })
 }
 
+/// The faces a command names (none when it names none).
+fn opt_faces(p: &Value) -> Result<Option<Vec<FaceRef>>, CmdError> {
+    if arg(p, "faces").is_some_and(|v| !v.is_null()) { Ok(Some(parse(p, "faces")?)) } else { Ok(None) }
+}
+
+/// The edges a command names (none when it names none).
+fn opt_edges(p: &Value) -> Result<Option<Vec<EdgeRef>>, CmdError> {
+    if arg(p, "edges").is_some_and(|v| !v.is_null()) { Ok(Some(parse(p, "edges")?)) } else { Ok(None) }
+}
+
+/// A point a command gives as [x, y, z] (None when it gives none).
+fn opt_point(p: &Value, key: &str) -> Result<Option<tenon_geom::Vec3>, CmdError> {
+    if arg(p, key).is_none_or(Value::is_null) {
+        return Ok(None);
+    }
+    let [x, y, z]: [f64; 3] = parse(p, key).map_err(|e| CmdError(format!("`{key}` is a point [x, y, z]: {}", e.0)))?;
+    Ok(Some(tenon_geom::Vec3::new(x + 0.0, y + 0.0, z + 0.0)))
+}
+
+/// A direction a command gives under `key`, as a force's is given (None when it gives none).
+fn opt_way(p: &Value, key: &str) -> Result<Option<tenon_geom::Vec3>, CmdError> {
+    match arg(p, key) {
+        None | Some(Value::Null) => Ok(None),
+        // (Adding 0 makes a -0 a 0.)
+        Some(v) => said_direction(v, key).map(|d| Some(tenon_geom::Vec3::new(d.x + 0.0, d.y + 0.0, d.z + 0.0))),
+    }
+}
+
 fn study_fix(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, name) = (study_of(s, p)?, opt_name(p)?);
+    let (faces, edges) = (opt_faces(p)?.unwrap_or_default(), opt_edges(p)?.unwrap_or_default());
+    study_edit(s, id, "support", |st| st.add_support_on(SupportKind::Fixed, faces, edges, name))
+}
+
+/// The axis a moment turns about, as a command says it: not said (None); "own", its faces'
+/// own (Some(None)); or a direction.
+fn moment_axis(p: &Value) -> Result<Option<Option<tenon_geom::Vec3>>, CmdError> {
+    match arg(p, "axis") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(w)) if w.eq_ignore_ascii_case("own") => Ok(Some(None)),
+        Some(_) => opt_way(p, "axis").map(Some),
+    }
+}
+
+fn study_moment(s: &mut Session, p: &Value) -> CmdResult {
     let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
-    study_edit(s, id, "support", |st| st.add_support(SupportKind::Fixed, faces, name))
+    let kind = LoadKind::Moment { newton_millimetres: num(p, "newton_millimetres")?, axis: moment_axis(p)?.flatten() };
+    study_edit(s, id, "load", |st| st.add_load(kind, faces, name))
+}
+
+fn study_bearing(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
+    let direction = opt_way(p, "direction")?.ok_or("missing parameter `direction`: the way the shaft presses, as +x, down ... or [x, y, z]")?;
+    let kind = LoadKind::Bearing { newtons: num(p, "newtons")?, direction };
+    study_edit(s, id, "load", |st| st.add_load(kind, faces, name))
+}
+
+fn study_remote_force(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
+    let direction = opt_way(p, "direction")?.ok_or("missing parameter `direction`: the way the force acts, as +x, down ... or [x, y, z]")?;
+    let point = opt_point(p, "point")?.ok_or("missing parameter `point`: where the force acts, [x, y, z]")?;
+    let kind = LoadKind::RemoteForce { newtons: num(p, "newtons")?, direction, point };
+    study_edit(s, id, "load", |st| st.add_load(kind, faces, name))
+}
+
+/// The part turning about an axis.
+fn study_body(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, name) = (study_of(s, p)?, opt_name(p)?);
+    let kind = LoadKind::Body {
+        axis: opt_way(p, "axis")?.unwrap_or(tenon_geom::Vec3::Z),
+        point: opt_point(p, "point")?.unwrap_or(tenon_geom::Vec3::ZERO),
+        rpm: num(p, "rpm")?,
+    };
+    study_edit(s, id, "load", |st| st.add_load(kind, Vec::new(), name))
 }
 
 fn opt_bool(p: &Value, key: &str) -> Result<Option<bool>, CmdError> {
@@ -672,10 +772,11 @@ fn study_gravity(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn study_force(s: &mut Session, p: &Value) -> CmdResult {
-    let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
+    let (id, name) = (study_of(s, p)?, opt_name(p)?);
+    let (faces, edges) = (opt_faces(p)?.unwrap_or_default(), opt_edges(p)?.unwrap_or_default());
     let newtons = num(p, "newtons")?;
     let direction = force_direction(p)?.flatten();
-    study_edit(s, id, "load", |st| st.add_load(LoadKind::Force { newtons, direction }, faces, name))
+    study_edit(s, id, "load", |st| st.add_load_on(LoadKind::Force { newtons, direction }, faces, edges, name))
 }
 
 /// The way a force pushes, as a command says it: not said (None); "normal", square to its
@@ -692,9 +793,13 @@ fn force_direction(p: &Value) -> Result<Option<Option<tenon_geom::Vec3>>, CmdErr
 /// Changes a support or a load of a study.
 fn study_set(s: &mut Session, p: &Value) -> CmdResult {
     let (id, item) = (study_of(s, p)?, id_u32(p, "item")?);
-    let faces: Option<Vec<FaceRef>> = if arg(p, "faces").is_some_and(|v| !v.is_null()) { Some(parse(p, "faces")?) } else { None };
     let change = ItemChange {
-        faces,
+        faces: opt_faces(p)?,
+        edges: opt_edges(p)?,
+        newton_millimetres: opt_num(p, "newton_millimetres")?,
+        axis: moment_axis(p)?,
+        point: opt_point(p, "point")?,
+        rpm: opt_num(p, "rpm")?,
         name: opt_name(p)?,
         suppressed: opt_bool(p, "suppressed")?,
         newtons: opt_num(p, "newtons")?,
@@ -779,15 +884,17 @@ fn study_check(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
         .supports
         .iter()
         .filter(|x| !x.suppressed)
-        .map(|x| (x.id, &x.name, &x.faces, Some(x.kind)))
-        .chain(st.loads.iter().filter(|l| !l.suppressed).map(|l| (l.id, &l.name, &l.faces, None)));
-    for (item, name, faces, kind) in items {
+        .map(|x| (x.id, &x.name, &x.faces, &x.edges, Some(x.kind)))
+        .chain(st.loads.iter().filter(|l| !l.suppressed).map(|l| (l.id, &l.name, &l.faces, &l.edges, None)));
+    for (item, name, faces, edges, kind) in items {
         let found: Vec<Option<(usize, u32)>> = faces.iter().map(|f| r.resolve(f, k).ok()).collect();
-        let gone = found.iter().filter(|f| f.is_none()).count();
+        // (An item is on faces or on edges: what is counted is whichever it is on.)
+        let gone = found.iter().filter(|f| f.is_none()).count() + edges.iter().filter(|e| r.resolve_edge(e, k).is_err()).count();
         if gone > 0 {
-            lost.push(json!({ "item": item, "name": name, "lost": gone, "of": faces.len() }));
-            let which = if faces.len() == 1 { "its face is".to_owned() } else { format!("{gone} of its {} faces are", faces.len()) };
-            needs.push(format!("{name}: {which} no longer on the part. Give it its faces again (study.set, with faces)"));
+            let (of, what) = if edges.is_empty() { (faces.len(), "face") } else { (edges.len(), "edge") };
+            lost.push(json!({ "item": item, "name": name, "lost": gone, "of": of }));
+            let which = if of == 1 { format!("its {what} is") } else { format!("{gone} of its {of} {what}s are") };
+            needs.push(format!("{name}: {which} no longer on the part. Give it its {what}s again (study.set, with {what}s)"));
         }
         // (A face that is still there may have become one its support cannot hold.)
         if let Some(kind) = kind
@@ -3906,7 +4013,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "study.fix",
         "Fixed Support",
-        "Holds faces still. study (default: the part's only one); faces: [face references]; name. Returns the study, and support: the new support's id",
+        "Holds faces, or edges, still. study (default: the part's only one); faces: [face references], or edges: [edge references] (one or the other); name. Returns the study, and support: the new support's id",
         true,
         study_fix
     ),
@@ -3934,7 +4041,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "study.force",
         "Force",
-        "A force spread over faces. study; faces: [face references]; newtons: the whole force; direction: the way it pushes, as +x, -z, top, bottom ... or [x, y, z] (default, or normal: square to each face, into it; negative newtons pull); name. Returns the study, and load: the new load's id",
+        "A force spread over faces, or along edges. study; faces: [face references], or edges: [edge references] (one or the other); newtons: the whole force; direction: the way it pushes, as +x, -z, top, bottom ... or [x, y, z] (on faces the default, or normal: square to each face, into it; negative newtons pull. Along edges a direction is needed); name. Returns the study, and load: the new load's id",
         true,
         study_force
     ),
@@ -3946,9 +4053,37 @@ static COMMANDS: &[CommandSpec] = &[
         study_pressure
     ),
     doc_cmd!(
+        "study.moment",
+        "Moment",
+        "A turning load on faces. study; faces: [face references]; newton_millimetres: the whole moment (1 N m is 1000); axis: what it turns about, through the middle of its faces, as +x, -z ... or [x, y, z] (right-handed: seen from the axis's tip it turns anticlockwise; default, or own: the faces' own axis, a flat face's normal or a round face's axis); name. Returns the study, and load: the new load's id",
+        true,
+        study_moment
+    ),
+    doc_cmd!(
+        "study.bearing",
+        "Bearing Load",
+        "The load of a shaft in its bore, or of a bearing on its shaft: it presses on the half of each round face that it pushes against, most in the middle and nothing at the sides. study; faces: [references to round (cylindrical) faces]; newtons: the whole load; direction: the way it presses, across the faces' axis, as +x, down ... or [x, y, z]; name. Returns the study, and load: the new load's id",
+        true,
+        study_bearing
+    ),
+    doc_cmd!(
+        "study.remote_force",
+        "Remote Force",
+        "A force that acts at a point away from the faces that carry it: they get the force, and the turning it has about their middle. study; faces: [face references]; newtons; direction: as +x, down ... or [x, y, z]; point: [x, y, z], where it acts; name. Returns the study, and load: the new load's id",
+        true,
+        study_remote_force
+    ),
+    doc_cmd!(
+        "study.body",
+        "Body Load",
+        "The part turning about an axis: every bit of it is flung outward, by its material's density. A study has it once. (Its being pulled one way is study.gravity.) study; rpm: turns a minute; axis: as +x, z ... or [x, y, z] (default z); point: [x, y, z], a point the axis goes through (default the origin); name. Returns the study, and load: the new load's id",
+        true,
+        study_body
+    ),
+    doc_cmd!(
         "study.set",
         "Change Support or Load",
-        "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references]; name; suppressed: true leaves it out of the study for now, and keeps it; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals; of gravity: direction, acceleration; of a pin: radial, axial, tangential",
+        "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references], or of a fixed support or a force edges: [edge references] (one takes the place of the other); name; suppressed: true leaves it out of the study for now, and keeps it; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals; of gravity: direction, acceleration; of a pin: radial, axial, tangential; of a moment: newton_millimetres, axis (or own); of a bearing load: newtons, direction; of a remote force: newtons, direction, point; of a body load: rpm, axis, point",
         true,
         study_set
     ),

@@ -2640,3 +2640,69 @@ the machine, and with more than one it does not make the same mesh twice. It now
 one: the same part gives the same mesh and the same answer to the last figure, which
 `a_cantilever_bends_as_beam_theory_says` holds it to. A quick check's mesh takes a fraction
 of a second either way.
+
+## DEC-100 The rest of the Loads panel, and supports and loads on edges (2026-10-13)
+
+The owner confirmed M11 and asked for what was greyed on the Loads panel and for loads on
+edges ("M11 confirmed, do the greyed loads and loads on edges next").
+
+**On edges.** A support and a load have `edges` beside `faces`. Only a Fixed support and a
+Force may be on edges: a pin and a sliding support are defined by a surface (its axis, the
+way it looks), a pressure by an area, and the others below by the faces they are spread
+over. An item is on faces or on edges, never both; `study.set` with the one takes the other
+away. A force along edges is spread evenly along their length and must have a direction (an
+edge has no face to be square to). In the app whichever is clicked first decides, and the
+other kind is not offered until the selection is cleared: with both on offer, a click meant
+for a face beside an edge would take the edge.
+
+Vertices are not offered. A force on a point is an endless stress there, and a vertex would
+be a third kind of reference in the format, which has none. (A gap against Inventor.)
+
+**Moment.** Newton millimetres in all on its faces, about an axis that is given or the
+faces' own (a flat face's normal, a round face's axis: they must share it, and when they do
+not the study says so and asks for an axis). It is put on the mesh as pushes `F/A + w x r`
+over the faces, with `w` found so that the pushes add up to exactly the moment and to no
+force: about the faces' centre, growing with the distance from it. The faces are not made
+rigid.
+
+**Remote Force.** A force at a point. Its faces get the force and the moment it has about
+their centre, in the same form. Again a spread load, not a rigid link to the point: near the
+faces a rigid link would give other stresses, away from them the same.
+
+**Bearing Load.** The load of a shaft in a bore, on round faces only: a pressure on the half
+of the face that the shaft pushes against, in proportion to how squarely the face meets the
+load, scaled so that it adds up to the load. A direction along the bore's axis presses on
+nothing and is refused when the study is put to the part (a study does not know which way
+its faces lie until then). The app turns a new bearing load across the bore it is given.
+
+**Body.** The part turning, in turns a minute about an axis through a point: the solver's
+own centrifugal load on every element, from the material's density. Like the part's weight
+it is on all of the part and is there once. Inventor's Body load also takes a linear
+acceleration: that is Gravity here, which takes any direction and size. An angular
+acceleration is not offered. (A gap.)
+
+**In the file**, as additions to version 2: `edges`, and the load types `moment`, `bearing`,
+`remote_force` and `body`. Four commands (`study.moment`, `study.bearing`,
+`study.remote_force`, `study.body`: 224 in all); `study.fix` and `study.force` take `edges`
+in place of `faces`.
+
+**On the mesh**, the mesher's curve elements (three-node lines) are read as well, and each
+curve is told to be an edge of the part by where it lies, as surfaces are told to be faces.
+A force along edges is summed along each curved line; held edges hold their nodes.
+
+**Checked** against torsion of a round bar, a bar bent by a moment and by a force from
+beyond its end, a shaft's load in a bore, a rod flung round, a bar under its own weight, and
+a cantilever loaded along an edge and held by its edges (docs/stress.md has the tolerances).
+
+**Found on the way.**
+
+- A force that a command had given as a negative size along a direction was shown in its
+  panel the other way round, and OK would have turned it. The panel now shows the way it
+  pushes, with a size that is never negative: `a_force_given_backwards_is_shown_the_way_it_pushes`.
+- The textbook cases took 56 seconds side by side and 19 one after another: each run of the
+  solver takes every thread of the machine. One external program runs at a time in a
+  process.
+
+Gaps: no vertices; a moment and a remote force do not make their faces rigid; no angular
+acceleration; where a remote force acts is typed, not picked; a direction, an axis or a
+point that was picked is kept as numbers and does not follow what it was picked from.

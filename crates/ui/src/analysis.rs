@@ -3,21 +3,21 @@
 //! the browser shows the study in place of the features; supports and loads are drawn on the
 //! part. Everything it does is a `study.*` command (DEC-093).
 //!
-//! Working a study out (dividing the part into elements, solving, showing stress) is not here
-//! yet: it waits on the mesher and solver (DEC-094), and the buttons for it say so.
+//! Working a study out, and showing what it found, is `crate::results`.
 
 use egui::{Align2, Color32, Pos2, Rect, Stroke, Ui, vec2};
 use serde_json::{Value, json};
 use tenon_geom::Vec3;
 use tenon_kernel::SurfaceKind;
 use tenon_model::study::{EARTH, LoadKind, Study, StudyId, SupportKind};
-use tenon_model::{FaceRef, WorkGeom};
+use tenon_model::{EdgeRef, FaceRef, WorkGeom};
 
 use crate::browser::{RowStyle, row};
 use crate::commands::ANALYSIS_TAB;
 use crate::icons::Icon;
+use crate::modify::{find_edge, find_face};
 use crate::panels::Panel;
-use crate::properties::{eq_field, flip_button, fmt_value, picked_row, section, slot_button};
+use crate::properties::{eq_field, flip_button, fmt_value, section, slot_button};
 use crate::theme::{self, Tokens};
 use crate::viewport::Pick;
 use crate::workbench::Workbench;
@@ -46,7 +46,7 @@ pub(crate) struct Env {
     pub running: Option<crate::results::Running>,
 }
 
-/// Fixed, Pin or Frictionless: the faces that are held.
+/// Fixed, Pin or Frictionless: the faces (or, of a fixed support, the edges) that are held.
 #[derive(Clone, Debug)]
 pub(crate) struct SupportPanel {
     pub study: StudyId,
@@ -54,6 +54,8 @@ pub(crate) struct SupportPanel {
     pub editing: Option<u32>,
     pub kind: SupportKind,
     pub faces: Vec<FaceRef>,
+    /// A fixed support may be on edges in place of faces.
+    pub edges: Vec<EdgeRef>,
 }
 
 impl SupportPanel {
@@ -61,10 +63,10 @@ impl SupportPanel {
         self.kind.word()
     }
 
-    /// What its faces are, for the status bar and the faces row.
+    /// What it is on, for the status bar and the faces row.
     fn faces_are(&self) -> &'static str {
         match self.kind {
-            SupportKind::Fixed => "the faces that are held still",
+            SupportKind::Fixed => "the faces, or the edges, that are held still",
             SupportKind::Pin { .. } => "the round faces that are on the pin",
             SupportKind::Frictionless => "the flat or round faces that may slide",
         }
@@ -72,7 +74,12 @@ impl SupportPanel {
 
     /// The command that makes or changes it.
     pub(crate) fn command(&self) -> (&'static str, Value) {
-        let mut p = json!({ "study": self.study.0, "faces": self.faces });
+        let mut p = json!({ "study": self.study.0 });
+        if self.edges.is_empty() {
+            p["faces"] = json!(self.faces);
+        } else {
+            p["edges"] = json!(self.edges);
+        }
         if let SupportKind::Pin { radial, axial, tangential } = self.kind {
             p["radial"] = json!(radial);
             p["axial"] = json!(axial);
@@ -90,10 +97,10 @@ impl SupportPanel {
     }
 }
 
-/// The way a force pushes, or the part's weight pulls.
+/// The way a load pushes, or the axis it turns about.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Way {
-    /// Square to each face, into it.
+    /// Its faces' own: a force square to each face and into it, a moment about its face's axis.
     Normal,
     X,
     Y,
@@ -133,6 +140,12 @@ impl Way {
         (Way::Other(d), false)
     }
 
+    /// The same for a size with its sign: a negative size is the other way.
+    fn of_signed(direction: Vec3, size: f64) -> (Way, bool, f64) {
+        let (way, flip) = Way::of(Some(if size < 0.0 { -direction } else { direction }));
+        (way, flip, size.abs())
+    }
+
     fn vector(self, flip: bool) -> Option<Vec3> {
         let v = match self {
             Way::Normal => return None,
@@ -152,16 +165,89 @@ pub(crate) enum What {
     Force,
     Pressure,
     Gravity,
+    Moment,
+    Bearing,
+    Remote,
+    Body,
 }
 
-/// Force, Pressure or Gravity: where it is, how large, which way.
+impl What {
+    fn of(kind: &LoadKind) -> What {
+        match kind {
+            LoadKind::Force { .. } => What::Force,
+            LoadKind::Pressure { .. } => What::Pressure,
+            LoadKind::Gravity { .. } => What::Gravity,
+            LoadKind::Moment { .. } => What::Moment,
+            LoadKind::Bearing { .. } => What::Bearing,
+            LoadKind::RemoteForce { .. } => What::Remote,
+            LoadKind::Body { .. } => What::Body,
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            What::Force => "Force",
+            What::Pressure => "Pressure",
+            What::Gravity => "Gravity",
+            What::Moment => "Moment",
+            What::Bearing => "Bearing Load",
+            What::Remote => "Remote Force",
+            What::Body => "Body",
+        }
+    }
+
+    /// The ribbon's command that starts one.
+    pub(crate) fn command(self) -> &'static str {
+        match self {
+            What::Force => "study.force",
+            What::Pressure => "study.pressure",
+            What::Gravity => "study.gravity",
+            What::Moment => "study.moment",
+            What::Bearing => "study.bearing",
+            What::Remote => "study.remote_force",
+            What::Body => "study.body",
+        }
+    }
+
+    pub(crate) fn of_command(id: &str) -> Option<What> {
+        [What::Force, What::Pressure, What::Gravity, What::Moment, What::Bearing, What::Remote, What::Body].into_iter().find(|w| w.command() == id)
+    }
+
+    /// Whether it is on faces (the part's weight and its turning are on all of it).
+    pub(crate) fn on_faces(self) -> bool {
+        !matches!(self, What::Gravity | What::Body)
+    }
+
+    /// Whether it turns about an axis, where the others push along a direction.
+    fn turns(self) -> bool {
+        matches!(self, What::Moment | What::Body)
+    }
+
+    /// How large it is: what the field is called, its unit, and what it may be.
+    pub(crate) fn size(self) -> (&'static str, &'static str, std::ops::RangeInclusive<f64>, &'static str) {
+        match self {
+            What::Force => ("Force", "N", 0.001..=1.0e12, "The whole force, spread evenly over the faces (or along the edges)"),
+            What::Pressure => ("Pressure", "MPa", -1.0e6..=1.0e6, "On the faces, square to them and into them. Negative pulls."),
+            What::Gravity => ("Acceleration", "mm/s²", 0.001..=1.0e9, "How hard the part's own weight pulls: 9810 mm/s² on the Earth"),
+            What::Moment => ("Moment", "N mm", 0.001..=1.0e15, "The whole turning load on the faces: 1 N m is 1000 N mm"),
+            What::Bearing => ("Load", "N", 0.001..=1.0e12, "The whole load of the shaft, on the half of the round faces it pushes against"),
+            What::Remote => ("Force", "N", 0.001..=1.0e12, "The force that acts at the point below"),
+            What::Body => ("Speed", "rpm", 0.001..=1.0e7, "How fast the part turns, in turns a minute"),
+        }
+    }
+}
+
+/// A load: where it is, how large, which way.
 #[derive(Clone, Debug)]
 pub(crate) struct LoadPanel {
     pub study: StudyId,
     pub editing: Option<u32>,
     pub what: What,
     pub faces: Vec<FaceRef>,
-    /// Newtons; megapascals for a pressure; mm/s^2 for gravity.
+    /// A force may be along edges in place of faces.
+    pub edges: Vec<EdgeRef>,
+    /// Newtons; megapascals for a pressure; mm/s^2 for gravity; N mm for a moment; turns a
+    /// minute for a body.
     pub magnitude: f64,
     pub way: Way,
     /// Along its direction the other way; for one square to its faces, pulling.
@@ -171,63 +257,92 @@ pub(crate) struct LoadPanel {
     pub picking: bool,
     /// Use Vector Components: the force as its parts along X, Y and Z (N).
     pub components: Option<Vec3>,
+    /// Where a remote force acts; a point the axis of a body's turning goes through.
+    pub point: Vec3,
 }
 
 impl LoadPanel {
     pub(crate) fn title(&self) -> &'static str {
-        match self.what {
-            What::Force => "Force",
-            What::Pressure => "Pressure",
-            What::Gravity => "Gravity",
+        self.what.title()
+    }
+
+    /// What the direction selector shows.
+    fn way_label(&self) -> String {
+        match (self.way, self.what) {
+            (Way::Normal, What::Moment) => "Face's Own Axis".into(),
+            (way, _) => way.label(),
         }
     }
 
     /// The load as it stands: its size with its sign, and where it points.
     pub(crate) fn shown(&self) -> LoadKind {
+        let way = |fallback: Vec3| self.way.vector(self.flip).unwrap_or(fallback);
+        let down = Vec3::new(0.0, 0.0, -1.0);
+        // (Its faces' own way has no vector to turn round: the other way is a negative size.)
+        let signed = if self.flip { -self.magnitude } else { self.magnitude };
         match (self.what, self.components) {
             (What::Pressure, _) => LoadKind::Pressure { megapascals: self.magnitude },
-            (What::Gravity, _) => {
-                LoadKind::Gravity { direction: self.way.vector(self.flip).unwrap_or(Vec3::new(0.0, 0.0, -1.0)), acceleration: self.magnitude }
-            }
+            (What::Gravity, _) => LoadKind::Gravity { direction: way(down), acceleration: self.magnitude },
             (What::Force, Some(v)) => {
                 let newtons = v.len();
                 LoadKind::Force { newtons, direction: (newtons > 0.0).then(|| v * (1.0 / newtons)) }
             }
-            (What::Force, None) if self.way == Way::Normal => {
-                LoadKind::Force { newtons: if self.flip { -self.magnitude } else { self.magnitude }, direction: None }
-            }
+            (What::Force, None) if self.way == Way::Normal => LoadKind::Force { newtons: signed, direction: None },
             (What::Force, None) => LoadKind::Force { newtons: self.magnitude, direction: self.way.vector(self.flip) },
+            (What::Moment, _) if self.way == Way::Normal => LoadKind::Moment { newton_millimetres: signed, axis: None },
+            (What::Moment, _) => LoadKind::Moment { newton_millimetres: self.magnitude, axis: self.way.vector(self.flip) },
+            (What::Bearing, _) => LoadKind::Bearing { newtons: self.magnitude, direction: way(Vec3::X) },
+            (What::Remote, _) => LoadKind::RemoteForce { newtons: self.magnitude, direction: way(down), point: self.point },
+            (What::Body, _) => LoadKind::Body { axis: way(Vec3::Z), point: self.point, rpm: self.magnitude },
         }
     }
 
     /// The command that makes or changes it.
     pub(crate) fn command(&self) -> (&'static str, Value) {
         let mut p = json!({ "study": self.study.0 });
-        let said = |d: Option<Vec3>| d.map_or(json!("normal"), |d| json!([d.x, d.y, d.z]));
-        let made = match self.shown() {
-            LoadKind::Pressure { megapascals } => {
+        if self.what.on_faces() {
+            if self.edges.is_empty() {
                 p["faces"] = json!(self.faces);
-                p["megapascals"] = json!(megapascals);
-                "study.pressure"
+            } else {
+                p["edges"] = json!(self.edges);
             }
+        }
+        let xyz = |d: Vec3| json!([d.x, d.y, d.z]);
+        match self.shown() {
+            LoadKind::Pressure { megapascals } => p["megapascals"] = json!(megapascals),
             LoadKind::Force { newtons, direction } => {
-                p["faces"] = json!(self.faces);
                 p["newtons"] = json!(newtons);
-                p["direction"] = said(direction);
-                "study.force"
+                p["direction"] = direction.map_or(json!("normal"), xyz);
             }
             LoadKind::Gravity { direction, acceleration } => {
-                p["direction"] = said(Some(direction));
+                p["direction"] = xyz(direction);
                 p["acceleration"] = json!(acceleration);
-                "study.gravity"
             }
-        };
+            LoadKind::Moment { newton_millimetres, axis } => {
+                p["newton_millimetres"] = json!(newton_millimetres);
+                p["axis"] = axis.map_or(json!("own"), xyz);
+            }
+            LoadKind::Bearing { newtons, direction } => {
+                p["newtons"] = json!(newtons);
+                p["direction"] = xyz(direction);
+            }
+            LoadKind::RemoteForce { newtons, direction, point } => {
+                p["newtons"] = json!(newtons);
+                p["direction"] = xyz(direction);
+                p["point"] = xyz(point);
+            }
+            LoadKind::Body { axis, point, rpm } => {
+                p["rpm"] = json!(rpm);
+                p["axis"] = xyz(axis);
+                p["point"] = xyz(point);
+            }
+        }
         match self.editing {
             Some(item) => {
                 p["item"] = json!(item);
                 ("study.set", p)
             }
-            None => (made, p),
+            None => (self.what.command(), p),
         }
     }
 
@@ -255,13 +370,29 @@ impl LoadPanel {
     }
 }
 
+/// "2 faces", "1 edge", or what to do when there are none.
+fn picked_text(faces: usize, edges: usize, none: &str) -> String {
+    let count = |n: usize, what: &str| format!("{n} {what}{}", if n == 1 { "" } else { "s" });
+    match (faces, edges) {
+        (0, 0) => none.to_owned(),
+        (f, 0) => count(f, "face"),
+        (_, e) => count(e, "edge"),
+    }
+}
+
 /// The fields of a support being set up.
 pub(crate) fn support_fields(ui: &mut Ui, p: &mut SupportPanel) -> bool {
     let mut clear = false;
+    let fixed = p.kind == SupportKind::Fixed;
     section(ui, "Location", true, |ui| {
         egui::Grid::new("tn_props_support").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-            ui.label("Faces").on_hover_text(format!("{}: click them in the part", p.faces_are()));
-            clear = picked_row(ui, p.faces.len(), "click faces");
+            ui.label(if fixed { "Faces or Edges" } else { "Faces" }).on_hover_text(format!("{}: click them in the part", p.faces_are()));
+            ui.horizontal(|ui| {
+                ui.label(picked_text(p.faces.len(), p.edges.len(), if fixed { "click faces or edges" } else { "click faces" }));
+                if !(p.faces.is_empty() && p.edges.is_empty()) && ui.small_button("✖").on_hover_text("Clear").clicked() {
+                    clear = true;
+                }
+            });
             ui.end_row();
         });
     });
@@ -276,21 +407,30 @@ pub(crate) fn support_fields(ui: &mut Ui, p: &mut SupportPanel) -> bool {
 }
 
 /// The fields of a load being set up. `face_normal`: the way its first face looks, if that is
-/// flat. Returns (clear the faces, Enter was pressed).
+/// flat. Returns (clear what it is on, Enter was pressed).
 pub(crate) fn load_fields(ui: &mut Ui, p: &mut LoadPanel, face_normal: Option<Vec3>, t: &Tokens) -> (bool, bool) {
     let (mut clear, mut enter) = (false, false);
-    if p.what != What::Gravity {
+    if p.what.on_faces() {
         section(ui, "Location", true, |ui| {
             egui::Grid::new("tn_props_load_faces").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Faces").on_hover_text("The faces it is on: click them in the part");
+                let (name, tip, none) = match p.what {
+                    What::Force => (
+                        "Faces or Edges",
+                        "The faces it is spread over, or the edges it is spread along: click them in the part",
+                        "click faces or edges",
+                    ),
+                    What::Bearing => ("Faces", "The round faces the shaft presses on: click them in the part", "click round faces"),
+                    _ => ("Faces", "The faces it is on: click them in the part", "click faces"),
+                };
+                ui.label(name).on_hover_text(tip);
                 let active = !p.picking;
-                let label = if p.faces.is_empty() { "click faces".to_owned() } else { format!("{} selected", p.faces.len()) };
+                let label = picked_text(p.faces.len(), p.edges.len(), none);
                 ui.horizontal(|ui| {
-                    // (The faces take the clicks unless the direction does.)
+                    // (What it is on takes the clicks unless the direction does.)
                     if slot_button(ui, active, &label, t) {
                         p.picking = false;
                     }
-                    if !p.faces.is_empty() && ui.small_button("✖").on_hover_text("Clear").clicked() {
+                    if !(p.faces.is_empty() && p.edges.is_empty()) && ui.small_button("✖").on_hover_text("Clear").clicked() {
                         clear = true;
                     }
                 });
@@ -299,52 +439,47 @@ pub(crate) fn load_fields(ui: &mut Ui, p: &mut LoadPanel, face_normal: Option<Ve
         });
     }
     section(ui, "Magnitude", true, |ui| {
-        egui::Grid::new("tn_props_load_size").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-            let mag = egui::Id::new("tn_props_load_mag");
-            match (p.what, &mut p.components) {
-                (What::Pressure, _) => {
-                    ui.label("Pressure").on_hover_text("On the faces, square to them and into them. Negative pulls.");
-                    enter |= eq_field(ui, mag, &mut p.magnitude, None, "MPa", -1.0e6..=1.0e6, 110.0, t).entered;
+        egui::Grid::new("tn_props_load_size").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| match &mut p.components {
+            Some(v) if p.what == What::Force => {
+                for (label, id, part) in
+                    [("Fx", "tn_props_load_fx", &mut v.x), ("Fy", "tn_props_load_fy", &mut v.y), ("Fz", "tn_props_load_fz", &mut v.z)]
+                {
+                    ui.label(label).on_hover_text("The part of the force along that axis of the part");
+                    enter |= eq_field(ui, egui::Id::new(id), part, None, "N", -1.0e12..=1.0e12, 110.0, t).entered;
                     ui.end_row();
                 }
-                (What::Gravity, _) => {
-                    ui.label("Acceleration").on_hover_text("How hard the part's own weight pulls: 9810 mm/s² on the Earth");
-                    enter |= eq_field(ui, mag, &mut p.magnitude, None, "mm/s²", 0.001..=1.0e9, 110.0, t).entered;
-                    ui.end_row();
-                }
-                (What::Force, Some(v)) => {
-                    for (label, id, part) in
-                        [("Fx", "tn_props_load_fx", &mut v.x), ("Fy", "tn_props_load_fy", &mut v.y), ("Fz", "tn_props_load_fz", &mut v.z)]
-                    {
-                        ui.label(label).on_hover_text("The part of the force along that axis of the part");
-                        enter |= eq_field(ui, egui::Id::new(id), part, None, "N", -1.0e12..=1.0e12, 110.0, t).entered;
-                        ui.end_row();
-                    }
-                }
-                (What::Force, None) => {
-                    ui.label("Force").on_hover_text("The whole force, spread evenly over the faces");
-                    enter |= eq_field(ui, mag, &mut p.magnitude, None, "N", 0.001..=1.0e12, 110.0, t).entered;
-                    ui.end_row();
-                }
+            }
+            _ => {
+                let (label, unit, range, tip) = p.what.size();
+                ui.label(label).on_hover_text(tip);
+                enter |= eq_field(ui, egui::Id::new("tn_props_load_mag"), &mut p.magnitude, None, unit, range, 110.0, t).entered;
+                ui.end_row();
             }
         });
     });
     if p.what != What::Pressure {
-        section(ui, "Direction", true, |ui| {
+        let turns = p.what.turns();
+        section(ui, if turns { "Axis" } else { "Direction" }, true, |ui| {
             if p.components.is_none() {
                 egui::Grid::new("tn_props_load_dir").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                    ui.label("Direction")
-                        .on_hover_text("Click, then a straight edge, a flat face or a work axis in the part; or choose an axis from the list");
+                    ui.label(if turns { "Axis" } else { "Direction" }).on_hover_text(if turns {
+                        "Click, then a straight edge, a face or a work axis in the part; or choose an axis from the list. Seen from the axis's tip it turns anticlockwise"
+                    } else {
+                        "Click, then a straight edge, a flat face or a work axis in the part; or choose an axis from the list"
+                    });
                     ui.horizontal(|ui| {
-                        let pick = ui.scope(|ui| slot_button(ui, p.picking, &p.way.label(), t));
+                        let pick = ui.scope(|ui| slot_button(ui, p.picking, &p.way_label(), t));
                         crate::drawing::remember(ui, "tn_props_load_pick", pick.response.rect);
                         if pick.inner {
                             p.picking = !p.picking;
                         }
                         let list = egui::ComboBox::from_id_salt("tn_props_load_way").selected_text("").width(18.0).show_ui(ui, |ui| {
-                            let ways: &[Way] = if p.what == What::Force { &[Way::Normal, Way::X, Way::Y, Way::Z] } else { &[Way::X, Way::Y, Way::Z] };
+                            // (A force may be square to its faces, a moment about its faces' own axis.)
+                            let own = matches!(p.what, What::Force | What::Moment) && p.edges.is_empty();
+                            let ways: &[Way] = if own { &[Way::Normal, Way::X, Way::Y, Way::Z] } else { &[Way::X, Way::Y, Way::Z] };
                             for way in ways {
-                                if ui.selectable_label(p.way == *way, way.label()).clicked() {
+                                let label = if *way == Way::Normal && p.what == What::Moment { "Face's Own Axis".to_owned() } else { way.label() };
+                                if ui.selectable_label(p.way == *way, label).clicked() {
                                     p.way = *way;
                                     p.flip = false;
                                     p.picking = false;
@@ -367,25 +502,46 @@ pub(crate) fn load_fields(ui: &mut Ui, p: &mut LoadPanel, face_normal: Option<Ve
             }
         });
     }
+    if matches!(p.what, What::Remote | What::Body) {
+        let (title, tip) = if p.what == What::Remote {
+            ("Acts At", "Where the force acts, in the part's coordinates")
+        } else {
+            ("Axis Through", "A point the axis of its turning goes through, in the part's coordinates")
+        };
+        section(ui, title, true, |ui| {
+            egui::Grid::new("tn_props_load_point").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                for (label, id, part) in
+                    [("X", "tn_props_load_px", &mut p.point.x), ("Y", "tn_props_load_py", &mut p.point.y), ("Z", "tn_props_load_pz", &mut p.point.z)]
+                {
+                    ui.label(label).on_hover_text(tip);
+                    enter |= eq_field(ui, egui::Id::new(id), part, None, "mm", -1.0e9..=1.0e9, 110.0, t).entered;
+                    ui.end_row();
+                }
+            });
+        });
+    }
     (clear, enter)
 }
 
 fn load_text(kind: &LoadKind) -> String {
     let n = |v: f64| if v.fract() == 0.0 && v.abs() < 1e9 { format!("{v:.0}") } else { fmt_value(v) };
     match kind {
-        LoadKind::Force { newtons, .. } => format!("{} N", n(*newtons)),
+        LoadKind::Force { newtons, .. } | LoadKind::Bearing { newtons, .. } | LoadKind::RemoteForce { newtons, .. } => format!("{} N", n(*newtons)),
         LoadKind::Pressure { megapascals } => format!("{} MPa", n(*megapascals)),
         LoadKind::Gravity { acceleration, .. } => format!("{} m/s²", fmt_value(acceleration / 1000.0)),
+        LoadKind::Moment { newton_millimetres, .. } => format!("{} N mm", n(*newton_millimetres)),
+        LoadKind::Body { rpm, .. } => format!("{} rpm", n(*rpm)),
     }
 }
 
-/// What a row says of faces the part no longer has: " (face lost)", " (1 of 3 faces lost)".
-fn lost_note(lost: usize, of: usize) -> String {
+/// What a row says of faces (or edges) the part no longer has: " (face lost)", " (1 of 3
+/// edges lost)".
+fn lost_note(lost: usize, of: usize, what: &str) -> String {
     match (lost, of) {
         (0, _) => String::new(),
-        (1, 1) => " (face lost)".into(),
-        (lost, of) if lost == of => " (faces lost)".into(),
-        (lost, of) => format!(" ({lost} of {of} faces lost)"),
+        (1, 1) => format!(" ({what} lost)"),
+        (lost, of) if lost == of => format!(" ({what}s lost)"),
+        (lost, of) => format!(" ({lost} of {of} {what}s lost)"),
     }
 }
 
@@ -394,6 +550,18 @@ fn support_icon(kind: SupportKind) -> Icon {
         SupportKind::Fixed => Icon::Fixed,
         SupportKind::Pin { .. } => Icon::Pin,
         SupportKind::Frictionless => Icon::Frictionless,
+    }
+}
+
+fn load_icon(kind: &LoadKind) -> Icon {
+    match kind {
+        LoadKind::Force { .. } => Icon::Force,
+        LoadKind::Pressure { .. } => Icon::Pressure,
+        LoadKind::Gravity { .. } => Icon::Gravity,
+        LoadKind::Moment { .. } => Icon::Moment,
+        LoadKind::Bearing { .. } => Icon::BearingLoad,
+        LoadKind::RemoteForce { .. } => Icon::RemoteForce,
+        LoadKind::Body { .. } => Icon::BodyLoad,
     }
 }
 
@@ -438,6 +606,9 @@ impl Workbench {
         if self.in_assembly() || self.in_drawing() {
             return Some(Err("Stress Analysis is of a part: open the part, or edit it in place.".into()));
         }
+        if let Some(what) = What::of_command(id) {
+            return Some(self.open_load(what, None));
+        }
         Some(match id {
             "analysis.begin" => self.analysis_begin(),
             "analysis.finish" => {
@@ -456,9 +627,6 @@ impl Workbench {
             "study.fix" => self.open_support(SupportKind::Fixed, None),
             "study.pin" => self.open_support(SupportKind::PIN, None),
             "study.frictionless" => self.open_support(SupportKind::Frictionless, None),
-            "study.force" => self.open_load(What::Force, None),
-            "study.pressure" => self.open_load(What::Pressure, None),
-            "study.gravity" => self.open_load(What::Gravity, None),
             "study.mesh_size" => self.open_mesh_size(),
             _ => return None,
         })
@@ -570,25 +738,29 @@ impl Workbench {
         self.active_study().map(|s| s.id).ok_or_else(|| "there is no study".to_string())
     }
 
-    /// How many of `faces` the part no longer has (a feature that made them was deleted or
-    /// changed). Nothing is called lost while the part is still being built.
-    fn lost_faces(&self, faces: &[FaceRef]) -> usize {
+    /// How many of those faces and edges the part no longer has (a feature that made them was
+    /// deleted or changed). Nothing is called lost while the part is still being built.
+    fn lost(&self, faces: &[FaceRef], edges: &[EdgeRef]) -> usize {
         if self.shown.is_none() || self.is_busy() || self.scene.bodies.is_empty() {
             return 0;
         }
-        faces.iter().filter(|r| crate::modify::find_face(&self.scene, r).is_none()).count()
+        let faces = faces.iter().filter(|r| find_face(&self.scene, r).is_none()).count();
+        faces + edges.iter().filter(|r| find_edge(&self.scene, r).is_none()).count()
     }
 
-    /// The faces of a support or load that is opened to be changed: those the part still has.
-    /// The rest are left out, and the status bar says so.
-    fn faces_still_there(&mut self, name: &str, faces: &[FaceRef]) -> Vec<FaceRef> {
-        let lost = self.lost_faces(faces);
+    /// What a support or load that is opened to be changed is on: the faces and edges the part
+    /// still has. The rest are left out, and the status bar says so (the last is true then).
+    fn still_there(&mut self, name: &str, faces: &[FaceRef], edges: &[EdgeRef]) -> (Vec<FaceRef>, Vec<EdgeRef>, bool) {
+        let lost = self.lost(faces, edges);
         if lost == 0 {
-            return faces.to_vec();
+            return (faces.to_vec(), edges.to_vec(), false);
         }
-        let which = if faces.len() == 1 { "its face is".to_owned() } else { format!("{lost} of its {} faces are", faces.len()) };
-        self.set_error(format!("{name}: {which} no longer on the part, and left out. Click its faces again, then OK."));
-        faces.iter().filter(|r| crate::modify::find_face(&self.scene, r).is_some()).cloned().collect()
+        let (what, of) = if edges.is_empty() { ("face", faces.len()) } else { ("edge", edges.len()) };
+        let which = if of == 1 { format!("its {what} is") } else { format!("{lost} of its {of} {what}s are") };
+        self.set_error(format!("{name}: {which} no longer on the part, and left out. Click its {what}s again, then OK."));
+        let faces = faces.iter().filter(|r| find_face(&self.scene, r).is_some()).cloned().collect();
+        let edges = edges.iter().filter(|r| find_edge(&self.scene, r).is_some()).cloned().collect();
+        (faces, edges, true)
     }
 
     /// Fixed, Pin or Frictionless: a new support, or (with `editing`) one of the study's
@@ -599,13 +771,19 @@ impl Workbench {
         let mut panel = match editing {
             Some(id) => {
                 let s = self.active_study().and_then(|s| s.supports.iter().find(|x| x.id == id)).cloned().ok_or("no such support")?;
-                let faces = self.faces_still_there(&s.name, &s.faces);
-                told = faces.len() < s.faces.len();
-                SupportPanel { study, editing, kind: s.kind, faces }
+                let (faces, edges, lost) = self.still_there(&s.name, &s.faces, &s.edges);
+                told = lost;
+                SupportPanel { study, editing, kind: s.kind, faces, edges }
             }
-            None => SupportPanel { study, editing, kind, faces: self.picked_faces() },
+            None => {
+                // (Of what was selected beforehand: its faces, or for a fixed support with no
+                // face among them its edges. A support is on the one or on the other.)
+                let faces = self.picked_faces();
+                let edges = if kind == SupportKind::Fixed && faces.is_empty() { self.picked_edges() } else { Vec::new() };
+                SupportPanel { study, editing, kind, faces, edges }
+            }
         };
-        // (Of what was selected beforehand, the faces this kind of support can hold.)
+        // (And of those faces, the ones this kind of support can hold.)
         panel.faces.retain(|f| panel.kind.takes(&f.fingerprint.surface).is_ok());
         self.view.selection.clear();
         if !told {
@@ -616,7 +794,7 @@ impl Workbench {
         Ok(())
     }
 
-    /// Force, Pressure or Gravity: a new load, or (with `editing`) one of the study's changed.
+    /// A new load, or (with `editing`) one of the study's changed.
     pub(crate) fn open_load(&mut self, what: What, editing: Option<u32>) -> Result<(), String> {
         let study = self.study_for_new()?;
         let blank = |what, faces, magnitude| LoadPanel {
@@ -624,61 +802,129 @@ impl Workbench {
             editing,
             what,
             faces,
+            edges: Vec::new(),
             magnitude,
             way: Way::Normal,
             flip: false,
             picking: false,
             components: None,
+            point: Vec3::ZERO,
         };
+        // (Down: against Z.)
+        let down = |p: LoadPanel| LoadPanel { way: Way::Z, flip: true, ..p };
         let mut told = false;
-        let panel = match editing {
+        let mut panel = match editing {
             Some(id) => {
                 let load = self.active_study().and_then(|s| s.loads.iter().find(|l| l.id == id)).cloned().ok_or("no such load")?;
-                let faces = self.faces_still_there(&load.name, &load.faces);
-                told = faces.len() < load.faces.len();
+                let (faces, edges, lost) = self.still_there(&load.name, &load.faces, &load.edges);
+                told = lost;
+                // A size with its direction, as the panel says it: never negative, the other
+                // way in its place.
+                let along = |what, direction: Vec3, size: f64, faces| {
+                    let (way, flip, size) = Way::of_signed(direction, size);
+                    LoadPanel { way, flip, ..blank(what, faces, size) }
+                };
                 match load.kind {
                     LoadKind::Pressure { megapascals } => blank(What::Pressure, faces, megapascals),
-                    LoadKind::Force { newtons, direction } => {
-                        let (way, flip) = Way::of(direction);
-                        // (Square to its faces, a negative force pulls: shown as flipped.)
-                        let pulls = direction.is_none() && newtons < 0.0;
-                        LoadPanel { way, flip: flip || pulls, ..blank(What::Force, faces, newtons.abs()) }
+                    // (Square to its faces, a negative force pulls: shown as flipped.)
+                    LoadKind::Force { newtons, direction: None } => LoadPanel { flip: newtons < 0.0, ..blank(What::Force, faces, newtons.abs()) },
+                    LoadKind::Force { newtons, direction: Some(d) } => LoadPanel { edges, ..along(What::Force, d, newtons, faces) },
+                    LoadKind::Gravity { direction, acceleration } => along(What::Gravity, direction, acceleration, Vec::new()),
+                    LoadKind::Moment { newton_millimetres, axis: None } => {
+                        LoadPanel { flip: newton_millimetres < 0.0, ..blank(What::Moment, faces, newton_millimetres.abs()) }
                     }
-                    LoadKind::Gravity { direction, acceleration } => {
-                        let (way, flip) = Way::of(Some(direction));
-                        LoadPanel { way, flip, ..blank(What::Gravity, Vec::new(), acceleration) }
+                    LoadKind::Moment { newton_millimetres, axis: Some(axis) } => along(What::Moment, axis, newton_millimetres, faces),
+                    LoadKind::Bearing { newtons, direction } => along(What::Bearing, direction, newtons, faces),
+                    LoadKind::RemoteForce { newtons, direction, point } => LoadPanel { point, ..along(What::Remote, direction, newtons, faces) },
+                    LoadKind::Body { axis, point, rpm } => LoadPanel { point, ..along(What::Body, axis, rpm, Vec::new()) },
+                }
+            }
+            None => {
+                let faces = self.picked_faces();
+                match what {
+                    What::Force => {
+                        // (Along edges it has no face to be square to: down, until it is said.)
+                        let edges = if faces.is_empty() { self.picked_edges() } else { Vec::new() };
+                        let panel = blank(what, faces, 100.0);
+                        if edges.is_empty() { panel } else { down(LoadPanel { edges, ..panel }) }
+                    }
+                    What::Pressure => blank(what, faces, 1.0),
+                    // (1 N m, about its faces' own axis.)
+                    What::Moment => blank(what, faces, 1000.0),
+                    What::Bearing => down(blank(what, faces, 100.0)),
+                    What::Remote => down(blank(what, faces, 100.0)),
+                    What::Gravity | What::Body => {
+                        // (Each is on all of the part, and there once.)
+                        if let Some(there) = self.active_study().and_then(|s| s.loads.iter().find(|l| What::of(&l.kind) == what)) {
+                            let it = there.kind.whole_part().unwrap_or("that load");
+                            return Err(format!("The study has {it} already ({}): double-click it to change it.", there.name));
+                        }
+                        if what == What::Gravity {
+                            down(blank(what, Vec::new(), EARTH))
+                        } else {
+                            LoadPanel { way: Way::Z, ..blank(what, Vec::new(), 1000.0) }
+                        }
                     }
                 }
             }
-            None => match what {
-                What::Force => blank(what, self.picked_faces(), 100.0),
-                What::Pressure => blank(what, self.picked_faces(), 1.0),
-                What::Gravity => {
-                    if let Some(there) = self.active_study().and_then(|s| s.loads.iter().find(|l| !l.kind.on_faces())) {
-                        return Err(format!("The study has the part's weight already ({}): double-click it to change it.", there.name));
-                    }
-                    // (Down: against Z.)
-                    LoadPanel { way: Way::Z, flip: true, ..blank(what, Vec::new(), EARTH) }
-                }
-            },
         };
+        // (Of the faces that were selected beforehand, those this kind of load can be on.)
+        let kind = panel.shown();
+        panel.faces.retain(|f| kind.takes(&f.fingerprint.surface).is_ok());
         self.view.selection.clear();
         if !told {
             self.set_status(match panel.what {
                 What::Pressure => "Pressure: click the faces it is on, set how large it is, then OK.",
-                What::Force => "Force: click the faces it is on, set how large it is and which way it pushes, then OK.",
+                What::Force => "Force: click the faces it is on (or the edges it is along), set how large it is and which way it pushes, then OK.",
                 What::Gravity => "Gravity: the part's own weight, from its material's density. Set which way it pulls, then OK.",
+                What::Moment => "Moment: click the faces it turns, set how large it is and the axis it turns about, then OK.",
+                What::Bearing => "Bearing Load: click the round faces the shaft presses on, set its load and which way it presses, then OK.",
+                What::Remote => "Remote Force: click the faces that carry it, set the force, which way it pushes and where it acts, then OK.",
+                What::Body => "Body: the part turning, flung outward by its own mass. Set how fast, and the axis it turns about, then OK.",
             });
         }
         self.panel = Some(Panel::Load(panel));
+        self.load_picked();
         self.start_equations();
         Ok(())
     }
 
+    /// After the open load panel was given something to be on: a force along edges has no face
+    /// to be square to, and a bearing load presses across its bore. Either is given a
+    /// direction it can have, and the status bar says so.
+    pub(crate) fn load_picked(&mut self) {
+        let Some(Panel::Load(p)) = &self.panel else { return };
+        let turned = match p.what {
+            What::Force if !p.edges.is_empty() && p.way == Way::Normal && p.components.is_none() => {
+                Some((Way::Z, true, "Force: along edges it has no face to be square to. It pushes down (-Z) until its direction is set."))
+            }
+            What::Bearing => {
+                let axis = p.faces.first().and_then(|r| self.face_axis(r)).map(Vec3::normalized);
+                match (axis, p.way.vector(p.flip)) {
+                    // (Down, unless the bore itself stands up.)
+                    (Some(a), Some(d)) if a.dot(d).abs() > 0.999 && a.z.abs() > 0.5 => {
+                        Some((Way::X, false, "Bearing Load: it presses across its bore: along X until its direction is set."))
+                    }
+                    (Some(a), Some(d)) if a.dot(d).abs() > 0.999 => {
+                        Some((Way::Z, true, "Bearing Load: it presses across its bore: down (-Z) until its direction is set."))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let Some((way, flip, said)) = turned else { return };
+        if let Some(Panel::Load(p)) = &mut self.panel {
+            (p.way, p.flip) = (way, flip);
+        }
+        self.set_status(said);
+    }
+
     /// OK on a support. Returns true when it was made or changed.
     pub(crate) fn commit_support(&mut self, p: &SupportPanel) -> bool {
-        if p.faces.is_empty() {
-            self.set_error(format!("{}: click at least one face", p.title()));
+        if p.faces.is_empty() && p.edges.is_empty() {
+            let or_edge = if p.kind == SupportKind::Fixed { " or edge" } else { "" };
+            self.set_error(format!("{}: click at least one face{or_edge}", p.title()));
             return false;
         }
         let (id, params) = p.command();
@@ -687,8 +933,9 @@ impl Workbench {
 
     /// OK on a load. Returns true when it was made or changed.
     pub(crate) fn commit_load(&mut self, p: &LoadPanel) -> bool {
-        if p.what != What::Gravity && p.faces.is_empty() {
-            self.set_error(format!("{}: click at least one face", p.title()));
+        if p.what.on_faces() && p.faces.is_empty() && p.edges.is_empty() {
+            let or_edge = if p.what == What::Force { " or edge" } else { "" };
+            self.set_error(format!("{}: click at least one face{or_edge}", p.title()));
             return false;
         }
         let (id, params) = p.command();
@@ -716,8 +963,10 @@ impl Workbench {
     }
 
     /// The direction a click on that edge or face gives: along a straight edge, or square to a
-    /// flat face and into it.
+    /// flat face and into it. For a load that turns it is an axis: the way a flat face looks,
+    /// or the axis of a round one.
     pub(crate) fn direction_of(&self, pick: Pick) -> Option<Vec3> {
+        let turns = matches!(&self.panel, Some(Panel::Load(p)) if p.what.turns());
         match pick {
             Pick::Edge { body, edge } => {
                 // (The scene keeps an edge's points, not what curve it is: straight is every
@@ -738,47 +987,89 @@ impl Workbench {
                 let round = |v: f64| (v * 1.0e6).round() / 1.0e6 + 0.0;
                 straight.then(|| Vec3::new(round(d.x), round(d.y), round(d.z)))
             }
-            Pick::Face { body, face } => match self.scene.bodies.get(body)?.faces.get(face as usize)?.1.surface {
-                SurfaceKind::Plane { normal, .. } => Some(-normal),
+            Pick::Face { body, face } => match &self.scene.bodies.get(body)?.faces.get(face as usize)?.1.surface {
+                SurfaceKind::Plane { normal, .. } => Some(if turns { *normal } else { -*normal }),
+                SurfaceKind::Cylinder { axis, .. } | SurfaceKind::Cone { axis, .. } if turns => Some(axis.dir()),
                 _ => None,
             },
         }
     }
 
+    /// A point on the line a click on that edge or face gives as an axis: on the edge, on a
+    /// round face's axis, in the middle of a flat face.
+    pub(crate) fn axis_point_of(&self, pick: Pick) -> Option<Vec3> {
+        match pick {
+            Pick::Edge { body, edge } => self.scene.bodies.get(body)?.edges.get(edge as usize).map(|(_, fp)| fp.mid),
+            Pick::Face { body, face } => {
+                let info = &self.scene.bodies.get(body)?.faces.get(face as usize)?.1;
+                Some(match &info.surface {
+                    SurfaceKind::Cylinder { axis, .. } | SurfaceKind::Cone { axis, .. } => axis.origin(),
+                    _ => info.centroid,
+                })
+            }
+        }
+    }
+
     /// Gives the open load panel its direction (from a click on an edge, a face or a work
-    /// axis). Returns false when no load panel is waiting for one.
-    pub(crate) fn set_load_direction(&mut self, d: Vec3) -> bool {
+    /// axis). `through`: a point on what was clicked, which the axis of a part's turning goes
+    /// through. Returns false when no load panel is waiting for a direction.
+    pub(crate) fn set_load_direction(&mut self, d: Vec3, through: Option<Vec3>) -> bool {
         if !self.picking_direction() || d.len() <= 0.0 {
             return false;
         }
         if let Some(Panel::Load(p)) = &mut self.panel {
             (p.way, p.flip) = Way::of(Some(d));
             p.picking = false;
+            if let (What::Body, Some(at)) = (p.what, through) {
+                // (To the thousandth of a micron: the scene's points are single precision.)
+                let round = |v: f64| (v * 1.0e6).round() / 1.0e6 + 0.0;
+                p.point = Vec3::new(round(at.x), round(at.y), round(at.z));
+            }
         }
         true
     }
 
-    /// The direction of work axis `id`, as the part has it now.
-    pub(crate) fn work_axis_direction(&self, id: tenon_model::FeatureId) -> Option<Vec3> {
+    /// Work axis `id` as the part has it now: its direction, and a point on it.
+    pub(crate) fn work_axis_line(&self, id: tenon_model::FeatureId) -> Option<(Vec3, Vec3)> {
         self.scene.work.iter().find(|(w, _)| *w == id).and_then(|(_, g)| match g {
-            WorkGeom::Axis(a) => Some(a.dir()),
+            WorkGeom::Axis(a) => Some((a.dir(), a.origin())),
             _ => None,
         })
     }
 
-    /// The faces of the support or load clicked in the browser, picked out as selected. (The
-    /// others are shown by their marks alone: a part with its faces all coloured in hides
-    /// the marks, and the part.)
+    /// The faces (or edges) of the support or load clicked in the browser, picked out as
+    /// selected. (The others are shown by their marks alone: a part with its faces all
+    /// coloured in hides the marks, and the part.)
     pub(crate) fn analysis_highlights(&self) -> Vec<(Pick, Color32)> {
         let (Some(study), Some(selected)) = (self.active_study(), self.analysis.as_ref().and_then(|e| e.selected)) else { return Vec::new() };
-        let face = |r: &FaceRef| crate::modify::find_face(&self.scene, r).map(|(body, face)| (Pick::Face { body, face }, crate::viewport::SELECTED));
-        let faces = study.supports.iter().map(|s| (s.id, &s.faces)).chain(study.loads.iter().map(|l| (l.id, &l.faces)));
-        faces.filter(|(id, _)| *id == selected).flat_map(|(_, faces)| faces.iter().filter_map(face)).collect()
+        let face = |r: &FaceRef| find_face(&self.scene, r).map(|(body, face)| Pick::Face { body, face });
+        let edge = |r: &EdgeRef| find_edge(&self.scene, r).map(|(body, edge)| Pick::Edge { body, edge });
+        let on = study.supports.iter().map(|s| (s.id, &s.faces, &s.edges)).chain(study.loads.iter().map(|l| (l.id, &l.faces, &l.edges)));
+        on.filter(|(id, ..)| *id == selected)
+            .flat_map(|(_, faces, edges)| faces.iter().filter_map(face).chain(edges.iter().filter_map(edge)))
+            .map(|pick| (pick, crate::viewport::SELECTED))
+            .collect()
+    }
+
+    /// Where an edge is: the middle of it.
+    fn edge_at(&self, r: &EdgeRef) -> Option<Vec3> {
+        let (body, edge) = find_edge(&self.scene, r)?;
+        self.scene.bodies.get(body)?.edges.get(edge as usize).map(|(_, fp)| fp.mid)
+    }
+
+    /// A face's own axis: the way a flat face looks, the axis of a round one.
+    fn face_axis(&self, r: &FaceRef) -> Option<Vec3> {
+        let (body, face) = find_face(&self.scene, r)?;
+        match &self.scene.bodies.get(body)?.faces.get(face as usize)?.1.surface {
+            SurfaceKind::Plane { normal, .. } => Some(*normal),
+            SurfaceKind::Cylinder { axis, .. } => Some(axis.dir()),
+            _ => None,
+        }
     }
 
     /// Where a face is and which way it looks (None for a face that is not flat).
     fn face_at(&self, r: &FaceRef) -> Option<(Vec3, Option<Vec3>)> {
-        let (body, face) = crate::modify::find_face(&self.scene, r)?;
+        let (body, face) = find_face(&self.scene, r)?;
         let info = &self.scene.bodies.get(body)?.faces.get(face as usize)?.1;
         let normal = match &info.surface {
             SurfaceKind::Plane { normal, .. } => Some(*normal),
@@ -902,37 +1193,143 @@ impl Workbench {
                 }
             }
         };
-        let load = |faces: &[FaceRef], kind: &LoadKind, color: Color32| {
-            let text = load_text(kind);
-            if let LoadKind::Gravity { direction, .. } = kind {
-                // The part's weight: an arrow from its centre of gravity, the way it pulls.
-                if let (Some(at), len) = (self.weight_at(), direction.len())
-                    && len > 0.0
-                {
-                    let d = *direction * (1.0 / len);
-                    arrow(at + d * (reach * 2.0), d, color, Some(&format!("g {text}")), false, true);
-                }
+        // A load that turns: an arc round its axis at `at`, three quarters of the way round
+        // and anticlockwise seen from the axis's tip, with its head where it ends, and the
+        // axis itself `reach` long each way.
+        let turn = |at: Vec3, axis: Vec3, radius: f64, axis_reach: f64, color: Color32, label: Option<&str>| {
+            let Some(c) = screen(at) else { return };
+            mark("load", c);
+            if axis.len() <= 0.0 {
                 return;
             }
+            let k = axis.normalized();
+            // (Two directions square to the axis and to each other.)
+            let u = if k.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+            let u = (u - k * u.dot(k)).normalized();
+            let v = k.cross(u);
+            const STEPS: u32 = 30;
+            let round: Vec<Pos2> = (0..=STEPS)
+                .filter_map(|i| {
+                    let a = f64::from(i) / f64::from(STEPS) * 1.5 * std::f64::consts::PI;
+                    screen(at + (u * a.cos() + v * a.sin()) * radius)
+                })
+                .collect();
+            if round.len() < 4 {
+                return;
+            }
+            let (tip, before) = (round[round.len() - 1], round[round.len() - 3]);
+            for (width, color) in [(5.0, edge), (2.5, color)] {
+                if let (Some(a), Some(b)) = (screen(at - k * axis_reach), screen(at + k * axis_reach)) {
+                    painter.line_segment([a, b], Stroke::new(width - 1.0, color));
+                }
+                painter.add(egui::Shape::line(round[..round.len() - 2].to_vec(), Stroke::new(width, color)));
+                let d = tip - before;
+                if d.length() > 0.5 {
+                    let along = d / d.length();
+                    let across = vec2(-along.y, along.x);
+                    let grow = (width - 2.5) * 0.6;
+                    let barbs = vec![
+                        tip + along * grow,
+                        tip - along * (12.0 + grow) + across * (5.5 + grow),
+                        tip - along * (12.0 + grow) - across * (5.5 + grow),
+                    ];
+                    painter.add(egui::Shape::convex_polygon(barbs, color, Stroke::NONE));
+                }
+            }
+            if let Some(text) = label {
+                // (Above the arc; or, where the axis is drawn long, at its tip: clear of what
+                // is on the part.)
+                let top = round.iter().map(|p| p.y).fold(c.y, f32::min);
+                let at =
+                    screen(at + k * axis_reach).filter(|_| axis_reach > radius).map_or(egui::pos2(c.x, top - 12.0), |tip| tip + vec2(0.0, -12.0));
+                label_at(at, Align2::CENTER_CENTER, text);
+            }
+        };
+        // Something that is on a face and has no one way to point there: marked where it is.
+        let spot = |c: Pos2, color: Color32, label: Option<&str>| {
+            mark("load", c);
+            ring(c, color);
+            if let Some(text) = label {
+                label_at(c + vec2(0.0, -16.0), Align2::CENTER_CENTER, text);
+            }
+        };
+        let load = |faces: &[FaceRef], edges: &[EdgeRef], kind: &LoadKind, color: Color32| {
+            let text = load_text(kind);
+            // (The other way for a size that is negative.)
+            let signed = |d: Vec3, size: f64| if size < 0.0 { -d } else { d };
+            match kind {
+                LoadKind::Gravity { direction, .. } => {
+                    // The part's weight: an arrow from its centre of gravity, the way it pulls.
+                    if let (Some(at), len) = (self.weight_at(), direction.len())
+                        && len > 0.0
+                    {
+                        let d = *direction * (1.0 / len);
+                        arrow(at + d * (reach * 2.0), d, color, Some(&format!("g {text}")), false, true);
+                    }
+                    return;
+                }
+                LoadKind::Body { axis, point, .. } => {
+                    // The part's turning: round its axis, beside the part's centre of gravity.
+                    if let Some(centre) = self.weight_at()
+                        && axis.len() > 0.0
+                    {
+                        let k = axis.normalized();
+                        turn(*point + k * (centre - *point).dot(k), k, reach * 3.0, reach * 7.0, color, Some(&text));
+                    }
+                    return;
+                }
+                LoadKind::RemoteForce { newtons, direction, point } => {
+                    // A force at a point away from the part, and a line to each face that
+                    // carries it.
+                    if let Some(from) = screen(*point) {
+                        for (at, _) in faces.iter().filter_map(|r| self.face_at(r)) {
+                            let Some(c) = screen(at) else { continue };
+                            mark("load", c);
+                            for (width, color) in [(3.5, edge), (1.5, color)] {
+                                painter.line_segment([from, c], Stroke::new(width, color));
+                                painter.circle_filled(c, width + 1.5, color);
+                            }
+                        }
+                    }
+                    arrow(*point, signed(*direction, *newtons), color, Some(&text), false, false);
+                    return;
+                }
+                _ => {}
+            }
+            // A force along edges: an arrow at the middle of each.
+            if let LoadKind::Force { direction: Some(d), newtons } = kind {
+                for (i, at) in edges.iter().filter_map(|r| self.edge_at(r)).enumerate() {
+                    arrow(at, signed(*d, *newtons), color, (i == 0).then_some(text.as_str()), false, false);
+                }
+            }
+            // (A moment about its faces' own axis turns about its first face's, as the solver has it.)
+            let own = faces.first().and_then(|r| self.face_axis(r));
             for (i, r) in faces.iter().enumerate() {
                 let Some((at, normal)) = self.face_at(r) else { continue };
                 let label = (i == 0).then_some(text.as_str());
                 let dir = match kind {
-                    LoadKind::Force { direction: Some(d), newtons } => Some(if *newtons < 0.0 { -*d } else { *d }),
-                    LoadKind::Force { direction: None, newtons } => normal.map(|n| if *newtons < 0.0 { n } else { -n }),
-                    LoadKind::Pressure { megapascals } => normal.map(|n| if *megapascals < 0.0 { n } else { -n }),
-                    LoadKind::Gravity { .. } => None,
+                    LoadKind::Force { direction: Some(d), newtons } | LoadKind::Bearing { direction: d, newtons } => Some(signed(*d, *newtons)),
+                    LoadKind::Force { direction: None, newtons } => normal.map(|n| signed(-n, *newtons)),
+                    LoadKind::Pressure { megapascals } => normal.map(|n| signed(-n, *megapascals)),
+                    LoadKind::Moment { newton_millimetres, axis } => {
+                        match axis.or(own) {
+                            Some(k) => turn(at, signed(k, *newton_millimetres), reach * 1.6, reach * 0.8, color, label),
+                            None => {
+                                if let Some(c) = screen(at) {
+                                    spot(c, color, label);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    LoadKind::Gravity { .. } | LoadKind::RemoteForce { .. } | LoadKind::Body { .. } => None,
                 };
                 match dir {
                     Some(d) => arrow(at, d, color, label, matches!(kind, LoadKind::Pressure { .. }), false),
                     // A round face is pushed all over, each way its own: marked where it is.
                     None => {
                         if let Some(c) = screen(at) {
-                            mark("load", c);
-                            ring(c, color);
-                            if let Some(text) = label {
-                                label_at(c + vec2(0.0, -16.0), Align2::CENTER_CENTER, text);
-                            }
+                            spot(c, color, label);
                         }
                     }
                 }
@@ -943,30 +1340,27 @@ impl Workbench {
             Some(Panel::Load(p)) => p.editing,
             _ => None,
         };
+        // (A support on edges is marked at the middle of each.)
+        let hold = |faces: &[FaceRef], edges: &[EdgeRef], kind: SupportKind, color: Color32| {
+            let faces = faces.iter().filter_map(|r| self.face_at(r)).map(|(at, _)| at);
+            for at in faces.chain(edges.iter().filter_map(|r| self.edge_at(r))) {
+                held(at, kind, color);
+            }
+        };
         let hidden = self.analysis.as_ref().is_some_and(|e| e.hide_marks);
         if let Some(study) = self.active_study().filter(|_| !hidden) {
             // (What is suppressed is not there for now, and is not drawn.)
             for s in study.supports.iter().filter(|s| Some(s.id) != editing && !s.suppressed) {
-                for r in &s.faces {
-                    if let Some((at, _)) = self.face_at(r) {
-                        held(at, s.kind, HELD);
-                    }
-                }
+                hold(&s.faces, &s.edges, s.kind, HELD);
             }
             for l in study.loads.iter().filter(|l| Some(l.id) != editing && !l.suppressed) {
-                load(&l.faces, &l.kind, LOADED);
+                load(&l.faces, &l.edges, &l.kind, LOADED);
             }
         }
         // What is being set up, as it will be.
         match &self.panel {
-            Some(Panel::Support(p)) => {
-                for r in &p.faces {
-                    if let Some((at, _)) = self.face_at(r) {
-                        held(at, p.kind, t.accent);
-                    }
-                }
-            }
-            Some(Panel::Load(p)) => load(&p.faces, &p.shown(), t.accent),
+            Some(Panel::Support(p)) => hold(&p.faces, &p.edges, p.kind, t.accent),
+            Some(Panel::Load(p)) => load(&p.faces, &p.edges, &p.shown(), t.accent),
             _ => {}
         }
         // (Tests look for a mark where a face is.)
@@ -995,12 +1389,13 @@ impl Workbench {
         let material = self.document().material().map(|m| m.name.clone());
         let strong = self.document().strength().is_some();
         let name = self.document().name.clone();
-        // (How many faces of each support and load of the study worked on the part no longer has.)
+        // (How many faces or edges of each support and load of the study worked on the part no
+        // longer has.)
         let lost: std::collections::BTreeMap<u32, usize> = studies
             .iter()
             .filter(|s| Some(s.id) == active)
-            .flat_map(|s| s.supports.iter().map(|x| (x.id, &x.faces)).chain(s.loads.iter().map(|l| (l.id, &l.faces))))
-            .map(|(id, faces)| (id, self.lost_faces(faces)))
+            .flat_map(|s| s.supports.iter().map(|x| (x.id, &x.faces, &x.edges)).chain(s.loads.iter().map(|l| (l.id, &l.faces, &l.edges))))
+            .map(|(id, faces, edges)| (id, self.lost(faces, edges)))
             .collect();
         let lost = |id: u32| lost.get(&id).copied().unwrap_or(0);
         // What there is to show of the study worked on: its mesh's size, and its results in words.
@@ -1079,24 +1474,23 @@ impl Workbench {
                     (false, false) => RowStyle::Normal,
                 };
                 let quiet = |suppressed: bool| if suppressed { " (suppressed)" } else { "" };
+                // (What a support or load is on: faces, or edges.)
+                let gone = |id: u32, faces: usize, edges: usize| lost_note(lost(id), faces + edges, if edges > 0 { "edge" } else { "face" });
                 for s in &study.supports {
-                    let label = format!("{}{}{}", s.name, lost_note(lost(s.id), s.faces.len()), quiet(s.suppressed));
+                    let label = format!("{}{}{}", s.name, gone(s.id, s.faces.len(), s.edges.len()), quiet(s.suppressed));
                     let (resp, _) = row(ui, t, 3, support_icon(s.kind), &label, None, style(s.id, s.suppressed));
                     item_row(resp, study.id, s.id, &s.name, s.suppressed, lost(s.id) > 0, &mut action);
                 }
                 let unloaded = study.loads.iter().all(|l| l.suppressed);
                 let (resp, _) = row(ui, t, 2, Icon::Folder, &format!("Loads({})", study.loads.len()), None, needed(unloaded));
                 if unloaded {
-                    resp.on_hover_text("The study needs a load (Force, Pressure or Gravity): with nothing pushing on it there is no stress to find");
+                    resp.on_hover_text(
+                        "The study needs a load (a force, a pressure, the part's weight...): with nothing pushing on it there is no stress to find",
+                    );
                 }
                 for l in &study.loads {
-                    let icon = match l.kind {
-                        LoadKind::Force { .. } => Icon::Force,
-                        LoadKind::Pressure { .. } => Icon::Pressure,
-                        LoadKind::Gravity { .. } => Icon::Gravity,
-                    };
-                    let label = format!("{} ({}){}{}", l.name, load_text(&l.kind), lost_note(lost(l.id), l.faces.len()), quiet(l.suppressed));
-                    let (resp, _) = row(ui, t, 3, icon, &label, None, style(l.id, l.suppressed));
+                    let label = format!("{} ({}){}{}", l.name, load_text(&l.kind), gone(l.id, l.faces.len(), l.edges.len()), quiet(l.suppressed));
+                    let (resp, _) = row(ui, t, 3, load_icon(&l.kind), &label, None, style(l.id, l.suppressed));
                     item_row(resp, study.id, l.id, &l.name, l.suppressed, lost(l.id) > 0, &mut action);
                 }
                 let mesh = match (&shown, study.mesh_size) {
@@ -1196,11 +1590,7 @@ impl Workbench {
         if let Some(s) = study.supports.iter().find(|s| s.id == id) {
             return self.open_support(s.kind, Some(id));
         }
-        let what = study.loads.iter().find(|l| l.id == id).map(|l| match l.kind {
-            LoadKind::Force { .. } => What::Force,
-            LoadKind::Pressure { .. } => What::Pressure,
-            LoadKind::Gravity { .. } => What::Gravity,
-        });
+        let what = study.loads.iter().find(|l| l.id == id).map(|l| What::of(&l.kind));
         match what {
             Some(what) => self.open_load(what, Some(id)),
             None => Err("no such support or load".into()),
@@ -1208,13 +1598,13 @@ impl Workbench {
     }
 }
 
-/// A support's or a load's row: a click picks its faces out, a double click opens it, the menu
-/// edits, renames, suppresses or deletes it.
+/// A support's or a load's row: a click picks its faces (or edges) out, a double click opens
+/// it, the menu edits, renames, suppresses or deletes it.
 fn item_row(resp: egui::Response, study: StudyId, id: u32, name: &str, suppressed: bool, lost: bool, action: &mut Option<StudyAction>) {
     let resp = resp.on_hover_text(if lost {
-        "It is on a face the part no longer has (a feature that made it was deleted or changed): double-click it and click its faces again"
+        "It is on a face or an edge the part no longer has (a feature that made it was deleted or changed): double-click it and click them again"
     } else {
-        "Click to see its faces; double-click to change it; right-click for more"
+        "Click to see what it is on; double-click to change it; right-click for more"
     });
     if resp.double_clicked() {
         *action = Some(StudyAction::Edit(id));

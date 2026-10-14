@@ -105,7 +105,7 @@ fn a_bar_is_held_at_one_end_and_loaded_at_the_other_by_clicks() {
     d.settle(&mut wb);
     click_text(&mut d, &mut wb, "Fixed");
     assert!(matches!(wb.panel, Some(Panel::Support(_))), "{}", wb.status());
-    assert_eq!(wb.status(), "Fixed: click the faces that are held still, then OK.");
+    assert_eq!(wb.status(), "Fixed: click the faces, or the edges, that are held still, then OK.");
     assert_eq!(study(&wb).name, "Study1");
     // OK with no face says what is missing, and the panel stays.
     click_text(&mut d, &mut wb, "OK");
@@ -214,9 +214,6 @@ fn a_bar_is_held_at_one_end_and_loaded_at_the_other_by_clicks() {
     // Simulate, with a part of no material: it says what the study still needs.
     wb.run_ui("analysis.simulate").unwrap();
     assert!(wb.status_error && wb.status().contains("cannot be worked out yet. It needs a material that says how strong it is"), "{}", wb.status());
-    // What is not there yet says when it comes.
-    let later = wb.run_ui("study.moment").unwrap_err();
-    assert!(later.contains("not available yet"), "{later}");
 
     // Finish Analysis: the part's ribbon and browser again; the study stays with the part.
     click_text(&mut d, &mut wb, "Finish");
@@ -700,6 +697,292 @@ fn a_support_whose_face_the_part_no_longer_has_says_so_and_is_mended() {
     d.frame(&mut wb, vec![]);
     browser_row(&d, "Pin1");
     assert!(marked(&d, &wb, "held", Vec3::new(50.0, 10.0, 5.0)));
+}
+
+/// Whether the edge with its middle at model point `mid` is picked out.
+fn lit_edge(wb: &Workbench, mid: Vec3) -> bool {
+    let scene = wb.scene();
+    wb.highlights()
+        .into_iter()
+        .any(|(p, _)| matches!(p, Pick::Edge { body, edge } if (scene.bodies[body].edges[edge as usize].1.mid - mid).len() < 1e-6))
+}
+
+/// How many faces and edges the open support panel has.
+fn support_on(wb: &Workbench) -> (usize, usize) {
+    match &wb.panel {
+        Some(Panel::Support(p)) => (p.faces.len(), p.edges.len()),
+        _ => panic!("no support panel: {}", wb.status()),
+    }
+}
+
+#[test]
+fn a_bar_is_held_along_an_edge_and_pushed_along_another() {
+    let (mut wb, mut d) = bar();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    // (Seen from the right, the front and above: the upright edge and the upper edge of the far
+    // end, the upper edge of the near end, the middle of the front.)
+    let (upright, far_top, near_top) = (Vec3::new(0.0, 0.0, 5.0), Vec3::new(0.0, 10.0, 10.0), Vec3::new(100.0, 10.0, 10.0));
+    let (on_upright, on_far_top, on_near_top) = (on_screen(&wb, upright), on_screen(&wb, far_top), on_screen(&wb, near_top));
+    let on_front = on_screen(&wb, Vec3::new(50.0, 0.0, 5.0));
+
+    // Fixed: an edge is offered as a face is. Once it is on an edge it takes no face: a support
+    // is on the one or on the other.
+    click_text(&mut d, &mut wb, "Fixed");
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(on_upright)]);
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(wb.view.hover, Some(Pick::Edge { .. })), "the edge under the pointer is offered: {:?}", wb.view.hover);
+    d.click(&mut wb, on_upright);
+    assert_eq!(support_on(&wb), (0, 1), "{}", wb.status());
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(on_front)]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.view.hover, None, "on edges, a face is not offered");
+    d.click(&mut wb, on_front);
+    assert_eq!(support_on(&wb), (0, 1));
+    // Another edge; clicked again it is given back.
+    d.click(&mut wb, on_far_top);
+    assert_eq!(support_on(&wb), (0, 2));
+    d.click(&mut wb, on_far_top);
+    assert_eq!(support_on(&wb), (0, 1));
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "1 edge"), "the panel says what it is on: {:?}", d.texts());
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let fixed = &study(&wb).supports[0];
+    assert_eq!((fixed.name.as_str(), fixed.faces.len(), fixed.edges.len()), ("Fixed1", 0, 1));
+    d.frame(&mut wb, vec![]);
+    assert!(marked(&d, &wb, "held", upright), "its mark is at the middle of its edge");
+
+    // Force, along the upper edge of the near end. An edge has no face to be square to: it
+    // pushes down until it is told which way, and says so.
+    click_text(&mut d, &mut wb, "Force");
+    assert!(wb.status().starts_with("Force: click the faces it is on (or the edges it is along)"), "{}", wb.status());
+    d.click(&mut wb, on_near_top);
+    let p = load_panel(&wb);
+    assert_eq!((p.faces.len(), p.edges.len(), p.way, p.flip), (0, 1, Way::Z, true), "{}", wb.status());
+    assert!(wb.status().contains("along edges it has no face to be square to"), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let list = pressable(&d, "tn_props_load_way");
+    d.click(&mut wb, list);
+    d.frame(&mut wb, vec![]);
+    assert!(!d.texts().iter().any(|t| t == "Normal to Face"), "not offered along edges: {:?}", d.texts());
+    click_text(&mut d, &mut wb, "Y Axis");
+    type_into(&mut d, &mut wb, "tn_props_load_mag", "60");
+    d.frame(&mut wb, vec![]);
+    assert!(
+        marked(&d, &wb, "load", near_top) && d.texts().iter().any(|t| t == "60 N"),
+        "drawn as it will be, at the middle of its edge: {:?}",
+        d.texts()
+    );
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let force = &study(&wb).loads[0];
+    assert_eq!((force.faces.len(), force.edges.len(), force.kind), (0, 1, LoadKind::Force { newtons: 60.0, direction: Some(Vec3::Y) }));
+    assert!(study(&wb).missing().is_empty(), "held and loaded: nothing is missing");
+
+    // Its row, clicked: its edge is picked out. Double-clicked: the panel opens on it.
+    let row = browser_row(&d, "Force1 (60 N)").center();
+    d.click(&mut wb, row);
+    d.frame(&mut wb, vec![]);
+    assert!(lit_edge(&wb, near_top));
+    double_click(&mut d, &mut wb, row);
+    d.frame(&mut wb, vec![]);
+    let p = load_panel(&wb);
+    assert_eq!((p.edges.len(), p.faces.len(), p.way, p.magnitude), (1, 0, Way::Y, 60.0));
+    click_text(&mut d, &mut wb, "Cancel");
+
+    // Fixed1, opened and cleared: a face is offered again, and with a face it takes no edge.
+    d.frame(&mut wb, vec![]);
+    let row = browser_row(&d, "Fixed1").center();
+    double_click(&mut d, &mut wb, row);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(support_on(&wb), (0, 1));
+    click_text(&mut d, &mut wb, "✖");
+    assert_eq!(support_on(&wb), (0, 0));
+    d.click(&mut wb, on_front);
+    assert_eq!(support_on(&wb), (1, 0), "{}", wb.status());
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(on_far_top)]);
+    d.frame(&mut wb, vec![]);
+    assert!(!matches!(wb.view.hover, Some(Pick::Edge { .. })), "on faces, an edge is not offered: {:?}", wb.view.hover);
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let fixed = &study(&wb).supports[0];
+    assert_eq!((fixed.faces.len(), fixed.edges.len()), (1, 0), "the face took the place of the edge");
+
+    // An edge that was selected beforehand is what a new force is along.
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, on_far_top);
+    assert!(matches!(wb.view.selection.as_slice(), [Pick::Edge { .. }]), "{:?}", wb.view.selection);
+    click_text(&mut d, &mut wb, "Force");
+    let p = load_panel(&wb);
+    assert_eq!((p.faces.len(), p.edges.len(), p.way, p.flip), (0, 1, Way::Z, true), "{}", wb.status());
+    click_text(&mut d, &mut wb, "Cancel");
+
+    // The edge the force is along goes (it is rounded off): its row says so, and opened it is
+    // without it. OK asks for something to be on; Cancel leaves it as it was.
+    let edges = wb.exec("model.find", json!({ "what": "edges" })).unwrap();
+    let there = |e: &&serde_json::Value| [100.0, 10.0, 10.0].iter().enumerate().all(|(i, v)| (e["mid"][i].as_f64().unwrap() - v).abs() < 1e-6);
+    let edge = edges["found"].as_array().unwrap().iter().find(there).expect("the edge")["reference"].clone();
+    wb.exec("model.fillet", json!({ "edges": [edge], "radius": 2 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let row = browser_row(&d, "Force1 (60 N) (edge lost)").center();
+    double_click(&mut d, &mut wb, row);
+    d.frame(&mut wb, vec![]);
+    assert!(load_panel(&wb).edges.is_empty());
+    assert!(
+        wb.status_error && wb.status().starts_with("Force1: its edge is no longer on the part, and left out. Click its edges again"),
+        "{}",
+        wb.status()
+    );
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.status().contains("click at least one face or edge"), "{}", wb.status());
+    click_text(&mut d, &mut wb, "Cancel");
+    assert_eq!(study(&wb).loads[0].edges.len(), 1, "kept: the edge may come back");
+}
+
+#[test]
+fn a_moment_a_bearing_load_a_remote_force_and_the_parts_turning() {
+    let (mut wb, mut d) = bar_with_a_hole();
+    // (The wall of the hole that is seen through its mouth.)
+    let wall = Vec3::new(50.0 - 2.828, 10.0 + 2.828, 8.0);
+    let (in_bore, on_top, right) = (on_screen(&wb, wall), on_screen(&wb, Vec3::new(20.0, 10.0, 10.0)), on_screen(&wb, RIGHT));
+    let middle = Vec3::new(50.0, 10.0, 5.0);
+
+    // Moment: on the right end, about that face's own axis until another is said. 2 N m.
+    click_text(&mut d, &mut wb, "Moment");
+    assert!(wb.status().starts_with("Moment: click the faces it turns"), "{}", wb.status());
+    d.click(&mut wb, right);
+    type_into(&mut d, &mut wb, "tn_props_load_mag", "2000");
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "Face's Own Axis"), "{:?}", d.texts());
+    assert!(marked(&d, &wb, "load", RIGHT) && d.texts().iter().any(|t| t == "2000 N mm"), "drawn round its face: {:?}", d.texts());
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let moment = &study(&wb).loads[0];
+    assert_eq!((moment.name.as_str(), moment.faces.len(), moment.kind), ("Moment1", 1, LoadKind::Moment { newton_millimetres: 2000.0, axis: None }));
+    // Opened again: its axis is clicked in the part (the top: the way that face looks), and it
+    // is turned the other way round.
+    let row = browser_row(&d, "Moment1 (2000 N mm)").center();
+    double_click(&mut d, &mut wb, row);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let selector = pressable(&d, "tn_props_load_pick");
+    d.click(&mut wb, selector);
+    assert!(load_panel(&wb).picking);
+    d.click(&mut wb, on_top);
+    let p = load_panel(&wb);
+    assert_eq!((p.way, p.flip, p.picking, p.faces.len()), (Way::Z, false, false, 1), "an axis is the way the face looks: {}", wb.status());
+    d.frame(&mut wb, vec![]);
+    let flipped = pressable(&d, "tn_glyph Flipped");
+    d.click(&mut wb, flipped);
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(study(&wb).loads[0].kind, LoadKind::Moment { newton_millimetres: 2000.0, axis: Some(Vec3::new(0.0, 0.0, -1.0)) });
+
+    // Bearing Load: round faces only. It presses across its bore, and this bore stands up: so
+    // along X, and it says so.
+    d.frame(&mut wb, vec![]);
+    click_text(&mut d, &mut wb, "Bearing");
+    assert!(wb.status().starts_with("Bearing Load: click the round faces"), "{}", wb.status());
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(on_top)]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.view.hover, None, "a flat face is not a bearing's");
+    d.click(&mut wb, on_top);
+    assert!(load_panel(&wb).faces.is_empty());
+    d.click(&mut wb, in_bore);
+    let p = load_panel(&wb);
+    assert_eq!((p.faces.len(), p.way, p.flip), (1, Way::X, false), "{}", wb.status());
+    assert!(wb.status().contains("presses across its bore"), "{}", wb.status());
+    type_into(&mut d, &mut wb, "tn_props_load_mag", "500");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let bearing = &study(&wb).loads[1];
+    assert_eq!((bearing.name.as_str(), bearing.kind), ("Bearing1", LoadKind::Bearing { newtons: 500.0, direction: Vec3::X }));
+    assert!(marked(&d, &wb, "load", middle), "its arrow is in the bore");
+    browser_row(&d, "Bearing1 (500 N)");
+
+    // Remote Force: carried by the right end, from a point beyond it.
+    click_text(&mut d, &mut wb, "Remote Force");
+    assert!(wb.status().starts_with("Remote Force: click the faces that carry it"), "{}", wb.status());
+    d.click(&mut wb, right);
+    type_into(&mut d, &mut wb, "tn_props_load_mag", "80");
+    type_into(&mut d, &mut wb, "tn_props_load_px", "130");
+    type_into(&mut d, &mut wb, "tn_props_load_py", "10");
+    type_into(&mut d, &mut wb, "tn_props_load_pz", "5");
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let beyond = Vec3::new(130.0, 10.0, 5.0);
+    assert!(marked(&d, &wb, "load", beyond) && marked(&d, &wb, "load", RIGHT), "drawn at its point, with a line to the face that carries it");
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let remote = &study(&wb).loads[2];
+    assert_eq!(
+        (remote.name.as_str(), remote.faces.len(), remote.kind),
+        ("RemoteForce1", 1, LoadKind::RemoteForce { newtons: 80.0, direction: Vec3::new(0.0, 0.0, -1.0), point: beyond })
+    );
+
+    // Body: the part turning, on no faces. Its axis is clicked in the part: the wall of the hole
+    // gives the hole's axis, and a point that axis goes through.
+    click_text(&mut d, &mut wb, "Body");
+    assert!(wb.status().starts_with("Body: the part turning"), "{}", wb.status());
+    assert_eq!(load_panel(&wb).shown(), LoadKind::Body { axis: Vec3::Z, point: Vec3::ZERO, rpm: 1000.0 });
+    d.click(&mut wb, right);
+    assert!(load_panel(&wb).faces.is_empty(), "it is on all of the part: a click on a face takes nothing");
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let selector = pressable(&d, "tn_props_load_pick");
+    d.click(&mut wb, selector);
+    d.click(&mut wb, in_bore);
+    let p = load_panel(&wb);
+    assert!(!p.picking && p.way == Way::Z, "{p:?}");
+    assert_eq!((p.point.x, p.point.y), (50.0, 10.0), "the axis goes through the middle of the hole");
+    type_into(&mut d, &mut wb, "tn_props_load_mag", "3000");
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "3000 rpm"), "drawn round its axis: {:?}", d.texts());
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let LoadKind::Body { axis, point, rpm } = study(&wb).loads[3].kind else { panic!("{:?}", study(&wb).loads) };
+    assert!(rpm == 3000.0 && axis.z.abs() == 1.0 && (point.x, point.y) == (50.0, 10.0), "{axis:?} {point:?} {rpm}");
+    assert!(study(&wb).loads[3].faces.is_empty());
+    browser_row(&d, "Body1 (3000 rpm)");
+    browser_row(&d, "Loads(4)");
+    // There is one: the button says so.
+    click_text(&mut d, &mut wb, "Body");
+    assert!(wb.status_error && wb.status().contains("the part's turning already (Body1)"), "{}", wb.status());
+}
+
+#[test]
+fn a_force_given_backwards_is_shown_the_way_it_pushes() {
+    // By a command a size may be negative: 100 N "up" the other way round is 100 N down.
+    let (mut wb, mut d) = bar();
+    wb.run_ui("analysis.begin").unwrap();
+    let right = wb.exec("model.find", json!({ "what": "faces", "facing": "right" })).unwrap()["found"][0]["reference"].clone();
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": -100, "direction": "up" })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let row = browser_row(&d, "Force1 (-100 N)").center();
+    double_click(&mut d, &mut wb, row);
+    d.frame(&mut wb, vec![]);
+    let p = load_panel(&wb);
+    assert_eq!((p.magnitude, p.way, p.flip), (100.0, Way::Z, true), "its panel shows the way it pushes: down");
+    let down = LoadKind::Force { newtons: 100.0, direction: Some(Vec3::new(0.0, 0.0, -1.0)) };
+    assert_eq!(p.shown(), down);
+    // OK leaves it pushing the way it did.
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(study(&wb).loads[0].kind, down);
 }
 
 /// True when the mesher and the solver are there. When they are not: a failure where they are

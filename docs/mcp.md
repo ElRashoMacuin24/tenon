@@ -110,15 +110,18 @@ gives a part that rebuilds and is wrong, which is worse than one that fails.
 ### A stress study
 
 Where a part is held and what pushes on it is set up by the `study.*` commands (through
-`run_command`), on faces found with `find_geometry`:
+`run_command`), on faces (and edges) found with `find_geometry`:
 
-- `study.new`; then `study.fix`, `study.pin` (round faces) or `study.frictionless` (flat
-  or round faces) to hold it, and `study.force`, `study.pressure` or `study.gravity` to
-  load it. `study.set` changes one of them, or suppresses it; `study.copy` makes the study
-  again, to change and compare.
+- `study.new`; then `study.fix` (faces, or `edges`), `study.pin` (round faces) or
+  `study.frictionless` (flat or round faces) to hold it, and to load it `study.force`
+  (faces, or `edges` with a direction), `study.pressure`, `study.gravity`, `study.moment`
+  (about an axis, or `"own"`: its faces'), `study.bearing` (a shaft's load on round faces),
+  `study.remote_force` (a force at a `point` away from the faces that carry it) or
+  `study.body` (the part turning at `rpm` about an axis). `study.set` changes one of them,
+  or suppresses it; `study.copy` makes the study again, to change and compare.
 - `study.check` holds the study against the part as it now is and says whether it can be
   worked out: `ready`, and in `needs` what it lacks in words (a support, a load, a material
-  that says how strong it is, faces that a later change took off the part).
+  that says how strong it is, faces or edges that a later change took off the part).
 
 - `study.solve` works it out: the largest von Mises stress and displacement with where they
   are, and the safety factor. It takes two programs that are not part of Tenon

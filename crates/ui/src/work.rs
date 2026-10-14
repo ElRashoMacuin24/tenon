@@ -362,13 +362,13 @@ impl Workbench {
         if self.picking_direction() {
             // (Read off the axis as it is now: a load keeps a direction, not what gave it.)
             let d = match axis {
-                Some(AxisSel::Origin(tenon_model::OriginAxis::X)) => Some(tenon_geom::Vec3::X),
-                Some(AxisSel::Origin(tenon_model::OriginAxis::Y)) => Some(tenon_geom::Vec3::Y),
-                Some(AxisSel::Origin(tenon_model::OriginAxis::Z)) => Some(tenon_geom::Vec3::Z),
-                Some(AxisSel::Work(id)) => self.work_axis_direction(id),
+                Some(AxisSel::Origin(tenon_model::OriginAxis::X)) => Some((tenon_geom::Vec3::X, tenon_geom::Vec3::ZERO)),
+                Some(AxisSel::Origin(tenon_model::OriginAxis::Y)) => Some((tenon_geom::Vec3::Y, tenon_geom::Vec3::ZERO)),
+                Some(AxisSel::Origin(tenon_model::OriginAxis::Z)) => Some((tenon_geom::Vec3::Z, tenon_geom::Vec3::ZERO)),
+                Some(AxisSel::Work(id)) => self.work_axis_line(id),
                 _ => None,
             };
-            return d.is_some_and(|d| self.set_load_direction(d));
+            return d.is_some_and(|(d, through)| self.set_load_direction(d, Some(through)));
         }
         match &mut self.panel {
             Some(Panel::Work(w)) => {

@@ -259,6 +259,92 @@ fn a_study_is_checked_against_the_part_as_it_now_is() {
 }
 
 #[test]
+fn moments_bearing_loads_remote_forces_turning_and_edges_by_command() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    let hole = run(&mut s, &mut k, "model.cylinder", json!({ "x": 50, "y": 10, "diameter": 8, "height": 10, "operation": "cut" }));
+    let bore = run(&mut s, &mut k, "model.find", json!({ "what": "faces", "kind": "cylinder" }))["found"][0]["reference"].clone();
+    let (left, right) = (face(&mut s, &mut k, "left"), face(&mut s, &mut k, "right"));
+    // The edge along y at the top of the right end, by where its middle is.
+    let edges = run(&mut s, &mut k, "model.find", json!({ "what": "edges", "along": "y" }));
+    let top_right = edges["found"].as_array().unwrap().iter().find(|e| e["mid"] == json!([100.0, 10.0, 10.0])).expect("the edge").clone();
+    let top_right = top_right["reference"].clone();
+    run(&mut s, &mut k, "study.new", json!({}));
+
+    // Held along an edge, pushed along another.
+    let held = run(&mut s, &mut k, "study.fix", json!({ "edges": [top_right] }));
+    assert_eq!(held["supports"][0], json!({ "id": 1, "name": "Fixed1", "kind": "fixed", "faces": 0, "edges": 1 }));
+    assert!(refused(&mut s, &mut k, "study.fix", json!({ "faces": [left], "edges": [top_right] })).contains("not on both"));
+    assert!(refused(&mut s, &mut k, "study.fix", json!({})).contains("at least one face, or edge"));
+    let pushed = run(&mut s, &mut k, "study.force", json!({ "edges": [top_right], "newtons": 40, "direction": "down" }));
+    assert_eq!(
+        pushed["loads"][0],
+        json!({ "id": 2, "name": "Force1", "faces": 0, "edges": 1, "type": "force", "newtons": 40.0, "direction": [0.0, 0.0, -1.0] })
+    );
+    assert!(refused(&mut s, &mut k, "study.force", json!({ "edges": [top_right], "newtons": 40 })).contains("needs a direction"));
+    assert!(refused(&mut s, &mut k, "study.pressure", json!({ "faces": [right], "edges": [top_right], "megapascals": 1 })).contains("edges"));
+    // Given a face, the support is on the face.
+    let moved = run(&mut s, &mut k, "study.set", json!({ "item": 1, "faces": [left] }));
+    assert_eq!(moved["supports"][0], json!({ "id": 1, "name": "Fixed1", "kind": "fixed", "faces": 1 }));
+
+    // A moment, about its face's own axis or one that is said.
+    let turn = run(&mut s, &mut k, "study.moment", json!({ "faces": [right], "newton_millimetres": 2500 }));
+    assert_eq!(turn["loads"][1], json!({ "id": 3, "name": "Moment1", "faces": 1, "type": "moment", "newton_millimetres": 2500.0, "axis": null }));
+    let about = run(&mut s, &mut k, "study.set", json!({ "item": 3, "axis": "+y", "newton_millimetres": -100 }));
+    assert_eq!((about["loads"][1]["axis"].clone(), about["loads"][1]["newton_millimetres"].as_f64()), (json!([0.0, 1.0, 0.0]), Some(-100.0)));
+    assert_eq!(run(&mut s, &mut k, "study.set", json!({ "item": 3, "axis": "own" }))["loads"][1]["axis"], Value::Null);
+    assert!(refused(&mut s, &mut k, "study.moment", json!({ "faces": [right], "newton_millimetres": 0 })).contains("other than 0"));
+
+    // A bearing load in the bore; on a flat face it is refused.
+    let press = run(&mut s, &mut k, "study.bearing", json!({ "faces": [bore], "newtons": 300, "direction": "front" }));
+    assert_eq!(
+        press["loads"][2],
+        json!({ "id": 4, "name": "Bearing1", "faces": 1, "type": "bearing", "newtons": 300.0, "direction": [0.0, -1.0, 0.0] })
+    );
+    assert!(
+        refused(&mut s, &mut k, "study.bearing", json!({ "faces": [right], "newtons": 300, "direction": "front" }))
+            .contains("round (cylindrical) faces")
+    );
+    assert!(refused(&mut s, &mut k, "study.bearing", json!({ "faces": [bore], "newtons": 300 })).contains("direction"));
+
+    // A force that acts at a point beyond the end.
+    let far = run(&mut s, &mut k, "study.remote_force", json!({ "faces": [right], "newtons": 80, "direction": "down", "point": [150, 10, 5] }));
+    let remote = json!({ "id": 5, "name": "RemoteForce1", "faces": 1, "type": "remote_force", "newtons": 80.0, "direction": [0.0, 0.0, -1.0], "point": [150.0, 10.0, 5.0] });
+    assert_eq!(far["loads"][3], remote);
+    assert!(refused(&mut s, &mut k, "study.remote_force", json!({ "faces": [right], "newtons": 80, "direction": "down" })).contains("point"));
+    let nearer = run(&mut s, &mut k, "study.set", json!({ "item": 5, "point": [120, 10, 5] }));
+    assert_eq!(nearer["loads"][3]["point"], json!([120.0, 10.0, 5.0]));
+
+    // The part's turning: about z through the origin unless said; once.
+    let spin = run(&mut s, &mut k, "study.body", json!({ "rpm": 3000 }));
+    assert_eq!(
+        spin["loads"][4],
+        json!({ "id": 6, "name": "Body1", "faces": 0, "type": "body", "axis": [0.0, 0.0, 1.0], "point": [0.0, 0.0, 0.0], "rpm": 3000.0 })
+    );
+    assert!(refused(&mut s, &mut k, "study.body", json!({ "rpm": 10 })).contains("the part's turning already (Body1)"));
+    let other = run(&mut s, &mut k, "study.set", json!({ "item": 6, "axis": "x", "point": [0, 10, 5], "rpm": 1500 }));
+    assert_eq!((other["loads"][4]["axis"].clone(), other["loads"][4]["rpm"].as_f64()), (json!([1.0, 0.0, 0.0]), Some(1500.0)));
+    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 6, "newtons": 5 })).contains("is the part's turning"));
+    run(&mut s, &mut k, "study.gravity", json!({}));
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    assert_eq!(s.document().study(StudyId(1)).unwrap().loads.len(), 5, "one undo step each");
+    s.document().validate().unwrap();
+
+    // Held against the part: an edge that the part no longer has is said, like a face.
+    run(&mut s, &mut k, "document.material", json!({ "name": "Steel, mild" }));
+    run(&mut s, &mut k, "study.set", json!({ "item": 2, "suppressed": true }));
+    assert_eq!(run(&mut s, &mut k, "study.check", json!({}))["ready"], true);
+    run(&mut s, &mut k, "study.set", json!({ "item": 2, "suppressed": false }));
+    // (The bar made shorter by a cut across its end: the edge at x = 100 is gone.)
+    run(&mut s, &mut k, "model.box", json!({ "x": 90, "width": 10, "depth": 20, "height": 10, "operation": "cut" }));
+    let cut = run(&mut s, &mut k, "study.check", json!({}));
+    let said: Vec<&str> = cut["needs"].as_array().unwrap().iter().map(|n| n.as_str().unwrap()).collect();
+    assert!(said.iter().any(|n| n.starts_with("Force1: its edge is no longer on the part. Give it its edges again")), "{said:?}");
+    assert!(cut["lost"].as_array().unwrap().iter().any(|l| l["name"] == "Force1" && l["lost"] == 1 && l["of"] == 1), "{cut}");
+    let _ = hole;
+}
+
+#[test]
 fn a_material_says_how_it_answers_to_a_load() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     // No material: nothing to check stress against.

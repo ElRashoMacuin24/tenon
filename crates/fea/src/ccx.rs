@@ -124,11 +124,23 @@ pub fn write_inp(p: &Problem) -> String {
             }
         }
     }
+    // Loads on all of the part, which the solver works out from its mass: its weight, and its
+    // being flung outward as it turns (the square of its speed, a point on the axis, the axis).
+    let mut whole = String::new();
     if let Some(g) = p.gravity {
         let size = g.len();
         if size > 0.0 {
-            let _ = writeln!(s, "*DLOAD\nEALL, GRAV, {}, {}, {}, {}", num(size), num(g.x / size), num(g.y / size), num(g.z / size));
+            let _ = writeln!(whole, "EALL, GRAV, {}, {}, {}, {}", num(size), num(g.x / size), num(g.y / size), num(g.z / size));
         }
+    }
+    if let Some(spin) = p.spin {
+        let (at, axis) = (spin.point, spin.axis);
+        let said = [spin.omega * spin.omega, at.x, at.y, at.z, axis.x, axis.y, axis.z].map(num).join(", ");
+        let _ = writeln!(whole, "EALL, CENTRIF, {said}");
+    }
+    if !whole.is_empty() {
+        s.push_str("*DLOAD\n");
+        s.push_str(&whole);
     }
     s.push_str("*NODE FILE\nU\n*EL FILE\nS\n*END STEP\n");
     s
@@ -206,6 +218,7 @@ mod tests {
             held: BTreeMap::new(),
             forces: BTreeMap::new(),
             gravity: None,
+            spin: None,
         }
     }
 
@@ -257,7 +270,13 @@ mod tests {
         // Directions along the axes are boundary conditions.
         has("*BOUNDARY\n1, 1, 1\n1, 2, 2\n1, 3, 3\n3, 3, 3\n");
         has("*CLOAD\n4, 2, 2.5e0\n4, 3, -1e1\n");
-        has("*DLOAD\nEALL, GRAV, 9.81e3, 0e0, 0e0, -1e0\n");
+        has("*DLOAD\nEALL, GRAV, 9.81e3, 0e0, 0e0, -1e0\n*NODE FILE");
+        // Turning at 10 radians a second about z through (1, 2, 0), with its weight: both.
+        p.spin = Some(crate::problem::Spin { point: Vec3::new(1.0, 2.0, 0.0), axis: Vec3::Z, omega: 10.0 });
+        let text = write_inp(&p);
+        assert!(text.contains("*DLOAD\nEALL, GRAV, 9.81e3, 0e0, 0e0, -1e0\nEALL, CENTRIF, 1e2, 1e0, 2e0, 0e0, 0e0, 0e0, 1e0\n*NODE FILE"), "{text}");
+        p.gravity = None;
+        assert!(write_inp(&p).contains("*DLOAD\nEALL, CENTRIF, 1e2"));
         assert!(text.ends_with("*NODE FILE\nU\n*EL FILE\nS\n*END STEP\n"));
         // With nothing held or pushed, those sections are not written at all.
         let bare = write_inp(&tet());

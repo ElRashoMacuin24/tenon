@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 pub use ccx::Solution;
 pub use mesh::TetMesh;
-pub use problem::{Held, Material, Problem, Pushed, Setup, Surface};
+pub use problem::{Held, Material, Problem, Pushed, Setup, Spin, Surface};
 pub use result::{Peak, Results, von_mises};
 pub use tools::{Cancel, Scratch, Tools};
 
@@ -112,7 +112,8 @@ pub fn work_out(
         ));
     }
     let on = faces::match_surfaces(&mesh, part)?;
-    let problem = Problem::build(mesh, &on, setup)?;
+    let curves = faces::match_curves(&mesh, part);
+    let problem = Problem::build(mesh, &on, &curves, setup)?;
     match problem.free_motions() {
         0 => {}
         n => {

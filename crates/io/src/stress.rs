@@ -88,13 +88,16 @@ pub fn work_out(s: &mut Session, k: &mut dyn Kernel, id: StudyId, keep: Option<&
     let on_part = |faces: &[tenon_model::FaceRef], name: &str| -> Result<Vec<u32>, String> {
         faces.iter().map(|f| r.resolve(f, k).map(|(_, face)| face).map_err(|e| format!("{name}: {e}"))).collect()
     };
+    let edges_on_part = |edges: &[tenon_model::EdgeRef], name: &str| -> Result<Vec<u32>, String> {
+        edges.iter().map(|e| r.resolve_edge(e, k).map(|(_, edge)| edge).map_err(|e| format!("{name}: {e}"))).collect()
+    };
     let mut held = Vec::new();
     for x in st.supports.iter().filter(|x| !x.suppressed) {
-        held.push(Held { name: x.name.clone(), kind: x.kind, faces: on_part(&x.faces, &x.name)? });
+        held.push(Held { name: x.name.clone(), kind: x.kind, faces: on_part(&x.faces, &x.name)?, edges: edges_on_part(&x.edges, &x.name)? });
     }
     let mut pushed = Vec::new();
     for l in st.loads.iter().filter(|l| !l.suppressed) {
-        pushed.push(Pushed { name: l.name.clone(), kind: l.kind, faces: on_part(&l.faces, &l.name)? });
+        pushed.push(Pushed { name: l.name.clone(), kind: l.kind, faces: on_part(&l.faces, &l.name)?, edges: edges_on_part(&l.edges, &l.name)? });
     }
     let material = Material::of(strength.youngs_modulus, strength.poisson, d.density());
     let setup = Setup { held, pushed, surfaces, material };

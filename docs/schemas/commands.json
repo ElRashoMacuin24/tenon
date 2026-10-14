@@ -5011,7 +5011,7 @@
       "id": "study.fix",
       "label": "Fixed Support",
       "undoable": true,
-      "description": "Holds faces still. study (default: the part's only one); faces: [face references]; name. Returns the study, and support: the new support's id",
+      "description": "Holds faces, or edges, still. study (default: the part's only one); faces: [face references], or edges: [edge references] (one or the other); name. Returns the study, and support: the new support's id",
       "params": {
         "type": "object",
         "properties": {
@@ -5027,15 +5027,19 @@
             },
             "description": "the faces that are held still"
           },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/edge_ref"
+            },
+            "description": "or the edges that are held still (faces or edges, not both)"
+          },
           "name": {
             "type": "string",
             "description": "its name (default Fixed1, Force1, Pressure1...)"
           }
         },
-        "additionalProperties": false,
-        "required": [
-          "faces"
-        ]
+        "additionalProperties": false
       }
     },
     {
@@ -5176,7 +5180,7 @@
       "id": "study.force",
       "label": "Force",
       "undoable": true,
-      "description": "A force spread over faces. study; faces: [face references]; newtons: the whole force; direction: the way it pushes, as +x, -z, top, bottom ... or [x, y, z] (default, or normal: square to each face, into it; negative newtons pull); name. Returns the study, and load: the new load's id",
+      "description": "A force spread over faces, or along edges. study; faces: [face references], or edges: [edge references] (one or the other); newtons: the whole force; direction: the way it pushes, as +x, -z, top, bottom ... or [x, y, z] (on faces the default, or normal: square to each face, into it; negative newtons pull. Along edges a direction is needed); name. Returns the study, and load: the new load's id",
       "params": {
         "type": "object",
         "properties": {
@@ -5191,6 +5195,13 @@
               "$ref": "#/$defs/face_ref"
             },
             "description": "the faces the force is spread over"
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/edge_ref"
+            },
+            "description": "or the edges it is spread along (faces or edges, not both; along edges it needs a direction)"
           },
           "newtons": {
             "type": "number",
@@ -5248,7 +5259,6 @@
         },
         "additionalProperties": false,
         "required": [
-          "faces",
           "newtons"
         ]
       }
@@ -5290,10 +5300,317 @@
       }
     },
     {
+      "id": "study.moment",
+      "label": "Moment",
+      "undoable": true,
+      "description": "A turning load on faces. study; faces: [face references]; newton_millimetres: the whole moment (1 N m is 1000); axis: what it turns about, through the middle of its faces, as +x, -z ... or [x, y, z] (right-handed: seen from the axis's tip it turns anticlockwise; default, or own: the faces' own axis, a flat face's normal or a round face's axis); name. Returns the study, and load: the new load's id",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "the faces the moment is on"
+          },
+          "newton_millimetres": {
+            "type": "number",
+            "description": "the whole moment, N mm (negative: the other way round)"
+          },
+          "axis": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "own"
+                ]
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "+x",
+                      "-x",
+                      "+y",
+                      "-y",
+                      "+z",
+                      "-z",
+                      "x",
+                      "y",
+                      "z",
+                      "top",
+                      "bottom",
+                      "up",
+                      "down",
+                      "left",
+                      "right",
+                      "front",
+                      "back"
+                    ]
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                ]
+              }
+            ],
+            "description": "what it turns about: +x ... -z or [x, y, z]; default (or own) the faces' own axis"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Fixed1, Force1, Pressure1...)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "faces",
+          "newton_millimetres"
+        ]
+      }
+    },
+    {
+      "id": "study.bearing",
+      "label": "Bearing Load",
+      "undoable": true,
+      "description": "The load of a shaft in its bore, or of a bearing on its shaft: it presses on the half of each round face that it pushes against, most in the middle and nothing at the sides. study; faces: [references to round (cylindrical) faces]; newtons: the whole load; direction: the way it presses, across the faces' axis, as +x, down ... or [x, y, z]; name. Returns the study, and load: the new load's id",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "the round (cylindrical) faces it presses on"
+          },
+          "newtons": {
+            "type": "number",
+            "description": "the whole load, N"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "+x",
+                  "-x",
+                  "+y",
+                  "-y",
+                  "+z",
+                  "-z",
+                  "x",
+                  "y",
+                  "z",
+                  "top",
+                  "bottom",
+                  "up",
+                  "down",
+                  "left",
+                  "right",
+                  "front",
+                  "back"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            ],
+            "description": "the way it presses, across the faces' axis: +x ... -z, down ... or [x, y, z]"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Fixed1, Force1, Pressure1...)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "faces",
+          "newtons",
+          "direction"
+        ]
+      }
+    },
+    {
+      "id": "study.remote_force",
+      "label": "Remote Force",
+      "undoable": true,
+      "description": "A force that acts at a point away from the faces that carry it: they get the force, and the turning it has about their middle. study; faces: [face references]; newtons; direction: as +x, down ... or [x, y, z]; point: [x, y, z], where it acts; name. Returns the study, and load: the new load's id",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "the faces that carry it"
+          },
+          "newtons": {
+            "type": "number",
+            "description": "the force, N"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "+x",
+                  "-x",
+                  "+y",
+                  "-y",
+                  "+z",
+                  "-z",
+                  "x",
+                  "y",
+                  "z",
+                  "top",
+                  "bottom",
+                  "up",
+                  "down",
+                  "left",
+                  "right",
+                  "front",
+                  "back"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            ],
+            "description": "the way it acts: +x ... -z, down ... or [x, y, z]"
+          },
+          "point": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "where it acts, [x, y, z] in the part's coordinates"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Fixed1, Force1, Pressure1...)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "faces",
+          "newtons",
+          "direction",
+          "point"
+        ]
+      }
+    },
+    {
+      "id": "study.body",
+      "label": "Body Load",
+      "undoable": true,
+      "description": "The part turning about an axis: every bit of it is flung outward, by its material's density. A study has it once. (Its being pulled one way is study.gravity.) study; rpm: turns a minute; axis: as +x, z ... or [x, y, z] (default z); point: [x, y, z], a point the axis goes through (default the origin); name. Returns the study, and load: the new load's id",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "rpm": {
+            "type": "number",
+            "description": "how fast the part turns, turns a minute"
+          },
+          "axis": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "+x",
+                  "-x",
+                  "+y",
+                  "-y",
+                  "+z",
+                  "-z",
+                  "x",
+                  "y",
+                  "z",
+                  "top",
+                  "bottom",
+                  "up",
+                  "down",
+                  "left",
+                  "right",
+                  "front",
+                  "back"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            ],
+            "description": "the axis it turns about: +x ... -z or [x, y, z] (default z)"
+          },
+          "point": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "a point the axis goes through, [x, y, z] (default the origin)"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Fixed1, Force1, Pressure1...)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "rpm"
+        ]
+      }
+    },
+    {
       "id": "study.set",
       "label": "Change Support or Load",
       "undoable": true,
-      "description": "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references]; name; suppressed: true leaves it out of the study for now, and keeps it; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals; of gravity: direction, acceleration; of a pin: radial, axial, tangential",
+      "description": "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references], or of a fixed support or a force edges: [edge references] (one takes the place of the other); name; suppressed: true leaves it out of the study for now, and keeps it; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals; of gravity: direction, acceleration; of a pin: radial, axial, tangential; of a moment: newton_millimetres, axis (or own); of a bearing load: newtons, direction; of a remote force: newtons, direction, point; of a body load: rpm, axis, point",
       "params": {
         "type": "object",
         "properties": {
@@ -5312,7 +5629,76 @@
             "items": {
               "$ref": "#/$defs/face_ref"
             },
-            "description": "the faces it is on, in place of those it had"
+            "description": "the faces it is on, in place of those (or the edges) it had"
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/edge_ref"
+            },
+            "description": "a fixed support's or a force's edges, in place of those (or the faces) it had"
+          },
+          "newton_millimetres": {
+            "type": "number",
+            "description": "a moment's size, N mm"
+          },
+          "axis": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "own"
+                ]
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "+x",
+                      "-x",
+                      "+y",
+                      "-y",
+                      "+z",
+                      "-z",
+                      "x",
+                      "y",
+                      "z",
+                      "top",
+                      "bottom",
+                      "up",
+                      "down",
+                      "left",
+                      "right",
+                      "front",
+                      "back"
+                    ]
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                ]
+              }
+            ],
+            "description": "a moment's axis (own: its faces' own), or a body load's"
+          },
+          "point": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "where a remote force acts, or a point a body load's axis goes through"
+          },
+          "rpm": {
+            "type": "number",
+            "description": "a body load's turns a minute"
           },
           "newtons": {
             "type": "number",

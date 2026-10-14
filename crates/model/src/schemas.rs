@@ -52,6 +52,8 @@ const NEUTRAL_PLANE: [Param; 3] =
 /// A direction in words or numbers.
 const WAY: Ty =
     Either(&[Word(&["+x", "-x", "+y", "-y", "+z", "-z", "x", "y", "z", "top", "bottom", "up", "down", "left", "right", "front", "back"]), Vector(3)]);
+/// What a moment turns about: its faces' own axis, or a direction.
+const TURN: Ty = Either(&[Word(&["own"]), WAY]);
 /// The way a force pushes: square to its faces, or a direction.
 const PUSH: Ty = Either(&[Word(&["normal"]), WAY]);
 const STUDY: Param = opt("study", Id, "which study (default: the part's only one)");
@@ -869,7 +871,15 @@ static SCHEMAS: &[C] = &[
     C::new("study.rename", &[STUDY, req("name", Text, "its new name (1 to 64 characters)")]),
     C::new("study.copy", &[STUDY, opt("name", Text, "the copy's name (default: the study's name with \"copy\")")]),
     C::new("study.delete", &[STUDY]),
-    C::new("study.fix", &[STUDY, req("faces", List(&Face), "the faces that are held still"), ITEM_NAME]),
+    C::new(
+        "study.fix",
+        &[
+            STUDY,
+            opt("faces", List(&Face), "the faces that are held still"),
+            opt("edges", List(&Edge), "or the edges that are held still (faces or edges, not both)"),
+            ITEM_NAME,
+        ],
+    ),
     C::new(
         "study.pin",
         &[
@@ -895,7 +905,8 @@ static SCHEMAS: &[C] = &[
         "study.force",
         &[
             STUDY,
-            req("faces", List(&Face), "the faces the force is spread over"),
+            opt("faces", List(&Face), "the faces the force is spread over"),
+            opt("edges", List(&Edge), "or the edges it is spread along (faces or edges, not both; along edges it needs a direction)"),
             req("newtons", Number, "the whole force, N (negative: the other way)"),
             opt(
                 "direction",
@@ -915,11 +926,57 @@ static SCHEMAS: &[C] = &[
         ],
     ),
     C::new(
+        "study.moment",
+        &[
+            STUDY,
+            req("faces", List(&Face), "the faces the moment is on"),
+            req("newton_millimetres", Number, "the whole moment, N mm (negative: the other way round)"),
+            opt("axis", TURN, "what it turns about: +x ... -z or [x, y, z]; default (or own) the faces' own axis"),
+            ITEM_NAME,
+        ],
+    ),
+    C::new(
+        "study.bearing",
+        &[
+            STUDY,
+            req("faces", List(&Face), "the round (cylindrical) faces it presses on"),
+            req("newtons", Number, "the whole load, N"),
+            req("direction", WAY, "the way it presses, across the faces' axis: +x ... -z, down ... or [x, y, z]"),
+            ITEM_NAME,
+        ],
+    ),
+    C::new(
+        "study.remote_force",
+        &[
+            STUDY,
+            req("faces", List(&Face), "the faces that carry it"),
+            req("newtons", Number, "the force, N"),
+            req("direction", WAY, "the way it acts: +x ... -z, down ... or [x, y, z]"),
+            req("point", Vector(3), "where it acts, [x, y, z] in the part's coordinates"),
+            ITEM_NAME,
+        ],
+    ),
+    C::new(
+        "study.body",
+        &[
+            STUDY,
+            req("rpm", Number, "how fast the part turns, turns a minute"),
+            opt("axis", WAY, "the axis it turns about: +x ... -z or [x, y, z] (default z)"),
+            opt("point", Vector(3), "a point the axis goes through, [x, y, z] (default the origin)"),
+            ITEM_NAME,
+        ],
+    ),
+    C::new(
         "study.set",
         &[
             STUDY,
             req("item", Id, "the id of the support or load to change"),
-            opt("faces", List(&Face), "the faces it is on, in place of those it had"),
+            opt("faces", List(&Face), "the faces it is on, in place of those (or the edges) it had"),
+            opt("edges", List(&Edge), "a fixed support's or a force's edges, in place of those (or the faces) it had"),
+            opt("newton_millimetres", Number, "a moment's size, N mm"),
+            opt("axis", TURN, "a moment's axis (own: its faces' own), or a body load's"),
+            opt("point", Vector(3), "where a remote force acts, or a point a body load's axis goes through"),
+            opt("rpm", Number, "a body load's turns a minute"),
             opt("newtons", Number, "a force's size, N"),
             opt("direction", PUSH, "a force's direction, as for study.force; normal: square to its faces"),
             opt("megapascals", Number, "a pressure's size, N/mm^2"),

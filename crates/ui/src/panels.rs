@@ -1303,13 +1303,10 @@ impl Workbench {
             Panel::Load(p) => {
                 if commit {
                     keep = !self.commit_load(p);
-                    // (The part's weight is there once: there is no other to start.)
+                    // (The part's weight and its turning are there once: there is no other to
+                    // start.)
                     if !keep && again {
-                        reopen = match p.what {
-                            crate::analysis::What::Force => Some("study.force"),
-                            crate::analysis::What::Pressure => Some("study.pressure"),
-                            crate::analysis::What::Gravity => None,
-                        };
+                        reopen = p.what.on_faces().then(|| p.what.command());
                     }
                 }
             }

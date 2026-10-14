@@ -435,6 +435,18 @@ Other supports, as they are written in `supports`:
 ```toml
   { id = 4, name = "Pin1", kind = "pin", radial = true, axial = true, tangential = false, faces = [...] },
   { id = 5, name = "Frictionless1", kind = "frictionless", faces = [...], suppressed = true },
+  { id = 7, name = "Fixed2", kind = "fixed", edges = [{ faces = [{ type = "side", feature = 2, curve = 9 }, { type = "cap", feature = 2, end = "start" }], fingerprint = { ... } }] },
+```
+
+Other loads, as they are written in `loads`:
+
+```toml
+  { id = 8, name = "Force2", edges = [...], type = "force", newtons = 60.0, direction = { x = 0.0, y = 1.0, z = 0.0 } },
+  { id = 9, name = "Moment1", faces = [...], type = "moment", newton_millimetres = 2000.0 },
+  { id = 10, name = "Moment2", faces = [...], type = "moment", newton_millimetres = 2000.0, axis = { x = 0.0, y = 0.0, z = 1.0 } },
+  { id = 11, name = "Bearing1", faces = [...], type = "bearing", newtons = 500.0, direction = { x = 1.0, y = 0.0, z = 0.0 } },
+  { id = 12, name = "RemoteForce1", faces = [...], type = "remote_force", newtons = 80.0, direction = { x = 0.0, y = 0.0, z = -1.0 }, point = { x = 130.0, y = 10.0, z = 5.0 } },
+  { id = 13, name = "Body1", type = "body", axis = { x = 0.0, y = 0.0, z = 1.0 }, point = { x = 50.0, y = 10.0, z = 0.0 }, rpm = 3000.0 },
 ```
 
 - **`id`, `name`:** the study's id within the part, and its name (1 to 64 characters).
@@ -448,9 +460,20 @@ Other supports, as they are written in `supports`:
   square to each face and into it. `type = "pressure"` is `megapascals` (N/mm²) on its faces,
   square to them and into them; a negative value pulls. `type = "gravity"` is the part's own
   weight: all of it pulled along `direction` at `acceleration` (mm/s²; the Earth's is 9810).
-  It has no `faces`, and a study has it once.
+  It has no `faces`, and a study has it once. `type = "moment"` is `newton_millimetres` in
+  all on its faces, about `axis` (a direction; seen from its tip the moment turns
+  anticlockwise) or, without one, about the faces' own axis: the way a flat face looks, the
+  axis of a round one. `type = "bearing"` is the load of a shaft, `newtons` along
+  `direction`, on round (cylindrical) faces. `type = "remote_force"` is `newtons` along
+  `direction` acting at `point` (in the part's coordinates) and carried by its faces.
+  `type = "body"` is the part turning at `rpm` (turns a minute) about `axis` through
+  `point`: it has no `faces`, and a study has it once.
 - **`faces`:** references to faces, as features have them (below). At least one, but for
-  gravity, which has none.
+  gravity and a body's turning, which have none, and for what is on `edges`.
+- **`edges`:** optional, in place of `faces`, on a `fixed` support and a `force`: references
+  to edges, as features have them. Written only when there are any. A force along edges is
+  spread evenly along their length and has a `direction`. A support or a load has faces or
+  edges, never both.
 - **`suppressed`:** optional, on a support or a load: `true` leaves it out of the study for
   now, and keeps it. Written only when true.
 - **`mesh_size`:** optional: the size of the elements the part is divided into, mm. Without it
@@ -469,8 +492,9 @@ After reading, a part is checked:
   load, a stiffness, a Poisson's ratio and a yield strength in range; an appearance is a
   colour;
 - a study has a name; its supports and loads have names, ids of their own and at least one
-  face each; a force and a pressure are numbers other than 0 within range, and a force's
-  direction is one;
+  face each, or edges where they may be on edges, and not both; every size is a number other
+  than 0 within range, and every direction and axis is one; gravity and a body's turning
+  are there at most once;
 - a design table names parameters of the part, each once; its rows have names of their own and
   one number for each parameter; its active row is one of them.
 
@@ -786,7 +810,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   `flat` (DEC-068), then `bend` (DEC-070), then `fold`, a contour flange's `edges` and
   `width`, `cut_normal` and `corner_rip` (DEC-071 to DEC-074), then `sharp_bend` (DEC-075), then a
   material's optional `strength` and the `[[study]]` records (DEC-093); in them, the
-  `pin` and `frictionless` supports, the `gravity` load and `suppressed` (DEC-097).
+  `pin` and `frictionless` supports, the `gravity` load and `suppressed` (DEC-097), then
+  `edges` and the `moment`, `bearing`, `remote_force` and `body` loads (DEC-100).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

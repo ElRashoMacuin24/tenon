@@ -1710,11 +1710,7 @@ impl Workbench {
                         }
                         // (A force said by its parts has no one size to show here.)
                         Some(Panel::Load(p)) if p.components.is_none() => {
-                            let (unit, range) = match p.what {
-                                crate::analysis::What::Pressure => ("MPa", -1.0e6..=1.0e6),
-                                crate::analysis::What::Force => ("N", 0.001..=1.0e12),
-                                crate::analysis::What::Gravity => ("mm/s²", 0.001..=1.0e9),
-                            };
+                            let (_, unit, range, _) = p.what.size();
                             if eq_field(ui, egui::Id::new("tn_mini_load"), &mut p.magnitude, None, unit, range, 80.0, t).entered {
                                 request = Some(PanelRequest::Ok);
                             }

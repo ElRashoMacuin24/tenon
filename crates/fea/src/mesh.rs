@@ -21,6 +21,15 @@ pub struct Tri6 {
     pub nodes: [u32; 6],
 }
 
+/// A three-node piece of a curve of the meshed solid (an edge of the part): its two ends, then
+/// the node in its middle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Line3 {
+    /// The curve it is a piece of, as the mesher numbers them.
+    pub curve: u32,
+    pub nodes: [u32; 3],
+}
+
 /// A mesh of second-order tetrahedra with its boundary triangles. Nodes are numbered from 0.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TetMesh {
@@ -29,6 +38,8 @@ pub struct TetMesh {
     /// mesher's order).
     pub tets: Vec<[u32; 10]>,
     pub tris: Vec<Tri6>,
+    /// The pieces of the solid's curves (its edges), for what is held or loaded along one.
+    pub lines: Vec<Line3>,
 }
 
 /// The points and weights of a rule that integrates over a triangle (exact to the fourth
@@ -67,6 +78,25 @@ impl TetMesh {
             // (The reference triangle has area 1/2.)
             (along(&dxi).cross(along(&deta)) * (0.5 * w), n)
         })
+    }
+
+    /// A piece of a curve integrated along: at each of three points, its share of the length
+    /// and the weight each of its nodes has there.
+    pub fn along(&self, l: &Line3) -> [(f64, [f64; 3]); 3] {
+        let p = l.nodes.map(|n| self.nodes[n as usize]);
+        // (Gauss's three points on -1..1; the nodes are at -1, 1 and 0.)
+        let at = 0.6f64.sqrt();
+        [(-at, 5.0 / 9.0), (0.0, 8.0 / 9.0), (at, 5.0 / 9.0)].map(|(x, w)| {
+            let n = [x * (x - 1.0) / 2.0, x * (x + 1.0) / 2.0, 1.0 - x * x];
+            let d = [x - 0.5, x + 0.5, -2.0 * x];
+            let tangent = p[0] * d[0] + p[1] * d[1] + p[2] * d[2];
+            (tangent.len() * w, n)
+        })
+    }
+
+    /// The length of a piece of a curve, bent as its middle node makes it.
+    pub fn length(&self, l: &Line3) -> f64 {
+        self.along(l).iter().map(|(dl, _)| dl).sum()
     }
 
     /// The area of a boundary triangle, curved as its mid-side nodes make it.
@@ -149,6 +179,7 @@ pub fn read_msh(text: &str) -> Result<TetMesh, String> {
     let mut lines = text.lines().map(str::trim).skip_while(|l| *l != "$Elements").skip(1);
     let count: usize = lines.next().and_then(|l| l.parse().ok()).ok_or("the mesh file has no $Elements section")?;
     let (mut tets, mut tris): (Vec<[u32; 10]>, Vec<Tri6>) = (Vec::new(), Vec::new());
+    let mut pieces: Vec<Line3> = Vec::new();
     let mut first_order = false;
     for _ in 0..count.min(MAX_NODES * 8) {
         let line = lines.next().ok_or("the mesh file ends inside its elements")?;
@@ -168,6 +199,11 @@ pub fn read_msh(text: &str) -> Result<TetMesh, String> {
                     *slot = node(i)?;
                 }
                 tris.push(Tri6 { surface: u32::try_from(surface).map_err(|_| "a surface number is too large")?, nodes: n });
+            }
+            // (A three-node line: its second tag is the curve it is a piece of.)
+            8 if nodes.len() == 3 => {
+                let curve = f.get(4).filter(|_| tags >= 2).copied().unwrap_or(0);
+                pieces.push(Line3 { curve: u32::try_from(curve).map_err(|_| "a curve number is too large")?, nodes: [node(0)?, node(1)?, node(2)?] });
             }
             11 if nodes.len() == 10 => {
                 let mut n = [0u32; 10];
@@ -205,7 +241,12 @@ pub fn read_msh(text: &str) -> Result<TetMesh, String> {
     for t in &mut tris {
         t.nodes.iter_mut().for_each(&mut used);
     }
-    Ok(TetMesh { nodes, tets, tris })
+    // (A piece of a curve is of the solid's own nodes: one that is not is left out.)
+    pieces.retain(|l| l.nodes.iter().all(|n| renumber[*n as usize] != u32::MAX));
+    for l in &mut pieces {
+        l.nodes.iter_mut().for_each(|n| *n = renumber[*n as usize]);
+    }
+    Ok(TetMesh { nodes, tets, tris, lines: pieces })
 }
 
 #[cfg(test)]
@@ -216,8 +257,11 @@ pub(crate) mod tests {
     /// faces as boundary triangles on surfaces 1 to 4 (written as the mesher would).
     pub(crate) const ONE_TET: &str = "$MeshFormat\n2.2 0 8\n$EndMeshFormat\n$Nodes\n11\n\
         1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\n5 0.5 0 0\n6 0.5 0.5 0\n7 0 0.5 0\n8 0 0 0.5\n9 0 0.5 0.5\n10 0.5 0 0.5\n99 7 7 7\n\
-        $EndNodes\n$Elements\n6\n\
+        $EndNodes\n$Elements\n9\n\
         1 15 2 0 1 1\n\
+        7 8 2 0 1 1 2 5\n\
+        8 8 2 0 2 2 3 6\n\
+        9 8 2 0 3 3 1 7\n\
         2 9 2 0 1 1 3 2 7 6 5\n\
         3 9 2 0 2 1 2 4 5 10 8\n\
         4 9 2 0 3 1 4 3 8 9 7\n\
@@ -229,6 +273,16 @@ pub(crate) mod tests {
     fn a_mesh_is_read_from_the_meshers_file() {
         let m = read_msh(ONE_TET).unwrap();
         assert_eq!((m.nodes.len(), m.tets.len(), m.tris.len()), (10, 1, 4), "the node no element uses is left out");
+        // The pieces of its curves: the three sides of the bottom, each one piece.
+        assert_eq!(m.lines.iter().map(|l| (l.curve, l.nodes)).collect::<Vec<_>>(), [(1, [0, 1, 4]), (2, [1, 2, 5]), (3, [2, 0, 6])]);
+        let lengths: Vec<f64> = m.lines.iter().map(|l| m.length(l)).collect();
+        assert!((lengths[0] - 1.0).abs() < 1e-12 && (lengths[1] - 2f64.sqrt()).abs() < 1e-12, "{lengths:?}");
+        // A straight piece under an even load: a sixth on each end and two thirds on the middle.
+        let mut share = [0.0; 3];
+        for (dl, n) in m.along(&m.lines[0]) {
+            (0..3).for_each(|i| share[i] += dl * n[i]);
+        }
+        assert!((share[0] - 1.0 / 6.0).abs() < 1e-12 && (share[1] - 1.0 / 6.0).abs() < 1e-12 && (share[2] - 2.0 / 3.0).abs() < 1e-12, "{share:?}");
         assert_eq!(m.tets[0], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
         assert_eq!(m.tris.iter().map(|t| t.surface).collect::<Vec<_>>(), [1, 2, 3, 4]);
         assert_eq!(m.nodes[1], Vec3::X);
@@ -261,7 +315,7 @@ pub(crate) mod tests {
             v * (1.0 / v.len())
         };
         let nodes = vec![Vec3::X, Vec3::Y, Vec3::Z, on(1.0, 1.0, 0.0), on(0.0, 1.0, 1.0), on(1.0, 0.0, 1.0)];
-        let m = TetMesh { nodes, tets: Vec::new(), tris: vec![Tri6 { surface: 1, nodes: [0, 1, 2, 3, 4, 5] }] };
+        let m = TetMesh { nodes, tets: Vec::new(), tris: vec![Tri6 { surface: 1, nodes: [0, 1, 2, 3, 4, 5] }], lines: Vec::new() };
         let flat = 3f64.sqrt() / 2.0;
         let sphere = std::f64::consts::PI / 2.0;
         let area = m.area(&m.tris[0]);

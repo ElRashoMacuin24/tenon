@@ -64,13 +64,21 @@ impl Workbench {
                 Some(Wants { edges: true, faces: false })
             }
             Some(Panel::Chamfer(p)) => Some(Wants { edges: true, faces: p.method != ChamferMethod::Distance }),
-            Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_) | Panel::Support(_)) => {
+            Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => {
                 Some(Wants { edges: false, faces: true })
             }
+            // A support is on faces. A fixed one may be on edges in their place: it is on
+            // whichever was clicked first, until that is cleared.
+            Some(Panel::Support(s)) => {
+                Some(Wants { edges: s.kind == tenon_model::study::SupportKind::Fixed && s.faces.is_empty(), faces: s.edges.is_empty() })
+            }
             // A load: its direction, from a straight edge or a flat face, while that selector is
-            // the active one; else its faces (the part's weight has none).
+            // the active one; else its faces (the part's weight and its turning have none). A
+            // force may be along edges in their place.
             Some(Panel::Load(_)) if self.picking_direction() => Some(Wants { edges: true, faces: true }),
-            Some(Panel::Load(l)) => Some(Wants { edges: false, faces: l.what != crate::analysis::What::Gravity }),
+            Some(Panel::Load(l)) => {
+                Some(Wants { edges: l.what == crate::analysis::What::Force && l.faces.is_empty(), faces: l.what.on_faces() && l.edges.is_empty() })
+            }
             Some(Panel::Pattern(p)) => Some(match p.slot {
                 Slot::Features | Slot::Plane => Wants { edges: false, faces: true },
                 Slot::Dir1 | Slot::Dir2 => Wants { edges: true, faces: false },
@@ -136,8 +144,8 @@ impl Workbench {
                 v
             }
             Some(Panel::Shell(p)) => p.faces.iter().filter_map(face).collect(),
-            Some(Panel::Support(p)) => p.faces.iter().filter_map(face).collect(),
-            Some(Panel::Load(p)) => p.faces.iter().filter_map(face).collect(),
+            Some(Panel::Support(p)) => p.faces.iter().filter_map(face).chain(edges(&p.edges)).collect(),
+            Some(Panel::Load(p)) => p.faces.iter().filter_map(face).chain(edges(&p.edges)).collect(),
             Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => self.bodies_picks(),
             Some(Panel::Measure(m)) => m.a.into_iter().chain(m.b).collect(),
             Some(Panel::Pattern(p)) => {
@@ -218,6 +226,10 @@ impl Workbench {
             (Pick::Face { body, face }, Some(Panel::Support(s))) => {
                 wants.faces && self.face_ref_of(body, face).is_some_and(|r| s.kind.takes(&r.fingerprint.surface).is_ok())
             }
+            // A load, the faces it can be on: a bearing load round ones.
+            (Pick::Face { body, face }, Some(Panel::Load(l))) => {
+                wants.faces && self.face_ref_of(body, face).is_some_and(|r| l.shown().takes(&r.fingerprint.surface).is_ok())
+            }
             (Pick::Edge { body, edge }, _) => wants.edges && self.edge_ref_of(body, edge).is_some(),
             (Pick::Face { body, face }, _) => wants.faces && self.face_ref_of(body, face).is_some(),
         }
@@ -230,7 +242,8 @@ impl Workbench {
             return self.work_pick(p);
         }
         if self.picking_direction() {
-            return self.direction_of(p).is_some_and(|d| self.set_load_direction(d));
+            let through = self.axis_point_of(p);
+            return self.direction_of(p).is_some_and(|d| self.set_load_direction(d, through));
         }
         if matches!(self.panel, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) {
             return self.bodies_pick(p, toggle);
@@ -333,13 +346,21 @@ impl Workbench {
                 }
             }
             (Some(Panel::Shell(s)), None, Some(r)) => edit_list(&mut s.faces, r, present, toggle, same_face),
-            (Some(Panel::Support(s)), None, Some(r)) => edit_list(&mut s.faces, r, present, toggle, same_face),
-            (Some(Panel::Load(l)), None, Some(r)) => edit_list(&mut l.faces, r, present, toggle, same_face),
+            // (A support or a load is on faces or on edges, never on both.)
+            (Some(Panel::Support(s)), None, Some(r)) if s.edges.is_empty() => edit_list(&mut s.faces, r, present, toggle, same_face),
+            (Some(Panel::Support(s)), Some(r), _) if s.faces.is_empty() && s.kind == tenon_model::study::SupportKind::Fixed => {
+                edit_list(&mut s.edges, r, present, toggle, same_edge);
+            }
+            (Some(Panel::Load(l)), None, Some(r)) if l.edges.is_empty() => edit_list(&mut l.faces, r, present, toggle, same_face),
+            (Some(Panel::Load(l)), Some(r), _) if l.faces.is_empty() && l.what == crate::analysis::What::Force => {
+                edit_list(&mut l.edges, r, present, toggle, same_edge);
+            }
             _ => return false,
         }
         if let Some(why) = refused {
             self.set_error(why.to_string());
         }
+        self.load_picked();
         true
     }
 
@@ -553,8 +574,14 @@ impl Workbench {
             Some(Panel::ContourFlange(f)) => f.edges.clear(),
             Some(Panel::Chamfer(c)) => c.edges.clear(),
             Some(Panel::Shell(s)) => s.faces.clear(),
-            Some(Panel::Support(s)) => s.faces.clear(),
-            Some(Panel::Load(l)) => l.faces.clear(),
+            Some(Panel::Support(s)) => {
+                s.faces.clear();
+                s.edges.clear();
+            }
+            Some(Panel::Load(l)) => {
+                l.faces.clear();
+                l.edges.clear();
+            }
             Some(Panel::Hole(h)) => h.points.clear(),
             Some(Panel::Pattern(p)) => p.features.clear(),
             Some(Panel::Draft(d)) => d.faces.clear(),

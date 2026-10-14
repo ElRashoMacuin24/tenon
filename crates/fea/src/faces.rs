@@ -103,6 +103,53 @@ pub fn match_surfaces(mesh: &TetMesh, part: &Mesh) -> Result<BTreeMap<u32, u32>,
     Ok(found)
 }
 
+/// The square of the distance from `p` to the piece of line from `a` to `b`.
+fn dist2_to_segment(p: Vec3, a: Vec3, b: Vec3) -> f64 {
+    let ab = b - a;
+    let len2 = ab.len2();
+    let t = if len2 > 0.0 { ((p - a).dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
+    (p - (a + ab * t)).len2()
+}
+
+/// For each curve of the mesh that lies along an edge of the part, that edge (`part` is the
+/// part as the kernel draws it: its edges as lines of points). A curve that lies along none
+/// (the seam of a round face, which the part does not count as an edge) is left out.
+pub fn match_curves(mesh: &TetMesh, part: &Mesh) -> BTreeMap<u32, u32> {
+    let at = |p: &[f32; 3]| Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+    let drawn: Vec<(u32, Vec<Vec3>)> = part.edges.iter().map(|e| (e.edge, e.points.iter().map(at).collect())).collect();
+    let mut by_curve: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for (i, l) in mesh.lines.iter().enumerate() {
+        by_curve.entry(l.curve).or_default().push(i);
+    }
+    let near = (mesh.extent() * 0.02).max(1e-6);
+    let mut found = BTreeMap::new();
+    for (curve, lines) in &by_curve {
+        let step = (lines.len() / SAMPLES).max(1);
+        let mut votes: BTreeMap<u32, usize> = BTreeMap::new();
+        let mut asked = 0;
+        for l in lines.iter().step_by(step).take(SAMPLES) {
+            // (Its middle node is on the curve itself.)
+            let p = mesh.nodes[mesh.lines[*l].nodes[2] as usize];
+            let nearest = drawn
+                .iter()
+                .filter_map(|(edge, points)| points.windows(2).map(|w| dist2_to_segment(p, w[0], w[1])).min_by(f64::total_cmp).map(|d2| (d2, *edge)))
+                .min_by(|x, y| x.0.total_cmp(&y.0));
+            asked += 1;
+            if let Some((d2, edge)) = nearest
+                && d2.sqrt() <= near
+            {
+                *votes.entry(edge).or_default() += 1;
+            }
+        }
+        if let Some((edge, n)) = votes.iter().max_by_key(|(_, n)| **n)
+            && *n * 3 >= asked * 2
+        {
+            found.insert(*curve, *edge);
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,7 +164,12 @@ mod tests {
         // face 0: the slanted one; 1: x = 0; 2: y = 0; 3: z = 0.
         let indices = vec![1, 2, 3, 0, 3, 2, 0, 1, 3, 0, 2, 1];
         let faces = (0..4).map(|f| FaceRange { face: f, first: f * 3, count: 3 }).collect();
-        Mesh { positions, normals: Vec::new(), indices, faces, edges: Vec::new(), ..Mesh::default() }
+        // Its edges, numbered another way round than the mesher's curves: 5 from the origin
+        // along y, 6 the slanted one of the bottom, 7 from the origin along x.
+        let line = |edge: u32, a: [f32; 3], b: [f32; 3]| tenon_kernel::EdgePolyline { edge, points: vec![a, b] };
+        let edges =
+            vec![line(5, [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]), line(6, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]), line(7, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0])];
+        Mesh { positions, normals: Vec::new(), indices, faces, edges, ..Mesh::default() }
     }
 
     #[test]
@@ -138,6 +190,19 @@ mod tests {
         let on = match_surfaces(&mesh, &drawn()).unwrap();
         // The mesher's surfaces 1 to 4 are z = 0, y = 0, x = 0 and the slanted face.
         assert_eq!(on.into_iter().collect::<Vec<_>>(), [(1, 3), (2, 2), (3, 1), (4, 0)]);
+    }
+
+    #[test]
+    fn each_curve_of_the_mesh_is_told_to_be_an_edge_of_the_part() {
+        let mesh = read_msh(ONE_TET).unwrap();
+        // The mesher's curves 1 to 3: along x, the slanted side, along y.
+        assert_eq!(match_curves(&mesh, &drawn()).into_iter().collect::<Vec<_>>(), [(1, 7), (2, 6), (3, 5)]);
+        // A curve that lies along no edge the part counts is left out, without complaint.
+        let mut fewer = drawn();
+        fewer.edges.remove(1);
+        assert_eq!(match_curves(&mesh, &fewer).into_iter().collect::<Vec<_>>(), [(1, 7), (3, 5)]);
+        let d = |x: f64, y: f64| dist2_to_segment(Vec3::new(x, y, 0.0), Vec3::ZERO, Vec3::X).sqrt();
+        assert!((d(0.5, 2.0) - 2.0).abs() < 1e-12 && (d(-3.0, 4.0) - 5.0).abs() < 1e-12 && (d(4.0, 0.0) - 3.0).abs() < 1e-12);
     }
 
     #[test]

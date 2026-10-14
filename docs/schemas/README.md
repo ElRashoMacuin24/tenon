@@ -100,5 +100,7 @@ taken away), without a check.
 ### Changes
 
 - **1** (2026-10-12): the first version. 204 commands.
-  - Since, without a new version (only more is taken): the sixteen `study.*` commands and the
+  - Since, without a new version (only more is taken): the twenty `study.*` commands and the
     optional `youngs_modulus`, `poisson` and `yield_strength` of `document.material` (M11).
+    Of them, `study.fix` and `study.force` at first required `faces`; they now take `faces`
+    or `edges`, so what was valid still is. 224 commands.

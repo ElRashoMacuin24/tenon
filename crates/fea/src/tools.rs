@@ -102,6 +102,10 @@ fn library_folders(program: &Path) -> Vec<PathBuf> {
 /// Returns what it said. It is stopped, and an error returned, when `cancel` is set or it
 /// runs longer than `limit`; an error too when it ends saying it failed.
 pub fn run(program: &Path, args: &[&str], dir: &Path, log: &str, cancel: &Cancel, limit: Duration) -> Result<String, String> {
+    // One at a time: each takes every thread the machine has, and several at once (the tests,
+    // which run side by side) get in each other's way and take many times as long.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let name = program.file_stem().map_or_else(|| "the program".to_owned(), |n| n.to_string_lossy().into_owned());
     let log_path = dir.join(log);
     let out = std::fs::File::create(&log_path).map_err(|e| format!("cannot write {}: {e}", log_path.display()))?;

@@ -179,11 +179,27 @@ fn part(a: &Value, b: &Value, out: &mut Vec<Change>) {
 
 /// A support or a load of a study, in a few words: what it is, how large, on how many faces.
 fn study_item(v: &Value) -> String {
-    let faces = v["faces"].as_array().map_or(0, Vec::len);
-    let on = format!("on {faces} face{}", if faces == 1 { "" } else { "s" });
+    let (faces, edges) = (v["faces"].as_array().map_or(0, Vec::len), v["edges"].as_array().map_or(0, Vec::len));
+    let on = if edges > 0 {
+        format!("on {edges} edge{}", if edges == 1 { "" } else { "s" })
+    } else {
+        format!("on {faces} face{}", if faces == 1 { "" } else { "s" })
+    };
     let along = |d: &Value| format!("({}, {}, {})", show(&d["x"]), show(&d["y"]), show(&d["z"]));
     let said = match (v["type"].as_str(), v["kind"].as_str()) {
         (Some("gravity"), _) => format!("gravity {} mm/s^2 along {}", show(&v["acceleration"]), along(&v["direction"])),
+        (Some("moment"), _) => {
+            let about = match &v["axis"] {
+                Value::Object(_) => format!("about {}", along(&v["axis"])),
+                _ => "about their own axis".into(),
+            };
+            format!("moment {} N mm {about} {on}", show(&v["newton_millimetres"]))
+        }
+        (Some("bearing"), _) => format!("bearing load {} N along {} {on}", show(&v["newtons"]), along(&v["direction"])),
+        (Some("remote_force"), _) => {
+            format!("remote force {} N along {} at {} {on}", show(&v["newtons"]), along(&v["direction"]), along(&v["point"]))
+        }
+        (Some("body"), _) => format!("turning {} rpm about {} through {}", show(&v["rpm"]), along(&v["axis"]), along(&v["point"])),
         (_, Some("pin")) => {
             let held: Vec<&str> = ["radial", "axial", "tangential"].into_iter().filter(|k| v[*k] == true).collect();
             format!("pin held {} {on}", held.join(", "))
