@@ -3,7 +3,7 @@
 What changes from one release of Tenon to the next. Every item that works has the test that
 shows it in [ROADMAP.md](ROADMAP.md).
 
-## 0.1.0 (not yet released)
+## 0.1.0 (2026-10-13)
 
 The first release: parametric parts, sheet metal, assemblies, drawings, 3D printing checks and
 quick stress checks, in one program that runs on Windows, macOS (Apple silicon) and Linux

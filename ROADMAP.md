@@ -16,9 +16,10 @@ the Primitives panel came first (DEC-092, in the M10 table below). The licence a
 the external mesher and solver went to the owner before anything was bundled or recommended,
 and was answered on 2026-10-13 (the M11 section below).
 
-Now: what the owner asked for on confirming M11, the rest of the Loads panel and supports
-and loads on edges (DEC-100, the last rows of the M11 table). M11 is the last milestone of
-the plan; what comes after it is the owner's to say.
+After M11: the rest of the Loads panel and supports and loads on edges (DEC-100), then the
+first release, 0.1.0, published on the owner's word on 2026-10-13 (DEC-101, the section "The
+first release" below). M11 is the last milestone of the plan; what comes after it is the
+owner's to say.
 
 **M10** agent-native workflow was started on the owner's confirmation of M9 (2026-10-12),
 completed and confirmed the same day: a versioned schema
@@ -497,7 +498,9 @@ the solver were asked of the owner first: [docs/m11-proposal.md](docs/m11-propos
 ## The first release, 0.1.0 (asked for by the owner on 2026-10-13)
 
 "CLose all the gaps you can let's get ready for the first release version." DEC-101. The
-release itself (the tag, and publishing the draft it makes) is the owner's step.
+release itself (the tag, and publishing the draft it makes) is the owner's step: published
+on their word ("publish 0.1.0", 2026-10-13) as tag `v0.1.0`, with the archives the release
+workflow made from it.
 
 | Feature | Status | Proof / gap |
 |---|---|---|
