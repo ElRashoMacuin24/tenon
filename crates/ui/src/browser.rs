@@ -30,6 +30,8 @@ pub(crate) enum BrowserAction {
     EndOfPart(Option<FeatureId>),
     /// A feature dropped just above another (`None`: last).
     Move(FeatureId, Option<FeatureId>),
+    /// A solid clicked in the Solid Bodies folder.
+    Body(usize),
 }
 
 /// A browser row being dragged.
@@ -235,11 +237,32 @@ impl Workbench {
             if toggled || resp.double_clicked() {
                 self.chrome.bodies_open = !self.chrome.bodies_open;
             }
+            // (A solid is lit in the view while it is pointed at here, and picked by a click as
+            // by a click on it in the view, for a panel that takes solids: Combine.)
+            let mut lit = None;
             if self.chrome.bodies_open {
+                let combining = matches!(self.panel, Some(crate::panels::Panel::Combine(_)));
+                let held: Vec<usize> = if combining {
+                    self.bodies_picks()
+                        .into_iter()
+                        .filter_map(|p| if let crate::viewport::Pick::Face { body, .. } = p { Some(body) } else { None })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 for i in 0..bodies {
-                    row(ui, t, 2, Icon::Body, &format!("Solid{}", i + 1), None, RowStyle::Normal);
+                    let style = if held.contains(&i) { RowStyle::Active } else { RowStyle::Normal };
+                    let (resp, _) = row(ui, t, 2, Icon::Body, &format!("Solid{}", i + 1), None, style);
+                    let resp = resp.on_hover_text(if combining { "Click to pick this solid" } else { "Pointed at, the solid is lit in the view" });
+                    if resp.hovered() {
+                        lit = Some(i);
+                    }
+                    if resp.clicked() && combining {
+                        action = Some(BrowserAction::Body(i));
+                    }
                 }
             }
+            self.chrome.body_lit = lit;
             let (resp, toggled) = row(ui, t, 1, Icon::Folder, "Origin", Some(self.chrome.origin_open), RowStyle::Normal);
             if toggled || resp.double_clicked() {
                 self.chrome.origin_open = !self.chrome.origin_open;
@@ -274,11 +297,16 @@ impl Workbench {
                 Mode::Sketch(s) => Some(s.feature),
                 Mode::Model => None,
             };
+            // (A thread's row says its size, as the part has it now.)
+            let label = |f: &tenon_model::Feature| match (&f.kind, self.scene.threads.iter().find(|t| t.mark.feature == f.id)) {
+                (FeatureKind::Thread(_), Some(t)) => format!("{} ({})", f.name, t.mark.designation),
+                _ => f.name.clone(),
+            };
             let features: Vec<(FeatureId, String, Icon, bool, bool)> = self
                 .document()
                 .features()
                 .iter()
-                .map(|f| (f.id, f.name.clone(), feature_icon(&f.kind), f.suppressed, matches!(f.kind, FeatureKind::Sketch { .. })))
+                .map(|f| (f.id, label(f), feature_icon(&f.kind), f.suppressed, matches!(f.kind, FeatureKind::Sketch { .. })))
                 .collect();
             // The End of Part row sits where the marker is; rows below it are rolled back.
             let end = self.document().end_of_part();
@@ -441,6 +469,18 @@ impl Workbench {
             BrowserAction::Reference(r) => {
                 self.pick_reference(r);
                 Ok(())
+            }
+            BrowserAction::Body(body) => {
+                // (As a click on it in the view: on a face of it that has a name.)
+                let face =
+                    self.scene.bodies.get(body).and_then(|b| b.faces.iter().position(|(name, _)| name.is_some())).and_then(|f| u32::try_from(f).ok());
+                match face {
+                    Some(face) => {
+                        self.bodies_pick(crate::viewport::Pick::Face { body, face }, true);
+                        Ok(())
+                    }
+                    None => Err("That solid has no face that can be referred to".into()),
+                }
             }
             BrowserAction::EndOfPart(before) => {
                 let p = match before {

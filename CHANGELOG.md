@@ -74,3 +74,6 @@ without installing anything else.
 - Application Options are kept between sessions, including where the stress programs are.
 - Release archives for Windows, macOS and Linux that hold every library Tenon needs and the
   licence of each.
+- Holes sized for M3 to M20 screws: clearance (close or normal fit) or tap drill, with a
+  counterbore or countersink for the head. Polygons of 3 to 64 sides. Moments of inertia in
+  the Properties window. Solids picked in the browser. A thread's size in its browser row.

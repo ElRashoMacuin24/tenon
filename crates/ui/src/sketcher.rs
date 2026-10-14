@@ -114,7 +114,7 @@ impl Tool {
             Tool::Circle => "Click the centre, then a point on the circle.",
             Tool::Arc => "Click the start, the end, then a point on the arc.",
             Tool::Rectangle => "Click two opposite corners.",
-            Tool::Polygon => "Click the centre, then a corner (6 sides).",
+            Tool::Polygon => "Click the centre, then a corner. The box at the top left says how many sides.",
             Tool::Spline => "Click control points; Enter finishes.",
             Tool::Point => "Click to place points.",
             Tool::Trim => "Click the piece of a curve to remove.",
@@ -208,6 +208,8 @@ pub(crate) struct SketchMode {
     /// The sketch as it was when opened. Until Finish Sketch the part is regenerated with this,
     /// so drawing and dragging never wait for the features that use the sketch.
     pub base: Option<Sketch>,
+    /// How many sides the Polygon tool draws.
+    pub polygon_sides: u32,
 }
 
 impl SketchMode {
@@ -227,6 +229,7 @@ impl SketchMode {
             hud: Hud::default(),
             dof: None,
             base,
+            polygon_sides: 6,
         }
     }
 }
@@ -670,7 +673,29 @@ impl Workbench {
         Aabb3::from_points(sk.entities().filter_map(|(id, _)| sk.point(id)).map(|p| frame.plane_point(p)))
     }
 
+    /// The Polygon tool's box: how many sides it draws.
+    fn polygon_box(&mut self, ui: &Ui, rect: Rect, t: &Tokens) {
+        let Mode::Sketch(sm) = &mut self.mode else { return };
+        if sm.tool != Tool::Polygon {
+            return;
+        }
+        let mut sides = f64::from(sm.polygon_sides);
+        egui::Area::new(egui::Id::new("tn_polygon_box")).order(egui::Order::Foreground).fixed_pos(rect.min + egui::vec2(12.0, 12.0)).show(
+            ui.ctx(),
+            |ui| {
+                egui::Frame::popup(ui.style()).fill(t.panel).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Sides").on_hover_text("How many sides the polygon has: 3 to 64");
+                        crate::properties::eq_field(ui, egui::Id::new("tn_polygon_sides"), &mut sides, None, "", 3.0..=64.0, 50.0, t);
+                    });
+                });
+            },
+        );
+        sm.polygon_sides = sides.round().clamp(3.0, 64.0) as u32;
+    }
+
     pub(crate) fn sketch_ui(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect, t: &Tokens) {
+        self.polygon_box(ui, rect, t);
         let Mode::Sketch(sm) = &self.mode else { return };
         let feature = sm.feature;
         let Some(frame) = self.sketch_frame(feature) else {
@@ -1067,11 +1092,20 @@ impl Workbench {
                         p.line_segment(seg, stroke);
                     }
                 }
-                Tool::Circle | Tool::Polygon => {
+                Tool::Circle => {
                     let r = last.at.dist(cur);
                     let ring: Vec<Pos2> =
                         (0..=64).filter_map(|i| plane.project(Vec2::polar(last.at, r, std::f64::consts::TAU * f64::from(i) / 64.0))).collect();
                     p.add(Shape::line(ring, stroke));
+                }
+                Tool::Polygon => {
+                    // (Its corners from the one under the pointer round the centre.)
+                    let (r, start) = (last.at.dist(cur), (cur.y - last.at.y).atan2(cur.x - last.at.x));
+                    let n = sm.polygon_sides;
+                    let corners: Vec<Pos2> = (0..=n)
+                        .filter_map(|i| plane.project(Vec2::polar(last.at, r, start + std::f64::consts::TAU * f64::from(i) / f64::from(n))))
+                        .collect();
+                    p.add(Shape::line(corners, stroke));
                 }
                 Tool::Rectangle => {
                     let (a, b) = (last.at, cur);
@@ -1382,7 +1416,7 @@ impl Workbench {
                     sm.clicks.push(click);
                     return;
                 };
-                let tool = sm.tool;
+                let (tool, sides) = (sm.tool, sm.polygon_sides);
                 sm.clicks.clear();
                 sm.hud = Hud::default();
                 let (a, b) = (first.at, click.at);
@@ -1403,7 +1437,7 @@ impl Workbench {
                         }
                     }
                     _ => {
-                        let _ = self.exec_status("sketch.polygon", json!({ "sketch": f, "cx": a.x, "cy": a.y, "x": b.x, "y": b.y, "sides": 6 }));
+                        let _ = self.exec_status("sketch.polygon", json!({ "sketch": f, "cx": a.x, "cy": a.y, "x": b.x, "y": b.y, "sides": sides }));
                     }
                 }
             }

@@ -71,6 +71,8 @@ pub(crate) struct Chrome {
     pub programs: [String; 2],
     /// The report of the fault Tenon met last time, to tell of once.
     pub crash: Option<std::path::PathBuf>,
+    /// The solid pointed at in the browser's Solid Bodies folder: lit in the view.
+    pub body_lit: Option<usize>,
 }
 
 /// New, Open or Exit waiting on "Save changes?".
@@ -103,6 +105,7 @@ impl Default for Chrome {
             autoproject: true,
             programs: Default::default(),
             crash: None,
+            body_lit: None,
             params: false,
             table: false,
             table_pick: Default::default(),
@@ -766,6 +769,10 @@ impl Workbench {
         let status = if self.status.is_empty() { "Ready" } else { &self.status };
         ui.painter().text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, status, theme::small(), color);
         let mut right = Vec::new();
+        // (An agent may drive this window: said for as long as it may.)
+        if let Some((port, _)) = self.control_address() {
+            right.push(format!("Control port {port} open"));
+        }
         if let Some(d) = self.drw_status() {
             right.push(d);
         }
@@ -860,6 +867,13 @@ impl Workbench {
             ui.label("Licence: MIT OR Apache-2.0.");
             ui.label("Geometry kernel: OpenCASCADE Technology 8 (LGPL-2.1 with the Open CASCADE exception), dynamically linked.");
             ui.label("Forked from CADCraft (MIT OR Apache-2.0). See NOTICE.");
+            ui.label("The other software Tenon is built with, and its licences: licenses/THIRD-PARTY.txt beside the program.");
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.hyperlink_to("Getting started", "https://github.com/ElRashoMacuin24/tenon/blob/main/docs/user-guide.md");
+                ui.label("·");
+                ui.hyperlink_to("Report a problem", crate::crash::ISSUES);
+            });
             ui.add_space(6.0);
             ui.small("Tenon is not affiliated with Autodesk, Inc. or any other CAD vendor.");
         });

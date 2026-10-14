@@ -164,3 +164,41 @@ pub fn apply_theme(ctx: &egui::Context, name: ThemeName) {
 pub fn apply(ctx: &egui::Context) {
     apply_theme(ctx, ThemeName::Dark);
 }
+
+/// Tenon's mark as the window's icon (the title bar draws it the same way): a tenon in its
+/// mortise, in the dark theme's colours.
+pub fn app_icon() -> egui::IconData {
+    const SIZE: u32 = 64;
+    let (accent, slot) = ([0x2f, 0xb8, 0xb0], [0x1d, 0x21, 0x27]);
+    let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    let n = SIZE as f32;
+    // (The square's corners rounded by a fifth of it; the slot 0.3 by 0.6 of it, a tenth below
+    // the middle; each edge softened over a pixel.)
+    let radius = n * 0.2;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let (cx, cy) = ((px - n / 2.0).abs() - (n / 2.0 - radius), (py - n / 2.0).abs() - (n / 2.0 - radius));
+            let outside = (cx.max(0.0).hypot(cy.max(0.0)) - radius).max(cx.max(cy).min(0.0) - radius);
+            let cover = (0.5 - outside).clamp(0.0, 1.0);
+            let (sx, sy) = ((px - n / 2.0).abs() - n * 0.15, (py - n * 0.6).abs() - n * 0.3);
+            let in_slot = (0.5 - sx.max(sy)).clamp(0.0, 1.0);
+            let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * in_slot).round() as u8;
+            rgba.extend([mix(accent[0], slot[0]), mix(accent[1], slot[1]), mix(accent[2], slot[2]), (cover * 255.0).round() as u8]);
+        }
+    }
+    egui::IconData { rgba, width: SIZE, height: SIZE }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    #[test]
+    fn the_window_icon_is_the_mark() {
+        let icon = super::app_icon();
+        assert_eq!((icon.width, icon.height, icon.rgba.len()), (64, 64, 64 * 64 * 4));
+        let at = |x: usize, y: usize| &icon.rgba[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4];
+        assert_eq!(at(0, 0)[3], 0, "the corners are rounded off");
+        assert_eq!(at(8, 32), [0x2f, 0xb8, 0xb0, 255], "the square");
+        assert_eq!(at(32, 40), [0x1d, 0x21, 0x27, 255], "the slot");
+    }
+}

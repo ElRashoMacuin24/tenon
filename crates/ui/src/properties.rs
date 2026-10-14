@@ -886,13 +886,52 @@ impl Workbench {
                         });
                         section(ui, "Type", true, |ui| {
                             egui::Grid::new("tn_props_hole_type").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                                ui.label("Hole");
-                                egui::ComboBox::from_id_salt("tn_props_hole_kind").selected_text("Simple").show_ui(ui, |ui| {
-                                    let _ = ui.selectable_label(true, "Simple");
-                                    ui.add_enabled(false, egui::Button::selectable(false, "Clearance (M7)"));
-                                    ui.add_enabled(false, egui::Button::selectable(false, "Tapped (M6)"));
+                                use crate::panels::Fit;
+                                use tenon_model::library::SCREW_HOLES;
+                                let before = (p.screw, p.seat);
+                                ui.label("Hole").on_hover_text("Simple: a size of one's own. Clearance: for a metric screw to pass through. Tap Drill: to tap a metric thread (put a Thread on the hole to show it).");
+                                let kind = match p.screw {
+                                    None => "Simple",
+                                    Some((_, Fit::TapDrill)) => "Tap Drill",
+                                    Some(_) => "Clearance",
+                                };
+                                // (A screw is first the one whose thread is nearest the hole.)
+                                let nearest = SCREW_HOLES.iter().enumerate().min_by(|a, b| (a.1.d - p.diameter).abs().total_cmp(&(b.1.d - p.diameter).abs())).map_or(0, |(i, _)| i);
+                                let screw = p.screw.map_or(nearest, |(i, _)| i);
+                                egui::ComboBox::from_id_salt("tn_props_hole_kind").selected_text(kind).show_ui(ui, |ui| {
+                                    if ui.selectable_label(p.screw.is_none(), "Simple").clicked() {
+                                        p.screw = None;
+                                    }
+                                    if ui.selectable_label(kind == "Clearance", "Clearance").clicked() && kind != "Clearance" {
+                                        p.screw = Some((screw, Fit::Normal));
+                                    }
+                                    if ui.selectable_label(kind == "Tap Drill", "Tap Drill").clicked() {
+                                        p.screw = Some((screw, Fit::TapDrill));
+                                    }
                                 });
                                 ui.end_row();
+                                if let Some((i, fit)) = p.screw {
+                                    ui.label("Screw").on_hover_text("ISO metric, coarse thread");
+                                    egui::ComboBox::from_id_salt("tn_props_hole_screw").selected_text(SCREW_HOLES[i].size).show_ui(ui, |ui| {
+                                        for (j, h) in SCREW_HOLES.iter().enumerate() {
+                                            if ui.selectable_label(i == j, h.size).clicked() {
+                                                p.screw = Some((j, fit));
+                                            }
+                                        }
+                                    });
+                                    ui.end_row();
+                                    if fit != Fit::TapDrill {
+                                        ui.label("Fit").on_hover_text("ISO 273: close leaves the screw less play, normal more");
+                                        egui::ComboBox::from_id_salt("tn_props_hole_fit").selected_text(if fit == Fit::Close { "Close" } else { "Normal" }).show_ui(ui, |ui| {
+                                            for (f, name) in [(Fit::Close, "Close"), (Fit::Normal, "Normal")] {
+                                                if ui.selectable_label(fit == f, name).clicked() {
+                                                    p.screw = Some((i, f));
+                                                }
+                                            }
+                                        });
+                                        ui.end_row();
+                                    }
+                                }
                                 ui.label("Seat");
                                 let seat_name = |s: Seat| match s {
                                     Seat::None => "None",
@@ -905,6 +944,10 @@ impl Workbench {
                                     }
                                 });
                                 ui.end_row();
+                                // (A screw, or its seat, chosen: the sizes follow; sizes typed after stay.)
+                                if (p.screw, p.seat) != before {
+                                    p.size_for_screw();
+                                }
                             });
                         });
                         section(ui, "Behavior", true, |ui| {

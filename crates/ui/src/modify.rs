@@ -75,7 +75,7 @@ impl Workbench {
             // A load: its direction, from a straight edge or a flat face, while that selector is
             // the active one; else its faces (the part's weight and its turning have none). A
             // force may be along edges in their place.
-            Some(Panel::Load(_)) if self.picking_direction() => Some(Wants { edges: true, faces: true }),
+            Some(Panel::Load(_)) if self.picking_direction() || self.picking_load_point() => Some(Wants { edges: true, faces: true }),
             Some(Panel::Load(l)) => {
                 Some(Wants { edges: l.what == crate::analysis::What::Force && l.faces.is_empty(), faces: l.what.on_faces() && l.edges.is_empty() })
             }
@@ -221,6 +221,8 @@ impl Workbench {
             }
             // A direction is read off the edge or face as it is: it needs no name.
             (pick, Some(Panel::Load(_))) if self.picking_direction() => self.direction_of(pick).is_some(),
+            // A point is the middle of the face or edge clicked.
+            (pick, Some(Panel::Load(_))) if self.picking_load_point() => self.axis_point_of(pick).is_some(),
             // A support takes the faces its kind can hold: a pin round ones, a sliding one
             // flat or round ones.
             (Pick::Face { body, face }, Some(Panel::Support(s))) => {
@@ -244,6 +246,13 @@ impl Workbench {
         if self.picking_direction() {
             let through = self.axis_point_of(p);
             return self.direction_of(p).is_some_and(|d| self.set_load_direction(d, through));
+        }
+        if self.picking_load_point() {
+            let at = match p {
+                Pick::Face { body, face } => self.scene.bodies.get(body).and_then(|b| b.faces.get(face as usize)).map(|f| f.1.centroid),
+                Pick::Edge { .. } => self.axis_point_of(p),
+            };
+            return at.is_some_and(|at| self.set_load_point(at));
         }
         if matches!(self.panel, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) {
             return self.bodies_pick(p, toggle);

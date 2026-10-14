@@ -141,6 +141,14 @@ pub(crate) struct ShellPanel {
     pub outside: bool,
 }
 
+/// A hole sized for a screw: a clearance hole in one of two fits, or the drill to tap it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Fit {
+    Close,
+    Normal,
+    TapDrill,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Seat {
     None,
@@ -164,9 +172,37 @@ pub(crate) struct HolePanel {
     pub flat: bool,
     pub tip_degrees: f64,
     pub reverse: bool,
+    /// Sized for a screw (an index into the library's screw holes): None for a hole of one's
+    /// own size.
+    pub screw: Option<(usize, Fit)>,
 }
 
 impl HolePanel {
+    /// Sizes the hole, and its seat, for its screw.
+    pub(crate) fn size_for_screw(&mut self) {
+        let Some((i, fit)) = self.screw else { return };
+        let Some(h) = tenon_model::library::SCREW_HOLES.get(i) else { return };
+        self.diameter = match fit {
+            Fit::Close => h.close,
+            Fit::Normal => h.normal,
+            Fit::TapDrill => h.tap_drill,
+        };
+        match self.seat {
+            Seat::None => {}
+            Seat::Counterbore => (self.seat_diameter, self.bore_depth) = h.counterbore,
+            Seat::Countersink => (self.seat_diameter, self.sink_degrees) = (h.countersink, 90.0),
+        }
+    }
+
+    /// The screw a hole's size is for, if it is one of the library's.
+    fn screw_of(diameter: f64) -> Option<(usize, Fit)> {
+        tenon_model::library::SCREW_HOLES.iter().enumerate().find_map(|(i, h)| {
+            [(h.close, Fit::Close), (h.normal, Fit::Normal), (h.tap_drill, Fit::TapDrill)]
+                .into_iter()
+                .find(|(d, _)| (d - diameter).abs() < 1e-9)
+                .map(|(_, fit)| (i, fit))
+        })
+    }
     pub(crate) fn kind(&self) -> FeatureKind {
         FeatureKind::Hole(Hole {
             sketch: self.sketch,
@@ -207,6 +243,7 @@ impl HolePanel {
             flat: h.tip_angle.is_none(),
             tip_degrees: h.tip_angle.unwrap_or(DRILL_POINT).to_degrees(),
             reverse: h.reverse,
+            screw: HolePanel::screw_of(h.diameter),
         }
     }
 }

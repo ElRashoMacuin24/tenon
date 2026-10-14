@@ -124,6 +124,17 @@ fn parse_size(s: &str) -> Option<[f32; 2]> {
     (w.is_finite() && h.is_finite() && (320.0..=8192.0).contains(&w) && (240.0..=8192.0).contains(&h)).then_some([w, h])
 }
 
+/// The drawing templates that come with Tenon: beside the program (Windows), beside the
+/// folder it is in (Linux's `bin`, macOS's `Tenon.app`), or in a checkout's assets.
+fn templates_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors()
+        .skip(1)
+        .take(5)
+        .flat_map(|dir| [dir.join("templates"), dir.join("assets").join("templates")])
+        .find(|dir| dir.join("templates.json").is_file())
+}
+
 /// Native file dialogs.
 fn services() -> Services {
     fn label(ext: &str) -> &str {
@@ -151,7 +162,16 @@ fn services() -> Services {
                 .add_filter(label("tenondrw"), &["tenondrw"])
                 .pick_file()
         })),
-        pick_open_ext: Some(Box::new(|ext: &str| rfd::FileDialog::new().add_filter(label(ext), &[ext]).pick_file())),
+        // (A drawing is chosen as a template: the dialog opens on the templates that come with
+        // Tenon.)
+        pick_open_ext: Some(Box::new(|ext: &str| {
+            let dialog = rfd::FileDialog::new().add_filter(label(ext), &[ext]);
+            match templates_dir().filter(|_| ext == "tenondrw") {
+                Some(dir) => dialog.set_directory(dir),
+                None => dialog,
+            }
+            .pick_file()
+        })),
         pick_save: Some(Box::new(|name: &str, ext: &str| {
             let path = rfd::FileDialog::new().set_file_name(name).add_filter(label(ext), &[ext]).save_file()?;
             // Some platforms return the name without the chosen filter's extension.
@@ -207,11 +227,17 @@ fn main() -> eframe::Result {
         tenon_ui::crash::install(dir.clone());
     }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("Tenon").with_inner_size(size).with_min_inner_size([900.0, 560.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_title("Tenon")
+            .with_icon(std::sync::Arc::new(tenon_ui::theme::app_icon()))
+            .with_inner_size(size)
+            .with_min_inner_size([900.0, 560.0]),
         persist_window: screenshot.is_none(),
         ..Default::default()
     };
-    eframe::run_native(
+    // (A screenshot run is for a program, which reads its error on the terminal.)
+    let shooting = screenshot.is_some();
+    let started = eframe::run_native(
         "Tenon",
         options,
         Box::new(move |cc| {
@@ -302,5 +328,36 @@ fn main() -> eframe::Result {
             }
             Ok(Box::new(App { wb, screenshot, frames: 0, requested: false, control: announced }))
         }),
-    )
+    );
+    // A window that could not be made says why, in a window of the system's own: on Windows the
+    // release build has no terminal to say it in.
+    if let Err(e) = &started
+        && !shooting
+    {
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title("Tenon could not start")
+            .set_description(format!(
+                "Tenon could not open its window: {e}\n\nIt needs a graphics driver with Vulkan, Metal, DirectX 12 or OpenGL 3.3. Updating the graphics driver usually helps."
+            ))
+            .show();
+    }
+    started
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_templates_that_come_with_tenon_are_found_from_the_program() {
+        // (Here, a checkout's: the test program is in target/<profile>/deps.)
+        let dir = super::templates_dir().expect("the templates");
+        assert!(dir.join("ansi-b.tenondrw").is_file() && dir.join("iso-a3.tenondrw").is_file(), "{}", dir.display());
+    }
+
+    #[test]
+    fn a_window_size_is_two_numbers_within_reason() {
+        assert_eq!(super::parse_size("1440x900"), Some([1440.0, 900.0]));
+        assert_eq!(super::parse_size("10x10"), None);
+        assert_eq!(super::parse_size("wide"), None);
+    }
 }

@@ -840,6 +840,11 @@ impl Workbench {
         v.extend(self.panel_picks().into_iter().map(|p| (p, SELECTED)));
         v.extend(self.repair_candidates().into_iter().map(|p| (p, crate::repair_ui::CANDIDATE)));
         v.extend(self.view.hover.map(|p| (p, HOVER)));
+        // The solid pointed at in the browser, whole.
+        if let Some(body) = self.chrome.body_lit {
+            let faces = self.scene.bodies.get(body).map_or(0, |b| b.faces.len());
+            v.extend((0..faces).filter_map(|f| u32::try_from(f).ok()).map(|face| (Pick::Face { body, face }, HOVER)));
+        }
         v
     }
 

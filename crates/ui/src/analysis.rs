@@ -259,6 +259,9 @@ pub(crate) struct LoadPanel {
     pub components: Option<Vec3>,
     /// Where a remote force acts; a point the axis of a body's turning goes through.
     pub point: Vec3,
+    /// The point's selector is the one that takes clicks: the next click on a face or an edge
+    /// gives the point (its middle).
+    pub picking_point: bool,
 }
 
 impl LoadPanel {
@@ -472,6 +475,7 @@ pub(crate) fn load_fields(ui: &mut Ui, p: &mut LoadPanel, face_normal: Option<Ve
                         crate::drawing::remember(ui, "tn_props_load_pick", pick.response.rect);
                         if pick.inner {
                             p.picking = !p.picking;
+                            p.picking_point = false;
                         }
                         let list = egui::ComboBox::from_id_salt("tn_props_load_way").selected_text("").width(18.0).show_ui(ui, |ui| {
                             // (A force may be square to its faces, a moment about its faces' own axis.)
@@ -510,6 +514,14 @@ pub(crate) fn load_fields(ui: &mut Ui, p: &mut LoadPanel, face_normal: Option<Ve
         };
         section(ui, title, true, |ui| {
             egui::Grid::new("tn_props_load_point").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Point").on_hover_text("Click, then a face or an edge in the part: its middle; or type it below");
+                let pick = ui.scope(|ui| slot_button(ui, p.picking_point, if p.picking_point { "click in the part" } else { "Pick" }, t));
+                crate::drawing::remember(ui, "tn_props_load_point_pick", pick.response.rect);
+                if pick.inner {
+                    p.picking_point = !p.picking_point;
+                    p.picking = false;
+                }
+                ui.end_row();
                 for (label, id, part) in
                     [("X", "tn_props_load_px", &mut p.point.x), ("Y", "tn_props_load_py", &mut p.point.y), ("Z", "tn_props_load_pz", &mut p.point.z)]
                 {
@@ -809,6 +821,7 @@ impl Workbench {
             picking: false,
             components: None,
             point: Vec3::ZERO,
+            picking_point: false,
         };
         // (Down: against Z.)
         let down = |p: LoadPanel| LoadPanel { way: Way::Z, flip: true, ..p };
@@ -960,6 +973,26 @@ impl Workbench {
     /// Whether the open load panel's direction selector is the one that takes clicks.
     pub(crate) fn picking_direction(&self) -> bool {
         matches!(&self.panel, Some(Panel::Load(p)) if p.picking && p.components.is_none())
+    }
+
+    /// Whether the open load panel's point selector is the one that takes clicks.
+    pub(crate) fn picking_load_point(&self) -> bool {
+        matches!(&self.panel, Some(Panel::Load(p)) if p.picking_point && matches!(p.what, What::Remote | What::Body))
+    }
+
+    /// Gives the open load panel its point (from a click on a face or an edge).
+    /// Returns false when no load panel is waiting for one.
+    pub(crate) fn set_load_point(&mut self, at: Vec3) -> bool {
+        if !self.picking_load_point() {
+            return false;
+        }
+        if let Some(Panel::Load(p)) = &mut self.panel {
+            // (To the thousandth of a micron: the scene's points are single precision.)
+            let round = |v: f64| (v * 1.0e6).round() / 1.0e6 + 0.0;
+            p.point = Vec3::new(round(at.x), round(at.y), round(at.z));
+            p.picking_point = false;
+        }
+        true
     }
 
     /// The direction a click on that edge or face gives: along a straight edge, or square to a

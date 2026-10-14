@@ -914,6 +914,15 @@ fn a_moment_a_bearing_load_a_remote_force_and_the_parts_turning() {
     click_text(&mut d, &mut wb, "Remote Force");
     assert!(wb.status().starts_with("Remote Force: click the faces that carry it"), "{}", wb.status());
     d.click(&mut wb, right);
+    // Its point picked in the part: the middle of the top face. (Then typed, below.)
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let pick = pressable(&d, "tn_props_load_point_pick");
+    d.click(&mut wb, pick);
+    assert!(load_panel(&wb).picking_point && !load_panel(&wb).picking);
+    d.click(&mut wb, on_top);
+    let p = load_panel(&wb);
+    assert_eq!((p.point, p.picking_point, p.faces.len()), (Vec3::new(50.0, 10.0, 10.0), false, 1), "the faces stay as they were: {}", wb.status());
     type_into(&mut d, &mut wb, "tn_props_load_mag", "80");
     type_into(&mut d, &mut wb, "tn_props_load_px", "130");
     type_into(&mut d, &mut wb, "tn_props_load_py", "10");

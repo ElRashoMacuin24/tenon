@@ -688,6 +688,78 @@ fn hole_takes_sketch_points_and_toggles_them_in_the_viewport() {
 }
 
 #[test]
+fn a_hole_is_sized_for_a_screw_to_pass_or_to_be_tapped() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    let top = wb.scene().bodies[0].faces.iter().position(|(n, _)| matches!(n, Some(FaceOrigin::Cap { end: CapEnd::End, .. }))).unwrap() as u32;
+    wb.view.selection = vec![Pick::Face { body: 0, face: top }];
+    wb.run_ui("sketch.new").unwrap();
+    let sk = sketching(&wb);
+    wb.exec("sketch.point", json!({ "sketch": sk.0, "x": 20, "y": 10 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    let hole = |wb: &Workbench| match &wb.panel {
+        Some(Panel::Hole(p)) => (p.diameter, p.screw, p.seat_diameter, p.bore_depth),
+        _ => panic!("no hole panel: {}", wb.status()),
+    };
+    let choose = |d: &mut Driver, wb: &mut Workbench, shown: &str, wanted: &str| {
+        let at = d.text_pos(shown).unwrap_or_else(|| panic!("no {shown}: {:?}", d.texts()));
+        d.click(wb, at);
+        d.frame(wb, vec![]);
+        let at = d.text_pos(wanted).unwrap_or_else(|| panic!("no {wanted} in the list: {:?}", d.texts()));
+        d.click(wb, at);
+        d.frame(wb, vec![]);
+        d.frame(wb, vec![]);
+    };
+    use crate::panels::Fit;
+
+    // Hole, then Clearance: for the screw nearest its size (M6), a normal fit: 6.6.
+    d.tap(&mut wb, egui::Key::H);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(hole(&wb).1, None, "a hole of its own size to start with");
+    choose(&mut d, &mut wb, "Simple", "Clearance");
+    assert_eq!(hole(&wb).0, 6.6);
+    assert_eq!(hole(&wb).1, Some((3, Fit::Normal)));
+    // A close fit; an M8.
+    choose(&mut d, &mut wb, "Normal", "Close");
+    assert_eq!(hole(&wb).0, 6.4);
+    choose(&mut d, &mut wb, "M6", "M8");
+    assert_eq!(hole(&wb).0, 8.4);
+    // Counterbored for its socket head.
+    choose(&mut d, &mut wb, "None", "Counterbore");
+    assert_eq!((hole(&wb).2, hole(&wb).3), (15.0, 8.6));
+    // Tap Drill: the drill an M8 thread is tapped in.
+    choose(&mut d, &mut wb, "Clearance", "Tap Drill");
+    assert_eq!(hole(&wb).0, 6.8);
+    assert!(d.text_pos("Fit").is_none(), "a tap drill has no fit");
+    choose(&mut d, &mut wb, "Counterbore", "None");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    // Opened again, it is still the M8's tap drill.
+    let id = wb.document().features().last().unwrap().id;
+    wb.edit_feature(id).unwrap();
+    assert_eq!(hole(&wb).1, Some((4, Fit::TapDrill)));
+    // A size typed of one's own is kept, and is no screw's.
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    choose(&mut d, &mut wb, "Tap Drill", "Simple");
+    type_into(&mut d, &mut wb, "tn_props_hole_dia", "7");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    wb.edit_feature(id).unwrap();
+    assert_eq!((hole(&wb).0, hole(&wb).1), (7.0, None));
+    d.tap(&mut wb, egui::Key::Escape);
+}
+
+#[test]
 fn pattern_and_mirror_pick_features_in_the_viewport() {
     use tenon_geom::Vec3;
     use tenon_model::{DirectionRef, OriginAxis};
@@ -1561,6 +1633,24 @@ fn draft_split_and_combine_pick_faces_planes_and_bodies() {
     }
     d.click(&mut wb, low);
     assert!(wb.status().contains("the body that stays"), "{}", wb.status());
+    // The other solid, picked in the browser's Solid Bodies folder: pointed at, it is lit in
+    // the view; clicked, it is picked, and its row says so.
+    // (Its box opens the folder: one row in, the box is 27 from the row's left.)
+    let folder = browser_row(&d, "Solid Bodies(2)");
+    d.click(&mut wb, egui::pos2(folder.left() + 27.0, folder.center().y));
+    d.frame(&mut wb, vec![]);
+    let second = browser_row(&d, "Solid2").center();
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(second)]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.highlights().iter().filter(|(p, c)| matches!(p, Pick::Face { body: 1, .. }) && *c == crate::viewport::HOVER).count(), 6);
+    d.click(&mut wb, second);
+    let Some(Panel::Combine(p)) = wb.panel.clone() else { panic!("no combine panel") };
+    assert_eq!(p.tools.len(), 1, "{}", wb.status());
+    assert_eq!(wb.panel_picks().len(), 12, "both solids are highlighted");
+    // Clicked in the view, it is given back; clicked again, picked again.
+    d.click(&mut wb, high);
+    let Some(Panel::Combine(p)) = wb.panel.clone() else { panic!("no combine panel") };
+    assert_eq!(p.tools.len(), 0);
     d.click(&mut wb, high);
     let Some(Panel::Combine(p)) = wb.panel.clone() else { panic!("no combine panel") };
     assert_eq!(p.tools.len(), 1);
@@ -1616,6 +1706,9 @@ fn a_thread_is_put_on_a_shaft_by_clicking_it_and_cut_when_modelled() {
     assert!(wb.panel.is_none(), "{}", wb.status());
     assert_eq!(wb.document().features().last().unwrap().name, "Thread1");
     assert_eq!(wb.scene().threads[0].mark.designation, "M8 special");
+    // Its row says its size.
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Thread1 (M8 special)");
     assert!((volume(&wb) - plain).abs() < 1e-6, "cosmetic: {}", volume(&wb));
 
     // Edited and ticked Modelled: the groove is cut, sixteen turns of it.
@@ -1991,8 +2084,10 @@ fn a_part_is_given_a_material_a_density_and_a_colour_in_its_properties() {
 
     wb.run_ui("inspect.mass").unwrap();
     open_window(&mut d, &mut wb);
-    // 8 cubic centimetres of nothing in particular weigh as water does.
+    // 8 cubic centimetres of nothing in particular weigh as water does. A block 40 by 20 by
+    // 10 of 8 g turns about X as m(20² + 10²)/12, and so on.
     assert!(shows(&d, "8 g") && shows(&d, "8000 mm³"), "{:?}", d.texts());
+    assert_eq!(d.texts().iter().filter(|t| *t == "333, 1133, 1333 g mm²").count(), 2, "moments, and principal moments: {:?}", d.texts());
 
     // The material is picked from the list: brass is 8.5 g/cm^3 and brass-coloured.
     let combo = d.text_pos("Generic").expect("the material box");

@@ -90,6 +90,9 @@ fn the_control_port_runs_commands_in_the_open_part_for_whoever_has_the_token() {
     let (port, token) = wb.listen(0, None).unwrap();
     assert!(port > 0 && token.len() == 32 && token.chars().all(|c| c.is_ascii_hexdigit()), "{token}");
     assert_eq!(wb.control_address(), Some((port, token.as_str())));
+    // The window says that it is open.
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t.contains(&format!("Control port {port} open"))), "{:?}", d.texts());
 
     // Without the token nothing is done, whatever is asked; nor with half a request.
     let mut stranger = Client::with_token(port, "0123456789abcdef0123456789abcdef");

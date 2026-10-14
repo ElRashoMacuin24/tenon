@@ -113,7 +113,7 @@ Create panel:
 | Arc: Three Point; Tangent; Center Point | done | the drop-down under Arc: `slots_rectangles_and_arcs_are_drawn_by_their_own_clicks`, `a_tangent_arc_carries_on_from_the_end_of_a_line_or_an_arc` |
 | Rectangle: Two Point; Three Point; Two Point Center; Three Point Center | partial | two point, three point, two point centre. Gap: three point centre |
 | Slot: Center to Center; Overall; Center Point; Three Point Arc; Center Point Arc | partial | the three straight slots, under Rectangle as in Inventor: `slots_and_rectangles_about_a_centre_or_at_an_angle_hold_their_shape` (a slot is two lines tangent to two equal arcs, five degrees of freedom). Gap: the two arc slots |
-| Polygon, with a number of sides and inscribed or circumscribed | partial | a hexagon. Gap: the dialog |
+| Polygon, with a number of sides and inscribed or circumscribed | partial | 3 to 64 sides from a box at the top left of the view while the tool is on: `a_polygon_has_as_many_sides_as_its_box_says`. Gap: inscribed only (the corner is clicked) |
 | Spline: Control Vertex; Interpolation; Equation Curve; Bridge Curve | partial | control vertex. Gap: the rest |
 | Fillet and Chamfer | partial | Fillet. Gap: sketch chamfer |
 | Text, Geometry Text | missing | |

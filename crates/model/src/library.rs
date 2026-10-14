@@ -59,6 +59,39 @@ const METRIC: [(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64); 9] = [
     (20.0, 2.5, 30.0, 12.5, 18.0, 30.0, 17.0, 10.0, 21.0, 37.0, 3.0),
 ];
 
+/// The holes for an ISO metric coarse screw, mm: clearance in the close and normal fits of ISO
+/// 273, the drill to tap its thread, and seats for its head (typical values: a counterbore
+/// for a socket head cap screw, ISO 4762, after DIN 974-1; a 90 degree countersink for a
+/// countersunk screw, ISO 10642).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrewHoles {
+    pub size: &'static str,
+    pub d: f64,
+    pub close: f64,
+    pub normal: f64,
+    pub tap_drill: f64,
+    /// Diameter and depth.
+    pub counterbore: (f64, f64),
+    pub countersink: f64,
+}
+
+const fn holes(size: &'static str, d: f64, close: f64, normal: f64, tap_drill: f64, counterbore: (f64, f64), countersink: f64) -> ScrewHoles {
+    ScrewHoles { size, d, close, normal, tap_drill, counterbore, countersink }
+}
+
+/// The holes for the screws of the library's sizes, M3 to M20.
+pub const SCREW_HOLES: [ScrewHoles; 9] = [
+    holes("M3", 3.0, 3.2, 3.4, 2.5, (6.5, 3.4), 6.9),
+    holes("M4", 4.0, 4.3, 4.5, 3.3, (8.0, 4.4), 9.2),
+    holes("M5", 5.0, 5.3, 5.5, 4.2, (10.0, 5.4), 11.4),
+    holes("M6", 6.0, 6.4, 6.6, 5.0, (11.0, 6.4), 13.6),
+    holes("M8", 8.0, 8.4, 9.0, 6.8, (15.0, 8.6), 18.1),
+    holes("M10", 10.0, 10.5, 11.0, 8.5, (18.0, 10.6), 22.6),
+    holes("M12", 12.0, 13.0, 13.5, 10.2, (20.0, 12.6), 27.1),
+    holes("M16", 16.0, 17.0, 17.5, 14.0, (26.0, 16.6), 33.8),
+    holes("M20", 20.0, 21.0, 22.0, 17.5, (33.0, 20.6), 40.5),
+];
+
 /// Preferred screw lengths, mm: eight for each diameter, from about twice the diameter up.
 const LENGTHS: [f64; 16] = [6.0, 8.0, 10.0, 12.0, 16.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 80.0, 100.0, 120.0, 150.0, 200.0];
 
@@ -670,6 +703,17 @@ mod tests {
         assert_eq!(size("hex-screw-iso-4017", "M8x30"), [8.0, 13.0, 5.3, 30.0]);
         assert_eq!(size("hex-screw-iso-4017", "M6x12"), [6.0, 10.0, 4.0, 12.0]);
         assert_eq!(size("socket-screw-iso-4762", "M5x20"), [5.0, 8.5, 4.0, 2.5, 20.0]);
+        // The holes for each size agree with the screws: the close fit is the washer's bore,
+        // the tap drill is under the thread, the counterbore takes the socket head and the
+        // countersink is about twice the thread.
+        for (h, m) in SCREW_HOLES.iter().zip(METRIC) {
+            assert_eq!(h.d, m.0);
+            assert_eq!(h.close, m.8, "{}", h.size);
+            assert!(h.d < h.close && h.close < h.normal, "{}", h.size);
+            assert!(h.tap_drill < h.d && h.tap_drill > h.d - 1.2 * m.1, "{}", h.size);
+            assert!(h.counterbore.0 > m.5 && h.counterbore.1 > h.d, "{}", h.size);
+            assert!(h.countersink > 2.0 * h.d && h.countersink < 2.4 * h.d, "{}", h.size);
+        }
         assert_eq!(size("hex-nut-iso-4032", "M10"), [10.0, 1.5, 16.0, 8.4]);
         assert_eq!(size("washer-iso-7089", "M6"), [6.4, 12.0, 1.6]);
         assert_eq!(size("ball-bearing-iso-15", "608"), [8.0, 22.0, 7.0]);

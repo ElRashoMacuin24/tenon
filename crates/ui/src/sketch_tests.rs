@@ -607,6 +607,46 @@ fn sketch_patterns_are_set_up_in_a_window_after_a_direction_or_a_centre_is_click
 }
 
 #[test]
+fn a_polygon_has_as_many_sides_as_its_box_says() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    d.settle(&mut wb);
+    let lines = |wb: &Workbench| wb.document().sketch(f).unwrap().entities().filter(|(_, e)| matches!(e.geometry, Geometry::Line { .. })).count();
+    // Polygon: six sides unless told; the box says five, then two clicks.
+    wb.run_ui("sketch.polygon").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("how many sides"), "{}", wb.status());
+    crate::tests::type_into(&mut d, &mut wb, "tn_polygon_sides", "5");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    let (centre, corner) = (on_screen(&wb, Vec3::new(0.0, 0.0, 0.0)), on_screen(&wb, Vec3::new(20.0, 0.0, 0.0)));
+    for p in [centre, corner] {
+        move_to(&mut d, &mut wb, p);
+        d.click(&mut wb, p);
+    }
+    assert_eq!(lines(&wb), 5, "{}", wb.status());
+    // Two sides are too few: the box keeps five. Eight, then.
+    crate::tests::type_into(&mut d, &mut wb, "tn_polygon_sides", "2");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    if let Mode::Sketch(sm) = &wb.mode {
+        assert_eq!(sm.polygon_sides, 5);
+    }
+    crate::tests::type_into(&mut d, &mut wb, "tn_polygon_sides", "8");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    let (centre, corner) = (on_screen(&wb, Vec3::new(60.0, 0.0, 0.0)), on_screen(&wb, Vec3::new(70.0, 0.0, 0.0)));
+    for p in [centre, corner] {
+        move_to(&mut d, &mut wb, p);
+        d.click(&mut wb, p);
+    }
+    assert_eq!(lines(&wb), 13, "{}", wb.status());
+}
+
+#[test]
 fn slots_rectangles_and_arcs_are_drawn_by_their_own_clicks() {
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
     let mut d = Driver::new(vec2(1400.0, 860.0));

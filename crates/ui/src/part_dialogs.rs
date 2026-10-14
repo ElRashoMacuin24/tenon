@@ -22,6 +22,26 @@ const STRENGTH_ROWS: [(&str, &str, &str, &str); 3] = [
 ];
 
 /// A mass in grams as it reads: grams below a kilogram, kilograms from there.
+/// The principal moments of an inertia tensor (its eigenvalues), smallest first.
+pub(crate) fn principal(m: [[f64; 3]; 3]) -> [f64; 3] {
+    // (A symmetric matrix's eigenvalues in closed form: O. K. Smith, 1961.)
+    let off = m[0][1].powi(2) + m[0][2].powi(2) + m[1][2].powi(2);
+    let mut e = if off <= 1e-24 * (m[0][0].abs() + m[1][1].abs() + m[2][2].abs()).powi(2) {
+        [m[0][0], m[1][1], m[2][2]]
+    } else {
+        let q = (m[0][0] + m[1][1] + m[2][2]) / 3.0;
+        let p = (((m[0][0] - q).powi(2) + (m[1][1] - q).powi(2) + (m[2][2] - q).powi(2) + 2.0 * off) / 6.0).sqrt();
+        let b = |r: usize, c: usize| (m[r][c] - if r == c { q } else { 0.0 }) / p;
+        let det = b(0, 0) * (b(1, 1) * b(2, 2) - b(1, 2) * b(2, 1)) - b(0, 1) * (b(1, 0) * b(2, 2) - b(1, 2) * b(2, 0))
+            + b(0, 2) * (b(1, 0) * b(2, 1) - b(1, 1) * b(2, 0));
+        let phi = (det / 2.0).clamp(-1.0, 1.0).acos() / 3.0;
+        let (big, small) = (q + 2.0 * p * phi.cos(), q + 2.0 * p * (phi + 2.0 * std::f64::consts::PI / 3.0).cos());
+        [small, 3.0 * q - big - small, big]
+    };
+    e.sort_by(f64::total_cmp);
+    e
+}
+
 pub(crate) fn mass_text(grams: f64) -> String {
     if grams.abs() >= 1000.0 { format!("{} kg", fmt_value(grams / 1000.0)) } else { format!("{} g", fmt_value(grams)) }
 }
@@ -285,6 +305,20 @@ impl Workbench {
                         ui.label("Centre of gravity");
                         ui.label(format!("{}, {}, {} mm", fmt_value(c.x), fmt_value(c.y), fmt_value(c.z)));
                         ui.end_row();
+                        // (About the centre of gravity, at the part's density: the scene's are
+                        // at one gram a cubic centimetre.)
+                        let scale = density / 1000.0;
+                        let i = b.mass.inertia;
+                        let three = |v: [f64; 3]| {
+                            let f = |x: f64| crate::results::figures(x * scale);
+                            format!("{}, {}, {} g mm²", f(v[0]), f(v[1]), f(v[2]))
+                        };
+                        ui.label("Moments of inertia").on_hover_text("Ixx, Iyy, Izz: about axes along X, Y and Z through the centre of gravity");
+                        ui.label(three([i[0][0], i[1][1], i[2][2]]));
+                        ui.end_row();
+                        ui.label("Principal moments").on_hover_text("About the solid's own axes of inertia through the centre of gravity, smallest first");
+                        ui.label(three(principal(i)));
+                        ui.end_row();
                     });
                     ui.add_space(4.0);
                 }
@@ -464,5 +498,21 @@ impl Workbench {
                 let _ = self.exec_status(id, p);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod inertia_tests {
+    #[test]
+    fn principal_moments_are_found_whichever_way_a_solid_lies() {
+        // A tensor turned by 30 degrees about Z has the same principal moments.
+        let (a, b, c) = (100.0, 400.0, 900.0);
+        let (s, k) = (30f64.to_radians().sin(), 30f64.to_radians().cos());
+        let turned = [[a * k * k + b * s * s, (a - b) * k * s, 0.0], [(a - b) * k * s, a * s * s + b * k * k, 0.0], [0.0, 0.0, c]];
+        let p = super::principal(turned);
+        for (got, want) in p.iter().zip([a, b, c]) {
+            assert!((got - want).abs() < 1e-9, "{p:?}");
+        }
+        assert_eq!(super::principal([[3.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 2.0]]), [1.0, 2.0, 3.0]);
     }
 }
