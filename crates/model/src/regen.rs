@@ -25,6 +25,26 @@ use crate::naming::{
     names_of_tagged, resolve, resolve_edge,
 };
 
+/// How much short of a whole turn Revolve To Next goes, so that where it would end is apart from
+/// where it starts (radians).
+const NEXT_GAP: f64 = 0.02;
+
+/// `p` turned `angle` radians round `axis` (right-handed).
+fn turn_about(p: Vec3, axis: &Axis, angle: f64) -> Vec3 {
+    let (o, u) = (axis.origin(), axis.dir());
+    let v = p - o;
+    let (s, c) = angle.sin_cos();
+    o + v * c + u.cross(v) * s + u * (u.dot(v) * (1.0 - c))
+}
+
+/// A frame turned `angle` round `axis`.
+fn turned_frame(f: &Frame, axis: &Axis, angle: f64) -> Option<Frame> {
+    let o = turn_about(f.origin(), axis, angle);
+    let z = turn_about(f.origin() + f.z(), axis, angle) - o;
+    let x = turn_about(f.origin() + f.x(), axis, angle) - o;
+    Frame::new(o, z, x)
+}
+
 /// Points of a profile curve enough to find how far it reaches in any direction: a line's ends,
 /// points round an arc or circle, a spline's poles (it lies within them).
 fn curve_points(c: &Curve2) -> Vec<Vec2> {
@@ -1157,6 +1177,17 @@ impl<'a> Ctx<'a> {
         let (held, frame) = self.sketch_and_frame(e.sketch)?;
         let sketch: &Sketch = &held;
         let profile = profile_of(sketch, frame, &e.regions)?;
+        if let ExtrudeExtent::Between { from, to } = &e.extent {
+            return self.extrude_between(id, e, profile, from, to);
+        }
+        // (A point of the profile: the side of a plane it goes to that is kept.)
+        let keep = profile
+            .regions
+            .iter()
+            .flat_map(|r| &r.outer.curves)
+            .flat_map(|c| curve_points(&c.curve))
+            .next()
+            .map_or(frame.origin(), |q| frame.plane_point(q));
         let sign = if e.reverse { -1.0 } else { 1.0 };
         // As far as a plane, on whichever side of the sketch it is: square to the sketch, the
         // distance to it; at an angle, a little past its farthest reach, and the end then cut
@@ -1193,6 +1224,7 @@ impl<'a> Ctx<'a> {
         }
         let extent = match &e.extent {
             ExtrudeExtent::To(_) => Extent::Distance(to.ok_or("no plane to go to")?),
+            ExtrudeExtent::Between { .. } => return Err("internal: between is made apart".into()),
             ExtrudeExtent::Distance(d) => Extent::Distance(sign * d),
             ExtrudeExtent::Symmetric(d) => Extent::Symmetric(*d),
             ExtrudeExtent::TwoSided { forward, backward } => {
@@ -1226,7 +1258,7 @@ impl<'a> Ctx<'a> {
         }
         if taper == 0.0 {
             let (shape, names) = match &trim {
-                Some(plane) => self.trim_to_plane(id, op.shape, names, plane, &frame)?,
+                Some(plane) => self.trim_to_plane(id, op.shape, names, plane, keep, CapEnd::End)?,
                 None => (op.shape, names),
             };
             return self.combine(id, vec![(shape, names)], e.operation);
@@ -1252,9 +1284,54 @@ impl<'a> Ctx<'a> {
         self.k.release(op.shape);
         let (shape, names) = tapered?;
         let (shape, names) = match &trim {
-            Some(plane) => self.trim_to_plane(id, shape, names, plane, &frame)?,
+            Some(plane) => self.trim_to_plane(id, shape, names, plane, keep, CapEnd::End)?,
             None => (shape, names),
         };
+        self.combine(id, vec![(shape, names)], e.operation)
+    }
+
+    /// An extrusion from one plane to another (DEC-111): run across both and cut along each, the
+    /// face on `from` its start cap and on `to` its end cap. Both square to the sketch, it is
+    /// the profile moved to `from` and extruded as far as `to`.
+    fn extrude_between(&mut self, id: FeatureId, e: &Extrude, profile: Profile, from: &PlaneRef, to: &PlaneRef) -> Result<(), Stop> {
+        let frame = profile.frame;
+        let (a, b) = (self.plane_frame(from)?, self.plane_frame(to)?);
+        let z = frame.z();
+        let points: Vec<Vec3> =
+            profile.regions.iter().flat_map(|r| &r.outer.curves).flat_map(|c| curve_points(&c.curve)).map(|q| frame.plane_point(q)).collect();
+        let reach = |p: &Frame| -> Result<Vec<f64>, Stop> {
+            let along = z.dot(p.z());
+            if along.abs() < 1e-6 {
+                return Err("a plane it goes between runs along the extrusion: it never reaches it. Pick faces or planes across it".into());
+            }
+            Ok(points.iter().map(|q| (p.origin() - *q).dot(p.z()) / along).collect())
+        };
+        let (ta, tb) = (reach(&a)?, reach(&b)?);
+        let square = |p: &Frame| (1.0 - z.dot(p.z()).abs()) <= 1e-9;
+        let (Some(a0), Some(b0)) = (ta.first().copied(), tb.first().copied()) else { return Err("the profile is empty".into()) };
+        if square(&a) && square(&b) && (a0 - b0).abs() < tenon_geom::tol::LINEAR {
+            return Err("the two planes it goes between are one: pick two apart".into());
+        }
+        if square(&a) && square(&b) {
+            let start = frame.with_origin(frame.origin() + z * a0).ok_or("the profile has no place")?;
+            let op = self.k.extrude(&Profile { frame: start, regions: profile.regions }, &Extent::Distance(b0 - a0), None)?;
+            let faces = self.k.topology(op.shape)?.faces;
+            let names = names_of_sweep(&op.history, id, faces);
+            return self.combine(id, vec![(op.shape, names)], e.operation);
+        }
+        // Across both: from a little before the nearer to a little past the farther.
+        let all = ta.iter().chain(&tb).copied();
+        let (lo, hi) = all.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| (lo.min(t), hi.max(t)));
+        let m = 1.0 + (hi - lo) * 0.1;
+        let start = frame.with_origin(frame.origin() + z * (lo - m)).ok_or("the profile has no place")?;
+        let op = self.k.extrude(&Profile { frame: start, regions: profile.regions }, &Extent::Distance(hi - lo + 2.0 * m), None)?;
+        let faces = self.k.topology(op.shape)?.faces;
+        let names = names_of_sweep(&op.history, id, faces);
+        // A point of the profile between the two planes, on the side of each that is kept.
+        let first = points.first().copied().ok_or("the profile is empty")?;
+        let between = first + z * ((a0 + b0) / 2.0);
+        let (shape, names) = self.trim_to_plane(id, op.shape, names, &a, between, CapEnd::Start)?;
+        let (shape, names) = self.trim_to_plane(id, shape, names, &b, between, CapEnd::End)?;
         self.combine(id, vec![(shape, names)], e.operation)
     }
 
@@ -1268,6 +1345,21 @@ impl<'a> Ctx<'a> {
         names: Vec<Option<FaceOrigin>>,
         profile: &Profile,
         far: f64,
+        operation: Operation,
+    ) -> Result<Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>, Stop> {
+        let end_frame = profile.frame.with_origin(profile.frame.origin() + profile.frame.z() * far).ok_or("the extrusion has no end")?;
+        let end = Profile { frame: end_frame, regions: profile.regions.clone() };
+        self.next_pieces(shape, names, profile, &end, operation)
+    }
+
+    /// The pieces of a sweep run past the part that reach its next faces (DEC-109, DEC-112): it
+    /// starts at `start` and, with nothing in its way, would end at `end`. `shape` is let go.
+    fn next_pieces(
+        &mut self,
+        shape: ShapeHandle,
+        names: Vec<Option<FaceOrigin>>,
+        start: &Profile,
+        end: &Profile,
         operation: Operation,
     ) -> Result<Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>, Stop> {
         let kind = match operation {
@@ -1295,10 +1387,9 @@ impl<'a> Ctx<'a> {
             // The profile where it starts, and where the extrusion would end with nothing in its
             // way: a piece that touches the first starts at the sketch, one that touches the
             // second never met the part.
-            let start = self.k.make_face(profile)?.shape;
+            let start = self.k.make_face(start)?.shape;
             temp.push(start);
-            let end_frame = profile.frame.with_origin(profile.frame.origin() + profile.frame.z() * far).ok_or("the extrusion has no end")?;
-            let end = self.k.make_face(&Profile { frame: end_frame, regions: profile.regions.clone() })?.shape;
+            let end = self.k.make_face(end)?.shape;
             temp.push(end);
             let mut out = Vec::new();
             for i in 0..topo.solids {
@@ -1332,20 +1423,22 @@ impl<'a> Ctx<'a> {
     }
 
     /// An extrusion run past a plane at an angle to its sketch, cut back along the plane: what is
-    /// on the sketch's side stays, and the face on the plane is its end cap. `shape` is let go.
+    /// on the side of the plane `keep` is on stays, and the face on the plane is its `end` cap.
+    /// `shape` is let go.
     fn trim_to_plane(
         &mut self,
         id: FeatureId,
         shape: ShapeHandle,
         names: Vec<Option<FaceOrigin>>,
         plane: &Frame,
-        sketch: &Frame,
+        keep: Vec3,
+        end: CapEnd,
     ) -> Result<(ShapeHandle, Vec<Option<FaceOrigin>>), Stop> {
         let out = (|| -> Result<(ShapeHandle, Vec<Option<FaceOrigin>>), Stop> {
             let bb = self.k.bounding_box(shape)?.ok_or("the extrusion is empty")?;
-            // The side of the plane the sketch is on, as deep as the extrusion goes: a square on
-            // the plane round the extrusion's middle.
-            let back = if (sketch.origin() - plane.origin()).dot(plane.z()) > 0.0 { 1.0 } else { -1.0 };
+            // The side of the plane kept, as deep as the extrusion goes: a square on the plane
+            // round the extrusion's middle.
+            let back = if (keep - plane.origin()).dot(plane.z()) > 0.0 { 1.0 } else { -1.0 };
             let size = (bb.max - bb.min).len() + 1.0;
             let mid = bb.center() - plane.origin();
             let (cx, cy) = (mid.dot(plane.x()), mid.dot(plane.y()));
@@ -1359,10 +1452,7 @@ impl<'a> Ctx<'a> {
                 let faces = self.k.topology(keep.shape)?.faces;
                 let tool: Vec<Option<FaceOrigin>> = names_of_sweep(&keep.history, id, faces)
                     .into_iter()
-                    .map(|n| {
-                        n.filter(|o| matches!(o, FaceOrigin::Cap { end: CapEnd::Start, .. }))
-                            .map(|_| FaceOrigin::Cap { feature: id, end: CapEnd::End })
-                    })
+                    .map(|n| n.filter(|o| matches!(o, FaceOrigin::Cap { end: CapEnd::Start, .. })).map(|_| FaceOrigin::Cap { feature: id, end }))
                     .collect();
                 let body = Body { shape, names: names.clone(), created_by: id };
                 let piece =
@@ -1394,8 +1484,12 @@ impl<'a> Ctx<'a> {
             return Err("The axis is square to the sketch, so turning the profile about it makes no solid. Choose an axis that lies in the sketch's plane: a line of the sketch, or an origin axis in that plane.".into());
         }
         let profile = profile_of(sketch, frame, &r.regions)?;
+        let sign = if r.reverse { -1.0 } else { 1.0 };
         // (Flipped: the other way round; two angles change places.)
         let angle = match (r.angle.clone(), r.reverse) {
+            (RevolveAngle::To(plane), _) => AngleExtent::Angle(sign * self.revolve_to(&profile, &axis, &plane, sign)?),
+            // (Not quite a whole turn, so that where it would end is apart from where it starts.)
+            (RevolveAngle::ToNext, _) => AngleExtent::Angle(sign * (std::f64::consts::TAU - NEXT_GAP)),
             (RevolveAngle::Full, _) => AngleExtent::Full,
             (RevolveAngle::Angle(a), reverse) => AngleExtent::Angle(if reverse { -a } else { a }),
             (RevolveAngle::Symmetric(a), _) => AngleExtent::Symmetric(a),
@@ -1416,7 +1510,64 @@ impl<'a> Ctx<'a> {
         }
         let faces = self.k.topology(op.shape)?.faces;
         let names = names_of_sweep(&op.history, id, faces);
+        if r.angle == RevolveAngle::ToNext {
+            let AngleExtent::Angle(turn) = angle else { return Err("internal: to next is an angle".into()) };
+            let end = Profile {
+                frame: turned_frame(&profile.frame, &axis, turn).ok_or("the turned profile has no frame")?,
+                regions: profile.regions.clone(),
+            };
+            let pieces = self.next_pieces(op.shape, names, &profile, &end, r.operation)?;
+            return self.combine(id, pieces, r.operation);
+        }
         self.combine(id, vec![(op.shape, names)], r.operation)
+    }
+
+    /// How far round (radians, at most a whole turn) a revolution goes to reach `plane`, turning
+    /// `sign` round `axis`: the plane must hold the axis. To a flat face, to the half of the
+    /// plane the face is on; to a work or origin plane, to where the profile first meets it.
+    fn revolve_to(&mut self, profile: &Profile, axis: &Axis, plane: &PlaneRef, sign: f64) -> Result<f64, Stop> {
+        let target = self.plane_frame(plane)?;
+        let (o, u, n) = (axis.origin(), axis.dir(), target.z());
+        if n.dot(u).abs() > 1e-6 || (o - target.origin()).dot(n).abs() > tenon_geom::tol::LINEAR {
+            return Err("Revolve To goes round to a plane that holds its axis: pick a face or plane through the axis".into());
+        }
+        // The profile's point farthest from the axis: where it starts round.
+        let radial = |p: Vec3| {
+            let v = p - o;
+            v - u * v.dot(u)
+        };
+        let from = profile
+            .regions
+            .iter()
+            .flat_map(|r| &r.outer.curves)
+            .flat_map(|c| curve_points(&c.curve))
+            .map(|q| radial(profile.frame.plane_point(q)))
+            .max_by(|a, b| a.len().total_cmp(&b.len()))
+            .filter(|v| v.len() > tenon_geom::tol::LINEAR)
+            .ok_or("the profile lies on the axis")?;
+        // How far round from `from` to direction `to`, turning `sign`, in (0, 2 pi].
+        let round = |to: Vec3| {
+            let a = u.cross(from).dot(to).atan2(from.dot(to)) * sign;
+            let a = a.rem_euclid(std::f64::consts::TAU);
+            if a < 1e-9 { std::f64::consts::TAU } else { a }
+        };
+        let in_plane = u.cross(n);
+        let angle = match plane {
+            PlaneRef::Face(fref) => {
+                let (b, face) = self.regen.resolve(fref, &*self.k).map_err(|e| self.describe_ref(fref, &e))?;
+                let shape = self.regen.bodies.get(b).ok_or("no such body")?.shape;
+                let toward = radial(self.k.face_info(shape.face(face))?.centroid);
+                if toward.len() < tenon_geom::tol::LINEAR {
+                    return Err("the face it goes to is on the axis: it has no side to go round to".into());
+                }
+                round(toward)
+            }
+            _ => round(in_plane).min(round(-in_plane)),
+        };
+        if angle > std::f64::consts::TAU - 1e-9 {
+            return Err("the plane it goes to is where the profile is: it would go a whole turn. Use Full".into());
+        }
+        Ok(angle)
     }
 
     fn sweep(&mut self, id: FeatureId, s: &Sweep) -> Result<(), Stop> {

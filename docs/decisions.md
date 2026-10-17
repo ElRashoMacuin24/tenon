@@ -3020,3 +3020,41 @@ Tangent's Solution is Outside or Inside. `asm.constrain` takes `type: "tangent"`
 
 **Not done:** cones (their radius changes along them), and a tangent to a curved face that is
 neither a cylinder nor a sphere; Symmetry.
+
+## DEC-111 Extrude Between (2026-10-17)
+
+The owner asked to keep going with the comparison's list ("keep going with the rest of the
+list"). Inventor's Extrude goes Between two faces or planes, its help warning that both must
+stay; Tenon had it greyed.
+
+**What it does.** `ExtrudeExtent::Between { from, to }`, each a flat face, a work plane or an
+origin plane, wherever the sketch is (the sketch need not lie between them). The profile is run
+across both and cut along each, the way To is cut at an angle (`trim_to_plane`, which now keeps
+a given side and names either cap): the face on `from` is the start cap, the face on `to` the
+end cap. Both square to the sketch, it is the profile moved to `from` and extruded as far as
+`to`, exactly. One plane twice, or a plane along the extrusion, is refused in words; no taper.
+
+**In the panel:** Extents > Between shows From and To; a pick fills From, then To, and clicking
+either row makes it the one the next pick fills. `model.extrude` takes `from` with `to`;
+files write `extent = { between = { from, to } }`, additive in version 2.
+
+## DEC-112 Revolve To and To Next (2026-10-17)
+
+From the same list. `RevolveAngle::To(PlaneRef)` and `RevolveAngle::ToNext`, Default or
+Flipped.
+
+- *To* turns round to a plane that holds the axis (any other is refused in words): to a flat
+  face, as far round as the half of the plane the face is on (from its centroid); to a work or
+  origin plane, to where the profile first meets it. Measured from the profile's point farthest
+  from the axis. Its own plane is half a turn round.
+- *To Next* turns a little short of a whole turn (`NEXT_GAP`, so that where it would end is
+  apart from where it starts) and keeps the pieces that start at the sketch, as Extrude's To
+  Next does: the selection is now `next_pieces`, given where the sweep starts and where it would
+  end, for both.
+
+In the panel, Extents has Angle, Full, To and To Next; To shows the plane or "Click a face or
+plane through the axis", picked in the view or the browser (a pick of an axis in the browser
+still sets the axis). `model.revolve` takes `to` and `to_next`; files write
+`angle = { to = ... }` and `angle = "to_next"`.
+
+**Not done:** Revolve Between, and To a plane that does not hold the axis.

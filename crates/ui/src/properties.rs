@@ -6,7 +6,7 @@ use tenon_geom::Vec3;
 use tenon_model::{AxisSel, DirectionRef, Operation, OriginAxis, OriginPlane, PlaneRef, RegionSel};
 use tenon_sketch::EntityId;
 
-use crate::panels::{AxisChoice, ChamferMethod, CopyKind, Direction, ExtentChoice, Panel, PanelRequest, Seat, Slot};
+use crate::panels::{AxisChoice, ChamferMethod, CopyKind, Direction, ExtentChoice, Panel, PanelRequest, RevTerm, Seat, Slot};
 use crate::theme::{self, Tokens};
 use crate::work::{WorkMethod, WorkSlot};
 use crate::workbench::Workbench;
@@ -610,6 +610,7 @@ impl Workbench {
                                         ExtentChoice::ThroughAll => "Through All",
                                         ExtentChoice::To => "To",
                                         ExtentChoice::ToNext => "To Next",
+                                        ExtentChoice::Between => "Between",
                                     })
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(&mut p.extent, ExtentChoice::Distance, "Distance");
@@ -629,11 +630,31 @@ impl Workbench {
                                         if r.clicked() && matches!(p.direction, Direction::Symmetric | Direction::Asymmetric) {
                                             p.direction = Direction::Default;
                                         }
-                                        ui.add_enabled(false, egui::Button::selectable(false, "Between (later)"));
+                                        let r = ui.selectable_value(&mut p.extent, ExtentChoice::Between, "Between");
+                                        crate::drawing::remember(ui, "tn_extent_between", r.rect);
+                                        if r.clicked() {
+                                            p.direction = Direction::Default;
+                                            p.pick_from = p.from.is_none();
+                                        }
                                     });
                                 crate::drawing::remember(ui, "tn_extents", extents.response.rect);
                                 ui.end_row();
-                                if to {
+                                if p.extent == ExtentChoice::Between {
+                                    // Two selectors: the one lit takes the next face or plane picked.
+                                    for (label, start) in [("From", true), ("To", false)] {
+                                        ui.label(label);
+                                        let chosen = if start { &p.from } else { &p.to };
+                                        let text = chosen.as_ref().map_or_else(|| "Click a face or plane".to_string(), |pl| self.plane_name(pl));
+                                        let active = p.pick_from == start;
+                                        let r = ui.add(egui::Button::selectable(active, text)).on_hover_text("Then click a flat face, a work plane, or an origin plane in the browser");
+                                        crate::drawing::remember(ui, &format!("tn_between_{}", label.to_lowercase()), r.rect);
+                                        if r.clicked() {
+                                            p.pick_from = start;
+                                        }
+                                        ui.end_row();
+                                    }
+                                }
+                                if to && p.extent == ExtentChoice::To {
                                     ui.label("To");
                                     let said = match &p.to {
                                         Some(plane) => egui::RichText::new(self.plane_name(plane)),
@@ -688,9 +709,9 @@ impl Workbench {
                             });
                         });
                         section(ui, "Advanced Properties", p.taper != 0.0, |ui| {
-                            if p.extent == ExtentChoice::ToNext {
-                                ui.add_enabled(false, egui::Label::new("Taper: not with To Next")).on_disabled_hover_text(
-                                    "To Next ends where the part is; a tapered side would meet it at no one place. Give a distance or To to taper.",
+                            if matches!(p.extent, ExtentChoice::ToNext | ExtentChoice::Between) {
+                                ui.add_enabled(false, egui::Label::new("Taper: not with To Next or Between")).on_disabled_hover_text(
+                                    "These end where the part or the planes are; a tapered side would meet them at no one place. Give a distance or To to taper.",
                                 );
                             } else if matches!(p.direction, Direction::Symmetric | Direction::Asymmetric) && p.extent == ExtentChoice::Distance {
                                 ui.add_enabled(false, egui::Label::new("Taper: for one direction only")).on_disabled_hover_text(
@@ -759,14 +780,42 @@ impl Workbench {
                         section(ui, "Behavior", true, |ui| {
                             egui::Grid::new("tn_props_rev_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                                 ui.label("Extents");
-                                egui::ComboBox::from_id_salt("tn_props_rev_extents").selected_text(if p.full { "Full" } else { "Angle" }).show_ui(
-                                    ui,
-                                    |ui| {
-                                        ui.selectable_value(&mut p.full, false, "Angle");
-                                        ui.selectable_value(&mut p.full, true, "Full");
-                                    },
-                                );
+                                let shown = match (p.full, p.term) {
+                                    (true, _) => "Full",
+                                    (false, RevTerm::Angle) => "Angle",
+                                    (false, RevTerm::To) => "To",
+                                    (false, RevTerm::ToNext) => "To Next",
+                                };
+                                let extents = egui::ComboBox::from_id_salt("tn_props_rev_extents").selected_text(shown).show_ui(ui, |ui| {
+                                    // (Inventor's four: DEC-112 adds To and To Next.)
+                                    for (label, full, term, key) in [
+                                        ("Angle", false, RevTerm::Angle, "tn_rev_angle"),
+                                        ("Full", true, RevTerm::Angle, "tn_rev_full"),
+                                        ("To", false, RevTerm::To, "tn_rev_to"),
+                                        ("To Next", false, RevTerm::ToNext, "tn_rev_to_next"),
+                                    ] {
+                                        let r = ui.selectable_label(shown == label, label);
+                                        crate::drawing::remember(ui, key, r.rect);
+                                        if r.clicked() {
+                                            (p.full, p.term) = (full, term);
+                                            if term != RevTerm::Angle && matches!(p.direction, Direction::Symmetric | Direction::Asymmetric) {
+                                                p.direction = Direction::Default;
+                                                p.symmetric = false;
+                                            }
+                                        }
+                                    }
+                                });
+                                crate::drawing::remember(ui, "tn_rev_extents", extents.response.rect);
                                 ui.end_row();
+                                if !p.full && p.term == RevTerm::To {
+                                    ui.label("To");
+                                    let said = match &p.to {
+                                        Some(plane) => egui::RichText::new(self.plane_name(plane)),
+                                        None => egui::RichText::new("Click a face or plane through the axis").color(t.accent),
+                                    };
+                                    ui.label(said).on_hover_text("A flat face or a plane that holds the axis: a face in the view, or a plane in the browser");
+                                    ui.end_row();
+                                }
                                 if !p.full {
                                     // (Inventor's four directions: DEC-108.)
                                     ui.label("Direction");
@@ -777,13 +826,18 @@ impl Workbench {
                                         (Glyph::Asymmetric, "Asymmetric: two angles", Direction::Asymmetric),
                                     ];
                                     let shown = if p.symmetric { Direction::Symmetric } else { p.direction };
-                                    let items: Vec<(Glyph, &str, bool)> = dirs.iter().map(|d| (d.0, d.1, true)).collect();
+                                    // (To and To Next go one way round: Default or Flipped.)
+                                    let one_way = p.term != RevTerm::Angle;
+                                    let items: Vec<(Glyph, &str, bool)> =
+                                        dirs.iter().map(|d| (d.0, d.1, !one_way || matches!(d.2, Direction::Default | Direction::Flipped))).collect();
                                     let sel = dirs.iter().position(|d| d.2 == shown).unwrap_or(0);
                                     if let Some(i) = glyph_row(ui, &items, sel, t) {
                                         p.direction = dirs[i].2;
                                         p.symmetric = p.direction == Direction::Symmetric;
                                     }
                                     ui.end_row();
+                                }
+                                if !p.full && p.term == RevTerm::Angle {
                                     ui.label(if p.direction == Direction::Asymmetric { "Angle A" } else { "Angle" });
                                     enter |= eq_value_field(
                                         ui,

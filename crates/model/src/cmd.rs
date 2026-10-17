@@ -1965,7 +1965,21 @@ fn add_feature(s: &mut Session, kind: FeatureKind, p: &Value) -> CmdResult {
 
 fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
-    let extent = if arg(p, "to").is_some() {
+    let between = |key: &str| -> Result<PlaneRef, CmdError> {
+        let plane = plane_value(p, key)?;
+        if let PlaneRef::Work(id) = plane
+            && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
+        {
+            return Err(format!("{id} is not a work plane").into());
+        }
+        Ok(plane)
+    };
+    let extent = if arg(p, "from").is_some() {
+        if arg(p, "to").is_none() {
+            return Err("`from` goes with `to`: the two planes it goes between".into());
+        }
+        ExtrudeExtent::Between { from: between("from")?, to: between("to")? }
+    } else if arg(p, "to").is_some() {
         let plane = plane_value(p, "to")?;
         if let PlaneRef::Work(id) = plane
             && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
@@ -2007,6 +2021,16 @@ fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
         Some(_) => axis_ref(s, p)?,
     };
     let angle = match (opt_num(p, "angle")?, opt_num(p, "backward")?) {
+        _ if arg(p, "to_next").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::ToNext,
+        _ if arg(p, "to").is_some() => {
+            let plane = plane_value(p, "to")?;
+            if let PlaneRef::Work(id) = plane
+                && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
+            {
+                return Err(format!("{id} is not a work plane").into());
+            }
+            RevolveAngle::To(plane)
+        }
         (None, None) => RevolveAngle::Full,
         (Some(a), _) if arg(p, "symmetric").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::Symmetric(a),
         (Some(a), Some(b)) => RevolveAngle::TwoSided { forward: a, backward: b },

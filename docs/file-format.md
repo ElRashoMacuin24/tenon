@@ -300,12 +300,14 @@ Field values:
   - `{ two_sided = { forward = a, backward = b } }`
   - `"through_all"`
   - `"to_next"`: as far as the part's next faces (DEC-109)
+  - `{ between = { from = <plane>, to = <plane> } }`: from one plane to the other (DEC-111)
   - `{ to = <plane> }`: as far as a plane, on whichever side of the sketch it is (DEC-104); the
     plane written as a sketch's is: `{ origin = "XY" }`, `{ face = <face reference> }` or
     `{ work = <work plane id> }`
 - **`operation`:** `"join"`, `"cut"`, `"new_body"` or `"intersect"`.
-- **Revolve `angle`:** `"full"`, `{ angle = a }`, `{ symmetric = a }` or
-  `{ two_sided = { forward = a, backward = b } }` (DEC-108); `reverse = true` after it turns it
+- **Revolve `angle`:** `"full"`, `{ angle = a }`, `{ symmetric = a }`,
+  `{ two_sided = { forward = a, backward = b } }` (DEC-108), `{ to = <plane> }` or `"to_next"`
+  (DEC-112); `reverse = true` after it turns it
   the other way round the axis (written only when true).
 - **Chamfer `size`:**
   - `{ equal = d }`

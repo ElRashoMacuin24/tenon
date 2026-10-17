@@ -21,6 +21,8 @@ pub(crate) enum ExtentChoice {
     To,
     /// As far as the part's next faces (DEC-109).
     ToNext,
+    /// From one face or plane to another (DEC-111).
+    Between,
 }
 
 /// Which way a feature goes from its sketch.
@@ -48,8 +50,11 @@ pub(crate) struct ExtrudePanel {
     pub keep_taper: bool,
     /// Degrees the sides lean in as they leave the sketch (negative: out); zero is straight.
     pub taper: f64,
-    /// With To: the face or plane it goes as far as.
+    /// With To: the face or plane it goes as far as; with Between, the one it ends on.
     pub to: Option<PlaneRef>,
+    /// With Between: the face or plane it starts from, and whether a pick goes there next.
+    pub from: Option<PlaneRef>,
+    pub pick_from: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +62,14 @@ pub(crate) enum AxisChoice {
     Origin(OriginAxis),
     Line(EntityId),
     Work(FeatureId),
+}
+
+/// Where a revolution ends besides an angle or a full turn (DEC-112).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RevTerm {
+    Angle,
+    To,
+    ToNext,
 }
 
 #[derive(Clone, Debug)]
@@ -70,6 +83,9 @@ pub(crate) struct RevolvePanel {
     /// Flipped, or (with `degrees_b`) Asymmetric, as Inventor's directions (DEC-108).
     pub direction: Direction,
     pub degrees_b: f64,
+    /// To a plane or the next faces instead of an angle, and the plane (DEC-112).
+    pub term: RevTerm,
+    pub to: Option<PlaneRef>,
     pub operation: Operation,
     pub regions: RegionSel,
 }
@@ -603,13 +619,14 @@ impl Panel {
         match self {
             Panel::Extrude(p) => match (p.extent, p.direction) {
                 (ExtentChoice::ThroughAll | ExtentChoice::To, _) => vec![("taper", "/taper")],
-                (ExtentChoice::ToNext, _) => vec![],
+                (ExtentChoice::ToNext | ExtentChoice::Between, _) => vec![],
                 (_, Direction::Symmetric) => vec![("distance", "/extent/symmetric")],
                 (_, Direction::Asymmetric) => vec![("distance", "/extent/two_sided/forward"), ("distance_b", "/extent/two_sided/backward")],
                 _ => vec![("distance", "/extent/distance"), ("taper", "/taper")],
             },
             Panel::Revolve(p) if p.full => vec![],
             Panel::Revolve(p) => match p.direction {
+                _ if p.term != RevTerm::Angle => vec![],
                 _ if p.symmetric || p.direction == Direction::Symmetric => vec![("degrees", "/angle/symmetric")],
                 Direction::Asymmetric => vec![("degrees", "/angle/two_sided/forward"), ("degrees_b", "/angle/two_sided/backward")],
                 _ => vec![("degrees", "/angle/angle")],
@@ -741,6 +758,10 @@ impl ExtrudePanel {
             },
             (ExtentChoice::ThroughAll, _) => ExtrudeExtent::ThroughAll,
             (ExtentChoice::ToNext, _) => ExtrudeExtent::ToNext,
+            (ExtentChoice::Between, _) => match (&self.from, &self.to) {
+                (Some(from), Some(to)) => ExtrudeExtent::Between { from: from.clone(), to: to.clone() },
+                _ => ExtrudeExtent::Distance(self.distance),
+            },
             (ExtentChoice::Distance, Direction::Symmetric) => ExtrudeExtent::Symmetric(self.distance),
             (ExtentChoice::Distance, Direction::Asymmetric) => ExtrudeExtent::TwoSided { forward: self.distance, backward: self.distance_b },
             (ExtentChoice::Distance, _) => ExtrudeExtent::Distance(self.distance),
@@ -755,7 +776,11 @@ impl ExtrudePanel {
 
 impl RevolvePanel {
     pub(crate) fn kind(&self) -> FeatureKind {
-        let angle = if self.full {
+        let angle = if !self.full && self.term == RevTerm::ToNext {
+            RevolveAngle::ToNext
+        } else if let (false, RevTerm::To, Some(plane)) = (self.full, self.term, &self.to) {
+            RevolveAngle::To(plane.clone())
+        } else if self.full {
             RevolveAngle::Full
         } else if self.symmetric || self.direction == Direction::Symmetric {
             RevolveAngle::Symmetric(self.degrees.to_radians())
@@ -965,10 +990,12 @@ impl Workbench {
                         ExtrudeExtent::ThroughAll => (ExtentChoice::ThroughAll, way, 10.0, 10.0),
                         ExtrudeExtent::To(_) => (ExtentChoice::To, Direction::Default, 10.0, 10.0),
                         ExtrudeExtent::ToNext => (ExtentChoice::ToNext, way, 10.0, 10.0),
+                        ExtrudeExtent::Between { .. } => (ExtentChoice::Between, Direction::Default, 10.0, 10.0),
                     };
-                    let to = match &e.extent {
-                        ExtrudeExtent::To(plane) => Some(plane.clone()),
-                        _ => None,
+                    let (from, to) = match &e.extent {
+                        ExtrudeExtent::To(plane) => (None, Some(plane.clone())),
+                        ExtrudeExtent::Between { from, to } => (Some(from.clone()), Some(to.clone())),
+                        _ => (None, None),
                     };
                     ExtrudePanel {
                         editing,
@@ -982,6 +1009,8 @@ impl Workbench {
                         taper: e.taper.unwrap_or(0.0).to_degrees(),
                         keep_taper: e.taper.is_some(),
                         to,
+                        from,
+                        pick_from: false,
                     }
                 }
                 _ => return Err("not an extrusion".into()),
@@ -1001,6 +1030,8 @@ impl Workbench {
                     taper: 0.0,
                     keep_taper: false,
                     to: None,
+                    from: None,
+                    pick_from: true,
                 }
             }
         };
@@ -1019,6 +1050,12 @@ impl Workbench {
                         RevolveAngle::Angle(a) => (false, a.to_degrees(), false),
                         RevolveAngle::Symmetric(a) => (false, a.to_degrees(), true),
                         RevolveAngle::TwoSided { forward, .. } => (false, forward.to_degrees(), false),
+                        RevolveAngle::To(_) | RevolveAngle::ToNext => (false, 90.0, false),
+                    };
+                    let (term, to) = match &r.angle {
+                        RevolveAngle::To(plane) => (RevTerm::To, Some(plane.clone())),
+                        RevolveAngle::ToNext => (RevTerm::ToNext, None),
+                        _ => (RevTerm::Angle, None),
                     };
                     let (direction, degrees_b) = match (&r.angle, r.reverse) {
                         (RevolveAngle::TwoSided { backward, .. }, _) => (Direction::Asymmetric, backward.to_degrees()),
@@ -1040,6 +1077,8 @@ impl Workbench {
                         symmetric,
                         direction,
                         degrees_b,
+                        term,
+                        to,
                         operation: r.operation,
                         regions: r.regions.clone(),
                     }
@@ -1058,6 +1097,8 @@ impl Workbench {
                     symmetric: false,
                     direction: Direction::Default,
                     degrees_b: 90.0,
+                    term: RevTerm::Angle,
+                    to: None,
                     operation: Operation::Join,
                     regions: RegionSel::Default,
                 }
@@ -1241,6 +1282,10 @@ impl Workbench {
                             ExtrudeExtent::ThroughAll => p["through_all"] = json!(true),
                             ExtrudeExtent::To(ref plane) => p["to"] = plane_json(plane),
                             ExtrudeExtent::ToNext => p["to_next"] = json!(true),
+                            ExtrudeExtent::Between { ref from, ref to } => {
+                                p["from"] = plane_json(from);
+                                p["to"] = plane_json(to);
+                            }
                         }
                         if let Some(taper) = e.taper {
                             p["taper"] = json!(taper);
@@ -1257,7 +1302,7 @@ impl Workbench {
                             AxisRef::SketchLine(l) => json!(l.0),
                             AxisRef::Work(w) => json!({ "work": w.0 }),
                         };
-                        match r.angle {
+                        match &r.angle {
                             RevolveAngle::Full => {}
                             RevolveAngle::Angle(a) => p["angle"] = json!(a),
                             RevolveAngle::Symmetric(a) => {
@@ -1268,6 +1313,8 @@ impl Workbench {
                                 p["angle"] = json!(forward);
                                 p["backward"] = json!(backward);
                             }
+                            RevolveAngle::To(plane) => p["to"] = plane_json(plane),
+                            RevolveAngle::ToNext => p["to_next"] = json!(true),
                         }
                         if r.reverse {
                             p["reverse"] = json!(true);

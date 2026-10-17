@@ -1163,3 +1163,109 @@ fn a_cut_to_next_goes_through_the_material_it_starts_in() {
     let r = run(&mut s, &mut k, "model.regenerate", json!({}));
     assert!(r["error"]["message"].as_str().unwrap().contains("does not intersect"), "{r}");
 }
+
+#[test]
+fn an_extrusion_goes_between_two_planes_wherever_its_sketch_is() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, _, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    // A disc drawn on the floor, made between planes 15 and 25 up: 10 thick, above the block.
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 20, "cy": 10, "r": 4 }));
+    let lo = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 15 }))["feature"].as_u64().unwrap();
+    let hi = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 25 }))["feature"].as_u64().unwrap();
+    let disc = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "from": { "work": lo }, "to": { "work": hi }, "operation": "new_body" }))
+        ["feature"]
+        .as_u64()
+        .unwrap();
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 8000.0 + PI * 16.0 * 10.0), "{}", volume(&mut s, &mut k));
+    let faces = run(&mut s, &mut k, "model.faces", json!({ "body": 1 }));
+    let start = faces["faces"].as_array().unwrap().iter().find(|f| f["name"] == json!({ "type": "cap", "feature": disc, "end": "start" })).unwrap();
+    assert!((start["centroid"][2].as_f64().unwrap() - 15.0).abs() < 1e-9, "its start is on the first plane: {start}");
+    run(&mut s, &mut k, "feature.delete", json!({ "feature": disc }));
+
+    // A bar drawn on the floor beside the block, from 10 below up to a plane tilted 30 degrees
+    // about Y: over a circle the tilted end is on average as high as at its middle (x = 50).
+    let tilt = run(&mut s, &mut k, "work.plane", json!({ "by": "angle", "base": "xy", "axis": "y", "angle": PI / 6.0 }))["feature"].as_u64().unwrap();
+    let below = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": -10 }))["feature"].as_u64().unwrap();
+    let sk2 = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk2, "cx": 50, "cy": 10, "r": 3 }));
+    let bar = run(
+        &mut s,
+        &mut k,
+        "model.extrude",
+        json!({ "sketch": sk2, "from": { "work": below }, "to": { "work": tilt }, "operation": "new_body" }),
+    )["feature"]
+        .as_u64()
+        .unwrap();
+    regenerates(&mut s, &mut k);
+    let v = volume(&mut s, &mut k) - 8000.0;
+    let rise = 50.0 * (PI / 6.0).tan();
+    assert!(approx(v, PI * 9.0 * (rise + 10.0)) || approx(v, PI * 9.0 * (rise - 10.0).abs()), "{v}");
+    let faces = run(&mut s, &mut k, "model.faces", json!({ "body": 1 }));
+    let caps = faces["faces"].as_array().unwrap().iter().filter(|f| f["name"]["type"] == "cap" && f["name"]["feature"] == bar).count();
+    assert_eq!(caps, 2, "a start on the lower plane and an end on the tilted one: {faces}");
+
+    // One plane twice, or one along the extrusion, is refused in words.
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "from": { "work": lo }, "to": { "work": lo }, "operation": "new_body" }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("are one"), "{r}");
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "from": { "work": lo }, "to": "yz", "operation": "new_body" }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("runs along the extrusion"), "{r}");
+}
+
+#[test]
+fn a_revolution_goes_round_to_a_plane_or_to_the_next_faces() {
+    // The 10 x 10 square 10 to 20 from the Y axis, as before: a turn of t sweeps 1500 t.
+    let setup = || {
+        let (mut s, mut k) = (Session::default(), OcctKernel::new());
+        let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+        run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 10, "y1": 0, "x2": 20, "y2": 10 }));
+        (s, k, sk)
+    };
+    // To the YZ plane, which holds the axis: a quarter turn, the first it meets, either way.
+    for reverse in [false, true] {
+        let (mut s, mut k, sk) = setup();
+        run(&mut s, &mut k, "model.revolve", json!({ "sketch": sk, "axis": "y", "to": "yz", "reverse": reverse }));
+        regenerates(&mut s, &mut k);
+        assert!(approx(volume(&mut s, &mut k), 1500.0 * PI / 2.0), "{reverse}: {}", volume(&mut s, &mut k));
+    }
+    // To its own plane, XY: half a turn, to the other side of the axis.
+    let (mut s, mut k, sk) = setup();
+    run(&mut s, &mut k, "model.revolve", json!({ "sketch": sk, "axis": "y", "to": "xy" }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 1500.0 * PI), "{}", volume(&mut s, &mut k));
+
+    // To a face: a block's underside in the XY plane on the far side (x -40 to -25) is half a
+    // turn round, whichever way.
+    let (mut s, mut k, sk) = setup();
+    let sk2 = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk2, "x1": -40, "y1": 0, "x2": -25, "y2": 10 }));
+    let blk = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "distance": 5, "operation": "new_body" }))["feature"].as_u64().unwrap();
+    let under = run(&mut s, &mut k, "model.face_ref", json!({ "origin": { "type": "cap", "feature": blk, "end": "start" } }));
+    run(&mut s, &mut k, "model.revolve", json!({ "sketch": sk, "axis": "y", "to": under, "reverse": true, "operation": "new_body" }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 750.0 + 1500.0 * PI), "{}", volume(&mut s, &mut k));
+    // A plane that does not hold the axis is refused in words.
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    run(&mut s, &mut k, "model.revolve", json!({ "sketch": sk, "axis": "y", "to": "xz" }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("holds its axis"), "{r}");
+
+    // To Next: round until it meets a block standing across its way, near half a turn round.
+    let (mut s, mut k, sk) = setup();
+    let sk2 = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk2, "x1": -30, "y1": -5, "x2": -5, "y2": 15 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "symmetric": 10 }));
+    regenerates(&mut s, &mut k);
+    let block = volume(&mut s, &mut k);
+    run(&mut s, &mut k, "model.revolve", json!({ "sketch": sk, "axis": "y", "to_next": true }));
+    regenerates(&mut s, &mut k);
+    let ring = volume(&mut s, &mut k) - block;
+    // (It stops between where its inner edge and its outer edge meet the block: 150 and about
+    // 165.5 degrees round.)
+    let (least, most) = (1500.0 * 150f64.to_radians(), 1500.0 * 165.6f64.to_radians());
+    assert!(ring > least && ring < most, "{ring} not in {least}..{most}");
+}

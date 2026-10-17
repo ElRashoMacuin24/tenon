@@ -25,6 +25,10 @@ shows it in [ROADMAP.md](ROADMAP.md).
   plane. `model.extrude` takes `to`; files gain `extent = { to = <plane> }`.
 - **Hole: Spotface and To.** A spotface seat (the hole measured from its floor), and holes
   that go as far as a flat face or plane. `model.hole` takes `type: "spotface"` and `to`.
+- **Extrude Between**: from one flat face or plane to another, wherever the sketch is.
+  `model.extrude` takes `from` and `to`.
+- **Revolve To** a face or plane through the axis, and **To Next**. `model.revolve` takes `to`
+  and `to_next`.
 - **Tangent** joins Constrain: a cylinder or sphere against a plane or another, outside or
   inside. `asm.constrain` takes `type: "tangent"` and `inside`.
 - **Extrude To Next**: joined, as far as the part's next face, sloping or curved; cut, through

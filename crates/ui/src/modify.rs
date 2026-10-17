@@ -193,8 +193,9 @@ impl Workbench {
     /// The open panel takes a face or plane to go as far as: Extrude To, or a Hole's To.
     pub(crate) fn picking_to(&self) -> bool {
         match &self.panel {
-            Some(Panel::Extrude(e)) => e.extent == crate::panels::ExtentChoice::To,
+            Some(Panel::Extrude(e)) => matches!(e.extent, crate::panels::ExtentChoice::To | crate::panels::ExtentChoice::Between),
             Some(Panel::Hole(h)) => h.to_plane,
+            Some(Panel::Revolve(r)) => !r.full && r.term == crate::panels::RevTerm::To,
             _ => false,
         }
     }
@@ -203,7 +204,17 @@ impl Workbench {
     pub(crate) fn set_to_plane(&mut self, plane: PlaneRef) -> bool {
         match &mut self.panel {
             Some(Panel::Extrude(e)) if e.extent == crate::panels::ExtentChoice::To => e.to = Some(plane),
+            // (Between: the start, then the end; a row clicked chooses which comes next.)
+            Some(Panel::Extrude(e)) if e.extent == crate::panels::ExtentChoice::Between => {
+                if e.pick_from || e.from.is_none() {
+                    e.from = Some(plane);
+                    e.pick_from = false;
+                } else {
+                    e.to = Some(plane);
+                }
+            }
             Some(Panel::Hole(h)) if h.to_plane => h.to = Some(plane),
+            Some(Panel::Revolve(r)) if !r.full && r.term == crate::panels::RevTerm::To => r.to = Some(plane),
             _ => return false,
         }
         true

@@ -2161,6 +2161,25 @@
             "type": "boolean",
             "description": "as far as the part's next faces: joined, to where it meets the part; cut, through the material it starts in"
           },
+          "from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "xy",
+                  "yz",
+                  "xz"
+                ]
+              },
+              {
+                "$ref": "#/$defs/face_ref"
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "with `to`: from this plane to that one, wherever the sketch is (between)"
+          },
           "to": {
             "anyOf": [
               {
@@ -2274,6 +2293,29 @@
             "type": "number",
             "x-unit": "rad",
             "description": "with `angle`: a second angle the other way (asymmetric)"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "xy",
+                  "yz",
+                  "xz"
+                ]
+              },
+              {
+                "$ref": "#/$defs/face_ref"
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "round to a plane that holds the axis: a flat face, a work plane or an origin plane"
+          },
+          "to_next": {
+            "type": "boolean",
+            "description": "round to the part's next faces"
           },
           "reverse": {
             "type": "boolean",

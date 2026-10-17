@@ -108,7 +108,8 @@ Text uses one font, DejaVu Sans, built in so that a part looks the same on every
 ## Features
 
 An extrusion goes a **Distance**, **Through All**, **To Next** (as far as the part's next face;
-a cut goes through the material it starts in), or **To** a flat face or plane: choose To
+a cut goes through the material it starts in), **Between** two faces or planes, or **To** a
+flat face or plane: choose To
 under Extents, then click the face, a work plane, or a plane in the browser.
 
 To delete a feature, right-click it in the browser and choose **Delete**. When sketches it is

@@ -384,8 +384,10 @@ impl Workbench {
             return d.is_some_and(|(d, through)| self.set_load_direction(d, Some(through)));
         }
         // (Extrude To, or a Hole's To: the plane it goes as far as.)
-        if self.picking_to() {
-            return plane.is_some_and(|p| self.set_to_plane(p));
+        if self.picking_to()
+            && let Some(p) = plane.clone()
+        {
+            return self.set_to_plane(p);
         }
         match &mut self.panel {
             Some(Panel::Work(w)) => {

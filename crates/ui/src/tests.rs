@@ -2779,3 +2779,84 @@ fn an_extrusion_is_flipped_to_the_next_face() {
     let ex = wb.document().features().last().unwrap();
     assert!(matches!(&ex.kind, tenon_model::FeatureKind::Extrude(e) if e.extent == tenon_model::ExtrudeExtent::ToNext && e.reverse), "{:?}", ex.kind);
 }
+
+#[test]
+fn an_extrusion_goes_between_two_planes_picked_in_the_browser() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.exec("work.plane", json!({ "base": "xy", "distance": 15 })).unwrap();
+    wb.exec("work.plane", json!({ "base": "xy", "distance": 25 })).unwrap();
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": 0, "cy": 0, "r": 4 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    // E; Extents: Between; From the first work plane, To the second, both from the browser.
+    d.tap(&mut wb, egui::Key::E);
+    d.settle(&mut wb);
+    d.click(&mut wb, pressable(&d, "tn_extents"));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_extent_between"));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, browser_row(&d, "Work Plane1").center());
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, browser_row(&d, "Work Plane2").center());
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel: {}", wb.status()) };
+    assert!(p.from.is_some() && p.to.is_some() && p.from != p.to, "{:?} {:?}", p.from, p.to);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - PI * 16.0 * 10.0).abs() < 1e-6, "{}", volume(&wb));
+    // Opened again, the From row can be made the one a pick goes to.
+    let id = wb.document().features().last().unwrap().id;
+    wb.edit_feature(id).unwrap();
+    d.settle(&mut wb);
+    d.click(&mut wb, pressable(&d, "tn_between_from"));
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(&wb.panel, Some(Panel::Extrude(p)) if p.pick_from && p.extent == crate::panels::ExtentChoice::Between));
+}
+
+#[test]
+fn a_revolution_goes_round_to_a_plane_picked_in_the_browser() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 10, "y1": 0, "x2": 20, "y2": 10 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    wb.run_ui("model.revolve").unwrap();
+    d.frame(&mut wb, vec![]);
+    if let Some(Panel::Revolve(p)) = &mut wb.panel {
+        p.axis = crate::panels::AxisChoice::Origin(tenon_model::OriginAxis::Y);
+    }
+    d.frame(&mut wb, vec![]);
+    // Extents: To; the YZ plane from the browser's Origin folder: a quarter turn.
+    d.click(&mut wb, pressable(&d, "tn_rev_extents"));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_rev_to"));
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "Click a face or plane through the axis"), "{:?}", d.texts());
+    if !d.texts().iter().any(|t| t == "YZ Plane") {
+        d.click(&mut wb, browser_row(&d, "Origin").left_center() + vec2(27.0, 0.0));
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, browser_row(&d, "YZ Plane").center());
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Revolve(p)) = wb.panel.clone() else { panic!("no revolve panel: {}", wb.status()) };
+    assert!(matches!(p.to, Some(tenon_model::PlaneRef::Origin(tenon_model::OriginPlane::YZ))), "{:?} {}", p.to, wb.status());
+    assert!(matches!(p.axis, crate::panels::AxisChoice::Origin(tenon_model::OriginAxis::Y)), "the axis stays: {:?}", p.axis);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - 1500.0 * PI / 2.0).abs() < 1e-6, "{}", volume(&wb));
+    // To Next is in the same list.
+    wb.run_ui("model.revolve").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_rev_extents"));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_rev_to_next"));
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(&wb.panel, Some(Panel::Revolve(p)) if p.term == crate::panels::RevTerm::ToNext));
+}

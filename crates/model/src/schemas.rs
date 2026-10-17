@@ -426,6 +426,7 @@ static SCHEMAS: &[C] = &[
             opt("symmetric", Length, "the total distance, half each way"),
             opt("through_all", Bool, "through the whole part"),
             opt("to_next", Bool, "as far as the part's next faces: joined, to where it meets the part; cut, through the material it starts in"),
+            opt("from", PLANE, "with `to`: from this plane to that one, wherever the sketch is (between)"),
             opt(
                 "to",
                 PLANE,
@@ -451,6 +452,8 @@ static SCHEMAS: &[C] = &[
             opt("angle", Angle, "how far round (default: all the way)"),
             opt("symmetric", Bool, "half the angle each way from the sketch (default false)"),
             opt("backward", Angle, "with `angle`: a second angle the other way (asymmetric)"),
+            opt("to", PLANE, "round to a plane that holds the axis: a flat face, a work plane or an origin plane"),
+            opt("to_next", Bool, "round to the part's next faces"),
             opt("reverse", Bool, "turn the other way round the axis (default false)"),
             OPERATION,
             REGIONS,

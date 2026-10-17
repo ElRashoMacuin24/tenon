@@ -123,6 +123,12 @@ pub enum ExtrudeExtent {
     /// As far as the part's next faces (DEC-109): joined, up to where it meets the part; cut,
     /// through the material it starts in, to where that ends.
     ToNext,
+    /// From one plane to another, wherever the sketch is (DEC-111): a flat face, a work plane or
+    /// an origin plane each; at an angle, the ends are cut along them.
+    Between {
+        from: PlaneRef,
+        to: PlaneRef,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -180,6 +186,11 @@ pub enum RevolveAngle {
         forward: f64,
         backward: f64,
     },
+    /// Round to a plane through the axis (DEC-112): a flat face (to the half of the plane it is
+    /// on) or a work or origin plane (to where the profile first meets it).
+    To(PlaneRef),
+    /// Round to the part's next faces (DEC-112), as Extrude's To Next.
+    ToNext,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -940,12 +951,19 @@ impl FeatureKind {
             }
             FeatureKind::Extrude(e) => match &e.extent {
                 ExtrudeExtent::To(plane) => std::iter::once(e.sketch).chain(plane.feature()).collect(),
+                ExtrudeExtent::Between { from, to } => std::iter::once(e.sketch).chain(from.feature()).chain(to.feature()).collect(),
                 _ => vec![e.sketch],
             },
-            FeatureKind::Revolve(r) => match r.axis {
-                AxisRef::Work(a) => vec![r.sketch, a],
-                _ => vec![r.sketch],
-            },
+            FeatureKind::Revolve(r) => {
+                let mut v = vec![r.sketch];
+                if let AxisRef::Work(a) = r.axis {
+                    v.push(a);
+                }
+                if let RevolveAngle::To(plane) = &r.angle {
+                    v.extend(plane.feature());
+                }
+                v
+            }
             FeatureKind::Fillet(f) => f.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::Chamfer(c) => {
                 let mut v: Vec<FeatureId> = c.edges.iter().flat_map(EdgeRef::features).collect();
