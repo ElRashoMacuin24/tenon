@@ -1343,3 +1343,71 @@ fn lines_and_circles_cut_an_ellipse_into_regions() {
     let middle = parts.iter().map(|r| r.area).fold(f64::INFINITY, f64::min);
     assert!(total > PI * 225.0 && total < PI * 225.0 + PI * 200.0 && middle > 0.0, "{total}");
 }
+
+/// Direction and signed curvature of a spline at its start, measured from points along it.
+fn spline_start(s: &Sketch, id: EntityId) -> (Vec2, f64) {
+    let sp = s.spline(id).unwrap();
+    let (lo, hi) = sp.domain();
+    // (One-sided differences good to h squared.)
+    let h = (hi - lo) * 1e-3;
+    let p: Vec<Vec2> = (0..4).map(|i| sp.eval(lo + h * f64::from(i))).collect();
+    let d1 = (p[1] * 4.0 - p[0] * 3.0 - p[2]) / (2.0 * h);
+    let d2 = (p[0] * 2.0 - p[1] * 5.0 + p[2] * 4.0 - p[3]) / (h * h);
+    (d1.normalized(), d1.cross(d2) / d1.len().powi(3))
+}
+
+#[test]
+fn smooth_joins_a_spline_to_a_line_or_an_arc_without_a_kink_or_a_jump_in_bending() {
+    // A level line held at both ends, and a spline carrying on from its end, set off at an angle
+    // and bent: made smooth (G2, DEC-121) it leaves straight on and unbent.
+    let mut s = Sketch::new();
+    let line = s.add_line(v(0.0, 0.0), v(10.0, 0.0)).unwrap();
+    let Some(Geometry::Line { start, end }) = s.geometry(line).cloned() else { panic!() };
+    s.add_constraint(Constraint::Fix { point: start }).unwrap();
+    s.add_constraint(Constraint::Fix { point: end }).unwrap();
+    let poles = [PointRef::Existing(end), v(15.0, 4.0).into(), v(20.0, 9.0).into(), v(28.0, 9.0).into()];
+    let spline = s.add_spline(&poles, 3).unwrap();
+    let free = s.dof().unwrap().dof;
+    s.add_constraint(Constraint::Smooth { a: spline, b: line }).unwrap();
+    assert_eq!(free - s.dof().unwrap().dof, 2, "the same direction and the same bending");
+    let (dir, bend) = spline_start(&s, spline);
+    assert!(dir.near(v(1.0, 0.0), 1e-5) && bend.abs() < 1e-4, "{dir:?} {bend}");
+
+    // An arc about (10, 10) through (10, 0), held, and a spline going left from there: made
+    // smooth it leaves level and bends up as the arc does, at 1/10.
+    let mut t = Sketch::new();
+    let arc = t.add_arc(v(10.0, 10.0), v(10.0, 0.0), v(20.0, 10.0)).unwrap();
+    let Some(Geometry::Arc { center, start, end }) = t.geometry(arc).cloned() else { panic!() };
+    for p in [center, start, end] {
+        t.add_constraint(Constraint::Fix { point: p }).unwrap();
+    }
+    let poles = [PointRef::Existing(start), v(5.0, -2.0).into(), v(0.0, -4.0).into(), v(-6.0, -3.0).into()];
+    let spline = t.add_spline(&poles, 3).unwrap();
+    t.add_constraint(Constraint::Smooth { a: arc, b: spline }).unwrap();
+    let (dir, bend) = spline_start(&t, spline);
+    assert!(dir.near(v(-1.0, 0.0), 1e-5) && (bend + 0.1).abs() < 1e-4, "leaving left, turning right of its way (up): {dir:?} {bend}");
+
+    // Refused: two lines; a spline and a circle; a spline and a line that do not meet.
+    let other = t.add_line(v(30.0, 0.0), v(40.0, 0.0)).unwrap();
+    let ring = t.add_circle(v(0.0, 30.0), 5.0).unwrap();
+    let second = t.add_line(v(30.0, 5.0), v(40.0, 5.0)).unwrap();
+    for c in [Constraint::Smooth { a: other, b: second }, Constraint::Smooth { a: spline, b: ring }, Constraint::Smooth { a: spline, b: other }] {
+        assert!(t.add_constraint(c.clone()).is_err(), "{c:?}");
+    }
+    // Ends held together by a coincidence join as well as a shared point does.
+    let mut u = Sketch::new();
+    let level = u.add_line(v(0.0, 0.0), v(10.0, 0.0)).unwrap();
+    let Some(Geometry::Line { start: l0, end: l1 }) = u.geometry(level).cloned() else { panic!() };
+    u.add_constraint(Constraint::Fix { point: l0 }).unwrap();
+    u.add_constraint(Constraint::Fix { point: l1 }).unwrap();
+    let apart = u.add_spline(&[v(10.0, 0.0).into(), v(14.0, 3.0).into(), v(18.0, 6.0).into(), v(24.0, 6.0).into()], 3).unwrap();
+    assert!(u.add_constraint(Constraint::Smooth { a: apart, b: level }).is_err(), "not joined yet");
+    let Some(Geometry::Spline { poles, .. }) = u.geometry(apart).cloned() else { panic!() };
+    u.add_constraint(Constraint::Coincident { a: poles[0], b: l1 }).unwrap();
+    u.add_constraint(Constraint::Smooth { a: apart, b: level }).unwrap();
+    let (dir, bend) = spline_start(&u, apart);
+    assert!(dir.near(v(1.0, 0.0), 1e-5) && bend.abs() < 1e-4, "{dir:?} {bend}");
+    // As a command takes it.
+    let c: Constraint = serde_json::from_value(serde_json::json!({ "type": "smooth", "a": 3, "b": 4 })).unwrap();
+    assert_eq!(c, Constraint::Smooth { a: EntityId(3), b: EntityId(4) });
+}

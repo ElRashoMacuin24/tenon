@@ -36,6 +36,7 @@ pub(crate) enum Tool {
     Parallel,
     Perpendicular,
     Tangent,
+    Smooth,
     Equal,
     Concentric,
     Fix,
@@ -91,6 +92,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("sketch.parallel", Tool::Parallel),
     ("sketch.perpendicular", Tool::Perpendicular),
     ("sketch.tangent", Tool::Tangent),
+    ("sketch.smooth", Tool::Smooth),
     ("sketch.equal", Tool::Equal),
     ("sketch.concentric", Tool::Concentric),
     ("sketch.fix", Tool::Fix),
@@ -141,6 +143,7 @@ impl Tool {
             Tool::Horizontal | Tool::Vertical => "Click a line.",
             Tool::Parallel | Tool::Perpendicular => "Click two lines.",
             Tool::Tangent => "Click a line and a circle/arc, or two circles/arcs.",
+            Tool::Smooth => "Click a spline, then the line, arc or spline it ends on.",
             Tool::Equal => "Click two lines or two circles/arcs.",
             Tool::Concentric => "Click two circles/arcs.",
             Tool::Fix => "Click a point.",
@@ -514,6 +517,7 @@ fn glyph(c: &Constraint) -> Option<(crate::icons::Icon, Vec<EntityId>)> {
         Parallel { a, b } => (Icon::Parallel, vec![*a, *b]),
         Perpendicular { a, b } => (Icon::Perpendicular, vec![*a, *b]),
         Tangent { a, b } => (Icon::Tangent, vec![*a, *b]),
+        Smooth { a, b } => (Icon::Smooth, vec![*a, *b]),
         Equal { a, b } => (Icon::Equal, vec![*a, *b]),
         Concentric { a, b } => (Icon::Concentric, vec![*a, *b]),
         Collinear { a, b } => (Icon::Collinear, vec![*a, *b]),
@@ -1572,7 +1576,8 @@ impl Workbench {
         if sm.tool != Tool::Spline || sm.clicks.len() < 2 {
             return;
         }
-        let pts: Vec<[f64; 2]> = sm.clicks.iter().map(|c| [c.at.x, c.at.y]).collect();
+        // (A click on an existing point shares it: the spline joins what it starts or ends on.)
+        let pts: Vec<Value> = sm.clicks.iter().map(|c| c.point.map_or_else(|| json!([c.at.x, c.at.y]), |p| json!(p.0))).collect();
         sm.clicks.clear();
         let degree = (pts.len() - 1).min(3);
         let _ = self.exec_status("sketch.spline", json!({ "sketch": feature.0, "points": pts, "degree": degree }));
@@ -1799,6 +1804,7 @@ impl Workbench {
             (Tool::Parallel, [a, b]) => Some(Constraint::Parallel { a: *a, b: *b }),
             (Tool::Perpendicular, [a, b]) => Some(Constraint::Perpendicular { a: *a, b: *b }),
             (Tool::Tangent, [a, b]) => Some(Constraint::Tangent { a: *a, b: *b }),
+            (Tool::Smooth, [a, b]) => Some(Constraint::Smooth { a: *a, b: *b }),
             (Tool::Equal, [a, b]) => Some(Constraint::Equal { a: *a, b: *b }),
             (Tool::Concentric, [a, b]) => Some(Constraint::Concentric { a: *a, b: *b }),
             (Tool::Collinear, [a, b]) => Some(Constraint::Collinear { a: *a, b: *b }),

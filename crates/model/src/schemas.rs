@@ -211,7 +211,11 @@ static SCHEMAS: &[C] = &[
     ),
     C::new(
         "sketch.spline",
-        &[SKETCH, req("points", List(&Vector(2)), "its control points, [[x, y], ...]"), opt("degree", Int, "its degree (default 3)")],
+        &[
+            SKETCH,
+            req("points", List(&Either(&[Vector(2), Id])), "its control points, [[x, y], ...]; an existing point's id shares that point"),
+            opt("degree", Int, "its degree (default 3)"),
+        ],
     ),
     C::new(
         "sketch.constrain",

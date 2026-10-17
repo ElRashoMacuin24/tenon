@@ -3221,3 +3221,25 @@ first, as OCCT asks, and moves the parameter a quarter turn to match. The shim b
 
 **Files** gain the entity type `ellipse` (`center`, `major`, `minor`), additive. `sketch.ellipse`
 takes the centre, the end of one axis and half the other.
+
+## DEC-121 Smooth (G2) (2026-10-17)
+
+Inventor's Constrain panel has Smooth (G2): a spline joined to another curve is tangent to it
+and as sharply bent where they meet, with no jump in curvature. Tenon's button was greyed.
+
+**The constraint.** `Constraint::Smooth { a, b }`, at least one a spline, the other a line, an
+arc or a spline, joined end to end: one point, or two held coincident. Two rows: the directions
+there agree, and the curvature vectors (toward the centre of the bend, as long as the
+curvature, whichever way each curve runs) agree across the shared direction, measured against
+the length of the spline's first leg so the row is of the same order as the others. A spline's
+end direction and curvature come from its clamped knots and first three control points
+exactly; a line's curvature is nothing, an arc's one over its radius toward its centre.
+Anything else is refused in words by the constraint's kinds.
+
+**Splines start where they are drawn from.** The Spline tool passed only positions, so a spline
+drawn on from a line's end had a point of its own there, not joined. `sketch.spline` now takes
+an existing point's id among its `points` and shares it, and the tool passes the points
+clicked on, as Line does.
+
+**In the sketch:** Constrain > Smooth (G2), then the two curves. Files gain the constraint type
+`smooth`, additive.

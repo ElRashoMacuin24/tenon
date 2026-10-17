@@ -1055,3 +1055,50 @@ fn an_ellipse_is_drawn_by_its_centre_an_axis_and_a_point_on_it() {
     let exact = PI * major.len() * minor * 10.0;
     assert!((volume(&wb) - exact).abs() < 1e-6 * exact, "{} vs {exact}", volume(&wb));
 }
+
+#[test]
+fn smooth_is_set_by_clicking_a_spline_and_the_line_it_ends_on() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    let line = wb.exec("sketch.line", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 20, "y2": 0 })).unwrap();
+    let end = tenon_sketch::EntityId(line["end"].as_u64().unwrap() as u32);
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, p: Vec2| on_screen(wb, Vec3::new(p.x, p.y, 0.0));
+    // A spline drawn on from the line's end: its first control point is that end itself.
+    wb.run_ui("sketch.spline").unwrap();
+    for p in [Vec2::new(20.0, 0.0), Vec2::new(28.0, 6.0), Vec2::new(36.0, 12.0), Vec2::new(46.0, 12.0)] {
+        let q = at(&wb, p);
+        move_to(&mut d, &mut wb, q);
+        d.click(&mut wb, q);
+    }
+    d.tap(&mut wb, egui::Key::Enter);
+    d.tap(&mut wb, egui::Key::Escape);
+    let s = open(&wb);
+    let (spline, poles) = s
+        .entities()
+        .find_map(|(id, e)| match &e.geometry {
+            Geometry::Spline { poles, .. } => Some((id, poles.clone())),
+            _ => None,
+        })
+        .expect("the spline");
+    assert_eq!(poles[0], end, "it starts on the line's end");
+    // Smooth (G2) from the Constrain panel, then the spline and the line (DEC-121).
+    d.click(&mut wb, pressable(&d, "ribbon sketch.smooth"));
+    assert_eq!(wb.active_tool_id(), Some("sketch.smooth"));
+    let sp = open(&wb).spline(spline).unwrap();
+    let (lo, hi) = sp.domain();
+    for p in [sp.eval((lo + hi) / 2.0), Vec2::new(8.0, 0.0)] {
+        let q = at(&wb, p);
+        move_to(&mut d, &mut wb, q);
+        d.click(&mut wb, q);
+    }
+    assert_eq!(wb.status(), "Added smooth.");
+    let s = open(&wb);
+    assert!(s.constraints().any(|(_, c)| matches!(c, Constraint::Smooth { .. })));
+    // It leaves the line straight on, unbent: its next two control points are in line with it.
+    let (p, q) = s.line(tenon_sketch::EntityId(line["line"].as_u64().unwrap() as u32)).unwrap();
+    let off = |i: usize| (q - p).normalized().cross(s.point(poles[i]).unwrap() - p);
+    assert!(off(1).abs() < 1e-7 && off(2).abs() < 1e-7, "{} {}", off(1), off(2));
+}

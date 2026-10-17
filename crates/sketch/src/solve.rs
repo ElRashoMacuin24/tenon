@@ -82,6 +82,8 @@ struct Built {
     /// equation, distance equals radius, is at its turning point there and says nothing to first
     /// order).
     joint: Option<EntityId>,
+    /// For Smooth: the end of each curve where they join (one point, or two held together).
+    pair: Option<(EntityId, EntityId)>,
     /// Orientation (+-1) or, for circle tangency, +1 external / -1 internal.
     sign: f64,
 }
@@ -198,6 +200,48 @@ impl<'s> System<'s> {
         }
     }
 
+    /// At end point `at` of line, arc or spline `id`: its direction there, its curvature as a
+    /// vector (toward the centre of the bend, as long as the curvature; whichever way the curve
+    /// runs), and a length to measure the curvature against.
+    fn end_bend(&self, x: &[f64], id: EntityId, at: EntityId) -> Option<(Vec2, Vec2, f64)> {
+        let j = self.pt(x, at)?;
+        match self.sketch.geometry(id)? {
+            Geometry::Line { start, end } => {
+                let (p, q) = (self.pt(x, *start)?, self.pt(x, *end)?);
+                Some((q - p, Vec2::ZERO, p.dist(q)))
+            }
+            Geometry::Arc { center, .. } => {
+                let c = self.pt(x, *center)?;
+                let r = c.dist(j).max(1e-12);
+                Some(((j - c).perp(), (c - j) * (1.0 / (r * r)), r))
+            }
+            Geometry::Spline { poles, degree } => {
+                let mut pts: Vec<Vec2> = poles.iter().map(|p| self.pt(x, *p)).collect::<Option<_>>()?;
+                // (Clamped uniform knots read the same from either end.)
+                if poles.last() == Some(&at) && poles.first() != Some(&at) {
+                    pts.reverse();
+                }
+                let s = tenon_geom::Spline::from_control(pts, *degree as usize);
+                let (p, u) = (s.degree as f64, &s.knots);
+                let k = |i: usize| u.get(i).copied().unwrap_or(0.0);
+                let (p0, p1) = (*s.control.first()?, *s.control.get(1)?);
+                let d1 = (p1 - p0) * (p / (k(s.degree + 1) - k(1)).max(1e-12));
+                let d2 = match s.control.get(2) {
+                    Some(&p2) if s.degree >= 2 => {
+                        let a = (p2 - p1) * (1.0 / (k(s.degree + 2) - k(2)).max(1e-12)) - (p1 - p0) * (1.0 / (k(s.degree + 1) - k(1)).max(1e-12));
+                        a * (p * (p - 1.0) / (k(s.degree + 1) - k(2)).max(1e-12))
+                    }
+                    _ => Vec2::ZERO,
+                };
+                let speed = d1.len().max(1e-12);
+                let t = d1 * (1.0 / speed);
+                let bend = (d2 - t * d2.dot(t)) * (1.0 / (speed * speed));
+                Some((d1, bend, p0.dist(p1)))
+            }
+            _ => None,
+        }
+    }
+
     /// The end point two curves share, if they do: a line's start or end, an arc's start or end.
     fn joint(&self, a: EntityId, b: EntityId) -> Option<EntityId> {
         let ends = |id: EntityId| -> Vec<EntityId> {
@@ -214,7 +258,7 @@ impl<'s> System<'s> {
         use Constraint::*;
         let x = &self.x0;
         let rows = match &c {
-            Coincident { .. } | Concentric { .. } | Symmetric { .. } | Midpoint { .. } | Collinear { .. } => 2,
+            Coincident { .. } | Concentric { .. } | Symmetric { .. } | Midpoint { .. } | Collinear { .. } | Smooth { .. } => 2,
             Fix { .. } => 0,
             _ => 1,
         };
@@ -253,7 +297,11 @@ impl<'s> System<'s> {
             Tangent { a, b } => self.joint(*a, *b),
             _ => None,
         };
-        Built { id, c, rows, sign, joint }
+        let pair = match &c {
+            Smooth { a, b } => self.sketch.joined_ends(*a, *b),
+            _ => None,
+        };
+        Built { id, c, rows, sign, joint, pair }
     }
 
     /// Appends exactly `b.rows` residuals.
@@ -329,6 +377,15 @@ impl<'s> System<'s> {
                     let d = c1.dist(c2);
                     out.push(if b.sign > 0.0 { d - (r1 + r2) } else { d - (r1 - r2).abs() });
                 }
+            }
+            Smooth { a, b: bb } => {
+                // Tangent where they meet, and bent as sharply there: the same way round, the
+                // curvature on each side measured across the shared tangent (DEC-121).
+                let (ea, eb) = b.pair?;
+                let ((ta, ka, la), (tb, kb, lb)) = (self.end_bend(x, *a, ea)?, self.end_bend(x, *bb, eb)?);
+                let (ua, ub) = (ta * (1.0 / ta.len().max(1e-12)), tb * (1.0 / tb.len().max(1e-12)));
+                let scale = la.min(lb).max(1e-9);
+                out.extend([ua.cross(ub), (ka - kb).dot(ua.perp()) * scale]);
             }
             Concentric { a, b } => {
                 let ((c1, _), (c2, _)) = (ci(*a)?, ci(*b)?);

@@ -188,6 +188,24 @@ impl Sketch {
             _ => None,
         }
     }
+    /// Where two curves join, end to end: an end of `a` and an end of `b` that are one point or
+    /// are held together (coincident). Of a line or an arc the ends are its start and end, of a
+    /// spline its first and last poles.
+    pub fn joined_ends(&self, a: EntityId, b: EntityId) -> Option<(EntityId, EntityId)> {
+        let ends = |id: EntityId| -> Vec<EntityId> {
+            match self.geometry(id) {
+                Some(Geometry::Line { start, end }) | Some(Geometry::Arc { start, end, .. }) => vec![*start, *end],
+                Some(Geometry::Spline { poles, .. }) => poles.first().into_iter().chain(poles.last()).copied().collect(),
+                _ => Vec::new(),
+            }
+        };
+        let held = |p: EntityId, q: EntityId| {
+            p == q || self.constraints().any(|(_, c)| matches!(c, Constraint::Coincident { a, b } if (*a, *b) == (p, q) || (*a, *b) == (q, p)))
+        };
+        let of_b = ends(b);
+        ends(a).into_iter().find_map(|p| of_b.iter().find(|q| held(p, **q)).map(|q| (p, *q)))
+    }
+
     pub fn is_ellipse(&self, id: EntityId) -> bool {
         matches!(self.geometry(id), Some(Geometry::Ellipse { .. }))
     }
@@ -770,6 +788,11 @@ impl Sketch {
             Horizontal { line } | Vertical { line } => ln(*line),
             Parallel { a, b } | Perpendicular { a, b } | Collinear { a, b } => ln(*a) && ln(*b) && a != b,
             Tangent { a, b } => a != b && ((ln(*a) && rd(*b)) || (rd(*a) && ln(*b)) || (rd(*a) && rd(*b))),
+            Smooth { a, b } => {
+                let (sp, arc) = (|i| self.spline(i).is_some(), |i| matches!(self.geometry(i), Some(Geometry::Arc { .. })));
+                let joins = |i| ln(i) || arc(i) || sp(i);
+                a != b && (sp(*a) || sp(*b)) && joins(*a) && joins(*b) && self.joined_ends(*a, *b).is_some()
+            }
             Concentric { a, b } => rd(*a) && rd(*b) && a != b,
             Equal { a, b } => a != b && ((ln(*a) && ln(*b)) || (rd(*a) && rd(*b))),
             Symmetric { a, b, axis } => pt(*a) && pt(*b) && a != b && ln(*axis),

@@ -14,6 +14,10 @@ shows it in [ROADMAP.md](ROADMAP.md).
   built in so that a part is the same everywhere. New commands `sketch.text` and
   `sketch.edit_text`; `sketch.info` lists the texts. Files gain the entity `text` and the
   region key `{ text = id }` (an addition to format version 2).
+- **Smooth (G2).** Constrain > Smooth: a spline and the line, arc or spline it ends on are
+  tangent there and bend as sharply on both sides. A spline drawn from an existing point now
+  starts on that point (`sketch.spline` takes point ids among its `points`); the constraint
+  type is `smooth`.
 - **Ellipse.** Under Circle: click the centre, the end of one axis, then a point on the
   ellipse. Dimension it by clicking it (half its first axis, then the other). Lines, arcs and
   circles cut it into regions, and it extrudes, revolves and cuts exactly. `sketch.ellipse`;

@@ -91,13 +91,12 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 18. ~~Delete Features with what goes with a feature; Extrude To a face or plane; Mate's Flush
     solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
     comparison of every command below.
-19. From the same comparison, in order: the Sketch tab's Smooth; fillets of variable
-    radius and face fillets. Done from it so far: Extrude To (DEC-104), To Next (DEC-109) and
+19. From the same comparison, in order: fillets of variable radius and face fillets. Done from it so far: Extrude To (DEC-104), To Next (DEC-109) and
     Between (DEC-111); the Hole panel's Spotface and To (DEC-105), placing on a face (DEC-113)
     and Tapped (DEC-114); visibility from the browser (DEC-106); components placed by the
     pointer (DEC-107); Revolve's directions (DEC-108), To and To Next (DEC-112); Tangent (DEC-110);
     Symmetry (DEC-115); the three-point work plane (DEC-116); Center Point (DEC-117); the
-    arc slots (DEC-118); Stretch (DEC-119); the ellipse (DEC-120).
+    arc slots (DEC-118); Stretch (DEC-119); the ellipse (DEC-120); Smooth (DEC-121).
 
 ## Geometry of the part in a sketch
 
@@ -154,7 +153,10 @@ Pattern panel:
 | Associative: the copies follow the original, and the count can be edited afterwards | missing | DEC-056: the copies are geometry of their own, with the constraints that keep their shape. Needs a pattern constraint in the solver |
 | Suppress single occurrences; Fitted | missing | |
 
-Constrain and Format panels: the constraints are all there (M1, M2); Automatic Dimensions and
+Constrain and Format panels: the constraints are all there (M1, M2; Smooth (G2) closed
+2026-10-17, DEC-121: a spline tangent to a line, an arc or a spline at an end they share or
+hold together, and bent as sharply on both sides, `smooth_joins_a_spline_to_a_line_or_an_arc_without_a_kink_or_a_jump_in_bending`,
+`smooth_is_set_by_clicking_a_spline_and_the_line_it_ends_on`); Automatic Dimensions and
 Constraints, Show Constraints for a selection, and Constraint Settings are missing. Format has
 Construction, Centerline, Center Point (DEC-117) and Driven Dimension; Show Format is missing.
 

@@ -1403,9 +1403,22 @@ fn sketch_polygon(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn sketch_spline(s: &mut Session, p: &Value) -> CmdResult {
-    let pts: Vec<[f64; 2]> = parse(p, "points")?;
+    // (A control point may be an existing point: the spline then starts or ends on it, joined.)
+    let items = arg(p, "points").and_then(Value::as_array).ok_or_else(|| CmdError("`points` must be a list".into()))?;
+    let refs: Vec<PointRef> = items
+        .iter()
+        .map(|q| match q {
+            Value::Number(n) => n
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .map(|v| PointRef::Existing(EntityId(v)))
+                .ok_or_else(|| CmdError(format!("{n} is not a point id"))),
+            _ => serde_json::from_value::<[f64; 2]>(q.clone())
+                .map(|a| PointRef::New(Vec2::new(a[0], a[1])))
+                .map_err(|e| CmdError(format!("`points`: {e}"))),
+        })
+        .collect::<Result<_, _>>()?;
     let degree = opt_id(p, "degree")?.unwrap_or(3);
-    let refs: Vec<PointRef> = pts.iter().map(|q| PointRef::New(Vec2::new(q[0], q[1]))).collect();
     let id = on_sketch(s, p, |sk| Ok(sk.add_spline(&refs, degree)?))?;
     Ok(json!({ "spline": id.0 }))
 }
@@ -3758,7 +3771,13 @@ static COMMANDS: &[CommandSpec] = &[
         sketch_rectangle
     ),
     doc_cmd!("sketch.polygon", "Polygon", "sketch, cx, cy, x, y (a corner), sides", true, sketch_polygon),
-    doc_cmd!("sketch.spline", "Spline", "sketch, points: [[x, y], ...] (control points), degree (default 3)", true, sketch_spline),
+    doc_cmd!(
+        "sketch.spline",
+        "Spline",
+        "sketch, points: [[x, y] or a point id, ...] (control points; an existing point is shared, so the spline joins what it is on), degree (default 3)",
+        true,
+        sketch_spline
+    ),
     doc_cmd!(
         "sketch.constrain",
         "Constrain",

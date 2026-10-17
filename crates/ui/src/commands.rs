@@ -274,7 +274,7 @@ pub const RIBBON: &[RibbonTab] = &[
                     glyph("sketch.tangent", "Tangent", "A line and a circle/arc, or two circles/arcs", Icon::Tangent, 0),
                     glyph("sketch.collinear", "Collinear", "Two lines on one line", Icon::Collinear, 0),
                     glyph("sketch.perpendicular", "Perpendicular", "Two lines", Icon::Perpendicular, 0),
-                    glyph("sketch.smooth", "Smooth", "Curvature-continuous join", Icon::Spline, LATER),
+                    glyph("sketch.smooth", "Smooth (G2)", "A spline and the line, arc or spline it ends on: tangent and as sharply bent on both sides", Icon::Smooth, 0),
                     glyph("sketch.concentric", "Concentric", "Two circles/arcs", Icon::Concentric, 0),
                     glyph("sketch.horizontal", "Horizontal", "A line", Icon::Horizontal, 0),
                     glyph("sketch.symmetric", "Symmetric", "Two points, then the line of symmetry", Icon::Symmetric, 0),

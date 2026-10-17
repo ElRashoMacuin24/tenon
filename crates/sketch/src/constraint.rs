@@ -44,6 +44,12 @@ pub enum Constraint {
         a: EntityId,
         b: EntityId,
     },
+    /// A spline joined to a line, an arc or another spline at an end they share, and as
+    /// smooth there as a curve can be (DEC-121): tangent, and bent as sharply on both sides (G2).
+    Smooth {
+        a: EntityId,
+        b: EntityId,
+    },
     /// Two circles/arcs share a centre.
     Concentric {
         a: EntityId,
@@ -124,6 +130,7 @@ impl Constraint {
             | Perpendicular { a, b }
             | Collinear { a, b }
             | Tangent { a, b }
+            | Smooth { a, b }
             | Concentric { a, b }
             | Equal { a, b }
             | Distance { a, b, .. }
@@ -195,6 +202,7 @@ impl Constraint {
             Perpendicular { .. } => "perpendicular",
             Collinear { .. } => "collinear",
             Tangent { .. } => "tangent",
+            Smooth { .. } => "smooth",
             Concentric { .. } => "concentric",
             Equal { .. } => "equal",
             Symmetric { .. } => "symmetric",
@@ -224,6 +232,7 @@ impl Constraint {
             Perpendicular { a, b } => Perpendicular { a: f(a), b: f(b) },
             Collinear { a, b } => Collinear { a: f(a), b: f(b) },
             Tangent { a, b } => Tangent { a: f(a), b: f(b) },
+            Smooth { a, b } => Smooth { a: f(a), b: f(b) },
             Concentric { a, b } => Concentric { a: f(a), b: f(b) },
             Equal { a, b } => Equal { a: f(a), b: f(b) },
             Symmetric { a, b, axis } => Symmetric { a: f(a), b: f(b), axis: f(axis) },

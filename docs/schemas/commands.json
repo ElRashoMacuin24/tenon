@@ -896,7 +896,7 @@
       "id": "sketch.spline",
       "label": "Spline",
       "undoable": true,
-      "description": "sketch, points: [[x, y], ...] (control points), degree (default 3)",
+      "description": "sketch, points: [[x, y] or a point id, ...] (control points; an existing point is shared, so the spline joins what it is on), degree (default 3)",
       "params": {
         "type": "object",
         "properties": {
@@ -908,14 +908,22 @@
           "points": {
             "type": "array",
             "items": {
-              "type": "array",
-              "items": {
-                "type": "number"
-              },
-              "minItems": 2,
-              "maxItems": 2
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ]
             },
-            "description": "its control points, [[x, y], ...]"
+            "description": "its control points, [[x, y], ...]; an existing point's id shares that point"
           },
           "degree": {
             "type": "integer",

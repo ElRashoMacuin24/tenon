@@ -366,6 +366,7 @@ Every entity also has `construction`, and optional marks written only when true:
   - `point_on_curve` (`point`, `curve`)
   - `horizontal`, `vertical` (`line`)
   - `parallel`, `perpendicular`, `collinear`, `tangent`, `concentric`, `equal` (`a`, `b`)
+  - `smooth` (`a`, `b`: a spline and the line, arc or spline it joins end to end; DEC-121)
   - `symmetric` (`a`, `b`, `axis`)
   - `midpoint` (`point`, `line`)
   - `fix` (`point`)

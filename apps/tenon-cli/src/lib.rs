@@ -301,6 +301,7 @@ fn constraint_examples() -> Vec<tenon_sketch::Constraint> {
         Perpendicular { a, b },
         Collinear { a, b },
         Tangent { a, b },
+        Smooth { a, b },
         Concentric { a, b },
         Equal { a, b },
         Symmetric { a, b, axis: c },
@@ -326,6 +327,7 @@ fn constraint_examples() -> Vec<tenon_sketch::Constraint> {
             | Perpendicular { .. }
             | Collinear { .. }
             | Tangent { .. }
+            | Smooth { .. }
             | Concentric { .. }
             | Equal { .. }
             | Symmetric { .. }

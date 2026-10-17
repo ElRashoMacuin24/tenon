@@ -177,6 +177,7 @@ pub enum Icon {
     CenterPoint,
     SlotArc,
     Ellipse,
+    Smooth,
 }
 
 /// What an icon depicts, for its fill colour.
@@ -375,6 +376,12 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
         Icon::Circle => {
             pen.circle((0.5, 0.5), 0.38);
             pen.dot((0.5, 0.5), 0.05);
+        }
+        // A straight run carried on into a curve with no kink, the join marked.
+        Icon::Smooth => {
+            pen.line(&[(0.08, 0.78), (0.46, 0.78)]);
+            pen.arc((0.46, 0.3), 0.48, 0.48, PI / 2.0, PI * 0.12);
+            pen.dot((0.46, 0.78), 0.07);
         }
         Icon::Ellipse => {
             pen.arc((0.5, 0.5), 0.44, 0.28, 0.0, PI * 2.0);

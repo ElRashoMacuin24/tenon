@@ -30,7 +30,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.arc3` | Three-Point Arc | sketch, x1, y1, x2, y2 (a point on the arc), x3, y3 | yes |
 | `sketch.rectangle` | Rectangle | sketch, x1, y1, x2, y2 (opposite corners); returns lines and corners (the first at x1, y1) | yes |
 | `sketch.polygon` | Polygon | sketch, cx, cy, x, y (a corner), sides | yes |
-| `sketch.spline` | Spline | sketch, points: [[x, y], ...] (control points), degree (default 3) | yes |
+| `sketch.spline` | Spline | sketch, points: [[x, y] or a point id, ...] (control points; an existing point is shared, so the spline joins what it is on), degree (default 3) | yes |
 | `sketch.constrain` | Constrain | sketch, constraint: {"type": "horizontal", "line": 3} etc. (see docs/commands.md); equation: drives a new dimension (e.g. "width / 2"); at_x, at_y: where a dimension's value is shown (default: beside its geometry); driven: true for a dimension that follows the sketch instead of setting it (shown in parentheses), or "auto" to make it driven only when a driving one would be one too many | yes |
 | `sketch.place_dimension` | Move Dimension | sketch, constraint (a dimension's id), x, y: where its value is shown; its dimension line runs through there | yes |
 | `sketch.set_dimension` | Edit Dimension | sketch, constraint (id); value (mm or rad), or equation (e.g. "d0 / 2", lengths in mm, angles in degrees) | yes |
@@ -251,6 +251,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 - `{"type":"perpendicular","a":1,"b":2}`
 - `{"type":"collinear","a":1,"b":2}`
 - `{"type":"tangent","a":1,"b":2}`
+- `{"type":"smooth","a":1,"b":2}`
 - `{"type":"concentric","a":1,"b":2}`
 - `{"type":"equal","a":1,"b":2}`
 - `{"type":"symmetric","a":1,"b":2,"axis":3}`
