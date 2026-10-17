@@ -190,6 +190,13 @@ fn holes_simple_counterbore_and_countersink() {
         ),
         // A 90 degree countersink from 10 down to 6 is 2 deep.
         (json!({ "diameter": 6, "through_all": true, "type": "countersink", "countersink_diameter": 10 }), cone(5.0, 3.0, 2.0) + PI * 9.0 * 8.0),
+        // A spotface 1 deep: the hole's 5 are measured from its floor (DEC-105); none deep, it is
+        // only where the hole starts.
+        (
+            json!({ "diameter": 6, "depth": 5, "flat_bottom": true, "type": "spotface", "spotface_diameter": 12, "spotface_depth": 1 }),
+            PI * 36.0 + PI * 9.0 * 5.0,
+        ),
+        (json!({ "diameter": 6, "depth": 5, "flat_bottom": true, "type": "spotface", "spotface_diameter": 12 }), PI * 9.0 * 5.0),
     ];
     for (params, removed) in cases {
         let (mut s, mut k) = (Session::default(), OcctKernel::new());
@@ -1025,4 +1032,37 @@ fn an_extrusion_goes_as_far_as_a_face_or_a_plane() {
     run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "to": "yz" }));
     let r = run(&mut s, &mut k, "model.regenerate", json!({}));
     assert!(r["error"]["message"].as_str().unwrap().contains("runs along the extrusion"), "{r}");
+}
+
+#[test]
+fn holes_go_as_far_as_a_plane() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    let (sk, _) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0), (30.0, 10.0)]);
+    // To a work plane 3 above the block's floor: 7 deep from its top, flat.
+    let floor = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 3 }))["feature"].as_u64().unwrap();
+    let hole = run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "to": { "work": floor }, "flat_bottom": true }))["feature"]
+        .as_u64()
+        .unwrap();
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 8000.0 - 2.0 * PI * 9.0 * 7.0), "{}", volume(&mut s, &mut k));
+    assert!(
+        run(&mut s, &mut k, "model.tree", json!({}))["features"].as_array().unwrap().last().unwrap()["depends_on"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(floor))
+    );
+    // The plane moved down 2: the holes follow.
+    let mut kind = serde_json::to_value(&s.document().feature(tenon_model::FeatureId(u32::try_from(floor).unwrap())).unwrap().kind).unwrap();
+    kind["distance"] = json!(1.0);
+    let wp = run(&mut s, &mut k, "feature.update", json!({ "feature": floor, "kind": kind }));
+    assert!(wp.is_object());
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 8000.0 - 2.0 * PI * 9.0 * 9.0), "{}", volume(&mut s, &mut k));
+    // A plane behind where the holes start is refused in words.
+    run(&mut s, &mut k, "feature.delete", json!({ "feature": hole }));
+    let above = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 30 }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "to": { "work": above } }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("not ahead of it"), "{r}");
 }

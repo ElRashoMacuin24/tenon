@@ -999,13 +999,16 @@ impl Workbench {
                                 let seat_name = |s: Seat| match s {
                                     Seat::None => "None",
                                     Seat::Counterbore => "Counterbore",
+                                    Seat::Spotface => "Spotface",
                                     Seat::Countersink => "Countersink",
                                 };
-                                egui::ComboBox::from_id_salt("tn_props_hole_seat").selected_text(seat_name(p.seat)).show_ui(ui, |ui| {
-                                    for s in [Seat::None, Seat::Counterbore, Seat::Countersink] {
-                                        ui.selectable_value(&mut p.seat, s, seat_name(s));
+                                let seats = egui::ComboBox::from_id_salt("tn_props_hole_seat").selected_text(seat_name(p.seat)).show_ui(ui, |ui| {
+                                    for s in [Seat::None, Seat::Counterbore, Seat::Spotface, Seat::Countersink] {
+                                        let r = ui.selectable_value(&mut p.seat, s, seat_name(s));
+                                        crate::drawing::remember(ui, &format!("tn_seat_{}", seat_name(s).to_lowercase()), r.rect);
                                     }
                                 });
+                                crate::drawing::remember(ui, "tn_hole_seat", seats.response.rect);
                                 ui.end_row();
                                 // (A screw, or its seat, chosen: the sizes follow; sizes typed after stay.)
                                 if (p.screw, p.seat) != before {
@@ -1016,13 +1019,36 @@ impl Workbench {
                         section(ui, "Behavior", true, |ui| {
                             egui::Grid::new("tn_props_hole_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                                 ui.label("Termination");
-                                egui::ComboBox::from_id_salt("tn_props_hole_term")
-                                    .selected_text(if p.through { "Through All" } else { "Distance" })
+                                let term = egui::ComboBox::from_id_salt("tn_props_hole_term")
+                                    .selected_text(match (p.to_plane, p.through) {
+                                        (true, _) => "To",
+                                        (false, true) => "Through All",
+                                        (false, false) => "Distance",
+                                    })
                                     .show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut p.through, false, "Distance");
-                                        ui.selectable_value(&mut p.through, true, "Through All");
+                                        if ui.selectable_label(!p.to_plane && !p.through, "Distance").clicked() {
+                                            (p.to_plane, p.through) = (false, false);
+                                        }
+                                        if ui.selectable_label(!p.to_plane && p.through, "Through All").clicked() {
+                                            (p.to_plane, p.through) = (false, true);
+                                        }
+                                        let r = ui.selectable_label(p.to_plane, "To");
+                                        crate::drawing::remember(ui, "tn_hole_term_to", r.rect);
+                                        if r.clicked() {
+                                            (p.to_plane, p.through) = (true, false);
+                                        }
                                     });
+                                crate::drawing::remember(ui, "tn_hole_term", term.response.rect);
                                 ui.end_row();
+                                if p.to_plane {
+                                    ui.label("To");
+                                    let said = match &p.to {
+                                        Some(plane) => egui::RichText::new(self.plane_name(plane)),
+                                        None => egui::RichText::new("Click a face or plane").color(t.accent),
+                                    };
+                                    ui.label(said).on_hover_text("A flat face of the part, a work plane, or an origin plane in the browser");
+                                    ui.end_row();
+                                }
                                 ui.label("Direction");
                                 let items =
                                     [(Glyph::Flipped, "Default: into the part, against the sketch normal", true), (Glyph::Default, "Flipped", true)];
@@ -1059,8 +1085,8 @@ impl Workbench {
                                 )
                                 .entered;
                                 ui.end_row();
-                                if !p.through {
-                                    ui.label("Depth");
+                                if !p.through && !p.to_plane {
+                                    ui.label(if p.seat == Seat::Spotface { "Depth (from the spotface)" } else { "Depth" });
                                     enter |= eq_value_field(
                                         ui,
                                         egui::Id::new("tn_props_hole_depth"),
@@ -1101,6 +1127,36 @@ impl Workbench {
                                             "bore_depth",
                                             "mm",
                                             0.001..=100_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
+                                        ui.end_row();
+                                    }
+                                    Seat::Spotface => {
+                                        ui.label("Spotface Diameter");
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_seat_dia"),
+                                            &mut p.seat_diameter,
+                                            &mut eqs,
+                                            "seat_diameter",
+                                            "mm",
+                                            0.001..=100_000.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
+                                        ui.end_row();
+                                        ui.label("Spotface Depth");
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_bore_depth"),
+                                            &mut p.bore_depth,
+                                            &mut eqs,
+                                            "bore_depth",
+                                            "mm",
+                                            0.0..=100_000.0,
                                             110.0,
                                             t,
                                         )

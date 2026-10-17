@@ -91,8 +91,8 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
     solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
     comparison of every command below.
 19. From the same comparison, in order: Extrude and Revolve To Next and Between; the Hole
-    panel's Spotface, To, Tapped and placing on a face; visibility of sketches and work
-    features from the browser; components placed by the pointer; the Tangent and Symmetry
+    panel's Tapped and placing on a face (Spotface and To are done: DEC-105); visibility of
+    sketches and work features from the browser; components placed by the pointer; the Tangent and Symmetry
     constraints; a three-point work plane; fillets of variable radius and face fillets.
 
 ## Geometry of the part in a sketch
@@ -259,7 +259,7 @@ on inventor and make ours feel 1-1"). The rows marked closed then were done in t
 |---|---|---|
 | Extrude extents: Distance, To, To Next, Between, Through All; directions Default, Flipped, Symmetric, Asymmetric | partial | Distance with all four directions, Through All, and **To** (closed 2026-10-16, DEC-104): a flat face, a work plane or an origin plane, on whichever side of the sketch it is; square to the sketch it is the distance to it, at an angle the end is cut along the plane and named as the end cap. Picked by clicking the face or the work plane, or the plane in the browser. `an_extrusion_goes_as_far_as_a_face_or_a_plane`, `an_extrusion_is_taken_as_far_as_a_face_clicked`. Gap: To Next, Between; To a vertex or a curved face ("extend to face"); Match Shape |
 | Revolve extents: Full, Angle (one way, symmetric, asymmetric), To, To Next, Between | partial | Full, Angle and Symmetric. Gap: two different angles, To, To Next, Between |
-| Hole: placed from a sketch's points, or on a face (linear from two edges, concentric, on a point); Simple, Clearance, Tapped, Taper Tapped; seat None, Counterbore, Spotface, Countersink; Distance, Through All, To; drill point flat or angled | partial | from sketch points; simple, counterbore, countersink; Clearance and Tap Drill sizes for M3 to M20 (DEC-101); distance or through all; drill point flat or angled. Gap: placing on a face without a sketch; Spotface; Tapped putting the thread on (Thread does it after); To; taper tapped |
+| Hole: placed from a sketch's points, or on a face (linear from two edges, concentric, on a point); Simple, Clearance, Tapped, Taper Tapped; seat None, Counterbore, Spotface, Countersink; Distance, Through All, To; drill point flat or angled | partial | from sketch points; simple, counterbore, countersink, and **spotface** (closed 2026-10-16, DEC-105: the hole measured from its floor); Clearance and Tap Drill sizes for M3 to M20 (DEC-101); Distance, Through All, and **To** a flat face or plane (closed 2026-10-16); drill point flat or angled. `holes_simple_counterbore_and_countersink` (spotfaces among them), `holes_go_as_far_as_a_plane`, `a_hole_is_spotfaced_and_goes_as_far_as_a_plane_picked_in_the_browser`. Gap: placing on a face without a sketch; Tapped putting the thread on (Thread does it after); taper tapped |
 | Fillet: constant edge fillets, variable radius, setbacks, face fillet, full round; edges picked one by one, or a loop or a feature at a time | partial | constant radius on picked edges, several at once; the largest radius that fits is said when one is too large (DEC-101). Gap: variable radius, setbacks, face and full round fillets, picking by loop or feature |
 | Chamfer: Distance, Distance and Angle, Two Distances; corner setback | done | the three kinds (M2). Gap: corner setback choice |
 | Shell: inside, outside or both ways; faces removed; a thickness of its own for chosen faces | partial | inside or outside, faces removed (M2). Gap: both ways; a face's own thickness |

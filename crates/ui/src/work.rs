@@ -370,6 +370,10 @@ impl Workbench {
             };
             return d.is_some_and(|(d, through)| self.set_load_direction(d, Some(through)));
         }
+        // (Extrude To, or a Hole's To: the plane it goes as far as.)
+        if self.picking_to() {
+            return plane.is_some_and(|p| self.set_to_plane(p));
+        }
         match &mut self.panel {
             Some(Panel::Work(w)) => {
                 match (w.slot, plane, axis) {
@@ -383,13 +387,6 @@ impl Workbench {
             }
             Some(Panel::Pattern(p)) => set_pattern_ref(p, plane, axis),
             Some(Panel::Draft(_) | Panel::Split(_)) => plane.is_some_and(|p| self.bodies_plane(p)),
-            Some(Panel::Extrude(e)) if e.extent == crate::panels::ExtentChoice::To => match plane {
-                Some(p) => {
-                    e.to = Some(p);
-                    true
-                }
-                None => false,
-            },
             Some(Panel::Primitive(_)) => plane.is_some_and(|p| self.primitive_on(p)),
             Some(Panel::Revolve(_) | Panel::Coil(_)) => match axis {
                 Some(AxisSel::Origin(o)) => self.set_panel_axis(crate::panels::AxisChoice::Origin(o)),

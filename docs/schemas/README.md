@@ -106,4 +106,5 @@ taken away), without a check.
     or `edges`, so what was valid still is. Then `document.properties` (a part's number and
     description, for 0.1.0); after it `sketch.text` and `sketch.edit_text` (DEC-102), the optional
     `consumed` and `dependents` of `feature.delete` (DEC-103) and `to` of `model.extrude`
-    (DEC-104). 227 commands.
+    (DEC-104); `model.hole`'s spotface type, `spotface_diameter`, `spotface_depth` and `to`
+    (DEC-105). 227 commands.

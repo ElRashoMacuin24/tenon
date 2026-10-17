@@ -23,6 +23,8 @@ shows it in [ROADMAP.md](ROADMAP.md).
 - **Extrude To.** Extents > To takes an extrusion as far as a flat face, a work plane or an
   origin plane, on whichever side of the sketch it is; at an angle, the end is cut along the
   plane. `model.extrude` takes `to`; files gain `extent = { to = <plane> }`.
+- **Hole: Spotface and To.** A spotface seat (the hole measured from its floor), and holes
+  that go as far as a flat face or plane. `model.hole` takes `type: "spotface"` and `to`.
 - **Constrain** offers Mate, Angle and Insert, with Flush as Mate's second solution, as
   Inventor has it; offsets and angles are typed.
 - [docs/inventor-fidelity.md](docs/inventor-fidelity.md) compares every environment with

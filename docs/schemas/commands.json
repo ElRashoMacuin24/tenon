@@ -2453,11 +2453,31 @@
             "type": "boolean",
             "description": "through the whole part"
           },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "xy",
+                  "yz",
+                  "xz"
+                ]
+              },
+              {
+                "$ref": "#/$defs/face_ref"
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "as far as a plane: each hole to where its axis meets it"
+          },
           "type": {
             "type": "string",
             "enum": [
               "simple",
               "counterbore",
+              "spotface",
               "countersink"
             ],
             "description": "default simple"
@@ -2471,6 +2491,16 @@
             "type": "number",
             "x-unit": "mm",
             "description": "for a counterbore"
+          },
+          "spotface_diameter": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "for a spotface"
+          },
+          "spotface_depth": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "for a spotface: how deep its seat is (default 0); the hole's depth is measured from it"
           },
           "countersink_diameter": {
             "type": "number",

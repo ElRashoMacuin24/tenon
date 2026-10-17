@@ -190,6 +190,63 @@ impl Workbench {
         self.scene.bodies.get(body)?.edge_ref(edge)
     }
 
+    /// The open panel takes a face or plane to go as far as: Extrude To, or a Hole's To.
+    pub(crate) fn picking_to(&self) -> bool {
+        match &self.panel {
+            Some(Panel::Extrude(e)) => e.extent == crate::panels::ExtentChoice::To,
+            Some(Panel::Hole(h)) => h.to_plane,
+            _ => false,
+        }
+    }
+
+    /// Puts the face or plane a feature goes as far as into the open panel.
+    pub(crate) fn set_to_plane(&mut self, plane: PlaneRef) -> bool {
+        match &mut self.panel {
+            Some(Panel::Extrude(e)) if e.extent == crate::panels::ExtentChoice::To => e.to = Some(plane),
+            Some(Panel::Hole(h)) if h.to_plane => h.to = Some(plane),
+            _ => return false,
+        }
+        true
+    }
+
+    /// A work plane, or a flat face of the part, under the pointer while the open panel picks
+    /// what it goes as far as: lit, and picked by a click. Returns whether there is one.
+    fn pick_end_plane(&mut self, resp: &egui::Response, rect: Rect) -> bool {
+        if let Some(pos) = resp.hover_pos()
+            && let Some((id, _)) = self.work_at(pos, rect, true, false)
+        {
+            self.view.hover = None;
+            self.view.work_hover = Some(id);
+            if resp.clicked() {
+                self.pick_reference(Reference::Work(id));
+            }
+            return true;
+        }
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
+        let flat = resp.hover_pos().and_then(|p| {
+            let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+            let (o, d) = self.view.camera.ray(x, y, w, h);
+            let f = pick_face_in(tree.as_deref(), &meshes, o, d)?;
+            let planar = self
+                .scene
+                .bodies
+                .get(f.body)
+                .and_then(|b| b.faces.get(f.face as usize))
+                .is_some_and(|x| matches!(x.1.surface, SurfaceKind::Plane { .. }));
+            planar
+                .then_some(Pick::Face { body: f.body, face: f.face })
+                .filter(|p| matches!(p, Pick::Face { body, face } if self.face_ref_of(*body, *face).is_some()))
+        });
+        self.view.hover = flat;
+        let Some(Pick::Face { body, face }) = flat else { return false };
+        if resp.clicked()
+            && let Some(r) = self.face_ref_of(body, face)
+        {
+            self.set_to_plane(PlaneRef::Face(r));
+        }
+        true
+    }
+
     pub(crate) fn face_ref_of(&self, body: usize, face: u32) -> Option<FaceRef> {
         let (name, info) = self.scene.bodies.get(body)?.faces.get(face as usize)?;
         Some(FaceRef { origin: (*name)?, fingerprint: Fingerprint::of(info) })
@@ -473,8 +530,9 @@ impl Workbench {
         }
         if matches!(self.panel, Some(Panel::Hole(_))) {
             self.view.hover = None;
+            let point = self.hole_point_at(resp.interact_pointer_pos(), rect);
             if resp.clicked()
-                && let Some(id) = self.hole_point_at(resp.interact_pointer_pos(), rect)
+                && let Some(id) = point
                 && let Some(Panel::Hole(p)) = &mut self.panel
             {
                 if let Some(i) = p.points.iter().position(|q| *q == id) {
@@ -482,6 +540,11 @@ impl Workbench {
                 } else {
                     p.points.push(id);
                 }
+                return true;
+            }
+            // Termination To: a work plane or a flat face is where the holes go.
+            if self.picking_to() {
+                self.pick_end_plane(resp, rect);
             }
             return true;
         }
@@ -505,44 +568,6 @@ impl Workbench {
                 return true;
             }
         }
-        // Extrude To: a work plane, or a flat face of the part, clicked is where it goes.
-        if matches!(&self.panel, Some(Panel::Extrude(e)) if e.extent == crate::panels::ExtentChoice::To) {
-            if let Some(pos) = resp.hover_pos()
-                && let Some((id, _)) = self.work_at(pos, rect, true, false)
-            {
-                self.view.hover = None;
-                self.view.work_hover = Some(id);
-                if resp.clicked() {
-                    self.pick_reference(Reference::Work(id));
-                }
-                return true;
-            }
-            let (meshes, tree) = (self.scene.placed(), self.body_tree());
-            let flat = resp.hover_pos().and_then(|p| {
-                let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
-                let (o, d) = self.view.camera.ray(x, y, w, h);
-                let f = pick_face_in(tree.as_deref(), &meshes, o, d)?;
-                let planar = self
-                    .scene
-                    .bodies
-                    .get(f.body)
-                    .and_then(|b| b.faces.get(f.face as usize))
-                    .is_some_and(|x| matches!(x.1.surface, SurfaceKind::Plane { .. }));
-                planar
-                    .then_some(Pick::Face { body: f.body, face: f.face })
-                    .filter(|p| matches!(p, Pick::Face { body, face } if self.face_ref_of(*body, *face).is_some()))
-            });
-            self.view.hover = flat;
-            if let Some(Pick::Face { body, face }) = flat {
-                if resp.clicked()
-                    && let Some(r) = self.face_ref_of(body, face)
-                    && let Some(Panel::Extrude(e)) = &mut self.panel
-                {
-                    e.to = Some(tenon_model::PlaneRef::Face(r));
-                }
-                return true;
-            }
-        }
         if matches!(
             self.panel,
             Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Sweep(_) | Panel::Coil(_) | Panel::SheetFace(_) | Panel::SheetCut(_))
@@ -554,6 +579,11 @@ impl Workbench {
                 && self.toggle_profile_at(pos, rect)
             {
                 self.view.hover = None;
+                return true;
+            }
+            // Extrude To: elsewhere, a work plane or a flat face is where it goes.
+            if self.picking_to() {
+                self.pick_end_plane(resp, rect);
                 return true;
             }
             return false;

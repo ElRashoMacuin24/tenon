@@ -234,6 +234,12 @@ pub enum HoleType {
         diameter: f64,
         angle: f64,
     },
+    /// A shallow seat, as Inventor's: the hole's depth is measured from its floor (DEC-105).
+    /// Zero deep, it is only where the hole starts.
+    Spotface {
+        diameter: f64,
+        depth: f64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -242,6 +248,8 @@ pub enum HoleExtent {
     /// Depth of the full-diameter part, from the sketch plane (the drill point is extra).
     Distance(f64),
     ThroughAll,
+    /// As far as a plane: each hole along its own axis to where that meets the plane (DEC-105).
+    To(PlaneRef),
 }
 
 /// Holes drilled at points of a sketch, against the sketch normal.
@@ -283,7 +291,7 @@ impl Hole {
         let depth = match self.extent {
             HoleExtent::Distance(d) if !positive(d) => return Err("the hole depth must be positive".into()),
             HoleExtent::Distance(d) => Some(d),
-            HoleExtent::ThroughAll => None,
+            HoleExtent::ThroughAll | HoleExtent::To(_) => None,
         };
         match self.kind {
             HoleType::Simple => {}
@@ -305,6 +313,15 @@ impl Hole {
                 let sink = (diameter - self.diameter) / 2.0 / (angle / 2.0).tan();
                 if depth.is_some_and(|d| sink >= d) {
                     return Err("the countersink is deeper than the hole".into());
+                }
+            }
+            // (The hole's depth is from the spotface's floor, so any depth of spotface goes.)
+            HoleType::Spotface { diameter, depth: sf } => {
+                if !positive(diameter) || diameter <= self.diameter {
+                    return Err("the spotface must be wider than the hole".into());
+                }
+                if !(sf.is_finite() && sf >= 0.0) {
+                    return Err("the spotface depth must be zero or more".into());
                 }
             }
         }
@@ -926,7 +943,10 @@ impl FeatureKind {
                 v
             }
             FeatureKind::Shell(s) => s.remove.iter().filter_map(FaceRef::feature).collect(),
-            FeatureKind::Hole(h) => vec![h.sketch],
+            FeatureKind::Hole(h) => match &h.extent {
+                HoleExtent::To(plane) => std::iter::once(h.sketch).chain(plane.feature()).collect(),
+                _ => vec![h.sketch],
+            },
             FeatureKind::Rib(r) => vec![r.sketch],
             FeatureKind::Sweep(s) => vec![s.sketch, s.path.sketch],
             FeatureKind::Coil(c) => match c.axis {

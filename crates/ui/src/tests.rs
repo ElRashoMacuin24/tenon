@@ -2621,3 +2621,54 @@ fn an_extrusion_is_taken_as_far_as_a_face_clicked() {
     assert_eq!(p.extent, crate::panels::ExtentChoice::To);
     assert!(d.texts().iter().any(|t| t.contains("Extrusion1")), "{:?}", d.texts());
 }
+
+#[test]
+fn a_hole_is_spotfaced_and_goes_as_far_as_a_plane_picked_in_the_browser() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    wb.exec("work.plane", json!({ "base": "xy", "distance": 3 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    let top = wb.scene().bodies[0].faces.iter().position(|(n, _)| matches!(n, Some(FaceOrigin::Cap { end: CapEnd::End, .. }))).unwrap() as u32;
+    wb.view.selection = vec![Pick::Face { body: 0, face: top }];
+    wb.run_ui("sketch.new").unwrap();
+    let sk = sketching(&wb);
+    wb.exec("sketch.point", json!({ "sketch": sk.0, "x": 20, "y": 10 })).unwrap();
+    wb.finish_sketch();
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    // H; Seat: Spotface; Termination: To, and the work plane picked in the browser.
+    d.tap(&mut wb, egui::Key::H);
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_hole_seat"));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_seat_spotface"));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_hole_term"));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_hole_term_to"));
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "Click a face or plane"), "{:?}", d.texts());
+    d.click(&mut wb, browser_row(&d, "Work Plane1").center());
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Hole(p)) = wb.panel.clone() else { panic!("no hole panel: {}", wb.status()) };
+    assert_eq!((p.seat, p.to_plane), (crate::panels::Seat::Spotface, true));
+    assert!(matches!(p.to, Some(tenon_model::PlaneRef::Work(_))), "{:?}", p.to);
+    // 6 across, a spotface 12 across and 1 deep, flat to the plane: 7 deep in all.
+    type_into(&mut d, &mut wb, "tn_props_hole_dia", "6");
+    type_into(&mut d, &mut wb, "tn_props_seat_dia", "12");
+    type_into(&mut d, &mut wb, "tn_props_bore_depth", "1");
+    if let Some(Panel::Hole(p)) = &mut wb.panel {
+        p.flat = true;
+    }
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let removed = PI * 36.0 + PI * 9.0 * 6.0;
+    assert!((volume(&wb) - (8000.0 - removed)).abs() < 1e-6, "{} vs {}", volume(&wb), 8000.0 - removed);
+}

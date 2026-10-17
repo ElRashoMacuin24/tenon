@@ -157,6 +157,8 @@ pub(crate) enum Fit {
 pub(crate) enum Seat {
     None,
     Counterbore,
+    /// A shallow seat; the hole is measured from its floor.
+    Spotface,
     Countersink,
 }
 
@@ -172,6 +174,9 @@ pub(crate) struct HolePanel {
     pub bore_depth: f64,
     pub sink_degrees: f64,
     pub through: bool,
+    /// Termination To: as far as `to` (DEC-105).
+    pub to_plane: bool,
+    pub to: Option<PlaneRef>,
     pub depth: f64,
     pub flat: bool,
     pub tip_degrees: f64,
@@ -194,6 +199,8 @@ impl HolePanel {
         match self.seat {
             Seat::None => {}
             Seat::Counterbore => (self.seat_diameter, self.bore_depth) = h.counterbore,
+            // (A spotface as wide as the head's counterbore: its depth is the user's.)
+            Seat::Spotface => self.seat_diameter = h.counterbore.0,
             Seat::Countersink => (self.seat_diameter, self.sink_degrees) = (h.countersink, 90.0),
         }
     }
@@ -215,9 +222,15 @@ impl HolePanel {
             kind: match self.seat {
                 Seat::None => HoleType::Simple,
                 Seat::Counterbore => HoleType::Counterbore { diameter: self.seat_diameter, depth: self.bore_depth },
+                Seat::Spotface => HoleType::Spotface { diameter: self.seat_diameter, depth: self.bore_depth },
                 Seat::Countersink => HoleType::Countersink { diameter: self.seat_diameter, angle: self.sink_degrees.to_radians() },
             },
-            extent: if self.through { HoleExtent::ThroughAll } else { HoleExtent::Distance(self.depth) },
+            // (To with nothing picked yet: the depth stands in, and the preview shows that.)
+            extent: match (&self.to, self.to_plane, self.through) {
+                (Some(plane), true, _) => HoleExtent::To(plane.clone()),
+                (_, false, true) => HoleExtent::ThroughAll,
+                _ => HoleExtent::Distance(self.depth),
+            },
             tip_angle: if self.flat { None } else { Some(self.tip_degrees.to_radians()) },
             reverse: self.reverse,
         })
@@ -228,10 +241,15 @@ impl HolePanel {
             HoleType::Simple => (Seat::None, h.diameter * 1.8, h.diameter / 2.0, 90.0),
             HoleType::Counterbore { diameter, depth } => (Seat::Counterbore, diameter, depth, 90.0),
             HoleType::Countersink { diameter, angle } => (Seat::Countersink, diameter, h.diameter / 2.0, angle.to_degrees()),
+            HoleType::Spotface { diameter, depth } => (Seat::Spotface, diameter, depth, 90.0),
         };
         let (through, depth) = match h.extent {
             HoleExtent::Distance(d) => (false, d),
-            HoleExtent::ThroughAll => (true, h.diameter * 2.0),
+            HoleExtent::ThroughAll | HoleExtent::To(_) => (matches!(h.extent, HoleExtent::ThroughAll), h.diameter * 2.0),
+        };
+        let to = match &h.extent {
+            HoleExtent::To(plane) => Some(plane.clone()),
+            _ => None,
         };
         HolePanel {
             editing,
@@ -243,6 +261,8 @@ impl HolePanel {
             bore_depth,
             sink_degrees,
             through,
+            to_plane: to.is_some(),
+            to,
             depth,
             flat: h.tip_angle.is_none(),
             tip_degrees: h.tip_angle.unwrap_or(DRILL_POINT).to_degrees(),
@@ -594,7 +614,9 @@ impl Panel {
             Panel::Hole(p) => {
                 let mut v = vec![("diameter", "/diameter")];
                 if !p.through {
-                    v.push(("depth", "/extent/distance"));
+                    if !p.to_plane {
+                        v.push(("depth", "/extent/distance"));
+                    }
                     if !p.flat {
                         v.push(("tip_degrees", "/tip_angle"));
                     }
@@ -602,6 +624,7 @@ impl Panel {
                 match p.seat {
                     Seat::None => {}
                     Seat::Counterbore => v.extend([("seat_diameter", "/kind/counterbore/diameter"), ("bore_depth", "/kind/counterbore/depth")]),
+                    Seat::Spotface => v.extend([("seat_diameter", "/kind/spotface/diameter"), ("bore_depth", "/kind/spotface/depth")]),
                     Seat::Countersink => v.extend([("seat_diameter", "/kind/countersink/diameter"), ("sink_degrees", "/kind/countersink/angle")]),
                 }
                 v
@@ -1232,6 +1255,7 @@ impl Workbench {
                         match h.extent {
                             HoleExtent::Distance(d) => p["depth"] = json!(d),
                             HoleExtent::ThroughAll => p["through_all"] = json!(true),
+                            HoleExtent::To(ref plane) => p["to"] = plane_json(plane),
                         }
                         match h.tip_angle {
                             Some(a) => p["tip_angle"] = json!(a),
@@ -1248,6 +1272,11 @@ impl Workbench {
                                 p["type"] = json!("countersink");
                                 p["countersink_diameter"] = json!(diameter);
                                 p["countersink_angle"] = json!(angle);
+                            }
+                            HoleType::Spotface { diameter, depth } => {
+                                p["type"] = json!("spotface");
+                                p["spotface_diameter"] = json!(diameter);
+                                p["spotface_depth"] = json!(depth);
                             }
                         }
                         ("model.hole", p)

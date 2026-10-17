@@ -960,13 +960,30 @@ impl<'a> Ctx<'a> {
         let sketch: &Sketch = &held;
         let dir = if h.reverse { frame.z() } else { -frame.z() };
         let bbox = self.target_bbox().ok_or("there is no body to drill")?;
+        let to_plane = match &h.extent {
+            HoleExtent::To(plane) => Some(self.plane_frame(plane)?),
+            _ => None,
+        };
         let mut tools: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)> = Vec::new();
         let mut made = || -> Result<(), Stop> {
             for p in &h.points {
                 let at = sketch.point(*p).ok_or_else(|| format!("hole centre point {} no longer exists in {}", p.0, label(self.doc, h.sketch)))?;
                 let origin = frame.plane_point(at);
-                let (depth, tip) = match h.extent {
-                    HoleExtent::Distance(d) => (d, h.tip_angle),
+                // (A spotface's hole is measured from the spotface's floor.)
+                let seat = if let HoleType::Spotface { depth, .. } = h.kind { depth } else { 0.0 };
+                let (depth, tip) = match &h.extent {
+                    HoleExtent::Distance(d) => (d + seat, h.tip_angle),
+                    HoleExtent::To(_) => {
+                        let target = to_plane.as_ref().ok_or("no plane")?;
+                        let across = dir.dot(target.z());
+                        let ahead = if across.abs() < 1e-9 { f64::NAN } else { (target.origin() - origin).dot(target.z()) / across };
+                        if ahead.is_nan() || ahead <= tenon_geom::tol::LINEAR + seat {
+                            return Err(
+                                "the plane the hole goes to is not ahead of it: it must cross the hole's axis beyond where the hole starts".into()
+                            );
+                        }
+                        (ahead, h.tip_angle)
+                    }
                     HoleExtent::ThroughAll => {
                         let reach = corners(&bbox).into_iter().map(|c| (c - origin).dot(dir)).fold(f64::NEG_INFINITY, f64::max);
                         if reach <= 0.0 {
@@ -1867,6 +1884,17 @@ fn hole_section(h: &Hole, depth: f64, tip: Option<f64>, point: EntityId) -> Resu
             pts.push((Vec2::new(0.0, 0.0), tag(HoleFace::Top)));
             pts.push((Vec2::new(diameter / 2.0, 0.0), tag(HoleFace::Sink)));
             pts.push((Vec2::new(r, sink), tag(HoleFace::Wall)));
+        }
+        // (A spotface is a counterbore by its faces; one of no depth is no seat at all.)
+        HoleType::Spotface { depth: spot, .. } if spot <= 0.0 => {
+            pts.push((Vec2::new(0.0, 0.0), tag(HoleFace::Top)));
+            pts.push((Vec2::new(r, 0.0), tag(HoleFace::Wall)));
+        }
+        HoleType::Spotface { diameter, depth: spot } => {
+            pts.push((Vec2::new(0.0, 0.0), tag(HoleFace::Top)));
+            pts.push((Vec2::new(diameter / 2.0, 0.0), tag(HoleFace::BoreWall)));
+            pts.push((Vec2::new(diameter / 2.0, spot), tag(HoleFace::BoreFloor)));
+            pts.push((Vec2::new(r, spot), tag(HoleFace::Wall)));
         }
     }
     match tip {

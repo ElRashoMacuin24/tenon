@@ -2887,3 +2887,30 @@ face"), and the same extents for Revolve.
 Flush as Mate's second solution as Inventor has it (Flush had been a type of its own; the
 relationship is stored as before), and its offset and angle are typed in value boxes like
 every other value in Tenon (they were drag fields).
+
+## DEC-105 The Hole panel's Spotface and To (2026-10-16)
+
+The next differences the comparison with Inventor listed for Hole.
+
+**Spotface.** Inventor's seats are None, Counterbore, Spotface and Countersink; Tenon had no
+Spotface. A spotface is a shallow seat whose floor the hole is measured from: a hole 5 deep
+under a spotface 1 deep reaches 6 below where it starts. Its depth may be 0, which leaves only
+the hole (Inventor allows it, for a spotface on the face where the hole ends). Its faces are
+named as a counterbore's are, by the hole's point, so features after it hold them the same
+way. A screw's size gives it the width of the head's counterbore; its depth stays the user's.
+The drawing note reads "SF Ø12 DEEP 1".
+
+**To.** Inventor's terminations are Distance, Through All and To. Each hole goes along its own
+axis to where that meets the plane (a flat face, a work plane or an origin plane): square to
+the hole the plane is its floor; at an angle each hole stops where its axis meets it, with its
+drill point or flat bottom there. A plane behind where the holes start is refused in words.
+Picked as Extrude's To is: a click on a flat face or a work plane, or a plane in the browser
+(the two panels share the picking now). Its depth is the plane's, so it has no Depth field;
+its drill point stays.
+
+**File format:** additive in version 2, `kind = { spotface = { diameter, depth } }` and
+`extent = { to = <plane> }`. **Command:** `model.hole` takes `type: "spotface"`,
+`spotface_diameter`, `spotface_depth` and `to`.
+
+**Not done:** a Tapped hole that puts its thread on (Thread does it afterwards), taper tapped,
+and placing a hole on a face without a sketch.

@@ -409,11 +409,13 @@ fn hole_description(h: &tenon_model::Hole) -> String {
     let depth = match h.extent {
         HoleExtent::ThroughAll => "THRU".to_string(),
         HoleExtent::Distance(d) => format!("DEEP {}", n(d)),
+        HoleExtent::To(_) => "TO FACE".to_string(),
     };
     match &h.kind {
         HoleType::Simple => format!("Ø{} {depth}", n(h.diameter)),
         HoleType::Counterbore { diameter, depth: cd } => format!("Ø{} {depth}, CBORE Ø{} DEEP {}", n(h.diameter), n(*diameter), n(*cd)),
         HoleType::Countersink { diameter, angle } => format!("Ø{} {depth}, CSK Ø{} X {}°", n(h.diameter), n(*diameter), n(angle.to_degrees())),
+        HoleType::Spotface { diameter, depth: sf } => format!("Ø{} {depth}, SF Ø{} DEEP {}", n(h.diameter), n(*diameter), n(*sf)),
     }
 }
 
@@ -457,7 +459,9 @@ pub fn hole_rows(d: &Drawing, ev: &Evaluation, view: ViewId, origin: Option<&Geo
         let desc = hole_description(h);
         let radius = match &h.kind {
             HoleType::Simple => h.diameter,
-            HoleType::Counterbore { diameter, .. } | HoleType::Countersink { diameter, .. } => diameter.max(h.diameter),
+            HoleType::Counterbore { diameter, .. } | HoleType::Countersink { diameter, .. } | HoleType::Spotface { diameter, .. } => {
+                diameter.max(h.diameter)
+            }
         } / 2.0;
         let k = match kinds.iter().position(|x| *x == desc) {
             Some(k) => k,

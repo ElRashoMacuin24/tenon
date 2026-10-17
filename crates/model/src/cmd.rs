@@ -2057,10 +2057,22 @@ fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
             diameter: num(p, "countersink_diameter")?,
             angle: opt_num(p, "countersink_angle")?.unwrap_or(std::f64::consts::FRAC_PI_2),
         },
-        other => return Err(format!("unknown hole type `{other}` (simple, counterbore, countersink)").into()),
+        "spotface" => HoleType::Spotface { diameter: num(p, "spotface_diameter")?, depth: opt_num(p, "spotface_depth")?.unwrap_or(0.0) },
+        other => return Err(format!("unknown hole type `{other}` (simple, counterbore, spotface, countersink)").into()),
     };
-    let extent =
-        if arg(p, "through_all").and_then(Value::as_bool).unwrap_or(false) { HoleExtent::ThroughAll } else { HoleExtent::Distance(num(p, "depth")?) };
+    let extent = if arg(p, "to").is_some() {
+        let plane = plane_value(p, "to")?;
+        if let PlaneRef::Work(id) = plane
+            && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
+        {
+            return Err(format!("{id} is not a work plane").into());
+        }
+        HoleExtent::To(plane)
+    } else if arg(p, "through_all").and_then(Value::as_bool).unwrap_or(false) {
+        HoleExtent::ThroughAll
+    } else {
+        HoleExtent::Distance(num(p, "depth")?)
+    };
     let tip_angle =
         if arg(p, "flat_bottom").and_then(Value::as_bool).unwrap_or(false) { None } else { Some(opt_num(p, "tip_angle")?.unwrap_or(DRILL_POINT)) };
     let reverse = arg(p, "reverse").and_then(Value::as_bool).unwrap_or(false);

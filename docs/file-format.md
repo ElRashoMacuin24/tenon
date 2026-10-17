@@ -306,9 +306,11 @@ Field values:
   - `{ equal = d }`
   - `{ two_distances = { d1, d2, reference = <face reference> } }`
   - `{ distance_angle = { distance, angle, reference } }`
-- **Hole `kind`:** `"simple"`, `{ counterbore = { diameter, depth } }` or
-  `{ countersink = { diameter, angle } }`.
-- **Hole `extent`:** `{ distance = d }` or `"through_all"`.
+- **Hole `kind`:** `"simple"`, `{ counterbore = { diameter, depth } }`,
+  `{ countersink = { diameter, angle } }` or `{ spotface = { diameter, depth } }` (DEC-105: the
+  hole's distance is measured from the spotface's floor; a depth of 0 is allowed).
+- **Hole `extent`:** `{ distance = d }`, `"through_all"` or `{ to = <plane> }` (DEC-105: each
+  hole to where its axis meets the plane; the plane written as a sketch's is).
 - **Rib `extent`:** `"to_next"` or `{ distance = d }`.
 
 ### Sketches
