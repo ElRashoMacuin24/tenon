@@ -12,9 +12,9 @@ use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions
 
 use crate::document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Extrude, ExtrudeExtent, FeatureKind,
-    Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RectPattern, RegionSel, Revolve,
-    RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, WorkAxis, WorkPlane, WorkPoint,
-    hole_centres, open_lines,
+    Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RadiusAt, RectPattern, RegionSel,
+    Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, WorkAxis, WorkPlane,
+    WorkPoint, hole_centres, open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
@@ -2121,7 +2121,26 @@ fn edge_refs(p: &Value) -> Result<Vec<EdgeRef>, CmdError> {
 }
 
 fn model_fillet(s: &mut Session, p: &Value) -> CmdResult {
-    add_feature(s, FeatureKind::Fillet(Fillet { edges: edge_refs(p)?, radius: num(p, "radius")? }), p)
+    // A face fillet names its two sets of faces in place of edges (DEC-122).
+    let faces: Option<[Vec<FaceRef>; 2]> = match arg(p, "faces") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(parse(p, "faces")?),
+    };
+    let edges = if faces.is_some() && arg(p, "edges").is_none() { Vec::new() } else { edge_refs(p)? };
+    // A variable radius: further radii along the edges, or only the one at their end.
+    let mut radii: Vec<RadiusAt> = match arg(p, "radii") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(_) => parse(p, "radii")?,
+    };
+    if let Some(end) = opt_num(p, "end_radius")? {
+        if radii.last().is_some_and(|r| r.at >= 1.0) {
+            return Err("give `end_radius` or a last radius at 1, not both".into());
+        }
+        radii.push(RadiusAt { at: 1.0, radius: end });
+    }
+    let fillet = Fillet { edges, radius: num(p, "radius")?, radii, faces };
+    fillet.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Fillet(fillet), p)
 }
 
 fn model_chamfer(s: &mut Session, p: &Value) -> CmdResult {
@@ -3956,7 +3975,13 @@ static COMMANDS: &[CommandSpec] = &[
         true,
         model_revolve
     ),
-    doc_cmd!("model.fillet", "Fillet", "edges: [edge references from model.edge_ref], radius", true, model_fillet),
+    doc_cmd!(
+        "model.fillet",
+        "Fillet",
+        "edges: [edge references from model.edge_ref], radius. Variable radius: end_radius (the radius at the end of each edge, `radius` being the start's), or radii: [{ at (0 to 1 along the edge), radius }, ...] for more places. Face fillet: faces: [[face references], [face references]] in place of edges: every edge between a face of one set and a face of the other is rounded",
+        true,
+        model_fillet
+    ),
     doc_cmd!(
         "model.chamfer",
         "Chamfer",

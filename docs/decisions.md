@@ -3243,3 +3243,31 @@ clicked on, as Line does.
 
 **In the sketch:** Constrain > Smooth (G2), then the two curves. Files gain the constraint type
 `smooth`, additive.
+
+## DEC-122 Variable and face fillets (2026-10-17)
+
+Inventor's Fillet has a Variable tab (a radius at the start and the end of each edge, and at
+places between) and the Fillet drop-down has Face Fillet (two sets of faces, rounded where
+they meet). Tenon's fillet had one radius on picked edges.
+
+**Variable.** `Fillet` gains `radii`: the radius at places along each edge (`at` from 0 at its
+start to 1 at its end, in order), `radius` being the start's; the last is held to the end if it
+is short of it. The kernel's `fillet_variable` takes the law; OCCT's evolving fillet runs it
+along each contour (an edge with any carrying on smoothly from it), even between two places and
+smooth through more. OCCT's contour need not start where the edge does (as `edge_info` and the
+view report it): on a lone edge the shim compares the contour's first vertex with the edge's
+own and turns the law round to match, so that "start" means the same everywhere. On a run of
+edges the law runs as the kernel's contour does (a gap). In the panel: Constant or Variable,
+as the dialog's tabs; Variable has Start and End, and the view marks each picked edge's two ends
+with their radii. Places between are kept when a fillet that has them is edited, and given by
+`radii`.
+
+**Face fillet.** `Fillet` gains `faces`: two lists of face references, `edges` then empty. At
+every rebuild the edges between a face of one list and a face of the other are found and
+rounded, so the fillet follows the faces as they change. Faces that do not meet are said so in
+words: bridging faces apart (Inventor's other use of it) is not done. In the panel (Face Fillet
+under Fillet): Face Set 1 and Face Set 2, the first face of the first handing on to the second
+as Symmetry's second pick does; a click on a set's row makes it the one clicks add to.
+
+`model.fillet` takes `end_radius` or `radii`, and `faces` in place of `edges`; files gain the
+two fields, additive.

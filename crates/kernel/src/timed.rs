@@ -103,6 +103,9 @@ impl Kernel for Timed {
     fn fillet(&mut self, body: ShapeHandle, edges: &[EdgeId], radius: f64) -> KResult<Op> {
         timed!(self, "fillet", self.inner.fillet(body, edges, radius))
     }
+    fn fillet_variable(&mut self, body: ShapeHandle, edges: &[EdgeId], law: &[(f64, f64)]) -> KResult<Op> {
+        timed!(self, "fillet", self.inner.fillet_variable(body, edges, law))
+    }
     fn chamfer(&mut self, body: ShapeHandle, edges: &[EdgeId], spec: &ChamferSpec) -> KResult<Op> {
         timed!(self, "chamfer", self.inner.chamfer(body, edges, spec))
     }

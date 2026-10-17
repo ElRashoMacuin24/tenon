@@ -17,10 +17,15 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         }
         (_, KernelError::InvalidInput(_)) => return words,
         (_, KernelError::Unsupported(op)) => return format!("This geometry kernel cannot do {op} yet."),
+        (FeatureKind::Fillet(f), _) if !f.radii.is_empty() => format!(
+            "The variable fillet, {} mm at the start, could not be made on {}. One of its radii is probably too large for the edges or for the faces beside them, or changes too fast: try smaller radii, or fewer edges.",
+            mm(f.radius),
+            count(f.edges.len().max(1), "this edge", "these edges")
+        ),
         (FeatureKind::Fillet(f), _) => format!(
             "The {} mm fillet could not be made on {}. The radius is probably too large for the edges or for the faces beside them: try a smaller radius, or fewer edges.",
             mm(f.radius),
-            count(f.edges.len(), "this edge", "these edges")
+            if f.faces.is_some() { "the edges between the faces".to_string() } else { count(f.edges.len(), "this edge", "these edges") }
         ),
         (FeatureKind::Chamfer(c), _) => format!(
             "The chamfer could not be made on {}. It is probably too large for the faces beside the edges: try a smaller size, or fewer edges.",

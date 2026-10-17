@@ -124,7 +124,9 @@ go with it unless you untick them.
 Extrude, Revolve, Sweep, Loft, Coil, Rib; Hole (simple, counterbored, countersunk), Thread,
 Fillet, Chamfer, Shell, Draft, Split, Combine; rectangular and circular patterns, Mirror;
 work planes, axes and points; Box, Cylinder, Sphere and Torus. Every one opens its panel
-again when its row is double-clicked.
+again when its row is double-clicked. A fillet can be Variable (a radius at each end of its
+edges, marked in the view), and **Face Fillet** (under Fillet) rounds every edge between two
+sets of faces.
 
 **Inspect > Properties** gives the part its number and description (for parts lists) and
 its material (its colour, density and how strong it is), and says its mass, volume, centre

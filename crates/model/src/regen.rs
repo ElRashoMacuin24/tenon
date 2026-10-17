@@ -534,9 +534,27 @@ impl<'a> Ctx<'a> {
             FeatureKind::Extrude(e) => self.extrude(f.id, e),
             FeatureKind::Revolve(r) => self.revolve(f.id, r),
             FeatureKind::Fillet(fi) => {
-                let (bi, edges) = self.resolve_edges(&fi.edges)?;
+                fi.check()?;
+                let (bi, edges) = match &fi.faces {
+                    Some(sets) => self.edges_between(sets)?,
+                    None => self.resolve_edges(&fi.edges)?,
+                };
                 let shape = self.body_shape(bi)?;
                 let ids: Vec<_> = edges.iter().map(|e| shape.edge(*e)).collect();
+                // A variable radius runs from the start's to the last one given, held to the end.
+                if !fi.radii.is_empty() {
+                    let mut law: Vec<(f64, f64)> = std::iter::once((0.0, fi.radius)).chain(fi.radii.iter().map(|r| (r.at, r.radius))).collect();
+                    if let Some(&(at, r)) = law.last()
+                        && at < 1.0
+                    {
+                        law.push((1.0, r));
+                    }
+                    let op = self.k.fillet_variable(shape, &ids, &law).map_err(|e| match e {
+                        KernelError::OperationFailed { .. } => Stop::Failed(crate::explain::explain(&f.kind, &e)),
+                        e => e.into(),
+                    })?;
+                    return self.replace_body(f.id, bi, op);
+                }
                 let op = match self.k.fillet(shape, &ids, fi.radius) {
                     Ok(op) => op,
                     Err(e @ KernelError::OperationFailed { .. }) => {
@@ -1132,6 +1150,36 @@ impl<'a> Ctx<'a> {
     }
 
     /// The body every edge is on, and the edges' indices there.
+    /// A face fillet's edges (DEC-122): every edge between a face of one set and a face of the
+    /// other, on the body they are on.
+    fn edges_between(&self, [a, b]: &[Vec<FaceRef>; 2]) -> Result<(usize, Vec<u32>), Stop> {
+        let mut body = None;
+        let mut faces = [Vec::new(), Vec::new()];
+        for (set, out) in [a, b].into_iter().zip(faces.iter_mut()) {
+            for fref in set {
+                let (bi, face) = self.regen.resolve(fref, &*self.k).map_err(|e| self.describe_ref(fref, &e))?;
+                if body.is_some_and(|x| x != bi) {
+                    return Err("the faces are on different bodies".into());
+                }
+                body = Some(bi);
+                out.push(face);
+            }
+        }
+        let bi = body.unwrap_or(0);
+        let topo = self.k.topology(self.body_shape(bi)?)?;
+        let edges: Vec<u32> = topo
+            .edge_faces
+            .iter()
+            .enumerate()
+            .filter(|(_, adj)| adj.iter().any(|f| faces[0].contains(f)) && adj.iter().any(|f| faces[1].contains(f)))
+            .filter_map(|(i, _)| u32::try_from(i).ok())
+            .collect();
+        if edges.is_empty() {
+            return Err("the two sets of faces do not meet: a face fillet rounds the edges between them (faces apart cannot be bridged yet)".into());
+        }
+        Ok((bi, edges))
+    }
+
     fn resolve_edges(&self, edges: &[EdgeRef]) -> Result<(usize, Vec<u32>), Stop> {
         if edges.is_empty() {
             return Err("select at least one edge".into());

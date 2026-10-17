@@ -2585,7 +2585,7 @@
       "id": "model.fillet",
       "label": "Fillet",
       "undoable": true,
-      "description": "edges: [edge references from model.edge_ref], radius",
+      "description": "edges: [edge references from model.edge_ref], radius. Variable radius: end_radius (the radius at the end of each edge, `radius` being the start's), or radii: [{ at (0 to 1 along the edge), radius }, ...] for more places. Face fillet: faces: [[face references], [face references]] in place of edges: every edge between a face of one set and a face of the other is rounded",
       "params": {
         "type": "object",
         "properties": {
@@ -2594,12 +2594,34 @@
             "items": {
               "$ref": "#/$defs/edge_ref"
             },
-            "description": "edge references, from model.edge_ref"
+            "description": "edge references, from model.edge_ref (or `faces`)"
           },
           "radius": {
             "type": "number",
             "x-unit": "mm",
-            "description": "the fillet's radius"
+            "description": "the fillet's radius; with a variable radius, at the start of each edge"
+          },
+          "end_radius": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "a variable radius: the radius at the end of each edge"
+          },
+          "radii": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "a variable radius at more places: [{ at: 0 to 1 along the edge, radius }, ...]"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/face_ref"
+              }
+            },
+            "description": "a face fillet: two lists of face references; the edges between them are rounded"
           },
           "equations": {
             "type": "object",
@@ -2608,7 +2630,6 @@
         },
         "additionalProperties": false,
         "required": [
-          "edges",
           "radius"
         ]
       }

@@ -60,6 +60,8 @@ impl Workbench {
     /// What the open panel picks in the viewport, if it picks anything.
     pub(crate) fn panel_wants(&self) -> Option<Wants> {
         match &self.panel {
+            // (A face fillet picks faces.)
+            Some(Panel::Fillet(p)) if p.faces.is_some() => Some(Wants { edges: false, faces: true }),
             Some(Panel::Fillet(_) | Panel::Flange(_) | Panel::Hem(_) | Panel::CornerSeam(_) | Panel::Bend(_) | Panel::ContourFlange(_)) => {
                 Some(Wants { edges: true, faces: false })
             }
@@ -132,7 +134,10 @@ impl Workbench {
         };
         let face = |r: &FaceRef| find_face(&self.scene, r).map(|(body, face)| Pick::Face { body, face });
         match &self.panel {
-            Some(Panel::Fillet(p)) => edges(&p.edges),
+            Some(Panel::Fillet(p)) => match &p.faces {
+                Some(sets) => sets.iter().flatten().filter_map(face).collect(),
+                None => edges(&p.edges),
+            },
             Some(Panel::Flange(p)) => edges(&p.edges),
             Some(Panel::Hem(p)) => edges(&p.edges),
             Some(Panel::CornerSeam(p)) => edges(&p.edges),
@@ -383,6 +388,20 @@ impl Workbench {
         let same_edge = |r: &EdgeRef| matches!(p, Pick::Edge { body, edge } if find_edge(scene, r) == Some((body, edge)));
         let same_face = |r: &FaceRef| matches!(p, Pick::Face { body, face } if find_face(scene, r) == Some((body, face)));
         match (&mut self.panel, eref, fref) {
+            (Some(Panel::Fillet(f)), None, Some(r)) if f.faces.is_some() => {
+                let set = f.set.min(1);
+                if let Some(sets) = &mut f.faces {
+                    // (A face already in the other set is taken out of it first.)
+                    let other = &mut sets[1 - set];
+                    let was_other = other.iter().any(&same_face);
+                    other.retain(|x| !same_face(x));
+                    edit_list(&mut sets[set], r, present && !was_other, toggle, same_face);
+                    // The first face of the first set hands on to the second set.
+                    if set == 0 && sets[0].len() == 1 && sets[1].is_empty() && !present {
+                        f.set = 1;
+                    }
+                }
+            }
             (Some(Panel::Fillet(f)), Some(r), _) => edit_list(&mut f.edges, r, present, toggle, same_edge),
             (Some(Panel::Flange(f)), Some(r), _) => edit_list(&mut f.edges, r, present, toggle, same_edge),
             (Some(Panel::Hem(f)), Some(r), _) => edit_list(&mut f.edges, r, present, toggle, same_edge),
@@ -483,6 +502,31 @@ impl Workbench {
         let galley = p.layout_no_wrap(label, crate::theme::body(), t.text);
         p.rect_filled(Rect::from_min_size(at - vec2(3.0, 2.0), galley.size() + vec2(6.0, 4.0)), 3.0, t.panel.gamma_multiply(0.9));
         p.galley(at, galley, t.text);
+    }
+
+    /// A variable fillet: each picked edge's start and end marked with the radius there, so
+    /// that it can be seen which end is which (DEC-122).
+    pub(crate) fn fillet_overlay(&self, ui: &egui::Ui, rect: Rect, t: &Tokens) {
+        let Some(Panel::Fillet(f)) = &self.panel else { return };
+        if !f.variable || f.faces.is_some() {
+            return;
+        }
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let screen = |q: tenon_geom::Vec3| self.view.camera.project(q, w, h).map(|(x, y, _)| rect.min + vec2(x as f32, y as f32));
+        let p = ui.painter().with_clip_rect(rect);
+        let value = crate::properties::fmt_value;
+        for r in &f.edges {
+            let Some((b, e)) = find_edge(&self.scene, r) else { continue };
+            let Some([start, end]) = self.scene.bodies.get(b).and_then(|b| b.ends.get(e as usize)).copied() else { continue };
+            for (q, label) in [(start, format!("Start {} mm", value(f.radius))), (end, format!("End {} mm", value(f.end_radius)))] {
+                let Some(at) = screen(q) else { continue };
+                p.circle_filled(at, 3.5, t.accent);
+                let galley = p.layout_no_wrap(label, crate::theme::small(), t.text);
+                let corner = at + vec2(7.0, -7.0 - galley.size().y);
+                p.rect_filled(Rect::from_min_size(corner - vec2(3.0, 2.0), galley.size() + vec2(6.0, 4.0)), 3.0, t.panel.gamma_multiply(0.9));
+                p.galley(corner, galley, t.text);
+            }
+        }
     }
 
     /// Where the centres clicked on a face are on the screen.
@@ -750,7 +794,10 @@ impl Workbench {
     /// Clears the open panel's edges or faces.
     pub(crate) fn clear_panel_picks(&mut self) {
         match &mut self.panel {
-            Some(Panel::Fillet(f)) => f.edges.clear(),
+            Some(Panel::Fillet(f)) => match &mut f.faces {
+                Some(sets) => sets[f.set.min(1)].clear(),
+                None => f.edges.clear(),
+            },
             Some(Panel::Flange(f)) => f.edges.clear(),
             Some(Panel::Hem(f)) => f.edges.clear(),
             Some(Panel::CornerSeam(f)) => f.edges.clear(),

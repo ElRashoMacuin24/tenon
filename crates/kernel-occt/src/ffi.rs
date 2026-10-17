@@ -251,6 +251,9 @@ pub(crate) mod bridge {
         fn transform(shape: &Shape, kind: u8, a: &V3, b: &V3, value: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// Constant-radius fillet on edges of `body` (0-based edge indices).
         fn fillet(body: &Shape, edges: &[u32], radius: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// A fillet whose radius is `radii[i]` at relative place `at[i]` (0 to 1) along each
+        /// edge's run of smoothly joined edges: evenly between two, smoothly through more.
+        fn fillet_variable(body: &Shape, edges: &[u32], at: &[f64], radii: &[f64], hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// `kind`: 0 equal distance `a`; 1 distances `a` (on face `reference`) and `b`; 2 distance
         /// `a` on `reference` and angle `b` (radians).
         fn chamfer(body: &Shape, edges: &[u32], kind: u8, a: f64, b: f64, reference: u32, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;

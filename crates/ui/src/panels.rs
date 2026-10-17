@@ -6,8 +6,8 @@ use serde_json::{Value, json};
 use tenon_geom::{Frame, Vec2};
 use tenon_model::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, DRILL_POINT, DirectionRef, Document, EdgeRef, Extrude, ExtrudeExtent, FaceRef, FeatureId,
-    FeatureKind, Fillet, Fingerprint, Hole, HoleExtent, HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel,
-    Revolve, RevolveAngle, Rib, RibExtent, Shell, hole_centres, open_lines,
+    FeatureKind, Fillet, Fingerprint, Hole, HoleExtent, HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RadiusAt, RectPattern,
+    RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, hole_centres, open_lines,
 };
 use tenon_sketch::{Constraint, ConstraintId, EntityId};
 
@@ -135,7 +135,16 @@ impl ValuePanel {
 pub(crate) struct FilletPanel {
     pub editing: Option<FeatureId>,
     pub edges: Vec<EdgeRef>,
+    /// The radius; varying, the radius at the start of each edge.
     pub radius: f64,
+    /// Variable radius (DEC-122): the radius at the end of each edge, and any places between
+    /// that the feature has (kept as they are).
+    pub variable: bool,
+    pub end_radius: f64,
+    pub between: Vec<RadiusAt>,
+    /// Face fillet (DEC-122): its two sets of faces, and which of them a click adds to.
+    pub faces: Option<[Vec<FaceRef>; 2]>,
+    pub set: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -522,8 +531,31 @@ impl PatternPanel {
 }
 
 impl FilletPanel {
+    pub(crate) fn new(editing: Option<FeatureId>, edges: Vec<EdgeRef>, radius: f64) -> FilletPanel {
+        FilletPanel { editing, edges, radius, variable: false, end_radius: radius * 2.0, between: Vec::new(), faces: None, set: 0 }
+    }
+
+    /// The panel for a fillet as it is.
+    pub(crate) fn of(editing: Option<FeatureId>, f: Fillet) -> FilletPanel {
+        let mut between = f.radii.clone();
+        let end = between.pop_if(|r| r.at >= 1.0).map(|r| r.radius).or(f.radii.last().map(|r| r.radius));
+        FilletPanel {
+            variable: end.is_some(),
+            end_radius: end.unwrap_or(f.radius * 2.0),
+            between,
+            faces: f.faces.clone(),
+            ..FilletPanel::new(editing, f.edges, f.radius)
+        }
+    }
+
     pub(crate) fn kind(&self) -> FeatureKind {
-        FeatureKind::Fillet(Fillet { edges: self.edges.clone(), radius: self.radius })
+        let radii = if self.variable {
+            self.between.iter().copied().chain(std::iter::once(RadiusAt { at: 1.0, radius: self.end_radius })).collect()
+        } else {
+            Vec::new()
+        };
+        let edges = if self.faces.is_some() { Vec::new() } else { self.edges.clone() };
+        FeatureKind::Fillet(Fillet { edges, radius: self.radius, radii, faces: self.faces.clone() })
     }
 }
 
@@ -679,6 +711,7 @@ impl Panel {
                 Direction::Asymmetric => vec![("degrees", "/angle/two_sided/forward"), ("degrees_b", "/angle/two_sided/backward")],
                 _ => vec![("degrees", "/angle/angle")],
             },
+            Panel::Fillet(p) if p.variable && p.between.is_empty() => vec![("radius", "/radius"), ("end_radius", "/radii/0/radius")],
             Panel::Fillet(_) => vec![("radius", "/radius")],
             Panel::Chamfer(p) => match p.method {
                 ChamferMethod::Distance => vec![("d1", "/size/equal")],
@@ -973,8 +1006,11 @@ impl Workbench {
             return Err("there is no solid yet: extrude or revolve a sketch first".into());
         }
         let panel = match (which, existing) {
-            ("fillet", Some(FeatureKind::Fillet(f))) => Panel::Fillet(FilletPanel { editing, edges: f.edges, radius: f.radius }),
-            ("fillet", None) => Panel::Fillet(FilletPanel { editing, edges: self.picked_edges(), radius: 2.0 }),
+            ("fillet" | "face_fillet", Some(FeatureKind::Fillet(f))) => Panel::Fillet(FilletPanel::of(editing, f)),
+            ("fillet", None) => Panel::Fillet(FilletPanel::new(editing, self.picked_edges(), 2.0)),
+            ("face_fillet", None) => {
+                Panel::Fillet(FilletPanel { faces: Some([Vec::new(), Vec::new()]), ..FilletPanel::new(editing, Vec::new(), 2.0) })
+            }
             ("chamfer", Some(FeatureKind::Chamfer(c))) => {
                 let (method, d1, d2, degrees, reference) = match c.size {
                     ChamferSize::Equal(d) => (ChamferMethod::Distance, d, d, 45.0, None),
@@ -1005,6 +1041,7 @@ impl Workbench {
         self.view.selection.clear();
         self.set_status(match which {
             "fillet" => "Fillet: click edges to round (click again to remove), set the radius, then OK.",
+            "face_fillet" => "Face Fillet: click the faces of the first set, then those of the second; the edges between them are rounded. Set the radius, then OK.",
             "chamfer" => "Chamfer: click edges to bevel, set the distance, then OK.",
             _ => "Shell: click the faces to open, set the thickness, then OK.",
         });
@@ -1412,7 +1449,17 @@ impl Workbench {
                         }
                         ("model.revolve", p)
                     }
-                    FeatureKind::Fillet(f) => ("model.fillet", json!({ "edges": f.edges, "radius": f.radius })),
+                    FeatureKind::Fillet(f) => {
+                        let mut v = json!({ "radius": f.radius });
+                        match &f.faces {
+                            Some(sets) => v["faces"] = json!(sets),
+                            None => v["edges"] = json!(f.edges),
+                        }
+                        if !f.radii.is_empty() {
+                            v["radii"] = json!(f.radii);
+                        }
+                        ("model.fillet", v)
+                    }
                     FeatureKind::Chamfer(c) => {
                         let p = match &c.size {
                             ChamferSize::Equal(d) => json!({ "edges": c.edges, "distance": d }),
@@ -1723,12 +1770,16 @@ impl Workbench {
             }
             Panel::Fillet(p) => {
                 if commit {
-                    if p.edges.is_empty() {
-                        self.set_error("Fillet: select at least one edge".to_string());
-                    } else {
-                        keep = !self.commit_panel(&ptrs, p.editing, p.kind());
-                        if !keep && again {
-                            reopen = Some("model.fillet");
+                    match &p.faces {
+                        Some([a, b]) if a.is_empty() || b.is_empty() => {
+                            self.set_error("Face Fillet: click a face for each of the two sets".to_string());
+                        }
+                        None if p.edges.is_empty() => self.set_error("Fillet: select at least one edge".to_string()),
+                        _ => {
+                            keep = !self.commit_panel(&ptrs, p.editing, p.kind());
+                            if !keep && again {
+                                reopen = Some(if p.faces.is_some() { "model.face_fillet" } else { "model.fillet" });
+                            }
                         }
                     }
                 }

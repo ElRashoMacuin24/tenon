@@ -79,6 +79,8 @@ std::unique_ptr<Shape> revolve(const ProfileIn& profile, const V3& origin, const
                                HistoryOut& hist);
 std::unique_ptr<Shape> transform(const Shape& shape, std::uint8_t kind, const V3& a, const V3& b, double value, HistoryOut& hist);
 std::unique_ptr<Shape> fillet(const Shape& body, rust::Slice<const std::uint32_t> edges, double radius, HistoryOut& hist);
+std::unique_ptr<Shape> fillet_variable(const Shape& body, rust::Slice<const std::uint32_t> edges, rust::Slice<const double> at,
+                                       rust::Slice<const double> radii, HistoryOut& hist);
 std::unique_ptr<Shape> chamfer(const Shape& body, rust::Slice<const std::uint32_t> edges, std::uint8_t kind, double a, double b,
                                std::uint32_t reference, HistoryOut& hist);
 // Faces that lie in one surface made one face, across the edges of `faces` only.

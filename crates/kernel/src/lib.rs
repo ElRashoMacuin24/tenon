@@ -178,6 +178,13 @@ pub trait Kernel: Send {
         let _ = (body, edges, radius);
         unsupported!("fillet")
     }
+    /// A fillet whose radius varies along each edge, or each run of edges that carry on smoothly
+    /// into one another (DEC-122): `law` is (place from 0 at the start to 1 at the end, radius),
+    /// at least two, in order; between them the radius changes evenly (two) or smoothly.
+    fn fillet_variable(&mut self, body: ShapeHandle, edges: &[EdgeId], law: &[(f64, f64)]) -> KResult<Op> {
+        let _ = (body, edges, law);
+        unsupported!("variable fillet")
+    }
     fn chamfer(&mut self, body: ShapeHandle, edges: &[EdgeId], spec: &ChamferSpec) -> KResult<Op> {
         let _ = (body, edges, spec);
         unsupported!("chamfer")

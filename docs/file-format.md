@@ -239,7 +239,7 @@ shows until a feature uses it and a work feature shows.
 | `sketch` | `plane`, `next_entity`, `next_constraint`, `entities`, `constraints`; optional `projections` (all below) |
 | `extrude` | `sketch`, `regions`, `extent`, `reverse`, `operation`; optional `taper` (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through-all only) |
 | `revolve` | `sketch`, `regions`, `axis` (revolve axis), `angle`, `operation` |
-| `fillet` | `edges` (edge references), `radius` |
+| `fillet` | `edges` (edge references), `radius`; optional `radii` (a variable radius: `[{ at, radius }, ...]`, `at` from 0 at each edge's start to 1 at its end, `radius` being the start's) and `faces` (a face fillet: two lists of face references, `edges` then empty; DEC-122) |
 | `chamfer` | `edges`, `size` |
 | `shell` | `remove` (face references), `thickness`, `outside` |
 | `hole` | `sketch`, `points` (sketch point ids), `diameter`, `kind`, `extent`, optional `tip_angle`, `reverse` |

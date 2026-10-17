@@ -1102,3 +1102,64 @@ fn smooth_is_set_by_clicking_a_spline_and_the_line_it_ends_on() {
     let off = |i: usize| (q - p).normalized().cross(s.point(poles[i]).unwrap() - p);
     assert!(off(1).abs() < 1e-7 && off(2).abs() < 1e-7, "{} {}", off(1), off(2));
 }
+
+#[test]
+fn a_fillet_is_made_variable_or_between_two_sets_of_faces_by_clicks() {
+    use tenon_model::{FeatureKind, RadiusAt};
+    let fillet = |wb: &Workbench| {
+        wb.document()
+            .features()
+            .iter()
+            .find_map(|f| match &f.kind {
+                FeatureKind::Fillet(x) => Some(x.clone()),
+                _ => None,
+            })
+            .expect("a fillet")
+    };
+    // Variable (DEC-122): F, the top front edge, Variable, 2 at the start and 4 at the end.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    block(&mut wb);
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::F);
+    let edge = on_screen(&wb, Vec3::new(20.0, 0.0, 10.0));
+    move_to(&mut d, &mut wb, edge);
+    d.click(&mut wb, edge);
+    assert!(matches!(&wb.panel, Some(Panel::Fillet(p)) if p.edges.len() == 1), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_fillet_variable"));
+    crate::tests::type_into(&mut d, &mut wb, "tn_props_radius", "2");
+    crate::tests::type_into(&mut d, &mut wb, "tn_props_end_radius", "4");
+    // Each end of the edge is marked in the view with its radius.
+    d.frame(&mut wb, vec![]);
+    let texts = d.texts();
+    assert!(texts.iter().any(|t| t.starts_with("Start 2")) && texts.iter().any(|t| t.starts_with("End 4")), "{texts:?}");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    let f = fillet(&wb);
+    assert_eq!((f.radius, f.radii.clone()), (2.0, vec![RadiusAt { at: 1.0, radius: 4.0 }]), "{}", wb.status());
+    let even = (1.0 - PI / 4.0) * 40.0 * (4.0 + 8.0 + 16.0) / 3.0;
+    assert!(((8000.0 - volume(&wb)) - even).abs() < 0.02 * even, "{} ({})", volume(&wb), wb.status());
+
+    // Face Fillet: the top, which hands on to the second set, then the front; 1 round.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    block(&mut wb);
+    d.settle(&mut wb);
+    wb.run_ui("model.face_fillet").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "Face Set 1") && d.texts().iter().any(|t| t == "Face Set 2"), "{:?}", d.texts());
+    for p in [Vec3::new(20.0, 10.0, 10.0), Vec3::new(20.0, 0.0, 4.0)] {
+        let q = on_screen(&wb, p);
+        move_to(&mut d, &mut wb, q);
+        d.click(&mut wb, q);
+    }
+    assert!(matches!(&wb.panel, Some(Panel::Fillet(p)) if p.faces.as_ref().is_some_and(|s| s[0].len() == 1 && s[1].len() == 1)), "{}", wb.status());
+    crate::tests::type_into(&mut d, &mut wb, "tn_props_radius", "1");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    let f = fillet(&wb);
+    assert!(f.faces.is_some() && f.edges.is_empty(), "{f:?}");
+    let round = (1.0 - PI / 4.0) * 40.0;
+    assert!((8000.0 - volume(&wb) - round).abs() < 1e-6 * 8000.0, "{} ({})", volume(&wb), wb.status());
+}

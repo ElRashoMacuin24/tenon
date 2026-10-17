@@ -114,4 +114,5 @@ taken away), without a check.
     `model.hole` (DEC-114); `asm.constrain`'s symmetry type and `plane` (DEC-115); `work.plane`'s `three_points` and
     `points` (DEC-116); `sketch.center_point` and `center` of `sketch.point` (DEC-117); `sketch.arc_slot`
     (DEC-118); `sketch.stretch` (DEC-119); `sketch.ellipse` (DEC-120); point ids among `sketch.spline`'s `points`, and the
-    constraint type `smooth` (DEC-121). 232 commands.
+    constraint type `smooth` (DEC-121); `end_radius`, `radii` and `faces` of `model.fillet`, whose
+    `edges` may be left out for `faces` (DEC-122). 232 commands.

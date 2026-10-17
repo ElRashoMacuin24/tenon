@@ -207,11 +207,49 @@ pub struct Revolve {
     pub reverse: bool,
 }
 
-/// Rounds edges with one radius.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Rounds edges: with one radius, a radius that varies along each edge, or the edges between
+/// two sets of faces.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Fillet {
     pub edges: Vec<EdgeRef>,
+    /// The radius; with `radii`, the radius at the start of each edge.
     pub radius: f64,
+    /// Variable radius (DEC-122): the radius further along each edge (or each run of edges that
+    /// carry on smoothly into one another), `at` from 0 at its start to 1 at its end, in order.
+    /// Between them the radius changes evenly (one further point) or smoothly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub radii: Vec<RadiusAt>,
+    /// Face fillet (DEC-122): two sets of faces; what is rounded is every edge between a face of
+    /// one and a face of the other, found again whenever the part is rebuilt (`edges` is empty).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faces: Option<[Vec<FaceRef>; 2]>,
+}
+
+/// A variable fillet's radius at a place along its edges (DEC-122).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RadiusAt {
+    /// From 0 at the start of the edge to 1 at its end.
+    pub at: f64,
+    pub radius: f64,
+}
+
+impl Fillet {
+    /// Why it cannot be a fillet, if it cannot.
+    pub fn check(&self) -> Result<(), String> {
+        let ok = |r: f64| r.is_finite() && r > 0.0;
+        if !ok(self.radius) || self.radii.iter().any(|r| !ok(r.radius)) {
+            return Err("a fillet's radii must be positive".into());
+        }
+        if self.radii.iter().any(|r| !(r.at > 0.0 && r.at <= 1.0)) || self.radii.windows(2).any(|w| w[1].at <= w[0].at) {
+            return Err("the places of a variable fillet's radii must be in order along the edge, after its start and up to its end (0 to 1)".into());
+        }
+        match &self.faces {
+            Some([a, b]) if a.is_empty() || b.is_empty() => Err("a face fillet needs a face in each of its two sets".into()),
+            Some(_) if !self.edges.is_empty() => Err("a face fillet rounds the edges between its faces: give faces or edges, not both".into()),
+            None if self.edges.is_empty() => Err("select at least one edge".into()),
+            _ => Ok(()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1009,7 +1047,9 @@ impl FeatureKind {
                 }
                 v
             }
-            FeatureKind::Fillet(f) => f.edges.iter().flat_map(EdgeRef::features).collect(),
+            FeatureKind::Fillet(f) => {
+                f.edges.iter().flat_map(EdgeRef::features).chain(f.faces.iter().flatten().flatten().filter_map(FaceRef::feature)).collect()
+            }
             FeatureKind::Chamfer(c) => {
                 let mut v: Vec<FeatureId> = c.edges.iter().flat_map(EdgeRef::features).collect();
                 if let ChamferSize::TwoDistances { reference, .. } | ChamferSize::DistanceAngle { reference, .. } = &c.size {

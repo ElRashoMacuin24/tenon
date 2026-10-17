@@ -468,6 +468,7 @@ impl Workbench {
             self.profile_overlay(ui, rect, t);
             self.axis_overlay(ui, rect, t);
             self.measure_overlay(ui, rect, t);
+            self.fillet_overlay(ui, rect, t);
             self.manipulator(ui, rect, t);
             self.mini_toolbar(ui, rect, t);
         }

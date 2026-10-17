@@ -14,6 +14,11 @@ shows it in [ROADMAP.md](ROADMAP.md).
   built in so that a part is the same everywhere. New commands `sketch.text` and
   `sketch.edit_text`; `sketch.info` lists the texts. Files gain the entity `text` and the
   region key `{ text = id }` (an addition to format version 2).
+- **Variable fillets.** The Fillet panel has Constant and Variable: a start and an end radius,
+  marked at each end of the edges in the view. `model.fillet` takes `end_radius`, or `radii`
+  for more places along the edges.
+- **Face Fillet** under Fillet: two sets of faces, and every edge between them is rounded,
+  found again whenever the part is rebuilt. `model.fillet` takes `faces` in place of `edges`.
 - **Smooth (G2).** Constrain > Smooth: a spline and the line, arc or spline it ends on are
   tangent there and bend as sharply on both sides. A spline drawn from an existing point now
   starts on that point (`sketch.spline` takes point ids among its `points`); the constraint

@@ -493,7 +493,17 @@ static SCHEMAS: &[C] = &[
             EQUATIONS,
         ],
     ),
-    C::new("model.fillet", &[FEATURE_EDGES, req("radius", Length, "the fillet's radius"), EQUATIONS]),
+    C::new(
+        "model.fillet",
+        &[
+            opt("edges", EDGES, "edge references, from model.edge_ref (or `faces`)"),
+            req("radius", Length, "the fillet's radius; with a variable radius, at the start of each edge"),
+            opt("end_radius", Length, "a variable radius: the radius at the end of each edge"),
+            opt("radii", List(&Object), "a variable radius at more places: [{ at: 0 to 1 along the edge, radius }, ...]"),
+            opt("faces", List(&List(&Face)), "a face fillet: two lists of face references; the edges between them are rounded"),
+            EQUATIONS,
+        ],
+    ),
     C::new(
         "model.chamfer",
         &[

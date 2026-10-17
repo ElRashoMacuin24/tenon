@@ -516,6 +516,26 @@ impl Kernel for OcctKernel {
         self.finish(shape, hist)
     }
 
+    fn fillet_variable(&mut self, body: ShapeHandle, edges: &[EdgeId], law: &[(f64, f64)]) -> KResult<Op> {
+        self.not_cancelled()?;
+        if law.len() < 2 || law.len() > 64 {
+            return Err(bad("a variable fillet needs a radius at 2 to 64 places"));
+        }
+        let mut at = Vec::with_capacity(law.len());
+        let mut radii = Vec::with_capacity(law.len());
+        for (i, (t, r)) in law.iter().enumerate() {
+            if !(0.0..=1.0).contains(t) || (i > 0 && *t <= at[i - 1]) {
+                return Err(bad("a variable fillet's places must run in order from 0 to 1"));
+            }
+            at.push(*t);
+            radii.push(check::size("fillet radius", *r)?);
+        }
+        let idx = own_edges(body, edges)?;
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::fillet_variable(self.get(body)?, &idx, &at, &radii, &mut hist).map_err(failed("fillet"))?;
+        self.finish(shape, hist)
+    }
+
     fn chamfer(&mut self, body: ShapeHandle, edges: &[EdgeId], spec: &ChamferSpec) -> KResult<Op> {
         self.not_cancelled()?;
         let idx = own_edges(body, edges)?;

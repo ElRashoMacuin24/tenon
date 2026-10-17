@@ -503,7 +503,7 @@ impl Workbench {
         let (kind, name) = match &panel {
             Panel::Extrude(p) => ("Extrusion", p.editing.map(|f| self.feature_name(f))),
             Panel::Revolve(p) => ("Revolution", p.editing.map(|f| self.feature_name(f))),
-            Panel::Fillet(p) => ("Fillet", p.editing.map(|f| self.feature_name(f))),
+            Panel::Fillet(p) => (if p.faces.is_some() { "Face Fillet" } else { "Fillet" }, p.editing.map(|f| self.feature_name(f))),
             Panel::Chamfer(p) => ("Chamfer", p.editing.map(|f| self.feature_name(f))),
             Panel::Shell(p) => ("Shell", p.editing.map(|f| self.feature_name(f))),
             Panel::Hole(p) => ("Hole", p.editing.map(|f| self.feature_name(f))),
@@ -886,14 +886,44 @@ impl Workbench {
                     Panel::Fillet(p) => {
                         section(ui, "Input Geometry", true, |ui| {
                             egui::Grid::new("tn_props_fillet_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                                ui.label("Edges");
-                                clear |= picked_row(ui, p.edges.len(), "click edges");
-                                ui.end_row();
+                                match &p.faces {
+                                    // A face fillet: two sets; a click on one makes it the set
+                                    // clicks in the view add to.
+                                    Some(sets) => {
+                                        let counts = [sets[0].len(), sets[1].len()];
+                                        for (i, n) in counts.into_iter().enumerate() {
+                                            let r = ui.selectable_label(p.set == i, format!("Face Set {}", i + 1));
+                                            crate::drawing::remember(ui, &format!("tn_fillet_set_{i}"), r.rect);
+                                            if r.clicked() {
+                                                p.set = i;
+                                            }
+                                            ui.label(if n == 0 { "click faces".to_string() } else { format!("{n} selected") });
+                                            ui.end_row();
+                                        }
+                                    }
+                                    None => {
+                                        ui.label("Edges");
+                                        clear |= picked_row(ui, p.edges.len(), "click edges");
+                                        ui.end_row();
+                                    }
+                                }
                             });
                         });
                         section(ui, "Behavior", true, |ui| {
                             egui::Grid::new("tn_props_fillet_behavior").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                                // Constant or Variable, as the fillet dialog's tabs.
                                 ui.label("Radius");
+                                ui.horizontal(|ui| {
+                                    for (variable, name) in [(false, "Constant"), (true, "Variable")] {
+                                        let r = ui.selectable_label(p.variable == variable, name);
+                                        crate::drawing::remember(ui, &format!("tn_fillet_{}", name.to_lowercase()), r.rect);
+                                        if r.clicked() {
+                                            p.variable = variable;
+                                        }
+                                    }
+                                });
+                                ui.end_row();
+                                ui.label(if p.variable { "Start" } else { "Radius" });
                                 enter |= eq_value_field(
                                     ui,
                                     egui::Id::new("tn_props_radius"),
@@ -907,6 +937,27 @@ impl Workbench {
                                 )
                                 .entered;
                                 ui.end_row();
+                                if p.variable {
+                                    ui.label("End");
+                                    enter |= eq_value_field(
+                                        ui,
+                                        egui::Id::new("tn_props_end_radius"),
+                                        &mut p.end_radius,
+                                        &mut eqs,
+                                        "end_radius",
+                                        "mm",
+                                        0.001..=100_000.0,
+                                        110.0,
+                                        t,
+                                    )
+                                    .entered;
+                                    ui.end_row();
+                                    if !p.between.is_empty() {
+                                        ui.label("");
+                                        ui.label(format!("and {} between", p.between.len()));
+                                        ui.end_row();
+                                    }
+                                }
                             });
                         });
                     }

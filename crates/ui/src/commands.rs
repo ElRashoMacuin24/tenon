@@ -133,7 +133,7 @@ pub const RIBBON: &[RibbonTab] = &[
                 title: "Modify",
                 commands: &[
                     large("model.hole", "Hole", "Simple, counterbore or countersink holes", Icon::Hole, 0).key("H"),
-                    large("model.fillet", "Fillet", "Round edges", Icon::Fillet, 0).key("F"),
+                    large("model.fillet", "Fillet", "Round edges", Icon::Fillet, 0).key("F").more(&["model.fillet", "model.face_fillet"]),
                     small("model.chamfer", "Chamfer", "Bevel edges", Icon::Chamfer, 0),
                     small("model.shell", "Shell", "Hollow a solid, removing faces", Icon::Shell, 0),
                     small("model.draft", "Draft", "Taper faces for moulding", Icon::Draft, 0),
@@ -957,6 +957,7 @@ pub const EXTRA: &[UiCommand] = &[
         0,
     ),
     small("sketch.arc_center", "Arc Center Point", "Click the centre, the start, then the end of the arc", Icon::Arc, 0),
+    small("model.face_fillet", "Face Fillet", "Round the edges between two sets of faces", Icon::Fillet, 0),
     small("sketch.ellipse", "Ellipse", "Click the centre, the end of one axis, then a point on the ellipse", Icon::Ellipse, 0),
     small("sketch.rectangle3", "Rectangle Three Point", "A rectangle at any angle: click two corners of one side, then how deep", Icon::Rectangle, 0),
     small("sketch.rectangle_center", "Rectangle Two Point Center", "Click the centre, then a corner", Icon::Rectangle, 0),

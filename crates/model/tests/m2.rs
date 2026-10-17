@@ -1453,3 +1453,68 @@ fn an_ellipse_extrudes_whole_or_cut_by_a_line() {
     let turned = 2.0 * PI * 300.0 * PI * 10.0 * 5.0;
     assert!(approx(volume(&mut s, &mut k), 2.5 * PI * 20.0 * 10.0 * 5.0 + turned), "{}", volume(&mut s, &mut k));
 }
+
+#[test]
+fn a_fillet_varies_along_its_edge_or_rounds_the_edges_between_two_faces() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, l, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    // The top front edge, 2 at its start and 4 at its end (DEC-122).
+    let edge = run(&mut s, &mut k, "model.edge_ref", json!({ "faces": [top(ex), side(ex, l[0])] }));
+    let edges = run(&mut s, &mut k, "model.edges", json!({}));
+    let info = edges["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["faces"].as_array().is_some_and(|f| f.contains(&top(ex)) && f.contains(&side(ex, l[0]))))
+        .unwrap()
+        .clone();
+    let starts_left = info["start"][0].as_f64().unwrap() < 20.0;
+    let fillet = run(&mut s, &mut k, "model.fillet", json!({ "edges": [edge], "radius": 2, "end_radius": 4 }))["feature"].as_u64().unwrap();
+    regenerates(&mut s, &mut k);
+    // Taken away: about (1 - pi/4) times the integral of r squared, for r from 2 to 4 over 40.
+    let corner = 1.0 - PI / 4.0;
+    let removed = 8000.0 - volume(&mut s, &mut k);
+    let even = corner * 40.0 * (4.0 + 8.0 + 16.0) / 3.0;
+    assert!((removed - even).abs() < 0.02 * even, "{removed} vs {even}");
+    // The start's end of the block is cut by the small radius, the other by the large.
+    let faces = run(&mut s, &mut k, "model.faces", json!({}));
+    let area = |line: u64| faces["faces"].as_array().unwrap().iter().find(|f| f["name"] == side(ex, line)).unwrap()["area"].as_f64().unwrap();
+    let (at_start, at_end) = if starts_left { (area(l[3]), area(l[1])) } else { (area(l[1]), area(l[3])) };
+    assert!((at_start - (200.0 - corner * 4.0)).abs() < 1e-3 && (at_end - (200.0 - corner * 16.0)).abs() < 1e-3, "{at_start} {at_end}");
+    // A place between: 6 halfway, smoothly; more is taken away.
+    let mut kind = serde_json::to_value(&s.document().feature(tenon_model::FeatureId(fillet as u32)).unwrap().kind).unwrap();
+    kind["radii"] = json!([{ "at": 0.5, "radius": 6 }, { "at": 1, "radius": 4 }]);
+    run(&mut s, &mut k, "feature.update", json!({ "feature": fillet, "kind": kind }));
+    regenerates(&mut s, &mut k);
+    assert!(8000.0 - volume(&mut s, &mut k) > removed * 1.5, "{}", volume(&mut s, &mut k));
+    // Refused in words: places out of order, a radius of nothing, end_radius with a place at 1.
+    for bad in [
+        json!({ "edges": [edge], "radius": 2, "radii": [{ "at": 0.8, "radius": 3 }, { "at": 0.4, "radius": 3 }] }),
+        json!({ "edges": [edge], "radius": 2, "radii": [{ "at": 1, "radius": 0 }] }),
+        json!({ "edges": [edge], "radius": 2, "end_radius": 3, "radii": [{ "at": 1, "radius": 3 }] }),
+    ] {
+        assert!(s.exec("model.fillet", &bad, Some(&mut k)).is_err(), "{bad}");
+    }
+
+    // A face fillet: the top against the front and the right rounds the two edges between, as
+    // filleting those two edges does.
+    let (mut t, mut k2) = (Session::default(), OcctKernel::new());
+    let (_, ex2, l2, _) = block(&mut t, &mut k2, 40.0, 20.0, 10.0);
+    let face = |t: &mut Session, k: &mut OcctKernel, origin: Value| run(t, k, "model.face_ref", json!({ "origin": origin }));
+    let (top_ref, front, right) = (face(&mut t, &mut k2, top(ex2)), face(&mut t, &mut k2, side(ex2, l2[0])), face(&mut t, &mut k2, side(ex2, l2[1])));
+    let faced = run(&mut t, &mut k2, "model.fillet", json!({ "faces": [[top_ref], [front, right]], "radius": 2 }))["feature"].as_u64().unwrap();
+    regenerates(&mut t, &mut k2);
+    let by_faces = volume(&mut t, &mut k2);
+    run(&mut t, &mut k2, "feature.delete", json!({ "feature": faced }));
+    let two: Vec<Value> =
+        [l2[0], l2[1]].iter().map(|l| run(&mut t, &mut k2, "model.edge_ref", json!({ "faces": [top(ex2), side(ex2, *l)] }))).collect();
+    run(&mut t, &mut k2, "model.fillet", json!({ "edges": two, "radius": 2 }));
+    regenerates(&mut t, &mut k2);
+    assert!(approx(by_faces, volume(&mut t, &mut k2)) && by_faces < 8000.0, "{by_faces} vs {}", volume(&mut t, &mut k2));
+    // Faces that do not meet are said to.
+    let bottom = run(&mut t, &mut k2, "model.face_ref", json!({ "origin": { "type": "cap", "feature": ex2, "end": "start" } }));
+    let top_again = face(&mut t, &mut k2, top(ex2));
+    run(&mut t, &mut k2, "model.fillet", json!({ "faces": [[top_again], [bottom]], "radius": 1 }));
+    let r = run(&mut t, &mut k2, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("do not meet"), "{r}");
+}

@@ -577,6 +577,7 @@ impl Workbench {
             "model.extrude" => self.open_extrude(None)?,
             "model.revolve" => self.open_revolve(None)?,
             "model.fillet" => self.open_modify("fillet", None)?,
+            "model.face_fillet" => self.open_modify("face_fillet", None)?,
             "model.chamfer" => self.open_modify("chamfer", None)?,
             "model.shell" => self.open_modify("shell", None)?,
             "model.hole" => self.open_hole(None)?,

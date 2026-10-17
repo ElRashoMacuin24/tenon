@@ -1320,6 +1320,49 @@ std::unique_ptr<Shape> fillet(const Shape& body, rust::Slice<const std::uint32_t
   });
 }
 
+std::unique_ptr<Shape> fillet_variable(const Shape& body, rust::Slice<const std::uint32_t> edges, rust::Slice<const double> at,
+                                       rust::Slice<const double> radii, HistoryOut& hist) {
+  return guarded("fillet", [&] {
+    const std::size_t n = at.size();
+    if (n < 2 || radii.size() != n) {
+      throw std::invalid_argument("a variable fillet needs a radius at two places or more");
+    }
+    BRepFilletAPI_MakeFillet mk(body.shape);
+    for (std::uint32_t e : edges) {
+      const TopoDS_Edge& edge = edge_at(body, e);
+      mk.Add(edge);
+      const int ic = mk.Contour(edge);
+      if (ic < 1) {
+        throw std::runtime_error("the fillet could not follow the edge");
+      }
+      // The law runs from the contour's first vertex. On a lone edge that is not always the
+      // edge's own start (as edge_info reports it): then the law is turned round to match.
+      TopoDS_Vertex v1;
+      TopoDS_Vertex v2;
+      TopExp::Vertices(edge, v1, v2, true);
+      const bool flip = mk.NbEdges(ic) == 1 && !v1.IsNull() && !mk.FirstVertex(ic).IsSame(v1);
+      NCollection_Array1<gp_Pnt2d> law(1, static_cast<int>(n));
+      for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t j = flip ? n - 1 - i : i;
+        law(static_cast<int>(i) + 1) = gp_Pnt2d(flip ? 1.0 - at[j] : at[j], radii[j]);
+      }
+      if (n == 2) {
+        mk.SetRadius(law(1).Y(), law(2).Y(), ic, 1);
+      } else {
+        mk.SetRadius(law, ic, 1);
+      }
+    }
+    mk.Build();
+    if (!mk.IsDone()) {
+      throw std::runtime_error("the fillet could not be built (is a radius too large for the edges?)");
+    }
+    require_valid(mk.Shape(), "the fillet gave an invalid solid (is a radius too large for the edges?)");
+    auto out = wrap(single_solid(mk.Shape()));
+    record_history(mk, 0, body.shape, *out, hist);
+    return out;
+  });
+}
+
 std::unique_ptr<Shape> chamfer(const Shape& body, rust::Slice<const std::uint32_t> edges, std::uint8_t kind, double a, double b,
                                std::uint32_t reference, HistoryOut& hist) {
   return guarded("chamfer", [&] {
