@@ -122,3 +122,45 @@ fn assembly_edits_undo_and_conflicts_are_refused() {
     assert_eq!(tree["components"].as_array().unwrap().len(), 4);
     assert!(tree["relationships"].as_array().unwrap().iter().all(|r| r["name"] != "Insert:1"));
 }
+
+#[test]
+fn a_roller_is_held_tangent_to_a_plate_outside_or_inside() {
+    let dir = scratch("tangent");
+    let mut e = Engine::new(kernel(), &dir);
+    let run = |e: &mut Engine, id: &str, p: serde_json::Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    // A plate 60 x 40 x 10, and a roller 10 across, 30 long, lying along X.
+    run(&mut e, "file.new", json!({ "name": "Plate" }));
+    let sk = run(&mut e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    run(&mut e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 }));
+    let plate = run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": 10 }))["feature"].clone();
+    run(&mut e, "file.save", json!({ "path": "plate.tenon" }));
+    run(&mut e, "file.new", json!({ "name": "Roller" }));
+    let sk = run(&mut e, "sketch.create", json!({ "plane": "yz" }))["feature"].clone();
+    let circle = run(&mut e, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 5 }))["circle"].clone();
+    let roller = run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": 30 }))["feature"].clone();
+    run(&mut e, "file.save", json!({ "path": "roller.tenon" }));
+    run(&mut e, "asm.new", json!({ "name": "Rolling" }));
+    run(&mut e, "asm.insert", json!({ "path": "plate.tenon" }));
+    let r = run(&mut e, "asm.insert", json!({ "path": "roller.tenon", "at": [10, 15, 40] }))["component"].clone();
+    let top = run(&mut e, "asm.geom", json!({ "component": 1, "face": { "type": "cap", "feature": plate, "end": "end" } }));
+    let side = run(&mut e, "asm.geom", json!({ "component": r, "face": { "type": "side", "feature": roller, "curve": circle } }));
+    // Outside: the roller lies on the plate, its axis 5 above the top; it can still roll,
+    // slide either way and turn about the upright.
+    let c = run(&mut e, "asm.constrain", json!({ "type": "tangent", "a": top, "b": side }));
+    assert_eq!(c["name"], "Tangent:1", "{c}");
+    let z = |e: &mut Engine| run(e, "asm.tree", json!({}))["components"][1]["placement"]["origin"][2].as_f64().unwrap();
+    assert!((z(&mut e) - 15.0).abs() < 1e-6, "{}", z(&mut e));
+    let dof = run(&mut e, "asm.dof", json!({}));
+    assert_eq!(dof["components"][1]["dof"], 4, "{dof}");
+    // Inside: below the top, its axis 5 under it.
+    run(&mut e, "asm.edit_relationship", json!({ "relationship": c["relationship"], "inside": true }));
+    assert!((z(&mut e) - 5.0).abs() < 1e-6, "{}", z(&mut e));
+    // Saved and opened again, it holds.
+    run(&mut e, "asm.save", json!({ "path": "rolling.tenonasm" }));
+    let text = std::fs::read_to_string(dir.join("rolling.tenonasm")).unwrap();
+    assert!(text.contains("type = \"tangent\"") && text.contains("inside = true"), "{text}");
+    // Two planes are no tangent.
+    let bottom = run(&mut e, "asm.geom", json!({ "component": r, "face": { "type": "cap", "feature": roller, "end": "start" } }));
+    let err = e.exec("asm.constrain", &json!({ "type": "tangent", "a": top, "b": bottom })).unwrap_err();
+    assert!(err.contains("tangent needs a cylindrical or spherical face"), "{err}");
+}

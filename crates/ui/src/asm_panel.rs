@@ -31,17 +31,20 @@ pub(crate) enum ConstraintType {
     Flush,
     Angle,
     Insert,
+    /// A cylinder or sphere against a plane or another (DEC-110).
+    Tangent,
 }
 
 impl ConstraintType {
     /// The types the panel offers, as Inventor's Constrain does: Flush is Mate's second solution.
-    const TYPES: [ConstraintType; 3] = [ConstraintType::Mate, ConstraintType::Angle, ConstraintType::Insert];
+    const TYPES: [ConstraintType; 4] = [ConstraintType::Mate, ConstraintType::Angle, ConstraintType::Tangent, ConstraintType::Insert];
     pub(crate) fn label(self) -> &'static str {
         match self {
             ConstraintType::Mate => "Mate",
             ConstraintType::Flush => "Flush",
             ConstraintType::Angle => "Angle",
             ConstraintType::Insert => "Insert",
+            ConstraintType::Tangent => "Tangent",
         }
     }
     fn id(self) -> &'static str {
@@ -50,6 +53,7 @@ impl ConstraintType {
             ConstraintType::Flush => "flush",
             ConstraintType::Angle => "angle",
             ConstraintType::Insert => "insert",
+            ConstraintType::Tangent => "tangent",
         }
     }
     fn hint(self) -> &'static str {
@@ -58,6 +62,7 @@ impl ConstraintType {
             ConstraintType::Flush => "Planar faces side by side, facing the same way",
             ConstraintType::Angle => "The angle between two faces or edges",
             ConstraintType::Insert => "Two circular edges: axes in line, faces together",
+            ConstraintType::Tangent => "A cylinder or sphere touching a plane or another, outside or inside",
         }
     }
 }
@@ -77,6 +82,8 @@ pub(crate) struct AsmPanel {
     pub degrees: f64,
     pub flip: bool,
     pub aligned: bool,
+    /// A tangent inside (one round face within the other, or behind the plane).
+    pub inside: bool,
     /// The relationship whose values are being edited.
     pub editing: Option<RelationshipId>,
     /// Tweak: the components moved, the direction (0 X, 1 Y, 2 Z), reversed, and how far.
@@ -102,6 +109,7 @@ impl AsmPanel {
             degrees: 0.0,
             flip: false,
             aligned: false,
+            inside: false,
             editing: None,
             components: Vec::new(),
             axis: 2,
@@ -129,6 +137,7 @@ impl AsmPanel {
                 ConstraintType::Flush => RelKind::Flush { a, b, offset: self.offset },
                 ConstraintType::Angle => RelKind::Angle { a, b, angle, reference: Vec3::Z },
                 ConstraintType::Insert => RelKind::Insert { a, b, offset: self.offset, aligned: self.aligned },
+                ConstraintType::Tangent => RelKind::Tangent { a, b, offset: self.offset, inside: self.inside },
             },
             AsmTool::Joint => RelKind::Joint { joint: self.joint, a, b, flip: self.flip, offset: self.offset, angle },
             AsmTool::Tweak => return None,
@@ -144,7 +153,7 @@ impl AsmPanel {
     fn preview_key(&self) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         format!("{:?}{:?}{:?}{:?}", self.tool, self.constraint, self.joint, self.kind()).hash(&mut h);
-        (self.offset.to_bits(), self.degrees.to_bits(), self.flip, self.aligned).hash(&mut h);
+        (self.offset.to_bits(), self.degrees.to_bits(), self.flip, self.aligned, self.inside).hash(&mut h);
         h.finish()
     }
 }
@@ -190,6 +199,7 @@ impl Workbench {
             RelKind::Flush { offset, .. } => (p.constraint, p.offset) = (ConstraintType::Flush, *offset),
             RelKind::Angle { angle, .. } => (p.constraint, p.degrees) = (ConstraintType::Angle, angle.to_degrees()),
             RelKind::Insert { offset, aligned, .. } => (p.constraint, p.offset, p.aligned) = (ConstraintType::Insert, *offset, *aligned),
+            RelKind::Tangent { offset, inside, .. } => (p.constraint, p.offset, p.inside) = (ConstraintType::Tangent, *offset, *inside),
             RelKind::Joint { joint, flip, offset, angle, .. } => {
                 (p.joint, p.flip, p.offset, p.degrees) = (*joint, *flip, *offset, angle.to_degrees());
             }
@@ -415,6 +425,7 @@ impl Workbench {
             section(ui, "Selections", &mut |ui| {
                 let hint = match (p.tool, p.constraint) {
                     (AsmTool::Constrain, ConstraintType::Insert) => "click a circular edge",
+                    (AsmTool::Constrain, ConstraintType::Tangent) => "click a cylinder, sphere or plane",
                     (AsmTool::Joint, _) => "click a face, circular edge or axis",
                     _ => "click a face or edge",
                 };
@@ -459,6 +470,20 @@ impl Workbench {
                                 crate::drawing::remember(ui, &format!("tn_asm_solution_{}", c.id()), r.rect);
                                 if r.clicked() {
                                     p.constraint = c;
+                                }
+                            }
+                        });
+                        ui.end_row();
+                    }
+                    // Tangent's two solutions, as Inventor's: outside, or inside.
+                    if p.tool == AsmTool::Constrain && p.constraint == ConstraintType::Tangent {
+                        ui.label("Solution");
+                        ui.horizontal(|ui| {
+                            for (inside, label, key) in [(false, "Outside", "tn_asm_solution_outside"), (true, "Inside", "tn_asm_solution_inside")] {
+                                let r = ui.add(egui::Button::selectable(p.inside == inside, label));
+                                crate::drawing::remember(ui, key, r.rect);
+                                if r.clicked() {
+                                    p.inside = inside;
                                 }
                             }
                         });
@@ -541,6 +566,7 @@ impl Workbench {
                     "angle": p.degrees.to_radians(),
                     "flip": p.flip,
                     "aligned": p.aligned,
+                    "inside": p.inside,
                     "type": if tool == AsmTool::Joint { Some(p.joint.id()) } else { None },
                 }),
             ),
@@ -554,7 +580,7 @@ impl Workbench {
                     } else {
                         (
                             "asm.constrain",
-                            json!({ "type": p.constraint.id(), "a": a, "b": b, "offset": p.offset, "angle": p.degrees.to_radians(), "aligned": p.aligned }),
+                            json!({ "type": p.constraint.id(), "a": a, "b": b, "offset": p.offset, "angle": p.degrees.to_radians(), "aligned": p.aligned, "inside": p.inside }),
                         )
                     };
                     self.asm_exec(id, params)

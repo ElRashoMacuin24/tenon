@@ -2997,3 +2997,26 @@ faces. Every body of the part is taken into account. No taper: the panel says so
 
 **Commands and files:** `model.extrude` takes `to_next: true`; files write
 `extent = "to_next"`, additive in version 2. **Not done:** Between; To Next for Revolve.
+
+## DEC-110 The assembly Tangent constraint (2026-10-16)
+
+From the comparison with Inventor, whose Constrain types are Mate, Angle, Tangent, Insert and
+Symmetry; Tenon had no Tangent.
+
+**What it holds.** A cylindrical or spherical face against a plane, or against another such
+face: `RelKind::Tangent { a, b, offset, inside }`. Against a plane, the round face's axis lies
+parallel to the plane (a cylinder's) and its axis or centre is its radius in front of the
+plane, or behind it when `inside`; between two round faces, their axes parallel (cylinders)
+and their axes or centres as far apart as their radii added, or one less the other when
+`inside`. `offset` is added to the gap. Each resolved target now carries the radius of the
+face it is (`End::radius`, from the face's surface), and `solve::check_tangent` refuses
+two planes, or a face that is not round, in words. A cylinder lying on a plane keeps four
+motions (it rolls, slides either way and turns about the plane's normal), as it should.
+
+**In the panel:** Constrain's types are Mate, Angle, Tangent and Insert in Inventor's order;
+Tangent's Solution is Outside or Inside. `asm.constrain` takes `type: "tangent"` and
+`inside`; `asm.edit_relationship` takes `inside`. Files gain the relationship type
+`tangent`, additive.
+
+**Not done:** cones (their radius changes along them), and a tangent to a curved face that is
+neither a cylinder nor a sphere; Symmetry.

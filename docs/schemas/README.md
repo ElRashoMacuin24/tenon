@@ -108,4 +108,5 @@ taken away), without a check.
     `consumed` and `dependents` of `feature.delete` (DEC-103) and `to` of `model.extrude`
     (DEC-104); `model.hole`'s spotface type, `spotface_diameter`, `spotface_depth` and `to`
     (DEC-105); `feature.visibility` (DEC-106); `backward` and `reverse` of `model.revolve` (DEC-108); `to_next` of `model.extrude`
-    (DEC-109). 228 commands.
+    (DEC-109); `asm.constrain`'s tangent type and `inside`, and `inside` of
+    `asm.edit_relationship` (DEC-110). 228 commands.

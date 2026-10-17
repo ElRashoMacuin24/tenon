@@ -25,6 +25,8 @@ shows it in [ROADMAP.md](ROADMAP.md).
   plane. `model.extrude` takes `to`; files gain `extent = { to = <plane> }`.
 - **Hole: Spotface and To.** A spotface seat (the hole measured from its floor), and holes
   that go as far as a flat face or plane. `model.hole` takes `type: "spotface"` and `to`.
+- **Tangent** joins Constrain: a cylinder or sphere against a plane or another, outside or
+  inside. `asm.constrain` takes `type: "tangent"` and `inside`.
 - **Extrude To Next**: joined, as far as the part's next face, sloping or curved; cut, through
   the material it starts in. `model.extrude` takes `to_next`.
 - **Revolve** turns Default, Flipped, Symmetric or Asymmetric (two angles), as Inventor's

@@ -7062,7 +7062,8 @@
               "mate",
               "flush",
               "angle",
-              "insert"
+              "insert",
+              "tangent"
             ],
             "description": "what kind of constraint"
           },
@@ -7087,6 +7088,10 @@
           "aligned": {
             "type": "boolean",
             "description": "for insert: the two axes point the same way (default false: opposed)"
+          },
+          "inside": {
+            "type": "boolean",
+            "description": "for tangent: inside (one round face within the other, or behind the plane; default false: outside)"
           }
         },
         "additionalProperties": false,
@@ -7178,6 +7183,10 @@
           "aligned": {
             "type": "boolean",
             "description": "an insert's axes the same way"
+          },
+          "inside": {
+            "type": "boolean",
+            "description": "a tangent inside"
           },
           "type": {
             "type": "string",

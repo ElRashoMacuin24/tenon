@@ -325,7 +325,8 @@ fn asm_constrain(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
         "flush" => RelKind::Flush { a, b, offset },
         "angle" => RelKind::Angle { a, b, angle: num(&p, "angle")?, reference: Vec3::Z },
         "insert" => RelKind::Insert { a, b, offset, aligned: opt_bool(&p, "aligned")?.unwrap_or(false) },
-        other => return Err(CmdError(format!("unknown constraint type `{other}` (mate, flush, angle, insert)"))),
+        "tangent" => RelKind::Tangent { a, b, offset, inside: opt_bool(&p, "inside")?.unwrap_or(false) },
+        other => return Err(CmdError(format!("unknown constraint type `{other}` (mate, flush, angle, insert, tangent)"))),
     };
     let rid = s.edit(|asm, parts| relate(asm, parts, kind))?;
     s.failing.clear();
@@ -366,6 +367,7 @@ fn solve_or_refuse(asm: &mut crate::model::Assembly, parts: &session::Parts, dra
 fn asm_edit_relationship(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let rid = relationship(p, "relationship")?;
     let (offset, angle, flip, aligned) = (opt_num(p, "offset")?, opt_num(p, "angle")?, opt_bool(p, "flip")?, opt_bool(p, "aligned")?);
+    let inside = opt_bool(p, "inside")?;
     let joint = match arg(p, "type").and_then(Value::as_str) {
         Some(t) => Some(JointKind::from_id(t).ok_or_else(|| CmdError(format!("unknown joint type `{t}`")))?),
         None => None,
@@ -378,6 +380,10 @@ fn asm_edit_relationship(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Va
             RelKind::Insert { offset: o, aligned: al, .. } => {
                 *o = offset.unwrap_or(*o);
                 *al = aligned.unwrap_or(*al);
+            }
+            RelKind::Tangent { offset: o, inside: i, .. } => {
+                *o = offset.unwrap_or(*o);
+                *i = inside.unwrap_or(*i);
             }
             RelKind::Joint { joint: j, flip: f, offset: o, angle: a, .. } => {
                 *j = joint.unwrap_or(*j);

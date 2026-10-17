@@ -87,6 +87,17 @@ pub fn find_face(scene: &Scene, face: &tenon_model::FaceRef) -> Result<(usize, u
     best.map(|(_, b, f)| (b, f)).ok_or_else(|| "the referenced face no longer exists".into())
 }
 
+/// The radius of the round face a target is, a cylinder's or a sphere's; 0 for anything else.
+pub fn radius(geom: &Geom, scene: Option<&Scene>) -> f64 {
+    let Geom::Face { face } = geom else { return 0.0 };
+    let Some(scene) = scene else { return 0.0 };
+    let Ok((b, f)) = find_face(scene, face) else { return 0.0 };
+    match scene.bodies.get(b).and_then(|x| x.faces.get(f)).map(|x| &x.1.surface) {
+        Some(SurfaceKind::Cylinder { radius, .. } | SurfaceKind::Sphere { radius, .. }) => *radius,
+        _ => 0.0,
+    }
+}
+
 /// The edge of `scene` a reference means: `(body, edge)`.
 pub fn find_edge(scene: &Scene, edge: &tenon_model::EdgeRef) -> Result<(usize, usize), String> {
     let mut best: Option<(f64, usize, usize)> = None;

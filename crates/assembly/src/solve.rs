@@ -52,6 +52,10 @@ pub enum Law {
         offset: f64,
         aligned: bool,
     },
+    Tangent {
+        offset: f64,
+        inside: bool,
+    },
     Joint {
         joint: JointKind,
         flip: bool,
@@ -66,6 +70,8 @@ pub enum Law {
 pub struct End {
     pub body: Option<usize>,
     pub prim: Prim,
+    /// The radius of the round face it is (a cylinder's or sphere's), else 0.
+    pub radius: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,8 +120,41 @@ pub fn check(law: &Law, a: &Prim, b: &Prim) -> Result<(), String> {
             (Prim::Circle { .. }, Prim::Circle { .. }) => Ok(()),
             _ => Err("insert needs two circular edges".into()),
         },
+        // (Which are round is told by their radii: see `check_tangent`.)
+        Law::Tangent { .. } => match (a, b) {
+            (Prim::Plane { .. }, Prim::Plane { .. }) | (Prim::Circle { .. }, _) | (_, Prim::Circle { .. }) => {
+                Err("tangent needs a cylindrical or spherical face, and a plane or another such face".into())
+            }
+            _ => Ok(()),
+        },
         Law::Joint { .. } => Ok(()),
     }
+}
+
+/// A tangent's two ends: at least one round face, and a plane only with a round one.
+pub fn check_tangent(a: &End, b: &End) -> Result<(), String> {
+    let round = |e: &End| e.radius > 0.0 && matches!(e.prim, Prim::Line { .. } | Prim::Point(_));
+    let plane = |e: &End| matches!(e.prim, Prim::Plane { .. });
+    if (round(a) && (round(b) || plane(b))) || (plane(a) && round(b)) {
+        Ok(())
+    } else {
+        Err("tangent needs a cylindrical or spherical face, and a plane or another such face".into())
+    }
+}
+
+/// How far a tangent wants its two ends apart: from a plane to a round face's axis or centre
+/// (signed: in front of the plane, or behind it when `inside`), or between two round faces'
+/// axes or centres (their radii added, or one less the other when `inside`).
+fn tangent_gap(ra: f64, rb: f64, offset: f64, inside: bool, plane: bool) -> f64 {
+    let gap = if plane {
+        let r = ra.max(rb);
+        if inside { -r } else { r }
+    } else if inside {
+        (ra - rb).abs()
+    } else {
+        ra + rb
+    };
+    gap + offset
 }
 
 fn perp(v: Vec3, d: Vec3) -> Vec3 {
@@ -193,6 +232,28 @@ fn residual(rel: &Rel, poses: &[Pose], out: &mut Vec<f64>) {
             if let (Prim::Circle { center: ca, normal: na, .. }, Prim::Circle { center: cb, normal: nb, .. }) = (pa, pb) {
                 push3(out, if aligned { na - nb } else { na + nb });
                 push3(out, cb - ca - na * offset);
+            }
+        }
+        Law::Tangent { offset, inside } => {
+            let plane = matches!(pa, Prim::Plane { .. }) || matches!(pb, Prim::Plane { .. });
+            let want = tangent_gap(rel.a.radius, rel.b.radius, offset, inside, plane);
+            match (pa, pb) {
+                (Prim::Plane { point, normal }, Prim::Line { point: q, dir }) | (Prim::Line { point: q, dir }, Prim::Plane { point, normal }) => {
+                    out.push(dir.dot(normal));
+                    out.push((q - point).dot(normal) - want);
+                }
+                (Prim::Plane { point, normal }, Prim::Point(c)) | (Prim::Point(c), Prim::Plane { point, normal }) => {
+                    out.push((c - point).dot(normal) - want);
+                }
+                (Prim::Line { point: a, dir: da }, Prim::Line { point: b, dir: db }) => {
+                    push3(out, da.cross(db));
+                    out.push(perp(b - a, da).len() - want);
+                }
+                (Prim::Line { point, dir }, Prim::Point(c)) | (Prim::Point(c), Prim::Line { point, dir }) => {
+                    out.push(perp(c - point, dir).len() - want);
+                }
+                (Prim::Point(a), Prim::Point(b)) => out.push((b - a).len() - want),
+                _ => {}
             }
         }
         Law::Joint { joint, flip, offset, angle } => {
@@ -362,7 +423,7 @@ pub fn snap(bodies: &[Body], rel: &Rel) -> Motion {
             },
             Law::Flush { .. } => Some(da),
             Law::Insert { aligned, .. } => Some(if aligned { da } else { -da }),
-            Law::Joint { joint: JointKind::Ball, .. } | Law::Angle { .. } => None,
+            Law::Joint { joint: JointKind::Ball, .. } | Law::Angle { .. } | Law::Tangent { .. } => None,
             Law::Joint { flip, .. } => Some(if flip { da } else { -da }),
         }
     };
@@ -408,6 +469,16 @@ pub fn snap(bodies: &[Body], rel: &Rel) -> Motion {
             _ => Vec3::ZERO,
         },
         Law::Angle { .. } => Vec3::ZERO,
+        // (Toward the plane, as far as the tangent wants; between round faces the solver goes
+        // from where they are.)
+        Law::Tangent { offset, inside } => {
+            let want = tangent_gap(rel.a.radius, rel.b.radius, offset, inside, true);
+            match (pa, pb2) {
+                (Prim::Plane { point, normal }, Prim::Line { point: q, .. } | Prim::Point(q)) => normal * (want - (q - point).dot(normal)),
+                (Prim::Line { point: q, .. } | Prim::Point(q), Prim::Plane { point, normal }) => normal * ((q - point).dot(normal) - want),
+                _ => Vec3::ZERO,
+            }
+        }
         Law::Joint { joint, offset, .. } => {
             let (oa, _, za) = ja;
             let ob = moved(jb.0);
@@ -588,7 +659,7 @@ mod tests {
         Prim::Plane { point: Vec3::new(0.0, 5.0, 5.0), normal: -Vec3::X }
     }
     fn end(body: usize, prim: Prim) -> End {
-        End { body: Some(body), prim }
+        End { body: Some(body), prim, radius: 0.0 }
     }
 
     #[test]
@@ -617,6 +688,44 @@ mod tests {
         let placed: Vec<Body> = placed.iter().zip(&s.frames).map(|(b, f)| Body { frame: *f, ..*b }).collect();
         let (per, total) = dof(&placed, &rels);
         assert_eq!((per[1].count(), total), (0, 0));
+    }
+
+    #[test]
+    fn tangents_hold_round_faces_against_planes_and_each_other() {
+        let round = |body: usize, prim: Prim, radius: f64| End { body: Some(body), prim, radius };
+        // A cylinder of radius 5 lying along X, on the fixed block's top (z = 10): its axis at
+        // 15, and it may still roll, slide either way and turn about the plane's normal.
+        let bodies = vec![body(Vec3::ZERO, true), body(Vec3::new(3.0, 2.0, 30.0), false)];
+        let axis = Prim::Line { point: Vec3::ZERO, dir: Vec3::X };
+        let rels = vec![Rel { law: Law::Tangent { offset: 0.0, inside: false }, a: end(0, top()), b: round(1, axis, 5.0) }];
+        let s = solve(&bodies, &rels, None);
+        assert!(s.converged, "{s:?}");
+        let f = s.frames[1];
+        assert!((f.origin().z - 15.0).abs() < 1e-7 && f.x().dot(Vec3::Z).abs() < 1e-7, "{f:?}");
+        let placed: Vec<Body> = bodies.iter().zip(&s.frames).map(|(b, f)| Body { frame: *f, ..*b }).collect();
+        let (per, _) = dof(&placed, &rels);
+        assert_eq!(per[1].count(), 4, "{:?}", per[1]);
+        // Inside: behind the plane, its axis at 5.
+        let rels = vec![Rel { law: Law::Tangent { offset: 0.0, inside: true }, a: end(0, top()), b: round(1, axis, 5.0) }];
+        let s = solve(&bodies, &rels, None);
+        assert!(s.converged && (s.frames[1].origin().z - 5.0).abs() < 1e-7, "{s:?}");
+        // Two upright cylinders, 10 and 5 across the axis: 15 apart outside, 5 inside.
+        let upright = Prim::Line { point: Vec3::ZERO, dir: Vec3::Z };
+        let bodies = vec![body(Vec3::ZERO, true), body(Vec3::new(30.0, 0.0, 0.0), false)];
+        for (inside, gap) in [(false, 15.0), (true, 5.0)] {
+            let rels = vec![Rel { law: Law::Tangent { offset: 0.0, inside }, a: round(0, upright, 10.0), b: round(1, upright, 5.0) }];
+            let s = solve(&bodies, &rels, None);
+            let o = s.frames[1].origin();
+            assert!(s.converged && (Vec3::new(o.x, o.y, 0.0).len() - gap).abs() < 1e-6, "{inside}: {o:?}");
+        }
+        // A ball of radius 3 on the top: its centre 13 up.
+        let rels = vec![Rel { law: Law::Tangent { offset: 0.0, inside: false }, a: end(0, top()), b: round(1, Prim::Point(Vec3::ZERO), 3.0) }];
+        let s = solve(&bodies, &rels, None);
+        assert!(s.converged && (s.frames[1].origin().z - 13.0).abs() < 1e-7, "{s:?}");
+        // Two planes, or a plain axis, are no tangent.
+        assert!(check_tangent(&end(0, top()), &end(1, bottom())).is_err());
+        assert!(check_tangent(&end(0, top()), &end(1, axis)).is_err());
+        assert!(check_tangent(&end(0, top()), &round(1, axis, 5.0)).is_ok());
     }
 
     #[test]

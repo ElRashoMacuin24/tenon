@@ -194,6 +194,17 @@ pub enum RelKind {
         #[serde(default)]
         aligned: bool,
     },
+    /// A round face against a plane or another round face (DEC-110): a cylinder's or sphere's
+    /// side touching a plane (`inside`: on its far side), or two touching each other, outside or
+    /// one inside the other, `offset` apart.
+    Tangent {
+        a: Target,
+        b: Target,
+        #[serde(default)]
+        offset: f64,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        inside: bool,
+    },
     /// A joint between origins on A and B. The origins' Z axes face each other (`flip`: the same
     /// way), `offset` apart along A's Z; rigid and slider joints also turn B by `angle` about it.
     Joint {
@@ -216,6 +227,7 @@ impl RelKind {
             | RelKind::Flush { a, b, .. }
             | RelKind::Angle { a, b, .. }
             | RelKind::Insert { a, b, .. }
+            | RelKind::Tangent { a, b, .. }
             | RelKind::Joint { a, b, .. } => [a, b],
         }
     }
@@ -225,6 +237,7 @@ impl RelKind {
             | RelKind::Flush { a, b, .. }
             | RelKind::Angle { a, b, .. }
             | RelKind::Insert { a, b, .. }
+            | RelKind::Tangent { a, b, .. }
             | RelKind::Joint { a, b, .. } => [a, b],
         }
     }
@@ -241,6 +254,7 @@ impl RelKind {
             RelKind::Flush { .. } => "Flush",
             RelKind::Angle { .. } => "Angle",
             RelKind::Insert { .. } => "Insert",
+            RelKind::Tangent { .. } => "Tangent",
             RelKind::Joint { joint, .. } => joint.label(),
         }
     }
@@ -439,7 +453,9 @@ impl Assembly {
                 return Err(format!("{} joins a component to itself", r.name));
             }
             let numbers_ok = match &r.kind {
-                RelKind::Mate { offset, .. } | RelKind::Flush { offset, .. } | RelKind::Insert { offset, .. } => offset.abs() <= tol::MAX_SIZE,
+                RelKind::Mate { offset, .. } | RelKind::Flush { offset, .. } | RelKind::Insert { offset, .. } | RelKind::Tangent { offset, .. } => {
+                    offset.abs() <= tol::MAX_SIZE
+                }
                 RelKind::Angle { angle, reference, .. } => angle.is_finite() && (reference.len() - 1.0).abs() < tol::UNIT,
                 RelKind::Joint { offset, angle, .. } => offset.abs() <= tol::MAX_SIZE && angle.is_finite(),
             };

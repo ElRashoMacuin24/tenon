@@ -1101,3 +1101,30 @@ fn placed_parts_follow_the_pointer_and_are_put_down_by_clicks() {
     d.frame(&mut wb, vec![]);
     assert_eq!(wb.assembly().unwrap().assembly().components.len(), 2);
 }
+
+#[test]
+fn constrain_offers_tangent_with_its_outside_and_inside_solutions() {
+    let dir = scratch("tangent-ui");
+    box_part(&dir.join("base.tenon"), "Base", 40.0, 40.0, 10.0);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("file.new_assembly").unwrap();
+    wb.place_file(&dir.join("base.tenon")).unwrap();
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::C);
+    d.frame(&mut wb, vec![]);
+    // Inventor's order of types: Mate, Angle, Tangent, Insert.
+    let x = |key: &str| pressable(&d, key).x;
+    assert!(x("tn_asm_type_mate") < x("tn_asm_type_angle") && x("tn_asm_type_angle") < x("tn_asm_type_tangent"));
+    assert!(x("tn_asm_type_tangent") < x("tn_asm_type_insert"));
+    d.click(&mut wb, pressable(&d, "tn_asm_type_tangent"));
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "click a cylinder, sphere or plane"), "{:?}", d.texts());
+    d.click(&mut wb, pressable(&d, "tn_asm_solution_inside"));
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Asm(p)) = &wb.panel else { panic!("no panel") };
+    assert_eq!((p.constraint, p.inside), (ConstraintType::Tangent, true));
+    d.click(&mut wb, pressable(&d, "tn_asm_solution_outside"));
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(&wb.panel, Some(Panel::Asm(p)) if !p.inside));
+}

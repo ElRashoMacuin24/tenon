@@ -111,6 +111,7 @@ pub fn law_of(kind: &RelKind) -> Law {
         RelKind::Flush { offset, .. } => Law::Flush { offset: *offset },
         RelKind::Angle { angle, reference, .. } => Law::Angle { angle: *angle, reference: *reference },
         RelKind::Insert { offset, aligned, .. } => Law::Insert { offset: *offset, aligned: *aligned },
+        RelKind::Tangent { offset, inside, .. } => Law::Tangent { offset: *offset, inside: *inside },
         RelKind::Joint { joint, flip, offset, angle, .. } => Law::Joint { joint: *joint, flip: *flip, offset: *offset, angle: *angle },
     }
 }
@@ -119,7 +120,7 @@ pub fn law_of(kind: &RelKind) -> Law {
 /// the assembly's own origin), and that component's index.
 pub fn resolve_target(asm: &Assembly, parts: &Parts, t: &Target) -> Result<End, String> {
     match t.component {
-        None => Ok(End { body: None, prim: geometry::resolve(&t.geom, None)? }),
+        None => Ok(End { body: None, prim: geometry::resolve(&t.geom, None)?, radius: 0.0 }),
         Some(id) => {
             let i = asm.components.iter().position(|c| c.id == id).ok_or_else(|| format!("{id} does not exist"))?;
             let c = &asm.components[i];
@@ -127,7 +128,8 @@ pub fn resolve_target(asm: &Assembly, parts: &Parts, t: &Target) -> Result<End, 
                 return Err(format!("{} is missing: {why}", c.name));
             }
             let prim = geometry::resolve(&t.geom, scene_of(parts, c)).map_err(|e| format!("{}: {e}", c.name))?;
-            Ok(End { body: Some(i), prim })
+            let radius = geometry::radius(&t.geom, scene_of(parts, c));
+            Ok(End { body: Some(i), prim, radius })
         }
     }
 }
@@ -142,6 +144,9 @@ pub fn system(asm: &Assembly, parts: &Parts) -> System {
         match ends.and_then(|(a, b)| {
             let law = law_of(&r.kind);
             solve::check(&law, &a.prim, &b.prim)?;
+            if matches!(law, Law::Tangent { .. }) {
+                solve::check_tangent(&a, &b)?;
+            }
             Ok(Rel { law, a, b })
         }) {
             Ok(rel) => {
