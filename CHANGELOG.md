@@ -33,6 +33,8 @@ shows it in [ROADMAP.md](ROADMAP.md).
   `model.extrude` takes `from` and `to`.
 - **Revolve To** a face or plane through the axis, and **To Next**. `model.revolve` takes `to`
   and `to_next`.
+- **Work plane through three points**: work points, sketch points, circles' centres or the
+  origin. `work.plane` takes `by: "three_points"` and `points`.
 - **Symmetry** joins Constrain: two faces, axes or points mirrored in a plane picked third.
   `asm.constrain` takes `type: "symmetry"` and `plane`.
 - **Tangent** joins Constrain: a cylinder or sphere against a plane or another, outside or

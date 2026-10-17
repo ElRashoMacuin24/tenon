@@ -87,7 +87,7 @@ impl Workbench {
             Some(Panel::Work(w)) => Some(match w.slot {
                 WorkSlot::A | WorkSlot::B => Wants { edges: false, faces: true },
                 WorkSlot::Axis => Wants { edges: true, faces: true },
-                WorkSlot::Edge => Wants { edges: true, faces: false },
+                WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => Wants { edges: true, faces: false },
             }),
             _ => None,
         }
@@ -281,7 +281,7 @@ impl Workbench {
                     && match w.slot {
                         WorkSlot::A | WorkSlot::B => matches!(surface(body, face), Some(SurfaceKind::Plane { .. })),
                         WorkSlot::Axis => matches!(surface(body, face), Some(SurfaceKind::Cylinder { .. } | SurfaceKind::Cone { .. })),
-                        WorkSlot::Edge => false,
+                        WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => false,
                     }
             }
             (Pick::Face { body, face }, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) => {
@@ -673,6 +673,29 @@ impl Workbench {
             return false;
         }
         let Some(wants) = self.panel_wants() else { return false };
+        // A three-point plane's point: a work point, or a point of a sketch shown, drawn over
+        // the part, before the part's circular edges (DEC-116).
+        if matches!(&self.panel, Some(Panel::Work(w)) if w.slot.point().is_some())
+            && let Some(pos) = resp.hover_pos()
+        {
+            if let Some(id) = self.work_point_at(pos, rect) {
+                self.view.hover = None;
+                self.view.work_hover = Some(id);
+                if resp.clicked() {
+                    self.pick_reference(Reference::Work(id));
+                }
+                return true;
+            }
+            if let Some((sketch, point)) = self.sketch_point_at(pos, rect) {
+                self.view.hover = None;
+                if resp.clicked()
+                    && let Some(Panel::Work(w)) = &mut self.panel
+                {
+                    w.put_point(tenon_model::PointSel::SketchPoint { sketch, point });
+                }
+                return true;
+            }
+        }
         // Work planes and axes are drawn over the part, so they are picked first.
         let (planes, axes) = self.work_accepted();
         if (planes || axes)

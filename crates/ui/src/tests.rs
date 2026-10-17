@@ -2915,3 +2915,51 @@ fn holes_are_placed_by_clicking_a_face_without_a_sketch() {
     d.settle(&mut wb);
     assert_eq!(wb.document().features().len(), 2, "the sketch and the hole go back together");
 }
+
+#[test]
+fn a_work_plane_is_made_through_three_points_picked() {
+    use tenon_geom::Vec3;
+    use tenon_model::{PointSel, WorkGeom};
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    // A sketch on a work plane 10 up with two points: (10, 0) and (0, 10), shown as no feature
+    // uses it.
+    let up = wb.exec("work.plane", json!({ "base": "xy", "distance": 10 })).unwrap()["feature"].as_u64().unwrap();
+    wb.create_sketch(json!({ "work_plane": up })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.point", json!({ "sketch": f.0, "x": 10, "y": 0 })).unwrap();
+    wb.exec("sketch.point", json!({ "sketch": f.0, "x": 0, "y": 10 })).unwrap();
+    wb.finish_sketch();
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    // Plane, Three Points: the origin's Center Point from the browser, then the two points.
+    wb.run_ui("work.plane").unwrap();
+    d.frame(&mut wb, vec![]);
+    if let Some(Panel::Work(w)) = &mut wb.panel {
+        w.method = crate::work::WorkMethod::ThreePoints;
+        w.slot = crate::work::WorkSlot::P1;
+    }
+    d.frame(&mut wb, vec![]);
+    if !d.texts().iter().any(|t| t == "Center Point") {
+        d.click(&mut wb, browser_row(&d, "Origin").left_center() + vec2(27.0, 0.0));
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, browser_row(&d, "Center Point").center());
+    d.frame(&mut wb, vec![]);
+    for q in [Vec3::new(10.0, 0.0, 10.0), Vec3::new(0.0, 10.0, 10.0)] {
+        let at = on_screen(&wb, q);
+        d.frame(&mut wb, vec![egui::Event::PointerMoved(at)]);
+        d.click(&mut wb, at);
+        d.frame(&mut wb, vec![]);
+    }
+    let Some(Panel::Work(w)) = wb.panel.clone() else { panic!("no work panel: {}", wb.status()) };
+    assert!(matches!(w.points, [Some(PointSel::Origin), Some(PointSel::SketchPoint { .. }), Some(PointSel::SketchPoint { .. })]), "{:?}", w.points);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    // Through (0, 0, 0), (10, 0, 10) and (0, 10, 10): its normal is (-1, -1, 1) / root 3.
+    let wp = wb.document().features().last().unwrap().id;
+    let Some(WorkGeom::Plane(frame)) = wb.scene().work.iter().find(|(id, _)| *id == wp).map(|(_, g)| *g) else { panic!("no plane") };
+    let r = 1.0 / 3f64.sqrt();
+    assert!(frame.z().near(Vec3::new(-r, -r, r), 1e-9), "{:?}", frame.z());
+}

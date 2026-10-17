@@ -1301,3 +1301,39 @@ fn a_tapped_hole_has_its_thread_from_its_mouth() {
     let r = run(&mut s, &mut k, "model.regenerate", json!({}));
     assert!(r["error"]["message"].as_str().unwrap().contains("make it shorter"), "{r}");
 }
+
+#[test]
+fn a_work_plane_goes_through_three_points() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    // Points of two sketches, at (10, 0, 0) and (0, 10, 10), and the origin.
+    let sk1 = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let p1 = run(&mut s, &mut k, "sketch.point", json!({ "sketch": sk1, "x": 10, "y": 0 }))["point"].as_u64().unwrap();
+    let up = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 10 }))["feature"].as_u64().unwrap();
+    let sk2 = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": up, "project_origin": false }))["feature"].as_u64().unwrap();
+    let p2 = run(&mut s, &mut k, "sketch.point", json!({ "sketch": sk2, "x": 0, "y": 10 }))["point"].as_u64().unwrap();
+    let points = json!(["origin", { "sketch_point": { "sketch": sk1, "point": p1 } }, { "sketch_point": { "sketch": sk2, "point": p2 } }]);
+    let wp = run(&mut s, &mut k, "work.plane", json!({ "by": "three_points", "points": points }))["feature"].as_u64().unwrap();
+    regenerates(&mut s, &mut k);
+    // Its normal is (0, -1, 1) / root 2 (X from the first to the second, the third on its +Y
+    // side), its origin the first point.
+    let w = work(&mut s, &mut k, wp);
+    let n = v3(&w["normal"]);
+    let r = std::f64::consts::FRAC_1_SQRT_2;
+    assert!(near3(n, [0.0, -r, r]), "{w}");
+    assert!(near3(v3(&w["origin"]), [0.0, 0.0, 0.0]), "{w}");
+    // It follows its points: the second sketch's point moved, the plane turns.
+    run(&mut s, &mut k, "sketch.drag", json!({ "sketch": sk2, "point": p2, "x": 0, "y": 20 }));
+    regenerates(&mut s, &mut k);
+    let n = v3(&work(&mut s, &mut k, wp)["normal"]);
+    let m = (20.0f64 * 20.0 + 10.0 * 10.0).sqrt();
+    assert!(near3(n, [0.0, -10.0 / m, 20.0 / m]), "{n:?}");
+    // Three in a line are refused in words.
+    let p3 = run(&mut s, &mut k, "sketch.point", json!({ "sketch": sk1, "x": 20, "y": 0 }))["point"].as_u64().unwrap();
+    let line = json!(["origin", { "sketch_point": { "sketch": sk1, "point": p1 } }, { "sketch_point": { "sketch": sk1, "point": p3 } }]);
+    run(&mut s, &mut k, "work.plane", json!({ "by": "three_points", "points": line }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("in one line"), "{r}");
+    // A work plane is no point.
+    let e = s.exec("work.plane", &json!({ "by": "three_points", "points": ["origin", { "work": up }, "origin"] }), Some(&mut k)).unwrap_err();
+    assert!(e.to_string().contains("work point"), "{e}");
+}

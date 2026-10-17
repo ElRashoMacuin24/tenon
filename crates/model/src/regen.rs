@@ -17,8 +17,8 @@ mod sheet;
 use crate::FeatureId;
 use crate::document::{
     AxisRef, AxisSel, ChamferSize, Coil, Combine, DirectionRef, Document, Draft, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent,
-    HoleType, Loft, Operation, PlaneRef, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Split, SplitKeep, Sweep, Thread, ThreadLength, WorkAxis,
-    WorkPlane, WorkPoint,
+    HoleType, Loft, Operation, PlaneRef, PointSel, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Split, SplitKeep, Sweep, Thread, ThreadLength,
+    WorkAxis, WorkPlane, WorkPoint,
 };
 use crate::naming::{
     CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
@@ -722,6 +722,39 @@ impl<'a> Ctx<'a> {
                 }
                 let gap = (b.origin() - a.origin()).dot(a.z());
                 Ok(Frame::new(a.origin() + a.z() * (gap / 2.0), a.z(), a.x()).ok_or("the plane is not valid")?)
+            }
+            WorkPlane::ThreePoints { points: [a, b, c] } => {
+                let (a, b, c) = (self.point_of(a)?, self.point_of(b)?, self.point_of(c)?);
+                let x = b - a;
+                let n = x.cross(c - a);
+                if x.len() < tenon_geom::tol::LINEAR || n.len() < tenon_geom::tol::LINEAR * x.len() {
+                    return Err("the three points are in one line (or two are one): a plane needs three apart".into());
+                }
+                Ok(Frame::new(a, n, x).ok_or("the plane is not valid")?)
+            }
+        }
+    }
+
+    /// Where a point a work feature goes through is (DEC-116).
+    fn point_of(&mut self, p: &PointSel) -> Result<Vec3, Stop> {
+        match p {
+            PointSel::Origin => Ok(Vec3::ZERO),
+            PointSel::Work(id) => match self.work(*id)? {
+                WorkGeom::Point(q) => Ok(q),
+                _ => Err(format!("{} is not a work point", label(self.doc, *id)).into()),
+            },
+            PointSel::Center(edge) => match self.edge_geometry(edge)?.curve {
+                CurveKind::Circle { axis, .. } => Ok(axis.origin()),
+                _ => Err("the edge is not circular: it has no centre".into()),
+            },
+            PointSel::SketchPoint { sketch, point } => {
+                let frame = *self.regen.sketch_frames.get(sketch).ok_or_else(|| format!("{} is suppressed or failed", label(self.doc, *sketch)))?;
+                let q = self
+                    .doc
+                    .sketch(*sketch)
+                    .and_then(|s| s.point(*point))
+                    .ok_or_else(|| format!("the point is no longer in {}", label(self.doc, *sketch)))?;
+                Ok(frame.plane_point(q))
             }
         }
     }

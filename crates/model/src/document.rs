@@ -692,6 +692,35 @@ pub enum WorkPlane {
     Angle { base: PlaneRef, axis: AxisSel, angle: f64 },
     /// Halfway between two parallel planes.
     Midplane { a: PlaneRef, b: PlaneRef },
+    /// Through three points (DEC-116): from the first toward the second is its X, the third on
+    /// its positive Y side.
+    ThreePoints { points: [PointSel; 3] },
+}
+
+/// A point a work feature goes through (DEC-116).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PointSel {
+    /// The part's origin.
+    Origin,
+    /// A work point.
+    Work(FeatureId),
+    /// The centre of a circular edge.
+    Center(EdgeRef),
+    /// A point of a sketch.
+    SketchPoint { sketch: FeatureId, point: EntityId },
+}
+
+impl PointSel {
+    /// The features it comes from.
+    pub fn features(&self) -> Vec<FeatureId> {
+        match self {
+            PointSel::Origin => Vec::new(),
+            PointSel::Work(id) => vec![*id],
+            PointSel::Center(e) => e.features(),
+            PointSel::SketchPoint { sketch, .. } => vec![*sketch],
+        }
+    }
 }
 
 /// A work axis.
@@ -1043,6 +1072,7 @@ impl FeatureKind {
                 WorkPlane::Offset { base, .. } => base.feature().into_iter().collect(),
                 WorkPlane::Angle { base, axis, .. } => base.feature().into_iter().chain(axis.features()).collect(),
                 WorkPlane::Midplane { a, b } => a.feature().into_iter().chain(b.feature()).collect(),
+                WorkPlane::ThreePoints { points } => points.iter().flat_map(PointSel::features).collect(),
             },
             FeatureKind::WorkAxis(w) => match w {
                 WorkAxis::Along { axis } => axis.features(),

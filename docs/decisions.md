@@ -3113,3 +3113,21 @@ component.
 Plane, which the second pick hands on to (a click in the view, or a plane in the browser's
 Origin folder). `asm.constrain` takes `type: "symmetry"` and `plane`; files write the
 relationship type `symmetry` with its `plane`, additive.
+
+## DEC-116 A work plane through three points (2026-10-17)
+
+Inventor's work plane methods include Three Points (endpoints, midpoints, intersections or work
+points; the first toward the second is X, the third on +Y). Tenon had offset, angle and
+midplane.
+
+**Now:** `WorkPlane::ThreePoints { points: [PointSel; 3] }`, a `PointSel` being the origin, a
+work point, a circular edge's centre, or a point of a sketch (`SketchPoint { sketch, point }`).
+These are what Tenon can name and follow; vertices are not named yet (persistent naming has no
+vertices), so they cannot be picked. The frame: origin at the first point, X toward the second,
+the third on the positive Y side. Three in a line, or two the same, are refused in words; the
+plane follows its points (a sketch point dragged turns it).
+
+**In the panel:** Plane > Three Points, with Point 1, 2 and 3: a work point or a sketch's point
+clicked in the view (drawn over the part, picked first), a circular edge (its centre), a work
+point in the browser, or the Origin folder's Center Point. `work.plane` takes
+`by: "three_points"` and `points`; files gain the kind, additive.

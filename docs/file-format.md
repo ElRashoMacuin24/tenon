@@ -246,7 +246,7 @@ shows until a feature uses it and a work feature shows.
 | `pattern_rect` | `features`, `dir1`, `count1`, `spacing1`, `reverse1`, optional `dir2`, `count2`, `spacing2`, `reverse2` |
 | `pattern_circular` | `features`, `axis`, `count`, `angle`, `reverse` |
 | `mirror` | `features`, `plane` |
-| `work_plane` | `by`: `offset` (`base` plane, `distance`), `angle` (`base`, `axis`, `angle`) or `midplane` (`a`, `b`) |
+| `work_plane` | `by`: `offset` (`base` plane, `distance`), `angle` (`base`, `axis`, `angle`), `midplane` (`a`, `b`) or `three_points` (`points`: three of `"origin"`, `{ work = <point id> }`, `{ center = <edge reference> }` or `{ sketch_point = { sketch, point } }`; DEC-116) |
 | `work_axis` | `by`: `along` (`axis`) or `planes` (`a`, `b`) |
 | `work_point` | `by`: `center` (`edge`) or `intersection` (`axis`, `plane`) |
 | `rib` | `sketch`, `lines` (sketch line ids), `thickness`, `extent`, `flip` |

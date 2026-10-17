@@ -90,13 +90,12 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 18. ~~Delete Features with what goes with a feature; Extrude To a face or plane; Mate's Flush
     solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
     comparison of every command below.
-19. From the same comparison, in order: a three-point work plane;
-    the Sketch tab's Center Point, arc slots, ellipse, Stretch and Smooth; fillets of variable
+19. From the same comparison, in order: the Sketch tab's Center Point, arc slots, ellipse, Stretch and Smooth; fillets of variable
     radius and face fillets. Done from it so far: Extrude To (DEC-104), To Next (DEC-109) and
     Between (DEC-111); the Hole panel's Spotface and To (DEC-105), placing on a face (DEC-113)
     and Tapped (DEC-114); visibility from the browser (DEC-106); components placed by the
     pointer (DEC-107); Revolve's directions (DEC-108), To and To Next (DEC-112); Tangent (DEC-110);
-    Symmetry (DEC-115).
+    Symmetry (DEC-115); the three-point work plane (DEC-116).
 
 ## Geometry of the part in a sketch
 
@@ -281,7 +280,7 @@ on inventor and make ours feel 1-1"). The rows marked closed then were done in t
 
 | Inventor | Tenon | Proof / gap |
 |---|---|---|
-| Work plane: offset from a plane, angle about an edge, midplane, three points, tangent to a curved face through an edge or parallel to a plane, normal to a curve at a point | partial | offset, angle, midplane (M2). Gap: three points, the tangent planes, normal to a curve |
+| Work plane: offset from a plane, angle about an edge, midplane, three points, tangent to a curved face through an edge or parallel to a plane, normal to a curve at a point | partial | offset, angle, midplane (M2); **three points** (closed 2026-10-17, DEC-116: work points, sketch points, circles' centres and the origin; X from the first to the second). `a_work_plane_goes_through_three_points`, `a_work_plane_is_made_through_three_points_picked`. Gap: vertices and edge midpoints as points; the tangent planes; normal to a curve |
 | Work axis: along an edge, through a cylinder, two planes meeting, two points, normal to a plane through a point | partial | edge or cylinder, two planes (M2). Gap: two points, normal to a plane |
 | Work point: a vertex, a circle's centre, an axis through a plane, where three planes meet | partial | a circle's centre, an axis through a plane. Gap: on a vertex, three planes |
 | UCS | missing | greyed on the ribbon |

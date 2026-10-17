@@ -12,9 +12,9 @@ use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions
 
 use crate::document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Extrude, ExtrudeExtent, FeatureKind,
-    Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle,
-    Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, WorkAxis, WorkPlane, WorkPoint, hole_centres,
-    open_lines,
+    Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RectPattern, RegionSel, Revolve,
+    RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, WorkAxis, WorkPlane, WorkPoint,
+    hole_centres, open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
@@ -1120,6 +1120,15 @@ fn check_work_refs(s: &Session, kind: &FeatureKind) -> Result<(), CmdError> {
         FeatureKind::WorkPlane(WorkPlane::Offset { base, .. }) => plane(base),
         FeatureKind::WorkPlane(WorkPlane::Angle { base, axis: a, .. }) => plane(base).and(axis(a)),
         FeatureKind::WorkPlane(WorkPlane::Midplane { a, b }) => plane(a).and(plane(b)),
+        FeatureKind::WorkPlane(WorkPlane::ThreePoints { points }) => points.iter().try_for_each(|q| match q {
+            PointSel::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkPoint(_)), "work point"),
+            PointSel::SketchPoint { sketch, point } => match doc.sketch(*sketch) {
+                Some(sk) if sk.point(*point).is_some() => Ok(()),
+                Some(_) => Err(CmdError(format!("{} is no point of {sketch}", point.0))),
+                None => Err(CmdError(format!("{sketch} is not a sketch"))),
+            },
+            _ => Ok(()),
+        }),
         FeatureKind::WorkAxis(WorkAxis::Along { axis: a }) => axis(a),
         FeatureKind::WorkAxis(WorkAxis::Planes { a, b }) => plane(a).and(plane(b)),
         FeatureKind::WorkPoint(WorkPoint::Intersection { axis: a, plane: p }) => axis(a).and(plane(p)),
@@ -1139,7 +1148,8 @@ fn work_plane(s: &mut Session, p: &Value) -> CmdResult {
         "offset" => WorkPlane::Offset { base: plane_value(p, "base")?, distance: num(p, "distance")? },
         "angle" => WorkPlane::Angle { base: plane_value(p, "base")?, axis: axis_param(p, "axis")?, angle: num(p, "angle")? },
         "midplane" => WorkPlane::Midplane { a: plane_value(p, "a")?, b: plane_value(p, "b")? },
-        other => return Err(format!("unknown work plane `{other}` (offset, angle, midplane)").into()),
+        "three_points" => WorkPlane::ThreePoints { points: parse(p, "points")? },
+        other => return Err(format!("unknown work plane `{other}` (offset, angle, midplane, three_points)").into()),
     };
     let kind = FeatureKind::WorkPlane(def);
     check_work_refs(s, &kind)?;

@@ -3276,7 +3276,8 @@
             "enum": [
               "offset",
               "angle",
-              "midplane"
+              "midplane",
+              "three_points"
             ],
             "description": "how it is placed (default offset)"
           },
@@ -3368,6 +3369,23 @@
               }
             ],
             "description": "midplane: the other"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "origin"
+                  ]
+                },
+                {
+                  "type": "object"
+                }
+              ]
+            },
+            "description": "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference} or {\"sketch_point\": {\"sketch\": id, \"point\": id}}; from the first toward the second is its X"
           },
           "equations": {
             "type": "object",

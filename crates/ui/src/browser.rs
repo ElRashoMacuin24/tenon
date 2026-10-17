@@ -278,7 +278,7 @@ impl Workbench {
                     (Icon::Axis, "X Axis", Some(Reference::Axis(tenon_model::OriginAxis::X))),
                     (Icon::Axis, "Y Axis", Some(Reference::Axis(tenon_model::OriginAxis::Y))),
                     (Icon::Axis, "Z Axis", Some(Reference::Axis(tenon_model::OriginAxis::Z))),
-                    (Icon::Point, "Center Point", None),
+                    (Icon::Point, "Center Point", Some(Reference::Point)),
                 ] {
                     let (resp, _) = row(ui, t, 2, icon, label, None, RowStyle::Normal);
                     match r {

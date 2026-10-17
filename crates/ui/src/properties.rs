@@ -1669,6 +1669,22 @@ impl Workbench {
                                                 w.slot = WorkSlot::Edge;
                                             }
                                         }
+                                        // (A work point, a sketch point, a circle's centre, the origin.)
+                                        WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => {
+                                            let i = slot.point().unwrap_or(0);
+                                            ui.label(format!("Point {}", i + 1));
+                                            let label = match &w.points[i] {
+                                                None => "click a point".to_string(),
+                                                Some(tenon_model::PointSel::Origin) => "Center Point".to_string(),
+                                                Some(tenon_model::PointSel::Work(id)) => self.feature_name(id.to_owned()),
+                                                Some(tenon_model::PointSel::Center(_)) => "a circle's centre".to_string(),
+                                                Some(tenon_model::PointSel::SketchPoint { sketch, .. }) => format!("a point of {}", self.feature_name(sketch.to_owned())),
+                                            };
+                                            let r = slot_button(ui, w.slot == *slot, &label, t);
+                                            if r {
+                                                w.slot = *slot;
+                                            }
+                                        }
                                     }
                                     ui.end_row();
                                 }

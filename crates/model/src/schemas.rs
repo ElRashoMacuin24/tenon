@@ -650,13 +650,18 @@ static SCHEMAS: &[C] = &[
     C::new(
         "work.plane",
         &[
-            opt("by", Word(&["offset", "angle", "midplane"]), "how it is placed (default offset)"),
+            opt("by", Word(&["offset", "angle", "midplane", "three_points"]), "how it is placed (default offset)"),
             opt("base", PLANE, "offset, angle: the plane it starts from"),
             opt("distance", Length, "offset: how far from `base`"),
             opt("axis", AXIS, "angle: the axis in `base` it turns about"),
             opt("angle", Angle, "angle: how far it turns"),
             opt("a", PLANE, "midplane: one of two parallel planes"),
             opt("b", PLANE, "midplane: the other"),
+            opt(
+                "points",
+                List(&Either(&[Word(&["origin"]), Object])),
+                "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference} or {\"sketch_point\": {\"sketch\": id, \"point\": id}}; from the first toward the second is its X",
+            ),
             EQUATIONS,
         ],
     ),

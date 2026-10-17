@@ -4,7 +4,7 @@
 use egui::{Align2, Pos2, Rect, Shape, Stroke, Ui, vec2};
 use serde_json::{Value, json};
 use tenon_geom::{Axis, Frame, Vec2, Vec3};
-use tenon_model::{AxisSel, EdgeRef, FeatureId, FeatureKind, OriginAxis, OriginPlane, PlaneRef, WorkAxis, WorkGeom, WorkPlane, WorkPoint};
+use tenon_model::{AxisSel, EdgeRef, FeatureId, FeatureKind, OriginAxis, OriginPlane, PlaneRef, PointSel, WorkAxis, WorkGeom, WorkPlane, WorkPoint};
 
 use crate::panels::{Panel, PatternPanel, Slot};
 use crate::theme::{self, Tokens};
@@ -17,6 +17,8 @@ pub(crate) enum WorkMethod {
     Offset,
     Angle,
     Midplane,
+    /// Through three points (DEC-116).
+    ThreePoints,
     Along,
     Planes,
     Center,
@@ -29,6 +31,7 @@ impl WorkMethod {
             WorkMethod::Offset => "Offset from Plane",
             WorkMethod::Angle => "Angle to Plane around Edge",
             WorkMethod::Midplane => "Midplane between Two Planes",
+            WorkMethod::ThreePoints => "Three Points",
             WorkMethod::Along => "On Edge, Axis or Cylinder",
             WorkMethod::Planes => "Intersection of Two Planes",
             WorkMethod::Center => "Center of Circular Edge",
@@ -38,7 +41,9 @@ impl WorkMethod {
     /// The methods of the same kind (plane, axis or point).
     pub(crate) fn family(self) -> &'static [WorkMethod] {
         match self {
-            WorkMethod::Offset | WorkMethod::Angle | WorkMethod::Midplane => &[WorkMethod::Offset, WorkMethod::Angle, WorkMethod::Midplane],
+            WorkMethod::Offset | WorkMethod::Angle | WorkMethod::Midplane | WorkMethod::ThreePoints => {
+                &[WorkMethod::Offset, WorkMethod::Angle, WorkMethod::Midplane, WorkMethod::ThreePoints]
+            }
             WorkMethod::Along | WorkMethod::Planes => &[WorkMethod::Along, WorkMethod::Planes],
             WorkMethod::Center | WorkMethod::Intersection => &[WorkMethod::Center, WorkMethod::Intersection],
         }
@@ -49,6 +54,7 @@ impl WorkMethod {
             WorkMethod::Offset => &[WorkSlot::A],
             WorkMethod::Angle => &[WorkSlot::A, WorkSlot::Axis],
             WorkMethod::Midplane | WorkMethod::Planes => &[WorkSlot::A, WorkSlot::B],
+            WorkMethod::ThreePoints => &[WorkSlot::P1, WorkSlot::P2, WorkSlot::P3],
             WorkMethod::Along => &[WorkSlot::Axis],
             WorkMethod::Center => &[WorkSlot::Edge],
             WorkMethod::Intersection => &[WorkSlot::Axis, WorkSlot::A],
@@ -63,6 +69,22 @@ pub(crate) enum WorkSlot {
     B,
     Axis,
     Edge,
+    /// The points of a three-point plane.
+    P1,
+    P2,
+    P3,
+}
+
+impl WorkSlot {
+    /// Which of three points it takes, if it takes a point.
+    pub(crate) fn point(self) -> Option<usize> {
+        match self {
+            WorkSlot::P1 => Some(0),
+            WorkSlot::P2 => Some(1),
+            WorkSlot::P3 => Some(2),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -73,6 +95,8 @@ pub(crate) struct WorkPanel {
     pub b: Option<PlaneRef>,
     pub axis: Option<AxisSel>,
     pub edge: Option<EdgeRef>,
+    /// A three-point plane's points.
+    pub points: [Option<PointSel>; 3],
     pub distance: f64,
     pub degrees: f64,
     pub slot: WorkSlot,
@@ -80,7 +104,18 @@ pub(crate) struct WorkPanel {
 
 impl WorkPanel {
     fn new(method: WorkMethod) -> WorkPanel {
-        WorkPanel { editing: None, method, a: None, b: None, axis: None, edge: None, distance: 10.0, degrees: 90.0, slot: method.slots()[0] }
+        WorkPanel {
+            editing: None,
+            method,
+            a: None,
+            b: None,
+            axis: None,
+            edge: None,
+            points: [None, None, None],
+            distance: 10.0,
+            degrees: 90.0,
+            slot: method.slots()[0],
+        }
     }
 
     fn from_kind(editing: Option<FeatureId>, k: &FeatureKind) -> Option<WorkPanel> {
@@ -93,6 +128,9 @@ impl WorkPanel {
             }
             FeatureKind::WorkPlane(WorkPlane::Midplane { a, b }) => {
                 WorkPanel { a: Some(a.clone()), b: Some(b.clone()), ..WorkPanel::new(WorkMethod::Midplane) }
+            }
+            FeatureKind::WorkPlane(WorkPlane::ThreePoints { points }) => {
+                WorkPanel { points: points.clone().map(Some), ..WorkPanel::new(WorkMethod::ThreePoints) }
             }
             FeatureKind::WorkAxis(WorkAxis::Along { axis }) => WorkPanel { axis: Some(axis.clone()), ..WorkPanel::new(WorkMethod::Along) },
             FeatureKind::WorkAxis(WorkAxis::Planes { a, b }) => {
@@ -110,7 +148,7 @@ impl WorkPanel {
 
     pub(crate) fn title(&self) -> &'static str {
         match self.method {
-            WorkMethod::Offset | WorkMethod::Angle | WorkMethod::Midplane => "Work Plane",
+            WorkMethod::Offset | WorkMethod::Angle | WorkMethod::Midplane | WorkMethod::ThreePoints => "Work Plane",
             WorkMethod::Along | WorkMethod::Planes => "Work Axis",
             WorkMethod::Center | WorkMethod::Intersection => "Work Point",
         }
@@ -132,6 +170,10 @@ impl WorkPanel {
                 FeatureKind::WorkPlane(WorkPlane::Angle { base: self.a.clone()?, axis: self.axis.clone()?, angle: self.degrees.to_radians() })
             }
             WorkMethod::Midplane => FeatureKind::WorkPlane(WorkPlane::Midplane { a: self.a.clone()?, b: self.b.clone()? }),
+            WorkMethod::ThreePoints => {
+                let [a, b, c] = &self.points;
+                FeatureKind::WorkPlane(WorkPlane::ThreePoints { points: [a.clone()?, b.clone()?, c.clone()?] })
+            }
             WorkMethod::Along => FeatureKind::WorkAxis(WorkAxis::Along { axis: self.axis.clone()? }),
             WorkMethod::Planes => FeatureKind::WorkAxis(WorkAxis::Planes { a: self.a.clone()?, b: self.b.clone()? }),
             WorkMethod::Center => FeatureKind::WorkPoint(WorkPoint::Center { edge: self.edge.clone()? }),
@@ -146,6 +188,7 @@ impl WorkPanel {
             WorkSlot::B => self.b.is_some(),
             WorkSlot::Axis => self.axis.is_some(),
             WorkSlot::Edge => self.edge.is_some(),
+            WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => s.point().is_some_and(|i| self.points[i].is_some()),
         };
         if let Some(next) = self.method.slots().iter().find(|s| !filled(s)) {
             self.slot = *next;
@@ -157,8 +200,16 @@ impl WorkPanel {
         match self.slot {
             WorkSlot::A | WorkSlot::B => (true, false),
             WorkSlot::Axis => (false, true),
-            WorkSlot::Edge => (false, false),
+            WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => (false, false),
         }
+    }
+
+    /// Puts a point into the active point selector, and moves on.
+    pub(crate) fn put_point(&mut self, p: PointSel) -> bool {
+        let Some(i) = self.slot.point() else { return false };
+        self.points[i] = Some(p);
+        self.advance();
+        true
     }
 }
 
@@ -191,6 +242,7 @@ pub(crate) fn work_params(kind: &FeatureKind) -> Option<(&'static str, Value)> {
             ("work.plane", json!({ "by": "angle", "base": plane_json(base), "axis": axis_json(axis), "angle": angle }))
         }
         FeatureKind::WorkPlane(WorkPlane::Midplane { a, b }) => ("work.plane", json!({ "by": "midplane", "a": plane_json(a), "b": plane_json(b) })),
+        FeatureKind::WorkPlane(WorkPlane::ThreePoints { points }) => ("work.plane", json!({ "by": "three_points", "points": points })),
         FeatureKind::WorkAxis(WorkAxis::Along { axis }) => ("work.axis", json!({ "axis": axis_json(axis) })),
         FeatureKind::WorkAxis(WorkAxis::Planes { a, b }) => ("work.axis", json!({ "a": plane_json(a), "b": plane_json(b) })),
         FeatureKind::WorkPoint(WorkPoint::Center { edge }) => ("work.point", json!({ "edge": edge })),
@@ -389,6 +441,21 @@ impl Workbench {
         {
             return self.set_to_plane(p);
         }
+        // A point of a three-point plane: the origin, or a work point (DEC-116).
+        let is_point = |wb: &Workbench, id: FeatureId| wb.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPoint(_)));
+        if let Some(Panel::Work(w)) = &self.panel
+            && w.slot.point().is_some()
+        {
+            let point = match r {
+                Reference::Point => Some(PointSel::Origin),
+                Reference::Work(id) if is_point(self, id) => Some(PointSel::Work(id)),
+                _ => None,
+            };
+            return match (point, &mut self.panel) {
+                (Some(p), Some(Panel::Work(w))) => w.put_point(p),
+                _ => false,
+            };
+        }
         match &mut self.panel {
             Some(Panel::Work(w)) => {
                 match (w.slot, plane, axis) {
@@ -465,6 +532,12 @@ impl Workbench {
     pub(crate) fn work_pick(&mut self, p: Pick) -> bool {
         let Some(Panel::Work(w)) = &self.panel else { return false };
         let slot = w.slot;
+        let circle = match p {
+            Pick::Edge { body, edge } => {
+                matches!(self.scene.bodies.get(body).and_then(|b| b.curves.get(edge as usize)), Some(tenon_kernel::CurveKind::Circle { .. }))
+            }
+            Pick::Face { .. } => false,
+        };
         let (fref, eref, surface) = match p {
             Pick::Face { body, face } => {
                 let Some((name, info)) = self.scene.bodies.get(body).and_then(|b| b.faces.get(face as usize)) else { return false };
@@ -482,10 +555,44 @@ impl Workbench {
             }
             (WorkSlot::Axis, _, Some(e), _) => w.axis = Some(AxisSel::Edge(e)),
             (WorkSlot::Edge, _, Some(e), _) => w.edge = Some(e),
+            // A point: a circular edge's centre.
+            (WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3, _, Some(e), _) if circle => return w.put_point(PointSel::Center(e)),
             _ => return false,
         }
         w.advance();
         true
+    }
+
+    /// The work point under a screen point (drawn where it is).
+    pub(crate) fn work_point_at(&self, p: Pos2, rect: Rect) -> Option<FeatureId> {
+        self.scene
+            .work
+            .iter()
+            .filter(|(id, _)| self.work_visible(*id))
+            .filter_map(|(id, g)| match g {
+                WorkGeom::Point(q) => Some((*id, self.to_screen(*q, rect)?.distance(p))),
+                _ => None,
+            })
+            .filter(|(_, d)| *d <= 8.0)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
+
+    /// The point of a sketch shown in the view under a screen point.
+    pub(crate) fn sketch_point_at(&self, p: Pos2, rect: Rect) -> Option<(FeatureId, tenon_sketch::EntityId)> {
+        let mut best: Option<(f32, FeatureId, tenon_sketch::EntityId)> = None;
+        for (id, _) in self.shown_sketches() {
+            let (Some(sk), Some(frame)) = (self.document().sketch(id), self.sketch_frame(id)) else { continue };
+            for (e, entity) in sk.entities() {
+                let (true, Some(q)) = (entity.geometry.is_point(), sk.point(e)) else { continue };
+                let Some(s) = self.to_screen(frame.plane_point(q), rect) else { continue };
+                let d = s.distance(p);
+                if d <= 8.0 && best.is_none_or(|b| d < b.0) {
+                    best = Some((d, id, e));
+                }
+            }
+        }
+        best.map(|(_, id, e)| (id, e))
     }
 }
 
@@ -495,6 +602,8 @@ pub(crate) enum Reference {
     Plane(OriginPlane),
     Axis(OriginAxis),
     Work(FeatureId),
+    /// The origin's centre point.
+    Point,
 }
 
 fn set_pattern_ref(p: &mut PatternPanel, plane: Option<PlaneRef>, axis: Option<AxisSel>) -> bool {
