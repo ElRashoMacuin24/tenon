@@ -91,12 +91,13 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 18. ~~Delete Features with what goes with a feature; Extrude To a face or plane; Mate's Flush
     solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
     comparison of every command below.
-19. From the same comparison, in order: the Sketch tab's arc slots, ellipse, Stretch and Smooth; fillets of variable
+19. From the same comparison, in order: the Sketch tab's ellipse, Stretch and Smooth; fillets of variable
     radius and face fillets. Done from it so far: Extrude To (DEC-104), To Next (DEC-109) and
     Between (DEC-111); the Hole panel's Spotface and To (DEC-105), placing on a face (DEC-113)
     and Tapped (DEC-114); visibility from the browser (DEC-106); components placed by the
     pointer (DEC-107); Revolve's directions (DEC-108), To and To Next (DEC-112); Tangent (DEC-110);
-    Symmetry (DEC-115); the three-point work plane (DEC-116); Center Point (DEC-117).
+    Symmetry (DEC-115); the three-point work plane (DEC-116); Center Point (DEC-117); the
+    arc slots (DEC-118).
 
 ## Geometry of the part in a sketch
 
@@ -124,7 +125,7 @@ Create panel:
 | Circle: Center Point; Tangent (to three lines); Ellipse | partial | by centre. Gap: tangent circle, ellipse |
 | Arc: Three Point; Tangent; Center Point | done | the drop-down under Arc: `slots_rectangles_and_arcs_are_drawn_by_their_own_clicks`, `a_tangent_arc_carries_on_from_the_end_of_a_line_or_an_arc` |
 | Rectangle: Two Point; Three Point; Two Point Center; Three Point Center | partial | two point, three point, two point centre. Gap: three point centre |
-| Slot: Center to Center; Overall; Center Point; Three Point Arc; Center Point Arc | partial | the three straight slots, under Rectangle as in Inventor: `slots_and_rectangles_about_a_centre_or_at_an_angle_hold_their_shape` (a slot is two lines tangent to two equal arcs, five degrees of freedom). Gap: the two arc slots |
+| Slot: Center to Center; Overall; Center Point; Three Point Arc; Center Point Arc | partial | the three straight slots, under Rectangle as in Inventor: `slots_and_rectangles_about_a_centre_or_at_an_angle_hold_their_shape` (a slot is two lines tangent to two equal arcs, five degrees of freedom); **the two arc slots** (closed 2026-10-17, DEC-118: two arcs about one centre and two round ends tangent to both, six degrees of freedom), `arc_slots_hold_their_shape_about_their_centre`, `an_arc_slot_is_drawn_about_a_centre_or_through_three_points`, `arc_slots_are_drawn_by_their_clicks_about_a_centre_or_through_three_points` |
 | Polygon, with a number of sides and inscribed or circumscribed | partial | 3 to 64 sides from a box at the top left of the view while the tool is on: `a_polygon_has_as_many_sides_as_its_box_says`. Gap: inscribed only (the corner is clicked) |
 | Spline: Control Vertex; Interpolation; Equation Curve; Bridge Curve | partial | control vertex. Gap: the rest |
 | Fillet and Chamfer | partial | Fillet. Gap: sketch chamfer |

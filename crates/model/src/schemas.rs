@@ -369,6 +369,22 @@ static SCHEMAS: &[C] = &[
             ),
         ],
     ),
+    C::with(
+        "sketch.arc_slot",
+        &[
+            SKETCH,
+            req("x1", Length, "the start of the slot's middle arc"),
+            req("y1", Length, "the start of the slot's middle arc"),
+            req("x2", Length, "the end of the middle arc (with a centre, its direction from it)"),
+            req("y2", Length, "the end of the middle arc (with a centre, its direction from it)"),
+            req("width", Length, "how wide the slot is"),
+            opt("cx", Length, "the centre of the arc: it runs counter-clockwise from the start"),
+            opt("cy", Length, "the centre of the arc: it runs counter-clockwise from the start"),
+            opt("x3", Length, "or a point on the arc"),
+            opt("y3", Length, "or a point on the arc"),
+        ],
+        &[&[&["cx", "cy"], &["x3", "y3"]]],
+    ),
     C::new(
         "sketch.rectangle_center",
         &[SKETCH, req("cx", Length, "its centre"), req("cy", Length, "its centre"), req("x", Length, "a corner"), req("y", Length, "a corner")],

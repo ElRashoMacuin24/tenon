@@ -52,6 +52,10 @@ pub(crate) enum Tool {
     Slot,
     SlotOverall,
     SlotCenter,
+    /// Center Point Arc Slot: the arc's centre, its start, its end, then how wide.
+    SlotArcCenter,
+    /// Three Point Arc Slot: the arc's start, its end, a point on it, then how wide.
+    SlotArc3,
     RectCenter,
     Rect3,
     ArcCenter,
@@ -100,6 +104,8 @@ const TOOLS: &[(&str, Tool)] = &[
     ("sketch.slot", Tool::Slot),
     ("sketch.slot_overall", Tool::SlotOverall),
     ("sketch.slot_center", Tool::SlotCenter),
+    ("sketch.slot_arc_center", Tool::SlotArcCenter),
+    ("sketch.slot_arc_three", Tool::SlotArc3),
     ("sketch.rectangle_center", Tool::RectCenter),
     ("sketch.rectangle3", Tool::Rect3),
     ("sketch.arc_center", Tool::ArcCenter),
@@ -148,6 +154,8 @@ impl Tool {
             Tool::Slot => "Click the centre of each end, then how wide.",
             Tool::SlotOverall => "Click each end of the slot, then how wide.",
             Tool::SlotCenter => "Click the middle of the slot, the centre of one end, then how wide.",
+            Tool::SlotArcCenter => "Click the centre of the arc, its start, its end, then how wide.",
+            Tool::SlotArc3 => "Click the start of the arc, its end, a point on it, then how wide.",
             Tool::RectCenter => "Click the centre, then a corner.",
             Tool::Rect3 => "Click two corners of one side, then how deep.",
             Tool::ArcCenter => "Click the centre, the start, then the end of the arc.",

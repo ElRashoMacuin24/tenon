@@ -1371,3 +1371,33 @@ fn a_hole_goes_at_centre_points_and_not_at_sketch_points() {
     }
     assert_eq!(s.document(), &before);
 }
+
+#[test]
+fn an_arc_slot_is_drawn_about_a_centre_or_through_three_points() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    // Through three points: half round the origin, 20 to its middle, 8 wide.
+    let half = json!({ "sketch": sk, "x1": 20, "y1": 0, "x2": -20, "y2": 0, "x3": 0, "y3": 20, "width": 8 });
+    let r = run(&mut s, &mut k, "sketch.arc_slot", half);
+    assert!(
+        r["sides"].as_array().unwrap().len() == 2 && r["ends"].as_array().unwrap().len() == 2 && r["centers"].as_array().unwrap().len() == 3,
+        "{r}"
+    );
+    // About the origin, a quarter turn from straight up, 40 out and 6 wide.
+    let quarter = json!({ "sketch": sk, "cx": 0, "cy": 0, "x1": 0, "y1": 40, "x2": -50, "y2": 0, "width": 6 });
+    run(&mut s, &mut k, "sketch.arc_slot", quarter);
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 10 }));
+    regenerates(&mut s, &mut k);
+    let area = PI * 20.0 * 8.0 + PI * 16.0 + PI / 2.0 * 40.0 * 6.0 + PI * 9.0;
+    assert!(approx(volume(&mut s, &mut k), area * 10.0), "{} vs {}", volume(&mut s, &mut k), area * 10.0);
+    // Three points in a line, both ways of placing it, or neither, are refused.
+    let before = s.document().clone();
+    for bad in [
+        json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 10, "y2": 0, "x3": 5, "y3": 0, "width": 2 }),
+        json!({ "sketch": sk, "x1": 20, "y1": 0, "x2": -20, "y2": 0, "x3": 0, "y3": 20, "cx": 0, "cy": 0, "width": 8 }),
+        json!({ "sketch": sk, "x1": 20, "y1": 0, "x2": -20, "y2": 0, "width": 8 }),
+    ] {
+        assert!(s.exec("sketch.arc_slot", &bad, Some(&mut k)).is_err(), "{bad}");
+    }
+    assert_eq!(s.document(), &before);
+}

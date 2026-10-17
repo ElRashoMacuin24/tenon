@@ -160,6 +160,8 @@ pub(crate) fn is_tool(t: Tool) -> bool {
             | Slot
             | SlotOverall
             | SlotCenter
+            | SlotArcCenter
+            | SlotArc3
             | RectCenter
             | Rect3
             | ArcCenter
@@ -250,6 +252,23 @@ fn slot_centres(tool: Tool, a: Vec2, b: Vec2, width: f64) -> (Vec2, Vec2) {
         Tool::SlotCenter => (a * 2.0 - b, b),
         _ => (a, b),
     }
+}
+
+/// The centre, start and end (counter-clockwise) of an arc slot's middle from the first three
+/// clicks of its tool: about a centre, the shorter way round from the start toward the third
+/// click; or through three points (the start, the end, then one on the arc).
+fn arc_slot_middle(tool: Tool, a: Vec2, b: Vec2, c: Vec2) -> Option<(Vec2, Vec2, Vec2)> {
+    if tool == Tool::SlotArcCenter {
+        let end = a + (c - a).normalized() * b.dist(a);
+        return Some(if turn(b - a, end - a) >= 0.0 { (a, b, end) } else { (a, end, b) });
+    }
+    let arc = tenon_geom::Arc::from_3_points(a, c, b)?;
+    Some((arc.center, arc.start_point(), arc.end_point()))
+}
+
+/// How wide an arc slot is for the pointer to be on its side.
+fn arc_slot_width(center: Vec2, start: Vec2, at: Vec2) -> f64 {
+    (2.0 * (at.dist(center) - start.dist(center)).abs()).max(0.01)
 }
 
 /// How wide a slot through `a` and `b` is for the pointer to be on its side.
@@ -365,6 +384,27 @@ impl Workbench {
                     }
                 }
             }
+            Tool::SlotArcCenter | Tool::SlotArc3 => {
+                if sm.clicks.len() < 3 {
+                    sm.clicks.push(click);
+                    return;
+                }
+                let (a, b, c) = (sm.clicks[0], sm.clicks[1], sm.clicks[2]);
+                sm.clicks.clear();
+                let Some((center, start, end)) = arc_slot_middle(tool, a.at, b.at, c.at) else {
+                    self.set_error("the three points are in one line: no arc goes through them");
+                    return;
+                };
+                let width = arc_slot_width(center, start, click.at);
+                let p =
+                    json!({ "sketch": f, "cx": center.x, "cy": center.y, "x1": start.x, "y1": start.y, "x2": end.x, "y2": end.y, "width": width });
+                // Drawn about an existing point (the origin, say), its centre is that point.
+                if let Some(r) = self.exec_status("sketch.arc_slot", p)
+                    && let (Some(on), Some(c), Tool::SlotArcCenter) = (a.point, r["centers"][0].as_u64(), tool)
+                {
+                    let _ = self.exec("sketch.constrain", json!({ "sketch": f, "constraint": { "type": "coincident", "a": on.0, "b": c } }));
+                }
+            }
             Tool::RectCenter => {
                 let Some(first) = sm.clicks.first().copied() else {
                     sm.clicks.push(click);
@@ -473,6 +513,23 @@ impl Workbench {
                 let (ca, cb) = slot_centres(sm.tool, a.at, b.at, width);
                 made(&|s| s.add_slot(ca, cb, width).is_ok())
             }
+            (Tool::SlotArcCenter | Tool::SlotArc3, [a]) => vec![vec![a.at, cursor]],
+            (Tool::SlotArcCenter, [c, start]) => {
+                let (_, from, to) = arc_slot_middle(Tool::SlotArcCenter, c.at, start.at, cursor).unwrap_or((c.at, start.at, cursor));
+                made(&|s| s.add_arc(c.at, from, to).is_ok())
+            }
+            (Tool::SlotArc3, [start, end]) => match tenon_geom::Arc::from_3_points(start.at, cursor, end.at) {
+                Some(arc) => {
+                    let mut v = Vec::new();
+                    arc.tessellate(0.05, &mut v);
+                    vec![v]
+                }
+                None => vec![vec![start.at, end.at]],
+            },
+            (Tool::SlotArcCenter | Tool::SlotArc3, [a, b, c]) => match arc_slot_middle(sm.tool, a.at, b.at, c.at) {
+                Some((center, start, end)) => made(&|s| s.add_arc_slot(center, start, end, arc_slot_width(center, start, cursor)).is_ok()),
+                None => Vec::new(),
+            },
             (Tool::RectCenter, [c]) => made(&|s| s.add_rectangle(c.at * 2.0 - cursor, cursor).is_ok()),
             (Tool::Rect3 | Tool::ArcCenter, [a]) => vec![vec![a.at, cursor]],
             (Tool::Rect3, [a, b]) => made(&|s| s.add_rectangle_3(a.at, b.at, cursor).is_ok()),

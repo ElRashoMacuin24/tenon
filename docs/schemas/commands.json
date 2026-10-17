@@ -1895,6 +1895,94 @@
       }
     },
     {
+      "id": "sketch.arc_slot",
+      "label": "Arc Slot",
+      "undoable": true,
+      "description": "sketch, x1, y1 (the start of its middle arc), x2, y2 (the end), width; and cx, cy (the centre: the slot runs counter-clockwise from the start round to the direction of the end) or x3, y3 (a point on the arc, which goes through all three). Returns its sides (outer, inner), its ends and the centre points (the arc's, then the ends')",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "x1": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the start of the slot's middle arc"
+          },
+          "y1": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the start of the slot's middle arc"
+          },
+          "x2": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the end of the middle arc (with a centre, its direction from it)"
+          },
+          "y2": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the end of the middle arc (with a centre, its direction from it)"
+          },
+          "width": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "how wide the slot is"
+          },
+          "cx": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the centre of the arc: it runs counter-clockwise from the start"
+          },
+          "cy": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the centre of the arc: it runs counter-clockwise from the start"
+          },
+          "x3": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "or a point on the arc"
+          },
+          "y3": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "or a point on the arc"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "x1",
+          "y1",
+          "x2",
+          "y2",
+          "width"
+        ],
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "cx",
+                  "cy"
+                ]
+              },
+              {
+                "required": [
+                  "x3",
+                  "y3"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "sketch.rectangle_center",
       "label": "Rectangle from Centre",
       "undoable": true,

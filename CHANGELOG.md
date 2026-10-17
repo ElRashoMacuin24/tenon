@@ -14,6 +14,9 @@ shows it in [ROADMAP.md](ROADMAP.md).
   built in so that a part is the same everywhere. New commands `sketch.text` and
   `sketch.edit_text`; `sketch.info` lists the texts. Files gain the entity `text` and the
   region key `{ text = id }` (an addition to format version 2).
+- **Arc slots.** Center Point Arc Slot and Three Point Arc Slot join the slots under
+  Rectangle: an arc's centre, start and end (or its start, end and a point on it), then how
+  wide. Its sides share their centre and its ends stay tangent to both. `sketch.arc_slot`.
 - **Center Point.** Sketch > Format > Center Point: points on their own are centre points
   (drawn as a cross, and a hole goes at them) or sketch points (a dot; a hole takes them only
   when picked). On the selected points, or with none selected, on what Point makes.

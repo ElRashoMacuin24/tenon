@@ -45,6 +45,17 @@ pub struct Slot {
     pub centers: [EntityId; 2],
 }
 
+/// An arc slot as [`Sketch::add_arc_slot`] makes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArcSlot {
+    /// The two curved sides about the centre: the outer, then the inner.
+    pub sides: [EntityId; 2],
+    /// The round ends: the one at the start, then the one at the end.
+    pub ends: [EntityId; 2],
+    /// The centre point of the sides, then those of the ends (the start's first).
+    pub centers: [EntityId; 3],
+}
+
 /// Whether a text can be one: some words of at most [`crate::text::MAX_CHARS`] characters, a
 /// height in range and a finite angle.
 fn check_text(text: &str, height: f64, angle: f64) -> SketchResult<()> {
@@ -610,6 +621,46 @@ impl Sketch {
         s.push_constraint(Constraint::Equal { a: round_a, b: round_b })?;
         *self = s;
         Ok(Slot { lines: [lower, upper], arcs: [round_a, round_b], centers: [ca, cb] })
+    }
+
+    /// An arc slot: two arcs about `center`, `width` apart, joined at each end by a half
+    /// circle. Its middle runs counter-clockwise from `start` round to the direction of `end`
+    /// (its radius is the start's). The ends are tangent to both sides, so it stays an arc slot
+    /// whatever is done to it: the sides share their centre, and the ends are equal of
+    /// themselves. Its radius, width and the angle between its ends are what size it.
+    pub fn add_arc_slot(&mut self, center: Vec2, start: Vec2, end: Vec2, width: f64) -> SketchResult<ArcSlot> {
+        let radius = start.dist(center);
+        if !tol::is_valid_size(radius) || end.dist(center) <= tol::MIN_SIZE {
+            return Err(invalid("an arc slot needs its start and its end away from its centre"));
+        }
+        if !tol::is_valid_size(width) {
+            return Err(invalid(format!("slot width {width} is out of range")));
+        }
+        if width >= 2.0 * radius {
+            return Err(invalid("an arc slot must be narrower than twice its radius: its inside would cross the centre"));
+        }
+        let (u0, u1) = ((start - center).normalized(), (end - center).normalized());
+        if (u1 - u0).len() * radius <= width {
+            return Err(invalid("the round ends of the arc slot would overlap: its ends must be further apart round the arc"));
+        }
+        let r = width / 2.0;
+        let at = |u: Vec2, d: f64| center + u * d;
+        let mut s = self.clone();
+        let c = s.add_point(center)?;
+        let (c0, c1) = (s.add_point(at(u0, radius))?, s.add_point(at(u1, radius))?);
+        let (out0, out1) = (s.add_point(at(u0, radius + r))?, s.add_point(at(u1, radius + r))?);
+        let (in0, in1) = (s.add_point(at(u0, radius - r))?, s.add_point(at(u1, radius - r))?);
+        // Counter-clockwise: along the outside, round the end, back along the inside (drawn the
+        // same way round its centre), round the start.
+        let outer = s.add_arc(c, out0, out1)?;
+        let round_end = s.add_arc(c1, out1, in1)?;
+        let inner = s.add_arc(c, in0, in1)?;
+        let round_start = s.add_arc(c0, in0, out0)?;
+        for (side, round) in [(outer, round_start), (outer, round_end), (inner, round_start), (inner, round_end)] {
+            s.push_constraint(Constraint::Tangent { a: side, b: round })?;
+        }
+        *self = s;
+        Ok(ArcSlot { sides: [outer, inner], ends: [round_start, round_end], centers: [c, c0, c1] })
     }
 
     /// Regular polygon with `sides` corners, one at `vertex`: the sides plus a construction

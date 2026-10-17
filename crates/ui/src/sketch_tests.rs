@@ -901,3 +901,50 @@ fn center_point_makes_sketch_points_and_a_hole_passes_them_over() {
     let Some(Panel::Hole(h)) = wb.panel.clone() else { panic!("no hole panel: {}", wb.status()) };
     assert_eq!((h.sketch, h.points), (sk, vec![c]));
 }
+
+#[test]
+fn arc_slots_are_drawn_by_their_clicks_about_a_centre_or_through_three_points() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+    let areas = |wb: &Workbench| -> Vec<f64> {
+        let info = tenon_model::cmd::sketch_info_value(&open(wb));
+        info["regions"].as_array().unwrap().iter().map(|r| r["area"].as_f64().unwrap()).collect()
+    };
+    let draw = |d: &mut Driver, wb: &mut Workbench, tool: &str, pts: &[(f64, f64)]| {
+        wb.run_ui(tool).unwrap();
+        for (x, y) in pts {
+            let p = at(wb, *x, *y);
+            move_to(d, wb, p);
+            d.click(wb, p);
+        }
+        d.tap(wb, egui::Key::Escape);
+        d.tap(wb, egui::Key::Escape);
+    };
+    let near = |a: &[f64], want: f64| a.len() == 1 && (a[0] - want).abs() < 0.02 * want;
+    // Center Point Arc Slot: about the origin, from 20 along x a quarter turn round, and a
+    // fourth click 24 out: 8 wide. Its centre is the origin point itself.
+    draw(&mut d, &mut wb, "sketch.slot_arc_center", &[(0.0, 0.0), (20.0, 0.0), (0.0, 35.0), (0.0, 24.0)]);
+    let a = areas(&wb);
+    assert!(near(&a, PI / 2.0 * 20.0 * 8.0 + 16.0 * PI), "{a:?} {}", wb.status());
+    assert!(open(&wb).constraints().any(|(_, c)| matches!(c, Constraint::Coincident { .. })), "held at the origin");
+    wb.run_ui("edit.undo").unwrap();
+    wb.run_ui("edit.undo").unwrap();
+    assert!(areas(&wb).is_empty());
+    // Three Point Arc Slot: its start, its end, a point on the arc (clockwise from the start
+    // here: it is the arc through the three that counts), then 4 inside it: 8 wide.
+    draw(&mut d, &mut wb, "sketch.slot_arc_three", &[(-20.0, 0.0), (20.0, 0.0), (0.0, 20.0), (0.0, 16.0)]);
+    let a = areas(&wb);
+    assert!(near(&a, PI * 20.0 * 8.0 + 16.0 * PI), "{a:?} {}", wb.status());
+    // Three points in a line make none, and say why.
+    wb.run_ui("edit.undo").unwrap();
+    wb.run_ui("sketch.slot_arc_three").unwrap();
+    for (x, y) in [(-20.0, 5.0), (20.0, 5.0), (0.0, 5.0), (0.0, 9.0)] {
+        let p = at(&wb, x, y);
+        move_to(&mut d, &mut wb, p);
+        d.click(&mut wb, p);
+    }
+    assert!(areas(&wb).is_empty() && wb.status().contains("in one line"), "{}", wb.status());
+}

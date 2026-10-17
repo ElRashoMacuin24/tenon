@@ -3151,3 +3151,24 @@ selected it toggles them; with none, what the Point tool makes, and it is lit wh
 centre points (as a sketch opens). Centre points are drawn as a cross, sketch points as a dot.
 `sketch.center_point` (`entity`, `on`), and `center` on `sketch.point`; `sketch.info` lists
 `sketch_point`. Files gain the mark, additive.
+
+## DEC-118 The arc slots (2026-10-17)
+
+Inventor's Slot drop-down has two slots along an arc beside the three straight ones: Center
+Point Arc Slot (the arc's centre, its start, its end, then the width) and Three Point Arc Slot
+(the arc's start, its end, a point on it, then the width). Tenon had the straight ones.
+
+**What it is.** `Sketch::add_arc_slot`: two arcs about one centre point (the sides) joined at
+each end by a half circle about a point on the slot's middle arc, each end tangent to both
+sides. No Equal is added: two tangent ends between concentric sides are equal of themselves,
+and an Equal would be redundant. Six degrees of freedom are left: the centre, the radius, the
+width and the angle of each end. A width of twice the radius or more (the inside would cross
+the centre) and ends that would overlap are refused in words.
+
+**Commands and tools.** `sketch.arc_slot` takes the start and the end of the middle arc, the
+width, and either the centre (counter-clockwise from the start round to the direction of the
+end) or a third point on the arc. The tools are under Rectangle with the other slots, in
+Inventor's order; the centre tool goes the shorter way round from the start, as Arc Center
+Point does, and drawn about an existing point its centre is that point. The fourth click's
+distance from the middle arc is half the width. Nothing is added to files: an arc slot is arcs,
+points and constraints.

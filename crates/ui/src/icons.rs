@@ -175,6 +175,7 @@ pub enum Icon {
     Centerline,
     CenterlineBisector,
     CenterPoint,
+    SlotArc,
 }
 
 /// What an icon depicts, for its fill colour.
@@ -635,6 +636,17 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.line(&[(0.28, 0.68), (0.72, 0.68)]);
             pen.arc((0.72, 0.5), 0.18, 0.18, -PI / 2.0, PI / 2.0);
             pen.arc((0.28, 0.5), 0.18, 0.18, PI / 2.0, PI * 1.5);
+        }
+        // A slot bent round a centre below it.
+        Icon::SlotArc => {
+            pen.arc((0.5, 0.95), 0.62, 0.62, -PI * 0.8, -PI * 0.2);
+            pen.arc((0.5, 0.95), 0.34, 0.34, -PI * 0.8, -PI * 0.2);
+            for a in [-PI * 0.8, -PI * 0.2] {
+                let (c, s) = (0.48 * a.cos(), 0.48 * a.sin());
+                // (Each end bulges on past its end of the arc.)
+                let (from, to) = if a < -PI / 2.0 { (a - PI, a) } else { (a, a + PI) };
+                pen.arc((0.5 + c, 0.95 + s), 0.14, 0.14, from, to);
+            }
         }
         Icon::Construction => {
             for i in 0..4 {

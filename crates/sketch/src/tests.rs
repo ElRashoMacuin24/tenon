@@ -1226,3 +1226,38 @@ fn text_moves_turns_grows_and_is_copied_with_its_point() {
     assert!(regions(&s).is_empty());
     assert!(s.delete(&[t]).contains(&t) && s.geometry(t).is_none() && s.text_contours(t).is_empty());
 }
+
+#[test]
+fn arc_slots_hold_their_shape_about_their_centre() {
+    // About the origin, 20 to its middle, a quarter turn from the x axis, 8 wide.
+    let mut s = Sketch::new();
+    let slot = s.add_arc_slot(v(0.0, 0.0), v(20.0, 0.0), v(0.0, 35.0), 8.0).unwrap();
+    s.solve().unwrap();
+    assert_eq!(s.dof().unwrap().dof, 6, "where its centre is, its radius, its width and the angle of each end");
+    let all = regions(&s);
+    let area = PI / 2.0 * 20.0 * 8.0 + PI * 16.0;
+    assert!(all.len() == 1 && (all[0].area - area).abs() < 0.3, "{:?} vs {area}", all.iter().map(|r| r.area).collect::<Vec<_>>());
+    let ends = slot.ends.map(|e| s.arc(e).unwrap());
+    assert!(ends.iter().all(|a| close(a.radius, 4.0) && close(a.sweep(), PI)), "{ends:?}");
+    assert!(s.point(slot.centers[2]).unwrap().near(v(0.0, 20.0), 1e-9));
+    // Held by its centre and the start's centre, a diameter of one end and the distance between
+    // the ends' centres: nothing is left to move. Made 12 wide it is still an arc slot, the
+    // other end as wide.
+    s.add_constraint(Constraint::Fix { point: slot.centers[0] }).unwrap();
+    s.add_constraint(Constraint::Fix { point: slot.centers[1] }).unwrap();
+    let width = s.add_constraint(Constraint::Diameter { curve: slot.ends[0], value: 8.0 }).unwrap();
+    s.add_constraint(Constraint::Distance { a: slot.centers[1], b: slot.centers[2], value: 20.0 * 2f64.sqrt() }).unwrap();
+    assert_eq!(s.dof().unwrap().dof, 0);
+    s.set_dimension(width, 12.0).unwrap();
+    let radius = |e: EntityId| s.arc(e).unwrap().radius;
+    assert!(close(radius(slot.sides[0]), 26.0) && close(radius(slot.sides[1]), 14.0) && close(radius(slot.ends[1]), 6.0));
+    let outline = regions(&s);
+    let wider = PI / 2.0 * 20.0 * 12.0 + PI * 36.0;
+    assert!(outline.len() == 1 && (outline[0].area - wider).abs() < 1e-3 * wider, "{:?} vs {wider}", outline[0].area);
+    // Refused: a width of twice the radius, ends that would overlap, a start on the centre.
+    let mut t = Sketch::new();
+    assert!(t.add_arc_slot(v(0.0, 0.0), v(5.0, 0.0), v(0.0, 5.0), 10.0).is_err());
+    assert!(t.add_arc_slot(v(0.0, 0.0), v(20.0, 0.0), v(20.0, 1.0), 8.0).is_err());
+    assert!(t.add_arc_slot(v(0.0, 0.0), v(0.0, 0.0), v(0.0, 5.0), 2.0).is_err());
+    assert_eq!(t.entities().count(), 0);
+}

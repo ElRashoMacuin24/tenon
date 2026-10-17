@@ -1676,6 +1676,22 @@ fn sketch_slot(s: &mut Session, p: &Value) -> CmdResult {
     Ok(json!({ "lines": entity_ids(&slot.lines), "arcs": entity_ids(&slot.arcs), "centers": entity_ids(&slot.centers) }))
 }
 
+fn sketch_arc_slot(s: &mut Session, p: &Value) -> CmdResult {
+    let (a, b, width) = (pos(p, "x1", "y1")?, pos(p, "x2", "y2")?, num(p, "width")?);
+    // About a centre, counter-clockwise from the first point; or through three points.
+    let (center, start, end) = match (arg(p, "cx").is_some(), arg(p, "x3").is_some()) {
+        (true, false) => (pos(p, "cx", "cy")?, a, b),
+        (false, true) => {
+            let arc =
+                tenon_geom::Arc::from_3_points(a, pos(p, "x3", "y3")?, b).ok_or("the three points are in one line: no arc goes through them")?;
+            (arc.center, arc.start_point(), arc.end_point())
+        }
+        _ => return Err("an arc slot takes its centre (cx, cy) or a third point on its arc (x3, y3)".into()),
+    };
+    let slot = on_sketch(s, p, |sk| Ok(sk.add_arc_slot(center, start, end, width)?))?;
+    Ok(json!({ "sides": entity_ids(&slot.sides), "ends": entity_ids(&slot.ends), "centers": entity_ids(&slot.centers) }))
+}
+
 fn sketch_rectangle_center(s: &mut Session, p: &Value) -> CmdResult {
     let (c, corner) = (pos(p, "cx", "cy")?, pos(p, "x", "y")?);
     let (lines, center) = on_sketch(s, p, |sk| Ok(sk.add_rectangle_center(c, corner)?))?;
@@ -3839,6 +3855,13 @@ static COMMANDS: &[CommandSpec] = &[
         "sketch, x1, y1, x2, y2, width; by: centers (default: the two points are the centres of the round ends) | overall (they are the ends of the slot) | center (the middle of the slot and one centre). Returns its lines, arcs and the centre points of its ends",
         true,
         sketch_slot
+    ),
+    doc_cmd!(
+        "sketch.arc_slot",
+        "Arc Slot",
+        "sketch, x1, y1 (the start of its middle arc), x2, y2 (the end), width; and cx, cy (the centre: the slot runs counter-clockwise from the start round to the direction of the end) or x3, y3 (a point on the arc, which goes through all three). Returns its sides (outer, inner), its ends and the centre points (the arc's, then the ends')",
+        true,
+        sketch_arc_slot
     ),
     doc_cmd!(
         "sketch.rectangle_center",
