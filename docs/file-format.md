@@ -290,6 +290,8 @@ Field values:
       start to its end; a circle or arc runs counter-clockwise, so its left is its inside.
       `nth` (left out when 0) tells apart regions with the same curves on the same sides,
       counted along the lowest-numbered curve. An empty list is left out.
+    - `{ text = <text id> }`: the letters of a text, each with its holes (DEC-102). A
+      sketch with no closed region of curves takes its texts by default.
 - **Extrusion `extent`:**
   - `{ distance = d }`
   - `{ symmetric = d }`
@@ -329,6 +331,7 @@ constraints = [
 | `circle` | `center` (point id), `radius` |
 | `arc` | `center`, `start`, `end` (point ids; counter-clockwise; the radius is \|start − center\|) |
 | `spline` | `poles` (point ids), `degree` (a clamped uniform B-spline) |
+| `text` | `at` (point id: where the first line's baseline starts), `text` (the words; a new line starts a line below), `height` (of capital letters, mm), `angle` (radians counter-clockwise, left out when 0). The letters are DejaVu Sans 2.37's, worked out when the file is read, never written (DEC-102) |
 
 Every entity also has `construction`, and two optional marks written only when true:
 

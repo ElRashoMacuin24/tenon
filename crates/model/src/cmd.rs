@@ -1287,6 +1287,29 @@ fn sketch_line(s: &mut Session, p: &Value) -> CmdResult {
     Ok(json!({ "line": line.0, "start": start.0, "end": end.0 }))
 }
 
+fn sketch_text(s: &mut Session, p: &Value) -> CmdResult {
+    let at = point_ref(p, "at", "x", "y")?;
+    let words = field(p, "text")?.as_str().ok_or("`text` must be text")?.to_owned();
+    let height = opt_num(p, "height")?.unwrap_or(tenon_sketch::text::DEFAULT_HEIGHT);
+    let angle = opt_num(p, "angle")?.unwrap_or(0.0);
+    let (id, anchor) = on_sketch(s, p, |sk| {
+        let id = sk.add_text(at, &words, height, angle)?;
+        Ok((id, sk.entity(id).and_then(|e| e.geometry.points().first().copied())))
+    })?;
+    Ok(json!({ "text": id.0, "at": anchor.map(|a| a.0) }))
+}
+
+fn sketch_edit_text(s: &mut Session, p: &Value) -> CmdResult {
+    let entity = EntityId(id_u32(p, "entity")?);
+    let words = match arg(p, "text") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_str().ok_or("`text` must be text")?.to_owned()),
+    };
+    let (height, angle) = (opt_num(p, "height")?, opt_num(p, "angle")?);
+    on_sketch(s, p, |sk| Ok(sk.set_text(entity, words.as_deref(), height, angle)?))?;
+    Ok(json!({}))
+}
+
 fn sketch_circle(s: &mut Session, p: &Value) -> CmdResult {
     let c = point_ref(p, "center", "cx", "cy")?;
     let r = num(p, "r")?;
@@ -1859,12 +1882,30 @@ pub fn sketch_info_value(sk: &Sketch) -> Value {
             })
         })
         .collect();
-    json!({
+    // (A text's letters are profiles of their own, taken whole as `select` says.)
+    let texts: Vec<Value> = sk
+        .texts()
+        .map(|t| {
+            let letters = tenon_sketch::text_regions(sk, t);
+            let corners = sk.text_corners(t);
+            json!({
+                "text": t.0,
+                "select": tenon_sketch::RegionKey::Text { text: t },
+                "letters": letters.len(),
+                "corners": corners.map(|c| c.map(|p| [p.x, p.y])),
+            })
+        })
+        .collect();
+    let mut out = json!({
         "entities": entities,
         "constraints": constraints,
         "dof": dof.as_ref().map(|d| json!(d.dof)).unwrap_or(Value::Null),
         "regions": regions,
-    })
+    });
+    if !texts.is_empty() {
+        out["texts"] = Value::Array(texts);
+    }
+    out
 }
 
 fn sketch_info(s: &mut Session, p: &Value) -> CmdResult {
@@ -3691,6 +3732,14 @@ static COMMANDS: &[CommandSpec] = &[
         true,
         sketch_arc_tangent
     ),
+    doc_cmd!(
+        "sketch.text",
+        "Text",
+        "sketch; at (point id) or x, y: where the first line's baseline starts; text (lines split by a new line); height (of capital letters, default 3.5 mm); angle (rad, default 0). Its letters are profiles an extrude takes as {text: id} in `regions`. Returns the text and its point (`at`)",
+        true,
+        sketch_text
+    ),
+    doc_cmd!("sketch.edit_text", "Edit Text", "sketch, entity (the text's id); text, height, angle: what changes", true, sketch_edit_text),
     doc_cmd!("sketch.info", "Sketch Info", "sketch", false, sketch_info),
     doc_cmd!(
         "model.extrude",

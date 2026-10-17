@@ -104,4 +104,5 @@ taken away), without a check.
     optional `youngs_modulus`, `poisson` and `yield_strength` of `document.material` (M11).
     Of them, `study.fix` and `study.force` at first required `faces`; they now take `faces`
     or `edges`, so what was valid still is. Then `document.properties` (a part's number and
-    description, for 0.1.0). 225 commands.
+    description, for 0.1.0); after it `sketch.text` and `sketch.edit_text` (DEC-102). 227
+    commands.

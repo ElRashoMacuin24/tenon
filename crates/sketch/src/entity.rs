@@ -52,6 +52,21 @@ pub enum Geometry {
         poles: Vec<EntityId>,
         degree: u32,
     },
+    /// Text (DEC-102): its first line's baseline starts at point `at`; its capital letters are
+    /// `height` tall; it is turned `angle` radians about `at`. Lines are parted by a new line. Its
+    /// letters are outlined by the font (see `text.rs`) and are profiles of their own.
+    Text {
+        at: EntityId,
+        text: String,
+        height: f64,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        angle: f64,
+    },
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 impl Geometry {
@@ -63,13 +78,18 @@ impl Geometry {
             Geometry::Circle { center, .. } => vec![*center],
             Geometry::Arc { center, start, end } => vec![*center, *start, *end],
             Geometry::Spline { poles, .. } => poles.clone(),
+            Geometry::Text { at, .. } => vec![*at],
         }
     }
     pub fn is_point(&self) -> bool {
         matches!(self, Geometry::Point { .. })
     }
+    /// A line, circle, arc or spline. (Text is no curve: its letters are outlined apart.)
     pub fn is_curve(&self) -> bool {
-        !self.is_point()
+        !self.is_point() && !self.is_text()
+    }
+    pub fn is_text(&self) -> bool {
+        matches!(self, Geometry::Text { .. })
     }
     pub fn kind_name(&self) -> &'static str {
         match self {
@@ -78,6 +98,7 @@ impl Geometry {
             Geometry::Circle { .. } => "circle",
             Geometry::Arc { .. } => "arc",
             Geometry::Spline { .. } => "spline",
+            Geometry::Text { .. } => "text",
         }
     }
 }

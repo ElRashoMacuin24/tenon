@@ -1190,3 +1190,39 @@ fn a_tangent_arc_carries_on_from_the_end_of_a_line_or_an_arc() {
     let lone = t.add_point(v(5.0, 5.0)).unwrap();
     assert!(t.add_arc_tangent(lone, v(9.0, 9.0)).unwrap_err().to_string().contains("end point of a line or an arc"));
 }
+
+#[test]
+fn text_moves_turns_grows_and_is_copied_with_its_point() {
+    let mut s = Sketch::new();
+    let t = s.add_text(v(1.0, 2.0), "AB", 5.0, 0.0).unwrap();
+    let Some(Geometry::Text { at, .. }) = s.geometry(t).cloned() else { panic!() };
+    assert_eq!(s.texts().collect::<Vec<_>>(), [t]);
+    let letters = s.text_contours(t).len();
+    assert_eq!(letters, 5, "an A and its hole, a B and its two");
+    // Moved, its point goes with it; turned and scaled, it turns and grows.
+    s.transform(&[t], Motion::Shift(v(3.0, 4.0)), false).unwrap();
+    assert!(s.point(at).unwrap().near(v(4.0, 6.0), 1e-9));
+    s.transform(&[t], Motion::Turn { about: v(0.0, 6.0), angle: FRAC_PI_2 }, false).unwrap();
+    s.transform(&[t], Motion::Scale { about: v(0.0, 6.0), factor: 2.0 }, false).unwrap();
+    assert!(s.point(at).unwrap().near(v(0.0, 14.0), 1e-9), "{:?}", s.point(at));
+    assert!(matches!(s.geometry(t), Some(Geometry::Text { height, angle, .. }) if close(*height, 10.0) && close(*angle, FRAC_PI_2)));
+    // A copy is a text of its own, on a point of its own.
+    let copies = s.transform(&[t], Motion::Shift(v(0.0, -20.0)), true).unwrap();
+    let copy = copies.iter().copied().find(|c| s.geometry(*c).is_some_and(Geometry::is_text)).unwrap();
+    assert!(matches!(s.geometry(copy), Some(Geometry::Text { at: other, height, .. }) if *other != at && close(*height, 10.0)));
+    // Mirrored, a text would read backwards: it is left as it is.
+    let axis = s.add_line(v(-50.0, 0.0), v(50.0, 0.0)).unwrap();
+    let _ = s.mirror(&[t], axis);
+    assert_eq!(s.texts().count(), 2);
+    // Its words, height and angle change; what is no text is refused.
+    s.set_text(t, Some("CD"), None, Some(0.0)).unwrap();
+    assert!(matches!(s.geometry(t), Some(Geometry::Text { text, height, angle, .. }) if text == "CD" && close(*height, 10.0) && *angle == 0.0));
+    assert!(s.set_text(t, Some(" "), None, None).is_err());
+    assert!(s.set_text(t, None, Some(0.0), None).is_err());
+    assert!(s.set_text(axis, Some("x"), None, None).is_err());
+    assert!(s.add_text(v(0.0, 0.0), "x", f64::NAN, 0.0).is_err());
+    assert!(s.add_text(v(0.0, 0.0), &"x".repeat(crate::text::MAX_CHARS + 1), 5.0, 0.0).is_err());
+    // Deleted, it is gone; its letters are no regions of curves at any time.
+    assert!(regions(&s).is_empty());
+    assert!(s.delete(&[t]).contains(&t) && s.geometry(t).is_none() && s.text_contours(t).is_empty());
+}

@@ -102,6 +102,9 @@ impl SketchRegion {
 pub enum RegionKey {
     /// The region these curves enclose on their own, whole, however other curves divide it.
     Curves(Vec<EntityId>),
+    /// The letters of a text, each with its holes (DEC-102). (Before `Sided`, which would take
+    /// any map.)
+    Text { text: EntityId },
     /// One region of those the sketch's curves divide it into: the one to the left of (inside)
     /// the curves in `left` and to the right of (outside) those in `right`.
     Sided {
@@ -132,8 +135,15 @@ impl RegionKey {
         match self {
             RegionKey::Curves(c) => sorted(c),
             RegionKey::Sided { left, right, .. } => sorted(&[left.as_slice(), right.as_slice()].concat()),
+            RegionKey::Text { text } => vec![*text],
         }
     }
+}
+
+/// The letters of text `id` as kernel regions, each with its holes, every curve tagged with the
+/// text's id (DEC-102). None when `id` is no text.
+pub fn text_regions(sketch: &Sketch, id: EntityId) -> Vec<Region> {
+    crate::text::regions(&sketch.text_contours(id), u64::from(id.0))
 }
 
 /// A line, arc or circle as something that can be cut.
@@ -546,7 +556,8 @@ fn arrangement(sketch: &Sketch, only: Option<&BTreeSet<EntityId>>) -> Vec<Sketch
             Geometry::Arc { start, end, .. } => Some((*start, *end)),
             Geometry::Spline { poles, .. } => poles.first().zip(poles.last()).map(|(a, b)| (*a, *b)),
             Geometry::Circle { .. } => None,
-            Geometry::Point { .. } => continue,
+            // (Text bounds no region of curves: its letters are profiles of their own.)
+            Geometry::Point { .. } | Geometry::Text { .. } => continue,
         };
         let carrier = Carrier::of(sketch, id);
         let cuts = cut_at.get(&id).map(Vec::as_slice).unwrap_or_default();
@@ -788,6 +799,8 @@ pub fn default_regions<'r>(sketch: &Sketch, all: &'r [SketchRegion]) -> Vec<&'r 
 /// longer has such a region.
 pub fn find<'r>(sketch: &Sketch, all: &'r [SketchRegion], key: &RegionKey) -> Vec<&'r SketchRegion> {
     match key {
+        // (A text's letters are no regions of curves: see [`text_regions`].)
+        RegionKey::Text { .. } => Vec::new(),
         RegionKey::Sided { left, right, nth } => {
             let (l, r) = (sorted(left), sorted(right));
             all.iter().filter(|x| x.left == l && x.right == r && x.nth == *nth).collect()

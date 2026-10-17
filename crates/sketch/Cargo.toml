@@ -13,6 +13,7 @@ tenon-geom = { workspace = true }
 tenon-kernel = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+skrifa = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

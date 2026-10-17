@@ -45,6 +45,24 @@ pub struct Slot {
     pub centers: [EntityId; 2],
 }
 
+/// Whether a text can be one: some words of at most [`crate::text::MAX_CHARS`] characters, a
+/// height in range and a finite angle.
+fn check_text(text: &str, height: f64, angle: f64) -> SketchResult<()> {
+    if text.trim().is_empty() {
+        return Err(invalid("a text needs some words"));
+    }
+    if text.chars().count() > crate::text::MAX_CHARS {
+        return Err(invalid(format!("a text has at most {} characters", crate::text::MAX_CHARS)));
+    }
+    if !(height.is_finite() && (0.01..=10_000.0).contains(&height)) {
+        return Err(invalid(format!("a text's height must be from 0.01 to 10000 mm, not {height}")));
+    }
+    if !angle.is_finite() {
+        return Err(invalid("a text's angle must be a number"));
+    }
+    Ok(())
+}
+
 fn invalid(msg: impl Into<String>) -> SketchError {
     SketchError::Invalid(msg.into())
 }
@@ -189,6 +207,7 @@ impl Sketch {
                 let pts: Option<Vec<Vec2>> = poles.iter().map(|p| self.point(*p)).collect();
                 Curve2::BSpline { poles: pts?, degree: *degree }
             }
+            Geometry::Text { .. } => return None,
         })
     }
 
@@ -218,9 +237,60 @@ impl Sketch {
                     out = s.tessellate(chord_tol);
                 }
             }
-            None => {}
+            // (A text is many outlines, not one: see [`Sketch::text_contours`].)
+            Some(Geometry::Text { .. }) | None => {}
         }
         out
+    }
+
+    /// The outlines of text entity `id`'s letters as they stand.
+    pub fn text_contours(&self, id: EntityId) -> Vec<crate::text::Contour> {
+        match self.geometry(id) {
+            Some(Geometry::Text { at, text, height, angle }) => {
+                self.point(*at).map_or_else(Vec::new, |p| crate::text::contours(text, p, *height, *angle))
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The box text `id` takes, as its four corners in order round it.
+    pub fn text_corners(&self, id: EntityId) -> Option<[Vec2; 4]> {
+        match self.geometry(id)? {
+            Geometry::Text { at, text, height, angle } => crate::text::corners(text, self.point(*at)?, *height, *angle),
+            _ => None,
+        }
+    }
+
+    /// Where the sketch reaches: its points, and the corners of its texts' boxes.
+    pub fn extent(&self) -> Vec<Vec2> {
+        let points = self.entities().filter_map(|(id, _)| self.point(id));
+        points.chain(self.texts().filter_map(|t| self.text_corners(t)).flatten()).collect()
+    }
+
+    /// The texts of the sketch.
+    pub fn texts(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.entities().filter(|(_, e)| e.geometry.is_text()).map(|(id, _)| id)
+    }
+
+    /// Text `text` with its first line's baseline starting at `at`, capital letters `height` tall,
+    /// turned `angle` radians (DEC-102).
+    pub fn add_text(&mut self, at: impl Into<PointRef>, text: &str, height: f64, angle: f64) -> SketchResult<EntityId> {
+        check_text(text, height, angle)?;
+        let at = self.resolve(at.into())?;
+        self.insert(Geometry::Text { at, text: text.to_owned(), height, angle })
+    }
+
+    /// Changes a text's words, height or angle (what is None stays).
+    pub fn set_text(&mut self, id: EntityId, text: Option<&str>, height: Option<f64>, angle: Option<f64>) -> SketchResult<()> {
+        let Some(Geometry::Text { text: t, height: h, angle: a, .. }) = self.geometry(id) else {
+            return Err(invalid(format!("{id} is no text")));
+        };
+        let (t, h, a) = (text.map_or_else(|| t.clone(), str::to_owned), height.unwrap_or(*h), angle.unwrap_or(*a));
+        check_text(&t, h, a)?;
+        if let Some(Geometry::Text { text, height, angle, .. }) = self.geometry_mut(id) {
+            (*text, *height, *angle) = (t, h, a);
+        }
+        Ok(())
     }
 
     /// Curves that use point `p`.
@@ -259,6 +329,7 @@ impl Sketch {
                 }
                 Geometry::Circle { center, .. } => swap(center),
                 Geometry::Spline { poles, .. } => poles.iter_mut().for_each(swap),
+                Geometry::Text { at, .. } => swap(at),
                 Geometry::Point { .. } => {}
             }
         }

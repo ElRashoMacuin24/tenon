@@ -425,6 +425,8 @@ impl Sketch {
                     start: mirror_point(&mut s, *end, &mut created)?,
                     end: mirror_point(&mut s, *start, &mut created)?,
                 },
+                // (Text is not mirrored: mirrored, it would read backwards.)
+                Geometry::Text { .. } => continue,
                 Geometry::Spline { poles, degree } => Geometry::Spline {
                     poles: poles.iter().map(|p| mirror_point(&mut s, *p, &mut created)).collect::<SketchResult<_>>()?,
                     degree: *degree,

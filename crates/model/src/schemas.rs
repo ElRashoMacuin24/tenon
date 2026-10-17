@@ -33,7 +33,7 @@ const OPERATION: Param = opt("operation", Word(&["join", "cut", "new_body", "int
 const REGIONS: Param = opt(
     "regions",
     List(&Either(&[IDS, Object])),
-    "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], or {left, right, nth} for one region of a divided sketch (default: every outer region)",
+    "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], {left, right, nth} for one region of a divided sketch, or {text: id} for a text's letters (default: every outer region; a sketch of texts alone, its texts)",
 );
 const FEATURE_EDGES: Param = req("edges", EDGES, "edge references, from model.edge_ref");
 const RADIUS: Param = opt("radius", Length, "the inside bend radius (default: the rule's BendRadius)");
@@ -391,6 +391,29 @@ static SCHEMAS: &[C] = &[
             req("from", Id, "the free end point of a line or an arc"),
             req("x", Length, "where the arc ends"),
             req("y", Length, "where the arc ends"),
+        ],
+    ),
+    C::with(
+        "sketch.text",
+        &[
+            SKETCH,
+            opt("at", Id, "an existing point where the first line's baseline starts"),
+            opt("x", Length, "where the first line's baseline starts"),
+            opt("y", Length, "where the first line's baseline starts"),
+            req("text", Text, "the words, lines split by a new line (up to 2000 characters)"),
+            opt("height", Length, "how tall capital letters are (default 3.5)"),
+            opt("angle", Angle, "how far the text is turned (default 0)"),
+        ],
+        &[&[&["at"], &["x", "y"]]],
+    ),
+    C::new(
+        "sketch.edit_text",
+        &[
+            SKETCH,
+            req("entity", Id, "the text, as sketch.text returns it"),
+            opt("text", Text, "its new words"),
+            opt("height", Length, "its new height"),
+            opt("angle", Angle, "its new angle"),
         ],
     ),
     C::new("sketch.info", &[SKETCH]),

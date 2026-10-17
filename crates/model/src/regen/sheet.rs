@@ -4,9 +4,9 @@ use tenon_geom::{Axis, Frame, Vec2, Vec3};
 use tenon_kernel::{
     BoolOp, CurveKind, Extent, Op, Origin, PrimitiveRole, Profile, Region, ShapeHandle, SubShape, SurfaceKind, TopoKind, Topology, Transform,
 };
-use tenon_sketch::{Sketch, profile, regions};
+use tenon_sketch::Sketch;
 
-use super::{Ctx, Stop, label, select};
+use super::{Ctx, Stop, label, profile_of};
 use crate::FeatureId;
 use crate::naming::{FaceOrigin, edge_key, names_of_boolean, names_of_sweep, pair_key, resolve_edge, sub_key};
 use crate::sheet::flange::{self, Notch, Part, Site};
@@ -102,8 +102,7 @@ impl Ctx<'_> {
         let sizes = self.doc.sheet_sizes()?;
         let (held, frame) = self.sketch_and_frame(s.sketch)?;
         let sketch: &Sketch = &held;
-        let all = regions(sketch);
-        let profile = profile(sketch, frame, &select(sketch, &all, &s.regions)?);
+        let profile = profile_of(sketch, frame, &s.regions)?;
         let distance = if s.flip { -sizes.thickness } else { sizes.thickness };
         let op = self.k.extrude(&profile, &Extent::Distance(distance), None)?;
         let faces = self.k.topology(op.shape)?.faces;
@@ -1703,8 +1702,7 @@ impl Ctx<'_> {
         let t = sizes.thickness;
         let (held, frame) = self.sketch_and_frame(c.sketch)?;
         let sketch: &Sketch = &held;
-        let all = regions(sketch);
-        let profile = profile(sketch, frame, &select(sketch, &all, &c.regions)?);
+        let profile = profile_of(sketch, frame, &c.regions)?;
         let opts = Unfold { thickness: t, k_factor: sizes.k_factor, base: None, deflection: crate::sheet::FLAT_DEFLECTION };
         // The face the sketch is on.
         let seat = crate::sheet::seat_of(self.doc, &self.regen, &*self.k, c.sketch, &frame, &profile.regions)?;
@@ -1729,8 +1727,7 @@ impl Ctx<'_> {
         let t = sizes.thickness;
         let (held, frame) = self.sketch_and_frame(c.sketch)?;
         let sketch: &Sketch = &held;
-        let all = regions(sketch);
-        let profile = profile(sketch, frame, &select(sketch, &all, &c.regions)?);
+        let profile = profile_of(sketch, frame, &c.regions)?;
         let opts = Unfold { thickness: t, k_factor: sizes.k_factor, base: None, deflection: crate::sheet::FLAT_DEFLECTION };
         let Some((bi, base, toward)) = crate::sheet::seen_on(self.doc, &self.regen, &*self.k, &frame, &profile.regions)? else {
             return Err(

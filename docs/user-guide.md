@@ -98,6 +98,13 @@ status bar says how many degrees of freedom are left, and curves that are fully
 constrained change colour. **Project Geometry** brings edges of the part into the
 sketch. A dimension can be typed as a formula of parameters.
 
+**Text** (Sketch > Create): click where the text starts and type it in the Format Text box,
+with the height of its capital letters and an angle; Enter starts a new line, OK places it.
+Double-click a text to change it, or drag it by its box. Its letters are profiles: extrude
+a sketch that holds only text to raise it, or cut it into a face to engrave it. When a sketch
+also has closed curves, click inside the text's box in the Extrude panel to add its letters.
+Text uses one font, DejaVu Sans, built in so that a part looks the same on every computer.
+
 ## Features
 
 Extrude, Revolve, Sweep, Loft, Coil, Rib; Hole (simple, counterbored, countersunk), Thread,
@@ -189,6 +196,6 @@ Protocol ([mcp.md](mcp.md)). Every command the ribbon runs is listed in
 
 Tenon 0.1 is a first release. Among what it does not do: sub-assemblies, motion studies and
 parts that adapt to one another; shaded drawing views, tolerances and ordinate dimensions;
-ellipses in sketches; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
+ellipses in sketches, a choice of fonts for sketch text; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
 stress studies of assemblies or of more than one material. [ROADMAP.md](../ROADMAP.md)
 lists everything that works, with the test that shows it, and what is missing.

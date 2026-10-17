@@ -110,7 +110,34 @@ pub(crate) fn path_curves(doc: &Document, sketch: FeatureId) -> Option<SketchCur
 }
 
 pub(crate) fn has_profile(doc: &Document, sketch: FeatureId) -> bool {
-    doc.sketch(sketch).is_some_and(|sk| !tenon_sketch::regions(sk).is_empty())
+    doc.sketch(sketch).is_some_and(|sk| !tenon_sketch::regions(sk).is_empty() || !own_texts(sk).is_empty())
+}
+
+/// The texts of `sk` that are not construction: their letters are profiles.
+fn own_texts(sk: &tenon_sketch::Sketch) -> Vec<tenon_sketch::EntityId> {
+    sk.texts().filter(|t| sk.entity(*t).is_some_and(|e| !e.construction)).collect()
+}
+
+/// The texts `sel` takes the letters of, as the feature will (DEC-102): those it names, or by
+/// default a sketch's texts when it has no closed region of curves.
+pub(crate) fn texts_of(sk: &tenon_sketch::Sketch, sel: &RegionSel) -> Vec<tenon_sketch::EntityId> {
+    match sel {
+        RegionSel::Default if tenon_sketch::default_regions(sk, &tenon_sketch::regions(sk)).is_empty() => own_texts(sk),
+        RegionSel::Default => Vec::new(),
+        RegionSel::Keys(keys) => {
+            keys.iter().filter_map(|k| if let tenon_sketch::RegionKey::Text { text } = k { Some(*text) } else { None }).collect()
+        }
+    }
+}
+
+/// The outlines of a text's letters, as it stands in `sk`.
+fn text_outlines(sk: &tenon_sketch::Sketch, id: tenon_sketch::EntityId) -> Vec<Vec<tenon_geom::Vec2>> {
+    tenon_sketch::text::polylines(&sk.text_contours(id))
+}
+
+/// The text of `sk` whose box holds `at` (sketch coordinates).
+fn text_at(sk: &tenon_sketch::Sketch, at: tenon_geom::Vec2) -> Option<tenon_sketch::EntityId> {
+    own_texts(sk).into_iter().find(|t| sk.text_corners(*t).is_some_and(|c| tenon_geom::point_in_polygon(&c, at)))
 }
 
 impl Workbench {
@@ -495,16 +522,26 @@ impl Workbench {
         for (id, on) in self.shown_sketches() {
             let (Some(sk), Some(frame)) = (doc.sketch(id), self.sketch_frame(id)) else { continue };
             let stroke = if on { egui::Stroke::new(2.0, t.accent) } else { egui::Stroke::new(1.2, t.text_dim) };
+            let screen = |outline: Vec<tenon_geom::Vec2>| -> Vec<egui::Pos2> {
+                outline
+                    .into_iter()
+                    .filter_map(|q| self.view.camera.project(frame.plane_point(q), w, h))
+                    .map(|(x, y, _)| rect.min + egui::vec2(x as f32, y as f32))
+                    .collect()
+            };
             for (e, entity) in sk.entities() {
                 if entity.geometry.is_point() {
                     continue;
                 }
-                let pts: Vec<egui::Pos2> = sk
-                    .tessellate(e, 0.05)
-                    .into_iter()
-                    .filter_map(|q| self.view.camera.project(frame.plane_point(q), w, h))
-                    .map(|(x, y, _)| rect.min + egui::vec2(x as f32, y as f32))
-                    .collect();
+                if entity.geometry.is_text() {
+                    let stroke =
+                        if entity.construction { egui::Stroke::new(1.0, stroke.color) } else { egui::Stroke::new(stroke.width * 0.75, stroke.color) };
+                    for outline in text_outlines(sk, e) {
+                        painter.add(egui::Shape::line(screen(outline), stroke));
+                    }
+                    continue;
+                }
+                let pts = screen(sk.tessellate(e, 0.05));
                 if pts.len() < 2 {
                     continue;
                 }
@@ -697,19 +734,37 @@ impl Workbench {
         let (Some(sk), Some(frame)) = (self.document().sketch(sketch), self.sketch_frame(sketch)) else { return false };
         let Some(at) = self.on_sketch_plane(pos, rect, &frame) else { return false };
         let all = tenon_sketch::regions(sk);
-        // The innermost region there: a hole's disc before the plate round it.
-        let Some(hit) = all.iter().filter(|r| r.contains(at)).max_by_key(|r| r.depth) else { return false };
         let mut chosen = regions_of(sk, &all, sel);
+        let mut texts = texts_of(sk, sel);
+        let only = chosen.len() + texts.len() == 1;
         let mut note = None;
-        match chosen.iter().position(|r| std::ptr::eq(*r, hit)) {
-            Some(_) if chosen.len() == 1 => note = Some("A feature needs at least one profile: click another region to add it first."),
-            Some(i) => {
-                chosen.remove(i);
+        const LAST: &str = "A feature needs at least one profile: click another region to add it first.";
+        // A text's letters (anywhere in its box), else the innermost region there: a hole's disc
+        // before the plate round it.
+        if let Some(t) = text_at(sk, at) {
+            match texts.iter().position(|x| *x == t) {
+                Some(_) if only => note = Some(LAST),
+                Some(i) => {
+                    texts.remove(i);
+                }
+                None => texts.push(t),
             }
-            None => chosen.push(hit),
+        } else {
+            let Some(hit) = all.iter().filter(|r| r.contains(at)).max_by_key(|r| r.depth) else { return false };
+            match chosen.iter().position(|r| std::ptr::eq(*r, hit)) {
+                Some(_) if only => note = Some(LAST),
+                Some(i) => {
+                    chosen.remove(i);
+                }
+                None => chosen.push(hit),
+            }
         }
-        // Each region by the shortest name that is its alone.
-        let keys: Vec<tenon_sketch::RegionKey> = chosen.iter().map(|r| tenon_sketch::key_of(sk, &all, r)).collect();
+        // Each region by the shortest name that is its alone; each text by itself.
+        let keys: Vec<tenon_sketch::RegionKey> = chosen
+            .iter()
+            .map(|r| tenon_sketch::key_of(sk, &all, r))
+            .chain(texts.iter().map(|t| tenon_sketch::RegionKey::Text { text: *t }))
+            .collect();
         let regions = match &mut self.panel {
             Some(Panel::Extrude(p)) => &mut p.regions,
             Some(Panel::Revolve(p)) => &mut p.regions,
@@ -732,6 +787,9 @@ impl Workbench {
         let (sketch, _) = self.profile_panel()?;
         let (sk, frame) = (self.document().sketch(sketch)?, self.sketch_frame(sketch)?);
         let at = self.on_sketch_plane(pointer.filter(|p| rect.contains(*p))?, rect, &frame)?;
+        if let Some(t) = text_at(sk, at) {
+            return Some(text_outlines(sk, t));
+        }
         let all = tenon_sketch::regions(sk);
         let hit = all.iter().filter(|r| r.contains(at)).max_by_key(|r| r.depth)?;
         Some(std::iter::once(hit.outline.clone()).chain(hit.hole_outlines.iter().cloned()).collect())
@@ -759,6 +817,9 @@ impl Workbench {
         let all = tenon_sketch::regions(sk);
         for outline in tenon_sketch::outlines(sk, &regions_of(sk, &all, sel)) {
             draw(&outline, egui::Stroke::new(3.0, t.accent));
+        }
+        for outline in texts_of(sk, sel).into_iter().flat_map(|x| text_outlines(sk, x)) {
+            draw(&outline, egui::Stroke::new(2.0, t.accent));
         }
         if let Some(hover) = self.profile_hover(ui.ctx().pointer_hover_pos(), rect) {
             for outline in &hover {
@@ -791,5 +852,7 @@ pub(crate) fn regions_of<'r>(
 /// How many separate profiles `sel` comes to in `sk`: regions side by side count once.
 pub(crate) fn profiles_in(sk: &tenon_sketch::Sketch, sel: &RegionSel) -> usize {
     let all = tenon_sketch::regions(sk);
-    tenon_sketch::profile(sk, tenon_geom::Frame::WORLD, &regions_of(sk, &all, sel)).regions.len()
+    let curves = regions_of(sk, &all, sel);
+    let letters: usize = texts_of(sk, sel).into_iter().map(|t| tenon_sketch::text_regions(sk, t).len()).sum();
+    if curves.is_empty() { letters } else { tenon_sketch::profile(sk, tenon_geom::Frame::WORLD, &curves).regions.len() + letters }
 }

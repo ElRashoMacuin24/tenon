@@ -206,7 +206,7 @@ pub const RIBBON: &[RibbonTab] = &[
                         "sketch.polygon",
                     ]),
                     small("sketch.fillet", "Fillet", "Click a corner where two lines meet", Icon::Fillet, 0),
-                    small("sketch.text", "Text", "Text in a sketch", Icon::Text, LATER),
+                    small("sketch.text", "Text", "Click where the text starts, then type it: its letters are profiles to extrude or cut", Icon::Text, 0),
                     small("sketch.point", "Point", "Click to place a point (e.g. a hole centre)", Icon::Point, 0),
                     large(
                         "sketch.project",

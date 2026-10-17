@@ -180,3 +180,57 @@ fn slots_rectangles_and_tangent_arcs_are_profiles() {
     let e = refused(&mut s, &mut k, "sketch.arc_tangent", json!({ "sketch": sk, "from": base["start"], "x": -9, "y": 0 }));
     assert!(e.contains("that is a line"), "{e}");
 }
+
+#[test]
+fn text_is_cut_into_a_plate_and_changed() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let plate = sketch(&mut s, &mut k);
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": plate, "x1": 0, "y1": 0, "x2": 60, "y2": 20 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": plate, "distance": 4 }));
+    assert!(near(volume(&mut s, &mut k), 4800.0));
+    // TENON, 8 tall, cut 1 deep into the plate from its underside: five letters, the O one
+    // with a hole.
+    let words = sketch(&mut s, &mut k);
+    let t = run(&mut s, &mut k, "sketch.text", json!({ "sketch": words, "x": 2, "y": 5, "text": "TENON", "height": 8 }));
+    let text = t["text"].as_u64().unwrap();
+    assert!(t["at"].is_u64(), "{t}");
+    let info = run(&mut s, &mut k, "sketch.info", json!({ "sketch": words }));
+    assert_eq!(info["texts"][0]["letters"], 5, "{info}");
+    assert_eq!(info["texts"][0]["select"], json!({ "text": text }), "{info}");
+    assert!(info["regions"].as_array().unwrap().is_empty(), "letters are no regions of curves: {info}");
+    // (No curves in the sketch: its text is what is cut, by default.)
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": words, "distance": 1, "operation": "cut" }));
+    let small = 4800.0 - volume(&mut s, &mut k);
+    assert!(small > 40.0 && small < 400.0, "the letters take away {small}");
+    // Taller letters take away as much more as their area is: 1.25 squared.
+    run(&mut s, &mut k, "sketch.edit_text", json!({ "sketch": words, "entity": text, "height": 10 }));
+    let tall = 4800.0 - volume(&mut s, &mut k);
+    assert!((tall / small - 1.5625).abs() < 1e-3, "{small} then {tall}");
+    // Fewer letters, less taken away; and named by their key, as sketch.info gives it.
+    run(&mut s, &mut k, "sketch.edit_text", json!({ "sketch": words, "entity": text, "text": "TEN" }));
+    let three = 4800.0 - volume(&mut s, &mut k);
+    assert!(three < tall * 0.75, "{three} of {tall}");
+    // (Cut 2 deep from the same place, the letters take away twice as much.)
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": words, "distance": 2, "operation": "cut", "regions": [{ "text": text }] }));
+    let twice = 4800.0 - volume(&mut s, &mut k);
+    assert!((twice / three - 2.0).abs() < 1e-6, "{three} then {twice}");
+    // What a text cannot be.
+    assert!(refused(&mut s, &mut k, "sketch.text", json!({ "sketch": words, "x": 0, "y": 0, "text": "  " })).contains("needs some words"));
+    assert!(refused(&mut s, &mut k, "sketch.edit_text", json!({ "sketch": words, "entity": text, "height": 0 })).contains("height"));
+}
+
+#[test]
+fn a_letter_with_a_hole_is_a_ring_not_a_disc() {
+    use tenon_geom::{Vec2, shoelace};
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = sketch(&mut s, &mut k);
+    run(&mut s, &mut k, "sketch.text", json!({ "sketch": sk, "x": 0, "y": 0, "text": "O", "height": 10 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 1 }));
+    // The O's area: its outline less its hole, from the outlines as drawn.
+    let outlines = tenon_sketch::text::polylines(&tenon_sketch::text::contours("O", Vec2::ZERO, 10.0, 0.0));
+    let mut areas: Vec<f64> = outlines.iter().map(|o| shoelace(o).abs()).collect();
+    areas.sort_by(f64::total_cmp);
+    let [hole, outer] = areas.as_slice() else { panic!("{areas:?}") };
+    let ring = volume(&mut s, &mut k);
+    assert!((ring - (outer - hole)).abs() < 0.01 * ring, "{ring} for {outer} less {hole}");
+}

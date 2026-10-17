@@ -777,3 +777,81 @@ fn a_fillets_radius_and_an_offsets_distance_are_typed_and_entered() {
     assert!(wb.panel.is_none(), "{}", wb.status());
     assert_eq!(lines(&wb), before + 1, "a line beside the one selected: {}", wb.status());
 }
+
+/// Two clicks at one place, after a pause: clicks soon after earlier ones would count as a
+/// triple click.
+fn double_click(d: &mut Driver, wb: &mut Workbench, at: Pos2) {
+    d.frame(wb, vec![egui::Event::PointerMoved(at)]);
+    for _ in 0..45 {
+        d.frame(wb, vec![]);
+    }
+    d.click(wb, at);
+    d.click(wb, at);
+}
+
+#[test]
+fn text_is_typed_in_its_box_changed_by_a_double_click_and_its_letters_are_a_profile() {
+    use tenon_model::RegionSel;
+    use tenon_sketch::RegionKey;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    d.settle(&mut wb);
+    // Text, from the ribbon: a click where it starts opens the Format Text box. OK with
+    // nothing typed is refused, and the box stays.
+    d.click(&mut wb, pressable(&d, "ribbon sketch.text"));
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("Format Text"), "{}", wb.status());
+    let start = on_screen(&wb, Vec3::new(0.0, 25.0, 0.0));
+    assert!(wb.view.rect.contains(start) && wb.view.rect.contains(on_screen(&wb, Vec3::new(30.0, 32.0, 0.0))), "the text's place is in view");
+    move_to(&mut d, &mut wb, start);
+    d.click(&mut wb, start);
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_sketch_text_ok"));
+    assert!(wb.status().contains("Type the text first"), "{}", wb.status());
+    // Typed, 6 tall: placed where the click was.
+    crate::tests::type_into(&mut d, &mut wb, "tn_sketch_text", "TENON");
+    crate::tests::type_into(&mut d, &mut wb, "tn_text_height", "6");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_sketch_text_ok"));
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("Placed the text"), "{}", wb.status());
+    let s = open(&wb);
+    let texts: Vec<EntityId> = s.texts().collect();
+    let [t] = texts.as_slice() else { panic!("one text: {texts:?}") };
+    let Some(Geometry::Text { at, text, height, .. }) = s.geometry(*t).cloned() else { panic!() };
+    assert_eq!(text, "TENON");
+    assert!((height - 6.0).abs() < 1e-9 && s.point(at).unwrap().near(Vec2::new(0.0, 25.0), 0.5), "{height} {:?}", s.point(at));
+    // Esc ends the tool; a double-click in the text's box opens it again, to change.
+    d.tap(&mut wb, egui::Key::Escape);
+    let middle = on_screen(&wb, Vec3::new(12.0, 27.0, 0.0));
+    double_click(&mut d, &mut wb, middle);
+    d.frame(&mut wb, vec![]);
+    crate::tests::type_into(&mut d, &mut wb, "tn_sketch_text", "TEN");
+    d.click(&mut wb, pressable(&d, "tn_sketch_text_ok"));
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(open(&wb).geometry(*t), Some(Geometry::Text { text, .. }) if text == "TEN"), "{}", wb.status());
+
+    // Extrude: the rectangle by default. A click in the text's box adds its letters; one on the
+    // rectangle takes it away, and the letters alone are left.
+    d.tap(&mut wb, egui::Key::E);
+    d.settle(&mut wb);
+    let plate = volume(&wb);
+    assert!(plate > 0.0);
+    let letters = on_screen(&wb, Vec3::new(6.0, 27.0, 0.0));
+    d.click(&mut wb, letters);
+    d.settle(&mut wb);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel") };
+    assert!(matches!(&p.regions, RegionSel::Keys(k) if k.contains(&RegionKey::Text { text: *t })), "{:?}", p.regions);
+    let both = volume(&wb);
+    assert!(both > plate, "{plate} then {both}");
+    let rectangle = on_screen(&wb, Vec3::new(20.0, 10.0, 0.0));
+    d.click(&mut wb, rectangle);
+    d.settle(&mut wb);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel") };
+    assert_eq!(p.regions, RegionSel::Keys(vec![RegionKey::Text { text: *t }]));
+    assert!((volume(&wb) - (both - plate)).abs() < 1e-6 * both, "{} of {}", volume(&wb), both - plate);
+}

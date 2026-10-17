@@ -3,6 +3,33 @@
 What changes from one release of Tenon to the next. Every item that works has the test that
 shows it in [ROADMAP.md](ROADMAP.md).
 
+## Unreleased
+
+### Sketches
+
+- **Text.** Sketch > Create > Text: click where it starts, type it in the Format Text box
+  (several lines, the height of its capitals, an angle), OK. Its letters are profiles: a sketch
+  of text alone extrudes or cuts at once, and in a feature's panel a click in a text's box adds
+  its letters. Double-click a text to change it; drag it by its box. One font, DejaVu Sans,
+  built in so that a part is the same everywhere. New commands `sketch.text` and
+  `sketch.edit_text`; `sketch.info` lists the texts. Files gain the entity `text` and the
+  region key `{ text = id }` (an addition to format version 2).
+
+### Fixed
+
+- Ctrl+Z with a feature's panel open undid the change before it, unseen. It now leaves the
+  panel, as Cancel does.
+- A value a field refused was still taken for OK with the value from before. OK is now refused
+  and the status bar says what the field takes.
+- The face a sketch was started on stayed selected, and the next command took it as its own.
+- In the light theme, sketch dimensions and fully constrained curves were near-white on white.
+- A feature being set up was named by its internal id in messages; Extrude started on the
+  newest sketch even when it held no profile.
+- The status bar kept a panel's instruction after OK; "nothing to undo" was shown as an error;
+  start hints named a button that does not exist; Application Options opened over the ribbon.
+- A shell thicker than a chamfer of the part fails in the kernel: the message now says to make
+  the shell before the chamfer.
+
 ## 0.1.0 (2026-10-13)
 
 The first release: parametric parts, sheet metal, assemblies, drawings, 3D printing checks and

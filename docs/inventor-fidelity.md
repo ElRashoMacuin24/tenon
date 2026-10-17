@@ -66,8 +66,9 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 7. Standard parts and printing (the second table below): a length asked for when a section is
    placed; a fastener that takes its size from the hole it is dropped on; the printer's build
    space drawn round the part.
-8. The Sketch tab's remaining buttons (the tables below): Stretch, Text, ellipses, the Center
-   Point format, sketch patterns that stay tied to their original, automatic dimensions.
+8. The Sketch tab's remaining buttons (the tables below): Stretch, ellipses, the Center
+   Point format, sketch patterns that stay tied to their original, automatic dimensions. (Text
+   is done: DEC-102.)
 9. ~~Sheet metal (M8): the Sheet Metal tab, its defaults, Face, Flange and the flat pattern.~~ Done
    (DEC-057 to DEC-061).
 10. ~~Mitred corners and corner reliefs centred on the bend lines; Hem; Contour Flange.~~ Done
@@ -116,7 +117,7 @@ Create panel:
 | Polygon, with a number of sides and inscribed or circumscribed | partial | 3 to 64 sides from a box at the top left of the view while the tool is on: `a_polygon_has_as_many_sides_as_its_box_says`. Gap: inscribed only (the corner is clicked) |
 | Spline: Control Vertex; Interpolation; Equation Curve; Bridge Curve | partial | control vertex. Gap: the rest |
 | Fillet and Chamfer | partial | Fillet. Gap: sketch chamfer |
-| Text, Geometry Text | missing | |
+| Text: a click (or a box dragged) where it goes opens Format Text, with the words, font, size, justification and angle; the text is drawn in the sketch, its letters are profiles, double-click edits it. Geometry Text runs along a curve | partial | Text: a click opens the Format Text box (the words over several lines, the height of capitals, the angle; the font named), the text drawn as it will be while typing; OK places it, Esc ends. Double-click edits it; dragged by its box it moves; Delete removes it. Its letters are a profile of their own: a sketch with only text extrudes at once, and in a feature's panel a click in its box adds its letters (DEC-102). `text_is_typed_in_its_box_changed_by_a_double_click_and_its_letters_are_a_profile`. Gap: one font, DejaVu Sans (Inventor lists the system's fonts); no bold, italic, underline, stacking or justification; no box dragged to place it; no Geometry Text |
 | Point | done (M1) | |
 
 Modify panel:

@@ -23,6 +23,8 @@ pub(crate) enum Tool {
     Polygon,
     Spline,
     Point,
+    /// Text: a click opens the Format Text box.
+    Text,
     Trim,
     Mirror,
     Fillet,
@@ -70,6 +72,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("sketch.polygon", Tool::Polygon),
     ("sketch.spline", Tool::Spline),
     ("sketch.point", Tool::Point),
+    ("sketch.text", Tool::Text),
     ("sketch.trim", Tool::Trim),
     ("sketch.mirror", Tool::Mirror),
     ("sketch.fillet", Tool::Fillet),
@@ -117,6 +120,7 @@ impl Tool {
             Tool::Polygon => "Click the centre, then a corner. The box at the top left says how many sides.",
             Tool::Spline => "Click control points; Enter finishes.",
             Tool::Point => "Click to place points.",
+            Tool::Text => "Click where the text starts, then type it in the Format Text box.",
             Tool::Trim => "Click the piece of a curve to remove.",
             Tool::Mirror => "Click the mirror line.",
             Tool::Fillet => "Click a corner where two lines meet.",
@@ -210,6 +214,24 @@ pub(crate) struct SketchMode {
     pub base: Option<Sketch>,
     /// How many sides the Polygon tool draws.
     pub polygon_sides: u32,
+    /// The Format Text box, while a text is being placed or changed.
+    pub text_box: Option<TextBox>,
+    /// How tall the last text placed was: the next one starts so.
+    pub text_height: f64,
+    /// Where a dragged text was taken hold of, from its point (sketch coordinates).
+    pub drag_grab: Vec2,
+}
+
+/// The Format Text box: what is typed, how tall and at what angle, and where it goes (or which
+/// text it changes).
+#[derive(Clone, Debug)]
+pub(crate) struct TextBox {
+    pub at: Click,
+    pub editing: Option<EntityId>,
+    pub text: String,
+    pub height: f64,
+    /// Degrees, counter-clockwise.
+    pub angle: f64,
 }
 
 impl SketchMode {
@@ -230,6 +252,9 @@ impl SketchMode {
             dof: None,
             base,
             polygon_sides: 6,
+            text_box: None,
+            text_height: tenon_sketch::text::DEFAULT_HEIGHT,
+            drag_grab: Vec2::ZERO,
         }
     }
 }
@@ -357,6 +382,19 @@ fn hit_test(s: &Sketch, plane: &Plane, p: Pos2) -> Option<EntityId> {
                 let d = q.distance(p);
                 if d < 9.0 && best_point.is_none_or(|b| d < b.0) {
                     best_point = Some((d, id));
+                }
+            }
+            continue;
+        }
+        if e.geometry.is_text() {
+            // (A text is taken hold of anywhere in its box; a curve through the box comes first.)
+            let quad: Vec<Pos2> = s.text_corners(id).iter().flatten().filter_map(|q| plane.project(*q)).collect();
+            if quad.len() == 4 {
+                let flat: Vec<Vec2> = quad.iter().map(|q| Vec2::new(f64::from(q.x), f64::from(q.y))).collect();
+                let edge = (0..4).map(|i| seg_dist(p, quad[i], quad[(i + 1) % 4])).fold(f32::MAX, f32::min);
+                let d = if tenon_geom::point_in_polygon(&flat, Vec2::new(f64::from(p.x), f64::from(p.y))) { edge.min(3.0) } else { edge };
+                if d < 6.0 && best_curve.is_none_or(|b| d < b.0) {
+                    best_curve = Some((d, id));
                 }
             }
             continue;
@@ -676,7 +714,7 @@ impl Workbench {
         let Mode::Sketch(s) = &self.mode else { return None };
         let frame = self.sketch_frame(s.feature)?;
         let sk = self.document().sketch(s.feature)?;
-        Aabb3::from_points(sk.entities().filter_map(|(id, _)| sk.point(id)).map(|p| frame.plane_point(p)))
+        Aabb3::from_points(sk.extent().into_iter().map(|p| frame.plane_point(p)))
     }
 
     /// The Polygon tool's box: how many sides it draws.
@@ -700,8 +738,88 @@ impl Workbench {
         sm.polygon_sides = sides.round().clamp(3.0, 64.0) as u32;
     }
 
+    /// The Format Text box of the Text tool, or of a text double-clicked: OK places the text, or
+    /// changes it.
+    fn format_text(&mut self, ui: &Ui, t: &Tokens) {
+        let Mode::Sketch(sm) = &mut self.mode else { return };
+        let Some(mut tb) = sm.text_box.clone() else { return };
+        let feature = sm.feature;
+        let (mut open, mut ok, mut cancel) = (true, false, false);
+        let title = if tb.editing.is_some() { "Edit Text" } else { "Format Text" };
+        egui::Window::new(title)
+            .id(egui::Id::new("tn_format_text"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(340.0)
+            .default_pos([320.0, 170.0])
+            .show(ui.ctx(), |ui| {
+                let r = ui.add(
+                    egui::TextEdit::multiline(&mut tb.text)
+                        .id(egui::Id::new("tn_sketch_text"))
+                        .desired_rows(3)
+                        .desired_width(310.0)
+                        .hint_text("Type the text (Enter starts a new line)"),
+                );
+                if tb.text.is_empty() && !r.has_focus() {
+                    r.request_focus();
+                }
+                ui.add_space(6.0);
+                egui::Grid::new("tn_text_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                    ui.label("Height").on_hover_text("How tall capital letters are");
+                    crate::properties::eq_field(ui, egui::Id::new("tn_text_height"), &mut tb.height, None, "mm", 0.01..=10_000.0, 80.0, t);
+                    ui.end_row();
+                    ui.label("Angle").on_hover_text("How far the text is turned, counter-clockwise");
+                    crate::properties::eq_field(ui, egui::Id::new("tn_text_angle"), &mut tb.angle, None, "deg", -360.0..=360.0, 80.0, t);
+                    ui.end_row();
+                });
+                ui.label(egui::RichText::new(format!("Font: {}", tenon_sketch::text::FONT_NAME)).color(t.text_dim));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if crate::drawing::button(ui, "OK", "tn_sketch_text_ok").clicked() {
+                        ok = true;
+                    }
+                    if crate::drawing::button(ui, "Cancel", "tn_sketch_text_cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        // (OK with nothing typed leaves the box open, to be typed in.)
+        let empty = ok && tb.text.trim().is_empty();
+        sm.text_box = (open && (!ok || empty) && !cancel).then(|| tb.clone());
+        if empty {
+            self.set_error("Type the text first: a text needs some words.");
+            return;
+        }
+        if !ok {
+            return;
+        }
+        sm.text_height = tb.height;
+        let angle = tb.angle.to_radians();
+        match tb.editing {
+            Some(id) => {
+                let p = json!({ "sketch": feature.0, "entity": id.0, "text": tb.text, "height": tb.height, "angle": angle });
+                if self.exec_status("sketch.edit_text", p).is_some() {
+                    self.set_status("Changed the text.");
+                }
+            }
+            None => {
+                let mut m = Map::new();
+                m.insert("sketch".into(), json!(feature.0));
+                put_point(&mut m, "at", "x", "y", &tb.at);
+                m.insert("text".into(), json!(tb.text));
+                m.insert("height".into(), json!(tb.height));
+                m.insert("angle".into(), json!(angle));
+                if self.exec_status("sketch.text", Value::Object(m)).is_some() {
+                    self.set_status("Placed the text. Click to place another; Esc ends. Double-click a text to change it.");
+                }
+            }
+        }
+    }
+
     pub(crate) fn sketch_ui(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect, t: &Tokens) {
         self.polygon_box(ui, rect, t);
+        self.format_text(ui, t);
         let Mode::Sketch(sm) = &self.mode else { return };
         let feature = sm.feature;
         let Some(frame) = self.sketch_frame(feature) else {
@@ -890,6 +1008,14 @@ impl Workbench {
                     equation,
                 });
             }
+        // Double-clicking a text opens it in the Format Text box, to change.
+        } else if resp.double_clicked()
+            && let Some(id) = hover
+            && let Some(Geometry::Text { at, text, height, angle }) = doc_sketch.geometry(id).cloned()
+            && let Mode::Sketch(sm) = &mut self.mode
+        {
+            let click = Click { at: doc_sketch.point(at).unwrap_or(Vec2::ZERO), point: Some(at), infer: None };
+            sm.text_box = Some(TextBox { at: click, editing: Some(id), text, height, angle: angle.to_degrees() });
         } else if resp.clicked_by(egui::PointerButton::Primary)
             && let Some(cid) = on_badge
             && let Mode::Sketch(sm) = &mut self.mode
@@ -953,16 +1079,30 @@ impl Workbench {
             if resp.drag_started_by(egui::PointerButton::Primary)
                 && !dragging_dimension
                 && let Some(origin) = ui.input(|i| i.pointer.press_origin())
-                && let Some(p) = hit_test(&doc_sketch, &plane, origin).filter(|h| doc_sketch.is_point(*h))
+                && let Some(held) = hit_test(&doc_sketch, &plane, origin)
                 && let Mode::Sketch(sm) = &mut self.mode
             {
-                sm.drag = Some((p, doc_sketch.clone()));
+                // A point, or a text by its point, from where it was taken hold of.
+                match doc_sketch.geometry(held) {
+                    Some(Geometry::Point { .. }) => {
+                        sm.drag = Some((held, doc_sketch.clone()));
+                        sm.drag_grab = Vec2::ZERO;
+                    }
+                    Some(Geometry::Text { at, .. }) => {
+                        sm.drag = Some((*at, doc_sketch.clone()));
+                        sm.drag_grab = match (doc_sketch.point(*at), plane.unproject(origin)) {
+                            (Some(q), Some(o)) => q - o,
+                            _ => Vec2::ZERO,
+                        };
+                    }
+                    _ => {}
+                }
             }
             if let (Some(at), Mode::Sketch(sm)) = (cursor, &mut self.mode)
                 && let Some((p, preview)) = &mut sm.drag
             {
                 let mut next = doc_sketch.clone();
-                if next.drag(*p, at).is_ok() {
+                if next.drag(*p, at + sm.drag_grab).is_ok() {
                     *preview = next;
                 }
             }
@@ -971,6 +1111,7 @@ impl Workbench {
                 && let Some((p, _)) = sm.drag.take()
                 && let Some(at) = cursor
             {
+                let at = at + std::mem::replace(&mut sm.drag_grab, Vec2::ZERO);
                 let _ = self.exec_status("sketch.drag", json!({ "sketch": feature.0, "point": p.0, "x": at.x, "y": at.y }));
             }
         }
@@ -1007,6 +1148,27 @@ impl Workbench {
             if e.geometry.is_point() {
                 continue;
             }
+            if let Geometry::Text { at, text, height, angle } = &e.geometry {
+                // (One being changed in the Format Text box is drawn as it is there, below.)
+                let Some(q) = shown.point(*at).filter(|_| sm.text_box.as_ref().is_none_or(|b| b.editing != Some(id))) else { continue };
+                let color = if e.construction { t.text_dim } else { color_of(id) };
+                let width = if sm.hover == Some(id) { 1.8 } else { 1.3 };
+                for outline in tenon_sketch::text::polylines(&tenon_sketch::text::contours(text, q, *height, *angle)) {
+                    let pts: Vec<Pos2> = outline.iter().filter_map(|v| plane.project(*v)).collect();
+                    p.add(Shape::line(pts, Stroke::new(width, color)));
+                }
+                // Selected or under the pointer, its box shows.
+                if (sm.selection.contains(&id) || sm.hover == Some(id))
+                    && let Some(c) = shown.text_corners(id)
+                {
+                    let mut quad: Vec<Pos2> = c.iter().filter_map(|v| plane.project(*v)).collect();
+                    if let Some(first) = quad.first().copied() {
+                        quad.push(first);
+                    }
+                    p.extend(Shape::dashed_line(&quad, Stroke::new(1.0, color), 4.0, 3.0));
+                }
+                continue;
+            }
             let pts: Vec<Pos2> = shown.tessellate(id, 0.02).into_iter().filter_map(|v| plane.project(v)).collect();
             if pts.len() < 2 {
                 continue;
@@ -1034,6 +1196,16 @@ impl Workbench {
                 } else {
                     p.rect_filled(Rect::from_center_size(q, vec2(s * 2.0, s * 2.0)), 1.0, color_of(id));
                 }
+            }
+        }
+        // The text in the Format Text box, where it goes, as it will be.
+        if let Some(tb) = &sm.text_box {
+            for outline in tenon_sketch::text::polylines(&tenon_sketch::text::contours(&tb.text, tb.at.at, tb.height, tb.angle.to_radians())) {
+                let pts: Vec<Pos2> = outline.iter().filter_map(|v| plane.project(*v)).collect();
+                p.add(Shape::line(pts, Stroke::new(1.5, hot)));
+            }
+            if let Some(q) = plane.project(tb.at.at) {
+                p.circle_stroke(q, 3.5, Stroke::new(1.2, hot));
             }
         }
         // Constraint symbols beside what they hold (F8 shows them all, F9 hides them all). The
@@ -1328,7 +1500,9 @@ impl Workbench {
 
     fn sketch_escape(&mut self) {
         if let Mode::Sketch(sm) = &mut self.mode {
-            if !sm.clicks.is_empty() || !sm.picks.is_empty() {
+            if sm.text_box.is_some() {
+                sm.text_box = None;
+            } else if !sm.clicks.is_empty() || !sm.picks.is_empty() {
                 sm.clicks.clear();
                 sm.picks.clear();
             } else if sm.tool != Tool::Select {
@@ -1387,6 +1561,14 @@ impl Workbench {
                     sm.constraints.clear();
                 }
             },
+            Tool::Text => {
+                // (Another click while the box is open moves where the text goes.)
+                let height = sm.text_height;
+                match &mut sm.text_box {
+                    Some(tb) if tb.editing.is_none() => tb.at = click,
+                    _ => sm.text_box = Some(TextBox { at: click, editing: None, text: String::new(), height, angle: 0.0 }),
+                }
+            }
             Tool::Point => {
                 let _ = self.exec_status("sketch.point", json!({ "sketch": f, "x": click.at.x, "y": click.at.y }));
             }

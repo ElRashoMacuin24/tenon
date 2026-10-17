@@ -157,6 +157,12 @@ pub fn run_dist(args: &[&str]) -> Result<(), String> {
     ));
     summary += &conda_licences(&prefix, &bundled, &licences)?;
     summary += &crate_licences(&meta, &licences)?;
+    // The font sketch text is drawn in, built into the program (DEC-102).
+    copy(&root().join("assets").join("fonts").join("DejaVu-LICENSE.txt"), &licences.join("fonts").join("DejaVu-LICENSE.txt"))?;
+    summary += concat!(
+        "Fonts built into the program\n",
+        "  DejaVu Sans 2.37: Bitstream Vera and Arev font licences, DejaVu changes public domain (licenses/fonts/DejaVu-LICENSE.txt)\n",
+    );
     write(&licences.join("THIRD-PARTY.txt"), &summary)?;
     for f in ["LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "ATTRIBUTION.md", "CHANGELOG.md"] {
         copy(&root().join(f), &layout.top.join(f))?;

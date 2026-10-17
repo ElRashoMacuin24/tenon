@@ -1999,6 +1999,113 @@
       }
     },
     {
+      "id": "sketch.text",
+      "label": "Text",
+      "undoable": true,
+      "description": "sketch; at (point id) or x, y: where the first line's baseline starts; text (lines split by a new line); height (of capital letters, default 3.5 mm); angle (rad, default 0). Its letters are profiles an extrude takes as {text: id} in `regions`. Returns the text and its point (`at`)",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "at": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "an existing point where the first line's baseline starts"
+          },
+          "x": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "where the first line's baseline starts"
+          },
+          "y": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "where the first line's baseline starts"
+          },
+          "text": {
+            "type": "string",
+            "description": "the words, lines split by a new line (up to 2000 characters)"
+          },
+          "height": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "how tall capital letters are (default 3.5)"
+          },
+          "angle": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "how far the text is turned (default 0)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "text"
+        ],
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "at"
+                ]
+              },
+              {
+                "required": [
+                  "x",
+                  "y"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "sketch.edit_text",
+      "label": "Edit Text",
+      "undoable": true,
+      "description": "sketch, entity (the text's id); text, height, angle: what changes",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "entity": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the text, as sketch.text returns it"
+          },
+          "text": {
+            "type": "string",
+            "description": "its new words"
+          },
+          "height": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "its new height"
+          },
+          "angle": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "its new angle"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "entity"
+        ]
+      }
+    },
+    {
       "id": "sketch.info",
       "label": "Sketch Info",
       "undoable": false,
@@ -2080,7 +2187,7 @@
                 }
               ]
             },
-            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], or {left, right, nth} for one region of a divided sketch (default: every outer region)"
+            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], {left, right, nth} for one region of a divided sketch, or {text: id} for a text's letters (default: every outer region; a sketch of texts alone, its texts)"
           },
           "taper": {
             "type": "number",
@@ -2166,7 +2273,7 @@
                 }
               ]
             },
-            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], or {left, right, nth} for one region of a divided sketch (default: every outer region)"
+            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], {left, right, nth} for one region of a divided sketch, or {text: id} for a text's letters (default: every outer region; a sketch of texts alone, its texts)"
           },
           "equations": {
             "type": "object",
@@ -2457,7 +2564,7 @@
                 }
               ]
             },
-            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], or {left, right, nth} for one region of a divided sketch (default: every outer region)"
+            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], {left, right, nth} for one region of a divided sketch, or {text: id} for a text's letters (default: every outer region; a sketch of texts alone, its texts)"
           },
           "path_sketch": {
             "type": "integer",
@@ -2527,7 +2634,7 @@
                 }
               ]
             },
-            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], or {left, right, nth} for one region of a divided sketch (default: every outer region)"
+            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], {left, right, nth} for one region of a divided sketch, or {text: id} for a text's letters (default: every outer region; a sketch of texts alone, its texts)"
           },
           "axis": {
             "anyOf": [
@@ -3973,7 +4080,7 @@
                 }
               ]
             },
-            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], or {left, right, nth} for one region of a divided sketch (default: every outer region)"
+            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], {left, right, nth} for one region of a divided sketch, or {text: id} for a text's letters (default: every outer region; a sketch of texts alone, its texts)"
           },
           "flip": {
             "type": "boolean",
@@ -4413,7 +4520,7 @@
                 }
               ]
             },
-            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], or {left, right, nth} for one region of a divided sketch (default: every outer region)"
+            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], {left, right, nth} for one region of a divided sketch, or {text: id} for a text's letters (default: every outer region; a sketch of texts alone, its texts)"
           },
           "distance": {
             "type": "number",
@@ -4460,7 +4567,7 @@
                 }
               ]
             },
-            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], or {left, right, nth} for one region of a divided sketch (default: every outer region)"
+            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], {left, right, nth} for one region of a divided sketch, or {text: id} for a text's letters (default: every outer region; a sketch of texts alone, its texts)"
           },
           "distance": {
             "type": "number",

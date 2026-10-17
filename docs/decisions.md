@@ -2783,3 +2783,54 @@ Options as well as on the search path or by `TENON_GMSH` / `TENON_CCX`.
   (a counterbore, after DIN 974-1) and a countersunk head (ISO 10642). The hole keeps only its
   sizes; opened again, a size that is a screw's says so. Tapping is still a Thread put on the
   hole; the choice is called Tap Drill, for that is what it gives.
+
+## DEC-102 Text in sketches: one font built in, its letters as profiles (2026-10-16)
+
+The owner asked to "keep going with the milestones for text and stuff in the sketches". Text
+was the greyed button on the Sketch tab most worth having: lettering cut into or raised from a
+part.
+
+**What a text is.** A sketch entity `text` with a point `at` (where the first line's
+baseline starts), the words, the `height` of capital letters and an `angle`. Its point is
+all that holds it: a text has no curves of its own for constraints, and its letters are
+worked out from the font whenever they are needed, never stored. So the file holds the words
+and the sizes, and a text is changed by changing them (`sketch.edit_text`, or a double-click
+in the sketch). Moved, turned, scaled or copied with the sketch's Modify tools it goes with
+its point, turning and growing; Mirror leaves it, for mirrored letters read backwards.
+
+**One font, built in: DejaVu Sans 2.37**, read by skrifa (pure Rust, from the fontations
+project; no system font lookup, no new native library). A part must be the same solid on every
+computer and in every version of Tenon: a font found on the system differs from one machine to
+the next, and a part whose font is missing would change when opened. DejaVu Sans covers Latin,
+Greek and Cyrillic, and its licence (Bitstream Vera and Arev, DejaVu's changes public domain)
+allows it to be built into a program and passed on unmodified under its own name; the licence
+ships in every release package. A choice of fonts would be an addition: a `font` field whose
+absence means this one. This is a third-party data choice made without asking the owner: it
+costs nothing to undo until a release has carried it (no file with a text exists before
+this), and it is reported.
+
+**Sizes.** `height` is how tall a capital letter is, measured from the font's own H (the
+height the font states is about 1% off). Lines are 1.6 heights apart. Characters the font
+lacks show its missing-letter box.
+
+**Its letters as profiles.** A text's letters are not put into the planar graph the sketch's
+curves divide into regions: a hundred outlines of curves crossing the sketch's lines would
+make regions nobody wants. They are a profile of their own: `RegionKey::Text { text }`, all
+its letters with their holes. A feature takes the sketch's regions of curves by default and,
+in a sketch without any, its texts: a sketch with only a text extrudes or cuts at once. In
+Extrude, Revolve, Sweep, Coil and sheet metal Face and Cut, a click anywhere in a text's box
+adds its letters or takes them away. Letters go to the kernel as quadratic B-splines; their
+holes run counter-clockwise, as circles' do (the kernel turns holes round).
+
+**Not done (said in the fidelity notes):** a choice of font, bold or italic; justification
+(the text starts at its point, on its baseline); text along a curve; text that stretches to
+fit a box; letters that overlap a region of curves are not merged with it (cut text into a
+plate from a sketch of its own, as above); text is not constrained to the sketch beyond its
+point. Emboss (raising or recessing a profile wrapped onto a face) is still greyed.
+
+**File format:** additive in version 2: the entity `text` (`at`, `text`, `height`,
+`angle`, the angle left out when 0) and the region key `{ text = <id> }`. A file with a
+text is refused by an older Tenon, as any addition is.
+
+**Commands:** `sketch.text`, `sketch.edit_text`; `sketch.info` lists `texts`, each with
+what a feature's `regions` takes (`select`), how many letters it has and its box.

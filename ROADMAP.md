@@ -19,7 +19,9 @@ and was answered on 2026-10-13 (the M11 section below).
 After M11: the rest of the Loads panel and supports and loads on edges (DEC-100), then the
 first release, 0.1.0, published on the owner's word on 2026-10-13 (DEC-101, the section "The
 first release" below). M11 is the last milestone of the plan; what comes after it is the
-owner's to say.
+owner's to say. Since the release, at their word (2026-10-16): a pass through the program as
+a user with the bugs it found fixed, and text in sketches (DEC-102); a comparison of every
+feature with Inventor's is under way (the section "After 0.1.0").
 
 **M10** agent-native workflow was started on the owner's confirmation of M9 (2026-10-12),
 completed and confirmed the same day: a versioned schema
@@ -509,6 +511,18 @@ workflow made from it.
 | Application Options kept between sessions, with where the stress programs are | done | `application_options_are_kept_and_say_where_the_stress_programs_are` (by real input: the cube turned off, Gmsh's place typed and said not to be there; kept as text and taken by the next start). Gap: the app's own reading and writing of them at start and close is checked by hand |
 | For users: a guide, a changelog, a README in the archive | done | docs/user-guide.md (every command place in it checked against the ribbon), CHANGELOG.md, `xtask/dist/README.txt` |
 | Gaps closed for the release | done | in the rows they were recorded in: part numbers and descriptions for parts lists, coils by height, the stress peak's mark behind the part, the printer's build space drawn, the largest fillet that fits, solids picked in the browser, a thread's size in its row, moments of inertia, polygons of any number of sides, holes sized for screws, the template dialog on the templates, the control port said in the status bar, a remote force's point picked; and four gaps that later work had closed, corrected |
+
+## After 0.1.0 (asked for by the owner on 2026-10-16)
+
+"keep going with the milestones for text and stuff in the sketches also do a pass where you
+act as a user of the software and actually test all of the feature to see if they work and
+find and kill the major bugs", and, with it, "compare all of our features with how they work
+on inventor and make ours feel 1-1".
+
+| Feature | Status | Proof / gap |
+|---|---|---|
+| A pass through the program as a user, with the bugs it found fixed | done | `crates/ui/src/explore_tests.rs`: whole pieces of work by pointer and keyboard with the geometry on its own thread (a bracket from nothing, an assembly, a drawing, a sheet metal tray, a sketch changed under its features, each part feature, a part driven by parameters, a rough user). Eight faults fixed, each held by its session (the commit of 2026-10-16 lists them) |
+| Text in sketches: its letters are profiles to extrude, cut or revolve | done | DEC-102. Font: `text::tests` (an H as tall as asked and where asked; an O's hole; lines below one another; turned; the box turns with it). Sketch: `text_moves_turns_grows_and_is_copied_with_its_point` (and is refused with no words, no height or too many characters). Model: `text_is_cut_into_a_plate_and_changed` (TENON cut 1 deep: five letters, the O with its hole; 1.25 times as tall takes away 1.25 squared as much, to 1e-3; fewer letters less; named by its key, cut 2 deep, twice as much), `a_letter_with_a_hole_is_a_ring_not_a_disc` (an O extruded is its outline less its hole, to 1%). File: `a_text_and_the_letters_cut_from_it_are_written_and_read_back` (quotes and a new line in the words). In the app, by real input: `text_is_typed_in_its_box_changed_by_a_double_click_and_its_letters_are_a_profile` (Text on the ribbon, a click, OK refused with nothing typed, the words and height typed; double-clicked and changed; Extrude takes the rectangle, a click in the text's box adds its letters, one on the rectangle leaves the letters alone). Gap: one font (DejaVu Sans); no bold, italic or justification; no text along a curve or stretched to a box; letters over a region of curves are not merged with it; Emboss is still greyed |
 
 ## Experimental: native kernel
 

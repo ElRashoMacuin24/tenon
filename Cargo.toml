@@ -26,6 +26,7 @@ tenon-ui = { path = "crates/ui" }
 # foundation
 thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 log = "0.4"
 robust = "1.2"

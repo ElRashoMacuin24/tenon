@@ -1559,7 +1559,7 @@ impl Workbench {
     pub(crate) fn profile_anchor(&self, sketch: tenon_model::FeatureId) -> Option<(Vec3, Vec3)> {
         let frame = self.sketch_frame(sketch)?;
         let sk = self.document().sketch(sketch)?;
-        let pts: Vec<_> = sk.entities().filter_map(|(id, _)| sk.point(id)).collect();
+        let pts = sk.extent();
         if pts.is_empty() {
             return None;
         }

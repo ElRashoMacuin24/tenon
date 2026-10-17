@@ -45,6 +45,14 @@ impl Motion {
         }
     }
 
+    /// How far everything turns (radians).
+    fn turn(&self) -> f64 {
+        match self {
+            Motion::Turn { angle, .. } => *angle,
+            _ => 0.0,
+        }
+    }
+
     /// How much longer every length becomes.
     fn factor(&self) -> f64 {
         match self {
@@ -112,7 +120,9 @@ impl Sketch {
         }
         let carried: Vec<EntityId> = self
             .entities()
-            .filter(|(id, e)| e.geometry.is_curve() && (ids.contains(id) || e.geometry.points().iter().all(|p| points.contains(p))))
+            .filter(|(id, e)| {
+                (e.geometry.is_curve() || e.geometry.is_text()) && (ids.contains(id) || e.geometry.points().iter().all(|p| points.contains(p)))
+            })
             .map(|(id, _)| id)
             .collect();
         let moved: BTreeSet<EntityId> = points.iter().copied().chain(carried.iter().copied()).collect();
@@ -146,6 +156,9 @@ impl Sketch {
                     Geometry::Arc { center, start, end } => Geometry::Arc { center: at(center)?, start: at(start)?, end: at(end)? },
                     Geometry::Spline { poles, degree } => {
                         Geometry::Spline { poles: poles.iter().map(at).collect::<SketchResult<_>>()?, degree: *degree }
+                    }
+                    Geometry::Text { at: anchor, text, height, angle } => {
+                        Geometry::Text { at: at(anchor)?, text: text.clone(), height: height * motion.factor(), angle: angle + motion.turn() }
                     }
                     Geometry::Point { .. } => continue,
                 };
@@ -208,6 +221,11 @@ impl Sketch {
             if let Some(Geometry::Circle { radius, .. }) = self.geometry(*c) {
                 s.set_radius(*c, radius * motion.factor())?;
                 pin.push(*c);
+            }
+            // (Text turns and grows with what carries it.)
+            if let Some(Geometry::Text { height, angle, .. }) = s.geometry_mut(*c) {
+                *height *= motion.factor();
+                *angle += motion.turn();
             }
         }
         GaussNewton.solve(&mut s, &SolveOptions { pin, ..Default::default() }).map_err(|e| {

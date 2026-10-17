@@ -10,7 +10,7 @@ use tenon_kernel::{
     AngleExtent, BoolOp, ChamferSpec, Curve2, Curve3, CurveKind, Extent, FaceInfo, Kernel, KernelError, LoftOpts, Loop, MassProps, Mesh, MeshTol,
     Path3, Placed, Profile, Region, ShapeHandle, SubShape, SurfaceKind, SweepOpts, SweepOrientation, TaggedCurve2, Transform,
 };
-use tenon_sketch::{EntityId, Sketch, SketchRegion, default_regions, profile, regions};
+use tenon_sketch::{EntityId, RegionKey, Sketch, SketchRegion, default_regions, profile, regions, text_regions};
 
 mod sheet;
 
@@ -417,12 +417,43 @@ impl From<KernelError> for Stop {
     }
 }
 
+/// The profile `sel` names in `sketch`, in `frame`: its regions of curves taken together, and
+/// the letters of the texts it names (DEC-102). By default, the regions of curves; a sketch
+/// with none, its texts.
+pub(crate) fn profile_of(sketch: &Sketch, frame: Frame, sel: &RegionSel) -> Result<Profile, String> {
+    let all = regions(sketch);
+    let texts: Vec<EntityId> = match sel {
+        RegionSel::Default if default_regions(sketch, &all).is_empty() => {
+            sketch.texts().filter(|t| sketch.entity(*t).is_some_and(|e| !e.construction)).collect()
+        }
+        RegionSel::Default => Vec::new(),
+        RegionSel::Keys(keys) => keys.iter().filter_map(|k| if let RegionKey::Text { text } = k { Some(*text) } else { None }).collect(),
+    };
+    let curves = match sel {
+        RegionSel::Default if !texts.is_empty() => Vec::new(),
+        RegionSel::Keys(keys) if keys.iter().all(|k| matches!(k, RegionKey::Text { .. })) => Vec::new(),
+        _ => select(sketch, &all, sel)?,
+    };
+    let mut out = if curves.is_empty() { Profile { frame, regions: Vec::new() } } else { profile(sketch, frame, &curves) };
+    for t in texts {
+        let letters = text_regions(sketch, t);
+        if letters.is_empty() {
+            return Err("a selected text no longer exists in the sketch, or has nothing to show".into());
+        }
+        out.regions.extend(letters);
+    }
+    if out.regions.is_empty() {
+        return Err("the sketch has no closed profile".into());
+    }
+    Ok(out)
+}
+
 fn select<'r>(sketch: &Sketch, all: &'r [SketchRegion], sel: &RegionSel) -> Result<Vec<&'r SketchRegion>, String> {
     let chosen: Vec<&SketchRegion> = match sel {
         RegionSel::Default => default_regions(sketch, all),
         RegionSel::Keys(keys) => {
             let mut out: Vec<&SketchRegion> = Vec::new();
-            for key in keys {
+            for key in keys.iter().filter(|k| !matches!(k, RegionKey::Text { .. })) {
                 let found = tenon_sketch::find(sketch, all, key);
                 if found.is_empty() {
                     return Err("a selected profile region no longer exists in the sketch".into());
@@ -1094,8 +1125,7 @@ impl<'a> Ctx<'a> {
     fn extrude(&mut self, id: FeatureId, e: &Extrude) -> Result<(), Stop> {
         let (held, frame) = self.sketch_and_frame(e.sketch)?;
         let sketch: &Sketch = &held;
-        let all = regions(sketch);
-        let profile = profile(sketch, frame, &select(sketch, &all, &e.regions)?);
+        let profile = profile_of(sketch, frame, &e.regions)?;
         let sign = if e.reverse { -1.0 } else { 1.0 };
         let extent = match &e.extent {
             ExtrudeExtent::Distance(d) => Extent::Distance(sign * d),
@@ -1164,8 +1194,7 @@ impl<'a> Ctx<'a> {
         if axis.dir().dot(frame.z()).abs() > 1.0 - 1e-9 {
             return Err("The axis is square to the sketch, so turning the profile about it makes no solid. Choose an axis that lies in the sketch's plane: a line of the sketch, or an origin axis in that plane.".into());
         }
-        let all = regions(sketch);
-        let profile = profile(sketch, frame, &select(sketch, &all, &r.regions)?);
+        let profile = profile_of(sketch, frame, &r.regions)?;
         let angle = match r.angle {
             RevolveAngle::Full => AngleExtent::Full,
             RevolveAngle::Angle(a) => AngleExtent::Angle(a),
@@ -1191,8 +1220,7 @@ impl<'a> Ctx<'a> {
     fn sweep(&mut self, id: FeatureId, s: &Sweep) -> Result<(), Stop> {
         let (held, frame) = self.sketch_and_frame(s.sketch)?;
         let sketch: &Sketch = &held;
-        let all = regions(sketch);
-        let profile = profile(sketch, frame, &select(sketch, &all, &s.regions)?);
+        let profile = profile_of(sketch, frame, &s.regions)?;
         let (held_path, path_frame) = self.sketch_and_frame(s.path.sketch)?;
         let path_sketch: &Sketch = &held_path;
         let path = path_of(path_sketch, &path_frame, &s.path.curves, profile_centre(&profile))?;
@@ -1222,8 +1250,7 @@ impl<'a> Ctx<'a> {
             }
             AxisRef::Work(w) => self.work_axis(*w)?,
         };
-        let all = regions(sketch);
-        let profile = profile(sketch, frame, &select(sketch, &all, &c.regions)?);
+        let profile = profile_of(sketch, frame, &c.regions)?;
         // Turns closer together than the profile is tall run into each other, and a kernel may
         // build that without complaint: refuse it here.
         let along: Vec<f64> = profile_points(&profile).iter().map(|q| (*q - axis.origin()).dot(axis.dir())).collect();
@@ -1247,11 +1274,9 @@ impl<'a> Ctx<'a> {
         for (i, s) in l.sections.iter().enumerate() {
             let (held, frame) = self.sketch_and_frame(*s)?;
             let sketch: &Sketch = &held;
-            let all = regions(sketch);
-            if all.is_empty() {
-                return Err(format!("loft section {} ({}) has no closed profile", i + 1, label(self.doc, *s)).into());
-            }
-            sections.push(profile(sketch, frame, &select(sketch, &all, &RegionSel::Default)?));
+            let section = profile_of(sketch, frame, &RegionSel::Default)
+                .map_err(|_| format!("loft section {} ({}) has no closed profile", i + 1, label(self.doc, *s)))?;
+            sections.push(section);
         }
         let op = self.k.loft(&sections, &LoftOpts { solid: true, ruled: l.ruled, closed: false })?;
         let faces = self.k.topology(op.shape)?.faces;

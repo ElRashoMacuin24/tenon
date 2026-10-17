@@ -566,6 +566,23 @@ fn a_region_of_a_divided_sketch_is_named_by_side_in_the_file() {
 }
 
 #[test]
+fn a_text_and_the_letters_cut_from_it_are_written_and_read_back() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let words = "Tenon \"1\"\nline 2";
+    let t = run(&mut s, "sketch.text", json!({ "sketch": sk, "x": 1, "y": 2, "text": words, "height": 4, "angle": 0.5 }))["text"].as_u64().unwrap();
+    run(&mut s, "model.extrude", json!({ "sketch": sk, "distance": 1, "regions": [{ "text": t }] }));
+    let extra = Map::new();
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(text.contains(&format!("\nregions = {{ keys = [{{ text = {t} }}] }}\n")), "{text}");
+    assert!(text.contains(r#"type = "text", at = 1, text = "Tenon \"1\"\nline 2", height = 4.0, angle = 0.5,"#), "{text}");
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(&back, s.document());
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+}
+
+#[test]
 fn a_driven_dimension_says_so_on_its_own_record() {
     let mut s = Session::default();
     let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();

@@ -41,6 +41,8 @@ Standard sizes and physical constants held in code:
 
 | Asset | Author | Source | Licence | Notes |
 |---|---|---|---|---|
+| `assets/fonts/DejaVuSans.ttf` | the DejaVu fonts team; glyphs from Bitstream Vera (c) Bitstream, Inc., and from Arev (c) Tavmjong Bah | DejaVu Fonts 2.37 (dejavu-fonts.github.io), the file as conda-forge's font-ttf-dejavu-sans-mono 2.37 package installs it | Bitstream Vera Fonts licence and Arev Fonts licence (free to use, copy and redistribute, with the notice kept); DejaVu's changes public domain | Unmodified, under its own name. Built into the program: the letters of sketch text (DEC-102). Its licence ships in the package's `licenses/fonts/` |
+| `assets/fonts/DejaVu-LICENSE.txt` | the DejaVu fonts team | the licence file of the same release | (the licence text itself) | Kept with the font, and copied into every release package |
 | `docs/images/m0-shell.png` | Tenon contributors | screenshot of Tenon itself: `tenon --screenshot docs/images/m0-shell.png` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `assets/templates/templates.json` | Tenon contributors | written for this repository (the command script that makes the drawing templates) | MIT OR Apache-2.0 | Original |
 | `assets/templates/ansi-b.tenondrw` | Tenon contributors | generated: `tenon-cli run assets/templates/templates.json --out assets/templates` | MIT OR Apache-2.0 | Original; Tenon's own title block |
