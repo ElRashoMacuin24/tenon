@@ -17,6 +17,8 @@ use crate::workbench::{Mode, Workbench};
 pub(crate) enum ExtentChoice {
     Distance,
     ThroughAll,
+    /// As far as a face or plane (DEC-104).
+    To,
 }
 
 /// Which way a feature goes from its sketch.
@@ -44,6 +46,8 @@ pub(crate) struct ExtrudePanel {
     pub keep_taper: bool,
     /// Degrees the sides lean in as they leave the sketch (negative: out); zero is straight.
     pub taper: f64,
+    /// With To: the face or plane it goes as far as.
+    pub to: Option<PlaneRef>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -524,6 +528,14 @@ pub(crate) enum Panel {
         feature: FeatureId,
         name: String,
     },
+    /// Delete Features: what goes with a feature, ticked as Inventor ticks it (DEC-103).
+    DeleteFeatures {
+        feature: FeatureId,
+        /// The sketches it is made from that nothing else uses go too.
+        consumed: bool,
+        /// The features that use it go too (without them it cannot be deleted).
+        dependents: bool,
+    },
     /// Constrain, Joint or Tweak in an assembly.
     Asm(Box<crate::asm_panel::AsmPanel>),
 }
@@ -565,7 +577,7 @@ impl Panel {
     pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
         match self {
             Panel::Extrude(p) => match (p.extent, p.direction) {
-                (ExtentChoice::ThroughAll, _) => vec![("taper", "/taper")],
+                (ExtentChoice::ThroughAll | ExtentChoice::To, _) => vec![("taper", "/taper")],
                 (_, Direction::Symmetric) => vec![("distance", "/extent/symmetric")],
                 (_, Direction::Asymmetric) => vec![("distance", "/extent/two_sided/forward"), ("distance_b", "/extent/two_sided/backward")],
                 _ => vec![("distance", "/extent/distance"), ("taper", "/taper")],
@@ -677,9 +689,23 @@ impl Workbench {
     }
 }
 
+/// A plane as commands take it: an origin plane's name, a face reference, or {"work": id}.
+pub(crate) fn plane_json(plane: &PlaneRef) -> Value {
+    match plane {
+        PlaneRef::Origin(o) => json!(format!("{o:?}").to_lowercase()),
+        PlaneRef::Face(f) => serde_json::to_value(f).unwrap_or(Value::Null),
+        PlaneRef::Work(id) => json!({ "work": id.0 }),
+    }
+}
+
 impl ExtrudePanel {
     pub(crate) fn kind(&self) -> FeatureKind {
         let extent = match (self.extent, self.direction) {
+            // (Until a plane is picked, the distance stands in: the preview shows that.)
+            (ExtentChoice::To, _) => match &self.to {
+                Some(plane) => ExtrudeExtent::To(plane.clone()),
+                None => ExtrudeExtent::Distance(self.distance),
+            },
             (ExtentChoice::ThroughAll, _) => ExtrudeExtent::ThroughAll,
             (ExtentChoice::Distance, Direction::Symmetric) => ExtrudeExtent::Symmetric(self.distance),
             (ExtentChoice::Distance, Direction::Asymmetric) => ExtrudeExtent::TwoSided { forward: self.distance, backward: self.distance_b },
@@ -687,7 +713,7 @@ impl ExtrudePanel {
         };
         let reverse = self.direction == Direction::Flipped;
         // A taper goes one way from the sketch: the two-way extents are straight.
-        let one_way = matches!(extent, ExtrudeExtent::Distance(_) | ExtrudeExtent::ThroughAll);
+        let one_way = matches!(extent, ExtrudeExtent::Distance(_) | ExtrudeExtent::ThroughAll | ExtrudeExtent::To(_));
         let taper = (one_way && (self.taper != 0.0 || self.keep_taper)).then(|| self.taper.to_radians());
         FeatureKind::Extrude(Extrude { sketch: self.sketch, regions: self.regions.clone(), extent, reverse, operation: self.operation, taper })
     }
@@ -900,6 +926,11 @@ impl Workbench {
                         ExtrudeExtent::Symmetric(d) => (ExtentChoice::Distance, Direction::Symmetric, d, d),
                         ExtrudeExtent::TwoSided { forward, backward } => (ExtentChoice::Distance, Direction::Asymmetric, forward, backward),
                         ExtrudeExtent::ThroughAll => (ExtentChoice::ThroughAll, way, 10.0, 10.0),
+                        ExtrudeExtent::To(_) => (ExtentChoice::To, Direction::Default, 10.0, 10.0),
+                    };
+                    let to = match &e.extent {
+                        ExtrudeExtent::To(plane) => Some(plane.clone()),
+                        _ => None,
                     };
                     ExtrudePanel {
                         editing,
@@ -912,6 +943,7 @@ impl Workbench {
                         regions: e.regions.clone(),
                         taper: e.taper.unwrap_or(0.0).to_degrees(),
                         keep_taper: e.taper.is_some(),
+                        to,
                     }
                 }
                 _ => return Err("not an extrusion".into()),
@@ -930,6 +962,7 @@ impl Workbench {
                     regions: RegionSel::Default,
                     taper: 0.0,
                     keep_taper: false,
+                    to: None,
                 }
             }
         };
@@ -1148,6 +1181,7 @@ impl Workbench {
                                 p["backward"] = json!(backward);
                             }
                             ExtrudeExtent::ThroughAll => p["through_all"] = json!(true),
+                            ExtrudeExtent::To(ref plane) => p["to"] = plane_json(plane),
                         }
                         if let Some(taper) = e.taper {
                             p["taper"] = json!(taper);
@@ -1767,6 +1801,50 @@ impl Workbench {
                 let ok = name_window(&ctx, name, &mut keep) || commit;
                 if ok {
                     keep = self.exec_status("feature.rename", json!({ "feature": feature.0, "name": name.trim() })).is_none();
+                }
+            }
+            Panel::DeleteFeatures { feature, consumed, dependents } => {
+                let plan = self.document().deletion(*feature);
+                let names = |ids: &[FeatureId]| ids.iter().map(|id| self.feature_name(*id)).collect::<Vec<_>>().join(", ");
+                let (what, used, made_from) = (self.feature_name(*feature), names(&plan.dependents), names(&plan.consumed));
+                let mut ok = commit;
+                egui::Window::new("Delete Features").collapsible(false).resizable(false).anchor(Align2::CENTER_TOP, [0.0, 160.0]).show(&ctx, |ui| {
+                    ui.label(format!("Delete {what}, and:"));
+                    ui.add_space(4.0);
+                    if !plan.consumed.is_empty() {
+                        crate::drawing::check(ui, consumed, "Consumed sketches and features", "tn_delete_consumed");
+                        ui.label(egui::RichText::new(format!("    {made_from}")).small());
+                    }
+                    if !plan.dependents.is_empty() {
+                        crate::drawing::check(ui, dependents, "Dependent sketches and features", "tn_delete_dependents");
+                        ui.label(egui::RichText::new(format!("    {used}")).small());
+                    }
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if crate::drawing::button(ui, "OK", "tn_delete_ok").clicked() {
+                            ok = true;
+                        }
+                        if crate::drawing::button(ui, "Cancel", "tn_delete_cancel").clicked() {
+                            keep = false;
+                        }
+                    });
+                });
+                if ok && keep {
+                    if !*dependents && !plan.dependents.is_empty() {
+                        // (Tenon keeps no feature whose parent is gone: it is deleted with it, or
+                        // the parent stays.)
+                        self.set_error(format!("{what} cannot go while {used} use it: tick them to delete them too, or Cancel."));
+                    } else {
+                        let p = json!({ "feature": feature.0, "consumed": *consumed, "dependents": *dependents });
+                        match self.exec("feature.delete", p) {
+                            Ok(r) => {
+                                let n = r["deleted"].as_array().map_or(1, Vec::len);
+                                self.set_status(if n > 1 { format!("Deleted {what} and {} more.", n - 1) } else { format!("Deleted {what}.") });
+                                keep = false;
+                            }
+                            Err(e) => self.set_error(e),
+                        }
+                    }
                 }
             }
         }

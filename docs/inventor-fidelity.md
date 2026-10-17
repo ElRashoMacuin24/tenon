@@ -2,7 +2,8 @@
 
 Tenon's goal is that someone who knows Autodesk Inventor can sit down and work: the same
 commands in the same places, started and finished the same way. This page tracks that goal for
-the sketch and part-feature workflow: what Inventor does (from Autodesk's published help, linked
+sketches, part features, work features, the browser, sheet metal, stress checks, assemblies,
+drawings and moving round the view: what Inventor does (from Autodesk's published help, linked
 at the end), what Tenon does, and what is still missing. It is a working list, kept in the order
 things should be done.
 
@@ -86,6 +87,13 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 17. The rest of the Sheet Metal tab (the table below): a Corner Seam between faces in one
     plane that were made as two features, the tear and weld reliefs, bend tables, Lofted
     Flange, Contour Roll, Rip, Punch Tool, Unfold and Refold. These wait until after M9.
+18. ~~Delete Features with what goes with a feature; Extrude To a face or plane; Mate's Flush
+    solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
+    comparison of every command below.
+19. From the same comparison, in order: Extrude and Revolve To Next and Between; the Hole
+    panel's Spotface, To, Tapped and placing on a face; visibility of sketches and work
+    features from the browser; components placed by the pointer; the Tangent and Symmetry
+    constraints; a three-point work plane; fillets of variable radius and face fillets.
 
 ## Geometry of the part in a sketch
 
@@ -242,6 +250,77 @@ that are programs of their own (docs/stress.md).
 | (A constraint or load whose geometry the part no longer has) | Tenon: its row is written in red with how many of its faces (or edges) are lost; opened, it is without them and says so; `study.check` says the same to a script | `a_support_whose_face_the_part_no_longer_has_says_so_and_is_mended`; for an edge that was rounded off: `a_bar_is_held_along_an_edge_and_pushed_along_another` |
 | (The part is edited outside the environment) | done | commands that change the part are refused inside it, with "Finish Analysis first" |
 
+## Part features, command by command
+
+Compared on 2026-10-16, at the owner's asking ("compare all of our features with how they work
+on inventor and make ours feel 1-1"). The rows marked closed then were done in that round.
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| Extrude extents: Distance, To, To Next, Between, Through All; directions Default, Flipped, Symmetric, Asymmetric | partial | Distance with all four directions, Through All, and **To** (closed 2026-10-16, DEC-104): a flat face, a work plane or an origin plane, on whichever side of the sketch it is; square to the sketch it is the distance to it, at an angle the end is cut along the plane and named as the end cap. Picked by clicking the face or the work plane, or the plane in the browser. `an_extrusion_goes_as_far_as_a_face_or_a_plane`, `an_extrusion_is_taken_as_far_as_a_face_clicked`. Gap: To Next, Between; To a vertex or a curved face ("extend to face"); Match Shape |
+| Revolve extents: Full, Angle (one way, symmetric, asymmetric), To, To Next, Between | partial | Full, Angle and Symmetric. Gap: two different angles, To, To Next, Between |
+| Hole: placed from a sketch's points, or on a face (linear from two edges, concentric, on a point); Simple, Clearance, Tapped, Taper Tapped; seat None, Counterbore, Spotface, Countersink; Distance, Through All, To; drill point flat or angled | partial | from sketch points; simple, counterbore, countersink; Clearance and Tap Drill sizes for M3 to M20 (DEC-101); distance or through all; drill point flat or angled. Gap: placing on a face without a sketch; Spotface; Tapped putting the thread on (Thread does it after); To; taper tapped |
+| Fillet: constant edge fillets, variable radius, setbacks, face fillet, full round; edges picked one by one, or a loop or a feature at a time | partial | constant radius on picked edges, several at once; the largest radius that fits is said when one is too large (DEC-101). Gap: variable radius, setbacks, face and full round fillets, picking by loop or feature |
+| Chamfer: Distance, Distance and Angle, Two Distances; corner setback | done | the three kinds (M2). Gap: corner setback choice |
+| Shell: inside, outside or both ways; faces removed; a thickness of its own for chosen faces | partial | inside or outside, faces removed (M2). Gap: both ways; a face's own thickness |
+| Rib: parallel or normal to the sketch, to next or a thickness, profile extended | partial | in the sketch's plane, to next or a distance. Gap: normal to the sketch; taper |
+| Draft (Face Draft): fixed plane or fixed edge, pull direction | partial | about a fixed plane (M6). Gap: fixed edge; parting line |
+| Thread: on a round face, full length or a length and offset, sized from the face | done | cosmetic or modelled (DEC-038) |
+| Split: Split Part, Split Face, Trim Solid; by a plane, surface or sketch | partial | solids by a plane, keeping both or one side (M6). Gap: split faces only; by a sketch or surface |
+| Combine: Join, Cut, Intersect, keep the tool | done | M6 |
+| Sweep: profile along a path, following it or fixed, with twist and taper; guide rail or surface | partial | follows the path or keeps its direction (M6). Gap: twist, taper, guide rails |
+| Loft: sections, rails, a centre line, end conditions | partial | sections in order, smooth or ruled (M6). Gap: rails, centre line, conditions |
+| Coil: pitch and revolutions, revolutions and height, pitch and height, spiral; flat ends | partial | pitch and turns, or turns and height (DEC-101). Gap: spiral; flat ends |
+| Emboss, Decal, Derive; plastic part features (Grill, Boss, Rest, Snap Fit, Rule Fillet, Lip) | missing | Emboss and Derive are on the ribbon, greyed |
+| Rectangular pattern: two directions, Spacing, Distance or Curve Length, Midplane; features or solids; occurrences suppressed one by one | partial | features in two directions or round an axis (M2), mirror. Gap: along a curve, Midplane, whole solids, suppressing one occurrence, Sketch Driven pattern |
+
+## Work features
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| Work plane: offset from a plane, angle about an edge, midplane, three points, tangent to a curved face through an edge or parallel to a plane, normal to a curve at a point | partial | offset, angle, midplane (M2). Gap: three points, the tangent planes, normal to a curve |
+| Work axis: along an edge, through a cylinder, two planes meeting, two points, normal to a plane through a point | partial | edge or cylinder, two planes (M2). Gap: two points, normal to a plane |
+| Work point: a vertex, a circle's centre, an axis through a plane, where three planes meet | partial | a circle's centre, an axis through a plane. Gap: on a vertex, three planes |
+| UCS | missing | greyed on the ribbon |
+
+## The browser
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| Delete on a feature opens Delete Features: consumed sketches go with it unless unticked, and dependent sketches and features are listed to go too | done differently | closed 2026-10-16 (DEC-103): the box, ticked as Inventor ticks it, says what goes and does it in one undo step; with nothing more to say the feature goes at once. Inventor can keep dependents, sick, when unticked; Tenon keeps no feature whose parent is gone, so it says so and deletes nothing. `deleting_a_feature_says_what_goes_with_it`, `a_feature_is_deleted_with_what_it_is_made_from_and_what_uses_it`. Gap: the Delete key on a feature picked in the browser |
+| Right-click: Edit Feature, Edit Sketch, Rename, Suppress Features, Delete; double-click edits | done | the browser's menu (M2 onward) |
+| End of Part dragged up and down; features dragged to reorder | done | `end_of_part_and_features_are_dragged_in_the_browser` |
+| A sketch is shown under the feature that uses it | done | |
+| Visibility of a sketch or work feature from its right-click menu | missing | unused sketches show, used ones do not (DEC-037) |
+
+## Assemblies
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| Place: the first component is grounded at the origin; further ones follow the pointer and are put down by a click, several at a time | partial | the first is grounded at the origin; further ones are put beside the others. Gap: placed by the pointer |
+| Constrain: Mate, whose two solutions are Mate and Flush; Angle; Tangent; Insert (opposed or aligned); Symmetry; an offset typed; a preview | partial | Mate with its Mate and Flush solutions (closed 2026-10-16: Flush had been a type of its own), Angle, Insert; offsets and angles typed in value boxes as everywhere else (they were drag fields); a preview before OK. `constrain_and_joint_by_clicking_faces_in_the_view` (Flush picked as Mate's solution, the offset typed). Gap: Tangent, Symmetry; predicting the offset and solution from the faces picked; limits |
+| Joint: Automatic, Rigid, Rotational, Slider, Cylindrical, Planar, Ball; origins on faces, edges and points | partial | all but Automatic (M3). Gap: Automatic; vertex and mid-edge origins; limits |
+| Free Move, Free Rotate, Ground | done | M3 |
+| Pattern, Mirror, Copy of components | missing | greyed on the ribbon |
+| Bill of materials, exploded views, interference, degrees of freedom | done | M3; an explosion is steps of the assembly's own, not a presentation file |
+
+## Drawings
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| Base, Projected, Section, Detail, Auxiliary, Break Out, Break, Crop, Overlay views | partial | base, projected, isometric, section and detail (M4). Gap: Auxiliary, Break Out, Break, Crop, Overlay; sections with offset lines; detail boundaries other than a circle |
+| Dimensions picked from views, Retrieve Model Annotations, baseline and ordinate dimensions | partial | associative dimensions of every common kind and suggestions (M4). Gap: retrieving the sketch's own dimensions, baseline and ordinate sets, tolerances |
+| Centre marks and centre lines, automatic and by hand; hole tables; balloons and parts lists; title blocks and borders; revision tables | partial | all but revision tables (M4) |
+| Export to PDF, DWG and DXF | partial | PDF, SVG, DXF R12. Gap: DWG (a proprietary format) |
+
+## Navigating the view
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| Middle drag pans, Shift and middle drag orbits, the wheel zooms about the pointer; F2 pan, F3 zoom, F4 orbit while held; F5 Previous View, F6 Home View | done | `viewport_responds_to_real_pointer_input` |
+| ViewCube: faces, edges and corners, the arrows that turn and roll, Home, its menu | done | `cube::tests`, the same test |
+| The navigation bar: pan, zoom, orbit, look at, zoom all | done | |
+
 ## Sources
 
 Behaviour described above is from Autodesk's help for Inventor:
@@ -267,6 +346,7 @@ Behaviour described above is from Autodesk's help for Inventor:
 - Cuts across bends: [To Work with Cuts on Sheet Metal](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-D7D99832-BE8E-4986-9BF5-F7A986F063FA.htm) (Project Flat Pattern and Slice Graphics to unfold the sketch geometry; the Cut panel's Cut Across Bend and Cut Normal toggles, Thickness as the default distance, an equation of it for a partial depth, the cut matching the profile in the flat pattern; the extents and directions of a cut that is not across bends) and [About Cuts on Sheet Metal Face or Bend](https://help.autodesk.com/cloudhelp/2020/ENU/Inventor-Help/files/GUID-45515288-BB66-47C0-8A0B-007E22112774.htm) (the cut is applied to the faces and bends under the sketch with the part flattened; Cut Normal projects the profile onto the faces and cuts square to them)
 - Bends between faces: [To Work with Bend Features on Sheet Metal](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-E56A1052-4527-4A2F-A9F0-68770B0871EE.htm) (a bend joins faces that do not touch, by a model edge picked on each; the double bend for faces that are parallel but not in one plane; the bend extension) and the [Bends Dialog Reference](https://help.autodesk.com/cloudhelp/2020/ENU/Inventor-Help/files/GUID-12D2A06D-0FAE-4BE2-83A3-3F76B00A6A0C.htm) (Edges, Bend Radius, the four Double Bend kinds and what each does to the faces, Flip Fixed Edge)
 - Fold, Corner Rip, contour flanges along edges and Cut Normal: [To Create a Sheet Metal Fold](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-CDC8A285-A9C4-4B2D-A8BB-0AC0A2F0BBBE.htm) (the bend line from edge to edge, the two flips, the three fold locations, the angle and radius), the Corner Rip shape of the [Corner Seam Dialog Reference](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-0645719B-26E3-4B4C-828B-F5A07A9274C3.htm) and [Rip corner seam on converted part edge](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-6CF24394-8FE9-4C47-A9EA-9C692CB98596.htm) (rip, cut away what is left, bend the inside edges, flatten), [To Work with Contour Flanges](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-C28B79F7-9CC6-4A5A-A50B-C82B9B90B1A8.htm) (a profile run along edges of a face), and Cut Normal in the pages on cuts above. The help does not say which wall an overlap keeps when a corner is ripped by one edge; in Tenon it is settled by the names of the two faces, and the two overlaps are there to be tried
+- Part features, the browser, assemblies (read 2026-10-16): the [Extrude dialog box](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-4BBB5048-E351-49EC-9041-B82A562CD9BA.htm) and [About Sketched Features](https://help.autodesk.com/cloudhelp/2025/ENU/Inventor-Help/files/GUID-5A2D77F1-1A36-4E6C-A1C4-4F111CBE7650.htm) (To, To Next, Between, the farthest face by default), the [Hole dialog box](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-13509CAE-15E8-4F3E-B267-B32E5BFB45F4.htm) and [Hole features](https://help.autodesk.com/cloudhelp/2015/ENU/Inventor-Help/files/GUID-009A70C0-B7CF-428A-B7CF-DE506F8A306E.htm), [To Create Fillets](https://help.autodesk.com/cloudhelp/2018/ENU/Inventor-Help/files/GUID-590A8760-FFBB-41C8-8169-6B7002207884.htm), the [Rectangular pattern dialog box](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-C1A1FF2B-082E-4D50-911E-10343611F276.htm), the [Work planes reference](https://help.autodesk.com/cloudhelp/2015/ENU/Inventor-Help/files/GUID-0B495A4A-C067-4E81-AA69-D840686D8020.htm), [About Deleting and Suppressing Features](https://help.autodesk.com/cloudhelp/2026/ENU/Inventor-Help/files/GUID-C6A19638-C241-4E35-92D5-6C8D3D78B1C6.htm) (the Delete Features box and its three ticks), [To Place Mate or Flush Constraints in Assemblies](https://help.autodesk.com/cloudhelp/2022/ENU/Inventor-Help/files/GUID-0F500089-4F69-41C5-AFE8-B58AC9E8E15E.htm) and the [Place Constraint Reference](https://help.autodesk.com/cloudhelp/2020/ENU/Inventor-Help/files/GUID-EBD2C784-0E71-452A-B5F2-22738D22D45A.htm) (Mate's two solutions), and the [Create Joints Reference](https://help.autodesk.com/cloudhelp/2024/ENU/Inventor-Help/files/GUID-6AA68E8F-7C97-4806-8483-3941DE915E70.htm)
 - The Sketch tab's panels (Create, Modify, Pattern, Constrain, Format), Project Geometry and the
   Sketch page of Application Options are from the same help's pages on sketch commands and
   options; they are not linked one by one here.

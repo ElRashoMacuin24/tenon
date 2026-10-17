@@ -88,7 +88,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `feature.update` | Edit Feature | feature (id), kind: the feature definition as in model.tree / the file format; equations: {value field: equation} (e.g. {"/extent/distance": "d0 * 2"}) | yes |
 | `feature.rename` | Rename Feature | feature, name | yes |
 | `feature.suppress` | Suppress | feature, suppressed (default true) | yes |
-| `feature.delete` | Delete Feature | feature | yes |
+| `feature.delete` | Delete Feature | feature; consumed (default false): the sketches it is made from that nothing else uses go too; dependents (default false): the features that use it go too, else it is refused while any does. Returns the features `deleted` | yes |
 | `feature.end_of_part` | Move End of Part | before: the feature the marker goes just above (it and later ones are rolled back); omit or null for the end | yes |
 | `feature.move` | Reorder Feature | feature; before: the feature it goes just above (omit or null: last, above the End of Part); sketches only it uses go along | yes |
 | `edit.undo` | Undo | none | no |

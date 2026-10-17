@@ -505,6 +505,44 @@ impl Workbench {
                 return true;
             }
         }
+        // Extrude To: a work plane, or a flat face of the part, clicked is where it goes.
+        if matches!(&self.panel, Some(Panel::Extrude(e)) if e.extent == crate::panels::ExtentChoice::To) {
+            if let Some(pos) = resp.hover_pos()
+                && let Some((id, _)) = self.work_at(pos, rect, true, false)
+            {
+                self.view.hover = None;
+                self.view.work_hover = Some(id);
+                if resp.clicked() {
+                    self.pick_reference(Reference::Work(id));
+                }
+                return true;
+            }
+            let (meshes, tree) = (self.scene.placed(), self.body_tree());
+            let flat = resp.hover_pos().and_then(|p| {
+                let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+                let (o, d) = self.view.camera.ray(x, y, w, h);
+                let f = pick_face_in(tree.as_deref(), &meshes, o, d)?;
+                let planar = self
+                    .scene
+                    .bodies
+                    .get(f.body)
+                    .and_then(|b| b.faces.get(f.face as usize))
+                    .is_some_and(|x| matches!(x.1.surface, SurfaceKind::Plane { .. }));
+                planar
+                    .then_some(Pick::Face { body: f.body, face: f.face })
+                    .filter(|p| matches!(p, Pick::Face { body, face } if self.face_ref_of(*body, *face).is_some()))
+            });
+            self.view.hover = flat;
+            if let Some(Pick::Face { body, face }) = flat {
+                if resp.clicked()
+                    && let Some(r) = self.face_ref_of(body, face)
+                    && let Some(Panel::Extrude(e)) = &mut self.panel
+                {
+                    e.to = Some(tenon_model::PlaneRef::Face(r));
+                }
+                return true;
+            }
+        }
         if matches!(
             self.panel,
             Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Sweep(_) | Panel::Coil(_) | Panel::SheetFace(_) | Panel::SheetCut(_))

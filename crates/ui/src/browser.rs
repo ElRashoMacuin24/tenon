@@ -451,7 +451,15 @@ impl Workbench {
                 if matches!(&self.mode, Mode::Sketch(s) if s.feature == id) {
                     self.mode = Mode::Model;
                 }
-                self.exec("feature.delete", json!({ "feature": id.0 })).map(|_| ())
+                // With sketches it is made from, or features that use it, the Delete Features
+                // box says what goes with it (DEC-103); else it goes at once.
+                let plan = self.document().deletion(id);
+                if plan.consumed.is_empty() && plan.dependents.is_empty() {
+                    self.exec("feature.delete", json!({ "feature": id.0 })).map(|_| ())
+                } else {
+                    self.panel = Some(Panel::DeleteFeatures { feature: id, consumed: true, dependents: true });
+                    Ok(())
+                }
             }
             BrowserAction::Pick(id) => {
                 // A work feature goes into a plane or axis selector; others into pattern features.

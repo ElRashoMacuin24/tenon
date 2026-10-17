@@ -425,6 +425,11 @@ static SCHEMAS: &[C] = &[
             opt("backward", Length, "with `distance`: a second distance the other way"),
             opt("symmetric", Length, "the total distance, half each way"),
             opt("through_all", Bool, "through the whole part"),
+            opt(
+                "to",
+                PLANE,
+                "as far as a plane: a planar face, a work plane as {\"work\": id}, or an origin plane, on whichever side of the sketch it is",
+            ),
             opt("reverse", Bool, "the other way from the sketch (default false)"),
             OPERATION,
             REGIONS,
@@ -685,7 +690,14 @@ static SCHEMAS: &[C] = &[
     C::new("feature.update", &[FEATURE, req("kind", Object, "the feature's whole definition, as model.tree lists it"), EQUATIONS]),
     C::new("feature.rename", &[FEATURE, req("name", Text, "its new name")]),
     C::new("feature.suppress", &[FEATURE, opt("suppressed", Bool, "true to suppress (default), false to bring it back")]),
-    C::new("feature.delete", &[FEATURE]),
+    C::new(
+        "feature.delete",
+        &[
+            FEATURE,
+            opt("consumed", Bool, "the sketches it is made from that nothing else uses are deleted too (default false)"),
+            opt("dependents", Bool, "the features that use it are deleted too; without, it is refused while any does (default false)"),
+        ],
+    ),
     C::new("feature.end_of_part", &[opt("before", Id, "the feature the marker goes above (default: the end, with every feature in)")]),
     C::new("feature.move", &[FEATURE, opt("before", Id, "the feature it goes above (default: to the end)")]),
     C::new("edit.undo", &[]),

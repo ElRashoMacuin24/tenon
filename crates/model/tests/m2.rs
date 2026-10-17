@@ -938,3 +938,91 @@ fn kernel_failures_are_explained_in_plain_words_and_never_pass_silently() {
     regenerates(&mut s, &mut k);
     assert!(approx(volume(&mut s, &mut k), 20.0 * 20.0 * 10.0 - 16.0 * 16.0 * 8.0), "{}", volume(&mut s, &mut k));
 }
+
+#[test]
+fn a_feature_is_deleted_with_what_it_is_made_from_and_what_uses_it() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (sk, ex, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    // A boss on the block's top face: its sketch uses the block's face.
+    let top_ref = run(&mut s, &mut k, "model.face_ref", json!({ "origin": top(ex) }));
+    let sk2 = run(&mut s, &mut k, "sketch.create", json!({ "face": top_ref }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk2, "cx": 20, "cy": 10, "r": 4 }));
+    let boss = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "distance": 5 }))["feature"].as_u64().unwrap();
+    regenerates(&mut s, &mut k);
+    let id = |n: u64| tenon_model::FeatureId(u32::try_from(n).unwrap());
+    // What deleting the block takes: the boss and its sketch use it; its own sketch is used by
+    // nothing else.
+    let plan = s.document().deletion(id(ex));
+    assert_eq!(plan.dependents, vec![id(sk2), id(boss)]);
+    assert_eq!(plan.consumed, vec![id(sk)]);
+    // Without its dependents it is refused, saying who uses it; nothing is deleted.
+    let e = s.exec("feature.delete", &json!({ "feature": ex }), Some(&mut k)).unwrap_err().to_string();
+    assert!(e.contains("Extrusion1 is used by Sketch2, Extrusion2"), "{e}");
+    assert_eq!(s.document().features().len(), 4);
+    // With them, and with its sketch: all four in one step, and one undo brings them back.
+    let r = run(&mut s, &mut k, "feature.delete", json!({ "feature": ex, "consumed": true, "dependents": true }));
+    assert_eq!(r["deleted"], json!([sk, ex, sk2, boss]));
+    assert!(s.document().features().is_empty());
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    assert_eq!(s.document().features().len(), 4);
+    regenerates(&mut s, &mut k);
+    // The boss alone, with its sketch: the block and its sketch stay.
+    let r = run(&mut s, &mut k, "feature.delete", json!({ "feature": boss, "consumed": true }));
+    assert_eq!(r["deleted"], json!([sk2, boss]));
+    assert!(approx(volume(&mut s, &mut k), 8000.0));
+    // A sketch in use is not deleted without what uses it.
+    let e = s.exec("feature.delete", &json!({ "feature": sk }), Some(&mut k)).unwrap_err().to_string();
+    assert!(e.contains("Sketch1 is used by Extrusion1"), "{e}");
+}
+
+#[test]
+fn an_extrusion_goes_as_far_as_a_face_or_a_plane() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    // A post drawn 50 above the block, down to its top face: 40 long, whichever way it is.
+    let above = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 50 }))["feature"].as_u64().unwrap();
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": above }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 20, "cy": 10, "r": 5 }));
+    let top_ref = run(&mut s, &mut k, "model.face_ref", json!({ "origin": top(ex) }));
+    let post = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "to": top_ref }))["feature"].as_u64().unwrap();
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 8000.0 + PI * 25.0 * 40.0), "{}", volume(&mut s, &mut k));
+    // It follows the face: the block made 15 tall, the post is 35.
+    let tree = run(&mut s, &mut k, "model.tree", json!({}));
+    assert!(tree["features"][4]["depends_on"].as_array().unwrap().contains(&json!(ex)), "it uses the block: {tree}");
+    let blk = s.document().features()[1].id;
+    let mut kind = serde_json::to_value(&s.document().feature(blk).unwrap().kind).unwrap();
+    kind["extent"] = json!({ "distance": 15.0 });
+    run(&mut s, &mut k, "feature.update", json!({ "feature": blk.0, "kind": kind }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 12000.0 + PI * 25.0 * 35.0), "{}", volume(&mut s, &mut k));
+    run(&mut s, &mut k, "feature.delete", json!({ "feature": post, "consumed": true }));
+
+    // To a plane at an angle: a bar from 50 below, up to a plane tilted 30 degrees about X. Its
+    // end is cut along the plane: as long, at each y, as the plane is high there.
+    let tilt = run(&mut s, &mut k, "work.plane", json!({ "by": "angle", "base": "xy", "axis": "x", "angle": PI / 6.0 }))["feature"].as_u64().unwrap();
+    let below = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": -50 }))["feature"].as_u64().unwrap();
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": below }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 50, "y1": 10, "x2": 60, "y2": 20 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "to": { "work": tilt }, "operation": "new_body" }));
+    regenerates(&mut s, &mut k);
+    let bar = volume(&mut s, &mut k) - 12000.0;
+    let rise = (PI / 6.0).tan() * (20.0 * 20.0 - 10.0 * 10.0) / 2.0;
+    assert!(approx(bar, 10.0 * (rise + 500.0)) || approx(bar, 10.0 * (500.0 - rise)), "{bar}");
+    // Its end is a face named as an extrusion's end, for features after it.
+    let faces = run(&mut s, &mut k, "model.faces", json!({ "body": 1 }));
+    let last = s.document().features().last().unwrap().id.0;
+    let ends = faces["faces"].as_array().unwrap().iter().filter(|f| f["name"]["type"] == "cap" && f["name"]["feature"] == last).count();
+    assert_eq!(ends, 2, "a start and an end: {faces}");
+
+    // A plane that crosses the profile, or runs along the extrusion, is refused in words.
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 50, "y1": -10, "x2": 60, "y2": 10 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "to": { "work": tilt } }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("crosses the sketch"), "{r}");
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "to": "yz" }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("runs along the extrusion"), "{r}");
+}

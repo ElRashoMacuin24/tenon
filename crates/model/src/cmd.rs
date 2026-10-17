@@ -1965,7 +1965,15 @@ fn add_feature(s: &mut Session, kind: FeatureKind, p: &Value) -> CmdResult {
 
 fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
-    let extent = if arg(p, "through_all").and_then(Value::as_bool).unwrap_or(false) {
+    let extent = if arg(p, "to").is_some() {
+        let plane = plane_value(p, "to")?;
+        if let PlaneRef::Work(id) = plane
+            && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
+        {
+            return Err(format!("{id} is not a work plane").into());
+        }
+        ExtrudeExtent::To(plane)
+    } else if arg(p, "through_all").and_then(Value::as_bool).unwrap_or(false) {
         ExtrudeExtent::ThroughAll
     } else if let Some(d) = opt_num(p, "symmetric")? {
         ExtrudeExtent::Symmetric(d)
@@ -2452,7 +2460,25 @@ fn feature_move(s: &mut Session, p: &Value) -> CmdResult {
 
 fn feature_delete(s: &mut Session, p: &Value) -> CmdResult {
     let id = feature_id(p)?;
-    s.edit(|d| d.remove(id).map(|_| json!({})).map_err(CmdError))
+    let flag = |k: &str| arg(p, k).and_then(Value::as_bool).unwrap_or(false);
+    let (consumed, dependents) = (flag("consumed"), flag("dependents"));
+    s.edit(|d| {
+        let plan = d.deletion(id);
+        if !dependents && !plan.dependents.is_empty() {
+            let name = |f: &FeatureId| d.feature(*f).map_or_else(|| f.to_string(), |x| x.name.clone());
+            let users: Vec<String> = plan.dependents.iter().map(name).collect();
+            return Err(CmdError(format!("{} is used by {}: delete them with it (`dependents`), or change them first", name(&id), users.join(", "))));
+        }
+        let mut ids = vec![id];
+        if dependents {
+            ids.extend(&plan.dependents);
+        }
+        if consumed {
+            ids.extend(&plan.consumed);
+        }
+        let gone = d.remove_all(&ids).map_err(CmdError)?;
+        Ok(json!({ "deleted": gone.iter().map(|f| f.id.0).collect::<Vec<_>>() }))
+    })
 }
 
 fn edit_undo(s: &mut Session, _: &Value) -> CmdResult {
@@ -3902,7 +3928,13 @@ static COMMANDS: &[CommandSpec] = &[
     ),
     doc_cmd!("feature.rename", "Rename Feature", "feature, name", true, feature_rename),
     doc_cmd!("feature.suppress", "Suppress", "feature, suppressed (default true)", true, feature_suppress),
-    doc_cmd!("feature.delete", "Delete Feature", "feature", true, feature_delete),
+    doc_cmd!(
+        "feature.delete",
+        "Delete Feature",
+        "feature; consumed (default false): the sketches it is made from that nothing else uses go too; dependents (default false): the features that use it go too, else it is refused while any does. Returns the features `deleted`",
+        true,
+        feature_delete
+    ),
     doc_cmd!(
         "feature.end_of_part",
         "Move End of Part",

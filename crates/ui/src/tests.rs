@@ -2516,3 +2516,108 @@ fn a_part_is_started_from_a_standard_one_in_the_library() {
     assert_eq!(wb.document().name, "Deep Groove Ball Bearing", "not replaced until the question is answered");
     assert!(d.texts().iter().any(|t| t.contains("Save")), "{:?}", d.texts());
 }
+
+#[test]
+fn deleting_a_feature_says_what_goes_with_it() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    let ex = wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap()["feature"].as_u64().unwrap();
+    // A boss on its top face: its sketch uses the block.
+    let top = wb.exec("model.face_ref", json!({ "origin": { "type": "cap", "feature": ex, "end": "end" } })).unwrap();
+    wb.create_sketch(json!({ "face": top })).unwrap();
+    let f2 = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": f2.0, "cx": 20, "cy": 10, "r": 4 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f2.0, "distance": 5 })).unwrap();
+    d.settle(&mut wb);
+    let names = |wb: &Workbench| wb.document().features().iter().map(|f| f.name.clone()).collect::<Vec<_>>();
+    let menu = |d: &mut Driver, wb: &mut Workbench, row: &str| {
+        let at = browser_row(d, row).center();
+        d.frame(wb, vec![egui::Event::PointerMoved(at)]);
+        d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, true)]);
+        d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, false)]);
+        d.frame(wb, vec![]);
+        let item = d.text_pos("Delete").expect("Delete in the menu");
+        d.click(wb, item);
+        d.frame(wb, vec![]);
+    };
+
+    // Delete on the block: the box says its sketch goes, and the boss and its sketch, which
+    // use it. Without them it cannot go, and says so.
+    menu(&mut d, &mut wb, "Extrusion1");
+    assert!(matches!(wb.panel, Some(Panel::DeleteFeatures { consumed: true, dependents: true, .. })), "{}", wb.status());
+    let texts = d.texts();
+    assert!(texts.iter().any(|t| t == "    Sketch1") && texts.iter().any(|t| t == "    Sketch2, Extrusion2"), "{texts:?}");
+    d.click(&mut wb, pressable(&d, "tn_delete_dependents"));
+    d.click(&mut wb, pressable(&d, "tn_delete_ok"));
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("cannot go while Sketch2, Extrusion2 use it"), "{}", wb.status());
+    assert_eq!(names(&wb).len(), 4);
+    // Ticked again: all four go, in one step.
+    d.click(&mut wb, pressable(&d, "tn_delete_dependents"));
+    d.click(&mut wb, pressable(&d, "tn_delete_ok"));
+    d.settle(&mut wb);
+    assert!(names(&wb).is_empty() && wb.panel.is_none(), "{:?}", names(&wb));
+    assert!(wb.status().contains("Deleted Extrusion1 and 3 more"), "{}", wb.status());
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    d.settle(&mut wb);
+    assert_eq!(names(&wb), ["Sketch1", "Extrusion1", "Sketch2", "Extrusion2"]);
+
+    // The boss, keeping its sketch: the sketch stays, to be used again.
+    menu(&mut d, &mut wb, "Extrusion2");
+    d.click(&mut wb, pressable(&d, "tn_delete_consumed"));
+    d.click(&mut wb, pressable(&d, "tn_delete_ok"));
+    d.settle(&mut wb);
+    assert_eq!(names(&wb), ["Sketch1", "Extrusion1", "Sketch2"]);
+    assert!((volume(&wb) - 8000.0).abs() < 1e-6, "{}", volume(&wb));
+}
+
+#[test]
+fn an_extrusion_is_taken_as_far_as_a_face_clicked() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    // A post drawn on a work plane 30 above.
+    let wp = wb.exec("work.plane", json!({ "base": "xy", "distance": 30 })).unwrap()["feature"].as_u64().unwrap();
+    wb.create_sketch(json!({ "work_plane": wp })).unwrap();
+    let f2 = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": f2.0, "cx": 30, "cy": 10, "r": 4 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    // Extrude, Extents: To. Until a face is picked it shows the distance; the face clicked is
+    // where it goes, down to the block.
+    d.tap(&mut wb, egui::Key::E);
+    d.settle(&mut wb);
+    d.click(&mut wb, pressable(&d, "tn_extents"));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_extent_to"));
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "Click a face or plane"), "{:?}", d.texts());
+    let face = on_screen(&wb, Vec3::new(5.0, 5.0, 10.0));
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(face)]);
+    d.click(&mut wb, face);
+    d.settle(&mut wb);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!("no extrude panel: {}", wb.status()) };
+    assert!(matches!(&p.to, Some(tenon_model::PlaneRef::Face(_))), "{:?}", p.to);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let post = PI * 16.0 * 20.0;
+    assert!((volume(&wb) - (8000.0 + post)).abs() < 1e-6, "{}", volume(&wb));
+    // Opened again, it says To and names the face.
+    let ex = wb.document().features().last().unwrap().id;
+    wb.edit_feature(ex).unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Extrude(p)) = wb.panel.clone() else { panic!() };
+    assert_eq!(p.extent, crate::panels::ExtentChoice::To);
+    assert!(d.texts().iter().any(|t| t.contains("Extrusion1")), "{:?}", d.texts());
+}

@@ -2157,6 +2157,25 @@
             "type": "boolean",
             "description": "through the whole part"
           },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "xy",
+                  "yz",
+                  "xz"
+                ]
+              },
+              {
+                "$ref": "#/$defs/face_ref"
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "as far as a plane: a planar face, a work plane as {\"work\": id}, or an origin plane, on whichever side of the sketch it is"
+          },
           "reverse": {
             "type": "boolean",
             "description": "the other way from the sketch (default false)"
@@ -3662,7 +3681,7 @@
       "id": "feature.delete",
       "label": "Delete Feature",
       "undoable": true,
-      "description": "feature",
+      "description": "feature; consumed (default false): the sketches it is made from that nothing else uses go too; dependents (default false): the features that use it go too, else it is refused while any does. Returns the features `deleted`",
       "params": {
         "type": "object",
         "properties": {
@@ -3670,6 +3689,14 @@
             "type": "integer",
             "minimum": 0,
             "description": "the feature's id, as model.tree lists it"
+          },
+          "consumed": {
+            "type": "boolean",
+            "description": "the sketches it is made from that nothing else uses are deleted too (default false)"
+          },
+          "dependents": {
+            "type": "boolean",
+            "description": "the features that use it are deleted too; without, it is refused while any does (default false)"
           }
         },
         "additionalProperties": false,

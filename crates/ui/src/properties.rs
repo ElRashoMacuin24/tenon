@@ -587,10 +587,11 @@ impl Workbench {
                             });
                         });
                         section(ui, "Behavior", true, |ui| {
-                            let through = p.extent == ExtentChoice::ThroughAll;
+                            let through = p.extent != ExtentChoice::Distance;
+                            let to = p.extent == ExtentChoice::To;
                             let dirs = [
                                 (Glyph::Default, "Default direction", true, Direction::Default),
-                                (Glyph::Flipped, "Flipped", true, Direction::Flipped),
+                                (Glyph::Flipped, "Flipped", !to, Direction::Flipped),
                                 (Glyph::Symmetric, "Symmetric: half each way", !through, Direction::Symmetric),
                                 (Glyph::Asymmetric, "Asymmetric: two distances", !through, Direction::Asymmetric),
                             ];
@@ -603,8 +604,12 @@ impl Workbench {
                                 }
                                 ui.end_row();
                                 ui.label("Extents");
-                                egui::ComboBox::from_id_salt("tn_props_extents")
-                                    .selected_text(if through { "Through All" } else { "Distance" })
+                                let extents = egui::ComboBox::from_id_salt("tn_props_extents")
+                                    .selected_text(match p.extent {
+                                        ExtentChoice::Distance => "Distance",
+                                        ExtentChoice::ThroughAll => "Through All",
+                                        ExtentChoice::To => "To",
+                                    })
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(&mut p.extent, ExtentChoice::Distance, "Distance");
                                         if ui.selectable_value(&mut p.extent, ExtentChoice::ThroughAll, "Through All").clicked()
@@ -612,10 +617,26 @@ impl Workbench {
                                         {
                                             p.direction = Direction::Default;
                                         }
-                                        ui.add_enabled(false, egui::Button::selectable(false, "To (later)"));
+                                        // (It goes to the plane on whichever side it is: no direction to choose.)
+                                        let r = ui.selectable_value(&mut p.extent, ExtentChoice::To, "To");
+                                        crate::drawing::remember(ui, "tn_extent_to", r.rect);
+                                        if r.clicked() {
+                                            p.direction = Direction::Default;
+                                        }
+                                        ui.add_enabled(false, egui::Button::selectable(false, "To Next (later)"));
                                         ui.add_enabled(false, egui::Button::selectable(false, "Between (later)"));
                                     });
+                                crate::drawing::remember(ui, "tn_extents", extents.response.rect);
                                 ui.end_row();
+                                if to {
+                                    ui.label("To");
+                                    let said = match &p.to {
+                                        Some(plane) => egui::RichText::new(self.plane_name(plane)),
+                                        None => egui::RichText::new("Click a face or plane").color(t.accent),
+                                    };
+                                    ui.label(said).on_hover_text("A flat face of the part, a work plane, or an origin plane in the browser");
+                                    ui.end_row();
+                                }
                                 if p.extent == ExtentChoice::Distance {
                                     ui.label(if p.direction == Direction::Asymmetric { "Distance A" } else { "Distance" });
                                     enter |= eq_value_field(

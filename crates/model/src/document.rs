@@ -117,6 +117,9 @@ pub enum ExtrudeExtent {
     },
     /// Through the whole current body (for cuts).
     ThroughAll,
+    /// As far as a plane: a planar face, a work plane or an origin plane, on whichever side of
+    /// the sketch it is (DEC-104). At an angle to the sketch, the end is cut along the plane.
+    To(PlaneRef),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -142,7 +145,7 @@ impl Extrude {
         if !(taper.is_finite() && taper.abs() <= MAX_DRAFT_ANGLE) {
             return Err("the taper must be at most 85 degrees either way".into());
         }
-        if taper != 0.0 && !matches!(self.extent, ExtrudeExtent::Distance(_) | ExtrudeExtent::ThroughAll) {
+        if taper != 0.0 && !matches!(self.extent, ExtrudeExtent::Distance(_) | ExtrudeExtent::ThroughAll | ExtrudeExtent::To(_)) {
             return Err(
                 "A tapered extrusion goes one way from its sketch: use one distance or Through All, or taper each side as an extrusion of its own."
                     .into(),
@@ -906,7 +909,10 @@ impl FeatureKind {
             FeatureKind::Sketch { plane, projections, .. } => {
                 plane.feature().into_iter().chain(projections.iter().flat_map(|p| p.edge.features())).collect()
             }
-            FeatureKind::Extrude(e) => vec![e.sketch],
+            FeatureKind::Extrude(e) => match &e.extent {
+                ExtrudeExtent::To(plane) => std::iter::once(e.sketch).chain(plane.feature()).collect(),
+                _ => vec![e.sketch],
+            },
             FeatureKind::Revolve(r) => match r.axis {
                 AxisRef::Work(a) => vec![r.sketch, a],
                 _ => vec![r.sketch],
@@ -1060,6 +1066,17 @@ impl Default for Document {
             studies: Vec::new(),
         }
     }
+}
+
+/// What deleting a feature takes with it (see [`Document::deletion`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Deletion {
+    /// The features that use it, and those that use them in turn, in the tree's order. A
+    /// feature cannot be deleted without them.
+    pub dependents: Vec<FeatureId>,
+    /// The sketches it and its dependents are made from that nothing else uses, in the tree's
+    /// order: Inventor deletes them with it unless told not to.
+    pub consumed: Vec<FeatureId>,
 }
 
 impl Document {
@@ -1256,6 +1273,60 @@ impl Document {
     }
 
     /// Removes a feature that nothing depends on.
+    /// What deleting `id` would take with it, as Inventor's Delete Features box offers it
+    /// (DEC-103).
+    pub fn deletion(&self, id: FeatureId) -> Deletion {
+        // What uses it, and what uses that, in turn.
+        let mut gone: std::collections::BTreeSet<FeatureId> = std::iter::once(id).collect();
+        loop {
+            let more: Vec<FeatureId> = self
+                .features
+                .iter()
+                .filter(|f| !gone.contains(&f.id) && f.kind.depends_on().iter().any(|d| gone.contains(d)))
+                .map(|f| f.id)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            gone.extend(more);
+        }
+        let dependents = self.features.iter().filter(|f| f.id != id && gone.contains(&f.id)).map(|f| f.id).collect();
+        // The sketches those are made from, that nothing else uses.
+        let consumed = self
+            .features
+            .iter()
+            .filter(|s| !gone.contains(&s.id) && matches!(s.kind, FeatureKind::Sketch { .. }))
+            .filter(|s| {
+                let mut users = self.features.iter().filter(|u| u.kind.depends_on().contains(&s.id)).peekable();
+                users.peek().is_some() && users.all(|u| gone.contains(&u.id))
+            })
+            .map(|s| s.id)
+            .collect();
+        Deletion { dependents, consumed }
+    }
+
+    /// Deletes features, the later first (what uses a feature comes after it). Refused, with
+    /// nothing deleted, when one is used by a feature that stays.
+    pub fn remove_all(&mut self, ids: &[FeatureId]) -> Result<Vec<Feature>, String> {
+        let mut order: Vec<(usize, FeatureId)> =
+            ids.iter().map(|id| self.index_of(*id).map(|i| (i, *id)).ok_or_else(|| format!("{id} does not exist"))).collect::<Result<_, _>>()?;
+        order.sort_by_key(|o| std::cmp::Reverse(o.0));
+        order.dedup();
+        let before = self.clone();
+        let mut out = Vec::new();
+        for (_, id) in order {
+            match self.remove(id) {
+                Ok(f) => out.push(f),
+                Err(e) => {
+                    *self = before;
+                    return Err(e);
+                }
+            }
+        }
+        out.reverse();
+        Ok(out)
+    }
+
     pub fn remove(&mut self, id: FeatureId) -> Result<Feature, String> {
         let users: Vec<&str> = self.features.iter().filter(|f| f.kind.depends_on().contains(&id)).map(|f| f.name.as_str()).collect();
         if !users.is_empty() {

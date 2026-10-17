@@ -383,6 +383,13 @@ impl Workbench {
             }
             Some(Panel::Pattern(p)) => set_pattern_ref(p, plane, axis),
             Some(Panel::Draft(_) | Panel::Split(_)) => plane.is_some_and(|p| self.bodies_plane(p)),
+            Some(Panel::Extrude(e)) if e.extent == crate::panels::ExtentChoice::To => match plane {
+                Some(p) => {
+                    e.to = Some(p);
+                    true
+                }
+                None => false,
+            },
             Some(Panel::Primitive(_)) => plane.is_some_and(|p| self.primitive_on(p)),
             Some(Panel::Revolve(_) | Panel::Coil(_)) => match axis {
                 Some(AxisSel::Origin(o)) => self.set_panel_axis(crate::panels::AxisChoice::Origin(o)),

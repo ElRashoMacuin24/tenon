@@ -107,6 +107,13 @@ Text uses one font, DejaVu Sans, built in so that a part looks the same on every
 
 ## Features
 
+An extrusion goes a **Distance**, **Through All**, or **To** a flat face or plane: choose To
+under Extents, then click the face, a work plane, or a plane in the browser.
+
+To delete a feature, right-click it in the browser and choose **Delete**. When sketches it is
+made from, or features that use it, would be left, the Delete Features box lists them; they
+go with it unless you untick them.
+
 Extrude, Revolve, Sweep, Loft, Coil, Rib; Hole (simple, counterbored, countersunk), Thread,
 Fillet, Chamfer, Shell, Draft, Split, Combine; rectangular and circular patterns, Mirror;
 work planes, axes and points; Box, Cylinder, Sphere and Torus. Every one opens its panel

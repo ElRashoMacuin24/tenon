@@ -297,6 +297,9 @@ Field values:
   - `{ symmetric = d }`
   - `{ two_sided = { forward = a, backward = b } }`
   - `"through_all"`
+  - `{ to = <plane> }`: as far as a plane, on whichever side of the sketch it is (DEC-104); the
+    plane written as a sketch's is: `{ origin = "XY" }`, `{ face = <face reference> }` or
+    `{ work = <work plane id> }`
 - **`operation`:** `"join"`, `"cut"`, `"new_body"` or `"intersect"`.
 - **Revolve `angle`:** `"full"`, `{ angle = a }` or `{ symmetric = a }`.
 - **Chamfer `size`:**

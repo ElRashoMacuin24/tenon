@@ -114,13 +114,21 @@ fn constrain_and_joint_by_clicking_faces_in_the_view() {
     let cube0 = placement(&wb, 2);
     assert!(cube0.origin().x > 40.0, "placed beside the base: {cube0:?}");
 
-    // C opens Constrain. Flush, 5 apart: click the base's top, then the cube's top.
+    // C opens Constrain, on Mate. Its second solution, Flush, and 5 typed as the offset; then
+    // click the base's top, and the cube's top.
     d.tap(&mut wb, egui::Key::C);
-    assert!(matches!(&wb.panel, Some(Panel::Asm(p)) if p.tool == AsmTool::Constrain));
-    if let Some(Panel::Asm(p)) = &mut wb.panel {
-        p.constraint = ConstraintType::Flush;
-        p.offset = 5.0;
-    }
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(&wb.panel, Some(Panel::Asm(p)) if p.tool == AsmTool::Constrain && p.constraint == ConstraintType::Mate));
+    d.click(&mut wb, crate::tests::pressable(&d, "tn_asm_solution_flush"));
+    crate::tests::type_into(&mut d, &mut wb, "tn_asm_offset", "5");
+    let label = d.text_pos("Offset").expect("the Offset label");
+    d.click(&mut wb, label);
+    d.frame(&mut wb, vec![]);
+    assert!(
+        matches!(&wb.panel, Some(Panel::Asm(p)) if p.constraint == ConstraintType::Flush && p.offset == 5.0),
+        "{:?}",
+        wb.panel.as_ref().map(|_| ())
+    );
     let at = on_screen(&wb, Vec3::new(20.0, 20.0, 10.0));
     d.click(&mut wb, at);
     let c = cube0.origin();

@@ -1809,7 +1809,7 @@ pub(crate) fn button(ui: &mut Ui, label: &str, key: &str) -> egui::Response {
 }
 
 /// A checkbox; in tests its rectangle is kept under `key`, as for [`button`].
-fn check(ui: &mut Ui, on: &mut bool, label: &str, key: &str) -> egui::Response {
+pub(crate) fn check(ui: &mut Ui, on: &mut bool, label: &str, key: &str) -> egui::Response {
     let r = ui.checkbox(on, label);
     remember(ui, key, r.rect);
     r

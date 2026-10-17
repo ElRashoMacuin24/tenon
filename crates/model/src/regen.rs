@@ -25,6 +25,19 @@ use crate::naming::{
     names_of_tagged, resolve, resolve_edge,
 };
 
+/// Points of a profile curve enough to find how far it reaches in any direction: a line's ends,
+/// points round an arc or circle, a spline's poles (it lies within them).
+fn curve_points(c: &Curve2) -> Vec<Vec2> {
+    match c {
+        Curve2::Line { start, end } => vec![*start, *end],
+        Curve2::Arc { center, radius, start_angle, end_angle } => {
+            (0..=32).map(|i| Vec2::polar(*center, *radius, start_angle + (end_angle - start_angle) * f64::from(i) / 32.0)).collect()
+        }
+        Curve2::Circle { center, radius } => (0..32).map(|i| Vec2::polar(*center, *radius, std::f64::consts::TAU * f64::from(i) / 32.0)).collect(),
+        Curve2::BSpline { poles, .. } => poles.clone(),
+    }
+}
+
 /// A solid body of the part and the names of its faces.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Body {
@@ -1127,7 +1140,41 @@ impl<'a> Ctx<'a> {
         let sketch: &Sketch = &held;
         let profile = profile_of(sketch, frame, &e.regions)?;
         let sign = if e.reverse { -1.0 } else { 1.0 };
+        // As far as a plane, on whichever side of the sketch it is: square to the sketch, the
+        // distance to it; at an angle, a little past its farthest reach, and the end then cut
+        // along the plane (`trim`).
+        let mut trim: Option<Frame> = None;
+        let mut to: Option<f64> = None;
+        if let ExtrudeExtent::To(plane) = &e.extent {
+            let target = self.plane_frame(plane)?;
+            let (z, n) = (frame.z(), target.z());
+            let along = z.dot(n);
+            if along.abs() < 1e-6 {
+                return Err("the plane it goes to runs along the extrusion: it never reaches it. Pick a face or plane across it".into());
+            }
+            // How far each point of the profile goes along the sketch's normal to the plane.
+            let reach: Vec<f64> = profile
+                .regions
+                .iter()
+                .flat_map(|r| &r.outer.curves)
+                .flat_map(|c| curve_points(&c.curve))
+                .map(|q| (target.origin() - frame.plane_point(q)).dot(n) / along)
+                .collect();
+            let (lo, hi) = reach.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| (lo.min(*t), hi.max(*t)));
+            let eps = tenon_geom::tol::LINEAR;
+            if !(lo.is_finite() && hi.is_finite()) || (lo < eps && hi > -eps) {
+                return Err("the plane it goes to crosses the sketch or lies in it: pick a face or plane wholly to one side of the profile".into());
+            }
+            let far = if lo > 0.0 { hi } else { lo };
+            if (1.0 - along.abs()) > 1e-9 {
+                trim = Some(target);
+                to = Some(far + far.signum() * (1.0 + far.abs() * 0.1));
+            } else {
+                to = Some(far);
+            }
+        }
         let extent = match &e.extent {
+            ExtrudeExtent::To(_) => Extent::Distance(to.ok_or("no plane to go to")?),
             ExtrudeExtent::Distance(d) => Extent::Distance(sign * d),
             ExtrudeExtent::Symmetric(d) => Extent::Symmetric(*d),
             ExtrudeExtent::TwoSided { forward, backward } => {
@@ -1152,7 +1199,11 @@ impl<'a> Ctx<'a> {
         let names = names_of_sweep(&op.history, id, faces);
         let taper = e.taper.unwrap_or(0.0);
         if taper == 0.0 {
-            return self.combine(id, vec![(op.shape, names)], e.operation);
+            let (shape, names) = match &trim {
+                Some(plane) => self.trim_to_plane(id, op.shape, names, plane, &frame)?,
+                None => (op.shape, names),
+            };
+            return self.combine(id, vec![(shape, names)], e.operation);
         }
         // Tapered: the straight solid's sides are tilted about the sketch plane, where they stay
         // put. Leaning in narrows the solid as it leaves the sketch.
@@ -1174,7 +1225,56 @@ impl<'a> Ctx<'a> {
         })();
         self.k.release(op.shape);
         let (shape, names) = tapered?;
+        let (shape, names) = match &trim {
+            Some(plane) => self.trim_to_plane(id, shape, names, plane, &frame)?,
+            None => (shape, names),
+        };
         self.combine(id, vec![(shape, names)], e.operation)
+    }
+
+    /// An extrusion run past a plane at an angle to its sketch, cut back along the plane: what is
+    /// on the sketch's side stays, and the face on the plane is its end cap. `shape` is let go.
+    fn trim_to_plane(
+        &mut self,
+        id: FeatureId,
+        shape: ShapeHandle,
+        names: Vec<Option<FaceOrigin>>,
+        plane: &Frame,
+        sketch: &Frame,
+    ) -> Result<(ShapeHandle, Vec<Option<FaceOrigin>>), Stop> {
+        let out = (|| -> Result<(ShapeHandle, Vec<Option<FaceOrigin>>), Stop> {
+            let bb = self.k.bounding_box(shape)?.ok_or("the extrusion is empty")?;
+            // The side of the plane the sketch is on, as deep as the extrusion goes: a square on
+            // the plane round the extrusion's middle.
+            let back = if (sketch.origin() - plane.origin()).dot(plane.z()) > 0.0 { 1.0 } else { -1.0 };
+            let size = (bb.max - bb.min).len() + 1.0;
+            let mid = bb.center() - plane.origin();
+            let (cx, cy) = (mid.dot(plane.x()), mid.dot(plane.y()));
+            let quad =
+                [Vec2::new(cx - size, cy - size), Vec2::new(cx + size, cy - size), Vec2::new(cx + size, cy + size), Vec2::new(cx - size, cy + size)];
+            let curves = (0..4).map(|i| TaggedCurve2 { tag: i as u64 + 1, curve: Curve2::Line { start: quad[i], end: quad[(i + 1) % 4] } }).collect();
+            let profile = Profile { frame: *plane, regions: vec![Region { outer: Loop { curves }, holes: vec![] }] };
+            let keep = self.k.extrude(&profile, &Extent::Distance(back * 2.0 * size), None)?;
+            let kept = (|| -> Result<(ShapeHandle, Vec<Option<FaceOrigin>>), Stop> {
+                // The slab's face on the plane is the extrusion's end; its other faces are cut away.
+                let faces = self.k.topology(keep.shape)?.faces;
+                let tool: Vec<Option<FaceOrigin>> = names_of_sweep(&keep.history, id, faces)
+                    .into_iter()
+                    .map(|n| {
+                        n.filter(|o| matches!(o, FaceOrigin::Cap { end: CapEnd::Start, .. }))
+                            .map(|_| FaceOrigin::Cap { feature: id, end: CapEnd::End })
+                    })
+                    .collect();
+                let body = Body { shape, names: names.clone(), created_by: id };
+                let piece =
+                    self.split_piece(BoolOp::Intersect, &body, keep.shape, &tool)?.ok_or("the plane it goes to leaves nothing of the extrusion")?;
+                Ok((piece.shape, piece.names))
+            })();
+            self.k.release(keep.shape);
+            kept
+        })();
+        self.k.release(shape);
+        out
     }
 
     fn revolve(&mut self, id: FeatureId, r: &Revolve) -> Result<(), Stop> {

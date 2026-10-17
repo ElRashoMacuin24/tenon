@@ -34,7 +34,8 @@ pub(crate) enum ConstraintType {
 }
 
 impl ConstraintType {
-    pub(crate) const ALL: [ConstraintType; 4] = [ConstraintType::Mate, ConstraintType::Flush, ConstraintType::Angle, ConstraintType::Insert];
+    /// The types the panel offers, as Inventor's Constrain does: Flush is Mate's second solution.
+    const TYPES: [ConstraintType; 3] = [ConstraintType::Mate, ConstraintType::Angle, ConstraintType::Insert];
     pub(crate) fn label(self) -> &'static str {
         match self {
             ConstraintType::Mate => "Mate",
@@ -53,7 +54,7 @@ impl ConstraintType {
     }
     fn hint(self) -> &'static str {
         match self {
-            ConstraintType::Mate => "Faces face each other; axes line up; points meet",
+            ConstraintType::Mate => "Faces face each other (Mate) or side by side (Flush); axes line up; points meet",
             ConstraintType::Flush => "Planar faces side by side, facing the same way",
             ConstraintType::Angle => "The angle between two faces or edges",
             ConstraintType::Insert => "Two circular edges: axes in line, faces together",
@@ -382,14 +383,16 @@ impl Workbench {
             AsmTool::Constrain => {
                 section(ui, "Type", &mut |ui| {
                     ui.horizontal(|ui| {
-                        for c in ConstraintType::ALL {
-                            let on = p.constraint == c;
+                        for c in ConstraintType::TYPES {
+                            let on = p.constraint == c || (c == ConstraintType::Mate && p.constraint == ConstraintType::Flush);
                             let b = egui::Button::new(RichText::new(c.label()).color(if on { t.accent_text } else { t.text })).fill(if on {
                                 t.accent
                             } else {
                                 t.field
                             });
-                            if ui.add_enabled(p.editing.is_none(), b).on_hover_text(c.hint()).clicked() {
+                            let r = ui.add_enabled(p.editing.is_none(), b).on_hover_text(c.hint());
+                            crate::drawing::remember(ui, &format!("tn_asm_type_{}", c.id()), r.rect);
+                            if r.clicked() && !on {
                                 p.constraint = c;
                             }
                         }
@@ -433,14 +436,32 @@ impl Workbench {
                         || matches!((p.tool, p.joint), (AsmTool::Joint, JointKind::Rigid | JointKind::Slider));
                     let offset = !matches!((p.tool, p.constraint), (AsmTool::Constrain, ConstraintType::Angle))
                         && !matches!((p.tool, p.joint), (AsmTool::Joint, JointKind::Slider | JointKind::Cylindrical | JointKind::Ball));
+                    // (Typed, as every value box: a negative offset is the other way.)
                     if offset {
                         ui.label("Offset");
-                        ui.add(egui::DragValue::new(&mut p.offset).speed(0.5).suffix(" mm").range(-100_000.0..=100_000.0));
+                        crate::properties::eq_field(ui, egui::Id::new("tn_asm_offset"), &mut p.offset, None, "mm", -100_000.0..=100_000.0, 90.0, t);
                         ui.end_row();
                     }
                     if angle {
                         ui.label("Angle");
-                        ui.add(egui::DragValue::new(&mut p.degrees).speed(1.0).suffix(" deg").range(-360.0..=360.0));
+                        crate::properties::eq_field(ui, egui::Id::new("tn_asm_angle"), &mut p.degrees, None, "deg", -360.0..=360.0, 90.0, t);
+                        ui.end_row();
+                    }
+                    // Mate's two solutions, as Inventor offers them: facing each other, or side by side.
+                    if p.tool == AsmTool::Constrain && matches!(p.constraint, ConstraintType::Mate | ConstraintType::Flush) {
+                        ui.label("Solution");
+                        ui.horizontal(|ui| {
+                            for (c, label, hint) in [
+                                (ConstraintType::Mate, "Mate", "The faces face each other"),
+                                (ConstraintType::Flush, "Flush", "The faces lie side by side, facing the same way"),
+                            ] {
+                                let r = ui.add_enabled(p.editing.is_none(), egui::Button::selectable(p.constraint == c, label)).on_hover_text(hint);
+                                crate::drawing::remember(ui, &format!("tn_asm_solution_{}", c.id()), r.rect);
+                                if r.clicked() {
+                                    p.constraint = c;
+                                }
+                            }
+                        });
                         ui.end_row();
                     }
                     if p.tool == AsmTool::Constrain && p.constraint == ConstraintType::Insert {

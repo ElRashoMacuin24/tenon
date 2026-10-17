@@ -15,6 +15,19 @@ shows it in [ROADMAP.md](ROADMAP.md).
   `sketch.edit_text`; `sketch.info` lists the texts. Files gain the entity `text` and the
   region key `{ text = id }` (an addition to format version 2).
 
+### Parts and assemblies
+
+- **Delete Features.** Deleting a feature from the browser now says what goes with it: the
+  sketches it is made from, and the features that use it, ticked as Inventor ticks them, in
+  one undo step. `feature.delete` takes `consumed` and `dependents`.
+- **Extrude To.** Extents > To takes an extrusion as far as a flat face, a work plane or an
+  origin plane, on whichever side of the sketch it is; at an angle, the end is cut along the
+  plane. `model.extrude` takes `to`; files gain `extent = { to = <plane> }`.
+- **Constrain** offers Mate, Angle and Insert, with Flush as Mate's second solution, as
+  Inventor has it; offsets and angles are typed.
+- [docs/inventor-fidelity.md](docs/inventor-fidelity.md) compares every environment with
+  Inventor's, command by command.
+
 ### Fixed
 
 - Ctrl+Z with a feature's panel open undid the change before it, unseen. It now leaves the

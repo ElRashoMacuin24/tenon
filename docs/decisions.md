@@ -2834,3 +2834,56 @@ text is refused by an older Tenon, as any addition is.
 
 **Commands:** `sketch.text`, `sketch.edit_text`; `sketch.info` lists `texts`, each with
 what a feature's `regions` takes (`select`), how many letters it has and its box.
+
+## DEC-103 Delete Features: what goes with a feature (2026-10-16)
+
+From the comparison with Inventor the owner asked for ("compare all of our features with how
+they work on inventor and make ours feel 1-1"). Inventor's Delete on a feature opens Delete
+Features, with consumed sketches ticked to go with it and dependent sketches and features
+listed to go too. Tenon deleted the feature alone, leaving its sketch, and refused while
+anything used it.
+
+**Now:** Delete in the browser's menu opens the Delete Features box when there is more to say:
+"Consumed sketches and features" (the sketches the feature and its dependents are made from
+that nothing else uses), ticked; "Dependent sketches and features" (what uses it, and what
+uses that), ticked; OK deletes them in one undo step and says how many went. With nothing to
+say the feature goes at once, as before. `Document::deletion` works out the lists;
+`Document::remove_all` deletes later features first and puts everything back if one is
+refused. `feature.delete` takes `consumed` and `dependents` (both false unless given, so
+that what scripts did before they still do) and returns the features `deleted`.
+
+**Done differently:** Inventor keeps dependents that are unticked, broken ("sick") until they
+are given new parents. Tenon keeps no feature whose parent is gone: unticked, the box says
+the feature cannot go while they use it, and nothing is deleted. Work features are dependents
+like any other feature, not a third tick box.
+
+## DEC-104 Extrude To a face or a plane (2026-10-16)
+
+From the same comparison. Inventor's Extrude goes To a face or plane besides a distance or
+Through All; Tenon had the choice greyed.
+
+**What it does.** `ExtrudeExtent::To(PlaneRef)`: a flat face of the part, a work plane or an
+origin plane. The extrusion goes to it on whichever side of the sketch it is, so it has no
+direction to choose (Inventor's Flip settles which of several faces when a curved face is
+ambiguous, which does not arise here). Square to the sketch, it is the distance to the
+plane, so its faces are named as any extrusion's. At an angle, the profile is extruded a
+little past the plane's farthest reach and cut back along it, the way Split cuts a body; the
+face on the plane is named as the extrusion's end cap, so features after it can hold it. A
+plane that crosses the profile, lies in the sketch or runs along the extrusion is refused in
+words. It follows the face: the block below made taller, a post extruded down to it is
+shorter. A taper works with it.
+
+**In the panel:** Extents offers To; a row says which face or plane, or "Click a face or
+plane"; a click on a flat face, on a work plane in the view, or on a plane in the browser
+picks it. Until one is picked the preview shows the distance.
+
+**File format:** additive in version 2, `extent = { to = <plane> }`, the plane written as a
+sketch's is. **Command:** `model.extrude` takes `to`.
+
+**Not done:** To Next and Between, To a vertex, To a curved face (Inventor's "extend to
+face"), and the same extents for Revolve.
+
+**Also from the comparison:** the assembly Constrain panel offers Mate, Angle and Insert, with
+Flush as Mate's second solution as Inventor has it (Flush had been a type of its own; the
+relationship is stored as before), and its offset and angle are typed in value boxes like
+every other value in Tenon (they were drag fields).
