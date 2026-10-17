@@ -33,11 +33,14 @@ pub(crate) enum ConstraintType {
     Insert,
     /// A cylinder or sphere against a plane or another (DEC-110).
     Tangent,
+    /// Two planes, axes or points mirrored in a plane (DEC-115).
+    Symmetry,
 }
 
 impl ConstraintType {
     /// The types the panel offers, as Inventor's Constrain does: Flush is Mate's second solution.
-    const TYPES: [ConstraintType; 4] = [ConstraintType::Mate, ConstraintType::Angle, ConstraintType::Tangent, ConstraintType::Insert];
+    const TYPES: [ConstraintType; 5] =
+        [ConstraintType::Mate, ConstraintType::Angle, ConstraintType::Tangent, ConstraintType::Insert, ConstraintType::Symmetry];
     pub(crate) fn label(self) -> &'static str {
         match self {
             ConstraintType::Mate => "Mate",
@@ -45,6 +48,7 @@ impl ConstraintType {
             ConstraintType::Angle => "Angle",
             ConstraintType::Insert => "Insert",
             ConstraintType::Tangent => "Tangent",
+            ConstraintType::Symmetry => "Symmetry",
         }
     }
     fn id(self) -> &'static str {
@@ -54,6 +58,7 @@ impl ConstraintType {
             ConstraintType::Angle => "angle",
             ConstraintType::Insert => "insert",
             ConstraintType::Tangent => "tangent",
+            ConstraintType::Symmetry => "symmetry",
         }
     }
     fn hint(self) -> &'static str {
@@ -63,6 +68,7 @@ impl ConstraintType {
             ConstraintType::Angle => "The angle between two faces or edges",
             ConstraintType::Insert => "Two circular edges: axes in line, faces together",
             ConstraintType::Tangent => "A cylinder or sphere touching a plane or another, outside or inside",
+            ConstraintType::Symmetry => "Two faces, axes or points mirror images of each other in a plane",
         }
     }
 }
@@ -76,7 +82,9 @@ pub(crate) struct AsmPanel {
     /// The two picks, with what they are called.
     pub a: Option<(Target, String)>,
     pub b: Option<(Target, String)>,
-    /// Which pick a click fills: 0 the first, 1 the second.
+    /// Symmetry's third pick: the plane the two are mirrored in.
+    pub c: Option<(Target, String)>,
+    /// Which pick a click fills: 0 the first, 1 the second, 2 symmetry's plane.
     pub slot: usize,
     pub offset: f64,
     pub degrees: f64,
@@ -104,6 +112,7 @@ impl AsmPanel {
             joint: JointKind::Rigid,
             a: None,
             b: None,
+            c: None,
             slot: 0,
             offset: 0.0,
             degrees: 0.0,
@@ -116,6 +125,24 @@ impl AsmPanel {
             reverse: false,
             distance: 20.0,
             preview: None,
+        }
+    }
+
+    /// A pick into the selection being filled; the next is then the following one (symmetry's
+    /// plane after the second).
+    pub(crate) fn put(&mut self, t: (Target, String)) {
+        match self.slot {
+            0 => {
+                self.a = Some(t);
+                self.slot = 1;
+            }
+            1 => {
+                self.b = Some(t);
+                if self.tool == AsmTool::Constrain && self.constraint == ConstraintType::Symmetry && self.c.is_none() {
+                    self.slot = 2;
+                }
+            }
+            _ => self.c = Some(t),
         }
     }
 
@@ -138,6 +165,7 @@ impl AsmPanel {
                 ConstraintType::Angle => RelKind::Angle { a, b, angle, reference: Vec3::Z },
                 ConstraintType::Insert => RelKind::Insert { a, b, offset: self.offset, aligned: self.aligned },
                 ConstraintType::Tangent => RelKind::Tangent { a, b, offset: self.offset, inside: self.inside },
+                ConstraintType::Symmetry => RelKind::Symmetry { a, b, plane: self.c.as_ref()?.0.clone() },
             },
             AsmTool::Joint => RelKind::Joint { joint: self.joint, a, b, flip: self.flip, offset: self.offset, angle },
             AsmTool::Tweak => return None,
@@ -200,6 +228,7 @@ impl Workbench {
             RelKind::Angle { angle, .. } => (p.constraint, p.degrees) = (ConstraintType::Angle, angle.to_degrees()),
             RelKind::Insert { offset, aligned, .. } => (p.constraint, p.offset, p.aligned) = (ConstraintType::Insert, *offset, *aligned),
             RelKind::Tangent { offset, inside, .. } => (p.constraint, p.offset, p.inside) = (ConstraintType::Tangent, *offset, *inside),
+            RelKind::Symmetry { plane, .. } => (p.constraint, p.c) = (ConstraintType::Symmetry, Some(label(plane))),
             RelKind::Joint { joint, flip, offset, angle, .. } => {
                 (p.joint, p.flip, p.offset, p.degrees) = (*joint, *flip, *offset, angle.to_degrees());
             }
@@ -347,23 +376,17 @@ impl Workbench {
         match self.target_of_pick(pick) {
             Ok(t) => {
                 let other = match &self.panel {
-                    Some(Panel::Asm(p)) => if p.slot == 0 { &p.b } else { &p.a }.as_ref().and_then(|(o, _)| o.component),
+                    Some(Panel::Asm(p)) if p.slot < 2 => if p.slot == 0 { &p.b } else { &p.a }.as_ref().and_then(|(o, _)| o.component),
                     _ => None,
                 };
                 if other.is_some() && other == t.0.component {
                     self.set_error("Pick the second geometry on another component.");
                     return;
                 }
-                if let Some(Panel::Asm(p)) = &mut self.panel {
-                    if p.editing.is_some() {
-                        return;
-                    }
-                    if p.slot == 0 {
-                        p.a = Some(t);
-                        p.slot = 1;
-                    } else {
-                        p.b = Some(t);
-                    }
+                if let Some(Panel::Asm(p)) = &mut self.panel
+                    && p.editing.is_none()
+                {
+                    p.put(t);
                 }
             }
             Err(e) => self.set_error(e),
@@ -426,6 +449,7 @@ impl Workbench {
                 let hint = match (p.tool, p.constraint) {
                     (AsmTool::Constrain, ConstraintType::Insert) => "click a circular edge",
                     (AsmTool::Constrain, ConstraintType::Tangent) => "click a cylinder, sphere or plane",
+                    (AsmTool::Constrain, ConstraintType::Symmetry) => "click a face, axis or point",
                     (AsmTool::Joint, _) => "click a face, circular edge or axis",
                     _ => "click a face or edge",
                 };
@@ -435,9 +459,18 @@ impl Workbench {
                 if slot_row(ui, "2", &p.b, p.slot == 1 && p.editing.is_none(), hint) && p.editing.is_none() {
                     p.slot = 1;
                 }
-                if p.editing.is_none() && (p.a.is_some() || p.b.is_some()) && ui.small_button("Clear").clicked() {
+                // Symmetry's third: the plane they mirror in, of any component or the assembly's.
+                if p.tool == AsmTool::Constrain
+                    && p.constraint == ConstraintType::Symmetry
+                    && slot_row(ui, "Plane", &p.c, p.slot == 2 && p.editing.is_none(), "click a plane or planar face")
+                    && p.editing.is_none()
+                {
+                    p.slot = 2;
+                }
+                if p.editing.is_none() && (p.a.is_some() || p.b.is_some() || p.c.is_some()) && ui.small_button("Clear").clicked() {
                     p.a = None;
                     p.b = None;
+                    p.c = None;
                     p.slot = 0;
                 }
             });
@@ -445,7 +478,7 @@ impl Workbench {
                 egui::Grid::new("tn_asm_values").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                     let angle = matches!((p.tool, p.constraint), (AsmTool::Constrain, ConstraintType::Angle))
                         || matches!((p.tool, p.joint), (AsmTool::Joint, JointKind::Rigid | JointKind::Slider));
-                    let offset = !matches!((p.tool, p.constraint), (AsmTool::Constrain, ConstraintType::Angle))
+                    let offset = !matches!((p.tool, p.constraint), (AsmTool::Constrain, ConstraintType::Angle | ConstraintType::Symmetry))
                         && !matches!((p.tool, p.joint), (AsmTool::Joint, JointKind::Slider | JointKind::Cylindrical | JointKind::Ball));
                     // (Typed, as every value box: a negative offset is the other way.)
                     if offset {
@@ -578,10 +611,13 @@ impl Workbench {
                             json!({ "type": p.joint.id(), "a": a, "b": b, "flip": p.flip, "offset": p.offset, "angle": p.degrees.to_radians() }),
                         )
                     } else {
-                        (
-                            "asm.constrain",
-                            json!({ "type": p.constraint.id(), "a": a, "b": b, "offset": p.offset, "angle": p.degrees.to_radians(), "aligned": p.aligned, "inside": p.inside }),
-                        )
+                        ("asm.constrain", {
+                            let mut params = json!({ "type": p.constraint.id(), "a": a, "b": b, "offset": p.offset, "angle": p.degrees.to_radians(), "aligned": p.aligned, "inside": p.inside });
+                            if let Some((plane, _)) = &p.c {
+                                params["plane"] = json!(plane);
+                            }
+                            params
+                        })
                     };
                     self.asm_exec(id, params)
                 }

@@ -578,6 +578,7 @@ Implemented in `crates/io/src/asm.rs` and `crates/assembly/src/model.rs`; tested
   - `angle` (`angle` in radians, `reference`: a unit vector in A's part coordinates);
   - `insert` (`offset`, `aligned`);
   - `tangent` (`offset`, `inside` written only when true; DEC-110);
+  - `symmetry` (`plane`: a third target, the plane the two are mirrored in; DEC-115);
   - `joint`, with `joint` being `rigid`, `revolute`, `slider`, `cylindrical`, `planar` or
     `ball`.
 - **A target** (`a`, `b`) is `{ component, geom }`. Without `component` it is the assembly's

@@ -326,7 +326,8 @@ fn asm_constrain(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
         "angle" => RelKind::Angle { a, b, angle: num(&p, "angle")?, reference: Vec3::Z },
         "insert" => RelKind::Insert { a, b, offset, aligned: opt_bool(&p, "aligned")?.unwrap_or(false) },
         "tangent" => RelKind::Tangent { a, b, offset, inside: opt_bool(&p, "inside")?.unwrap_or(false) },
-        other => return Err(CmdError(format!("unknown constraint type `{other}` (mate, flush, angle, insert, tangent)"))),
+        "symmetry" => RelKind::Symmetry { a, b, plane: target(&p, "plane")? },
+        other => return Err(CmdError(format!("unknown constraint type `{other}` (mate, flush, angle, insert, tangent, symmetry)"))),
     };
     let rid = s.edit(|asm, parts| relate(asm, parts, kind))?;
     s.failing.clear();
@@ -385,6 +386,8 @@ fn asm_edit_relationship(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Va
                 *o = offset.unwrap_or(*o);
                 *i = inside.unwrap_or(*i);
             }
+            // (Nothing of a symmetry is a value: it is its three picks.)
+            RelKind::Symmetry { .. } => {}
             RelKind::Joint { joint: j, flip: f, offset: o, angle: a, .. } => {
                 *j = joint.unwrap_or(*j);
                 *f = flip.unwrap_or(*f);

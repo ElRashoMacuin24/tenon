@@ -205,6 +205,8 @@ pub enum RelKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         inside: bool,
     },
+    /// A and B mirror images of each other in `plane` (DEC-115): two planes, axes or points.
+    Symmetry { a: Target, b: Target, plane: Target },
     /// A joint between origins on A and B. The origins' Z axes face each other (`flip`: the same
     /// way), `offset` apart along A's Z; rigid and slider joints also turn B by `angle` about it.
     Joint {
@@ -228,8 +230,21 @@ impl RelKind {
             | RelKind::Angle { a, b, .. }
             | RelKind::Insert { a, b, .. }
             | RelKind::Tangent { a, b, .. }
+            | RelKind::Symmetry { a, b, .. }
             | RelKind::Joint { a, b, .. } => [a, b],
         }
+    }
+    /// A symmetry's plane: the third thing it is between.
+    pub fn plane(&self) -> Option<&Target> {
+        match self {
+            RelKind::Symmetry { plane, .. } => Some(plane),
+            _ => None,
+        }
+    }
+    /// Every target, a symmetry's plane included.
+    pub fn all_targets(&self) -> Vec<&Target> {
+        let [a, b] = self.targets();
+        [a, b].into_iter().chain(self.plane()).collect()
     }
     fn targets_mut(&mut self) -> [&mut Target; 2] {
         match self {
@@ -238,12 +253,13 @@ impl RelKind {
             | RelKind::Angle { a, b, .. }
             | RelKind::Insert { a, b, .. }
             | RelKind::Tangent { a, b, .. }
+            | RelKind::Symmetry { a, b, .. }
             | RelKind::Joint { a, b, .. } => [a, b],
         }
     }
     /// The components it connects (the assembly origin is not one).
     pub fn components(&self) -> Vec<ComponentId> {
-        let mut v: Vec<ComponentId> = self.targets().iter().filter_map(|t| t.component).collect();
+        let mut v: Vec<ComponentId> = self.all_targets().iter().filter_map(|t| t.component).collect();
         v.dedup();
         v
     }
@@ -255,6 +271,7 @@ impl RelKind {
             RelKind::Angle { .. } => "Angle",
             RelKind::Insert { .. } => "Insert",
             RelKind::Tangent { .. } => "Tangent",
+            RelKind::Symmetry { .. } => "Symmetry",
             RelKind::Joint { joint, .. } => joint.label(),
         }
     }
@@ -439,7 +456,7 @@ impl Assembly {
             if r.id.0 == 0 || r.id.0 >= self.next_relationship || !rids.insert(r.id) {
                 return Err(format!("{} has a bad or repeated id", r.id));
             }
-            for t in r.kind.targets() {
+            for t in r.kind.all_targets() {
                 match t.component {
                     Some(c) if !ids.contains(&c) => return Err(format!("{} refers to a missing {c}", r.name)),
                     None if !matches!(t.geom, Geom::Plane { .. } | Geom::Axis { .. } | Geom::Origin) => {
@@ -457,6 +474,7 @@ impl Assembly {
                     offset.abs() <= tol::MAX_SIZE
                 }
                 RelKind::Angle { angle, reference, .. } => angle.is_finite() && (reference.len() - 1.0).abs() < tol::UNIT,
+                RelKind::Symmetry { .. } => true,
                 RelKind::Joint { offset, angle, .. } => offset.abs() <= tol::MAX_SIZE && angle.is_finite(),
             };
             if !numbers_ok {
@@ -490,6 +508,11 @@ impl Assembly {
                 if t.component == Some(from) {
                     t.component = Some(to);
                 }
+            }
+            if let RelKind::Symmetry { plane, .. } = &mut r.kind
+                && plane.component == Some(from)
+            {
+                plane.component = Some(to);
             }
         }
     }

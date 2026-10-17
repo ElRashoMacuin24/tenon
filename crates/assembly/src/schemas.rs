@@ -30,13 +30,14 @@ static SCHEMAS: &[C] = &[
     C::new(
         "asm.constrain",
         &[
-            req("type", Word(&["mate", "flush", "angle", "insert", "tangent"]), "what kind of constraint"),
+            req("type", Word(&["mate", "flush", "angle", "insert", "tangent", "symmetry"]), "what kind of constraint"),
             req("a", TARGET, "a target from asm.geom"),
             req("b", TARGET, "a target from asm.geom, on another component"),
             opt("offset", Length, "the distance held between the two (default 0)"),
             opt("angle", Angle, "for angle: the angle held between the two"),
             opt("aligned", Bool, "for insert: the two axes point the same way (default false: opposed)"),
             opt("inside", Bool, "for tangent: inside (one round face within the other, or behind the plane; default false: outside)"),
+            opt("plane", TARGET, "for symmetry: the plane A and B are mirrored in, a target from asm.geom"),
         ],
     ),
     C::new(

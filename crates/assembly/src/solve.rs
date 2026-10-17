@@ -56,6 +56,10 @@ pub enum Law {
         offset: f64,
         inside: bool,
     },
+    /// A and B mirror images in `plane` (DEC-115).
+    Symmetry {
+        plane: End,
+    },
     Joint {
         joint: JointKind,
         flip: bool,
@@ -127,7 +131,24 @@ pub fn check(law: &Law, a: &Prim, b: &Prim) -> Result<(), String> {
             }
             _ => Ok(()),
         },
+        Law::Symmetry { plane } => {
+            if !matches!(plane.prim, Prim::Plane { .. }) {
+                return Err("symmetry's third pick is the plane they are mirrored in: a planar face or a plane".into());
+            }
+            match (mate_prim(*a), mate_prim(*b)) {
+                (Prim::Plane { .. }, Prim::Plane { .. }) | (Prim::Line { .. }, Prim::Line { .. }) | (Prim::Point(_), Prim::Point(_)) => Ok(()),
+                _ => Err("symmetry needs two of a kind: two planes, two axes or two points".into()),
+            }
+        }
         Law::Joint { .. } => Ok(()),
+    }
+}
+
+impl Rel {
+    /// The bodies it holds: its two ends', and a symmetry's plane's.
+    fn bodies(&self) -> [Option<usize>; 3] {
+        let plane = if let Law::Symmetry { plane } = &self.law { plane.body } else { None };
+        [self.a.body, self.b.body, plane]
     }
 }
 
@@ -256,6 +277,25 @@ fn residual(rel: &Rel, poses: &[Pose], out: &mut Vec<f64>) {
                 _ => {}
             }
         }
+        Law::Symmetry { plane } => {
+            let qs = pose(&plane);
+            let Prim::Plane { point: s0, normal: ns } = plane.prim.placed(&qs.r, qs.t) else { return };
+            // A's geometry mirrored in the plane is B's.
+            let turn = |v: Vec3| v - ns * (2.0 * v.dot(ns));
+            let place = |p: Vec3| p - ns * (2.0 * (p - s0).dot(ns));
+            match (mate_prim(pa), mate_prim(pb)) {
+                (Prim::Plane { point: a, normal: na }, Prim::Plane { point: b, normal: nb }) => {
+                    push3(out, nb - turn(na));
+                    out.push((b - place(a)).dot(nb));
+                }
+                (Prim::Line { point: a, dir: da }, Prim::Line { point: b, dir: db }) => {
+                    push3(out, db.cross(turn(da)));
+                    push3(out, perp(b - place(a), db));
+                }
+                (Prim::Point(a), Prim::Point(b)) => push3(out, b - place(a)),
+                _ => {}
+            }
+        }
         Law::Joint { joint, flip, offset, angle } => {
             let (oa, xa, za) = joint_frame(&rel.a.prim, &qa);
             let (ob, xb, zb) = joint_frame(&rel.b.prim, &qb);
@@ -278,7 +318,7 @@ fn residual(rel: &Rel, poses: &[Pose], out: &mut Vec<f64>) {
 
 /// The unknowns: for each body, its parameter offset (`None`: it does not move).
 fn layout(bodies: &[Body], rels: &[Rel]) -> Vec<Option<usize>> {
-    let used: std::collections::BTreeSet<usize> = rels.iter().flat_map(|r| [r.a.body, r.b.body]).flatten().collect();
+    let used: std::collections::BTreeSet<usize> = rels.iter().flat_map(Rel::bodies).flatten().collect();
     let mut next = 0;
     bodies
         .iter()
@@ -423,7 +463,7 @@ pub fn snap(bodies: &[Body], rel: &Rel) -> Motion {
             },
             Law::Flush { .. } => Some(da),
             Law::Insert { aligned, .. } => Some(if aligned { da } else { -da }),
-            Law::Joint { joint: JointKind::Ball, .. } | Law::Angle { .. } | Law::Tangent { .. } => None,
+            Law::Joint { joint: JointKind::Ball, .. } | Law::Angle { .. } | Law::Tangent { .. } | Law::Symmetry { .. } => None,
             Law::Joint { flip, .. } => Some(if flip { da } else { -da }),
         }
     };
@@ -468,7 +508,7 @@ pub fn snap(bodies: &[Body], rel: &Rel) -> Motion {
             (Prim::Circle { center: ca, normal: na, .. }, Prim::Circle { center: cb, .. }) => ca + na * offset - cb,
             _ => Vec3::ZERO,
         },
-        Law::Angle { .. } => Vec3::ZERO,
+        Law::Angle { .. } | Law::Symmetry { .. } => Vec3::ZERO,
         // (Toward the plane, as far as the tangent wants; between round faces the solver goes
         // from where they are.)
         Law::Tangent { offset, inside } => {
@@ -517,7 +557,7 @@ pub fn dof(bodies: &[Body], rels: &[Rel]) -> (Vec<BodyDof>, usize) {
             per.push(BodyDof::default());
             continue;
         }
-        let mine: Vec<Rel> = rels.iter().filter(|r| r.a.body == Some(i) || r.b.body == Some(i)).copied().collect();
+        let mine: Vec<Rel> = rels.iter().filter(|r| r.bodies().contains(&Some(i))).copied().collect();
         let l = half_size(b);
         let f = |x: &[f64], out: &mut Vec<f64>| {
             let mut p = poses.clone();
@@ -726,6 +766,38 @@ mod tests {
         assert!(check_tangent(&end(0, top()), &end(1, bottom())).is_err());
         assert!(check_tangent(&end(0, top()), &end(1, axis)).is_err());
         assert!(check_tangent(&end(0, top()), &round(1, axis, 5.0)).is_ok());
+    }
+
+    #[test]
+    fn a_symmetry_mirrors_one_face_or_point_in_a_plane() {
+        // The plane of symmetry on the fixed body 0 (x = 0, facing +X); body 1 fixed, its right
+        // face 10 to the left of it; body 2 free, far off. Mirrored, body 2's left face is 10 to
+        // the right, facing back.
+        let mid = Prim::Plane { point: Vec3::ZERO, normal: Vec3::X };
+        let right = Prim::Plane { point: Vec3::new(10.0, 5.0, 5.0), normal: Vec3::X };
+        let bodies = vec![body(Vec3::ZERO, true), body(Vec3::new(-20.0, 0.0, 0.0), true), body(Vec3::new(40.0, 7.0, -3.0), false)];
+        let rels = vec![Rel { law: Law::Symmetry { plane: end(0, mid) }, a: end(1, right), b: end(2, left()) }];
+        let s = solve(&bodies, &rels, None);
+        assert!(s.converged, "{s:?}");
+        // Body 2's left face is its frame's x = 0 plane: at x = 10, facing -X.
+        let f = s.frames[2];
+        assert!((f.origin().x - 10.0).abs() < 1e-7 && f.x().near(Vec3::X, 1e-7), "{f:?}");
+        // It may still slide in the plane and turn about its normal.
+        let placed: Vec<Body> = bodies.iter().zip(&s.frames).map(|(b, f)| Body { frame: *f, ..*b }).collect();
+        let (per, _) = dof(&placed, &rels);
+        assert_eq!(per[2].count(), 3, "{:?}", per[2]);
+        // Two points: mirrored, wherever they were.
+        let rels = vec![Rel {
+            law: Law::Symmetry { plane: end(0, mid) },
+            a: end(1, Prim::Point(Vec3::new(13.0, 4.0, 2.0))),
+            b: end(2, Prim::Point(Vec3::ZERO)),
+        }];
+        let s = solve(&bodies, &rels, None);
+        assert!(s.converged && s.frames[2].origin().near(Vec3::new(7.0, 4.0, 2.0), 1e-7), "{:?}", s.frames[2]);
+        // A plane and a point are no pair; nor is a symmetry about a point.
+        let law = Law::Symmetry { plane: end(0, mid) };
+        assert!(check(&law, &right, &Prim::Point(Vec3::ZERO)).is_err());
+        assert!(check(&Law::Symmetry { plane: end(0, Prim::Point(Vec3::ZERO)) }, &right, &left()).is_err());
     }
 
     #[test]

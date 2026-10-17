@@ -3092,3 +3092,24 @@ again, a Tap Drill hole made before this is Tapped, and OK puts its thread on.
 `model.hole` takes `tapped`, `thread_length`, `pitch`, `designation` and `left`; files gain
 `tapped = {...}`, additive in version 2. **Not done:** taper tapped; a modelled thread from the
 Hole (Thread still models one).
+
+## DEC-115 The assembly Symmetry constraint (2026-10-17)
+
+Inventor's last Constrain type: two planes, axes or points are held as mirror images of each
+other in a third pick, a plane.
+
+**What it holds.** `RelKind::Symmetry { a, b, plane }`: B is A mirrored in the plane: for planes,
+B's normal is A's mirrored and B lies on A's plane mirrored; for axes, the same with directions
+and lines; for points, B is A's mirror image. A face and an axis, or a third pick that is no
+plane, are refused in words. The plane may be on any component or the assembly's own.
+
+The solver's relationships have two ends, so the plane rides in the law
+(`Law::Symmetry { plane: End }`, resolved by `session::law_for`), and the bodies a
+relationship holds now include it (`Rel::bodies`), for what moves and for the freedoms
+counted. `RelKind::all_targets` lists all three, for components, checks and replacing a
+component.
+
+**In the panel:** Symmetry is the fifth type, in Inventor's order; it has a third selection,
+Plane, which the second pick hands on to (a click in the view, or a plane in the browser's
+Origin folder). `asm.constrain` takes `type: "symmetry"` and `plane`; files write the
+relationship type `symmetry` with its `plane`, additive.

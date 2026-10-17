@@ -1128,3 +1128,44 @@ fn constrain_offers_tangent_with_its_outside_and_inside_solutions() {
     d.frame(&mut wb, vec![]);
     assert!(matches!(&wb.panel, Some(Panel::Asm(p)) if !p.inside));
 }
+
+#[test]
+fn a_symmetry_takes_its_plane_as_a_third_pick() {
+    let dir = scratch("symmetry-ui");
+    box_part(&dir.join("block.tenon"), "Block", 10.0, 10.0, 10.0);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("file.new_assembly").unwrap();
+    wb.place_file(&dir.join("block.tenon")).unwrap();
+    wb.place_file(&dir.join("block.tenon")).unwrap();
+    // The second off to the back: its front 7 behind the first's.
+    wb.asm_exec("asm.move", json!({ "component": 2, "by": [0, 7, 0] })).unwrap();
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    let b = placement(&wb, 2).origin();
+    // C, Symmetry: the first's front face, the second's front face, then the YZ plane from the
+    // browser's Origin folder.
+    d.tap(&mut wb, egui::Key::C);
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_asm_type_symmetry"));
+    d.frame(&mut wb, vec![]);
+    let front_a = on_screen(&wb, Vec3::new(5.0, 0.0, 5.0));
+    d.click(&mut wb, front_a);
+    let front_b = on_screen(&wb, b + Vec3::new(5.0, 0.0, 5.0));
+    d.click(&mut wb, front_b);
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(&wb.panel, Some(Panel::Asm(p)) if p.a.is_some() && p.b.is_some() && p.slot == 2), "the plane is next: {}", wb.status());
+    if !d.texts().iter().any(|t| t == "YZ Plane") {
+        d.click(&mut wb, browser_row(&d, "Origin").left_center() + vec2(27.0, 0.0));
+        d.frame(&mut wb, vec![]);
+    }
+    d.click(&mut wb, browser_row(&d, "YZ Plane").center());
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(&wb.panel, Some(Panel::Asm(p)) if p.c.is_some()), "{}", wb.status());
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    // The second's front is back on the first's (a front face mirrored in YZ stays at its y).
+    assert!(placement(&wb, 2).origin().y.abs() < 1e-6, "{:?}", placement(&wb, 2));
+    browser_row(&d, "Symmetry:1");
+}

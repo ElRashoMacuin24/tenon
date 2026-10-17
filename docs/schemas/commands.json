@@ -7127,7 +7127,8 @@
               "flush",
               "angle",
               "insert",
-              "tangent"
+              "tangent",
+              "symmetry"
             ],
             "description": "what kind of constraint"
           },
@@ -7156,6 +7157,10 @@
           "inside": {
             "type": "boolean",
             "description": "for tangent: inside (one round face within the other, or behind the plane; default false: outside)"
+          },
+          "plane": {
+            "type": "object",
+            "description": "for symmetry: the plane A and B are mirrored in, a target from asm.geom"
           }
         },
         "additionalProperties": false,

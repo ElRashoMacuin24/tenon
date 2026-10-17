@@ -90,12 +90,13 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 18. ~~Delete Features with what goes with a feature; Extrude To a face or plane; Mate's Flush
     solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
     comparison of every command below.
-19. From the same comparison, in order: the Symmetry constraint; a three-point work plane;
+19. From the same comparison, in order: a three-point work plane;
     the Sketch tab's Center Point, arc slots, ellipse, Stretch and Smooth; fillets of variable
     radius and face fillets. Done from it so far: Extrude To (DEC-104), To Next (DEC-109) and
     Between (DEC-111); the Hole panel's Spotface and To (DEC-105), placing on a face (DEC-113)
     and Tapped (DEC-114); visibility from the browser (DEC-106); components placed by the
-    pointer (DEC-107); Revolve's directions (DEC-108), To and To Next (DEC-112); Tangent (DEC-110).
+    pointer (DEC-107); Revolve's directions (DEC-108), To and To Next (DEC-112); Tangent (DEC-110);
+    Symmetry (DEC-115).
 
 ## Geometry of the part in a sketch
 
@@ -300,7 +301,7 @@ on inventor and make ours feel 1-1"). The rows marked closed then were done in t
 | Inventor | Tenon | Proof / gap |
 |---|---|---|
 | Place: the first component is grounded at the origin; further ones follow the pointer and are put down by a click, several at a time | done | closed 2026-10-16 (DEC-107): the first grounded at the origin, then instances follow the pointer and each click puts one down, until Esc or a right-click; each one put down is one undo step. `placed_parts_follow_the_pointer_and_are_put_down_by_clicks`. Gap: the right-click menu of Inventor (Place Grounded at Origin, rotate while placing) |
-| Constrain: Mate, whose two solutions are Mate and Flush; Angle; Tangent; Insert (opposed or aligned); Symmetry; an offset typed; a preview | partial | Mate with its Mate and Flush solutions (closed 2026-10-16: Flush had been a type of its own), Angle, **Tangent** with its Outside and Inside solutions (closed 2026-10-16, DEC-110: a cylinder or sphere against a plane or another), Insert; offsets and angles typed in value boxes as everywhere else (they were drag fields); a preview before OK. `constrain_and_joint_by_clicking_faces_in_the_view`, `tangents_hold_round_faces_against_planes_and_each_other`, `a_roller_is_held_tangent_to_a_plate_outside_or_inside`, `constrain_offers_tangent_with_its_outside_and_inside_solutions`. Gap: Symmetry; tangent to cones; predicting the offset and solution from the faces picked; limits |
+| Constrain: Mate, whose two solutions are Mate and Flush; Angle; Tangent; Insert (opposed or aligned); Symmetry; an offset typed; a preview | partial | Mate with its Mate and Flush solutions (closed 2026-10-16: Flush had been a type of its own), Angle, **Tangent** with its Outside and Inside solutions (closed 2026-10-16, DEC-110: a cylinder or sphere against a plane or another), Insert; offsets and angles typed in value boxes as everywhere else (they were drag fields); a preview before OK. `constrain_and_joint_by_clicking_faces_in_the_view`, `tangents_hold_round_faces_against_planes_and_each_other`, `a_roller_is_held_tangent_to_a_plate_outside_or_inside`, `constrain_offers_tangent_with_its_outside_and_inside_solutions`; **Symmetry** (closed 2026-10-17, DEC-115: two faces, axes or points mirrored in a plane, the third pick), `a_symmetry_mirrors_one_face_or_point_in_a_plane`, `a_block_is_held_as_the_mirror_image_of_another_in_a_plane`, `a_symmetry_takes_its_plane_as_a_third_pick`. Gap: tangent to cones; predicting the offset and solution from the faces picked; limits |
 | Joint: Automatic, Rigid, Rotational, Slider, Cylindrical, Planar, Ball; origins on faces, edges and points | partial | all but Automatic (M3). Gap: Automatic; vertex and mid-edge origins; limits |
 | Free Move, Free Rotate, Ground | done | M3 |
 | Pattern, Mirror, Copy of components | missing | greyed on the ribbon |

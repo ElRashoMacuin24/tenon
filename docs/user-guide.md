@@ -139,7 +139,7 @@ writes it for a cutter.
 **File > New Assembly**, then **Place** (P) part files: the first is grounded at the
 origin; then each instance follows the pointer, a click puts it down and the next follows,
 until Esc or a right-click. Hold them with **Constrain** (C: mate, with its Mate and Flush
-solutions, angle, tangent, insert) or **Joint** (J: rigid, rotational, slider, cylindrical, planar,
+solutions, angle, tangent, insert, symmetry) or **Joint** (J: rigid, rotational, slider, cylindrical, planar,
 ball). Drag a component: its relationships hold.
 Double-click a component to change its part in place. **Inspect > Analyze Interference**
 finds parts that overlap; **Manage > Bill of Materials** lists them (and exports CSV).

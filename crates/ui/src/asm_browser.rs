@@ -369,12 +369,7 @@ impl Workbench {
                     && p.tool != crate::asm_panel::AsmTool::Tweak
                 {
                     let text = format!("Assembly: {:?}", target.geom).replace("Plane { plane: ", "").replace("Axis { axis: ", "").replace(" }", "");
-                    if p.slot == 0 {
-                        p.a = Some((target, text));
-                        p.slot = 1;
-                    } else {
-                        p.b = Some((target, text));
-                    }
+                    p.put((target, text));
                 }
                 Ok(())
             }

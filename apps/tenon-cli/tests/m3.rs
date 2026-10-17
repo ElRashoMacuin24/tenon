@@ -164,3 +164,37 @@ fn a_roller_is_held_tangent_to_a_plate_outside_or_inside() {
     let err = e.exec("asm.constrain", &json!({ "type": "tangent", "a": top, "b": bottom })).unwrap_err();
     assert!(err.contains("tangent needs a cylindrical or spherical face"), "{err}");
 }
+
+#[test]
+fn a_block_is_held_as_the_mirror_image_of_another_in_a_plane() {
+    let dir = scratch("symmetry");
+    let mut e = Engine::new(kernel(), &dir);
+    let run = |e: &mut Engine, id: &str, p: serde_json::Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    // A 10 mm block; its sides are the rectangle's lines: bottom, right (x = 10), top, left (x = 0).
+    run(&mut e, "file.new", json!({ "name": "Block" }));
+    let sk = run(&mut e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    let lines = run(&mut e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 10, "y2": 10 }))["lines"].clone();
+    let ex = run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": 10 }))["feature"].clone();
+    run(&mut e, "file.save", json!({ "path": "block.tenon" }));
+    run(&mut e, "asm.new", json!({ "name": "Mirrored" }));
+    run(&mut e, "asm.insert", json!({ "path": "block.tenon", "at": [20, 0, 0], "grounded": true }));
+    let b = run(&mut e, "asm.insert", json!({ "path": "block.tenon", "at": [50, 30, 0] }))["component"].clone();
+    let right = run(&mut e, "asm.geom", json!({ "component": 1, "face": { "type": "side", "feature": ex, "curve": lines[1] } }));
+    let left = run(&mut e, "asm.geom", json!({ "component": b, "face": { "type": "side", "feature": ex, "curve": lines[3] } }));
+    let yz = run(&mut e, "asm.geom", json!({ "plane": "yz" }));
+    // The first block's right face, at x = 30, mirrored in the assembly's YZ plane: the second's
+    // left face at x = -30, facing back, so it stands from -30 to -20.
+    let c = run(&mut e, "asm.constrain", json!({ "type": "symmetry", "a": right, "b": left, "plane": yz }));
+    assert_eq!(c["name"], "Symmetry:1", "{c}");
+    let x = run(&mut e, "asm.tree", json!({}))["components"][1]["placement"]["origin"][0].as_f64().unwrap();
+    assert!((x + 30.0).abs() < 1e-6, "{x}");
+    // It may still slide in the plane and turn about its normal.
+    assert_eq!(run(&mut e, "asm.dof", json!({}))["components"][1]["dof"], 3);
+    run(&mut e, "asm.save", json!({ "path": "mirrored.tenonasm" }));
+    let text = std::fs::read_to_string(dir.join("mirrored.tenonasm")).unwrap();
+    assert!(text.contains("type = \"symmetry\"") && text.contains("plane = "), "{text}");
+    // A face and an axis are no pair.
+    let axis = run(&mut e, "asm.geom", json!({ "axis": "z" }));
+    let err = e.exec("asm.constrain", &json!({ "type": "symmetry", "a": right, "b": axis, "plane": yz })).unwrap_err();
+    assert!(err.contains("two of a kind"), "{err}");
+}

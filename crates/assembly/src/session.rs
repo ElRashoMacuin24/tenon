@@ -104,7 +104,15 @@ fn body_of(parts: &Parts, c: &Component) -> Body {
     Body { frame: c.placement, fixed: c.grounded, center, size }
 }
 
-/// The law of a relationship kind.
+/// The law of a relationship, with a symmetry's plane found in `asm` (DEC-115).
+pub fn law_for(asm: &Assembly, parts: &Parts, kind: &RelKind) -> Result<Law, String> {
+    match kind {
+        RelKind::Symmetry { plane, .. } => Ok(Law::Symmetry { plane: resolve_target(asm, parts, plane)? }),
+        _ => Ok(law_of(kind)),
+    }
+}
+
+/// The law of a relationship kind (a symmetry's plane is at the world's origin: see [`law_for`]).
 pub fn law_of(kind: &RelKind) -> Law {
     match kind {
         RelKind::Mate { offset, .. } => Law::Mate { offset: *offset },
@@ -112,6 +120,9 @@ pub fn law_of(kind: &RelKind) -> Law {
         RelKind::Angle { angle, reference, .. } => Law::Angle { angle: *angle, reference: *reference },
         RelKind::Insert { offset, aligned, .. } => Law::Insert { offset: *offset, aligned: *aligned },
         RelKind::Tangent { offset, inside, .. } => Law::Tangent { offset: *offset, inside: *inside },
+        RelKind::Symmetry { .. } => {
+            Law::Symmetry { plane: End { body: None, prim: geometry::Prim::Plane { point: Vec3::ZERO, normal: Vec3::Z }, radius: 0.0 } }
+        }
         RelKind::Joint { joint, flip, offset, angle, .. } => Law::Joint { joint: *joint, flip: *flip, offset: *offset, angle: *angle },
     }
 }
@@ -142,7 +153,7 @@ pub fn system(asm: &Assembly, parts: &Parts) -> System {
         let [a, b] = r.kind.targets();
         let ends = resolve_target(asm, parts, a).and_then(|a| Ok((a, resolve_target(asm, parts, b)?)));
         match ends.and_then(|(a, b)| {
-            let law = law_of(&r.kind);
+            let law = law_for(asm, parts, &r.kind)?;
             solve::check(&law, &a.prim, &b.prim)?;
             if matches!(law, Law::Tangent { .. }) {
                 solve::check_tangent(&a, &b)?;
@@ -742,7 +753,7 @@ pub fn relate(asm: &mut Assembly, parts: &Parts, mut kind: RelKind) -> Result<Re
             *reference = ra.transpose().apply(axis);
         }
     }
-    let law = law_of(&kind);
+    let law = law_for(asm, parts, &kind).map_err(CmdError)?;
     solve::check(&law, &ea.prim, &eb.prim).map_err(CmdError)?;
     // Snap the free side into place first.
     let sys = system(asm, parts);
