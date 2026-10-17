@@ -27,7 +27,7 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
             count(c.edges.len(), "this edge", "these edges")
         ),
         (FeatureKind::Shell(s), _) => format!(
-            "The part could not be hollowed out with {} mm walls. The walls are probably too thick for its rounds or thin places: try thinner walls, or remove other faces.",
+            "The part could not be hollowed out with {} mm walls. The walls are probably thicker than a chamfer, a round or a thin place of the part: try walls thinner than the smallest of them, or move the shell above the chamfers and rounds in the browser so that it is made before them.",
             mm(s.thickness)
         ),
         (FeatureKind::Extrude(x), KernelError::OperationFailed { op: "draft", .. }) => format!(

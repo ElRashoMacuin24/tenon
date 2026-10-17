@@ -59,6 +59,8 @@ mod control_tests;
 #[cfg(test)]
 mod drw_tests;
 #[cfg(test)]
+mod explore_tests;
+#[cfg(test)]
 mod primitive_tests;
 #[cfg(test)]
 mod print_tests;

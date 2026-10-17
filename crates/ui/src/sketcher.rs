@@ -546,7 +546,13 @@ impl Workbench {
             let name = self.feature_name(s.feature);
             self.mode = Mode::Model;
             self.chrome.tab = self.home_tab();
-            self.set_status(format!("Finished {name}. Extrude or revolve it from the 3D Model tab."));
+            // (What a sketch is made into: a sheet metal part's Face, or a part's Extrude.)
+            let next = if self.document().sheet_sizes().is_ok() {
+                "Make a Face or a Contour Flange of it from the Sheet Metal tab."
+            } else {
+                "Extrude or revolve it from the 3D Model tab."
+            };
+            self.set_status(format!("Finished {name}. {next}"));
             // Back to the view from before the sketch.
             if let Some(c) = self.view.sketch_return.take() {
                 self.animate_to(c);
@@ -974,13 +980,9 @@ impl Workbench {
         let shown = sm.drag.as_ref().map_or(&doc_sketch, |(_, s)| s);
         let fully = sm.dof.as_ref().map(|d| d.2.clone()).unwrap_or_default();
         let p = ui.painter();
-        let under = Color32::from_rgb(0x5c, 0xd0, 0xc8);
-        let done = Color32::from_rgb(0xe8, 0xec, 0xf0);
-        let picked = Color32::from_rgb(0xf0, 0xa0, 0x3c);
-        let hot = Color32::from_rgb(0xff, 0xe0, 0x80);
+        let (under, done, picked, hot) = (t.sketch_free, t.sketch_done, t.sketch_picked, t.sketch_hot);
         // The part's own geometry shown in the sketch: amber; magenta when its edge is gone.
-        let reference = Color32::from_rgb(0xd9, 0xb6, 0x52);
-        let orphan = Color32::from_rgb(0xd6, 0x4f, 0xb0);
+        let (reference, orphan) = (t.sketch_ref, t.sketch_lost);
         let lost: BTreeSet<EntityId> = self.scene.lost.get(&feature).map(|l| l.iter().map(|(e, _)| *e).collect()).unwrap_or_default();
         // What the constraint under the pointer, and the selected ones, hold.
         let lit: BTreeSet<EntityId> =
@@ -1053,7 +1055,7 @@ impl Workbench {
         // Dimensions: extension lines, a dimension line with arrowheads, and the value on it. The
         // one under the pointer, or being dragged, lights up (it can be dragged, or
         // double-clicked to edit).
-        let dim_line = Color32::from_rgb(0x9a, 0xa8, 0xb6);
+        let dim_line = t.dim_line;
         let moved = sm.dim_drag.map(|(cid, at, _)| (cid, at));
         for l in dims_of(shown, moved) {
             let lit = moved.is_some_and(|m| Some(m.0) == l.id)

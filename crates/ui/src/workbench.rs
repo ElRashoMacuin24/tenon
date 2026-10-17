@@ -167,7 +167,7 @@ impl Workbench {
             mode: Mode::Model,
             panel: None,
             analysis: None,
-            status: "Ready. Start with New Sketch.".into(),
+            status: "Ready. Start 2D Sketch (S) to begin a part.".into(),
             status_error: false,
             path: None,
             services,
@@ -548,15 +548,24 @@ impl Workbench {
                 let path = self.services.pick_save.as_ref().and_then(|f| f(&name, kind.extension())).ok_or("no file chosen")?;
                 self.export_mesh(&path, kind)?;
             }
+            // (Undo with a feature's panel open leaves the panel, as Cancel does, and goes no
+            // further: the change before it is not taken back unseen.)
+            "edit.undo" | "edit.redo" if self.panel.is_some() && self.has_properties() => {
+                self.panel = None;
+                self.set_status("Left the panel without a change. Undo again to take back the last change.");
+            }
+            // (Nothing to undo is not a fault: it is said, plainly.)
             "edit.undo" => {
                 if !self.session.undo() {
-                    return Err("nothing to undo".into());
+                    self.set_status("Nothing to undo.");
+                    return Ok(());
                 }
                 self.after_undo();
             }
             "edit.redo" => {
                 if !self.session.redo() {
-                    return Err("nothing to redo".into());
+                    self.set_status("Nothing to redo.");
+                    return Ok(());
                 }
                 self.after_undo();
             }
@@ -933,7 +942,8 @@ impl Workbench {
     }
 
     pub(crate) fn feature_name(&self, id: FeatureId) -> String {
-        self.document().feature(id).map_or_else(|| id.to_string(), |f| f.name.clone())
+        // (A feature not in the part is the one a panel shows as it would be.)
+        self.document().feature(id).map_or_else(|| "The feature being set up".to_owned(), |f| f.name.clone())
     }
 
     /// Draws the whole window. `render` is the wgpu state when the app renders with wgpu.
@@ -1144,6 +1154,9 @@ impl Workbench {
 
     fn new_sketch(&mut self) -> Result<(), String> {
         if let Some(face_ref) = self.selected_face_ref() {
+            // (The face is used up by the sketch on it: it is not still selected for the next
+            // command.)
+            self.view.selection.clear();
             return self.create_sketch(json!({ "face": face_ref }));
         }
         // Show the origin planes in the viewport and wait for a plane or planar face.

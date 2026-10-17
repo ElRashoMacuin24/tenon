@@ -198,6 +198,8 @@ enum Hit {
 /// A ribbon button. Large: icon over one or two label lines; small: icon then label; icon: icon
 /// only. Buttons with a drop-down list have an arrow part (below for large, right for small).
 fn ribbon_button(ui: &Ui, rect: Rect, cmd: &UiCommand, active: bool, t: &Tokens) -> Hit {
+    // (Tests press a ribbon button by its command, as a user by its picture.)
+    crate::drawing::remember(ui, &format!("ribbon {}", cmd.id), rect);
     let has_more = !cmd.more.is_empty();
     let arrow_zone = match cmd.size {
         Size::Large if has_more => Some(Rect::from_min_max(pos2(rect.left(), rect.bottom() - 18.0), rect.max)),
@@ -880,28 +882,34 @@ impl Workbench {
         self.chrome.about = about;
 
         let mut options = self.chrome.options;
-        egui::Window::new("Application Options").open(&mut options).collapsible(false).resizable(false).default_width(320.0).show(ui.ctx(), |ui| {
-            ui.strong("Colors");
-            ui.horizontal(|ui| {
-                ui.label("UI theme");
-                ui.radio_value(&mut self.chrome.theme, ThemeName::Light, "Light");
-                ui.radio_value(&mut self.chrome.theme, ThemeName::Dark, "Dark");
+        egui::Window::new("Application Options")
+            .open(&mut options)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(320.0)
+            .default_pos([300.0, 170.0])
+            .show(ui.ctx(), |ui| {
+                ui.strong("Colors");
+                ui.horizontal(|ui| {
+                    ui.label("UI theme");
+                    ui.radio_value(&mut self.chrome.theme, ThemeName::Light, "Light");
+                    ui.radio_value(&mut self.chrome.theme, ThemeName::Dark, "Dark");
+                });
+                ui.add_space(6.0);
+                ui.strong("Display");
+                ui.checkbox(&mut self.chrome.show_cube, "Orientation cube");
+                ui.checkbox(&mut self.chrome.show_navbar, "Navigation bar");
+                ui.checkbox(&mut self.chrome.show_browser, "Model browser");
+                ui.add_space(6.0);
+                ui.strong("Sketch");
+                let r = ui.checkbox(&mut self.chrome.autoproject, "Autoproject edges for sketch creation and edit");
+                crate::drawing::remember(ui, "tn_options_autoproject", r.rect);
+                r.on_hover_text(
+                    "A new sketch on a face shows the face's edges as reference geometry: dimension and constrain to them, or use them as a profile",
+                );
+                ui.add_space(6.0);
+                self.program_options(ui);
             });
-            ui.add_space(6.0);
-            ui.strong("Display");
-            ui.checkbox(&mut self.chrome.show_cube, "Orientation cube");
-            ui.checkbox(&mut self.chrome.show_navbar, "Navigation bar");
-            ui.checkbox(&mut self.chrome.show_browser, "Model browser");
-            ui.add_space(6.0);
-            ui.strong("Sketch");
-            let r = ui.checkbox(&mut self.chrome.autoproject, "Autoproject edges for sketch creation and edit");
-            crate::drawing::remember(ui, "tn_options_autoproject", r.rect);
-            r.on_hover_text(
-                "A new sketch on a face shows the face's edges as reference geometry: dimension and constrain to them, or use them as a profile",
-            );
-            ui.add_space(6.0);
-            self.program_options(ui);
-        });
         self.chrome.options = options;
         self.crash_window(ui);
 

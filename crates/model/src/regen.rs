@@ -527,7 +527,7 @@ impl<'a> Ctx<'a> {
                     Ok(_) => {
                         self.k.release(op.shape);
                         return Err(format!(
-                            "The part could not be hollowed out with {} mm walls: the kernel left it solid. The walls are probably too thick for it: try thinner walls.",
+                            "The part could not be hollowed out with {} mm walls: the kernel left it solid. The walls are probably thicker than a chamfer or a round of the part: try walls thinner than the smallest of them, or move the shell above the chamfers and rounds in the browser so that it is made before them.",
                             crate::explain::mm(s.thickness)
                         )
                         .into());

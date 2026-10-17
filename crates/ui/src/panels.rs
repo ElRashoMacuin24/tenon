@@ -878,7 +878,16 @@ impl Workbench {
             self.finish_sketch();
             return Ok(id);
         }
-        self.sketches().last().map(|s| s.0).ok_or_else(|| "draw a sketch first".to_string())
+        // The newest sketch with a closed profile that nothing uses yet; else the newest with
+        // a profile; else the newest.
+        let doc = self.document();
+        let used: std::collections::BTreeSet<FeatureId> = doc.features().iter().flat_map(|f| f.kind.depends_on()).collect();
+        let sketches = self.sketches();
+        let newest = |want: &dyn Fn(FeatureId) -> bool| sketches.iter().rev().map(|s| s.0).find(|id| want(*id));
+        newest(&|id| !used.contains(&id) && crate::sweeps::has_profile(doc, id))
+            .or_else(|| newest(&|id| crate::sweeps::has_profile(doc, id)))
+            .or_else(|| sketches.last().map(|s| s.0))
+            .ok_or_else(|| "draw a sketch first".to_string())
     }
 
     pub(crate) fn open_extrude(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
@@ -1284,13 +1293,31 @@ impl Workbench {
                 self.exec_status(params.0, params.1)
             }
         };
+        // Said in the status bar, where the panel's instruction was: what was made or changed.
+        // (If its geometry then fails, the browser and the view say so.)
+        if let Some(done) = &r {
+            let id = done["feature"].as_u64().and_then(|v| u32::try_from(v).ok()).map(FeatureId).or(editing);
+            let name = id.and_then(|id| self.document().feature(id)).or_else(|| self.document().features().last()).map(|f| f.name.clone());
+            if let Some(name) = name {
+                self.set_status(if editing.is_some() { format!("Changed {name}.") } else { format!("Made {name}.") });
+            }
+        }
         r.is_some()
     }
 
     pub(crate) fn panels(&mut self, ui: &mut Ui) {
+        // A value a field refused this frame: said, and no OK is taken with the value from
+        // before it.
+        let refused = ui.ctx().data_mut(|d| d.remove_temp::<String>(egui::Id::new(crate::properties::FIELD_REFUSED)));
+        if let Some(said) = &refused {
+            self.set_error(said.clone());
+        }
         let Some(mut panel) = self.panel.take() else { return };
         // OK, Cancel or Apply from the properties panel, the mini-toolbar or the radial menu.
-        let request = self.panel_request.take();
+        let request = match self.panel_request.take() {
+            Some(PanelRequest::Ok | PanelRequest::Apply) if refused.is_some() => None,
+            request => request,
+        };
         let mut keep = request != Some(PanelRequest::Cancel);
         let commit = matches!(request, Some(PanelRequest::Ok | PanelRequest::Apply));
         let again = request == Some(PanelRequest::Apply);

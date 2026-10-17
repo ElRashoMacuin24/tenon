@@ -1110,7 +1110,13 @@ impl Workbench {
             }
         } else if self.document().features().is_empty() && !matches!(self.mode, Mode::Sketch(_)) && !self.pick_plane && self.panel.is_none() {
             // (Not over the planes while one is being picked, nor over a solid being set up.)
-            p.text(rect.center() - vec2(0.0, 12.0), Align2::CENTER_CENTER, "Start with New Sketch (Model tab).", theme::heading(), t.viewport_text);
+            p.text(
+                rect.center() - vec2(0.0, 12.0),
+                Align2::CENTER_CENTER,
+                "Start 2D Sketch (S) on the 3D Model tab.",
+                theme::heading(),
+                t.viewport_text,
+            );
             p.text(
                 rect.center() + vec2(0.0, 12.0),
                 Align2::CENTER_CENTER,

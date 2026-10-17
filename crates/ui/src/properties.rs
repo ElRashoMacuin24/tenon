@@ -49,6 +49,22 @@ fn parse_entry(ui: &Ui, text: &str, unit: &str) -> Option<(f64, Option<String>)>
     Some((v, Some(text.trim().to_owned())))
 }
 
+/// Where a value field leaves word of a value it refused this frame, for the panel not to
+/// take OK with the old one and for the status bar to say why.
+pub(crate) const FIELD_REFUSED: &str = "tn_field_refused";
+
+/// What a field takes, in words: "a number more than 0", "from 3 to 64".
+fn range_words(range: &std::ops::RangeInclusive<f64>, unit: &str) -> String {
+    let (lo, hi) = (*range.start(), *range.end());
+    let unit = if unit.is_empty() { String::new() } else { format!(" {unit}") };
+    match (lo, hi) {
+        (lo, hi) if lo <= -1e5 && hi >= 1e5 => "a number".into(),
+        (lo, hi) if lo > 0.0 && lo <= 0.01 && hi >= 1e5 => "more than 0".into(),
+        (lo, hi) if lo >= 0.0 && hi >= 1e5 => format!("at least {}{unit}", fmt_value(lo)),
+        (lo, hi) => format!("from {} to {}{unit}", fmt_value(lo), fmt_value(hi)),
+    }
+}
+
 /// Equations typed into a panel's fields, by field key.
 pub(crate) type Equations = std::collections::BTreeMap<&'static str, String>;
 
@@ -138,8 +154,34 @@ pub(crate) fn eq_field(
         }
     }
     if resp.lost_focus() {
-        out.entered = ui.input(|i| i.key_pressed(egui::Key::Enter));
-        ui.data_mut(|d| d.remove::<String>(id));
+        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        // What is left in the box is refused when it is no value the field takes: said, and
+        // never taken for OK with the value from before. (Enter leaves the box as it is, to be
+        // put right; a click elsewhere shows the value from before again.)
+        let typed = text.trim().trim_end_matches(unit).trim().to_owned();
+        let refused = match parse_entry(ui, &text, unit) {
+            Some((v, _)) if range.contains(&v) => None,
+            Some((v, _)) if v > *range.end() => {
+                let unit = if unit.is_empty() { String::new() } else { format!(" {unit}") };
+                Some(format!("{typed} is too large here: it must be at most {}{unit}.", fmt_value(*range.end())))
+            }
+            Some(_) => Some(format!("{typed} is not taken here: it must be {}.", range_words(&range, unit))),
+            None => Some(format!("{typed} is not a number, or an equation of the parameters.")),
+        };
+        match refused {
+            Some(said) => {
+                ui.data_mut(|d| d.insert_temp(egui::Id::new(FIELD_REFUSED), said));
+                if enter {
+                    resp.request_focus();
+                } else {
+                    ui.data_mut(|d| d.remove::<String>(id));
+                }
+            }
+            None => {
+                out.entered = enter;
+                ui.data_mut(|d| d.remove::<String>(id));
+            }
+        }
     }
     let border = if !valid {
         t.history_marker

@@ -49,6 +49,16 @@ pub struct Tokens {
     pub tint_work: Color32,
     pub tint_sketch: Color32,
     pub ok: Color32,
+    /// Sketch geometry on the viewport's background: free to move, held fully (and dimension
+    /// values), picked, under the pointer, the part's own edges, edges the part lost, and
+    /// dimension lines.
+    pub sketch_free: Color32,
+    pub sketch_done: Color32,
+    pub sketch_picked: Color32,
+    pub sketch_hot: Color32,
+    pub sketch_ref: Color32,
+    pub sketch_lost: Color32,
+    pub dim_line: Color32,
 }
 
 impl Tokens {
@@ -79,6 +89,13 @@ impl Tokens {
         cube_face_hover: Color32::from_rgb(0x8c, 0xc8, 0xf0),
         cube_edge: Color32::from_rgb(0x5d, 0x67, 0x72),
         cube_text: Color32::from_rgb(0x3a, 0x42, 0x4c),
+        sketch_free: Color32::from_rgb(0x5c, 0xd0, 0xc8),
+        sketch_done: Color32::from_rgb(0xe8, 0xec, 0xf0),
+        sketch_picked: Color32::from_rgb(0xf0, 0xa0, 0x3c),
+        sketch_hot: Color32::from_rgb(0xff, 0xe0, 0x80),
+        sketch_ref: Color32::from_rgb(0xd9, 0xb6, 0x52),
+        sketch_lost: Color32::from_rgb(0xd6, 0x4f, 0xb0),
+        dim_line: Color32::from_rgb(0x9a, 0xa8, 0xb6),
         axis_x: Color32::from_rgb(0xe0, 0x5a, 0x4f),
         axis_y: Color32::from_rgb(0x5c, 0xc0, 0x6a),
         axis_z: Color32::from_rgb(0x4f, 0x8f, 0xe8),
@@ -116,6 +133,14 @@ impl Tokens {
         cube_face_hover: Color32::from_rgb(0x8c, 0xc8, 0xf0),
         cube_edge: Color32::from_rgb(0x8a, 0x93, 0x9d),
         cube_text: Color32::from_rgb(0x4a, 0x52, 0x5c),
+        // (On the light background: the same hues, deep enough to read.)
+        sketch_free: Color32::from_rgb(0x0b, 0x8a, 0x84),
+        sketch_done: Color32::from_rgb(0x1f, 0x2a, 0x36),
+        sketch_picked: Color32::from_rgb(0xd0, 0x6a, 0x10),
+        sketch_hot: Color32::from_rgb(0xc2, 0x8c, 0x00),
+        sketch_ref: Color32::from_rgb(0x9a, 0x74, 0x10),
+        sketch_lost: Color32::from_rgb(0xb0, 0x2a, 0x8c),
+        dim_line: Color32::from_rgb(0x55, 0x63, 0x72),
         axis_x: Color32::from_rgb(0xd0, 0x3c, 0x30),
         axis_y: Color32::from_rgb(0x2e, 0x9e, 0x44),
         axis_z: Color32::from_rgb(0x2b, 0x6c, 0xd0),

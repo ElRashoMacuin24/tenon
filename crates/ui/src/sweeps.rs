@@ -109,7 +109,7 @@ pub(crate) fn path_curves(doc: &Document, sketch: FeatureId) -> Option<SketchCur
     (!curves.is_empty()).then_some(SketchCurves { sketch, curves })
 }
 
-fn has_profile(doc: &Document, sketch: FeatureId) -> bool {
+pub(crate) fn has_profile(doc: &Document, sketch: FeatureId) -> bool {
     doc.sketch(sketch).is_some_and(|sk| !tenon_sketch::regions(sk).is_empty())
 }
 
