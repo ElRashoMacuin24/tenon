@@ -190,7 +190,9 @@ pub const RIBBON: &[RibbonTab] = &[
                     large("sketch.line", "Line", "Click points; each line starts where the last ended. Esc ends the chain.", Icon::Line, 0)
                         .key("L")
                         .more(&["sketch.line", "sketch.spline"]),
-                    small("sketch.circle", "Circle", "Click the centre, then a point on the circle", Icon::Circle, 0).key("C"),
+                    small("sketch.circle", "Circle", "Click the centre, then a point on the circle", Icon::Circle, 0)
+                        .key("C")
+                        .more(&["sketch.circle", "sketch.ellipse"]),
                     small("sketch.arc", "Arc", "Three points: click the start, the end, then a point on the arc", Icon::Arc, 0).key("A").more(&[
                         "sketch.arc",
                         "sketch.arc_tangent",
@@ -955,6 +957,7 @@ pub const EXTRA: &[UiCommand] = &[
         0,
     ),
     small("sketch.arc_center", "Arc Center Point", "Click the centre, the start, then the end of the arc", Icon::Arc, 0),
+    small("sketch.ellipse", "Ellipse", "Click the centre, the end of one axis, then a point on the ellipse", Icon::Ellipse, 0),
     small("sketch.rectangle3", "Rectangle Three Point", "A rectangle at any angle: click two corners of one side, then how deep", Icon::Rectangle, 0),
     small("sketch.rectangle_center", "Rectangle Two Point Center", "Click the centre, then a corner", Icon::Rectangle, 0),
     small("sketch.slot", "Slot Center to Center", "Click the centre of each round end, then how wide", Icon::Slot, 0),

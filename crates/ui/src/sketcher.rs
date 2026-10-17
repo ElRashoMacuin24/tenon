@@ -61,6 +61,8 @@ pub(crate) enum Tool {
     Rect3,
     ArcCenter,
     ArcTangent,
+    /// Ellipse: the centre, the end of one axis, then a point on it.
+    Ellipse,
     /// Project Geometry: clicks are on the part, not the sketch.
     Project,
     /// Project Flat Pattern: a click on a face of the sheet shows it laid flat in the sketch.
@@ -112,6 +114,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("sketch.rectangle3", Tool::Rect3),
     ("sketch.arc_center", Tool::ArcCenter),
     ("sketch.arc_tangent", Tool::ArcTangent),
+    ("sketch.ellipse", Tool::Ellipse),
 ];
 
 impl Tool {
@@ -132,7 +135,7 @@ impl Tool {
             Tool::Trim => "Click the piece of a curve to remove.",
             Tool::Mirror => "Click the mirror line.",
             Tool::Fillet => "Click a corner where two lines meet.",
-            Tool::Dimension => "Click a line, circle or arc, or two points or lines; then click where the dimension goes.",
+            Tool::Dimension => "Click a line, circle, arc or ellipse, or two points or lines; then click where the dimension goes.",
             Tool::Driven => "Click a dimension to make it driven (it follows the sketch, in parentheses) or driving again.",
             Tool::Coincident => "Click two points, or a point and a curve.",
             Tool::Horizontal | Tool::Vertical => "Click a line.",
@@ -163,6 +166,7 @@ impl Tool {
             Tool::Rect3 => "Click two corners of one side, then how deep.",
             Tool::ArcCenter => "Click the centre, the start, then the end of the arc.",
             Tool::ArcTangent => "Click the end of a line or an arc, then where the arc ends.",
+            Tool::Ellipse => "Click the centre, the end of one axis, then a point on the ellipse.",
         }
     }
 }
@@ -1736,7 +1740,7 @@ impl Workbench {
         let picks = sm.picks.clone();
         let between = |id: EntityId| matches!(kind(s, id), Kind::Line | Kind::Point);
         match (picks.as_slice(), hover) {
-            ([], Some(h)) if between(h) || kind(s, h) == Kind::Round => {
+            ([], Some(h)) if between(h) || kind(s, h) == Kind::Round || s.is_ellipse(h) => {
                 sm.picks.push(h);
                 return;
             }

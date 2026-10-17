@@ -45,6 +45,17 @@ fn turned_frame(f: &Frame, axis: &Axis, angle: f64) -> Option<Frame> {
     Frame::new(o, z, x)
 }
 
+/// Points round an ellipse (DEC-120) from parameter `t0` to `t1`.
+fn ellipse_points(center: Vec2, major: Vec2, minor: f64, t0: f64, t1: f64) -> Vec<Vec2> {
+    let other = major.normalized().perp() * minor;
+    (0..=32)
+        .map(|i| {
+            let t = t0 + (t1 - t0) * f64::from(i) / 32.0;
+            center + major * t.cos() + other * t.sin()
+        })
+        .collect()
+}
+
 /// Points of a profile curve enough to find how far it reaches in any direction: a line's ends,
 /// points round an arc or circle, a spline's poles (it lies within them).
 fn curve_points(c: &Curve2) -> Vec<Vec2> {
@@ -55,6 +66,8 @@ fn curve_points(c: &Curve2) -> Vec<Vec2> {
         }
         Curve2::Circle { center, radius } => (0..32).map(|i| Vec2::polar(*center, *radius, std::f64::consts::TAU * f64::from(i) / 32.0)).collect(),
         Curve2::BSpline { poles, .. } => poles.clone(),
+        Curve2::Ellipse { center, major, minor } => ellipse_points(*center, *major, *minor, 0.0, std::f64::consts::TAU),
+        Curve2::EllipseArc { center, major, minor, start, end } => ellipse_points(*center, *major, *minor, *start, *end),
     }
 }
 
@@ -2422,6 +2435,8 @@ fn profile_points(p: &Profile) -> Vec<Vec3> {
                 }
                 Curve2::Circle { center, radius } => round(&mut pts, *center, *radius, 0.0, std::f64::consts::TAU),
                 Curve2::BSpline { poles, .. } => pts.extend(poles.iter().copied()),
+                Curve2::Ellipse { center, major, minor } => pts.extend(ellipse_points(*center, *major, *minor, 0.0, std::f64::consts::TAU)),
+                Curve2::EllipseArc { center, major, minor, start, end } => pts.extend(ellipse_points(*center, *major, *minor, *start, *end)),
             }
         }
     }

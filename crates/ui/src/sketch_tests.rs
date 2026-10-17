@@ -994,3 +994,64 @@ fn stretch_pulls_a_side_and_the_width_across_it_follows() {
     d.frame(&mut wb, vec![]);
     assert!((value(&wb) - (was + 5.0)).abs() < 1e-9, "{} from {was}", value(&wb));
 }
+
+#[test]
+fn an_ellipse_is_drawn_by_its_centre_an_axis_and_a_point_on_it() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+    // Ellipse (under Circle, DEC-120): the origin, 20 along x, then a point 10 up the other way.
+    wb.run_ui("sketch.ellipse").unwrap();
+    assert!(wb.status().starts_with("Click the centre, the end of one axis"), "{}", wb.status());
+    for (x, y) in [(0.0, 0.0), (20.0, 0.0)] {
+        let p = at(&wb, x, y);
+        move_to(&mut d, &mut wb, p);
+        d.click(&mut wb, p);
+    }
+    // What it would make follows the pointer.
+    let p = at(&wb, 0.0, 10.0);
+    move_to(&mut d, &mut wb, p);
+    let Mode::Sketch(sm) = &wb.mode else { panic!() };
+    let ghost = wb.tool_ghost(&open(&wb), sm, Vec2::new(0.0, 10.0));
+    assert!(ghost.len() == 1 && ghost[0].iter().any(|q| (q.y - 10.0).abs() < 0.3), "{ghost:?}");
+    d.click(&mut wb, p);
+    let s = open(&wb);
+    let info = tenon_model::cmd::sketch_info_value(&s);
+    let areas: Vec<f64> = info["regions"].as_array().unwrap().iter().map(|r| r["area"].as_f64().unwrap()).collect();
+    assert!(areas.len() == 1 && (areas[0] - PI * 200.0).abs() < 0.03 * PI * 200.0, "{areas:?} {}", wb.status());
+    assert!(s.entities().any(|(_, e)| matches!(e.geometry, Geometry::Ellipse { .. })));
+    assert!(s.constraints().any(|(_, c)| matches!(c, Constraint::Coincident { .. })), "held at the origin");
+    // Dimension: a click on it and a place for the value sizes half its first axis; again, the
+    // other.
+    d.tap(&mut wb, egui::Key::Escape);
+    let (id, _) = s.entities().find(|(_, e)| matches!(e.geometry, Geometry::Ellipse { .. })).unwrap();
+    for (on, place, typed) in [((-20.0, 0.0), (-26.0, 14.0), "30"), ((0.0, -10.0), (12.0, -18.0), "6")] {
+        // (The tool stays on after a dimension is placed.)
+        if wb.active_tool_id() != Some("sketch.dimension") {
+            d.tap(&mut wb, egui::Key::D);
+        }
+        for (x, y) in [on, place] {
+            let p = at(&wb, x, y);
+            move_to(&mut d, &mut wb, p);
+            d.click(&mut wb, p);
+        }
+        assert!(matches!(wb.panel, Some(Panel::Value(_))), "the value box is open: {}", wb.status());
+        d.frame(&mut wb, vec![]);
+        d.frame(&mut wb, vec![egui::Event::Text(typed.into())]);
+        d.tap(&mut wb, egui::Key::Enter);
+        d.frame(&mut wb, vec![]);
+    }
+    let (_, major, minor) = open(&wb).ellipse(id).unwrap();
+    assert!((major.len() - 30.0).abs() < 1e-7 && (minor - 6.0).abs() < 1e-7, "{major:?} {minor}");
+    let s = open(&wb);
+    // Extruded (10 deep, as Extrude starts), it is pi a b times that.
+    d.tap(&mut wb, egui::Key::Escape);
+    d.tap(&mut wb, egui::Key::E);
+    d.settle(&mut wb);
+    let (id, _) = s.entities().find(|(_, e)| matches!(e.geometry, Geometry::Ellipse { .. })).unwrap();
+    let (_, major, minor) = s.ellipse(id).unwrap();
+    let exact = PI * major.len() * minor * 10.0;
+    assert!((volume(&wb) - exact).abs() < 1e-6 * exact, "{} vs {exact}", volume(&wb));
+}

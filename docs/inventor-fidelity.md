@@ -68,9 +68,9 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 7. Standard parts and printing (the second table below): a length asked for when a section is
    placed; a fastener that takes its size from the hole it is dropped on; the printer's build
    space drawn round the part.
-8. The Sketch tab's remaining buttons (the tables below): Stretch, ellipses, the Center
-   Point format, sketch patterns that stay tied to their original, automatic dimensions. (Text
-   is done: DEC-102.)
+8. The Sketch tab's remaining buttons (the tables below): sketch patterns that stay tied to
+   their original, automatic dimensions. (Text is done: DEC-102; Center Point DEC-117, Stretch
+   DEC-119, the ellipse DEC-120.)
 9. ~~Sheet metal (M8): the Sheet Metal tab, its defaults, Face, Flange and the flat pattern.~~ Done
    (DEC-057 to DEC-061).
 10. ~~Mitred corners and corner reliefs centred on the bend lines; Hem; Contour Flange.~~ Done
@@ -91,13 +91,13 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 18. ~~Delete Features with what goes with a feature; Extrude To a face or plane; Mate's Flush
     solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
     comparison of every command below.
-19. From the same comparison, in order: the Sketch tab's ellipse and Smooth; fillets of variable
+19. From the same comparison, in order: the Sketch tab's Smooth; fillets of variable
     radius and face fillets. Done from it so far: Extrude To (DEC-104), To Next (DEC-109) and
     Between (DEC-111); the Hole panel's Spotface and To (DEC-105), placing on a face (DEC-113)
     and Tapped (DEC-114); visibility from the browser (DEC-106); components placed by the
     pointer (DEC-107); Revolve's directions (DEC-108), To and To Next (DEC-112); Tangent (DEC-110);
     Symmetry (DEC-115); the three-point work plane (DEC-116); Center Point (DEC-117); the
-    arc slots (DEC-118); Stretch (DEC-119).
+    arc slots (DEC-118); Stretch (DEC-119); the ellipse (DEC-120).
 
 ## Geometry of the part in a sketch
 
@@ -122,7 +122,7 @@ Create panel:
 | Inventor | Tenon | Proof / gap |
 |---|---|---|
 | Line, with an arc swept out of its end by dragging | partial | Line (L). Gap: no arc from a line by dragging; use Arc > Tangent |
-| Circle: Center Point; Tangent (to three lines); Ellipse | partial | by centre. Gap: tangent circle, ellipse |
+| Circle: Center Point; Tangent (to three lines); Ellipse | partial | by centre; **Ellipse** (closed 2026-10-17, DEC-120: the centre, the end of one axis, a point on it; sized by its half-axes; lines, arcs and circles cut it into regions; extruded exactly), `an_ellipse_holds_its_axes_square_and_bounds_regions`, `lines_and_circles_cut_an_ellipse_into_regions`, `an_ellipse_extrudes_whole_or_cut_by_a_line`, `an_ellipse_is_drawn_by_its_centre_an_axis_and_a_point_on_it`. Gap: tangent circle; an ellipse cannot yet be trimmed, offset or made tangent, and elliptical arcs come only from regions |
 | Arc: Three Point; Tangent; Center Point | done | the drop-down under Arc: `slots_rectangles_and_arcs_are_drawn_by_their_own_clicks`, `a_tangent_arc_carries_on_from_the_end_of_a_line_or_an_arc` |
 | Rectangle: Two Point; Three Point; Two Point Center; Three Point Center | partial | two point, three point, two point centre. Gap: three point centre |
 | Slot: Center to Center; Overall; Center Point; Three Point Arc; Center Point Arc | partial | the three straight slots, under Rectangle as in Inventor: `slots_and_rectangles_about_a_centre_or_at_an_angle_hold_their_shape` (a slot is two lines tangent to two equal arcs, five degrees of freedom); **the two arc slots** (closed 2026-10-17, DEC-118: two arcs about one centre and two round ends tangent to both, six degrees of freedom), `arc_slots_hold_their_shape_about_their_centre`, `an_arc_slot_is_drawn_about_a_centre_or_through_three_points`, `arc_slots_are_drawn_by_their_clicks_about_a_centre_or_through_three_points` |

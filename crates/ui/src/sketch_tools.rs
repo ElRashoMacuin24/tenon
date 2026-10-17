@@ -167,6 +167,7 @@ pub(crate) fn is_tool(t: Tool) -> bool {
             | Rect3
             | ArcCenter
             | ArcTangent
+            | Ellipse
     )
 }
 
@@ -266,6 +267,15 @@ fn arc_slot_middle(tool: Tool, a: Vec2, b: Vec2, c: Vec2) -> Option<(Vec2, Vec2,
     }
     let arc = tenon_geom::Arc::from_3_points(a, c, b)?;
     Some((arc.center, arc.start_point(), arc.end_point()))
+}
+
+/// Half the second axis of an ellipse about `c` with an axis to `end` that goes through `at`
+/// (or, where none can, how far `at` is from the first axis).
+fn ellipse_minor(c: Vec2, end: Vec2, at: Vec2) -> f64 {
+    let (u, a) = ((end - c).normalized(), end.dist(c));
+    let (x, y) = ((at - c).dot(u), (at - c).dot(u.perp()).abs());
+    let s = 1.0 - (x / a.max(1e-9)).powi(2);
+    (if s > 0.05 { y / s.sqrt() } else { y }).max(0.01)
 }
 
 /// How wide an arc slot is for the pointer to be on its side.
@@ -405,6 +415,22 @@ impl Workbench {
                     && let (Some(on), Some(c), Tool::SlotArcCenter) = (a.point, r["centers"][0].as_u64(), tool)
                 {
                     let _ = self.exec("sketch.constrain", json!({ "sketch": f, "constraint": { "type": "coincident", "a": on.0, "b": c } }));
+                }
+            }
+            Tool::Ellipse => {
+                if sm.clicks.len() < 2 {
+                    sm.clicks.push(click);
+                    return;
+                }
+                let (c, end) = (sm.clicks[0], sm.clicks[1]);
+                sm.clicks.clear();
+                let minor = ellipse_minor(c.at, end.at, click.at);
+                let p = json!({ "sketch": f, "cx": c.at.x, "cy": c.at.y, "x": end.at.x, "y": end.at.y, "minor": minor });
+                // Drawn about an existing point (the origin, say), its centre is that point.
+                if let Some(r) = self.exec_status("sketch.ellipse", p)
+                    && let (Some(on), Some(centre)) = (c.point, r["center"].as_u64())
+                {
+                    let _ = self.exec("sketch.constrain", json!({ "sketch": f, "constraint": { "type": "coincident", "a": on.0, "b": centre } }));
                 }
             }
             Tool::RectCenter => {
@@ -560,6 +586,8 @@ impl Workbench {
                 Some((center, start, end)) => made(&|s| s.add_arc_slot(center, start, end, arc_slot_width(center, start, cursor)).is_ok()),
                 None => Vec::new(),
             },
+            (Tool::Ellipse, [c]) => vec![vec![c.at, cursor]],
+            (Tool::Ellipse, [c, end]) => made(&|s| s.add_ellipse(c.at, end.at, ellipse_minor(c.at, end.at, cursor)).is_ok()),
             (Tool::RectCenter, [c]) => made(&|s| s.add_rectangle(c.at * 2.0 - cursor, cursor).is_ok()),
             (Tool::Rect3 | Tool::ArcCenter, [a]) => vec![vec![a.at, cursor]],
             (Tool::Rect3, [a, b]) => made(&|s| s.add_rectangle_3(a.at, b.at, cursor).is_ok()),

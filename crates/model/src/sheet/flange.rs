@@ -682,7 +682,7 @@ mod tests {
                         + radius * radius * d)
                 }
                 Curve2::Circle { radius, .. } => PI * radius * radius,
-                Curve2::BSpline { .. } => 0.0,
+                Curve2::BSpline { .. } | Curve2::Ellipse { .. } | Curve2::EllipseArc { .. } => 0.0,
             })
             .sum()
     }

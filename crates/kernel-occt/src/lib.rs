@@ -138,6 +138,26 @@ fn profile_in(p: &Profile) -> KResult<sys::ProfileIn> {
                         check::size("circle radius", *radius)?;
                         (c.kind, c.cx, c.cy, c.r) = (2, cc.x, cc.y, *radius);
                     }
+                    Curve2::Ellipse { center, major, minor } | Curve2::EllipseArc { center, major, minor, .. } => {
+                        let cc = finite2("ellipse centre", *center)?;
+                        let m = finite2("ellipse axis", *major)?;
+                        check::size("ellipse axis", m.len())?;
+                        check::size("ellipse axis", *minor)?;
+                        // (The kernel wants the longer axis first: the other one, a quarter turn on,
+                        // is then the first, and the parameter a quarter turn less.)
+                        let (dir, big, small, shift) = if m.len() >= *minor {
+                            (m.normalized(), m.len(), *minor, 0.0)
+                        } else {
+                            (m.normalized().perp(), *minor, m.len(), -std::f64::consts::FRAC_PI_2)
+                        };
+                        (c.kind, c.cx, c.cy, c.x0, c.y0, c.r, c.x1) = (4, cc.x, cc.y, dir.x, dir.y, big, small);
+                        if let Curve2::EllipseArc { start, end, .. } = &tc.curve {
+                            if !(start.is_finite() && end.is_finite()) {
+                                return Err(bad("ellipse angles must be finite"));
+                            }
+                            (c.kind, c.a0, c.a1) = (5, start + shift, end + shift);
+                        }
+                    }
                     Curve2::BSpline { poles, degree } => {
                         if !(1..=8).contains(degree) || poles.len() <= *degree as usize || poles.len() > MAX_SPLINE_POLES {
                             return Err(bad(format!("a spline needs degree 1..=8 and more poles than its degree (at most {MAX_SPLINE_POLES})")));

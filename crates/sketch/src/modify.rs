@@ -159,6 +159,7 @@ impl Sketch {
                     Geometry::Line { start, end } => Geometry::Line { start: at(start)?, end: at(end)? },
                     Geometry::Circle { center, radius } => Geometry::Circle { center: at(center)?, radius: radius * motion.factor() },
                     Geometry::Arc { center, start, end } => Geometry::Arc { center: at(center)?, start: at(start)?, end: at(end)? },
+                    Geometry::Ellipse { center, major, minor } => Geometry::Ellipse { center: at(center)?, major: at(major)?, minor: at(minor)? },
                     Geometry::Spline { poles, degree } => {
                         Geometry::Spline { poles: poles.iter().map(at).collect::<SketchResult<_>>()?, degree: *degree }
                     }

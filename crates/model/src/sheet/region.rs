@@ -363,6 +363,7 @@ pub fn of_loop(l: &Loop) -> Result<Vec<Piece>, String> {
             }),
             Curve2::Circle { center, radius } => out.extend(circle(*center, *radius, c.tag)),
             Curve2::BSpline { .. } => return Err("a spline".into()),
+            Curve2::Ellipse { .. } | Curve2::EllipseArc { .. } => return Err("an ellipse".into()),
         }
     }
     Ok(out)

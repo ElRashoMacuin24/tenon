@@ -93,6 +93,8 @@ struct System<'s> {
     radius_at: HashMap<EntityId, usize>,
     x0: Vec<f64>,
     arcs: Vec<(EntityId, EntityId, EntityId)>,
+    /// Ellipses' centres and axis ends: the axes are held square.
+    ellipses: Vec<(EntityId, EntityId, EntityId)>,
     built: Vec<Built>,
     locked: Vec<bool>,
 }
@@ -105,6 +107,7 @@ impl<'s> System<'s> {
             radius_at: HashMap::new(),
             x0: Vec::new(),
             arcs: Vec::new(),
+            ellipses: Vec::new(),
             built: Vec::new(),
             locked: Vec::new(),
         };
@@ -119,6 +122,7 @@ impl<'s> System<'s> {
                     sys.x0.push(*radius);
                 }
                 Geometry::Arc { center, start, end } => sys.arcs.push((*center, *start, *end)),
+                Geometry::Ellipse { center, major, minor } => sys.ellipses.push((*center, *major, *minor)),
                 _ => {}
             }
         }
@@ -167,6 +171,7 @@ impl<'s> System<'s> {
             radius_at: self.radius_at.clone(),
             x0: self.x0.clone(),
             arcs: self.arcs.clone(),
+            ellipses: self.ellipses.clone(),
             built: self.built.clone(),
             locked: self.locked.clone(),
         }
@@ -272,6 +277,14 @@ impl<'s> System<'s> {
                 let p = pt(*point)?;
                 if let Some((a, bb)) = ln(*curve) {
                     out.push(dir_n(a, bb).cross(p - a));
+                } else if let Some(Geometry::Ellipse { center, major, minor }) = self.sketch.geometry(*curve) {
+                    // How far round the ellipse's own scale the point is from it, near enough a
+                    // distance close to the curve.
+                    let (c, m, n) = (pt(*center)?, pt(*major)?, pt(*minor)?);
+                    let (u, a, b) = (dir_n(c, m), c.dist(m).max(1e-12), c.dist(n).max(1e-12));
+                    let d = p - c;
+                    let (x, y) = (d.dot(u) / a, d.cross(u) / -b);
+                    out.push(((x * x + y * y).sqrt() - 1.0) * (a * b).sqrt());
                 } else {
                     let (c, r) = ci(*curve)?;
                     out.push(p.dist(c) - r);
@@ -380,6 +393,13 @@ impl<'s> System<'s> {
             };
             out.push(v);
         }
+        for (c, m, n) in &self.ellipses {
+            let v = match (self.pt(x, *c), self.pt(x, *m), self.pt(x, *n)) {
+                (Some(c), Some(m), Some(n)) => dir_n(c, m).dot(dir_n(c, n)),
+                _ => 0.0,
+            };
+            out.push(v);
+        }
         for (i, b) in self.built.iter().enumerate() {
             if Some(i) != skip {
                 self.eval_one(b, x, out);
@@ -388,7 +408,7 @@ impl<'s> System<'s> {
     }
 
     fn rows(&self, skip: Option<usize>) -> usize {
-        self.arcs.len() + self.built.iter().enumerate().filter(|(i, _)| Some(*i) != skip).map(|(_, b)| b.rows).sum::<usize>()
+        self.arcs.len() + self.ellipses.len() + self.built.iter().enumerate().filter(|(i, _)| Some(*i) != skip).map(|(_, b)| b.rows).sum::<usize>()
     }
 
     fn free(&self) -> Vec<usize> {

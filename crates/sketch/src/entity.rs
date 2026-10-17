@@ -47,6 +47,14 @@ pub enum Geometry {
         start: EntityId,
         end: EntityId,
     },
+    /// An ellipse (DEC-120) about `center`: `major` is at the end of one axis and `minor` at
+    /// the end of the other (the solver keeps the two square to one another). Either may be the
+    /// longer; the other axis is a quarter turn counter-clockwise from the first.
+    Ellipse {
+        center: EntityId,
+        major: EntityId,
+        minor: EntityId,
+    },
     /// Clamped uniform B-spline over control points.
     Spline {
         poles: Vec<EntityId>,
@@ -77,6 +85,7 @@ impl Geometry {
             Geometry::Line { start, end } => vec![*start, *end],
             Geometry::Circle { center, .. } => vec![*center],
             Geometry::Arc { center, start, end } => vec![*center, *start, *end],
+            Geometry::Ellipse { center, major, minor } => vec![*center, *major, *minor],
             Geometry::Spline { poles, .. } => poles.clone(),
             Geometry::Text { at, .. } => vec![*at],
         }
@@ -97,6 +106,7 @@ impl Geometry {
             Geometry::Line { .. } => "line",
             Geometry::Circle { .. } => "circle",
             Geometry::Arc { .. } => "arc",
+            Geometry::Ellipse { .. } => "ellipse",
             Geometry::Spline { .. } => "spline",
             Geometry::Text { .. } => "text",
         }

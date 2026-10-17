@@ -673,6 +673,9 @@ fn projected_edges_centre_lines_and_diameters_to_them_are_written_and_read_back(
     let pt = run(&mut s, "sketch.point", json!({ "sketch": on, "x": 12, "y": 14 }))["point"].as_u64().unwrap();
     // A sketch point beside it (DEC-117).
     run(&mut s, "sketch.point", json!({ "sketch": on, "x": 30, "y": 14, "center": false }));
+    // An ellipse: its three points (DEC-120).
+    let ellipse =
+        run(&mut s, "sketch.ellipse", json!({ "sketch": on, "cx": 20, "cy": 30, "x": 30, "y": 30, "minor": 4 }))["ellipse"].as_u64().unwrap();
     let across = run(
         &mut s,
         "sketch.constrain",
@@ -685,6 +688,7 @@ fn projected_edges_centre_lines_and_diameters_to_them_are_written_and_read_back(
     assert_eq!(text.matches("reference = true").count(), 3, "{text}");
     assert_eq!(text.matches("centerline = true").count(), 1, "{text}");
     assert_eq!(text.matches("sketch_point = true").count(), 1, "{text}");
+    assert!(text.contains(&format!("{{ id = {ellipse}, type = \"ellipse\", center = ")), "{text}");
     assert!(text.contains(&format!("{{ id = {front}, type = \"line\", start = ")), "{text}");
     let record = format!("{{ id = {}, type = \"linear_diameter\", point = {pt}, axis = {}, value = 6.0 }}", across["constraint"], axis["line"]);
     assert!(text.contains(&record), "{text}");

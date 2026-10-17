@@ -14,6 +14,10 @@ shows it in [ROADMAP.md](ROADMAP.md).
   built in so that a part is the same everywhere. New commands `sketch.text` and
   `sketch.edit_text`; `sketch.info` lists the texts. Files gain the entity `text` and the
   region key `{ text = id }` (an addition to format version 2).
+- **Ellipse.** Under Circle: click the centre, the end of one axis, then a point on the
+  ellipse. Dimension it by clicking it (half its first axis, then the other). Lines, arcs and
+  circles cut it into regions, and it extrudes, revolves and cuts exactly. `sketch.ellipse`;
+  files gain the entity `ellipse`.
 - **Stretch.** Sketch > Modify > Stretch: select geometry, click where from and where to (or
   type X and Y). It moves, what is joined to it stretches, and the dimensions across the
   stretch take the new sizes. `sketch.stretch`.

@@ -582,6 +582,56 @@
       }
     },
     {
+      "id": "sketch.ellipse",
+      "label": "Ellipse",
+      "undoable": true,
+      "description": "sketch, cx, cy (its centre), x, y (the end of one axis), minor (half the other axis, a quarter turn counter-clockwise from the first). Returns the ellipse and its three points: `center`, `major` and `minor`, the ends of its axes, which dimensions to the centre size",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "cx": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "its centre"
+          },
+          "cy": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "its centre"
+          },
+          "x": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the end of one axis"
+          },
+          "y": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the end of one axis"
+          },
+          "minor": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "half the other axis"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "cx",
+          "cy",
+          "x",
+          "y",
+          "minor"
+        ]
+      }
+    },
+    {
       "id": "sketch.arc",
       "label": "Arc",
       "undoable": true,

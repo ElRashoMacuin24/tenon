@@ -149,6 +149,17 @@ static SCHEMAS: &[C] = &[
         ],
         &[&[&["center"], &["cx", "cy"]]],
     ),
+    C::new(
+        "sketch.ellipse",
+        &[
+            SKETCH,
+            req("cx", Length, "its centre"),
+            req("cy", Length, "its centre"),
+            req("x", Length, "the end of one axis"),
+            req("y", Length, "the end of one axis"),
+            req("minor", Length, "half the other axis"),
+        ],
+    ),
     C::with(
         "sketch.arc",
         &[

@@ -405,6 +405,15 @@ pub(crate) fn pending(s: &Sketch, picks: &[EntityId], cursor: Vec2) -> Option<Co
         [one] => match s.geometry(*one) {
             Some(Geometry::Circle { .. }) => Some(Constraint::Diameter { curve: *one, value: 0.0 }),
             Some(Geometry::Arc { .. }) => Some(Constraint::Radius { curve: *one, value: 0.0 }),
+            // An ellipse: half its first axis, or once that has a size, half the other (DEC-120).
+            Some(Geometry::Ellipse { center, major, minor }) => {
+                let sized = |end: EntityId| {
+                    s.constraints()
+                        .any(|(_, c)| matches!(c, Constraint::Distance { a, b, .. } if (*a, *b) == (*center, end) || (*a, *b) == (end, *center)))
+                };
+                let end = if sized(*major) { *minor } else { *major };
+                Some(Constraint::Distance { a: *center, b: end, value: 0.0 })
+            }
             _ => None,
         },
         // To a centre line: the diameter of what is turned about it.

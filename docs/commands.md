@@ -25,6 +25,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.point` | Point | sketch, x, y; center (default true): a centre point, where a hole goes unless told otherwise, or (false) a sketch point, which a hole takes only when picked | yes |
 | `sketch.line` | Line | sketch; start (point id) or x1, y1; end (point id) or x2, y2 | yes |
 | `sketch.circle` | Circle | sketch; center (point id) or cx, cy; r. Returns the circle and its centre point (`center`) | yes |
+| `sketch.ellipse` | Ellipse | sketch, cx, cy (its centre), x, y (the end of one axis), minor (half the other axis, a quarter turn counter-clockwise from the first). Returns the ellipse and its three points: `center`, `major` and `minor`, the ends of its axes, which dimensions to the centre size | yes |
 | `sketch.arc` | Arc | sketch; center or cx, cy; start or x1, y1; end or x2, y2 (counter-clockwise). Returns the arc and its points (`center`, `start`, `end`) | yes |
 | `sketch.arc3` | Three-Point Arc | sketch, x1, y1, x2, y2 (a point on the arc), x3, y3 | yes |
 | `sketch.rectangle` | Rectangle | sketch, x1, y1, x2, y2 (opposite corners); returns lines and corners (the first at x1, y1) | yes |

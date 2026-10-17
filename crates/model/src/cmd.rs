@@ -1326,6 +1326,16 @@ fn sketch_edit_text(s: &mut Session, p: &Value) -> CmdResult {
     Ok(json!({}))
 }
 
+fn sketch_ellipse(s: &mut Session, p: &Value) -> CmdResult {
+    let (c, end, minor) = (pos(p, "cx", "cy")?, pos(p, "x", "y")?, num(p, "minor")?);
+    let (id, points) = on_sketch(s, p, |sk| {
+        let id = sk.add_ellipse(c, end, minor)?;
+        Ok((id, sk.entity(id).map(|e| e.geometry.points()).unwrap_or_default()))
+    })?;
+    let at = |i: usize| points.get(i).map(|p| p.0);
+    Ok(json!({ "ellipse": id.0, "center": at(0), "major": at(1), "minor": at(2) }))
+}
+
 fn sketch_circle(s: &mut Session, p: &Value) -> CmdResult {
     let c = point_ref(p, "center", "cx", "cy")?;
     let r = num(p, "r")?;
@@ -3724,6 +3734,13 @@ static COMMANDS: &[CommandSpec] = &[
         "sketch; center (point id) or cx, cy; r. Returns the circle and its centre point (`center`)",
         true,
         sketch_circle
+    ),
+    doc_cmd!(
+        "sketch.ellipse",
+        "Ellipse",
+        "sketch, cx, cy (its centre), x, y (the end of one axis), minor (half the other axis, a quarter turn counter-clockwise from the first). Returns the ellipse and its three points: `center`, `major` and `minor`, the ends of its axes, which dimensions to the centre size",
+        true,
+        sketch_ellipse
     ),
     doc_cmd!(
         "sketch.arc",

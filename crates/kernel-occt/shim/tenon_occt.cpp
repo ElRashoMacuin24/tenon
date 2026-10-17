@@ -63,6 +63,7 @@
 #include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <Geom_Circle.hxx>
+#include <Geom_Ellipse.hxx>
 #include <Geom_Line.hxx>
 #include <NCollection_Array1.hxx>
 #include <Precision.hxx>
@@ -119,6 +120,7 @@
 #include <TopoDS_Vertex.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Elips.hxx>
 #include <gp_Cone.hxx>
 #include <gp_Cylinder.hxx>
 #include <gp_Dir.hxx>
@@ -546,6 +548,33 @@ TopoDS_Edge profile_edge(const CurveIn& c, const ProfileIn& p, const PlaneFrame&
     BRepBuilderAPI_MakeEdge mk(bs);
     if (!mk.IsDone()) {
       throw std::runtime_error("could not build a profile spline");
+    }
+    return mk.Edge();
+  }
+  case 4:
+  case 5: {
+    const gp_Pnt o = f.at(c.cx, c.cy);
+    const gp_Vec along(o, f.at(c.cx + c.x0, c.cy + c.y0));
+    if (along.Magnitude() <= Precision::Confusion() || c.x1 <= Precision::Confusion() || c.r < c.x1) {
+      throw std::invalid_argument("invalid ellipse in profile");
+    }
+    const gp_Elips el(gp_Ax2(o, f.z, gp_Dir(along)), c.r, c.x1);
+    curves.push_back({new Geom_Ellipse(el), c.tag});
+    if (c.kind == 4) {
+      BRepBuilderAPI_MakeEdge mk(el);
+      if (!mk.IsDone()) {
+        throw std::runtime_error("could not build a profile ellipse");
+      }
+      return mk.Edge();
+    }
+    double a0 = c.a0;
+    double a1 = c.a1;
+    while (a1 <= a0) {
+      a1 += kTwoPi;
+    }
+    BRepBuilderAPI_MakeEdge mk(el, a0, a1);
+    if (!mk.IsDone()) {
+      throw std::runtime_error("could not build a profile ellipse arc");
     }
     return mk.Edge();
   }

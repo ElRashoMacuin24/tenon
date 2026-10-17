@@ -1419,3 +1419,37 @@ fn a_stretch_lengthens_a_block_and_its_width_follows() {
     regenerates(&mut s, &mut k);
     assert!(approx(volume(&mut s, &mut k), 8000.0));
 }
+
+#[test]
+fn an_ellipse_extrudes_whole_or_cut_by_a_line() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    // Turned (its first axis 20 long toward (12, 16)) and 10 the other way: pi a b, 5 deep.
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    let r = run(&mut s, &mut k, "sketch.ellipse", json!({ "sketch": sk, "cx": 0, "cy": 0, "x": 12, "y": 16, "minor": 10 }));
+    assert!(r["center"].is_u64() && r["major"].is_u64() && r["minor"].is_u64(), "{r}");
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 5 }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), PI * 20.0 * 10.0 * 5.0), "{}", volume(&mut s, &mut k));
+    // Its second axis the longer (DEC-120): the same.
+    let tall = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.ellipse", json!({ "sketch": tall, "cx": 100, "cy": 0, "x": 110, "y": 0, "minor": 20 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": tall, "distance": 5, "operation": "new_body" }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 2.0 * PI * 20.0 * 10.0 * 5.0), "{}", volume(&mut s, &mut k));
+    // Cut across its middle by a line: the half above, as a piece of an ellipse and the line.
+    let half = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.ellipse", json!({ "sketch": half, "cx": 0, "cy": 100, "x": 20, "y": 100, "minor": 10 }));
+    run(&mut s, &mut k, "sketch.line", json!({ "sketch": half, "x1": -30, "y1": 100, "x2": 30, "y2": 100 }));
+    let info = run(&mut s, &mut k, "sketch.info", json!({ "sketch": half }));
+    let above = info["regions"].as_array().unwrap().iter().find(|r| r["inside"][1].as_f64().unwrap() > 100.0).unwrap()["select"].clone();
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": half, "distance": 5, "regions": [above], "operation": "new_body" }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 2.5 * PI * 20.0 * 10.0 * 5.0), "{}", volume(&mut s, &mut k));
+    // Turned a whole turn about y, 300 out: a ring as big as Pappus says, 2 pi 300 times pi a b.
+    let ring = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.ellipse", json!({ "sketch": ring, "cx": 300, "cy": 0, "x": 310, "y": 0, "minor": 5 }));
+    run(&mut s, &mut k, "model.revolve", json!({ "sketch": ring, "axis": "y", "operation": "new_body" }));
+    regenerates(&mut s, &mut k);
+    let turned = 2.0 * PI * 300.0 * PI * 10.0 * 5.0;
+    assert!(approx(volume(&mut s, &mut k), 2.5 * PI * 20.0 * 10.0 * 5.0 + turned), "{}", volume(&mut s, &mut k));
+}

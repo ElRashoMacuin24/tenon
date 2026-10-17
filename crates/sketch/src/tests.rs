@@ -1287,3 +1287,59 @@ fn stretch_moves_the_selection_and_the_dimensions_across_it_follow() {
     assert!(s.stretch(&[corner], v(5.0, 0.0)).unwrap_err().to_string().contains("cannot follow"));
     assert_eq!(s, before);
 }
+
+#[test]
+fn an_ellipse_holds_its_axes_square_and_bounds_regions() {
+    // About the origin, 20 along x and 10 the other way (DEC-120).
+    let mut s = Sketch::new();
+    let e = s.add_ellipse(v(0.0, 0.0), v(20.0, 0.0), 10.0).unwrap();
+    let Some(Geometry::Ellipse { center, major, minor }) = s.geometry(e).cloned() else { panic!() };
+    s.solve().unwrap();
+    assert_eq!(s.dof().unwrap().dof, 5, "its centre, the length and the direction of one axis, the length of the other");
+    let all = regions(&s);
+    let area = PI * 20.0 * 10.0;
+    assert!(all.len() == 1 && (all[0].area - area).abs() < 1e-3 * area, "{:?}", all.iter().map(|r| r.area).collect::<Vec<_>>());
+    // Held by its centre, one axis level and each axis's length; the first made 30: the other
+    // stays square to it and 10 long.
+    s.add_constraint(Constraint::Fix { point: center }).unwrap();
+    s.add_constraint(Constraint::VerticalDistance { a: center, b: major, value: 0.0 }).unwrap();
+    let long = s.add_constraint(Constraint::Distance { a: center, b: major, value: 20.0 }).unwrap();
+    s.add_constraint(Constraint::Distance { a: center, b: minor, value: 10.0 }).unwrap();
+    assert_eq!(s.dof().unwrap().dof, 0);
+    s.set_dimension(long, 30.0).unwrap();
+    assert!(s.point(major).unwrap().near(v(30.0, 0.0), 1e-7) && s.point(minor).unwrap().near(v(0.0, 10.0), 1e-7), "{:?}", s.point(minor));
+    // A point held on it lies on it.
+    let p = s.add_point(v(10.0, 12.0)).unwrap();
+    s.add_constraint(Constraint::PointOnCurve { point: p, curve: e }).unwrap();
+    let q = s.point(p).unwrap();
+    assert!(((q.x / 30.0).powi(2) + (q.y / 10.0).powi(2) - 1.0).abs() < 1e-7, "{q:?}");
+    // Tangent and the like are refused in words; trimming it is refused.
+    let l = s.add_line(v(-40.0, 20.0), v(40.0, 20.0)).unwrap();
+    assert!(s.add_constraint(Constraint::Tangent { a: l, b: e }).is_err());
+    assert!(s.trim(e, v(0.0, -10.0)).is_err());
+}
+
+#[test]
+fn lines_and_circles_cut_an_ellipse_into_regions() {
+    // A level line across the middle: two halves.
+    let mut s = Sketch::new();
+    s.add_ellipse(v(0.0, 0.0), v(20.0, 0.0), 10.0).unwrap();
+    s.add_line(v(-30.0, 0.0), v(30.0, 0.0)).unwrap();
+    let halves = regions(&s);
+    let half = PI * 100.0;
+    assert!(
+        halves.len() == 2 && halves.iter().all(|r| (r.area - half).abs() < 1e-3 * half),
+        "{:?}",
+        halves.iter().map(|r| r.area).collect::<Vec<_>>()
+    );
+    // Turned and crossed by a circle of radius 15 about its centre: four crossings, five regions
+    // (the middle both share, two caps of the ellipse beyond the circle, two of the circle).
+    let mut t = Sketch::new();
+    t.add_ellipse(v(5.0, 5.0), v(5.0, 5.0) + Vec2::new(12.0, 16.0), 10.0).unwrap();
+    t.add_circle(v(5.0, 5.0), 15.0).unwrap();
+    let parts = regions(&t);
+    assert_eq!(parts.len(), 5, "{:?}", parts.iter().map(|r| r.area).collect::<Vec<_>>());
+    let total: f64 = parts.iter().map(|r| r.area).sum();
+    let middle = parts.iter().map(|r| r.area).fold(f64::INFINITY, f64::min);
+    assert!(total > PI * 225.0 && total < PI * 225.0 + PI * 200.0 && middle > 0.0, "{total}");
+}

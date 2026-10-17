@@ -344,6 +344,7 @@ constraints = [
 | `line` | `start`, `end` (point ids) |
 | `circle` | `center` (point id), `radius` |
 | `arc` | `center`, `start`, `end` (point ids; counter-clockwise; the radius is \|start − center\|) |
+| `ellipse` | `center`, `major`, `minor` (point ids: its centre and the ends of its two axes, which the solver keeps square; either axis may be the longer; DEC-120) |
 | `spline` | `poles` (point ids), `degree` (a clamped uniform B-spline) |
 | `text` | `at` (point id: where the first line's baseline starts), `text` (the words; a new line starts a line below), `height` (of capital letters, mm), `angle` (radians counter-clockwise, left out when 0). The letters are DejaVu Sans 2.37's, worked out when the file is read, never written (DEC-102) |
 

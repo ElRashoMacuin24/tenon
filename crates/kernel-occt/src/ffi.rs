@@ -67,7 +67,8 @@ pub(crate) mod bridge {
 
     /// One profile curve in sketch coordinates. `kind`: 0 line (x0,y0)-(x1,y1), 1 arc (cx,cy,r,
     /// a0..a1 counter-clockwise), 2 circle (cx,cy,r), 3 clamped B-spline (`pole_count` poles from
-    /// `ProfileIn::poles[pole_start..]`, `degree`). Curves of one loop are consecutive; loop 0 of
+    /// `ProfileIn::poles[pole_start..]`, `degree`), 4 ellipse (centre cx,cy, major axis
+    /// direction x0,y0, major radius r, minor radius x1), 5 part of one (a0..a1 counter-clockwise). Curves of one loop are consecutive; loop 0 of
     /// a region is its outer boundary.
     #[derive(Clone, Copy, Debug, Default)]
     struct CurveIn {

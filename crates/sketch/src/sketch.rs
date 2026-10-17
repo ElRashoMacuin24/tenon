@@ -188,6 +188,20 @@ impl Sketch {
             _ => None,
         }
     }
+    pub fn is_ellipse(&self, id: EntityId) -> bool {
+        matches!(self.geometry(id), Some(Geometry::Ellipse { .. }))
+    }
+    /// An ellipse's centre, the axis from it to its `major` point, and the half-length of the
+    /// other axis (a quarter turn counter-clockwise from the first).
+    pub fn ellipse(&self, id: EntityId) -> Option<(Vec2, Vec2, f64)> {
+        match self.geometry(id)? {
+            Geometry::Ellipse { center, major, minor } => {
+                let c = self.point(*center)?;
+                Some((c, self.point(*major)? - c, self.point(*minor)?.dist(c)))
+            }
+            _ => None,
+        }
+    }
     pub fn spline(&self, id: EntityId) -> Option<Spline> {
         match self.geometry(id)? {
             Geometry::Spline { poles, degree } => {
@@ -218,6 +232,10 @@ impl Sketch {
                 let pts: Option<Vec<Vec2>> = poles.iter().map(|p| self.point(*p)).collect();
                 Curve2::BSpline { poles: pts?, degree: *degree }
             }
+            Geometry::Ellipse { .. } => {
+                let (center, major, minor) = self.ellipse(id)?;
+                Curve2::Ellipse { center, major, minor }
+            }
             Geometry::Text { .. } => return None,
         })
     }
@@ -246,6 +264,11 @@ impl Sketch {
             Some(Geometry::Spline { .. }) => {
                 if let Some(s) = self.spline(id) {
                     out = s.tessellate(chord_tol);
+                }
+            }
+            Some(Geometry::Ellipse { .. }) => {
+                if let Some((c, major, minor)) = self.ellipse(id) {
+                    out = ellipse_points(c, major, minor, 0.0, std::f64::consts::TAU, chord_tol);
                 }
             }
             // (A text is many outlines, not one: see [`Sketch::text_contours`].)
@@ -339,6 +362,11 @@ impl Sketch {
                     swap(end);
                 }
                 Geometry::Circle { center, .. } => swap(center),
+                Geometry::Ellipse { center, major, minor } => {
+                    swap(center);
+                    swap(major);
+                    swap(minor);
+                }
                 Geometry::Spline { poles, .. } => poles.iter_mut().for_each(swap),
                 Geometry::Text { at, .. } => swap(at),
                 Geometry::Point { .. } => {}
@@ -406,6 +434,21 @@ impl Sketch {
         }
         let c = self.resolve(center.into())?;
         self.insert(Geometry::Circle { center: c, radius })
+    }
+
+    /// An ellipse about `center` (DEC-120): one axis from it to `major`, the other a quarter turn
+    /// counter-clockwise from that and `minor` long. Its three points are new.
+    pub fn add_ellipse(&mut self, center: Vec2, major: Vec2, minor: f64) -> SketchResult<EntityId> {
+        let axis = major - center;
+        if !tol::is_valid_size(axis.len()) || !tol::is_valid_size(minor) {
+            return Err(invalid("an ellipse needs two axes of some length"));
+        }
+        let mut s = self.clone();
+        let (c, m) = (s.add_point(center)?, s.add_point(major)?);
+        let n = s.add_point(center + axis.normalized().perp() * minor)?;
+        let id = s.insert(Geometry::Ellipse { center: c, major: m, minor: n })?;
+        *self = s;
+        Ok(id)
     }
 
     /// Arc counter-clockwise from `start` to `end` about `center`. A new `end` position is moved
@@ -723,7 +766,7 @@ impl Sketch {
         let (pt, ln, rd) = (|i| self.is_point(i), |i| self.is_line(i), |i| self.is_round(i));
         let ok = match c {
             Coincident { a, b } => pt(*a) && pt(*b) && a != b,
-            PointOnCurve { point, curve } => pt(*point) && (ln(*curve) || rd(*curve)),
+            PointOnCurve { point, curve } => pt(*point) && (ln(*curve) || rd(*curve) || self.is_ellipse(*curve)),
             Horizontal { line } | Vertical { line } => ln(*line),
             Parallel { a, b } | Perpendicular { a, b } | Collinear { a, b } => ln(*a) && ln(*b) && a != b,
             Tangent { a, b } => a != b && ((ln(*a) && rd(*b)) || (rd(*a) && ln(*b)) || (rd(*a) && rd(*b))),
@@ -957,4 +1000,23 @@ impl Sketch {
         }
         Ok(())
     }
+}
+
+/// Points round an ellipse from parameter `t0` to `t1`, close enough to it that no chord strays
+/// more than `chord_tol` (DEC-120). The point at t is `c + major cos t + minor sin t` along the
+/// axis a quarter turn counter-clockwise from `major`.
+pub(crate) fn ellipse_points(c: Vec2, major: Vec2, minor: f64, t0: f64, t1: f64, chord_tol: f64) -> Vec<Vec2> {
+    let (a, b) = (major.len(), minor);
+    let other = major.normalized().perp() * b;
+    // (A step h of the parameter strays from the curve by at most max(a, b) h^2 / 8, as round a
+    // circle as big as the longer axis.)
+    let r = a.max(b);
+    let step = if r > chord_tol { 2.0 * (1.0 - chord_tol / r).clamp(-1.0, 1.0).acos() } else { std::f64::consts::TAU / 8.0 };
+    let n = (((t1 - t0).abs() / step.max(1e-3)).ceil() as usize).clamp(8, 4096);
+    (0..=n)
+        .map(|i| {
+            let t = t0 + (t1 - t0) * i as f64 / n as f64;
+            c + major * t.cos() + other * t.sin()
+        })
+        .collect()
 }

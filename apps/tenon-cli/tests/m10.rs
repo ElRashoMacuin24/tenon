@@ -77,12 +77,12 @@ fn every_command_has_a_schema_and_the_published_document_is_the_registrys() {
     tenon_cli::write_commands_schema(&file).unwrap();
     // As if a caller had been written against a command and a parameter that are no longer there.
     let mut older = doc.clone();
-    older["commands"].as_array_mut().unwrap().push(json!({ "id": "sketch.ellipse", "params": { "type": "object", "properties": {} } }));
+    older["commands"].as_array_mut().unwrap().push(json!({ "id": "sketch.hyperbola", "params": { "type": "object", "properties": {} } }));
     older["commands"][0]["params"]["properties"]["title"] = json!({ "type": "string" });
     std::fs::write(&file, older.to_string()).unwrap();
     let refused = tenon_cli::write_commands_schema(&file).unwrap_err();
     assert!(
-        refused.contains("sketch.ellipse is gone") && refused.contains("document.rename: `title` is gone") && refused.contains("VERSION"),
+        refused.contains("sketch.hyperbola is gone") && refused.contains("document.rename: `title` is gone") && refused.contains("VERSION"),
         "{refused}"
     );
     assert_eq!(std::fs::read_to_string(&file).unwrap(), older.to_string(), "nothing was written");

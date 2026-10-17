@@ -176,6 +176,7 @@ pub enum Icon {
     CenterlineBisector,
     CenterPoint,
     SlotArc,
+    Ellipse,
 }
 
 /// What an icon depicts, for its fill colour.
@@ -373,6 +374,10 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
         }
         Icon::Circle => {
             pen.circle((0.5, 0.5), 0.38);
+            pen.dot((0.5, 0.5), 0.05);
+        }
+        Icon::Ellipse => {
+            pen.arc((0.5, 0.5), 0.44, 0.28, 0.0, PI * 2.0);
             pen.dot((0.5, 0.5), 0.05);
         }
         Icon::Arc => {

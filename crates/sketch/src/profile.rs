@@ -153,6 +153,9 @@ enum Carrier {
     /// Centre, radius, start angle, sweep.
     Arc(Vec2, f64, f64, f64),
     Circle(Vec2, f64),
+    /// Centre, the first axis's direction, its half-length, and the other's (a quarter turn
+    /// counter-clockwise). Its parameter is the angle t of c + a cos t u + b sin t v (DEC-120).
+    Ellipse(Vec2, Vec2, f64, f64),
 }
 
 impl Carrier {
@@ -161,6 +164,10 @@ impl Carrier {
             Geometry::Line { .. } => sketch.line(id).map(|(a, b)| Carrier::Line(a, b)),
             Geometry::Arc { .. } => sketch.arc(id).map(|a| Carrier::Arc(a.center, a.radius, a.start, a.sweep())),
             Geometry::Circle { .. } => sketch.circle(id).map(|(c, r)| Carrier::Circle(c, r)),
+            Geometry::Ellipse { .. } => sketch
+                .ellipse(id)
+                .filter(|(_, m, b)| m.len() > MERGE_TOL && *b > MERGE_TOL)
+                .map(|(c, m, b)| Carrier::Ellipse(c, m.normalized(), m.len(), b)),
             _ => None,
         }
     }
@@ -170,7 +177,7 @@ impl Carrier {
         match *self {
             Carrier::Line(..) => Some(1.0),
             Carrier::Arc(_, _, _, sweep) => Some(sweep),
-            Carrier::Circle(..) => None,
+            Carrier::Circle(..) | Carrier::Ellipse(..) => None,
         }
     }
 
@@ -179,6 +186,7 @@ impl Carrier {
         match *self {
             Carrier::Line(a, b) => MERGE_TOL / a.dist(b).max(MERGE_TOL),
             Carrier::Arc(_, r, ..) | Carrier::Circle(_, r) => MERGE_TOL / r.max(MERGE_TOL),
+            Carrier::Ellipse(_, _, a, b) => MERGE_TOL / a.max(b).max(MERGE_TOL),
         }
     }
 
@@ -208,6 +216,11 @@ impl Carrier {
                 }
             }
             Carrier::Circle(c, r) => (r >= MERGE_TOL && (p.dist(c) - r).abs() <= MERGE_TOL).then(|| norm_angle((p - c).angle())),
+            Carrier::Ellipse(c, u, a, b) => {
+                let d = p - c;
+                let t = norm_angle((d.dot(u.perp()) / b).atan2(d.dot(u) / a));
+                (self.at(t).dist(p) <= MERGE_TOL).then_some(t)
+            }
         }
     }
 
@@ -216,6 +229,7 @@ impl Carrier {
             Carrier::Line(a, b) => a + (b - a) * t,
             Carrier::Arc(c, r, start, _) => Vec2::polar(c, r, start + t),
             Carrier::Circle(c, r) => Vec2::polar(c, r, t),
+            Carrier::Ellipse(c, u, a, b) => c + u * (a * t.cos()) + u.perp() * (b * t.sin()),
         }
     }
 
@@ -228,6 +242,7 @@ impl Carrier {
                 let n = (((t1 - t0) / step.max(1e-3)).ceil() as usize).clamp(2, 4096);
                 (0..=n).map(|i| self.at(t0 + (t1 - t0) * i as f64 / n as f64)).collect()
             }
+            Carrier::Ellipse(c, u, a, b) => crate::sketch::ellipse_points(c, u * a, b, t0, t1, TRACE_TOL),
         }
     }
 
@@ -236,13 +251,18 @@ impl Carrier {
         match *self {
             Carrier::Line(a, b) => (Vec2::new(a.x.min(b.x), a.y.min(b.y)), Vec2::new(a.x.max(b.x), a.y.max(b.y))),
             Carrier::Arc(c, r, ..) | Carrier::Circle(c, r) => (Vec2::new(c.x - r, c.y - r), Vec2::new(c.x + r, c.y + r)),
+            Carrier::Ellipse(c, u, a, b) => {
+                let v = u.perp();
+                let half = Vec2::new((a * u.x).hypot(b * v.x), (a * u.y).hypot(b * v.y));
+                (c - half, c + half)
+            }
         }
     }
 
     fn circle(&self) -> Option<Circle> {
         match *self {
             Carrier::Arc(c, r, ..) | Carrier::Circle(c, r) => Some(Circle::new(c, r)),
-            Carrier::Line(..) => None,
+            Carrier::Line(..) | Carrier::Ellipse(..) => None,
         }
     }
 
@@ -251,6 +271,19 @@ impl Carrier {
     fn meets(&self, other: &Carrier) -> Vec<Vec2> {
         match (self, other) {
             (Carrier::Line(p, q), Carrier::Line(r, s)) => line_line_infinite(*p, *q, *r, *s).map(|(x, _, _)| vec![x]).unwrap_or_default(),
+            (&Carrier::Line(p, q), &Carrier::Ellipse(c, u, a, b)) | (&Carrier::Ellipse(c, u, a, b), &Carrier::Line(p, q)) => {
+                // Scaled to the ellipse's axes it is a circle of radius 1.
+                let v = u.perp();
+                let to = |w: Vec2| Vec2::new((w - c).dot(u) / a, (w - c).dot(v) / b);
+                let back = |w: Vec2| c + u * (a * w.x) + v * (b * w.y);
+                let line = Line::new(to(p), to(q));
+                let foot = line.a + (line.b - line.a) * line.param_of(Vec2::ZERO);
+                if (foot.len() - 1.0).abs() * a.min(b) <= MERGE_TOL && foot.len() > 0.0 {
+                    return vec![back(foot.normalized())];
+                }
+                line_circle(&line, &Circle::new(Vec2::ZERO, 1.0)).into_iter().map(|(x, _)| back(x)).collect()
+            }
+            (a, b) if matches!(a, Carrier::Ellipse(..)) || matches!(b, Carrier::Ellipse(..)) => crossings(a, b),
             (Carrier::Line(p, q), round) | (round, Carrier::Line(p, q)) => {
                 let Some(c) = round.circle() else { return Vec::new() };
                 let line = Line::new(*p, *q);
@@ -470,6 +503,60 @@ fn node_at(p: Vec2, places: &mut Vec<(usize, Vec2)>, next: &mut usize) -> usize 
     n
 }
 
+/// Where two curves cross, an ellipse among them: found along their polylines, then made exact by
+/// Newton's method on the two curves' parameters (DEC-120). Curves that only touch are not found.
+fn crossings(a: &Carrier, b: &Carrier) -> Vec<Vec2> {
+    const N: usize = 256;
+    let samples = |c: &Carrier| -> Vec<(f64, Vec2)> {
+        let end = c.span().unwrap_or(TAU);
+        (0..=N)
+            .map(|i| {
+                let t = end * i as f64 / N as f64;
+                (t, c.at(t))
+            })
+            .collect()
+    };
+    let (pa, pb) = (samples(a), samples(b));
+    let mut out: Vec<Vec2> = Vec::new();
+    for wa in pa.windows(2) {
+        for wb in pb.windows(2) {
+            let Some((s, r)) = segment_cross(wa[0].1, wa[1].1, wb[0].1, wb[1].1) else { continue };
+            let (mut t, mut u) = (wa[0].0 + (wa[1].0 - wa[0].0) * s, wb[0].0 + (wb[1].0 - wb[0].0) * r);
+            for _ in 0..40 {
+                let f = a.at(t) - b.at(u);
+                if f.len() < 1e-13 {
+                    break;
+                }
+                let h = 1e-7;
+                let (da, db) = ((a.at(t + h) - a.at(t - h)) / (2.0 * h), (b.at(u + h) - b.at(u - h)) / (2.0 * h));
+                // da dt - db du = -f, by Cramer's rule.
+                let det = da.cross(-db);
+                if det.abs() < 1e-18 {
+                    break;
+                }
+                t += (-f).cross(-db) / det;
+                u += da.cross(-f) / det;
+            }
+            let p = a.at(t);
+            if p.dist(b.at(u)) <= MERGE_TOL * 1e-2 && !out.iter().any(|q| q.dist(p) <= MERGE_TOL) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Where segments p-q and r-s cross: the fraction along each.
+fn segment_cross(p: Vec2, q: Vec2, r: Vec2, s: Vec2) -> Option<(f64, f64)> {
+    let (d1, d2, w) = (q - p, s - r, r - p);
+    let den = d1.cross(d2);
+    if den.abs() < 1e-18 {
+        return None;
+    }
+    let (t, u) = (w.cross(d2) / den, w.cross(d1) / den);
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some((t, u))
+}
+
 /// Where each line, arc and circle is cut by the others: sorted parameters with their places.
 fn cuts(curves: &[(EntityId, Carrier, Option<(Vec2, Vec2)>)]) -> Vec<Vec<(f64, Vec2)>> {
     let mut out: Vec<Vec<(f64, Vec2)>> = vec![Vec::new(); curves.len()];
@@ -555,7 +642,7 @@ fn arrangement(sketch: &Sketch, only: Option<&BTreeSet<EntityId>>) -> Vec<Sketch
             Geometry::Line { start, end } => Some((*start, *end)),
             Geometry::Arc { start, end, .. } => Some((*start, *end)),
             Geometry::Spline { poles, .. } => poles.first().zip(poles.last()).map(|(a, b)| (*a, *b)),
-            Geometry::Circle { .. } => None,
+            Geometry::Circle { .. } | Geometry::Ellipse { .. } => None,
             // (Text bounds no region of curves: its letters are profiles of their own.)
             Geometry::Point { .. } | Geometry::Text { .. } => continue,
         };
@@ -903,7 +990,7 @@ fn loop_curves(sketch: &Sketch, pieces: &[Piece]) -> Vec<TaggedCurve2> {
         forward: bool,
         whole: bool,
     }
-    let round = |curve: EntityId| matches!(sketch.geometry(curve), Some(Geometry::Circle { .. }));
+    let round = |curve: EntityId| matches!(sketch.geometry(curve), Some(Geometry::Circle { .. } | Geometry::Ellipse { .. }));
     // `a` and `b` are the same place on the curve.
     let same = |curve: EntityId, a: f64, b: f64| {
         let d = (a - b).abs();
@@ -957,6 +1044,10 @@ fn loop_curves(sketch: &Sketch, pieces: &[Piece]) -> Vec<TaggedCurve2> {
                     Carrier::Circle(center, radius) => {
                         let start_angle = norm_angle(run.start);
                         Curve2::Arc { center, radius, start_angle, end_angle: start_angle + run.span }
+                    }
+                    Carrier::Ellipse(center, u, a, b) => {
+                        let start = norm_angle(run.start);
+                        Curve2::EllipseArc { center, major: u * a, minor: b, start, end: start + run.span }
                     }
                 },
                 _ => sketch.curve2(run.curve)?,

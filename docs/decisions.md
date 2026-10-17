@@ -3193,3 +3193,31 @@ where from, then a click where to or X and Y typed beside the pointer. What it w
 shown as it goes (the stretch worked out on a copy of the sketch). Inventor's window
 selection, which picks the points inside a box, is not there yet: points and curves are
 clicked.
+
+## DEC-120 The ellipse (2026-10-17)
+
+Inventor's Circle drop-down has Ellipse: the centre, the end of one axis, then a point on the
+ellipse. Tenon had no ellipse anywhere: not in sketches, nor in the profiles the kernel is
+given.
+
+**In the sketch.** `Geometry::Ellipse { center, major, minor }`: three points, the centre and
+the ends of its two axes. The solver holds the axes square (a row of its own, as an arc's ends
+are held on one circle), which leaves five degrees of freedom. It is sized by distances from the
+centre to the axis ends, so no new dimension is needed; the Dimension tool, clicked on an
+ellipse, measures half its first axis, then half the other once the first has a size. A point
+can be held on it. Tangent, Equal and Concentric with an ellipse, trimming, extending, splitting
+and offsetting it are refused in words for now: each needs geometry of its own.
+
+**Regions.** An ellipse is a carrier of its own in region finding (parameter t of
+c + a cos t u + b sin t v). A line meets it where, scaled to its axes, the line meets a circle of
+radius 1; arcs, circles and other ellipses meet it where their polylines cross, made exact by
+Newton's method on the two parameters. (Curves that only touch an ellipse are not found.) A piece
+of a cut ellipse goes to the kernel as part of an ellipse.
+
+**Kernel.** `Curve2` gains `Ellipse { center, major, minor }` and `EllipseArc { ..., start, end }`.
+The plain-data description lets either axis be the longer; the OCCT layer puts the longer
+first, as OCCT asks, and moves the parameter a quarter turn to match. The shim builds
+`gp_Elips` edges. Volumes come out exact.
+
+**Files** gain the entity type `ellipse` (`center`, `major`, `minor`), additive. `sketch.ellipse`
+takes the centre, the end of one axis and half the other.

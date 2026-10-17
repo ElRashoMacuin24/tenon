@@ -31,6 +31,22 @@ pub enum Curve2 {
         poles: Vec<Vec2>,
         degree: u32,
     },
+    /// An ellipse (DEC-120): `major` runs from the centre to the end of one axis, and the
+    /// other axis, `minor` from the centre, is a quarter turn counter-clockwise from it. Either
+    /// may be the longer. The point at parameter t is centre + major cos t + (the other axis) sin t.
+    Ellipse {
+        center: Vec2,
+        major: Vec2,
+        minor: f64,
+    },
+    /// Part of an ellipse, counter-clockwise from parameter `start` to `end` (radians).
+    EllipseArc {
+        center: Vec2,
+        major: Vec2,
+        minor: f64,
+        start: f64,
+        end: f64,
+    },
 }
 
 /// A profile curve with the caller's tag, usually the id of the sketch entity it came from. The
