@@ -13,7 +13,8 @@ use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions
 use crate::document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Extrude, ExtrudeExtent, FeatureKind,
     Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel, Revolve, RevolveAngle,
-    Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Thread, ThreadLength, WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
+    Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, WorkAxis, WorkPlane, WorkPoint, hole_centres,
+    open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
@@ -2105,7 +2106,17 @@ fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
     let tip_angle =
         if arg(p, "flat_bottom").and_then(Value::as_bool).unwrap_or(false) { None } else { Some(opt_num(p, "tip_angle")?.unwrap_or(DRILL_POINT)) };
     let reverse = arg(p, "reverse").and_then(Value::as_bool).unwrap_or(false);
-    let hole = Hole { sketch, points, diameter, kind, extent, tip_angle, reverse };
+    let tapped = if arg(p, "tapped").and_then(Value::as_bool).unwrap_or(false) {
+        Some(Tapping {
+            pitch: opt_num(p, "pitch")?,
+            designation: arg(p, "designation").and_then(Value::as_str).map(str::to_owned),
+            length: opt_num(p, "thread_length")?.map_or(ThreadLength::Full, ThreadLength::Distance),
+            left: arg(p, "left").and_then(Value::as_bool).unwrap_or(false),
+        })
+    } else {
+        None
+    };
+    let hole = Hole { sketch, points, diameter, kind, extent, tip_angle, reverse, tapped };
     hole.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::Hole(hole), p)
 }

@@ -411,11 +411,25 @@ fn hole_description(h: &tenon_model::Hole) -> String {
         HoleExtent::Distance(d) => format!("DEEP {}", n(d)),
         HoleExtent::To(_) => "TO FACE".to_string(),
     };
-    match &h.kind {
+    let drill = match &h.kind {
         HoleType::Simple => format!("Ø{} {depth}", n(h.diameter)),
         HoleType::Counterbore { diameter, depth: cd } => format!("Ø{} {depth}, CBORE Ø{} DEEP {}", n(h.diameter), n(*diameter), n(*cd)),
         HoleType::Countersink { diameter, angle } => format!("Ø{} {depth}, CSK Ø{} X {}°", n(h.diameter), n(*diameter), n(angle.to_degrees())),
         HoleType::Spotface { diameter, depth: sf } => format!("Ø{} {depth}, SF Ø{} DEEP {}", n(h.diameter), n(*diameter), n(*sf)),
+    };
+    // Tapped: its thread after the drill, and how deep that goes when it is not the whole wall.
+    match &h.tapped {
+        Some(t) => {
+            let name = t.designation.clone().unwrap_or_else(|| {
+                let (nominal, pitch) = tenon_model::threads::iso_coarse(h.diameter, true);
+                tenon_model::threads::designation(nominal, t.pitch.unwrap_or(pitch))
+            });
+            match t.length {
+                tenon_model::ThreadLength::Full => format!("{drill}, {name}"),
+                tenon_model::ThreadLength::Distance(d) => format!("{drill}, {name} DEEP {}", n(d)),
+            }
+        }
+        None => drill,
     }
 }
 
@@ -923,6 +937,28 @@ pub fn build(d: &Drawing, sheet: SheetId, ev: &Evaluation) -> (Graphics, BTreeMa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hole_notes_say_their_seats_and_threads() {
+        use tenon_model::{FeatureId, Hole, Tapping, ThreadLength};
+        let hole = |kind: HoleType, extent: HoleExtent, tapped: Option<Tapping>| Hole {
+            sketch: FeatureId(1),
+            points: Vec::new(),
+            diameter: 6.8,
+            kind,
+            extent,
+            tip_angle: None,
+            reverse: false,
+            tapped,
+        };
+        assert_eq!(hole_description(&hole(HoleType::Simple, HoleExtent::ThroughAll, None)), "Ø6.8 THRU");
+        let tapped = Tapping::default();
+        assert_eq!(hole_description(&hole(HoleType::Simple, HoleExtent::ThroughAll, Some(tapped.clone()))), "Ø6.8 THRU, M8x1.25");
+        let partly = Tapping { length: ThreadLength::Distance(8.0), ..tapped };
+        assert_eq!(hole_description(&hole(HoleType::Simple, HoleExtent::Distance(12.0), Some(partly))), "Ø6.8 DEEP 12, M8x1.25 DEEP 8");
+        let spot = HoleType::Spotface { diameter: 14.0, depth: 1.0 };
+        assert_eq!(hole_description(&hole(spot, HoleExtent::Distance(12.0), None)), "Ø6.8 DEEP 12, SF Ø14 DEEP 1");
+    }
 
     #[test]
     fn numbers_and_scales() {

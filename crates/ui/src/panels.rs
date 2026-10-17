@@ -3,6 +3,7 @@
 
 use egui::{Align2, Ui};
 use serde_json::{Value, json};
+use tenon_geom::{Frame, Vec2};
 use tenon_model::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, DRILL_POINT, DirectionRef, Document, EdgeRef, Extrude, ExtrudeExtent, FaceRef, FeatureId,
     FeatureKind, Fillet, Fingerprint, Hole, HoleExtent, HoleType, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, RectPattern, RegionSel,
@@ -205,6 +206,14 @@ pub(crate) struct HolePanel {
     /// Sized for a screw (an index into the library's screw holes): None for a hole of one's
     /// own size.
     pub screw: Option<(usize, Fit)>,
+    /// Holes placed by clicking a flat face, with no sketch drawn first (DEC-113): the face, its
+    /// sketch frame, and the centres clicked on it (in that frame). On OK a sketch on the face
+    /// with these points is made with the hole, in one step.
+    pub face: Option<(FaceRef, Frame)>,
+    pub face_points: Vec<Vec2>,
+    /// Tapped (a screw's tap drill, DEC-114): the thread the whole wall, or this deep.
+    pub thread_full: bool,
+    pub thread_depth: f64,
 }
 
 impl HolePanel {
@@ -254,7 +263,16 @@ impl HolePanel {
             },
             tip_angle: if self.flat { None } else { Some(self.tip_degrees.to_radians()) },
             reverse: self.reverse,
+            tapped: self.tapped().then(|| tenon_model::Tapping {
+                length: if self.thread_full { tenon_model::ThreadLength::Full } else { tenon_model::ThreadLength::Distance(self.thread_depth) },
+                ..Default::default()
+            }),
         })
+    }
+
+    /// Tapped: sized for a screw's tap drill.
+    pub(crate) fn tapped(&self) -> bool {
+        matches!(self.screw, Some((_, Fit::TapDrill)))
     }
 
     fn from_hole(editing: Option<FeatureId>, h: &Hole) -> HolePanel {
@@ -289,7 +307,37 @@ impl HolePanel {
             tip_degrees: h.tip_angle.unwrap_or(DRILL_POINT).to_degrees(),
             reverse: h.reverse,
             screw: HolePanel::screw_of(h.diameter),
+            face: None,
+            face_points: Vec::new(),
+            thread_full: !matches!(h.tapped.as_ref().map(|t| t.length), Some(tenon_model::ThreadLength::Distance(_))),
+            thread_depth: match h.tapped.as_ref().map(|t| t.length) {
+                Some(tenon_model::ThreadLength::Distance(d)) => d,
+                _ => h.diameter * 1.5,
+            },
         }
+    }
+
+    /// Whether its holes are placed by clicking a face.
+    pub(crate) fn on_face(&self) -> bool {
+        self.editing.is_none() && self.points.is_empty()
+    }
+
+    /// The document with the sketch its face clicks make, and the hole on it: the sketch's id
+    /// and the hole as it would be made.
+    pub(crate) fn on_face_document(&self, doc: &Document) -> Option<(Document, FeatureId, FeatureKind)> {
+        let ((face, _), points) = (self.face.as_ref()?, &self.face_points);
+        if points.is_empty() {
+            return None;
+        }
+        let mut d = doc.clone();
+        let mut sk = tenon_sketch::Sketch::new();
+        let ids: Vec<EntityId> = points.iter().filter_map(|p| sk.add_point(*p).ok()).collect();
+        let sketch = d.add(FeatureKind::Sketch { plane: PlaneRef::Face(face.clone()), sketch: sk, projections: Vec::new() }).ok()?;
+        let FeatureKind::Hole(mut h) = self.kind() else { return None };
+        (h.sketch, h.points) = (sketch, ids);
+        let kind = FeatureKind::Hole(h);
+        d.add(kind.clone()).ok()?;
+        Some((d, sketch, kind))
     }
 }
 
@@ -654,6 +702,9 @@ impl Panel {
                     Seat::Spotface => v.extend([("seat_diameter", "/kind/spotface/diameter"), ("bore_depth", "/kind/spotface/depth")]),
                     Seat::Countersink => v.extend([("seat_diameter", "/kind/countersink/diameter"), ("sink_degrees", "/kind/countersink/angle")]),
                 }
+                if p.tapped() && !p.thread_full {
+                    v.push(("thread_depth", "/tapped/length/distance"));
+                }
                 v
             }
             Panel::Pattern(p) => match p.kind {
@@ -822,6 +873,7 @@ impl Workbench {
             Some(Panel::Revolve(p)) => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Primitive(p)) => self.primitive_preview(p),
             Some(Panel::Hole(p)) if !p.points.is_empty() => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::Hole(p)) if !p.face_points.is_empty() => p.on_face_document(self.document()).map(|(d, _, _)| d),
             Some(Panel::Hole(p)) => rolled(p.editing),
             Some(Panel::Rib(p)) if !p.lines.is_empty() => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Rib(p)) => rolled(p.editing),
@@ -1212,13 +1264,14 @@ impl Workbench {
                         self.finish_sketch();
                         id
                     }
+                    // (With no sketch of centres the holes are placed by clicking a face.)
                     Mode::Model => self
                         .sketches()
                         .iter()
                         .rev()
                         .map(|s| s.0)
                         .find(|id| self.document().sketch(*id).is_some_and(|sk| !hole_centres(sk).is_empty()))
-                        .ok_or("put points in a sketch for the hole centres first (Point tool in the Sketch tab)")?,
+                        .unwrap_or(FeatureId(0)),
                 };
                 let points = self.document().sketch(sketch).map(hole_centres).unwrap_or_default();
                 let mut p = HolePanel::from_hole(
@@ -1231,6 +1284,7 @@ impl Workbench {
                         extent: HoleExtent::Distance(12.0),
                         tip_angle: Some(DRILL_POINT),
                         reverse: false,
+                        tapped: None,
                     },
                 );
                 // Drill into the part: flip when the part lies on the sketch normal's side.
@@ -1240,10 +1294,47 @@ impl Workbench {
                 p
             }
         };
+        let on_face = panel.on_face();
         self.panel = Some(Panel::Hole(panel));
         self.start_equations();
-        self.set_status("Hole: click sketch points to add or remove centres, set the sizes, then OK.");
+        self.set_status(if on_face {
+            "Hole: click a flat face where each hole goes, set the sizes, then OK."
+        } else {
+            "Hole: click sketch points to add or remove centres, set the sizes, then OK."
+        });
         Ok(())
+    }
+
+    /// Makes the sketch a hole placed by clicks on a face goes on, then the hole, as one step
+    /// (DEC-113). Returns whether it was made.
+    fn commit_hole_on_face(&mut self, ptrs: &[(&'static str, &'static str)], p: &HolePanel) -> bool {
+        let Some((face, _)) = p.face.clone() else { return false };
+        let mark = self.session.mark();
+        let made = (|| -> Result<(), String> {
+            let r = self.exec("sketch.create", json!({ "face": face, "project_origin": false }))?;
+            let sketch = r["feature"].as_u64().and_then(|v| u32::try_from(v).ok()).map(FeatureId).ok_or("internal: no sketch made")?;
+            let mut points = Vec::new();
+            for v in &p.face_points {
+                let r = self.exec("sketch.point", json!({ "sketch": sketch.0, "x": v.x, "y": v.y }))?;
+                points.push(r["point"].as_u64().and_then(|v| u32::try_from(v).ok()).map(EntityId).ok_or("internal: no point made")?);
+            }
+            let FeatureKind::Hole(mut h) = p.kind() else { return Err("internal: not a hole".into()) };
+            (h.sketch, h.points) = (sketch, points);
+            if self.commit_panel(ptrs, None, FeatureKind::Hole(h)) { Ok(()) } else { Err(String::new()) }
+        })();
+        match made {
+            Ok(()) => {
+                self.session.squash_since(mark);
+                true
+            }
+            Err(e) => {
+                self.session.roll_back_to(mark);
+                if !e.is_empty() {
+                    self.set_error(e);
+                }
+                false
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1367,6 +1458,21 @@ impl Workbench {
                                 p["type"] = json!("spotface");
                                 p["spotface_diameter"] = json!(diameter);
                                 p["spotface_depth"] = json!(depth);
+                            }
+                        }
+                        if let Some(t) = &h.tapped {
+                            p["tapped"] = json!(true);
+                            if let tenon_model::ThreadLength::Distance(d) = t.length {
+                                p["thread_length"] = json!(d);
+                            }
+                            if let Some(pitch) = t.pitch {
+                                p["pitch"] = json!(pitch);
+                            }
+                            if let Some(name) = &t.designation {
+                                p["designation"] = json!(name);
+                            }
+                            if t.left {
+                                p["left"] = json!(true);
                             }
                         }
                         ("model.hole", p)
@@ -1794,9 +1900,15 @@ impl Workbench {
                 }
             }
             Panel::Hole(p) => {
-                if commit {
+                if commit && p.on_face() && !p.face_points.is_empty() {
+                    // The sketch on the face, its points, and the hole: one step to undo.
+                    keep = !self.commit_hole_on_face(&ptrs, p);
+                    if !keep && again {
+                        reopen = Some("model.hole");
+                    }
+                } else if commit {
                     if p.points.is_empty() {
-                        self.set_error("Hole: click at least one sketch point for a centre".to_string());
+                        self.set_error("Hole: click a flat face where it goes, or sketch points for its centres".to_string());
                     } else {
                         keep = !self.commit_panel(&ptrs, p.editing, p.kind());
                         if !keep && again {

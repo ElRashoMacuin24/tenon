@@ -1039,7 +1039,32 @@ impl<'a> Ctx<'a> {
             }
             return Err(e);
         }
-        self.combine(id, tools, Operation::Cut)
+        self.combine(id, tools, Operation::Cut)?;
+        // Tapped: a thread on each hole's wall, as Thread puts one on (DEC-114).
+        if let Some(tap) = &h.tapped {
+            for p in &h.points {
+                let wall = FaceOrigin::From { feature: id, source: HoleFace::Wall.source(*p), ordinal: 0 };
+                let found =
+                    self.regen.bodies.iter().enumerate().find_map(|(bi, b)| {
+                        b.names.iter().position(|n| *n == Some(wall)).map(|fi| (bi, b.shape, u32::try_from(fi).unwrap_or(u32::MAX)))
+                    });
+                let Some((_, shape, fi)) = found else {
+                    return Err(format!("the wall of the hole at point {} is not in the part to tap", p.0).into());
+                };
+                let info = self.k.face_info(shape.face(fi))?;
+                let thread = Thread {
+                    face: FaceRef { origin: wall, fingerprint: Fingerprint::of(&info) },
+                    pitch: tap.pitch,
+                    designation: tap.designation.clone(),
+                    length: tap.length,
+                    reverse: false,
+                    left: tap.left,
+                    modelled: false,
+                };
+                self.thread(id, &thread)?;
+            }
+        }
+        Ok(())
     }
 
     fn body_shape(&self, bi: usize) -> Result<ShapeHandle, Stop> {

@@ -1041,10 +1041,10 @@ impl Workbench {
                                 use crate::panels::Fit;
                                 use tenon_model::library::SCREW_HOLES;
                                 let before = (p.screw, p.seat);
-                                ui.label("Hole").on_hover_text("Simple: a size of one's own. Clearance: for a metric screw to pass through. Tap Drill: to tap a metric thread (put a Thread on the hole to show it).");
+                                ui.label("Hole").on_hover_text("Simple: a size of one's own. Clearance: for a metric screw to pass through. Tapped: its tap drill, with the thread on its wall.");
                                 let kind = match p.screw {
                                     None => "Simple",
-                                    Some((_, Fit::TapDrill)) => "Tap Drill",
+                                    Some((_, Fit::TapDrill)) => "Tapped",
                                     Some(_) => "Clearance",
                                 };
                                 // (A screw is first the one whose thread is nearest the hole.)
@@ -1057,7 +1057,7 @@ impl Workbench {
                                     if ui.selectable_label(kind == "Clearance", "Clearance").clicked() && kind != "Clearance" {
                                         p.screw = Some((screw, Fit::Normal));
                                     }
-                                    if ui.selectable_label(kind == "Tap Drill", "Tap Drill").clicked() {
+                                    if ui.selectable_label(kind == "Tapped", "Tapped").clicked() {
                                         p.screw = Some((screw, Fit::TapDrill));
                                     }
                                 });
@@ -1072,6 +1072,32 @@ impl Workbench {
                                         }
                                     });
                                     ui.end_row();
+                                    // Tapped: the thread, and how deep it goes (DEC-114).
+                                    if fit == Fit::TapDrill {
+                                        let (nominal, pitch) = tenon_model::threads::iso_coarse(SCREW_HOLES[i].tap_drill, true);
+                                        ui.label("Thread");
+                                        ui.label(tenon_model::threads::designation(nominal, pitch));
+                                        ui.end_row();
+                                        ui.label("Full Depth");
+                                        crate::drawing::check(ui, &mut p.thread_full, "", "tn_hole_thread_full");
+                                        ui.end_row();
+                                        if !p.thread_full {
+                                            ui.label("Thread Depth");
+                                            enter |= eq_value_field(
+                                                ui,
+                                                egui::Id::new("tn_props_thread_depth"),
+                                                &mut p.thread_depth,
+                                                &mut eqs,
+                                                "thread_depth",
+                                                "mm",
+                                                0.1..=100_000.0,
+                                                110.0,
+                                                t,
+                                            )
+                                            .entered;
+                                            ui.end_row();
+                                        }
+                                    }
                                     if fit != Fit::TapDrill {
                                         ui.label("Fit").on_hover_text("ISO 273: close leaves the screw less play, normal more");
                                         egui::ComboBox::from_id_salt("tn_props_hole_fit").selected_text(if fit == Fit::Close { "Close" } else { "Normal" }).show_ui(ui, |ui| {

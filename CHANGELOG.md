@@ -25,6 +25,10 @@ shows it in [ROADMAP.md](ROADMAP.md).
   plane. `model.extrude` takes `to`; files gain `extent = { to = <plane> }`.
 - **Hole: Spotface and To.** A spotface seat (the hole measured from its floor), and holes
   that go as far as a flat face or plane. `model.hole` takes `type: "spotface"` and `to`.
+- **Hole on a face**: with no sketch of centres, click a flat face where each hole goes; OK
+  makes the sketch and the hole together.
+- **Tapped holes**: Hole > Tapped drills a screw's tap drill and puts the thread on each wall,
+  full depth or a depth; drawings note it ("M8x1.25"). `model.hole` takes `tapped`.
 - **Extrude Between**: from one flat face or plane to another, wherever the sketch is.
   `model.extrude` takes `from` and `to`.
 - **Revolve To** a face or plane through the axis, and **To Next**. `model.revolve` takes `to`

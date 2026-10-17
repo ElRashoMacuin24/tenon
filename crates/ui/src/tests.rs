@@ -735,22 +735,30 @@ fn a_hole_is_sized_for_a_screw_to_pass_or_to_be_tapped() {
     // Counterbored for its socket head.
     choose(&mut d, &mut wb, "None", "Counterbore");
     assert_eq!((hole(&wb).2, hole(&wb).3), (15.0, 8.6));
-    // Tap Drill: the drill an M8 thread is tapped in.
-    choose(&mut d, &mut wb, "Clearance", "Tap Drill");
+    // Tapped: the drill an M8 thread is tapped in, and the thread on its wall (DEC-114), here 8
+    // deep, not the full depth.
+    choose(&mut d, &mut wb, "Clearance", "Tapped");
     assert_eq!(hole(&wb).0, 6.8);
-    assert!(d.text_pos("Fit").is_none(), "a tap drill has no fit");
+    assert!(d.text_pos("Fit").is_none(), "a tapped hole has no fit");
+    assert!(d.text_pos("M8x1.25").is_some(), "{:?}", d.texts());
+    d.click(&mut wb, pressable(&d, "tn_hole_thread_full"));
+    d.frame(&mut wb, vec![]);
+    type_into(&mut d, &mut wb, "tn_props_thread_depth", "8");
     choose(&mut d, &mut wb, "Counterbore", "None");
     d.tap(&mut wb, egui::Key::Enter);
     d.frame(&mut wb, vec![]);
     assert!(wb.panel.is_none(), "{}", wb.status());
-    // Opened again, it is still the M8's tap drill.
+    // Opened again, it is still the M8's tap drill, tapped 8 deep.
     let id = wb.document().features().last().unwrap().id;
+    assert!(
+        matches!(&wb.document().feature(id).unwrap().kind, tenon_model::FeatureKind::Hole(h) if h.tapped.as_ref().is_some_and(|t| t.length == tenon_model::ThreadLength::Distance(8.0)))
+    );
     wb.edit_feature(id).unwrap();
     assert_eq!(hole(&wb).1, Some((4, Fit::TapDrill)));
     // A size typed of one's own is kept, and is no screw's.
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
-    choose(&mut d, &mut wb, "Tap Drill", "Simple");
+    choose(&mut d, &mut wb, "Tapped", "Simple");
     type_into(&mut d, &mut wb, "tn_props_hole_dia", "7");
     d.tap(&mut wb, egui::Key::Enter);
     d.frame(&mut wb, vec![]);
@@ -2859,4 +2867,51 @@ fn a_revolution_goes_round_to_a_plane_picked_in_the_browser() {
     d.click(&mut wb, pressable(&d, "tn_rev_to_next"));
     d.frame(&mut wb, vec![]);
     assert!(matches!(&wb.panel, Some(Panel::Revolve(p)) if p.term == crate::panels::RevTerm::ToNext));
+}
+
+#[test]
+fn holes_are_placed_by_clicking_a_face_without_a_sketch() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    // H with no sketch of centres: the face is clicked where each hole goes.
+    d.tap(&mut wb, egui::Key::H);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("click a flat face"), "{}", wb.status());
+    let spots = [Vec3::new(10.0, 10.0, 10.0), Vec3::new(30.0, 10.0, 10.0), Vec3::new(20.0, 5.0, 10.0)];
+    for q in spots {
+        let at = on_screen(&wb, q);
+        d.frame(&mut wb, vec![egui::Event::PointerMoved(at)]);
+        d.click(&mut wb, at);
+        d.settle(&mut wb);
+    }
+    let Some(Panel::Hole(p)) = wb.panel.clone() else { panic!("no hole panel: {}", wb.status()) };
+    assert_eq!(p.face_points.len(), 3, "{}", wb.status());
+    // The third clicked again: taken away.
+    let third = on_screen(&wb, spots[2]);
+    d.click(&mut wb, third);
+    d.settle(&mut wb);
+    let Some(Panel::Hole(p)) = wb.panel.clone() else { panic!() };
+    assert_eq!(p.face_points.len(), 2);
+    assert!(p.face_points.iter().all(|v| (v.x - 10.0).abs() < 0.05 || (v.x - 30.0).abs() < 0.05), "{:?}", p.face_points);
+    // The preview drills them (12 deep with a point goes through the 10 of the block).
+    let through = PI * 9.0 * 10.0;
+    assert!((volume(&wb) - (8000.0 - 2.0 * through)).abs() < 1e-6, "preview: {}", volume(&wb));
+    // OK: a sketch on the face with the two points, and the hole on it; one step to undo.
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let names: Vec<String> = wb.document().features().iter().map(|f| f.name.clone()).collect();
+    assert_eq!(names, ["Sketch1", "Extrusion1", "Sketch2", "Hole1"]);
+    assert!((volume(&wb) - (8000.0 - 2.0 * through)).abs() < 1e-6, "{}", volume(&wb));
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    d.settle(&mut wb);
+    assert_eq!(wb.document().features().len(), 2, "the sketch and the hole go back together");
 }

@@ -485,11 +485,78 @@ impl Workbench {
         p.galley(at, galley, t.text);
     }
 
+    /// Where the centres clicked on a face are on the screen.
+    fn hole_face_marks(&self, rect: Rect) -> Vec<Pos2> {
+        let Some(Panel::Hole(p)) = &self.panel else { return Vec::new() };
+        let Some((_, frame)) = &p.face else { return Vec::new() };
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        p.face_points
+            .iter()
+            .filter_map(|v| self.view.camera.project(frame.plane_point(*v), w, h))
+            .map(|(x, y, _)| rect.min + vec2(x as f32, y as f32))
+            .collect()
+    }
+
+    /// A click on a flat face while a Hole is placed by clicks: a centre there, on the first face
+    /// clicked; one on a centre already there takes it away.
+    fn hole_face_pick(&mut self, resp: &egui::Response, rect: Rect) {
+        let Some(pos) = resp.hover_pos().or_else(|| resp.interact_pointer_pos()) else { return };
+        let near = self.hole_face_marks(rect).iter().position(|m| m.distance(pos) <= 9.0);
+        let (x, y, w, h) = (f64::from(pos.x - rect.left()), f64::from(pos.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+        let (o, d) = self.view.camera.ray(x, y, w, h);
+        let hit = {
+            let (meshes, tree) = (self.scene.placed(), self.body_tree());
+            pick_face_in(tree.as_deref(), &meshes, o, d)
+        };
+        let flat = hit.as_ref().and_then(|f| {
+            let info = &self.scene.bodies.get(f.body)?.faces.get(f.face as usize)?.1;
+            let frame = matches!(info.surface, SurfaceKind::Plane { .. }).then(|| tenon_model::frame_on_face(&info.surface)).flatten()?;
+            Some((self.face_ref_of(f.body, f.face)?, frame, f.point))
+        });
+        self.view.hover = if near.is_none() { hit.map(|f| Pick::Face { body: f.body, face: f.face }).filter(|_| flat.is_some()) } else { None };
+        if !resp.clicked() {
+            return;
+        }
+        if let Some(i) = near {
+            if let Some(Panel::Hole(p)) = &mut self.panel {
+                p.face_points.remove(i);
+            }
+            return;
+        }
+        let Some((face, frame, point)) = flat else {
+            self.set_error("Click a flat face of the part where the hole goes.");
+            return;
+        };
+        let Some(Panel::Hole(p)) = &mut self.panel else { return };
+        match &p.face {
+            Some((f, _)) if f.origin != face.origin => {
+                self.set_error("These holes go on the face clicked first: OK them, then start another Hole for this face.");
+                return;
+            }
+            Some(_) => {}
+            None => p.face = Some((face, frame)),
+        }
+        let at = frame.to_local(point);
+        // (To a hundredth of a millimetre: where the pointer happened to be.)
+        let tidy = |v: f64| (v * 100.0).round() / 100.0;
+        p.face_points.push(tenon_geom::Vec2::new(tidy(at.x), tidy(at.y)));
+        let n = p.face_points.len();
+        self.set_status(format!(
+            "{n} hole{} on the face. Click for more; edit its sketch afterwards to dimension them.",
+            if n == 1 { "" } else { "s" }
+        ));
+    }
+
     /// The hole panel's centre points on the part: picked ones filled, the others hollow.
     pub(crate) fn hole_markers(&self, ui: &egui::Ui, rect: Rect, t: &Tokens) {
         let Some(Panel::Hole(p)) = &self.panel else { return };
         let hover = self.hole_point_at(ui.input(|i| i.pointer.hover_pos()).filter(|q| rect.contains(*q)), rect);
         let painter = ui.painter().with_clip_rect(rect);
+        for at in self.hole_face_marks(rect) {
+            painter.circle_filled(at, 4.5, t.accent);
+            painter.line_segment([at - vec2(8.0, 0.0), at + vec2(8.0, 0.0)], Stroke::new(1.0, t.accent));
+            painter.line_segment([at - vec2(0.0, 8.0), at + vec2(0.0, 8.0)], Stroke::new(1.0, t.accent));
+        }
         for (id, at) in self.hole_point_marks(rect) {
             let on = p.points.contains(&id);
             let color = if on { t.accent } else { t.text_dim };
@@ -553,9 +620,15 @@ impl Workbench {
                 }
                 return true;
             }
-            // Termination To: a work plane or a flat face is where the holes go.
-            if self.picking_to() {
+            // Termination To, not yet picked: a work plane or a flat face is where the holes go.
+            let on_face = matches!(&self.panel, Some(Panel::Hole(h)) if h.on_face());
+            if self.picking_to() && (!on_face || matches!(&self.panel, Some(Panel::Hole(h)) if h.to.is_none())) {
                 self.pick_end_plane(resp, rect);
+                return true;
+            }
+            // No sketch: a click on a flat face is a hole's centre there (DEC-113).
+            if on_face {
+                self.hole_face_pick(resp, rect);
             }
             return true;
         }

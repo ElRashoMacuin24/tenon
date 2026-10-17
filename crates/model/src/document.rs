@@ -290,6 +290,25 @@ pub struct Hole {
     /// Drill along the sketch normal instead.
     #[serde(default)]
     pub reverse: bool,
+    /// Tapped: a thread on each hole's wall, from its mouth (DEC-114).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tapped: Option<Tapping>,
+}
+
+/// A tapped hole's thread: cosmetic, on each hole's wall from its mouth, as Thread puts one on
+/// (DEC-114).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Tapping {
+    /// Millimetres from one turn to the next; without it, the ISO coarse pitch for the hole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<f64>,
+    /// What it is called on drawings; without it, named from its size and pitch ("M8x1.25").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub designation: Option<String>,
+    #[serde(default)]
+    pub length: ThreadLength,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub left: bool,
 }
 
 /// The points of a sketch a hole goes at by default: centre points, i.e. the sketch's own points that are not

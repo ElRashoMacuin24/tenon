@@ -3058,3 +3058,37 @@ still sets the axis). `model.revolve` takes `to` and `to_next`; files write
 `angle = { to = ... }` and `angle = "to_next"`.
 
 **Not done:** Revolve Between, and To a plane that does not hold the axis.
+
+## DEC-113 A hole placed by clicking a face (2026-10-17)
+
+Inventor's Hole is placed on a face without a sketch drawn first: a click where the hole goes,
+then dimensions from edges. Tenon's needed a sketch of points.
+
+**Now:** Hole with no sketch of centres (none being edited, and none with free points) opens
+asking for a flat face: each click on one puts a centre there (to a hundredth of a millimetre),
+a click on a centre takes it away, and the preview drills them. Centres go on the face clicked
+first; another face is refused in words (OK, then start another Hole). OK makes a sketch on the
+face with the points, and the hole on it, as one undo step (the session's mark, squashed; rolled
+back if the hole is refused). The sketch is the hole's, nested under it in the browser; editing
+it dimensions the holes from the face's edges, which is how Inventor's placement is
+dimensioned too. Termination To, while its plane is still to be picked, takes the click first.
+
+**Not done:** dimensioning from edges while placing (Inventor's linear and concentric
+placements); the sketch is dimensioned afterwards.
+
+## DEC-114 Tapped holes (2026-10-17)
+
+Inventor's Hole types are Simple, Clearance, Tapped and Taper Tapped. Tenon's Tap Drill choice
+sized the drill and left the thread to a Thread feature (DEC-101).
+
+**Now:** `Hole::tapped: Option<Tapping>` (pitch, designation, length, left; each optional): after
+the holes are cut, each hole's wall gets the thread the Thread feature would put on it, cosmetic,
+from the hole's mouth, so drawings, the Threads list and the thread checks treat it the same.
+The panel's choice is called Tapped: the screw's tap drill, its thread named (M8x1.25, ISO
+coarse), Full Depth ticked, or a Thread Depth taking equations. The part's solid is as an
+untapped hole's. The drawing note adds the thread ("Ø6.8 DEEP 12, M8x1.25 DEEP 8"). Opened
+again, a Tap Drill hole made before this is Tapped, and OK puts its thread on.
+
+`model.hole` takes `tapped`, `thread_length`, `pitch`, `designation` and `left`; files gain
+`tapped = {...}`, additive in version 2. **Not done:** taper tapped; a modelled thread from the
+Hole (Thread still models one).

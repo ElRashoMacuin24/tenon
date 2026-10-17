@@ -110,4 +110,5 @@ taken away), without a check.
     (DEC-105); `feature.visibility` (DEC-106); `backward` and `reverse` of `model.revolve` (DEC-108); `to_next` of `model.extrude`
     (DEC-109); `asm.constrain`'s tangent type and `inside`, and `inside` of
     `asm.edit_relationship` (DEC-110); `from` of `model.extrude` (DEC-111); `to` and `to_next`
-    of `model.revolve` (DEC-112). 228 commands.
+    of `model.revolve` (DEC-112); `tapped`, `thread_length`, `pitch`, `designation` and `left` of
+    `model.hole` (DEC-114). 228 commands.

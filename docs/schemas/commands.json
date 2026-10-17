@@ -2580,6 +2580,28 @@
             "type": "boolean",
             "description": "drill along the sketch normal instead of against it (default false)"
           },
+          "tapped": {
+            "type": "boolean",
+            "description": "a thread on each hole's wall, from its mouth (cosmetic; default false)"
+          },
+          "thread_length": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "tapped: how far the thread runs (default: the whole wall)"
+          },
+          "pitch": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "tapped: the thread's pitch (default: ISO coarse for the hole)"
+          },
+          "designation": {
+            "type": "string",
+            "description": "tapped: what the thread is called on drawings (default from its size: M8x1.25)"
+          },
+          "left": {
+            "type": "boolean",
+            "description": "tapped: a left-handed thread (default false)"
+          },
           "equations": {
             "type": "object",
             "description": "equations for values of the feature, by where the value is in its definition: {\"/distance\": \"width / 2\"} (lengths in mm, angles in degrees)"

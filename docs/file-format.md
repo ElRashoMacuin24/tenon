@@ -318,6 +318,8 @@ Field values:
   hole's distance is measured from the spotface's floor; a depth of 0 is allowed).
 - **Hole `extent`:** `{ distance = d }`, `"through_all"` or `{ to = <plane> }` (DEC-105: each
   hole to where its axis meets the plane; the plane written as a sketch's is).
+- **Hole `tapped`** (DEC-114, written only for a tapped hole): `{ length = "full" | { distance = d } }`,
+  with `pitch`, `designation` and `left = true` when they are given.
 - **Rib `extent`:** `"to_next"` or `{ distance = d }`.
 
 ### Sketches

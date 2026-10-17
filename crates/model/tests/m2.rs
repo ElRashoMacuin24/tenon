@@ -1269,3 +1269,35 @@ fn a_revolution_goes_round_to_a_plane_or_to_the_next_faces() {
     let (least, most) = (1500.0 * 150f64.to_radians(), 1500.0 * 165.6f64.to_radians());
     assert!(ring > least && ring < most, "{ring} not in {least}..{most}");
 }
+
+#[test]
+fn a_tapped_hole_has_its_thread_from_its_mouth() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    let (sk, _) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0), (30.0, 10.0)]);
+    // An M8's tap drill, 6.8, through: tapped the whole way, M8x1.25 named from its size.
+    run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6.8, "through_all": true, "tapped": true }));
+    regenerates(&mut s, &mut k);
+    let threads = run(&mut s, &mut k, "model.threads", json!({}))["threads"].as_array().unwrap().clone();
+    assert_eq!(threads.len(), 2, "one for each hole: {threads:?}");
+    for t in &threads {
+        assert_eq!(t["designation"], "M8x1.25", "{t}");
+        assert_eq!((t["internal"].as_bool(), t["name"].as_str()), (Some(true), Some("Hole1")), "{t}");
+        assert!(approx(t["length"].as_f64().unwrap(), 10.0), "{t}");
+        // From the mouth, at the top, downward.
+        assert!(approx(t["start"][2].as_f64().unwrap(), 10.0) && t["direction"][2].as_f64().unwrap() < -0.99, "{t}");
+    }
+    // The part is as an untapped hole leaves it: the thread is cosmetic.
+    assert!(approx(volume(&mut s, &mut k), 8000.0 - 2.0 * PI * 3.4 * 3.4 * 10.0), "{}", volume(&mut s, &mut k));
+    // A blind hole, 12 deep, tapped 8 of it.
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6.8, "depth": 9, "flat_bottom": true, "tapped": true, "thread_length": 6 }));
+    regenerates(&mut s, &mut k);
+    let threads = run(&mut s, &mut k, "model.threads", json!({}))["threads"].as_array().unwrap().clone();
+    assert!(threads.iter().all(|t| approx(t["length"].as_f64().unwrap(), 6.0)), "{threads:?}");
+    // Longer than its hole: refused in words.
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6.8, "depth": 9, "tapped": true, "thread_length": 15 }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("make it shorter"), "{r}");
+}
