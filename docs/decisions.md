@@ -2972,3 +2972,28 @@ as before. `model.revolve` takes `backward` and `reverse`; files gain
 `angle = { two_sided = {...} }` and `reverse = true`, additive in version 2.
 
 **Not done:** To, To Next and Between for Revolve.
+
+## DEC-109 Extrude To Next (2026-10-16)
+
+From the comparison with Inventor, whose help calls To Next the termination to prefer over To,
+since it names no face that may later be gone.
+
+**What it does.** `ExtrudeExtent::ToNext`, Default or Flipped. The profile is extruded past
+the part, then brought back to the part's next faces, as Rib's "to next" is built:
+
+- *Joined, or a new solid:* the part is taken away from it, and the pieces that start at the
+  sketch are kept: each runs from the sketch to where it meets the part, however that face
+  slopes or curves. A piece that reaches the far end met nothing: refused, "part of the profile
+  meets no face of the part ahead" (Inventor fails the same way when the profile overhangs).
+- *Cut:* what it shares with the part is taken, and of that the pieces that start at the
+  sketch: the cut goes through the material it starts in, to where that ends, and not on into
+  material beyond a gap. (Through All goes on.)
+- *Intersect* is refused in words.
+
+A piece starts at the sketch when it touches the profile's face there, and runs to the end
+when it touches the profile's face at the far end (`Kernel::min_distance`). The pieces keep
+the extrusion's names for their sides and the cap at the sketch; their far faces are the part's
+faces. Every body of the part is taken into account. No taper: the panel says so.
+
+**Commands and files:** `model.extrude` takes `to_next: true`; files write
+`extent = "to_next"`, additive in version 2. **Not done:** Between; To Next for Revolve.

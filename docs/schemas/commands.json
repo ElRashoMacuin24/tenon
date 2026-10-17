@@ -2157,6 +2157,10 @@
             "type": "boolean",
             "description": "through the whole part"
           },
+          "to_next": {
+            "type": "boolean",
+            "description": "as far as the part's next faces: joined, to where it meets the part; cut, through the material it starts in"
+          },
           "to": {
             "anyOf": [
               {

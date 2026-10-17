@@ -1973,6 +1973,8 @@ fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
             return Err(format!("{id} is not a work plane").into());
         }
         ExtrudeExtent::To(plane)
+    } else if arg(p, "to_next").and_then(Value::as_bool).unwrap_or(false) {
+        ExtrudeExtent::ToNext
     } else if arg(p, "through_all").and_then(Value::as_bool).unwrap_or(false) {
         ExtrudeExtent::ThroughAll
     } else if let Some(d) = opt_num(p, "symmetric")? {

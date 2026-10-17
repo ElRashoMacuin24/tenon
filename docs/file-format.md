@@ -299,6 +299,7 @@ Field values:
   - `{ symmetric = d }`
   - `{ two_sided = { forward = a, backward = b } }`
   - `"through_all"`
+  - `"to_next"`: as far as the part's next faces (DEC-109)
   - `{ to = <plane> }`: as far as a plane, on whichever side of the sketch it is (DEC-104); the
     plane written as a sketch's is: `{ origin = "XY" }`, `{ face = <face reference> }` or
     `{ work = <work plane id> }`

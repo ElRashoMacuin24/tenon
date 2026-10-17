@@ -425,6 +425,7 @@ static SCHEMAS: &[C] = &[
             opt("backward", Length, "with `distance`: a second distance the other way"),
             opt("symmetric", Length, "the total distance, half each way"),
             opt("through_all", Bool, "through the whole part"),
+            opt("to_next", Bool, "as far as the part's next faces: joined, to where it meets the part; cut, through the material it starts in"),
             opt(
                 "to",
                 PLANE,

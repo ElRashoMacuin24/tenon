@@ -19,6 +19,8 @@ pub(crate) enum ExtentChoice {
     ThroughAll,
     /// As far as a face or plane (DEC-104).
     To,
+    /// As far as the part's next faces (DEC-109).
+    ToNext,
 }
 
 /// Which way a feature goes from its sketch.
@@ -601,6 +603,7 @@ impl Panel {
         match self {
             Panel::Extrude(p) => match (p.extent, p.direction) {
                 (ExtentChoice::ThroughAll | ExtentChoice::To, _) => vec![("taper", "/taper")],
+                (ExtentChoice::ToNext, _) => vec![],
                 (_, Direction::Symmetric) => vec![("distance", "/extent/symmetric")],
                 (_, Direction::Asymmetric) => vec![("distance", "/extent/two_sided/forward"), ("distance_b", "/extent/two_sided/backward")],
                 _ => vec![("distance", "/extent/distance"), ("taper", "/taper")],
@@ -737,6 +740,7 @@ impl ExtrudePanel {
                 None => ExtrudeExtent::Distance(self.distance),
             },
             (ExtentChoice::ThroughAll, _) => ExtrudeExtent::ThroughAll,
+            (ExtentChoice::ToNext, _) => ExtrudeExtent::ToNext,
             (ExtentChoice::Distance, Direction::Symmetric) => ExtrudeExtent::Symmetric(self.distance),
             (ExtentChoice::Distance, Direction::Asymmetric) => ExtrudeExtent::TwoSided { forward: self.distance, backward: self.distance_b },
             (ExtentChoice::Distance, _) => ExtrudeExtent::Distance(self.distance),
@@ -960,6 +964,7 @@ impl Workbench {
                         ExtrudeExtent::TwoSided { forward, backward } => (ExtentChoice::Distance, Direction::Asymmetric, forward, backward),
                         ExtrudeExtent::ThroughAll => (ExtentChoice::ThroughAll, way, 10.0, 10.0),
                         ExtrudeExtent::To(_) => (ExtentChoice::To, Direction::Default, 10.0, 10.0),
+                        ExtrudeExtent::ToNext => (ExtentChoice::ToNext, way, 10.0, 10.0),
                     };
                     let to = match &e.extent {
                         ExtrudeExtent::To(plane) => Some(plane.clone()),
@@ -1235,6 +1240,7 @@ impl Workbench {
                             }
                             ExtrudeExtent::ThroughAll => p["through_all"] = json!(true),
                             ExtrudeExtent::To(ref plane) => p["to"] = plane_json(plane),
+                            ExtrudeExtent::ToNext => p["to_next"] = json!(true),
                         }
                         if let Some(taper) = e.taper {
                             p["taper"] = json!(taper);

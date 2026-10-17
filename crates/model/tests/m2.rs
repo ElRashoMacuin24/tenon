@@ -1100,3 +1100,66 @@ fn a_revolution_turns_either_way_or_by_two_angles() {
     let (vb, cb) = make(json!({ "angle": PI / 2.0, "backward": PI / 4.0, "reverse": true }));
     assert!(approx(vb, va) && (cb[2] + ca[2]).abs() < 1e-6, "{cb:?} {ca:?}");
 }
+
+#[test]
+fn an_extrusion_goes_to_the_next_faces_of_the_part() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    // A bar whose top slopes: up from z = -50 to a plane tilted 30 degrees about X.
+    let tilt = run(&mut s, &mut k, "work.plane", json!({ "by": "angle", "base": "xy", "axis": "x", "angle": PI / 6.0 }))["feature"].as_u64().unwrap();
+    let below = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": -50 }))["feature"].as_u64().unwrap();
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": below }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 50, "y1": 10, "x2": 60, "y2": 20 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "to": { "work": tilt } }));
+    regenerates(&mut s, &mut k);
+    let bar = volume(&mut s, &mut k);
+    // A post drawn 30 up, turned down To Next: it stops on the sloping top. Over a circle the
+    // slope is as high on average as at its middle (y = 15).
+    let above = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 30 }))["feature"].as_u64().unwrap();
+    let sk2 = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": above }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk2, "cx": 55, "cy": 15, "r": 3 }));
+    let post = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "to_next": true, "reverse": true }))["feature"].as_u64().unwrap();
+    regenerates(&mut s, &mut k);
+    let expect = PI * 9.0 * (30.0 - 15.0 * (PI / 6.0).tan());
+    assert!(approx(volume(&mut s, &mut k) - bar, expect), "{} vs {expect}", volume(&mut s, &mut k) - bar);
+    // Its round side and its top are named as the post's, for features after it.
+    let faces = run(&mut s, &mut k, "model.faces", json!({}));
+    let of_post = |t: &str| faces["faces"].as_array().unwrap().iter().filter(|f| f["name"]["type"] == t && f["name"]["feature"] == post).count();
+    assert!(of_post("side") >= 1 && of_post("cap") == 1, "{faces}");
+    // The default way it meets nothing, and says so; nor does a profile half off the bar.
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "to_next": true }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("meets no face of the part ahead"), "{r}");
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    let sk3 = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": above }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk3, "cx": 60, "cy": 15, "r": 3 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk3, "to_next": true, "reverse": true }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("part of the profile meets no face"), "{r}");
+    let _ = post;
+}
+
+#[test]
+fn a_cut_to_next_goes_through_the_material_it_starts_in() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    // Two plates, one above the other with a gap: 0 to 10 and 15 to 25.
+    let (_, _, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    let up = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 15 }))["feature"].as_u64().unwrap();
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": up }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 40, "y2": 20 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 10, "operation": "new_body" }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 16000.0));
+    // A hole cut down To Next from the top: through the upper plate only.
+    let top = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 25 }))["feature"].as_u64().unwrap();
+    let sk2 = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": top }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk2, "cx": 20, "cy": 10, "r": 4 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "to_next": true, "reverse": true, "operation": "cut" }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 16000.0 - PI * 16.0 * 10.0), "{}", volume(&mut s, &mut k));
+    // Intersect does not go To Next.
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "to_next": true, "reverse": true, "operation": "intersect" }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("does not intersect"), "{r}");
+}

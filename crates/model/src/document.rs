@@ -120,6 +120,9 @@ pub enum ExtrudeExtent {
     /// As far as a plane: a planar face, a work plane or an origin plane, on whichever side of
     /// the sketch it is (DEC-104). At an angle to the sketch, the end is cut along the plane.
     To(PlaneRef),
+    /// As far as the part's next faces (DEC-109): joined, up to where it meets the part; cut,
+    /// through the material it starts in, to where that ends.
+    ToNext,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

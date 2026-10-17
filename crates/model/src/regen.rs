@@ -1202,10 +1202,13 @@ impl<'a> Ctx<'a> {
                     Extent::TwoSided { forward: *forward, backward: *backward }
                 }
             }
-            ExtrudeExtent::ThroughAll => {
+            ExtrudeExtent::ThroughAll | ExtrudeExtent::ToNext => {
                 let b = self.target_bbox().ok_or("there is no body to extrude through")?;
                 let dir = frame.z() * sign;
                 let reach = corners(&b).into_iter().map(|c| (c - frame.origin()).dot(dir)).fold(f64::NEG_INFINITY, f64::max);
+                if reach <= 0.0 && e.extent == ExtrudeExtent::ToNext {
+                    return Err("the profile meets no face of the part ahead: flip it, or give a distance".into());
+                }
                 if reach <= 0.0 {
                     return Err("the body is not on that side of the sketch".into());
                 }
@@ -1216,6 +1219,11 @@ impl<'a> Ctx<'a> {
         let faces = self.k.topology(op.shape)?.faces;
         let names = names_of_sweep(&op.history, id, faces);
         let taper = e.taper.unwrap_or(0.0);
+        if e.extent == ExtrudeExtent::ToNext {
+            let Extent::Distance(far) = extent else { return Err("internal: to next is a distance".into()) };
+            let pieces = self.up_to_next(op.shape, names, &profile, far, e.operation)?;
+            return self.combine(id, pieces, e.operation);
+        }
         if taper == 0.0 {
             let (shape, names) = match &trim {
                 Some(plane) => self.trim_to_plane(id, op.shape, names, plane, &frame)?,
@@ -1248,6 +1256,79 @@ impl<'a> Ctx<'a> {
             None => (shape, names),
         };
         self.combine(id, vec![(shape, names)], e.operation)
+    }
+
+    /// An extrusion run past the part, `far` along its sketch's normal, brought back to the
+    /// part's next faces (DEC-109). Joined (or a new body): the pieces that start at the sketch and
+    /// end on the part, the part taken away. Cut: the part's material that starts at the sketch,
+    /// as far as it goes. `shape` is let go.
+    fn up_to_next(
+        &mut self,
+        shape: ShapeHandle,
+        names: Vec<Option<FaceOrigin>>,
+        profile: &Profile,
+        far: f64,
+        operation: Operation,
+    ) -> Result<Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>, Stop> {
+        let kind = match operation {
+            Operation::Join | Operation::NewBody => BoolOp::Cut,
+            Operation::Cut => BoolOp::Intersect,
+            Operation::Intersect => {
+                self.k.release(shape);
+                return Err("To Next joins, cuts or makes a new solid: it does not intersect. Give a distance instead".into());
+            }
+        };
+        let bodies: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)> = self.regen.bodies.iter().map(|b| (b.shape, b.names.clone())).collect();
+        if bodies.is_empty() {
+            self.k.release(shape);
+            return Err("there is no part for it to go to".into());
+        }
+        let mut temp = vec![shape];
+        let mut found = || -> Result<Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>, Stop> {
+            let tools: Vec<ShapeHandle> = bodies.iter().map(|b| b.0).collect();
+            let cut = self.k.boolean(kind, shape, &tools)?;
+            temp.push(cut.shape);
+            let topo = self.k.topology(cut.shape)?;
+            let mut all: Vec<&[Option<FaceOrigin>]> = vec![&names];
+            all.extend(bodies.iter().map(|b| b.1.as_slice()));
+            let cut_names = names_of_boolean(&cut.history, &all, topo.faces);
+            // The profile where it starts, and where the extrusion would end with nothing in its
+            // way: a piece that touches the first starts at the sketch, one that touches the
+            // second never met the part.
+            let start = self.k.make_face(profile)?.shape;
+            temp.push(start);
+            let end_frame = profile.frame.with_origin(profile.frame.origin() + profile.frame.z() * far).ok_or("the extrusion has no end")?;
+            let end = self.k.make_face(&Profile { frame: end_frame, regions: profile.regions.clone() })?.shape;
+            temp.push(end);
+            let mut out = Vec::new();
+            for i in 0..topo.solids {
+                let s = self.k.solid(cut.shape, i)?;
+                let at_start = self.k.min_distance(SubShape::Shape(s.shape), SubShape::Shape(start))?.value < 1e-6;
+                let open = kind == BoolOp::Cut && self.k.min_distance(SubShape::Shape(s.shape), SubShape::Shape(end))?.value < 1e-6;
+                if at_start && open {
+                    self.k.release(s.shape);
+                    for (p, _) in out {
+                        self.k.release(p);
+                    }
+                    return Err("part of the profile meets no face of the part ahead: To Next ends on the part, across the whole profile. Flip it, or give a distance".into());
+                }
+                if at_start {
+                    let faces = self.k.topology(s.shape)?.faces;
+                    out.push((s.shape, names_of_boolean(&s.history, &[&cut_names], faces)));
+                } else {
+                    self.k.release(s.shape);
+                }
+            }
+            if out.is_empty() {
+                return Err("the profile meets no face of the part ahead: flip it, or give a distance".into());
+            }
+            Ok(out)
+        };
+        let result = found();
+        for t in temp {
+            self.k.release(t);
+        }
+        result
     }
 
     /// An extrusion run past a plane at an angle to its sketch, cut back along the plane: what is

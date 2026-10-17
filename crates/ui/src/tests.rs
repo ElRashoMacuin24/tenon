@@ -2747,3 +2747,35 @@ fn a_revolution_is_made_asymmetric_with_two_angles_typed() {
     let Some(Panel::Revolve(p)) = wb.panel.clone() else { panic!() };
     assert_eq!((p.direction, p.degrees, p.degrees_b), (crate::panels::Direction::Asymmetric, 90.0, 45.0));
 }
+
+#[test]
+fn an_extrusion_is_flipped_to_the_next_face() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    let wp = wb.exec("work.plane", json!({ "base": "xy", "distance": 30 })).unwrap()["feature"].as_u64().unwrap();
+    wb.create_sketch(json!({ "work_plane": wp })).unwrap();
+    let f2 = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": f2.0, "cx": 30, "cy": 10, "r": 4 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    // E; Extents: To Next; Direction: Flipped (down to the block); Enter.
+    d.tap(&mut wb, egui::Key::E);
+    d.settle(&mut wb);
+    d.click(&mut wb, pressable(&d, "tn_extents"));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_extent_to_next"));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_glyph Flipped"));
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - (8000.0 + PI * 16.0 * 20.0)).abs() < 1e-6, "{}", volume(&wb));
+    let ex = wb.document().features().last().unwrap();
+    assert!(matches!(&ex.kind, tenon_model::FeatureKind::Extrude(e) if e.extent == tenon_model::ExtrudeExtent::ToNext && e.reverse), "{:?}", ex.kind);
+}

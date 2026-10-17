@@ -609,6 +609,7 @@ impl Workbench {
                                         ExtentChoice::Distance => "Distance",
                                         ExtentChoice::ThroughAll => "Through All",
                                         ExtentChoice::To => "To",
+                                        ExtentChoice::ToNext => "To Next",
                                     })
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(&mut p.extent, ExtentChoice::Distance, "Distance");
@@ -623,7 +624,11 @@ impl Workbench {
                                         if r.clicked() {
                                             p.direction = Direction::Default;
                                         }
-                                        ui.add_enabled(false, egui::Button::selectable(false, "To Next (later)"));
+                                        let r = ui.selectable_value(&mut p.extent, ExtentChoice::ToNext, "To Next");
+                                        crate::drawing::remember(ui, "tn_extent_to_next", r.rect);
+                                        if r.clicked() && matches!(p.direction, Direction::Symmetric | Direction::Asymmetric) {
+                                            p.direction = Direction::Default;
+                                        }
                                         ui.add_enabled(false, egui::Button::selectable(false, "Between (later)"));
                                     });
                                 crate::drawing::remember(ui, "tn_extents", extents.response.rect);
@@ -683,7 +688,11 @@ impl Workbench {
                             });
                         });
                         section(ui, "Advanced Properties", p.taper != 0.0, |ui| {
-                            if matches!(p.direction, Direction::Symmetric | Direction::Asymmetric) && p.extent == ExtentChoice::Distance {
+                            if p.extent == ExtentChoice::ToNext {
+                                ui.add_enabled(false, egui::Label::new("Taper: not with To Next")).on_disabled_hover_text(
+                                    "To Next ends where the part is; a tapered side would meet it at no one place. Give a distance or To to taper.",
+                                );
+                            } else if matches!(p.direction, Direction::Symmetric | Direction::Asymmetric) && p.extent == ExtentChoice::Distance {
                                 ui.add_enabled(false, egui::Label::new("Taper: for one direction only")).on_disabled_hover_text(
                                     "A tapered extrusion goes one way from its sketch. Taper each side as an extrusion of its own.",
                                 );
