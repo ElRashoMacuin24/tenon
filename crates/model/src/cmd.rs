@@ -2004,12 +2004,15 @@ fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
         }
         Some(_) => axis_ref(s, p)?,
     };
-    let angle = match opt_num(p, "angle")? {
-        None => RevolveAngle::Full,
-        Some(a) if arg(p, "symmetric").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::Symmetric(a),
-        Some(a) => RevolveAngle::Angle(a),
+    let angle = match (opt_num(p, "angle")?, opt_num(p, "backward")?) {
+        (None, None) => RevolveAngle::Full,
+        (Some(a), _) if arg(p, "symmetric").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::Symmetric(a),
+        (Some(a), Some(b)) => RevolveAngle::TwoSided { forward: a, backward: b },
+        (None, Some(_)) => return Err("`backward` goes with `angle`: the two angles of an asymmetric revolution".into()),
+        (Some(a), None) => RevolveAngle::Angle(a),
     };
-    add_feature(s, FeatureKind::Revolve(Revolve { sketch, regions: region_sel(p)?, axis, angle, operation: operation(p)? }), p)
+    let reverse = arg(p, "reverse").and_then(Value::as_bool).unwrap_or(false);
+    add_feature(s, FeatureKind::Revolve(Revolve { sketch, regions: region_sel(p)?, axis, angle, operation: operation(p)?, reverse }), p)
 }
 
 fn edge_refs(p: &Value) -> Result<Vec<EdgeRef>, CmdError> {

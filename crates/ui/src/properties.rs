@@ -759,13 +759,23 @@ impl Workbench {
                                 );
                                 ui.end_row();
                                 if !p.full {
+                                    // (Inventor's four directions: DEC-108.)
                                     ui.label("Direction");
-                                    let items = [(Glyph::Default, "Default direction", true), (Glyph::Symmetric, "Symmetric: half each way", true)];
-                                    if let Some(i) = glyph_row(ui, &items, usize::from(p.symmetric), t) {
-                                        p.symmetric = i == 1;
+                                    let dirs = [
+                                        (Glyph::Default, "Default direction", Direction::Default),
+                                        (Glyph::Flipped, "Flipped: the other way round", Direction::Flipped),
+                                        (Glyph::Symmetric, "Symmetric: half each way", Direction::Symmetric),
+                                        (Glyph::Asymmetric, "Asymmetric: two angles", Direction::Asymmetric),
+                                    ];
+                                    let shown = if p.symmetric { Direction::Symmetric } else { p.direction };
+                                    let items: Vec<(Glyph, &str, bool)> = dirs.iter().map(|d| (d.0, d.1, true)).collect();
+                                    let sel = dirs.iter().position(|d| d.2 == shown).unwrap_or(0);
+                                    if let Some(i) = glyph_row(ui, &items, sel, t) {
+                                        p.direction = dirs[i].2;
+                                        p.symmetric = p.direction == Direction::Symmetric;
                                     }
                                     ui.end_row();
-                                    ui.label("Angle");
+                                    ui.label(if p.direction == Direction::Asymmetric { "Angle A" } else { "Angle" });
                                     enter |= eq_value_field(
                                         ui,
                                         egui::Id::new("tn_props_angle"),
@@ -779,6 +789,22 @@ impl Workbench {
                                     )
                                     .entered;
                                     ui.end_row();
+                                    if p.direction == Direction::Asymmetric {
+                                        ui.label("Angle B");
+                                        enter |= eq_value_field(
+                                            ui,
+                                            egui::Id::new("tn_props_angle_b"),
+                                            &mut p.degrees_b,
+                                            &mut eqs,
+                                            "degrees_b",
+                                            "deg",
+                                            0.0..=360.0,
+                                            110.0,
+                                            t,
+                                        )
+                                        .entered;
+                                        ui.end_row();
+                                    }
                                 }
                             });
                         });

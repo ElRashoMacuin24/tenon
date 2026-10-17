@@ -171,6 +171,12 @@ pub enum RevolveAngle {
     Full,
     Angle(f64),
     Symmetric(f64),
+    /// Two angles: `forward` the default way, `backward` the other (Inventor's Asymmetric,
+    /// DEC-108).
+    TwoSided {
+        forward: f64,
+        backward: f64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -182,6 +188,9 @@ pub struct Revolve {
     pub angle: RevolveAngle,
     #[serde(default)]
     pub operation: Operation,
+    /// Turned the other way round the axis (Inventor's Flipped, DEC-108).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reverse: bool,
 }
 
 /// Rounds edges with one radius.

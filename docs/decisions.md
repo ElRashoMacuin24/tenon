@@ -2957,3 +2957,18 @@ rotate); Tenon's right-click ends placing at once. The instance does not settle 
 under the pointer, as Inventor's does not.
 
 `Workbench::place_file` (scripts and tests) still places beside the others in one go.
+
+## DEC-108 Revolve's four directions (2026-10-16)
+
+From the comparison with Inventor: a revolution by an angle goes Default, Flipped, Symmetric or
+Asymmetric (two angles, one each way). Tenon had Default and Symmetric.
+
+**Now:** `RevolveAngle::TwoSided { forward, backward }` for Asymmetric, and
+`Revolve::reverse` for Flipped (turned the other way round the axis; with two angles they
+change places). The panel's Direction row has the four, as Extrude's has; Asymmetric shows
+Angle A and Angle B, each taking equations. Both go to the kernel as the angles it already
+took (`AngleExtent::Angle` of the other sign, `AngleExtent::TwoSided`), so faces are named
+as before. `model.revolve` takes `backward` and `reverse`; files gain
+`angle = { two_sided = {...} }` and `reverse = true`, additive in version 2.
+
+**Not done:** To, To Next and Between for Revolve.

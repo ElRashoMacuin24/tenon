@@ -1313,10 +1313,13 @@ impl<'a> Ctx<'a> {
             return Err("The axis is square to the sketch, so turning the profile about it makes no solid. Choose an axis that lies in the sketch's plane: a line of the sketch, or an origin axis in that plane.".into());
         }
         let profile = profile_of(sketch, frame, &r.regions)?;
-        let angle = match r.angle {
-            RevolveAngle::Full => AngleExtent::Full,
-            RevolveAngle::Angle(a) => AngleExtent::Angle(a),
-            RevolveAngle::Symmetric(a) => AngleExtent::Symmetric(a),
+        // (Flipped: the other way round; two angles change places.)
+        let angle = match (r.angle.clone(), r.reverse) {
+            (RevolveAngle::Full, _) => AngleExtent::Full,
+            (RevolveAngle::Angle(a), reverse) => AngleExtent::Angle(if reverse { -a } else { a }),
+            (RevolveAngle::Symmetric(a), _) => AngleExtent::Symmetric(a),
+            (RevolveAngle::TwoSided { forward, backward }, false) => AngleExtent::TwoSided { forward, backward },
+            (RevolveAngle::TwoSided { forward, backward }, true) => AngleExtent::TwoSided { forward: backward, backward: forward },
         };
         let op = self.k.revolve(&profile, &axis, &angle)?;
         match self.k.mass_properties(op.shape, 1.0) {

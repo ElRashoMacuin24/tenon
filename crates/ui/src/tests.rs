@@ -2715,3 +2715,35 @@ fn sketches_and_work_features_are_shown_and_hidden_from_the_browser() {
     let e = wb.exec("feature.visibility", json!({ "feature": 2, "visible": false })).unwrap_err();
     assert!(e.contains("no sketch or work feature"), "{e}");
 }
+
+#[test]
+fn a_revolution_is_made_asymmetric_with_two_angles_typed() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 10, "y1": 0, "x2": 20, "y2": 10 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    wb.run_ui("model.revolve").unwrap();
+    d.frame(&mut wb, vec![]);
+    if let Some(Panel::Revolve(p)) = &mut wb.panel {
+        p.full = false;
+        p.axis = crate::panels::AxisChoice::Origin(tenon_model::OriginAxis::Y);
+    }
+    d.frame(&mut wb, vec![]);
+    // Asymmetric: Angle A 90, Angle B 45.
+    d.click(&mut wb, pressable(&d, "tn_glyph Asymmetric: two angles"));
+    d.frame(&mut wb, vec![]);
+    type_into(&mut d, &mut wb, "tn_props_angle", "90");
+    type_into(&mut d, &mut wb, "tn_props_angle_b", "45");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!((volume(&wb) - 1500.0 * PI * 0.75).abs() < 1e-6, "{}", volume(&wb));
+    // Opened again, it says so.
+    let id = wb.document().features().last().unwrap().id;
+    wb.edit_feature(id).unwrap();
+    let Some(Panel::Revolve(p)) = wb.panel.clone() else { panic!() };
+    assert_eq!((p.direction, p.degrees, p.degrees_b), (crate::panels::Direction::Asymmetric, 90.0, 45.0));
+}

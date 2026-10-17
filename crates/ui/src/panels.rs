@@ -65,6 +65,9 @@ pub(crate) struct RevolvePanel {
     pub full: bool,
     pub degrees: f64,
     pub symmetric: bool,
+    /// Flipped, or (with `degrees_b`) Asymmetric, as Inventor's directions (DEC-108).
+    pub direction: Direction,
+    pub degrees_b: f64,
     pub operation: Operation,
     pub regions: RegionSel,
 }
@@ -603,7 +606,11 @@ impl Panel {
                 _ => vec![("distance", "/extent/distance"), ("taper", "/taper")],
             },
             Panel::Revolve(p) if p.full => vec![],
-            Panel::Revolve(p) => vec![("degrees", if p.symmetric { "/angle/symmetric" } else { "/angle/angle" })],
+            Panel::Revolve(p) => match p.direction {
+                _ if p.symmetric || p.direction == Direction::Symmetric => vec![("degrees", "/angle/symmetric")],
+                Direction::Asymmetric => vec![("degrees", "/angle/two_sided/forward"), ("degrees_b", "/angle/two_sided/backward")],
+                _ => vec![("degrees", "/angle/angle")],
+            },
             Panel::Fillet(_) => vec![("radius", "/radius")],
             Panel::Chamfer(p) => match p.method {
                 ChamferMethod::Distance => vec![("d1", "/size/equal")],
@@ -746,17 +753,20 @@ impl RevolvePanel {
     pub(crate) fn kind(&self) -> FeatureKind {
         let angle = if self.full {
             RevolveAngle::Full
-        } else if self.symmetric {
+        } else if self.symmetric || self.direction == Direction::Symmetric {
             RevolveAngle::Symmetric(self.degrees.to_radians())
+        } else if self.direction == Direction::Asymmetric {
+            RevolveAngle::TwoSided { forward: self.degrees.to_radians(), backward: self.degrees_b.to_radians() }
         } else {
             RevolveAngle::Angle(self.degrees.to_radians())
         };
+        let reverse = !self.full && self.direction == Direction::Flipped;
         let axis = match self.axis {
             AxisChoice::Origin(a) => AxisRef::Origin(a),
             AxisChoice::Line(l) => AxisRef::SketchLine(l),
             AxisChoice::Work(w) => AxisRef::Work(w),
         };
-        FeatureKind::Revolve(Revolve { sketch: self.sketch, regions: self.regions.clone(), axis, angle, operation: self.operation })
+        FeatureKind::Revolve(Revolve { sketch: self.sketch, regions: self.regions.clone(), axis, angle, operation: self.operation, reverse })
     }
 }
 
@@ -1003,13 +1013,31 @@ impl Workbench {
                         RevolveAngle::Full => (true, 360.0, false),
                         RevolveAngle::Angle(a) => (false, a.to_degrees(), false),
                         RevolveAngle::Symmetric(a) => (false, a.to_degrees(), true),
+                        RevolveAngle::TwoSided { forward, .. } => (false, forward.to_degrees(), false),
+                    };
+                    let (direction, degrees_b) = match (&r.angle, r.reverse) {
+                        (RevolveAngle::TwoSided { backward, .. }, _) => (Direction::Asymmetric, backward.to_degrees()),
+                        (RevolveAngle::Symmetric(_), _) => (Direction::Symmetric, 90.0),
+                        (_, true) => (Direction::Flipped, 90.0),
+                        _ => (Direction::Default, 90.0),
                     };
                     let axis = match r.axis {
                         AxisRef::Origin(a) => AxisChoice::Origin(a),
                         AxisRef::SketchLine(l) => AxisChoice::Line(l),
                         AxisRef::Work(w) => AxisChoice::Work(w),
                     };
-                    RevolvePanel { editing, sketch: r.sketch, axis, full, degrees, symmetric, operation: r.operation, regions: r.regions.clone() }
+                    RevolvePanel {
+                        editing,
+                        sketch: r.sketch,
+                        axis,
+                        full,
+                        degrees,
+                        symmetric,
+                        direction,
+                        degrees_b,
+                        operation: r.operation,
+                        regions: r.regions.clone(),
+                    }
                 }
                 _ => return Err("not a revolution".into()),
             },
@@ -1023,6 +1051,8 @@ impl Workbench {
                     full: true,
                     degrees: 360.0,
                     symmetric: false,
+                    direction: Direction::Default,
+                    degrees_b: 90.0,
                     operation: Operation::Join,
                     regions: RegionSel::Default,
                 }
@@ -1228,6 +1258,13 @@ impl Workbench {
                                 p["angle"] = json!(a);
                                 p["symmetric"] = json!(true);
                             }
+                            RevolveAngle::TwoSided { forward, backward } => {
+                                p["angle"] = json!(forward);
+                                p["backward"] = json!(backward);
+                            }
+                        }
+                        if r.reverse {
+                            p["reverse"] = json!(true);
                         }
                         ("model.revolve", p)
                     }

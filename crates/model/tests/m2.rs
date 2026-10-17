@@ -1070,3 +1070,33 @@ fn holes_go_as_far_as_a_plane() {
     let r = run(&mut s, &mut k, "model.regenerate", json!({}));
     assert!(r["error"]["message"].as_str().unwrap().contains("not ahead of it"), "{r}");
 }
+
+#[test]
+fn a_revolution_turns_either_way_or_by_two_angles() {
+    // A 10 x 10 square 10 to 20 from the Y axis: by Pappus, a turn of t radians sweeps 1500 t.
+    let make = |p: Value| -> (f64, Vec<f64>) {
+        let (mut s, mut k) = (Session::default(), OcctKernel::new());
+        let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+        run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 10, "y1": 0, "x2": 20, "y2": 10 }));
+        let mut p = p.clone();
+        p["sketch"] = json!(sk);
+        p["axis"] = json!("y");
+        run(&mut s, &mut k, "model.revolve", p);
+        regenerates(&mut s, &mut k);
+        let m = run(&mut s, &mut k, "model.mass", json!({}));
+        let b = &m["bodies"][0];
+        (b["volume"].as_f64().unwrap(), b["center_of_mass"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect())
+    };
+    let (v, c) = make(json!({ "angle": PI / 2.0 }));
+    assert!(approx(v, 1500.0 * PI / 2.0), "{v}");
+    // Flipped: as much, on the other side of the sketch.
+    let (vf, cf) = make(json!({ "angle": PI / 2.0, "reverse": true }));
+    assert!(approx(vf, v) && (cf[2] + c[2]).abs() < 1e-6 && c[2].abs() > 1.0, "{c:?} {cf:?}");
+    // Asymmetric: 90 degrees one way and 45 the other, 135 in all, more of it on the first side.
+    let (va, ca) = make(json!({ "angle": PI / 2.0, "backward": PI / 4.0 }));
+    assert!(approx(va, 1500.0 * PI * 0.75), "{va}");
+    assert!(ca[2].signum() == c[2].signum() && ca[2].abs() < c[2].abs(), "{ca:?} {c:?}");
+    // Flipped, the two angles change places.
+    let (vb, cb) = make(json!({ "angle": PI / 2.0, "backward": PI / 4.0, "reverse": true }));
+    assert!(approx(vb, va) && (cb[2] + ca[2]).abs() < 1e-6, "{cb:?} {ca:?}");
+}

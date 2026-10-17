@@ -449,6 +449,8 @@ static SCHEMAS: &[C] = &[
             ),
             opt("angle", Angle, "how far round (default: all the way)"),
             opt("symmetric", Bool, "half the angle each way from the sketch (default false)"),
+            opt("backward", Angle, "with `angle`: a second angle the other way (asymmetric)"),
+            opt("reverse", Bool, "turn the other way round the axis (default false)"),
             OPERATION,
             REGIONS,
             EQUATIONS,

@@ -2266,6 +2266,15 @@
             "type": "boolean",
             "description": "half the angle each way from the sketch (default false)"
           },
+          "backward": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "with `angle`: a second angle the other way (asymmetric)"
+          },
+          "reverse": {
+            "type": "boolean",
+            "description": "turn the other way round the axis (default false)"
+          },
           "operation": {
             "type": "string",
             "enum": [

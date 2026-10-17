@@ -25,6 +25,8 @@ shows it in [ROADMAP.md](ROADMAP.md).
   plane. `model.extrude` takes `to`; files gain `extent = { to = <plane> }`.
 - **Hole: Spotface and To.** A spotface seat (the hole measured from its floor), and holes
   that go as far as a flat face or plane. `model.hole` takes `type: "spotface"` and `to`.
+- **Revolve** turns Default, Flipped, Symmetric or Asymmetric (two angles), as Inventor's
+  does. `model.revolve` takes `backward` and `reverse`.
 - **Place** works as Inventor's: after the first part (grounded at the origin), each instance
   follows the pointer and a click puts it down, until Esc or a right-click.
 - **Visibility.** A sketch's or work feature's menu in the browser shows or hides it, as

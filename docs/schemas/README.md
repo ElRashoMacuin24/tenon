@@ -107,4 +107,5 @@ taken away), without a check.
     description, for 0.1.0); after it `sketch.text` and `sketch.edit_text` (DEC-102), the optional
     `consumed` and `dependents` of `feature.delete` (DEC-103) and `to` of `model.extrude`
     (DEC-104); `model.hole`'s spotface type, `spotface_diameter`, `spotface_depth` and `to`
-    (DEC-105); `feature.visibility` (DEC-106). 228 commands.
+    (DEC-105); `feature.visibility` (DEC-106); `backward` and `reverse` of `model.revolve` (DEC-108). 228
+    commands.

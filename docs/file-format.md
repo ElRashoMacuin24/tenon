@@ -303,7 +303,9 @@ Field values:
     plane written as a sketch's is: `{ origin = "XY" }`, `{ face = <face reference> }` or
     `{ work = <work plane id> }`
 - **`operation`:** `"join"`, `"cut"`, `"new_body"` or `"intersect"`.
-- **Revolve `angle`:** `"full"`, `{ angle = a }` or `{ symmetric = a }`.
+- **Revolve `angle`:** `"full"`, `{ angle = a }`, `{ symmetric = a }` or
+  `{ two_sided = { forward = a, backward = b } }` (DEC-108); `reverse = true` after it turns it
+  the other way round the axis (written only when true).
 - **Chamfer `size`:**
   - `{ equal = d }`
   - `{ two_distances = { d1, d2, reference = <face reference> } }`
