@@ -22,7 +22,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `table.remove_column` | Remove Table Column | name; the parameter keeps its value | yes |
 | `table.activate` | Activate Row | row: the part takes that row's values | yes |
 | `sketch.create` | New Sketch | plane: "xy" \| "yz" \| "xz" (default xy), or face: a face reference from model.face_ref; project_origin (default true: a fixed point at the part origin, returned as `origin`); project_edges (default false): on a face, the face's edges are shown in the sketch as reference geometry, as sketch.project does (or give `edges` and `geometry` as for sketch.project). Returns the feature, and the entities `projected` | yes |
-| `sketch.point` | Point | sketch, x, y | yes |
+| `sketch.point` | Point | sketch, x, y; center (default true): a centre point, where a hole goes unless told otherwise, or (false) a sketch point, which a hole takes only when picked | yes |
 | `sketch.line` | Line | sketch; start (point id) or x1, y1; end (point id) or x2, y2 | yes |
 | `sketch.circle` | Circle | sketch; center (point id) or cx, cy; r. Returns the circle and its centre point (`center`) | yes |
 | `sketch.arc` | Arc | sketch; center or cx, cy; start or x1, y1; end or x2, y2 (counter-clockwise). Returns the arc and its points (`center`, `start`, `end`) | yes |
@@ -38,6 +38,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.drag` | Drag Point | sketch, point (id), x, y | yes |
 | `sketch.delete` | Delete | sketch, entities: [ids] | yes |
 | `sketch.construction` | Construction | sketch, entity (id), on (default true) | yes |
+| `sketch.center_point` | Center Point | sketch, entity (a point on its own), on (default true). A centre point is where a hole goes unless told otherwise; with on false it is a sketch point, which a hole takes only when picked | yes |
 | `sketch.centerline` | Centerline | sketch, entity (a line's id), on (default true). A centre line is the axis a revolution turns about unless told otherwise, and a dimension to it is a diameter; it still bounds profiles | yes |
 | `sketch.project` | Project Geometry | sketch; edge or edges: edge references (model.edge_ref), or face: a face reference whose edges are all projected. The edges are shown in the sketch as reference geometry: it follows the part, other geometry is constrained and dimensioned to it, and it bounds profiles. Only edges made before the sketch; straight and circular ones. flat: true (Project Flat Pattern, in a sketch on a side of a sheet metal part) shows each edge where it lies with the sheet laid flat from the sketch's face, so the faces beyond a bend can be drawn on for a cut across it. geometry: what each of `edges` is on the sketch plane (for callers without a kernel). Returns the entities, and why any edge of a face was left out | yes |
 | `sketch.break_link` | Break Link | sketch, entities: [ids of projected curves or points]. They stay where they are, become the sketch's own geometry and no longer follow the part | yes |

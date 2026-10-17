@@ -1337,3 +1337,37 @@ fn a_work_plane_goes_through_three_points() {
     let e = s.exec("work.plane", &json!({ "by": "three_points", "points": ["origin", { "work": up }, "origin"] }), Some(&mut k)).unwrap_err();
     assert!(e.to_string().contains("work point"), "{e}");
 }
+
+#[test]
+fn a_hole_goes_at_centre_points_and_not_at_sketch_points() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (_, ex, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    let (sk, pts) = points_on_top(&mut s, &mut k, ex, &[(10.0, 10.0), (30.0, 10.0)]);
+    // A point made a sketch point, and one made as one (DEC-117).
+    run(&mut s, &mut k, "sketch.center_point", json!({ "sketch": sk, "entity": pts[1], "on": false }));
+    let plain = run(&mut s, &mut k, "sketch.point", json!({ "sketch": sk, "x": 20, "y": 5, "center": false }))["point"].as_u64().unwrap();
+    let info = run(&mut s, &mut k, "sketch.info", json!({ "sketch": sk }));
+    let marked: Vec<u64> =
+        info["entities"].as_array().unwrap().iter().filter(|e| e["sketch_point"] == true).map(|e| e["id"].as_u64().unwrap()).collect();
+    assert_eq!(marked, vec![pts[1], plain], "{info}");
+    // The hole goes at the centre point only.
+    run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "diameter": 6, "through_all": true }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 8000.0 - PI * 9.0 * 10.0), "{}", volume(&mut s, &mut k));
+    // A sketch point is taken when picked.
+    run(&mut s, &mut k, "model.hole", json!({ "sketch": sk, "points": [plain], "diameter": 4, "through_all": true }));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 8000.0 - PI * 13.0 * 10.0), "{}", volume(&mut s, &mut k));
+    // Made a centre point again, it is one of the first hole's points.
+    run(&mut s, &mut k, "sketch.center_point", json!({ "sketch": sk, "entity": pts[1] }));
+    let sketch = s.document().sketch(tenon_model::FeatureId(sk as u32)).unwrap();
+    assert_eq!(tenon_model::hole_centres(sketch).len(), 2);
+    // Only a point on its own is either.
+    let line = run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": 2, "y1": 2, "x2": 8, "y2": 3 }));
+    let before = s.document().clone();
+    for e in [&line["line"], &line["start"]] {
+        let err = s.exec("sketch.center_point", &json!({ "sketch": sk, "entity": e, "on": false }), Some(&mut k)).unwrap_err();
+        assert!(err.to_string().contains("centre point"), "{err}");
+    }
+    assert_eq!(s.document(), &before);
+}

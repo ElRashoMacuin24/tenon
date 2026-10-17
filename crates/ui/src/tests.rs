@@ -190,6 +190,23 @@ impl Driver {
         }
         out
     }
+    /// How many short line segments (under 30 pixels) and filled circles the last frame drew
+    /// centred within a pixel and a half of `at`: what mark a point has.
+    pub(crate) fn marks_at(&self, at: Pos2) -> (usize, usize) {
+        fn walk(s: &egui::Shape, at: Pos2, out: &mut (usize, usize)) {
+            match s {
+                egui::Shape::LineSegment { points: [a, b], .. } if a.lerp(*b, 0.5).distance(at) < 1.5 && a.distance(*b) < 30.0 => out.0 += 1,
+                egui::Shape::Circle(c) if c.fill.a() > 0 && c.center.distance(at) < 1.5 => out.1 += 1,
+                egui::Shape::Vec(v) => v.iter().for_each(|x| walk(x, at, out)),
+                _ => {}
+            }
+        }
+        let mut out = (0, 0);
+        for c in &self.shapes {
+            walk(&c.shape, at, &mut out);
+        }
+        out
+    }
     /// The middle of the piece of text `text` the last frame drew, to click it as a user would.
     pub(crate) fn text_pos(&self, text: &str) -> Option<Pos2> {
         fn walk(s: &egui::Shape, text: &str) -> Option<Pos2> {

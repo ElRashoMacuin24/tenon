@@ -124,7 +124,7 @@ static SCHEMAS: &[C] = &[
             opt("geometry", List(&Object), "with `edges`: what each edge is on the sketch plane, one for one, as sketch.project takes it"),
         ],
     ),
-    C::new("sketch.point", &[SKETCH, X, Y]),
+    C::new("sketch.point", &[SKETCH, X, Y, opt("center", Bool, "a centre point (default true) or a sketch point")]),
     C::with(
         "sketch.line",
         &[
@@ -255,6 +255,7 @@ static SCHEMAS: &[C] = &[
         "sketch.construction",
         &[SKETCH, req("entity", Id, "a point's or curve's id"), opt("on", Bool, "make it construction geometry (default true)")],
     ),
+    C::new("sketch.center_point", &[SKETCH, req("entity", Id, "a point's id"), opt("on", Bool, "a centre point (default true) or a sketch point")]),
     C::new("sketch.centerline", &[SKETCH, req("entity", Id, "a line's id"), opt("on", Bool, "make it a centre line (default true)")]),
     C::new(
         "sketch.project",

@@ -347,7 +347,7 @@ constraints = [
 | `spline` | `poles` (point ids), `degree` (a clamped uniform B-spline) |
 | `text` | `at` (point id: where the first line's baseline starts), `text` (the words; a new line starts a line below), `height` (of capital letters, mm), `angle` (radians counter-clockwise, left out when 0). The letters are DejaVu Sans 2.37's, worked out when the file is read, never written (DEC-102) |
 
-Every entity also has `construction`, and two optional marks written only when true:
+Every entity also has `construction`, and optional marks written only when true:
 
 - `centerline = true` on a line: a centre line (DEC-056). It bounds profiles like any line,
   is the axis a revolution takes when none is named, and is what a `linear_diameter` is
@@ -355,6 +355,8 @@ Every entity also has `construction`, and two optional marks written only when t
 - `reference = true`: reference geometry, shown in the sketch from an edge of the part
   (DEC-055). The solver never moves it; the sketch's `projections` (below) say which edge each
   piece shows. A point, line, circle or arc can be reference geometry; a spline cannot.
+- `sketch_point = true` on a point on its own: a sketch point, which a hole takes only when
+  it is picked; points on their own are centre points otherwise (DEC-117).
 
 **Constraint types:**
 

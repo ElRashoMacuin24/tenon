@@ -105,6 +105,11 @@ a sketch that holds only text to raise it, or cut it into a face to engrave it. 
 also has closed curves, click inside the text's box in the Extrude panel to add its letters.
 Text uses one font, DejaVu Sans, built in so that a part looks the same on every computer.
 
+**Points** (Sketch > Create > Point) are centre points, drawn as a cross: a Hole goes at
+every one. **Center Point** (Sketch > Format) makes the selected points sketch points, drawn
+as a dot, which a hole takes only when you pick them, or centre points again; with nothing
+selected it switches what Point makes.
+
 ## Features
 
 An extrusion goes a **Distance**, **Through All**, **To Next** (as far as the part's next face;

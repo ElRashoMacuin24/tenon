@@ -285,6 +285,13 @@ pub const RIBBON: &[RibbonTab] = &[
                         0,
                     ),
                     small(
+                        "sketch.center_point",
+                        "Center Point",
+                        "Make the selected points centre points (a hole goes at them) or sketch points (a hole takes them only when picked); with none selected, what the Point tool makes",
+                        Icon::CenterPoint,
+                        0,
+                    ),
+                    small(
                         "sketch.driven",
                         "Driven Dimension",
                         "Click a dimension to make it driven (it follows the sketch, in parentheses) or driving again",

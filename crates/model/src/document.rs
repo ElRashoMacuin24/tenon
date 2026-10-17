@@ -312,12 +312,9 @@ pub struct Tapping {
 }
 
 /// The points of a sketch a hole goes at by default: centre points, i.e. the sketch's own points that are not
-/// construction and not on any curve.
+/// construction, not on any curve and not marked as sketch points (DEC-117).
 pub fn hole_centres(sk: &Sketch) -> Vec<EntityId> {
-    sk.entities()
-        .filter(|(id, e)| !e.construction && !e.reference && sk.point(*id).is_some() && sk.curves_at(*id).is_empty())
-        .map(|(id, _)| id)
-        .collect()
+    sk.entities().map(|(id, _)| id).filter(|id| sk.is_center_point(*id)).collect()
 }
 
 /// The usual drill point angle, 118 degrees.

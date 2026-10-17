@@ -145,7 +145,12 @@ impl Sketch {
             let mut map: BTreeMap<EntityId, EntityId> = BTreeMap::new();
             for p in &points {
                 let at = self.point(*p).ok_or(SketchError::NoEntity(*p))?;
-                map.insert(*p, s.add_point(motion.apply(at))?);
+                let new = s.add_point(motion.apply(at))?;
+                // (A copied sketch point stays one: the curves go on after.)
+                if self.entity(*p).is_some_and(|e| e.sketch_point) {
+                    s.set_center_point(new, false)?;
+                }
+                map.insert(*p, new);
             }
             for c in &carried {
                 let Some(e) = self.entity(*c) else { continue };

@@ -118,6 +118,10 @@ pub struct Entity {
     /// constrained and dimensioned to it, and it bounds profiles like any curve.
     #[serde(default, skip_serializing_if = "is_false")]
     pub reference: bool,
+    /// A point on its own marked as a sketch point rather than a centre point: a hole does not
+    /// go at it unless it is picked (DEC-117). Points on their own are centre points otherwise.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub sketch_point: bool,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]

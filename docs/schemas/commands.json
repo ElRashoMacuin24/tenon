@@ -409,7 +409,7 @@
       "id": "sketch.point",
       "label": "Point",
       "undoable": true,
-      "description": "sketch, x, y",
+      "description": "sketch, x, y; center (default true): a centre point, where a hole goes unless told otherwise, or (false) a sketch point, which a hole takes only when picked",
       "params": {
         "type": "object",
         "properties": {
@@ -427,6 +427,10 @@
             "type": "number",
             "x-unit": "mm",
             "description": "sketch coordinate"
+          },
+          "center": {
+            "type": "boolean",
+            "description": "a centre point (default true) or a sketch point"
           }
         },
         "additionalProperties": false,
@@ -1175,6 +1179,36 @@
           "on": {
             "type": "boolean",
             "description": "make it construction geometry (default true)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "entity"
+        ]
+      }
+    },
+    {
+      "id": "sketch.center_point",
+      "label": "Center Point",
+      "undoable": true,
+      "description": "sketch, entity (a point on its own), on (default true). A centre point is where a hole goes unless told otherwise; with on false it is a sketch point, which a hole takes only when picked",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "entity": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "a point's id"
+          },
+          "on": {
+            "type": "boolean",
+            "description": "a centre point (default true) or a sketch point"
           }
         },
         "additionalProperties": false,

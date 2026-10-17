@@ -14,6 +14,10 @@ shows it in [ROADMAP.md](ROADMAP.md).
   built in so that a part is the same everywhere. New commands `sketch.text` and
   `sketch.edit_text`; `sketch.info` lists the texts. Files gain the entity `text` and the
   region key `{ text = id }` (an addition to format version 2).
+- **Center Point.** Sketch > Format > Center Point: points on their own are centre points
+  (drawn as a cross, and a hole goes at them) or sketch points (a dot; a hole takes them only
+  when picked). On the selected points, or with none selected, on what Point makes.
+  `sketch.center_point`, and `center` of `sketch.point`; files mark `sketch_point = true`.
 
 ### Parts and assemblies
 

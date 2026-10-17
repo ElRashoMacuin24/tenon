@@ -660,7 +660,11 @@ impl Workbench {
                                 .fold(0.0, f32::max);
                             for (row, cmd) in column.iter().enumerate() {
                                 let br = Rect::from_min_size(pos2(x, top + row as f32 * row_h), vec2(w, row_h - 1.0));
-                                hit(ribbon_button(ui, br, cmd, active_tool == Some(cmd.id), t), cmd.id);
+                                // (A style toggle lights while it is on.)
+                                let lit = active_tool == Some(cmd.id)
+                                    || (cmd.id == "sketch.center_point"
+                                        && matches!(&self.mode, crate::workbench::Mode::Sketch(s) if s.center_points));
+                                hit(ribbon_button(ui, br, cmd, lit, t), cmd.id);
                             }
                             x += w + 3.0;
                         }

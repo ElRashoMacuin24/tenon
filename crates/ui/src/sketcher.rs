@@ -220,6 +220,9 @@ pub(crate) struct SketchMode {
     pub text_height: f64,
     /// Where a dragged text was taken hold of, from its point (sketch coordinates).
     pub drag_grab: Vec2,
+    /// The Point tool makes centre points (Format > Center Point on, as it starts) or sketch
+    /// points.
+    pub center_points: bool,
 }
 
 /// The Format Text box: what is typed, how tall and at what angle, and where it goes (or which
@@ -255,6 +258,7 @@ impl SketchMode {
             text_box: None,
             text_height: tenon_sketch::text::DEFAULT_HEIGHT,
             drag_grab: Vec2::ZERO,
+            center_points: true,
         }
     }
 }
@@ -626,6 +630,30 @@ impl Workbench {
                 self.exec("sketch.construction", json!({ "sketch": feature.0, "entity": e.0, "on": on }))?;
             }
             self.set_status(if on { "Construction geometry (not part of profiles)." } else { "Normal geometry." });
+            return Ok(());
+        }
+        if id == "sketch.center_point" {
+            let (feature, picked) = (s.feature, s.selection.clone());
+            let sk = self.document().sketch(feature).ok_or("the sketch is gone")?;
+            let points: Vec<EntityId> =
+                picked.into_iter().filter(|e| sk.is_point(*e) && sk.curves_at(*e).is_empty() && !sk.is_reference(*e)).collect();
+            if points.is_empty() {
+                // With no point selected, the style the Point tool makes changes.
+                let Mode::Sketch(s) = &mut self.mode else { return Ok(()) };
+                s.center_points = !s.center_points;
+                let on = s.center_points;
+                self.set_status(if on {
+                    "New points are centre points: a hole goes at them."
+                } else {
+                    "New points are sketch points: a hole takes them only when picked."
+                });
+                return Ok(());
+            }
+            let on = !points.iter().all(|e| sk.is_center_point(*e));
+            for e in points {
+                self.exec("sketch.center_point", json!({ "sketch": feature.0, "entity": e.0, "on": on }))?;
+            }
+            self.set_status(if on { "Centre points: a hole goes at them." } else { "Sketch points: a hole takes them only when picked." });
             return Ok(());
         }
         if id == "sketch.centerline" {
@@ -1193,6 +1221,15 @@ impl Workbench {
                 } else if e.reference {
                     // An end of a projected edge: a small round dot in the edge's colour.
                     p.circle_filled(q, s, color_of(id));
+                } else if shown.curves_at(id).is_empty() {
+                    // A point on its own: a centre point is a cross, a sketch point a dot.
+                    if e.sketch_point {
+                        p.circle_filled(q, s + 0.5, color_of(id));
+                    } else {
+                        let (arm, stroke) = (s * 2.2, Stroke::new(if sm.hover == Some(id) { 2.4 } else { 1.6 }, color_of(id)));
+                        p.line_segment([q - vec2(arm, 0.0), q + vec2(arm, 0.0)], stroke);
+                        p.line_segment([q - vec2(0.0, arm), q + vec2(0.0, arm)], stroke);
+                    }
                 } else {
                     p.rect_filled(Rect::from_center_size(q, vec2(s * 2.0, s * 2.0)), 1.0, color_of(id));
                 }
@@ -1570,7 +1607,8 @@ impl Workbench {
                 }
             }
             Tool::Point => {
-                let _ = self.exec_status("sketch.point", json!({ "sketch": f, "x": click.at.x, "y": click.at.y }));
+                let center = sm.center_points;
+                let _ = self.exec_status("sketch.point", json!({ "sketch": f, "x": click.at.x, "y": click.at.y, "center": center }));
             }
             Tool::Line => {
                 if let Some(start) = sm.clicks.last().copied() {

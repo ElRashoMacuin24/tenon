@@ -87,7 +87,7 @@ pub(crate) const DRAWING: Shape = Shape {
 /// Fields a version-1 file has beside the document; they are not kept.
 const HEAD: &[&str] = &["format", "version", "generator"];
 /// A sketch entity's own fields; the rest are its geometry's.
-const ENTITY_OWN: &[&str] = &["construction", "centerline", "reference"];
+const ENTITY_OWN: &[&str] = &["construction", "centerline", "reference", "sketch_point"];
 /// A sketch's fields, in file order.
 const SKETCH: &[&str] = &["next_entity", "next_constraint", "entities", "constraints", "places", "driven"];
 

@@ -49,7 +49,8 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 | Regions picked side by side make one profile: the curve between them leaves no face | done | `a_circle_divided_by_a_line_is_used_whole_or_by_halves` (both halves are one cylinder with one round wall), `a_plate_divided_by_a_line_keeps_its_plain_keys_and_its_holes` |
 | The region under the pointer is highlighted before it is clicked | done | its outline in the hover colour: the click test above. Gap: Inventor shades the region; Tenon outlines it |
 | Revolve takes a centre line as its axis without being asked; otherwise the axis is clicked in the graphics window | done | DEC-039, DEC-056: the one centre line of the sketch, else a construction line, else the one line that bounds no profile, else an origin axis in the sketch's plane; a sketch line, work axis or origin axis can be clicked. `revolve_turns_a_circle_into_a_sphere_and_takes_a_clicked_line_for_its_axis` |
-| Centerline is a line format of its own (Format panel), drawn as a chain line | done | Sketch > Format > Centerline, on what is selected (DEC-056). It still bounds profiles, so a half section closes along its own axis. `a_centre_line_is_the_axis_and_dimensions_to_it_are_diameters`. Gap: no Center Point format |
+| Centerline is a line format of its own (Format panel), drawn as a chain line | done | Sketch > Format > Centerline, on what is selected (DEC-056). It still bounds profiles, so a half section closes along its own axis. `a_centre_line_is_the_axis_and_dimensions_to_it_are_diameters` |
+| Center Point is a point format: centre points (a cross) are where a hole goes; sketch points (a dot) a hole takes only when picked | done | Sketch > Format > Center Point (closed 2026-10-17, DEC-117): on the selected points, or with none selected, on what the Point tool makes; on as a sketch opens. `a_hole_goes_at_centre_points_and_not_at_sketch_points`, `center_point_makes_sketch_points_and_a_hole_passes_them_over`. Gap: only points on their own (not the ends of curves) |
 | A sketch stays visible until a feature uses it; a used sketch can be shared and shown again | partial | unused sketches show (DEC-037); a used sketch cannot be shared with a second feature from the browser yet |
 | A feature previews as it is set up, with a mini-toolbar at the pointer and a Properties panel | done (M2) | |
 | Extrude tapers from its panel | done | DEC-040, `an_extrusion_is_tapered_from_its_advanced_properties` |
@@ -90,12 +91,12 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 18. ~~Delete Features with what goes with a feature; Extrude To a face or plane; Mate's Flush
     solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
     comparison of every command below.
-19. From the same comparison, in order: the Sketch tab's Center Point, arc slots, ellipse, Stretch and Smooth; fillets of variable
+19. From the same comparison, in order: the Sketch tab's arc slots, ellipse, Stretch and Smooth; fillets of variable
     radius and face fillets. Done from it so far: Extrude To (DEC-104), To Next (DEC-109) and
     Between (DEC-111); the Hole panel's Spotface and To (DEC-105), placing on a face (DEC-113)
     and Tapped (DEC-114); visibility from the browser (DEC-106); components placed by the
     pointer (DEC-107); Revolve's directions (DEC-108), To and To Next (DEC-112); Tangent (DEC-110);
-    Symmetry (DEC-115); the three-point work plane (DEC-116).
+    Symmetry (DEC-115); the three-point work plane (DEC-116); Center Point (DEC-117).
 
 ## Geometry of the part in a sketch
 
@@ -154,7 +155,7 @@ Pattern panel:
 
 Constrain and Format panels: the constraints are all there (M1, M2); Automatic Dimensions and
 Constraints, Show Constraints for a selection, and Constraint Settings are missing. Format has
-Construction, Centerline and Driven Dimension; Center Point and Show Format are missing.
+Construction, Centerline, Center Point (DEC-117) and Driven Dimension; Show Format is missing.
 
 ## The part as a whole: physical properties and sizes
 

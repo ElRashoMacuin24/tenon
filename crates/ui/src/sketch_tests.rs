@@ -855,3 +855,49 @@ fn text_is_typed_in_its_box_changed_by_a_double_click_and_its_letters_are_a_prof
     assert_eq!(p.regions, RegionSel::Keys(vec![RegionKey::Text { text: *t }]));
     assert!((volume(&wb) - (both - plate)).abs() < 1e-6 * both, "{} of {}", volume(&wb), both - plate);
 }
+
+#[test]
+fn center_point_makes_sketch_points_and_a_hole_passes_them_over() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    block(&mut wb);
+    d.settle(&mut wb);
+    let sk = sketch_on_top(&mut d, &mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 10.0));
+    // Point: a click makes a centre point. Format > Center Point with nothing selected, and the
+    // tool makes sketch points (DEC-117).
+    d.click(&mut wb, pressable(&d, "ribbon sketch.point"));
+    let first = at(&wb, 10.0, 10.0);
+    move_to(&mut d, &mut wb, first);
+    d.click(&mut wb, first);
+    d.click(&mut wb, pressable(&d, "ribbon sketch.center_point"));
+    assert!(wb.status().contains("New points are sketch points"), "{}", wb.status());
+    let second = at(&wb, 30.0, 10.0);
+    move_to(&mut d, &mut wb, second);
+    d.click(&mut wb, second);
+    d.tap(&mut wb, egui::Key::Escape);
+    let s = open(&wb);
+    let free: Vec<EntityId> =
+        s.entities().filter(|(id, e)| !e.reference && !e.construction && s.is_point(*id) && s.curves_at(*id).is_empty()).map(|(id, _)| id).collect();
+    let [c, p] = free.as_slice() else { panic!("two points: {free:?}") };
+    let (c, p) = (*c, *p);
+    assert!(s.is_center_point(c) && !s.is_center_point(p), "{:?}", s.entity(p));
+    // A centre point is drawn as a cross, a sketch point as a dot.
+    let away = at(&wb, 20.0, 18.0);
+    move_to(&mut d, &mut wb, away);
+    let (cq, pq) = (on_screen(&wb, on_part(&wb, sk, c)), on_screen(&wb, on_part(&wb, sk, p)));
+    assert_eq!((d.marks_at(cq), d.marks_at(pq)), ((2, 0), (0, 1)));
+    // Selected, Center Point makes the sketch point a centre point, and again a sketch point.
+    move_to(&mut d, &mut wb, pq);
+    d.click(&mut wb, pq);
+    d.click(&mut wb, pressable(&d, "ribbon sketch.center_point"));
+    assert!(open(&wb).is_center_point(p) && wb.status().starts_with("Centre points"), "{}", wb.status());
+    d.click(&mut wb, pressable(&d, "ribbon sketch.center_point"));
+    assert!(!open(&wb).is_center_point(p), "{}", wb.status());
+    // A hole goes at the centre point only.
+    wb.finish_sketch();
+    wb.run_ui("model.hole").unwrap();
+    d.settle(&mut wb);
+    let Some(Panel::Hole(h)) = wb.panel.clone() else { panic!("no hole panel: {}", wb.status()) };
+    assert_eq!((h.sketch, h.points), (sk, vec![c]));
+}

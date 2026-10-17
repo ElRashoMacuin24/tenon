@@ -671,6 +671,8 @@ fn projected_edges_centre_lines_and_diameters_to_them_are_written_and_read_back(
     let axis = run(&mut s, "sketch.line", json!({ "sketch": on, "x1": 0, "y1": 10, "x2": 40, "y2": 10 }));
     run(&mut s, "sketch.centerline", json!({ "sketch": on, "entity": axis["line"] }));
     let pt = run(&mut s, "sketch.point", json!({ "sketch": on, "x": 12, "y": 14 }))["point"].as_u64().unwrap();
+    // A sketch point beside it (DEC-117).
+    run(&mut s, "sketch.point", json!({ "sketch": on, "x": 30, "y": 14, "center": false }));
     let across = run(
         &mut s,
         "sketch.constrain",
@@ -682,6 +684,7 @@ fn projected_edges_centre_lines_and_diameters_to_them_are_written_and_read_back(
     // diameter is a dimension of its own kind; and the sketch lists what it shows of the part.
     assert_eq!(text.matches("reference = true").count(), 3, "{text}");
     assert_eq!(text.matches("centerline = true").count(), 1, "{text}");
+    assert_eq!(text.matches("sketch_point = true").count(), 1, "{text}");
     assert!(text.contains(&format!("{{ id = {front}, type = \"line\", start = ")), "{text}");
     let record = format!("{{ id = {}, type = \"linear_diameter\", point = {pt}, axis = {}, value = 6.0 }}", across["constraint"], axis["line"]);
     assert!(text.contains(&record), "{text}");
@@ -694,7 +697,11 @@ fn projected_edges_centre_lines_and_diameters_to_them_are_written_and_read_back(
     let (was, now) = (s.document().sketch(on_id).unwrap(), back.sketch(on_id).unwrap());
     for (id, e) in was.entities() {
         let read = now.entity(id).unwrap();
-        assert_eq!((read.reference, read.centerline, read.construction), (e.reference, e.centerline, e.construction), "{id}");
+        assert_eq!(
+            (read.reference, read.centerline, read.construction, read.sketch_point),
+            (e.reference, e.centerline, e.construction, e.sketch_point),
+            "{id}"
+        );
     }
     assert_eq!(now.constraints().collect::<Vec<_>>(), was.constraints().collect::<Vec<_>>());
     assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);

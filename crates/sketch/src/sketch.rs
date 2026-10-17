@@ -350,7 +350,7 @@ impl Sketch {
         }
         self.next_entity = self.next_entity.checked_add(1).ok_or(SketchError::TooMany)?;
         let id = EntityId(self.next_entity);
-        self.entities.insert(id, Entity { geometry, construction: false, centerline: false, reference: false });
+        self.entities.insert(id, Entity { geometry, construction: false, centerline: false, reference: false, sketch_point: false });
         Ok(id)
     }
 
@@ -458,6 +458,27 @@ impl Sketch {
     }
     pub fn is_centerline(&self, id: EntityId) -> bool {
         self.entity(id).is_some_and(|e| e.centerline)
+    }
+
+    /// Makes a point on its own a centre point (what a hole goes at unless told otherwise; a
+    /// point is one when made) or a sketch point, which a hole takes only when picked (DEC-117).
+    pub fn set_center_point(&mut self, id: EntityId, center: bool) -> SketchResult<()> {
+        if !self.is_point(id) {
+            return Err(if self.entity(id).is_some() {
+                invalid(format!("{id} is not a point: only a point can be a centre point"))
+            } else {
+                SketchError::NoEntity(id)
+            });
+        }
+        if !self.curves_at(id).is_empty() {
+            return Err(invalid(format!("{id} is the end of a curve: only a point on its own can be a centre point")));
+        }
+        self.entities.get_mut(&id).ok_or(SketchError::NoEntity(id))?.sketch_point = !center;
+        Ok(())
+    }
+    /// A point on its own that is a centre point: not construction, reference or a sketch point.
+    pub fn is_center_point(&self, id: EntityId) -> bool {
+        self.entity(id).is_some_and(|e| !e.construction && !e.reference && !e.sketch_point) && self.is_point(id) && self.curves_at(id).is_empty()
     }
 
     /// Marks an entity as reference geometry (or as the sketch's own again). A reference curve's

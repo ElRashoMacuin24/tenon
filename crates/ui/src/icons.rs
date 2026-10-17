@@ -174,6 +174,7 @@ pub enum Icon {
     CenterMark,
     Centerline,
     CenterlineBisector,
+    CenterPoint,
 }
 
 /// What an icon depicts, for its fill colour.
@@ -1182,6 +1183,12 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             for (a, b) in [(0.02, 0.36), (0.45, 0.55), (0.64, 0.98)] {
                 pen.line(&[(a, 1.0 - a), (b, 1.0 - b)]);
             }
+        }
+        // A centre point's cross, with a sketch point's dot beside it.
+        Icon::CenterPoint => {
+            pen.line(&[(0.42, 0.12), (0.42, 0.72)]);
+            pen.line(&[(0.12, 0.42), (0.72, 0.42)]);
+            pen.dot((0.8, 0.8), 0.09);
         }
         Icon::CenterlineBisector => {
             pen.line(&[(0.06, 0.16), (0.94, 0.16)]);

@@ -1282,7 +1282,12 @@ fn sketch_create(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
 
 fn sketch_point(s: &mut Session, p: &Value) -> CmdResult {
     let at = pos(p, "x", "y")?;
-    let id = on_sketch(s, p, |sk| Ok(sk.add_point(at)?))?;
+    let center = arg(p, "center").and_then(Value::as_bool).unwrap_or(true);
+    let id = on_sketch(s, p, |sk| {
+        let id = sk.add_point(at)?;
+        sk.set_center_point(id, center)?;
+        Ok(id)
+    })?;
     Ok(json!({ "point": id.0 }))
 }
 
@@ -1836,6 +1841,13 @@ fn sketch_break_link(s: &mut Session, p: &Value) -> CmdResult {
     Ok(json!({}))
 }
 
+fn sketch_center_point(s: &mut Session, p: &Value) -> CmdResult {
+    let e = EntityId(id_u32(p, "entity")?);
+    let on = arg(p, "on").and_then(Value::as_bool).unwrap_or(true);
+    on_sketch(s, p, |sk| Ok(sk.set_center_point(e, on)?))?;
+    Ok(json!({}))
+}
+
 fn sketch_centerline(s: &mut Session, p: &Value) -> CmdResult {
     let e = EntityId(id_u32(p, "entity")?);
     let on = arg(p, "on").and_then(Value::as_bool).unwrap_or(true);
@@ -1855,6 +1867,9 @@ pub fn sketch_info_value(sk: &Sketch) -> Value {
                 o.insert("construction".into(), json!(e.construction));
                 if e.centerline {
                     o.insert("centerline".into(), json!(true));
+                }
+                if e.sketch_point {
+                    o.insert("sketch_point".into(), json!(true));
                 }
                 if e.reference {
                     o.insert("reference".into(), json!(true));
@@ -3673,7 +3688,13 @@ static COMMANDS: &[CommandSpec] = &[
         mutates: true,
         run: Run::Opt(sketch_create),
     },
-    doc_cmd!("sketch.point", "Point", "sketch, x, y", true, sketch_point),
+    doc_cmd!(
+        "sketch.point",
+        "Point",
+        "sketch, x, y; center (default true): a centre point, where a hole goes unless told otherwise, or (false) a sketch point, which a hole takes only when picked",
+        true,
+        sketch_point
+    ),
     doc_cmd!("sketch.line", "Line", "sketch; start (point id) or x1, y1; end (point id) or x2, y2", true, sketch_line),
     doc_cmd!(
         "sketch.circle",
@@ -3731,6 +3752,13 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!("sketch.drag", "Drag Point", "sketch, point (id), x, y", true, sketch_drag),
     doc_cmd!("sketch.delete", "Delete", "sketch, entities: [ids]", true, sketch_delete),
     doc_cmd!("sketch.construction", "Construction", "sketch, entity (id), on (default true)", true, sketch_construction),
+    doc_cmd!(
+        "sketch.center_point",
+        "Center Point",
+        "sketch, entity (a point on its own), on (default true). A centre point is where a hole goes unless told otherwise; with on false it is a sketch point, which a hole takes only when picked",
+        true,
+        sketch_center_point
+    ),
     doc_cmd!(
         "sketch.centerline",
         "Centerline",

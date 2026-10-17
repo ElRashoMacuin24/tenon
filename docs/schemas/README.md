@@ -112,4 +112,5 @@ taken away), without a check.
     `asm.edit_relationship` (DEC-110); `from` of `model.extrude` (DEC-111); `to` and `to_next`
     of `model.revolve` (DEC-112); `tapped`, `thread_length`, `pitch`, `designation` and `left` of
     `model.hole` (DEC-114); `asm.constrain`'s symmetry type and `plane` (DEC-115); `work.plane`'s `three_points` and
-    `points` (DEC-116). 228 commands.
+    `points` (DEC-116); `sketch.center_point` and `center` of `sketch.point` (DEC-117). 229
+    commands.

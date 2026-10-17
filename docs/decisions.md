@@ -3131,3 +3131,23 @@ plane follows its points (a sketch point dragged turns it).
 clicked in the view (drawn over the part, picked first), a circular edge (its centre), a work
 point in the browser, or the Origin folder's Center Point. `work.plane` takes
 `by: "three_points"` and `points`; files gain the kind, additive.
+
+## DEC-117 Center Point: centre points and sketch points (2026-10-17)
+
+Inventor's sketch points come in two formats: centre points, drawn as a cross, which a hole
+takes on its own, and sketch points, drawn as a dot, which it takes only when picked. Format >
+Center Point switches the selected points, and what the Point tool makes. Tenon had one kind:
+every point on its own was a hole centre.
+
+**Now:** an entity mark `sketch_point` (written only when true), on a point on its own. Points
+are centre points unless marked, so files and sketches made before keep their holes.
+`Sketch::set_center_point` refuses anything else in words (a curve, or the end of one: Tenon's
+holes go only at points on their own, so the format would mean nothing there).
+`hole_centres` passes sketch points over; the Hole panel still offers every point to pick.
+A copied sketch point stays one.
+
+**In the sketch:** Format > Center Point, between Centerline and Driven Dimension. With points
+selected it toggles them; with none, what the Point tool makes, and it is lit while that is
+centre points (as a sketch opens). Centre points are drawn as a cross, sketch points as a dot.
+`sketch.center_point` (`entity`, `on`), and `center` on `sketch.point`; `sketch.info` lists
+`sketch_point`. Files gain the mark, additive.
