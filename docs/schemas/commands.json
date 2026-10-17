@@ -1509,6 +1509,47 @@
       }
     },
     {
+      "id": "sketch.stretch",
+      "label": "Stretch",
+      "undoable": true,
+      "description": "sketch, entities: [ids], dx, dy. The selection moves (a curve with its points, or points by themselves); the curves joined to it stretch, and the dimensions across the stretch (between what moves and what does not) take the sizes it gives them. What else holds the selection where it is refuses it. Returns the dimensions that changed",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "ids of the sketch's points and curves"
+          },
+          "dx": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "how far along x"
+          },
+          "dy": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "how far along y"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "entities",
+          "dx",
+          "dy"
+        ]
+      }
+    },
+    {
       "id": "sketch.rotate",
       "label": "Rotate",
       "undoable": true,

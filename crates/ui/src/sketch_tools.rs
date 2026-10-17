@@ -151,6 +151,7 @@ pub(crate) fn is_tool(t: Tool) -> bool {
     matches!(
         t,
         Move | Copy
+            | Stretch
             | Rotate
             | Scale
             | Extend
@@ -173,6 +174,7 @@ pub(crate) fn is_tool(t: Tool) -> bool {
 pub(crate) fn needs_selection(t: Tool) -> Option<&'static str> {
     Some(match t {
         Tool::Move => "move",
+        Tool::Stretch => "stretch",
         Tool::Copy => "copy",
         Tool::Rotate => "rotate",
         Tool::Scale => "scale",
@@ -208,7 +210,7 @@ fn turn(a: Vec2, b: Vec2) -> f64 {
 pub(crate) fn tool_motion(tool: Tool, clicks: &[Click], cursor: Vec2, hud: &Hud) -> Option<Motion> {
     let first = clicks.first()?.at;
     match tool {
-        Tool::Move | Tool::Copy => {
+        Tool::Move | Tool::Copy | Tool::Stretch => {
             let d = cursor - first;
             Some(Motion::Shift(Vec2::new(hud.typed(0).unwrap_or(d.x), hud.typed(1).unwrap_or(d.y))))
         }
@@ -288,12 +290,12 @@ impl Workbench {
         let Mode::Sketch(sm) = &mut self.mode else { return };
         let (tool, f) = (sm.tool, feature.0);
         match tool {
-            Tool::Move | Tool::Copy | Tool::Rotate | Tool::Scale => {
-                let before = if matches!(tool, Tool::Move | Tool::Copy) { 1 } else { 2 };
+            Tool::Move | Tool::Copy | Tool::Stretch | Tool::Rotate | Tool::Scale => {
+                let before = if matches!(tool, Tool::Move | Tool::Copy | Tool::Stretch) { 1 } else { 2 };
                 if sm.clicks.len() < before {
                     sm.clicks.push(click);
                     let next = match (tool, sm.clicks.len()) {
-                        (Tool::Move | Tool::Copy, _) => "Click where it goes, or type X and Y and press Enter.",
+                        (Tool::Move | Tool::Copy | Tool::Stretch, _) => "Click where it goes, or type X and Y and press Enter.",
                         (Tool::Rotate, 1) => "Click a point to turn from, or type the angle and press Enter.",
                         (Tool::Rotate, _) => "Click the point to turn to.",
                         (_, 1) => "Click a point to scale from, or type the factor and press Enter.",
@@ -442,6 +444,7 @@ impl Workbench {
         let ids: Vec<u32> = sm.selection.iter().map(|e| e.0).collect();
         let copy = tool == Tool::Copy;
         let (id, mut p) = match motion {
+            Some(Motion::Shift(d)) if tool == Tool::Stretch => ("sketch.stretch", json!({ "dx": d.x, "dy": d.y })),
             Some(Motion::Shift(d)) => ("sketch.move", json!({ "dx": d.x, "dy": d.y })),
             Some(Motion::Turn { about, angle }) => ("sketch.rotate", json!({ "cx": about.x, "cy": about.y, "angle": angle })),
             Some(Motion::Scale { about, factor }) => ("sketch.scale", json!({ "cx": about.x, "cy": about.y, "factor": factor })),
@@ -449,7 +452,9 @@ impl Workbench {
         };
         p["sketch"] = json!(feature.0);
         p["entities"] = json!(ids);
-        p["copy"] = json!(copy);
+        if tool != Tool::Stretch {
+            p["copy"] = json!(copy);
+        }
         // A copy is put down and the tool waits for where the next one goes; the others are done.
         if copy {
             sm.clicks.truncate(1);
@@ -463,6 +468,7 @@ impl Workbench {
                 Tool::Copy => "Copied. Click where the next copy goes, or press Esc.",
                 Tool::Rotate => "Rotated.",
                 Tool::Scale => "Scaled.",
+                Tool::Stretch => "Stretched.",
                 _ => "Moved.",
             });
         }
@@ -504,6 +510,30 @@ impl Workbench {
             if build(&mut s) { polylines(&s) } else { Vec::new() }
         };
         match (sm.tool, sm.clicks.as_slice()) {
+            // (Stretched on a copy of the sketch: what it moves and what it stretches are shown.)
+            (Tool::Stretch, clicks) => match tool_motion(Tool::Stretch, clicks, cursor, &sm.hud) {
+                Some(Motion::Shift(d)) => {
+                    let mut s = sketch.clone();
+                    if s.stretch(&sm.selection, d).is_err() {
+                        return Vec::new();
+                    }
+                    let mut points: BTreeSet<EntityId> = BTreeSet::new();
+                    for id in &sm.selection {
+                        match sketch.geometry(*id) {
+                            Some(g) if g.is_point() => {
+                                points.insert(*id);
+                            }
+                            Some(g) => points.extend(g.points()),
+                            None => {}
+                        }
+                    }
+                    s.entities()
+                        .filter(|(_, e)| e.geometry.is_curve() && e.geometry.points().iter().any(|p| points.contains(p)))
+                        .map(|(id, _)| s.tessellate(id, 0.05))
+                        .collect()
+                }
+                _ => Vec::new(),
+            },
             (Tool::Move | Tool::Copy | Tool::Rotate | Tool::Scale, clicks) => {
                 tool_motion(sm.tool, clicks, cursor, &sm.hud).map(moved).unwrap_or_default()
             }

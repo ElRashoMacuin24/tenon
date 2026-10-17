@@ -1593,6 +1593,12 @@ fn sketch_move(s: &mut Session, p: &Value) -> CmdResult {
     sketch_transform(s, p, tenon_sketch::Motion::Shift(pos(p, "dx", "dy")?))
 }
 
+fn sketch_stretch(s: &mut Session, p: &Value) -> CmdResult {
+    let (list, by) = (ids(p, "entities")?, pos(p, "dx", "dy")?);
+    let changed = on_sketch(s, p, |sk| Ok(sk.stretch(&list, by)?))?;
+    Ok(json!({ "dimensions": changed.iter().map(|c| c.0).collect::<Vec<_>>() }))
+}
+
 fn sketch_rotate(s: &mut Session, p: &Value) -> CmdResult {
     sketch_transform(s, p, tenon_sketch::Motion::Turn { about: pos(p, "cx", "cy")?, angle: num(p, "angle")? })
 }
@@ -3806,6 +3812,13 @@ static COMMANDS: &[CommandSpec] = &[
         "sketch, entities: [ids], dx, dy; copy (default false: with it the geometry stays and a copy is made). What is joined or constrained to the geometry follows; what holds it where it is refuses the move. Returns the entities moved, or the copies",
         true,
         sketch_move
+    ),
+    doc_cmd!(
+        "sketch.stretch",
+        "Stretch",
+        "sketch, entities: [ids], dx, dy. The selection moves (a curve with its points, or points by themselves); the curves joined to it stretch, and the dimensions across the stretch (between what moves and what does not) take the sizes it gives them. What else holds the selection where it is refuses it. Returns the dimensions that changed",
+        true,
+        sketch_stretch
     ),
     doc_cmd!(
         "sketch.rotate",

@@ -240,6 +240,71 @@ impl Sketch {
         Ok(ids.to_vec())
     }
 
+    /// Stretch (DEC-119): the selection's points (a curve's points, or points themselves) move
+    /// by `by`, and the curves joined to them stretch to follow. The dimensions the stretch
+    /// spans, between what moves and what does not, take the sizes it gives them; the rest of
+    /// the sketch follows its constraints, as with Move. Returns the dimensions that changed.
+    pub fn stretch(&mut self, ids: &[EntityId], by: Vec2) -> SketchResult<Vec<crate::ConstraintId>> {
+        Motion::Shift(by).check()?;
+        if ids.is_empty() {
+            return Err(invalid("there is nothing to stretch: select geometry first"));
+        }
+        let mut points: BTreeSet<EntityId> = BTreeSet::new();
+        for id in ids {
+            if self.is_held_outside(*id) {
+                return Err(invalid("projected geometry follows the part and cannot be stretched: break its link first"));
+            }
+            match self.geometry(*id) {
+                Some(Geometry::Point { .. }) => {
+                    points.insert(*id);
+                }
+                Some(g) => points.extend(g.points()),
+                None => return Err(SketchError::NoEntity(*id)),
+            }
+        }
+        if self.constraints().any(|(_, c)| matches!(c, Constraint::Fix { point } if points.contains(point))) {
+            return Err(invalid("a point of the selection is fixed, which holds it where it is"));
+        }
+        // How much of an entity moves: some of it, and all of it.
+        let moves = |r: &EntityId| -> (bool, bool) {
+            match self.geometry(*r) {
+                Some(Geometry::Point { .. }) => (points.contains(r), points.contains(r)),
+                Some(g) => (g.points().iter().any(|p| points.contains(p)), g.points().iter().all(|p| points.contains(p))),
+                None => (false, false),
+            }
+        };
+        let spans: Vec<crate::ConstraintId> = self
+            .constraints()
+            .filter(|(id, c)| {
+                let m: Vec<(bool, bool)> = c.refs().iter().map(moves).collect();
+                c.is_dimensional() && !self.is_driven(*id) && m.iter().any(|x| x.0) && !m.iter().all(|x| x.1)
+            })
+            .map(|(id, _)| id)
+            .collect();
+        // The dimensions it spans follow it while it is solved, then drive again at their new
+        // sizes.
+        let mut s = self.clone();
+        for id in &spans {
+            s.mark_driven(*id, true);
+        }
+        let mut pin = Vec::new();
+        for p in &points {
+            let at = self.point(*p).ok_or(SketchError::NoEntity(*p))?;
+            s.set_point(*p, at + by)?;
+            pin.push(*p);
+        }
+        GaussNewton.solve(&mut s, &SolveOptions { pin, ..Default::default() }).map_err(|e| {
+            invalid(format!("the rest of the sketch cannot follow: a constraint or a dimension holds the selection where it is ({e})"))
+        })?;
+        s.refresh_driven();
+        for id in &spans {
+            s.mark_driven(*id, false);
+        }
+        GaussNewton.solve(&mut s, &SolveOptions::default())?;
+        *self = s;
+        Ok(spans)
+    }
+
     /// The end point of line or arc `curve` nearer to `pick`: (the point, whether it is the
     /// curve's end rather than its start).
     fn end_near(&self, curve: EntityId, pick: Vec2) -> SketchResult<(EntityId, bool)> {

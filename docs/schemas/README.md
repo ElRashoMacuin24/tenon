@@ -113,4 +113,4 @@ taken away), without a check.
     of `model.revolve` (DEC-112); `tapped`, `thread_length`, `pitch`, `designation` and `left` of
     `model.hole` (DEC-114); `asm.constrain`'s symmetry type and `plane` (DEC-115); `work.plane`'s `three_points` and
     `points` (DEC-116); `sketch.center_point` and `center` of `sketch.point` (DEC-117); `sketch.arc_slot`
-    (DEC-118). 230 commands.
+    (DEC-118); `sketch.stretch` (DEC-119). 231 commands.

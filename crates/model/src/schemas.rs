@@ -286,6 +286,7 @@ static SCHEMAS: &[C] = &[
     ),
     C::new("sketch.mirror", &[SKETCH, ENTITIES, req("axis", Id, "the line to mirror across")]),
     C::new("sketch.move", &[SKETCH, ENTITIES, req("dx", Length, "how far along x"), req("dy", Length, "how far along y"), COPY]),
+    C::new("sketch.stretch", &[SKETCH, ENTITIES, req("dx", Length, "how far along x"), req("dy", Length, "how far along y")]),
     C::new(
         "sketch.rotate",
         &[

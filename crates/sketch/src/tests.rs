@@ -1261,3 +1261,29 @@ fn arc_slots_hold_their_shape_about_their_centre() {
     assert!(t.add_arc_slot(v(0.0, 0.0), v(0.0, 0.0), v(0.0, 5.0), 2.0).is_err());
     assert_eq!(t.entities().count(), 0);
 }
+
+#[test]
+fn stretch_moves_the_selection_and_the_dimensions_across_it_follow() {
+    // The right side of a held 40 x 20 rectangle stretched 10 right: the width, across the
+    // stretch, follows to 50; the height, along the side that moved whole, stays (DEC-119).
+    let (mut s, l, w, h) = fixed_rect();
+    let value = |s: &Sketch, c: ConstraintId| s.constraint(c).unwrap().value().unwrap();
+    assert_eq!(s.stretch(&[l[1]], v(10.0, 0.0)).unwrap(), vec![w]);
+    assert!(close(value(&s, w), 50.0) && close(value(&s, h), 20.0) && !s.is_driven(w));
+    let c = corners(&s, &l);
+    assert!(c[0].near(v(0.0, 0.0), 1e-7) && c[1].near(v(50.0, 0.0), 1e-7) && c[2].near(v(50.0, 20.0), 1e-7), "{c:?}");
+    assert_eq!(s.dof().unwrap().dof, 0, "still fully constrained");
+    // The top right corner alone, 5 up: the top stays level, so its other end goes up too, and
+    // the height follows to 25.
+    let Some(Geometry::Line { end: corner, .. }) = s.geometry(l[1]).cloned() else { panic!() };
+    assert_eq!(s.stretch(&[corner], v(0.0, 5.0)).unwrap(), vec![h]);
+    let c = corners(&s, &l);
+    assert!(close(value(&s, h), 25.0) && c[2].near(v(50.0, 25.0), 1e-7) && c[3].near(v(0.0, 25.0), 1e-7), "{c:?}");
+    // Refused, leaving the sketch as it was: nothing selected; the fixed corner; a corner the
+    // rest cannot follow (5 right, the side upright and the width between points that stay).
+    let before = s.clone();
+    assert!(s.stretch(&[], v(1.0, 0.0)).is_err());
+    assert!(s.stretch(&[l[0]], v(1.0, 0.0)).unwrap_err().to_string().contains("fixed"));
+    assert!(s.stretch(&[corner], v(5.0, 0.0)).unwrap_err().to_string().contains("cannot follow"));
+    assert_eq!(s, before);
+}

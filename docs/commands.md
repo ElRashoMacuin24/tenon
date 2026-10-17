@@ -47,6 +47,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.offset` | Offset | sketch, curves: [ids], distance (positive: outward / left) | yes |
 | `sketch.mirror` | Mirror | sketch, entities: [ids], axis (line id) | yes |
 | `sketch.move` | Move | sketch, entities: [ids], dx, dy; copy (default false: with it the geometry stays and a copy is made). What is joined or constrained to the geometry follows; what holds it where it is refuses the move. Returns the entities moved, or the copies | yes |
+| `sketch.stretch` | Stretch | sketch, entities: [ids], dx, dy. The selection moves (a curve with its points, or points by themselves); the curves joined to it stretch, and the dimensions across the stretch (between what moves and what does not) take the sizes it gives them. What else holds the selection where it is refuses it. Returns the dimensions that changed | yes |
 | `sketch.rotate` | Rotate | sketch, entities: [ids], cx, cy (the point to turn about), angle (rad, counter-clockwise); copy. Level and upright constraints within what turns are dropped (swapped by quarter turns) | yes |
 | `sketch.scale` | Scale | sketch, entities: [ids], cx, cy (the point that stays), factor; copy. Dimensions within what is scaled are scaled with it | yes |
 | `sketch.extend` | Extend | sketch, curve (a line or an arc), x, y (near the end to extend). The end goes on along the curve to the nearest curve in its way and is held on it | yes |

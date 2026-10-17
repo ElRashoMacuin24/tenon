@@ -1401,3 +1401,21 @@ fn an_arc_slot_is_drawn_about_a_centre_or_through_three_points() {
     }
     assert_eq!(s.document(), &before);
 }
+
+#[test]
+fn a_stretch_lengthens_a_block_and_its_width_follows() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (sk, _, l, width) = block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    // The right side 10 further right: the block is 50 long, and its width dimension says so.
+    let r = run(&mut s, &mut k, "sketch.stretch", json!({ "sketch": sk, "entities": [l[1]], "dx": 10, "dy": 0 }));
+    assert_eq!(r["dimensions"], json!([width]));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 50.0 * 20.0 * 10.0), "{}", volume(&mut s, &mut k));
+    let info = run(&mut s, &mut k, "sketch.info", json!({ "sketch": sk }));
+    let dim = info["constraints"].as_array().unwrap().iter().find(|c| c["id"] == width).unwrap().clone();
+    assert!((dim["value"].as_f64().unwrap() - 50.0).abs() < 1e-9, "{dim}");
+    // Undone in one step.
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    regenerates(&mut s, &mut k);
+    assert!(approx(volume(&mut s, &mut k), 8000.0));
+}

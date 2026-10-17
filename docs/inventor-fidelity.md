@@ -91,13 +91,13 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 18. ~~Delete Features with what goes with a feature; Extrude To a face or plane; Mate's Flush
     solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
     comparison of every command below.
-19. From the same comparison, in order: the Sketch tab's ellipse, Stretch and Smooth; fillets of variable
+19. From the same comparison, in order: the Sketch tab's ellipse and Smooth; fillets of variable
     radius and face fillets. Done from it so far: Extrude To (DEC-104), To Next (DEC-109) and
     Between (DEC-111); the Hole panel's Spotface and To (DEC-105), placing on a face (DEC-113)
     and Tapped (DEC-114); visibility from the browser (DEC-106); components placed by the
     pointer (DEC-107); Revolve's directions (DEC-108), To and To Next (DEC-112); Tangent (DEC-110);
     Symmetry (DEC-115); the three-point work plane (DEC-116); Center Point (DEC-117); the
-    arc slots (DEC-118).
+    arc slots (DEC-118); Stretch (DEC-119).
 
 ## Geometry of the part in a sketch
 
@@ -142,7 +142,7 @@ Modify panel:
 | A dialog asks whether constraints and dimensions in the way may be relaxed | done differently | level and upright constraints in what is turned are dropped (swapped by quarter turns); a fixed point or a dimension to the rest of the sketch refuses the motion and says which. `geometry_is_moved_turned_and_scaled_and_what_is_joined_to_it_follows` |
 | Trim (X); Extend; Split | done | `curves_are_extended_and_split_by_a_click`, `a_curve_is_extended_to_the_next_one_in_its_way`, `curves_are_split_where_another_crosses_them`. Gap: Inventor previews what a click would do; Shift does not yet switch between Trim and Extend |
 | Offset | done (M1) | |
-| Stretch | missing | on the ribbon, greyed |
+| Stretch | done | closed 2026-10-17, DEC-119: the selection moves, what is joined to it stretches, and the dimensions across the stretch take its sizes. `stretch_moves_the_selection_and_the_dimensions_across_it_follow`, `a_stretch_lengthens_a_block_and_its_width_follows`, `stretch_pulls_a_side_and_the_width_across_it_follows`. Gap: no window selection to pick what stretches (points and curves are clicked) |
 
 Pattern panel:
 

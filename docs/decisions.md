@@ -3172,3 +3172,24 @@ Inventor's order; the centre tool goes the shorter way round from the start, as 
 Point does, and drawn about an existing point its centre is that point. The fourth click's
 distance from the middle arc is half the width. Nothing is added to files: an arc slot is arcs,
 points and constraints.
+
+## DEC-119 Stretch (2026-10-17)
+
+Inventor's Modify panel has Stretch beside Move: what is selected moves from a base point to
+another, the geometry joined to it stretches, and the dimensions across the stretch change
+with it. Tenon's Move already let joined geometry follow, but a dimension across the
+selection held it where it was and refused the move. Stretch was on the ribbon, greyed.
+
+**What it does.** `Sketch::stretch`: the selection's points (a curve's points, or points
+picked by themselves) are shifted and held; the rest is solved, as Move does. A dimension that
+spans the stretch, touching what moves without all of it moving, is made driven while it is
+solved and driving again afterwards at the size it then measures, so it follows. Dimensions
+wholly within what moves, or wholly outside it, hold as before; a fixed point in the
+selection, or constraints the rest cannot meet, refuse it in words with the sketch unchanged.
+It is one undo step, and `sketch.stretch` returns the dimensions that changed.
+
+**In the sketch:** Modify > Stretch asks for a selection first, then works as Move: a click
+where from, then a click where to or X and Y typed beside the pointer. What it would make is
+shown as it goes (the stretch worked out on a copy of the sketch). Inventor's window
+selection, which picks the points inside a box, is not there yet: points and curves are
+clicked.

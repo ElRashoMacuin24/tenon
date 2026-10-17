@@ -92,7 +92,7 @@ a part from a screw, nut, washer, bearing or section in one of its sizes.
 ## Sketching
 
 Lines, arcs, circles, rectangles, slots (straight or along an arc), polygons and splines; Trim, Extend, Split, Offset,
-Move, Copy, Rotate, Scale, Mirror and patterns. Constraints are found as you draw
+Move, Copy, Rotate, Scale, Stretch, Mirror and patterns. Constraints are found as you draw
 (horizontal, perpendicular, tangent...) and can be added from the Constrain panel; the
 status bar says how many degrees of freedom are left, and curves that are fully
 constrained change colour. **Project Geometry** brings edges of the part into the

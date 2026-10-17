@@ -14,6 +14,9 @@ shows it in [ROADMAP.md](ROADMAP.md).
   built in so that a part is the same everywhere. New commands `sketch.text` and
   `sketch.edit_text`; `sketch.info` lists the texts. Files gain the entity `text` and the
   region key `{ text = id }` (an addition to format version 2).
+- **Stretch.** Sketch > Modify > Stretch: select geometry, click where from and where to (or
+  type X and Y). It moves, what is joined to it stretches, and the dimensions across the
+  stretch take the new sizes. `sketch.stretch`.
 - **Arc slots.** Center Point Arc Slot and Three Point Arc Slot join the slots under
   Rectangle: an arc's centre, start and end (or its start, end and a point on it), then how
   wide. Its sides share their centre and its ends stay tangent to both. `sketch.arc_slot`.

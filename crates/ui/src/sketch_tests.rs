@@ -948,3 +948,49 @@ fn arc_slots_are_drawn_by_their_clicks_about_a_centre_or_through_three_points() 
     }
     assert!(areas(&wb).is_empty() && wb.status().contains("in one line"), "{}", wb.status());
 }
+
+#[test]
+fn stretch_pulls_a_side_and_the_width_across_it_follows() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    let r = wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    let width =
+        wb.exec("sketch.constrain", json!({ "sketch": f.0, "constraint": { "type": "length", "line": r["lines"][0], "value": 40.0 } })).unwrap();
+    let width = tenon_sketch::ConstraintId(width["constraint"].as_u64().unwrap() as u32);
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+    let value = |wb: &Workbench| open(wb).constraint(width).unwrap().value().unwrap();
+    // With nothing selected it says what it needs (DEC-119).
+    assert_eq!(wb.run_ui("sketch.stretch").unwrap_err(), "select the geometry to stretch first");
+    // The right side selected, Stretch from the ribbon, a click on the side and one 10 right.
+    let side = at(&wb, 40.0, 10.0);
+    move_to(&mut d, &mut wb, side);
+    d.click(&mut wb, side);
+    d.click(&mut wb, pressable(&d, "ribbon sketch.stretch"));
+    assert_eq!(wb.active_tool_id(), Some("sketch.stretch"));
+    d.click(&mut wb, side);
+    assert!(wb.status().starts_with("Click where it goes"), "{}", wb.status());
+    let to = at(&wb, 50.0, 10.0);
+    move_to(&mut d, &mut wb, to);
+    // What it would make is shown first: the side moved, the top and bottom stretched to it.
+    let Mode::Sketch(sm) = &wb.mode else { panic!() };
+    let ghost = wb.tool_ghost(&open(&wb), sm, Vec2::new(50.0, 10.0));
+    assert_eq!(ghost.len(), 3, "{ghost:?}");
+    assert!(ghost.iter().flatten().all(|q| q.x < 50.2) && ghost.iter().flatten().any(|q| (q.x - 50.0).abs() < 0.2), "{ghost:?}");
+    d.click(&mut wb, to);
+    assert!(wb.status() == "Stretched." && wb.active_tool_id().is_none(), "{}", wb.status());
+    assert!((value(&wb) - 50.0).abs() < 0.2, "{}", value(&wb));
+    // Again by typing 5 for X: exactly that much longer.
+    let was = value(&wb);
+    wb.run_ui("sketch.stretch").unwrap();
+    let side = at(&wb, was, 10.0);
+    d.click(&mut wb, side);
+    text(&mut d, &mut wb, "5");
+    d.tap(&mut wb, egui::Key::Tab);
+    text(&mut d, &mut wb, "0");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!((value(&wb) - (was + 5.0)).abs() < 1e-9, "{} from {was}", value(&wb));
+}
