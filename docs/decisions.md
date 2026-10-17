@@ -2935,3 +2935,25 @@ same, saved with the part and undone like one, as Inventor saves it with the par
 
 **File format:** additive in version 2, `visible = true | false` on the feature's record,
 written only when the user set it. Other features are refused: their visibility is the part's.
+
+## DEC-107 Place: instances follow the pointer (2026-10-16)
+
+The next difference the comparison with Inventor listed for assemblies. Inventor's Place puts
+the first component of an assembly at the origin, grounded; then an instance follows the
+pointer, a click puts it down and another follows, until Esc or OK from the right-click menu.
+Tenon put each part beside the others, one per command.
+
+**Now:** Place (P) on an empty assembly puts the part at the origin, grounded, as before; then,
+and at once in an assembly with components, an instance follows the pointer: its middle is
+under the pointer, in the view's plane through the middle of the rest of the assembly (so it
+stays at the assembly's depth however the view is turned). A click puts it down and the next
+instance follows; Esc or a right-click ends, taking back the one following. Each instance put
+down is one step to undo (the instance and where it went: `AsmSession::squash_since`); the
+one taken back leaves no step (`roll_back_to`). Moving round the view keeps placing on; any
+other command ends it first.
+
+**Done differently:** Inventor's right-click opens a menu (OK, Place Grounded at Origin,
+rotate); Tenon's right-click ends placing at once. The instance does not settle onto faces
+under the pointer, as Inventor's does not.
+
+`Workbench::place_file` (scripts and tests) still places beside the others in one go.

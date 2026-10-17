@@ -91,8 +91,8 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
     solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
     comparison of every command below.
 19. From the same comparison, in order: Extrude and Revolve To Next and Between; the Hole
-    panel's Tapped and placing on a face (Spotface and To are done: DEC-105); components
-    placed by the pointer (visibility from the browser is done: DEC-106); the Tangent and Symmetry
+    panel's Tapped and placing on a face (Spotface and To are done: DEC-105; visibility from
+    the browser: DEC-106; components placed by the pointer: DEC-107); the Tangent and Symmetry
     constraints; a three-point work plane; fillets of variable radius and face fillets.
 
 ## Geometry of the part in a sketch
@@ -297,7 +297,7 @@ on inventor and make ours feel 1-1"). The rows marked closed then were done in t
 
 | Inventor | Tenon | Proof / gap |
 |---|---|---|
-| Place: the first component is grounded at the origin; further ones follow the pointer and are put down by a click, several at a time | partial | the first is grounded at the origin; further ones are put beside the others. Gap: placed by the pointer |
+| Place: the first component is grounded at the origin; further ones follow the pointer and are put down by a click, several at a time | done | closed 2026-10-16 (DEC-107): the first grounded at the origin, then instances follow the pointer and each click puts one down, until Esc or a right-click; each one put down is one undo step. `placed_parts_follow_the_pointer_and_are_put_down_by_clicks`. Gap: the right-click menu of Inventor (Place Grounded at Origin, rotate while placing) |
 | Constrain: Mate, whose two solutions are Mate and Flush; Angle; Tangent; Insert (opposed or aligned); Symmetry; an offset typed; a preview | partial | Mate with its Mate and Flush solutions (closed 2026-10-16: Flush had been a type of its own), Angle, Insert; offsets and angles typed in value boxes as everywhere else (they were drag fields); a preview before OK. `constrain_and_joint_by_clicking_faces_in_the_view` (Flush picked as Mate's solution, the offset typed). Gap: Tangent, Symmetry; predicting the offset and solution from the faces picked; limits |
 | Joint: Automatic, Rigid, Rotational, Slider, Cylindrical, Planar, Ball; origins on faces, edges and points | partial | all but Automatic (M3). Gap: Automatic; vertex and mid-edge origins; limits |
 | Free Move, Free Rotate, Ground | done | M3 |

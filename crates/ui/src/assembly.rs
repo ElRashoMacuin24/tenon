@@ -59,6 +59,18 @@ pub(crate) struct Drag {
     pub working: Assembly,
 }
 
+/// Place: a part file's instances following the pointer, each put down by a click (DEC-107).
+pub(crate) struct Placing {
+    pub path: PathBuf,
+    /// The instance following the pointer, inserted after `mark`.
+    pub component: ComponentId,
+    pub mark: u64,
+    /// How many have been put down.
+    pub placed: usize,
+    /// The assembly with the instance where the pointer is.
+    pub working: Assembly,
+}
+
 /// What a job sent to the worker is for.
 pub(crate) enum AsmJob {
     Interference,
@@ -94,6 +106,8 @@ pub(crate) struct AsmDoc {
     pub selected: Vec<ComponentId>,
     pub hover: Option<ComponentId>,
     pub drag: Option<Drag>,
+    /// Placing a part's instances by the pointer.
+    pub placing: Option<Placing>,
     /// Free Rotate: dragging turns components.
     pub rotate: bool,
     /// The last interference check (shown until closed).
@@ -129,6 +143,7 @@ impl AsmDoc {
             selected: Vec::new(),
             hover: None,
             drag: None,
+            placing: None,
             rotate: false,
             clashes: None,
             jobs: BTreeMap::new(),
@@ -142,7 +157,11 @@ impl AsmDoc {
 
     /// The assembly as it is shown: while dragging, the dragged state.
     pub(crate) fn shown_assembly(&self) -> &Assembly {
-        self.drag.as_ref().map_or_else(|| self.session.assembly(), |d| &d.working)
+        match (&self.drag, &self.placing) {
+            (Some(d), _) => &d.working,
+            (None, Some(p)) => &p.working,
+            (None, None) => self.session.assembly(),
+        }
     }
 
     /// The name of a component.
@@ -644,6 +663,10 @@ impl Workbench {
     /// Mouse in the viewport of an assembly: hover and select components, drag them (their
     /// relationships hold), double-click to edit one in place.
     pub(crate) fn asm_pointer(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect) {
+        if self.asm.as_ref().is_some_and(|a| a.placing.is_some()) {
+            self.placing_pointer(ui, resp, rect);
+            return;
+        }
         if matches!(self.panel, Some(crate::panels::Panel::Asm(_))) {
             self.asm_panel_pointer(ui, resp, rect);
             return;
@@ -898,6 +921,11 @@ impl Workbench {
             }
             _ if self.asm.is_none() => return Err("open or start an assembly first (File > New Assembly)".into()),
             _ if self.editing_in_place() => return Err("Return to the assembly first".into()),
+            // (Another command ends placing first; moving round the view does not.)
+            _ if !id.starts_with("view.") && self.asm.as_ref().is_some_and(|a| a.placing.is_some()) => {
+                self.stop_placing();
+                return self.run_asm_ui(id);
+            }
             "asm.place" => self.place_component()?,
             "asm.create" => self.create_component()?,
             "asm.edit" => {
@@ -979,11 +1007,103 @@ impl Workbench {
         Ok(())
     }
 
-    /// Place: choose a part file; the first goes to the origin, grounded, later ones beside
-    /// what is there.
+    /// Place: choose a part file. In an empty assembly the first goes to the origin, grounded;
+    /// then instances follow the pointer, each put down by a click, until Esc (DEC-107).
     fn place_component(&mut self) -> Result<(), String> {
         let path = self.services.pick_open.as_ref().and_then(|f| f()).ok_or("no file chosen")?;
-        self.place_file(&path)
+        if self.asm.as_ref().is_some_and(|a| a.session.assembly().components.is_empty()) {
+            self.place_file(&path)?;
+        }
+        self.start_placing(&path)
+    }
+
+    /// An instance of `path` that follows the pointer until a click puts it down.
+    pub(crate) fn start_placing(&mut self, path: &Path) -> Result<(), String> {
+        if path.extension().is_some_and(|e| e == tenon_io::asm::EXTENSION) {
+            return Err("sub-assemblies are not supported yet: place part files (.tenon)".into());
+        }
+        let a = self.asm.as_ref().ok_or("no assembly is open")?;
+        let (mark, placed) = (a.session.mark(), a.placing.as_ref().map_or(0, |p| p.placed));
+        let r = self.asm_exec("asm.insert", json!({ "path": path.to_string_lossy() }))?;
+        let id = r["component"].as_u64().and_then(|v| u32::try_from(v).ok()).map(ComponentId).ok_or("internal: no component id")?;
+        let Some(a) = self.asm.as_mut() else { return Err("no assembly is open".into()) };
+        let working = a.session.assembly().clone();
+        a.placing = Some(Placing { path: path.to_path_buf(), component: id, mark, placed, working });
+        a.selected = vec![id];
+        let name = a.name(id);
+        self.set_status(format!("Click where {name} goes; each click puts one down. Esc or a right-click ends."));
+        Ok(())
+    }
+
+    /// Ends placing: the instance following the pointer is taken back.
+    pub(crate) fn stop_placing(&mut self) {
+        let Some(a) = self.asm.as_mut() else { return };
+        let Some(p) = a.placing.take() else { return };
+        a.session.roll_back_to(p.mark);
+        a.selected.clear();
+        a.shown = None;
+        a.dof = None;
+        let name = p.path.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+        self.set_status(match p.placed {
+            0 => format!("Placed no {name}."),
+            1 => format!("Placed one {name}. Constrain (C) or Joint (J) it to the others."),
+            n => format!("Placed {n} of {name}. Constrain (C) or Joint (J) them to the others."),
+        });
+    }
+
+    /// The pointer while placing: the instance follows it, its middle under the pointer in the
+    /// view's plane through the middle of the rest of the assembly; a click puts it there and the
+    /// next one follows.
+    fn placing_pointer(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect) {
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) || resp.clicked_by(egui::PointerButton::Secondary) {
+            self.stop_placing();
+            return;
+        }
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let cam = self.view.camera;
+        let Some(pointer) = resp.hover_pos().or_else(|| resp.interact_pointer_pos()) else { return };
+        let (o, d) = cam.ray(f64::from(pointer.x - rect.left()), f64::from(pointer.y - rect.top()), w, h);
+        let Some(a) = self.asm.as_mut() else { return };
+        let Some(p) = a.placing.as_mut() else { return };
+        let mut working = a.session.assembly().clone();
+        let at = {
+            let others = Assembly { components: working.components.iter().filter(|c| c.id != p.component).cloned().collect(), ..working.clone() };
+            let middle = asm_session::assembly_bbox(&others, &a.session.parts).map_or(Vec3::ZERO, |b| b.center());
+            let n = cam.forward();
+            let den = d.dot(n);
+            (den.abs() > 1e-9).then(|| o + d * ((middle - o).dot(n) / den))
+        };
+        let Some(at) = at else { return };
+        let Some(comp) = working.component_mut(p.component) else { return };
+        // (Its middle where the pointer is, once its part's geometry is there.)
+        let offset =
+            asm_session::local_bbox(&a.session.parts, comp).map_or(Vec3::ZERO, |b| comp.placement.to_world(b.center()) - comp.placement.origin());
+        if let Some(f) = comp.placement.with_origin(at - offset) {
+            comp.placement = f;
+        }
+        p.working = working;
+        if resp.clicked_by(egui::PointerButton::Primary) {
+            let (put, mark, path, placed) = (p.working.clone(), p.mark, p.path.clone(), p.placed + 1);
+            a.placing = None;
+            if let Err(e) = a.session.edit(|asm, _| {
+                *asm = put;
+                Ok(())
+            }) {
+                self.set_error(e.0);
+                return;
+            }
+            // (The instance and where it was put are one step to undo.)
+            a.session.squash_since(mark);
+            a.shown = None;
+            a.dof = None;
+            if let Err(e) = self.start_placing(&path) {
+                self.set_error(e);
+                return;
+            }
+            if let Some(p) = self.asm.as_mut().and_then(|a| a.placing.as_mut()) {
+                p.placed = placed;
+            }
+        }
     }
 
     /// Places a part file in the open assembly.

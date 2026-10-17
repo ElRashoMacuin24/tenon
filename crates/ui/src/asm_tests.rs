@@ -1044,3 +1044,60 @@ fn an_assembly_opened_again_is_shown_from_what_was_kept_of_its_parts() {
     assert_eq!((wb.early_scenes, kept_scenes(&cache)), (1, kept));
     assert_eq!(wb.scene().bodies, alone);
 }
+
+#[test]
+fn placed_parts_follow_the_pointer_and_are_put_down_by_clicks() {
+    let dir = scratch("place");
+    box_part(&dir.join("base.tenon"), "Base", 40.0, 40.0, 10.0);
+    box_part(&dir.join("cube.tenon"), "Cube", 10.0, 10.0, 10.0);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("file.new_assembly").unwrap();
+    // Place on an empty assembly: the base goes to the origin, grounded, and another base
+    // follows the pointer at once.
+    let pick = std::sync::Arc::new(std::sync::Mutex::new(dir.join("base.tenon")));
+    let chosen = pick.clone();
+    wb.services.pick_open = Some(Box::new(move || Some(chosen.lock().unwrap().clone())));
+    d.tap(&mut wb, egui::Key::P);
+    d.settle(&mut wb);
+    assert!(wb.status().contains("Click where"), "{}", wb.status());
+    assert!(placement(&wb, 1).origin().near(Vec3::ZERO, 1e-12));
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.assembly().unwrap().assembly().components.len(), 1, "the follower is taken back: {}", wb.status());
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+
+    // Place the cube: it follows the pointer, its middle under it; two clicks put two down.
+    *pick.lock().unwrap() = dir.join("cube.tenon");
+    d.tap(&mut wb, egui::Key::P);
+    d.frame(&mut wb, vec![]);
+    let spots = [wb.view.rect.center() + vec2(-150.0, 60.0), wb.view.rect.center() + vec2(160.0, -40.0)];
+    for (i, at) in spots.iter().enumerate() {
+        d.frame(&mut wb, vec![egui::Event::PointerMoved(*at)]);
+        d.frame(&mut wb, vec![]);
+        // The cube's middle is under the pointer before the click.
+        let a = wb.asm.as_ref().unwrap();
+        let p = a.placing.as_ref().expect("placing");
+        let f = p.working.component(p.component).unwrap().placement;
+        let middle = f.to_world(Vec3::new(5.0, 5.0, 5.0));
+        let seen = crate::tests::on_screen(&wb, middle);
+        assert!((seen - *at).length() < 1.0, "instance {i}: middle seen at {seen:?}, pointer at {at:?}");
+        d.click(&mut wb, *at);
+        d.frame(&mut wb, vec![]);
+    }
+    // A right-click ends it: two cubes beside the base, each put down where it was clicked.
+    let at = spots[1];
+    d.frame(&mut wb, vec![Driver::button(at, egui::PointerButton::Secondary, true)]);
+    d.frame(&mut wb, vec![Driver::button(at, egui::PointerButton::Secondary, false)]);
+    d.frame(&mut wb, vec![]);
+    let asm = wb.assembly().unwrap().assembly().clone();
+    assert_eq!(asm.components.len(), 3, "{}", wb.status());
+    assert!(wb.status().contains("Placed 2 of cube"), "{}", wb.status());
+    let (c2, c3) = (placement(&wb, asm.components[1].id.0), placement(&wb, asm.components[2].id.0));
+    assert!(c2.origin().dist(c3.origin()) > 20.0, "put down apart: {c2:?} {c3:?}");
+    // Each one is one step to undo.
+    wb.run_ui("edit.undo").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.assembly().unwrap().assembly().components.len(), 2);
+}

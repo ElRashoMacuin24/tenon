@@ -260,6 +260,16 @@ fn an_assembly_is_put_together_by_hand() {
     step(&wb, "placed the base");
     answer_open(&mut wb, &dir.join("cube.tenon"));
     key(&mut d, &mut wb, egui::Key::P);
+    step(&wb, "the cube follows the pointer");
+    wait(&mut d, &mut wb);
+    // A click puts it down where the pointer is; Esc ends placing (DEC-107).
+    wb.run_ui("view.fit").unwrap();
+    wait(&mut d, &mut wb);
+    let spot = on_screen(&wb, Vec3::new(60.0, 20.0, 5.0)) + egui::vec2(150.0, 0.0);
+    assert!(wb.view.rect.contains(spot), "{spot:?}");
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(spot)]);
+    click_at(&mut d, &mut wb, spot);
+    key(&mut d, &mut wb, egui::Key::Escape);
     step(&wb, "placed the cube");
     wait(&mut d, &mut wb);
     let comps = wb.assembly().unwrap().assembly().components.len();
