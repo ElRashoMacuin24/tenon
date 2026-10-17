@@ -244,7 +244,8 @@ fn prefix_hashes(doc: &Document, copied: &std::collections::BTreeSet<FeatureId>)
     let rule = format!("{:?} {:?}", doc.sheet_metal().map(|r| (r.relief, r.corner)), doc.sheet_sizes());
     out.push(h.finish());
     for (i, f) in doc.features().iter().enumerate() {
-        serde_json::to_string(f).unwrap_or_default().hash(&mut h);
+        // (Whether it is shown is no part of the geometry: showing a sketch rebuilds nothing.)
+        serde_json::to_string(&(f.id, &f.name, f.suppressed, &f.kind)).unwrap_or_default().hash(&mut h);
         if matches!(
             f.kind,
             FeatureKind::SheetFace(_)

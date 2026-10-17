@@ -21,6 +21,8 @@ pub(crate) enum BrowserAction {
     Repair(FeatureId),
     Rename(FeatureId),
     Suppress(FeatureId, bool),
+    /// Shown or hidden in the view (sketches and work features).
+    Visibility(FeatureId, bool),
     Delete(FeatureId),
     /// A single click: picks the feature for a pattern being set up.
     Pick(FeatureId),
@@ -308,6 +310,19 @@ impl Workbench {
                 .iter()
                 .map(|f| (f.id, label(f), feature_icon(&f.kind), f.suppressed, matches!(f.kind, FeatureKind::Sketch { .. })))
                 .collect();
+            // Whether each sketch and work feature shows now (its Visibility in the menu).
+            let sketches_shown: Vec<FeatureId> = self.shown_sketches().into_iter().map(|(id, _)| id).collect();
+            let shown: std::collections::BTreeMap<FeatureId, bool> = self
+                .document()
+                .features()
+                .iter()
+                .filter_map(|f| match f.kind {
+                    FeatureKind::Sketch { .. } => Some((f.id, sketches_shown.contains(&f.id))),
+                    FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_) => Some((f.id, self.work_visible(f.id))),
+                    _ => None,
+                })
+                .collect();
+            let shown_now = |id: FeatureId| shown.get(&id).copied();
             // The End of Part row sits where the marker is; rows below it are rolled back.
             let end = self.document().end_of_part();
             let end_row = |ui: &mut Ui, drag: &mut Option<BrowserDrag>| {
@@ -387,6 +402,13 @@ impl Workbench {
                             action = Some(BrowserAction::Suppress(id, !suppressed));
                             ui.close();
                         }
+                        // Sketches and work features are shown or hidden, as Inventor's Visibility.
+                        if let Some(mut on) = shown_now(id)
+                            && ui.checkbox(&mut on, "Visibility").clicked()
+                        {
+                            action = Some(BrowserAction::Visibility(id, on));
+                            ui.close();
+                        }
                         ui.separator();
                         if ui.button("Delete").clicked() {
                             action = Some(BrowserAction::Delete(id));
@@ -447,6 +469,7 @@ impl Workbench {
                 Ok(())
             }
             BrowserAction::Suppress(id, on) => self.exec("feature.suppress", json!({ "feature": id.0, "suppressed": on })).map(|_| ()),
+            BrowserAction::Visibility(id, on) => self.exec("feature.visibility", json!({ "feature": id.0, "visible": on })).map(|_| ()),
             BrowserAction::Delete(id) => {
                 if matches!(&self.mode, Mode::Sketch(s) if s.feature == id) {
                     self.mode = Mode::Model;

@@ -692,6 +692,7 @@ static SCHEMAS: &[C] = &[
     C::new("param.delete", &[req("name", Text, "a user parameter that no equation uses")]),
     C::new("feature.update", &[FEATURE, req("kind", Object, "the feature's whole definition, as model.tree lists it"), EQUATIONS]),
     C::new("feature.rename", &[FEATURE, req("name", Text, "its new name")]),
+    C::new("feature.visibility", &[FEATURE, req("visible", Bool, "shown in the view (a sketch or work feature)")]),
     C::new("feature.suppress", &[FEATURE, opt("suppressed", Bool, "true to suppress (default), false to bring it back")]),
     C::new(
         "feature.delete",

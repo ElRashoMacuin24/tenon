@@ -2672,3 +2672,46 @@ fn a_hole_is_spotfaced_and_goes_as_far_as_a_plane_picked_in_the_browser() {
     let removed = PI * 36.0 + PI * 9.0 * 6.0;
     assert!((volume(&wb) - (8000.0 - removed)).abs() < 1e-6, "{} vs {}", volume(&wb), 8000.0 - removed);
 }
+
+#[test]
+fn sketches_and_work_features_are_shown_and_hidden_from_the_browser() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    let wp = FeatureId(wb.exec("work.plane", json!({ "base": "xy", "distance": 30 })).unwrap()["feature"].as_u64().unwrap() as u32);
+    d.settle(&mut wb);
+    let menu = |d: &mut Driver, wb: &mut Workbench, row: &str, item: &str| {
+        let at = browser_row(d, row).center();
+        d.frame(wb, vec![egui::Event::PointerMoved(at)]);
+        d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, true)]);
+        d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, false)]);
+        d.frame(wb, vec![]);
+        let p = d.text_pos(item).unwrap_or_else(|| panic!("{item} in the menu"));
+        d.click(wb, p);
+        d.frame(wb, vec![]);
+    };
+    // A used sketch is hidden, a work plane shown, as in Inventor.
+    assert!(wb.shown_sketches().is_empty());
+    assert!(wb.work_visible(wp));
+    // The work plane's Visibility: hidden, and no longer under the pointer in the view.
+    let rect = wb.view.rect;
+    let centre = crate::tests::on_screen(&wb, tenon_geom::Vec3::new(20.0, 10.0, 30.0));
+    assert!(wb.work_at(centre, rect, true, false).is_some(), "the plane is under the pointer");
+    menu(&mut d, &mut wb, "Work Plane1", "Visibility");
+    assert!(!wb.work_visible(wp), "{}", wb.status());
+    assert!(wb.work_at(centre, rect, true, false).is_none());
+    // Shown again from the same menu.
+    menu(&mut d, &mut wb, "Work Plane1", "Visibility");
+    assert!(wb.work_visible(wp));
+    // The sketch the extrusion uses, shown from its menu (under the extrusion's row).
+    wb.exec("feature.visibility", json!({ "feature": f.0, "visible": true })).unwrap();
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.shown_sketches(), [(f, false)]);
+    // Nothing else is shown or hidden: the extrusion's visibility is the part's.
+    let e = wb.exec("feature.visibility", json!({ "feature": 2, "visible": false })).unwrap_err();
+    assert!(e.contains("no sketch or work feature"), "{e}");
+}

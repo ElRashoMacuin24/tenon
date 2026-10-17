@@ -583,6 +583,23 @@ fn a_text_and_the_letters_cut_from_it_are_written_and_read_back() {
 }
 
 #[test]
+fn a_sketch_shown_by_the_user_says_so_on_its_record() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 5 }));
+    run(&mut s, "model.extrude", json!({ "sketch": sk, "distance": 5 }));
+    let extra = Map::new();
+    let before = String::from_utf8(project::to_bytes(s.document(), &extra).unwrap()).unwrap();
+    assert!(!before.contains("visible"), "{before}");
+    run(&mut s, "feature.visibility", json!({ "feature": sk, "visible": true }));
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(text.contains("name = \"Sketch1\"\nsuppressed = false\nvisible = true\ntype = \"sketch\""), "{text}");
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(&back, s.document());
+}
+
+#[test]
 fn a_driven_dimension_says_so_on_its_own_record() {
     let mut s = Session::default();
     let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();

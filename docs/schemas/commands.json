@@ -3684,6 +3684,31 @@
       }
     },
     {
+      "id": "feature.visibility",
+      "label": "Visibility",
+      "undoable": true,
+      "description": "feature (a sketch or work feature), visible: true shows it in the view, false hides it",
+      "params": {
+        "type": "object",
+        "properties": {
+          "feature": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the feature's id, as model.tree lists it"
+          },
+          "visible": {
+            "type": "boolean",
+            "description": "shown in the view (a sketch or work feature)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "feature",
+          "visible"
+        ]
+      }
+    },
+    {
       "id": "feature.suppress",
       "label": "Suppress",
       "undoable": true,

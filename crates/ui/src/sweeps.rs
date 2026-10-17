@@ -507,10 +507,11 @@ impl Workbench {
             Some(Panel::Loft(p)) => p.sections.clone(),
             _ => vec![],
         };
+        // (Shown or hidden by the user from the browser, it is as they said.)
         live.iter()
             .filter(|f| matches!(f.kind, FeatureKind::Sketch { .. }))
+            .filter(|f| chosen.contains(&f.id) || f.visible.unwrap_or(!used.contains(&f.id)))
             .map(|f| (f.id, chosen.contains(&f.id)))
-            .filter(|(id, on)| *on || !used.contains(id))
             .collect()
     }
 

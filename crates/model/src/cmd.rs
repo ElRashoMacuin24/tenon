@@ -2444,6 +2444,19 @@ fn feature_rename(s: &mut Session, p: &Value) -> CmdResult {
     })
 }
 
+fn feature_visibility(s: &mut Session, p: &Value) -> CmdResult {
+    let id = feature_id(p)?;
+    let visible = field(p, "visible")?.as_bool().ok_or("`visible` must be true or false")?;
+    s.edit(|d| {
+        let f = d.feature_mut(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?;
+        if !matches!(f.kind, FeatureKind::Sketch { .. } | FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_)) {
+            return Err(CmdError(format!("{} is no sketch or work feature: its visibility is the part's", f.name)));
+        }
+        f.visible = Some(visible);
+        Ok(json!({}))
+    })
+}
+
 fn feature_suppress(s: &mut Session, p: &Value) -> CmdResult {
     let id = feature_id(p)?;
     let on = arg(p, "suppressed").and_then(Value::as_bool).unwrap_or(true);
@@ -3939,6 +3952,13 @@ static COMMANDS: &[CommandSpec] = &[
         feature_update
     ),
     doc_cmd!("feature.rename", "Rename Feature", "feature, name", true, feature_rename),
+    doc_cmd!(
+        "feature.visibility",
+        "Visibility",
+        "feature (a sketch or work feature), visible: true shows it in the view, false hides it",
+        true,
+        feature_visibility
+    ),
     doc_cmd!("feature.suppress", "Suppress", "feature, suppressed (default true)", true, feature_suppress),
     doc_cmd!(
         "feature.delete",

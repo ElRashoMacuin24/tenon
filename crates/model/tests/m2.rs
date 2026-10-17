@@ -628,6 +628,10 @@ fn regeneration_resumes_from_the_feature_being_edited() {
         check(&doc, &mut k, &mut cache);
     }
     assert_eq!(cache.resumed_at, boss_index, "only the boss is recomputed");
+    // Showing the boss's sketch rebuilds nothing before the boss (DEC-106).
+    doc.feature_mut(FeatureId(sk2 as u32)).unwrap().visible = Some(true);
+    check(&doc, &mut k, &mut cache);
+    assert!(cache.resumed_at >= boss_index, "{} from {boss_index}", cache.resumed_at);
     // An earlier change (the hole diameter) starts from scratch again.
     let hole = doc.features().iter().find(|f| f.name == "Hole1").unwrap().id;
     let f = doc.feature_mut(hole).unwrap();

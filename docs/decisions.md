@@ -2914,3 +2914,24 @@ its drill point stays.
 
 **Not done:** a Tapped hole that puts its thread on (Thread does it afterwards), taper tapped,
 and placing a hole on a face without a sketch.
+
+## DEC-106 Visibility of sketches and work features (2026-10-16)
+
+The next difference the comparison with Inventor listed for the browser. Inventor's
+right-click menu on a sketch or a work feature has Visibility, a tick that shows or hides it in
+the view; a sketch a feature uses is hidden until shown that way. Tenon showed the sketches no
+feature used, and every work feature, with no say.
+
+**Now:** a sketch's or work feature's menu in the browser has Visibility, ticked when it shows;
+`feature.visibility` sets it. A feature remembers only what the user said
+(`Feature::visible`, None when they said nothing), so the rule goes on applying to the rest.
+A hidden work feature is not drawn and cannot be clicked in the view, unless the open panel
+uses it; it is still picked from the browser. The panel being set up always shows its own
+sketch, as before.
+
+**It is no change to the part:** the history's hashes leave it out, so showing a sketch
+rebuilds nothing (`regeneration_resumes_from_the_feature_being_edited`). It is an edit all the
+same, saved with the part and undone like one, as Inventor saves it with the part.
+
+**File format:** additive in version 2, `visible = true | false` on the feature's record,
+written only when the user set it. Other features are refused: their visibility is the part's.

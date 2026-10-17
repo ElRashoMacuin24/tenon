@@ -243,6 +243,10 @@ impl Workbench {
             }
         };
         for (id, g) in &self.scene.work {
+            // (A hidden one is picked from the browser, not in the view.)
+            if !self.work_visible(*id) {
+                continue;
+            }
             match g {
                 WorkGeom::Plane(f) if planes => {
                     let den = d.dot(f.z());
@@ -282,6 +286,10 @@ impl Workbench {
         let color = t.tint_work;
         for (id, g) in &self.scene.work {
             let hot = self.view.work_hover == Some(*id) || picked.contains(id);
+            // (Hidden from the browser: not drawn, unless the open panel uses it.)
+            if !hot && !self.work_visible(*id) {
+                continue;
+            }
             let name = self.feature_name(*id);
             match g {
                 WorkGeom::Plane(f) => {
@@ -306,6 +314,11 @@ impl Workbench {
                 }
             }
         }
+    }
+
+    /// Whether a work feature is shown: unless the user hid it (DEC-106).
+    pub(crate) fn work_visible(&self, id: FeatureId) -> bool {
+        self.document().feature(id).is_none_or(|f| f.visible != Some(false))
     }
 
     /// Work features the open panel refers to (to highlight them).

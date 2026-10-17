@@ -25,6 +25,8 @@ shows it in [ROADMAP.md](ROADMAP.md).
   plane. `model.extrude` takes `to`; files gain `extent = { to = <plane> }`.
 - **Hole: Spotface and To.** A spotface seat (the hole measured from its floor), and holes
   that go as far as a flat face or plane. `model.hole` takes `type: "spotface"` and `to`.
+- **Visibility.** A sketch's or work feature's menu in the browser shows or hides it, as
+  Inventor's does; saved with the part. `feature.visibility`.
 - **Constrain** offers Mate, Angle and Insert, with Flush as Mate's second solution, as
   Inventor has it; offsets and angles are typed.
 - [docs/inventor-fidelity.md](docs/inventor-fidelity.md) compares every environment with

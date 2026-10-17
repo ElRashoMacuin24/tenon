@@ -230,7 +230,9 @@ every edit, equations write them.
 ### Features (`[[feature]]`)
 
 Every feature has `id`, `name`, `suppressed` and `type`, then the fields of its type. Features
-may refer only to features before them.
+may refer only to features before them. A sketch or work feature the user showed or hid from
+the browser has `visible = true` or `false` after `suppressed` (DEC-106); without it, a sketch
+shows until a feature uses it and a work feature shows.
 
 | `type` | Fields |
 |---|---|

@@ -87,6 +87,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `param.delete` | Delete Parameter | name: a user parameter no equation uses | yes |
 | `feature.update` | Edit Feature | feature (id), kind: the feature definition as in model.tree / the file format; equations: {value field: equation} (e.g. {"/extent/distance": "d0 * 2"}) | yes |
 | `feature.rename` | Rename Feature | feature, name | yes |
+| `feature.visibility` | Visibility | feature (a sketch or work feature), visible: true shows it in the view, false hides it | yes |
 | `feature.suppress` | Suppress | feature, suppressed (default true) | yes |
 | `feature.delete` | Delete Feature | feature; consumed (default false): the sketches it is made from that nothing else uses go too; dependents (default false): the features that use it go too, else it is refused while any does. Returns the features `deleted` | yes |
 | `feature.end_of_part` | Move End of Part | before: the feature the marker goes just above (it and later ones are rolled back); omit or null for the end | yes |

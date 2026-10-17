@@ -44,7 +44,7 @@ pub(crate) const PART: Shape = Shape {
         ("features", "feature"),
         ("studies", "study"),
     ],
-    kinds: &[("features", &["id", "name", "suppressed"])],
+    kinds: &[("features", &["id", "name", "suppressed", "visible"])],
     computed: &[],
     tables: &[],
 };

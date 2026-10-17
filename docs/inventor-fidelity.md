@@ -91,8 +91,8 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
     solution and typed assembly values.~~ Done 2026-10-16 (DEC-103, DEC-104), from the
     comparison of every command below.
 19. From the same comparison, in order: Extrude and Revolve To Next and Between; the Hole
-    panel's Tapped and placing on a face (Spotface and To are done: DEC-105); visibility of
-    sketches and work features from the browser; components placed by the pointer; the Tangent and Symmetry
+    panel's Tapped and placing on a face (Spotface and To are done: DEC-105); components
+    placed by the pointer (visibility from the browser is done: DEC-106); the Tangent and Symmetry
     constraints; a three-point work plane; fillets of variable radius and face fillets.
 
 ## Geometry of the part in a sketch
@@ -291,7 +291,7 @@ on inventor and make ours feel 1-1"). The rows marked closed then were done in t
 | Right-click: Edit Feature, Edit Sketch, Rename, Suppress Features, Delete; double-click edits | done | the browser's menu (M2 onward) |
 | End of Part dragged up and down; features dragged to reorder | done | `end_of_part_and_features_are_dragged_in_the_browser` |
 | A sketch is shown under the feature that uses it | done | |
-| Visibility of a sketch or work feature from its right-click menu | missing | unused sketches show, used ones do not (DEC-037) |
+| Visibility of a sketch or work feature from its right-click menu | done | closed 2026-10-16 (DEC-106): the menu's Visibility tick; by default a sketch shows until a feature uses it and a work feature shows, as in Inventor. `sketches_and_work_features_are_shown_and_hidden_from_the_browser`, `a_sketch_shown_by_the_user_says_so_on_its_record`. Gap: the View tab's Object Visibility for every sketch or work feature at once |
 
 ## Assemblies
 

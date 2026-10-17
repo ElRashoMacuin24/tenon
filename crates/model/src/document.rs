@@ -1016,6 +1016,10 @@ pub struct Feature {
     pub name: String,
     #[serde(default)]
     pub suppressed: bool,
+    /// Shown or hidden in the view by the user (DEC-106); None: as the rule has it (a sketch
+    /// shows until a feature uses it, a work feature shows).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible: Option<bool>,
     pub kind: FeatureKind,
 }
 
@@ -1267,7 +1271,7 @@ impl Document {
         let n = (1..).find(|n| !self.features.iter().any(|f| f.name == format!("{base}{n}"))).unwrap_or(1);
         // New features go in just above the End of Part marker.
         let at = self.end_of_part();
-        self.features.insert(at, Feature { id, name: format!("{base}{n}"), suppressed: false, kind });
+        self.features.insert(at, Feature { id, name: format!("{base}{n}"), suppressed: false, visible: None, kind });
         Ok(id)
     }
 
