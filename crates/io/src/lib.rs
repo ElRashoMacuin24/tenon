@@ -38,6 +38,7 @@ pub mod print;
 pub mod project;
 pub mod scenes;
 pub mod schemas;
+pub mod shape;
 pub mod steps;
 pub mod stl;
 pub mod stress;

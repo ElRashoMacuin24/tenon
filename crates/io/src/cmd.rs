@@ -306,6 +306,13 @@ static COMMANDS: &[CommandSpec] = &[
         run: Run::Geo(crate::stress::solve),
     },
     CommandSpec {
+        id: "study.optimize",
+        label: "Optimize Shape",
+        help: "Works out where in the part material is needed to carry a stress study's loads to its supports, for a share of its mass kept (topology optimization, DEC-123), with Gmsh and CalculiX as for study.solve. It takes the study's settings (study.shape, study.keep); remove (percent of the mass taken away, 5 to 95) or grams, min_member, resolution (coarse, medium, fine), element_size, sharpen and iterations given here take their place for this run only. stl, threemf: files to write the shape to; shown: the share of the part those files keep (default: the share asked; another share shows where material ranks, not an optimum for it); smooth: pairs of smoothing passes (0 to 50, default 10); keep: a folder to leave the programs' files in. Returns nodes, elements, element_size, member_size, target {fraction, grams}, iterations, stopped (settled, levelled_off, limit, budget, stopped), history [{iteration, compliance, fraction, change, sharpness, grey, seconds}], compliance {solid, optimizer, shape}, stiffness_kept (solid over shape), mass {part_grams, shape_grams}, surface {share, threshold, triangles, watertight, islands_dropped, volume}, written, warnings, seconds, note. A guide to model over, not a finished part. Gravity and a body's turning are refused (suppress them to optimize), and so is what the study lacks, before anything is started",
+        mutates: false,
+        run: Run::Geo(crate::shape::optimize),
+    },
+    CommandSpec {
         id: "sheet.export_dxf",
         label: "Export Flat Pattern DXF",
         help: "path (.dxf): the flat pattern for a cutter, R12 in millimetres with its lower left corner at the origin. Layers: OUTER (the outline), INTERIOR (holes and cut-outs), BEND_UP and BEND_DOWN (bend centre lines), BEND_EXTENT (where bends begin and end). bends (default true), extents (default true): leave those lines out with false. face, body: as for sheet.flat. Returns the sheet's length, width, area and cut_length, and what was written of the outlines (entities)",

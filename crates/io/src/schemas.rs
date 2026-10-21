@@ -49,6 +49,24 @@ static PART: &[C] = &[
         ],
     ),
     C::new(
+        "study.optimize",
+        &[
+            opt("study", Id, "the study's id (default: the part's only one)"),
+            opt("remove", Number, "percent of the mass to take away, 5 to 95 (for this run)"),
+            opt("grams", Number, "or the mass to come to, g (for this run)"),
+            opt("min_member", Length, "the thinnest member, mm (for this run)"),
+            opt("resolution", Word(&["coarse", "medium", "fine"]), "about 12,000, 30,000 or 80,000 nodes (for this run)"),
+            opt("element_size", Length, "the size of the elements, mm (for this run)"),
+            opt("sharpen", Bool, "sharpen toward solid and empty (for this run)"),
+            opt("iterations", Int, "the most rounds, 1 to 300 (for this run)"),
+            opt("smooth", Int, "pairs of smoothing passes, 0 to 50 (default 10)"),
+            opt("shown", Number, "the share of the part the files keep, 0.05 to 1 (default: the share asked)"),
+            opt("stl", Path, "a file to write the shape to, STL"),
+            opt("threemf", Path, "a file to write the shape to, 3MF"),
+            opt("keep", Either(&[Path, Null]), "a folder to leave the programs' files in (default: they go when it is done)"),
+        ],
+    ),
+    C::new(
         "sheet.export_dxf",
         &[
             req("path", Path, "the file to write (.dxf)"),

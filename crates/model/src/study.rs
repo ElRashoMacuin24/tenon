@@ -732,7 +732,9 @@ impl Study {
                 s.suppressed = change.suppressed.unwrap_or(s.suppressed);
                 return Ok(());
             }
-            let Some(l) = this.loads.iter_mut().find(|l| l.id == id) else { return Err(format!("{} has no support, load or kept faces {id}", this.name)) };
+            let Some(l) = this.loads.iter_mut().find(|l| l.id == id) else {
+                return Err(format!("{} has no support, load or kept faces {id}", this.name));
+            };
             match &mut l.kind {
                 LoadKind::Force { newtons, direction } => {
                     stray(&l.name, "a force", "its size is in `newtons`, its way in `direction`", &["faces", "edges", "newtons", "direction"])?;

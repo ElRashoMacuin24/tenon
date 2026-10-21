@@ -69,6 +69,29 @@ pub fn work_out(s: &mut Session, k: &mut dyn Kernel, id: StudyId, keep: Option<&
         return Err(format!("{} cannot be worked out yet. It needs {}.", check["name"].as_str().unwrap_or("The study"), needs.join("; ")));
     }
     let tools = Tools::find()?;
+    let on = setup_of(s, k, id)?;
+    let size = s.document().study(id).and_then(|st| st.mesh_size);
+    let (step, drawn, element_size) = for_the_mesher(k, on.shape, size)?;
+    let scratch = match keep {
+        Some(dir) => Scratch::in_folder(dir)?,
+        None => Scratch::new()?,
+    };
+    let (results, took) = tenon_fea::work_out(&tools, &step, &drawn, &on.setup, element_size, &scratch.dir, cancel)?;
+    Ok(Solved { study: id, results, took, element_size, yield_strength: on.strength.yield_strength })
+}
+
+/// A study put on the part: its supports and loads on the part's faces and edges, what each
+/// face is, the material; how strong the material is; the solid; and the part as it was rebuilt
+/// (to tell more of its faces and planes).
+pub(crate) struct OnPart {
+    pub setup: Setup,
+    pub strength: tenon_model::materials::Strength,
+    pub shape: tenon_kernel::ShapeHandle,
+    pub regen: tenon_model::Regen,
+}
+
+/// Study `id` put on the session's part (what is suppressed is left out).
+pub(crate) fn setup_of(s: &mut Session, k: &mut dyn Kernel, id: StudyId) -> Result<OnPart, String> {
     let r = s.regen(k).clone();
     let d = s.document();
     let (st, strength) = (d.study(id).ok_or("no such study")?, d.strength().ok_or("the part's material does not say how strong it is")?);
@@ -102,18 +125,17 @@ pub fn work_out(s: &mut Session, k: &mut dyn Kernel, id: StudyId, keep: Option<&
     let material = Material::of(strength.youngs_modulus, strength.poisson, d.density());
     let setup = Setup { held, pushed, surfaces, material };
 
-    let (step, drawn, element_size) = for_the_mesher(k, body.shape, st.mesh_size)?;
-    let scratch = match keep {
-        Some(dir) => Scratch::in_folder(dir)?,
-        None => Scratch::new()?,
-    };
-    let (results, took) = tenon_fea::work_out(&tools, &step, &drawn, &setup, element_size, &scratch.dir, cancel)?;
-    Ok(Solved { study: id, results, took, element_size, yield_strength: strength.yield_strength })
+    let shape = body.shape;
+    Ok(OnPart { setup, strength, shape, regen: r })
 }
 
 /// The solid as the mesher reads it (a STEP file's bytes), as it is drawn (to tell its faces on
 /// the mesh), and how large its elements are to be: `size`, or from the part's own size.
-fn for_the_mesher(k: &mut dyn Kernel, shape: tenon_kernel::ShapeHandle, size: Option<f64>) -> Result<(Vec<u8>, tenon_kernel::Mesh, f64), String> {
+pub(crate) fn for_the_mesher(
+    k: &mut dyn Kernel,
+    shape: tenon_kernel::ShapeHandle,
+    size: Option<f64>,
+) -> Result<(Vec<u8>, tenon_kernel::Mesh, f64), String> {
     let step = k.export_step(&[shape]).map_err(|e| e.to_string())?;
     let drawn = k.tessellate(shape, &MeshTol::exact()).map_err(|e| e.to_string())?;
     let at = |p: &[f32; 3]| tenon_geom::Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
@@ -143,16 +165,21 @@ pub fn mesh(s: &mut Session, k: &mut dyn Kernel, id: StudyId, cancel: &Cancel) -
     Ok((tenon_fea::mesh_part(&tools, &step, element_size, &scratch.dir, cancel)?, element_size))
 }
 
-/// `study.solve`: works a study out and says what it comes to.
-pub(crate) fn solve(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
-    let id = match arg(p, "study").filter(|v| !v.is_null()) {
+/// The study a command names, or the part's only one.
+pub(crate) fn study_arg(s: &Session, p: &Value) -> Result<StudyId, CmdError> {
+    Ok(match arg(p, "study").filter(|v| !v.is_null()) {
         Some(v) => StudyId(v.as_u64().and_then(|v| u32::try_from(v).ok()).ok_or("`study` must be an id")?),
         None => match s.document().studies() {
             [only] => only.id,
             [] => return Err("the part has no study yet: study.new makes one".into()),
             _ => return Err("the part has several studies: say which with `study` (study.list says which there are)".into()),
         },
-    };
+    })
+}
+
+/// `study.solve`: works a study out and says what it comes to.
+pub(crate) fn solve(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
+    let id = study_arg(s, p)?;
     let name = s
         .document()
         .study(id)
