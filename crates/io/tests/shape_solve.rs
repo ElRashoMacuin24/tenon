@@ -1,8 +1,8 @@
 //! Optimize Shape (DEC-123): the solver run as the optimizer runs it, with each element at its
 //! own stiffness level, on the cantilever the stress checks are tried on. These are the checks
 //! that what it reads back is what the optimizer needs: the energy each element holds, which
-//! adds up to the work of the loads, the elements' volumes, and how the work changes with an
-//! element's stiffness.
+//! adds up to the work of the loads, the elements' volumes (on that bar with a bore through it
+//! too, where the elements are curved), and how the work changes with an element's stiffness.
 //!
 //! They need Gmsh and CalculiX (`pixi install -e fea`, docs/stress.md). Without them they say
 //! so and pass, unless `TENON_FEA_REQUIRED` is set, as the gate (`cargo xtask ci`) sets it:
@@ -40,17 +40,30 @@ const STEEL: (f64, f64, f64) = (200.0, 0.29, 7.85);
 /// The cantilever of the stress checks: a bar of mild steel 100 x 10 x 10 along x, held fast at
 /// its left end, with 100 N down on its right end, divided into elements of 2.5 mm.
 fn cantilever(tools: &Tools, dir: &Path) -> Problem {
+    bar(tools, dir, None)
+}
+
+/// The cantilever, with a bore `bore` mm across through its height at its middle when one is
+/// given. The elements on the bore are curved, as on the box's flat faces they are not.
+fn bar(tools: &Tools, dir: &Path, bore: Option<f64>) -> Problem {
     let mut s = Session::default();
     let mut k = OcctKernel::new();
     tenon_io::cmd::run(&mut s, "model.box", &json!({ "width": 100, "depth": 10, "height": 10 }), Some(&mut k as &mut dyn Kernel)).unwrap();
+    if let Some(d) = bore {
+        let cut = json!({ "x": 50, "y": 5, "diameter": d, "height": 10, "operation": "cut" });
+        tenon_io::cmd::run(&mut s, "model.cylinder", &cut, Some(&mut k as &mut dyn Kernel)).unwrap();
+    }
     let r = s.regen(&mut k).clone();
     let body = r.bodies.first().unwrap();
     // What each face is, and which are the bar's ends.
     let (mut surfaces, mut left, mut right) = (Vec::new(), Vec::new(), Vec::new());
     for face in 0..u32::try_from(body.names.len()).unwrap() {
         let info = k.face_info(body.shape.face(face)).unwrap();
-        let SurfaceKind::Plane { normal, .. } = info.surface else { panic!("a box has flat faces: {info:?}") };
-        surfaces.push(Surface::Plane { normal });
+        surfaces.push(match info.surface {
+            SurfaceKind::Plane { normal, .. } => Surface::Plane { normal },
+            SurfaceKind::Cylinder { axis, .. } => Surface::Cylinder { origin: axis.origin(), dir: axis.dir() },
+            _ => panic!("the bar has flat faces and its bore a round one: {info:?}"),
+        });
         if info.centroid.x.abs() < 1e-9 {
             left.push(face);
         } else if (info.centroid.x - 100.0).abs() < 1e-9 {
@@ -58,6 +71,9 @@ fn cantilever(tools: &Tools, dir: &Path) -> Problem {
         }
     }
     assert_eq!((left.len(), right.len()), (1, 1), "{surfaces:?}");
+    let round = surfaces.iter().filter(|f| matches!(f, Surface::Cylinder { .. })).count();
+    assert_eq!((surfaces.len(), round), if bore.is_some() { (7, 1) } else { (6, 0) }, "{surfaces:?}");
+    let faces = surfaces.len();
     let setup = Setup {
         held: vec![Held { name: "Fixed1".into(), kind: SupportKind::Fixed, faces: left, edges: Vec::new() }],
         pushed: vec![Pushed {
@@ -72,7 +88,7 @@ fn cantilever(tools: &Tools, dir: &Path) -> Problem {
     let step = k.export_step(&[body.shape]).unwrap();
     let drawn = k.tessellate(body.shape, &MeshTol::exact()).unwrap();
     let prepared = tenon_fea::prepare(tools, &step, &drawn, &setup, 2.5, dir, &Cancel::default(), tenon_fea::MAX_SOLVE_NODES).unwrap();
-    assert!(prepared.meshing >= 0.0 && prepared.on.len() == 6, "the box's six faces are found on the mesh: {:?}", prepared.on);
+    assert!(prepared.meshing >= 0.0 && prepared.on.len() == faces, "the bar's {faces} faces are found on the mesh: {:?}", prepared.on);
     let p = prepared.problem;
     assert!(p.mesh.tets.len() > 1000 && p.held.len() > 10 && p.forces.len() > 10, "{} elements", p.mesh.tets.len());
     assert!((p.total_force() - Vec3::new(0.0, 0.0, -100.0)).len() < 1e-9, "{:?}", p.total_force());
@@ -119,20 +135,39 @@ fn rust_volumes_are_the_solvers() {
         return;
     }
     let (tools, scratch, cancel) = (Tools::find().unwrap(), Scratch::new().unwrap(), Cancel::default());
-    let p = cantilever(&tools, &scratch.dir);
-    let deck = Deck::new(&p).unwrap();
-    let half = vec![500; p.mesh.tets.len()];
-    let (energies, volumes) =
-        tenon_fea::solve_shape(&tools, &deck, &half, p.material.youngs_modulus, p.material.poisson, &scratch.dir, &cancel, true).unwrap();
-    let volumes = volumes.unwrap();
-    assert_eq!((energies.len(), volumes.len()), (p.mesh.tets.len(), p.mesh.tets.len()));
-    // The solver's element e is the mesh's e - 1st.
-    for (e, (t, theirs)) in p.mesh.tets.iter().zip(&volumes).enumerate() {
-        let ours = p.mesh.volume(t);
-        assert!((ours - theirs).abs() <= 1e-6 * theirs, "element {}: {ours} mm^3 here, {theirs} by the solver", e + 1);
+    // The plain bar, and the bar with a bore of 6, whose elements on the bore are curved.
+    for bore in [None, Some(6.0)] {
+        let p = bar(&tools, &scratch.dir, bore);
+        let deck = Deck::new(&p).unwrap();
+        let half = vec![500; p.mesh.tets.len()];
+        let (energies, volumes) =
+            tenon_fea::solve_shape(&tools, &deck, &half, p.material.youngs_modulus, p.material.poisson, &scratch.dir, &cancel, true).unwrap();
+        let volumes = volumes.unwrap();
+        assert_eq!((energies.len(), volumes.len()), (p.mesh.tets.len(), p.mesh.tets.len()));
+        // The solver's element e is the mesh's e - 1st.
+        let mut straight = 0.0f64;
+        for (e, (t, theirs)) in p.mesh.tets.iter().zip(&volumes).enumerate() {
+            let ours = p.mesh.volume(t);
+            assert!((ours - theirs).abs() <= 1e-6 * theirs, "element {} ({bore:?}): {ours} mm^3 here, {theirs} by the solver", e + 1);
+            // How far the straight tetrahedron between its corners is from it.
+            straight = straight.max((p.mesh.corner_volume(t) - theirs).abs() / theirs);
+        }
+        let whole: f64 = p.mesh.tets.iter().map(|t| p.mesh.volume(t)).sum();
+        match bore {
+            // On the box every element is straight, so that its corners alone give its volume.
+            None => {
+                assert!(straight <= 1e-6, "the box's elements are straight: {straight}");
+                assert!((whole - 10_000.0).abs() < 1e-9 * 10_000.0, "the bar is 10000 mm^3: {whole}");
+            }
+            // On the bore they are not: the straight one is a long way out (a quarter, here),
+            // so that only the rule the solver uses agrees with it.
+            Some(d) => {
+                assert!(straight > 0.1, "the elements on the bore are curved: {straight}");
+                let solid = 10_000.0 - std::f64::consts::PI * d * d / 4.0 * 10.0;
+                assert!((whole - solid).abs() < 1e-5 * solid, "the bar with its bore is {solid} mm^3: {whole}");
+            }
+        }
     }
-    let whole: f64 = p.mesh.tets.iter().map(|t| p.mesh.volume(t)).sum();
-    assert!((whole - 10_000.0).abs() < 1e-9 * 10_000.0, "the bar is 10000 mm^3: {whole}");
 }
 
 #[test]
