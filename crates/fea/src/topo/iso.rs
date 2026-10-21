@@ -824,6 +824,13 @@ pub(crate) mod tests {
         let bits = |e: &Extracted| e.skin.positions.iter().flat_map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).collect::<Vec<u64>>();
         assert_eq!(bits(&a), bits(&b));
         assert!(a.skin.triangles.len() > 50 && a.skin.is_closed());
+        // Smoothed: the same triangles, not all where they were made.
+        let raw = extract(&f, 0.45, 0);
+        assert_eq!((&raw.skin.triangles, &raw.skin.fixed), (&a.skin.triangles, &a.skin.fixed));
+        assert_ne!(raw.skin.positions, a.skin.positions);
+        // (The caps' vertices, on the part's own boundary, stay where they were.)
+        assert!(raw.skin.positions.iter().zip(&a.skin.positions).zip(&a.skin.fixed).all(|((p, q), fixed)| !fixed || p == q));
+        assert!(a.skin.fixed.iter().any(|f| *f));
     }
 
     #[test]
