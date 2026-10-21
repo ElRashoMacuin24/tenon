@@ -627,6 +627,10 @@ pub(crate) enum Panel {
     Primitive(crate::primitive::PrimitivePanel),
     /// Fixed, in the Stress Analysis environment: the faces that are held.
     Support(crate::analysis::SupportPanel),
+    /// Optimize Shape's settings, Keep Faces, Symmetry (DEC-123).
+    Shape(crate::shape::ShapePanel),
+    Keep(crate::shape::KeepPanel),
+    Symmetry(crate::shape::SymmetryPanel),
     /// Force, Pressure or Gravity, in the Stress Analysis environment.
     Load(crate::analysis::LoadPanel),
     /// A study's name, or (with `item`) that of a support or a load of it.
@@ -1668,6 +1672,24 @@ impl Workbench {
                             tenon_model::study::SupportKind::Frictionless => "study.frictionless",
                         });
                     }
+                }
+            }
+            Panel::Shape(p) => {
+                if commit {
+                    keep = !self.commit_shape(p);
+                }
+            }
+            Panel::Keep(p) => {
+                if commit {
+                    keep = !self.commit_keep(p);
+                    if !keep && again {
+                        reopen = Some("analysis.keep_faces");
+                    }
+                }
+            }
+            Panel::Symmetry(p) => {
+                if commit {
+                    keep = !self.commit_symmetry(p);
                 }
             }
             Panel::Load(p) => {

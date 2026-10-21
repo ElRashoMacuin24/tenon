@@ -75,6 +75,10 @@ pub enum Icon {
     // more sketching
     Collinear,
     Symmetric,
+    /// Optimize Shape, Keep Faces, Symmetry (DEC-123).
+    OptimizeShape,
+    KeepFaces,
+    SymmetryPlane,
     Fix,
     Equal,
     Concentric,
@@ -605,6 +609,26 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
                 let t = 0.42 + i as f32 * 0.1;
                 pen.line(&[(t, 0.54 - i as f32 * 0.05), (t + 0.04, 0.52 - i as f32 * 0.05)]);
             }
+        }
+        // A bracket with material taken out between its members.
+        Icon::OptimizeShape => {
+            pen.fill(&[(0.08, 0.12), (0.92, 0.12), (0.92, 0.36), (0.08, 0.9)], soft);
+            pen.closed(&[(0.08, 0.12), (0.92, 0.12), (0.92, 0.36), (0.08, 0.9)]);
+            pen.closed(&[(0.22, 0.24), (0.7, 0.24), (0.22, 0.56)]);
+        }
+        // A face kept, its corner held by a pin.
+        Icon::KeepFaces => {
+            pen.fill(&[(0.1, 0.3), (0.7, 0.3), (0.9, 0.7), (0.3, 0.7)], soft);
+            pen.closed(&[(0.1, 0.3), (0.7, 0.3), (0.9, 0.7), (0.3, 0.7)]);
+            pen.dot((0.5, 0.5), 0.1);
+        }
+        // Two halves of a shape either side of a plane, seen on edge.
+        Icon::SymmetryPlane => {
+            for (a, b) in [(0.02, 0.2), (0.3, 0.45), (0.55, 0.7), (0.8, 0.98)] {
+                pen.line(&[(0.5, a), (0.5, b)]);
+            }
+            pen.closed(&[(0.1, 0.2), (0.4, 0.35), (0.4, 0.8), (0.1, 0.65)]);
+            pen.closed(&[(0.9, 0.2), (0.6, 0.35), (0.6, 0.8), (0.9, 0.65)]);
         }
         Icon::Symmetric => {
             pen.line(&[(0.5, 0.05), (0.5, 0.95)]);

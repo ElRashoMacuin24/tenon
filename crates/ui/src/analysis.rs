@@ -44,6 +44,9 @@ pub(crate) struct Env {
     pub mesh_view: bool,
     /// A study is being worked out.
     pub running: Option<crate::results::Running>,
+    /// Optimize Shape's shape of a study, and a run of it (DEC-123).
+    pub shape: Option<crate::shape::ShapeView>,
+    pub shaping: Option<crate::shape::Shaping>,
 }
 
 /// Fixed, Pin or Frictionless: the faces (or, of a fixed support, the edges) that are held.
@@ -640,6 +643,16 @@ impl Workbench {
             "study.pin" => self.open_support(SupportKind::PIN, None),
             "study.frictionless" => self.open_support(SupportKind::Frictionless, None),
             "study.mesh_size" => self.open_mesh_size(),
+            "analysis.optimize" => self.open_shape(),
+            // (Again, with the settings the study has: no panel.)
+            "analysis.optimize.now" => self.optimize_shape(),
+            "analysis.keep_faces" => self.open_keep(None),
+            "analysis.symmetry" => self.open_symmetry(),
+            "analysis.export_shape" => self.export_shape(),
+            "analysis.show_shape" => {
+                self.toggle_shape();
+                Ok(())
+            }
             _ => return None,
         })
     }
@@ -669,8 +682,15 @@ impl Workbench {
 
     /// Finish Analysis: back to the part.
     pub(crate) fn analysis_finish(&mut self) {
-        if matches!(self.panel, Some(Panel::Support(_) | Panel::Load(_) | Panel::RenameStudy { .. })) {
+        if matches!(
+            self.panel,
+            Some(Panel::Support(_) | Panel::Load(_) | Panel::RenameStudy { .. } | Panel::Shape(_) | Panel::Keep(_) | Panel::Symmetry(_))
+        ) {
             self.panel = None;
+        }
+        // (A shape being worked out is stopped: it would come back to nothing.)
+        if let Some(r) = self.analysis.as_ref().and_then(|e| e.shaping.as_ref()) {
+            r.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         self.analysis = None;
         self.chrome.tab = self.home_tab();
@@ -740,7 +760,7 @@ impl Workbench {
     }
 
     /// The study a new support or load goes into: the one worked on, made if there is none.
-    fn study_for_new(&mut self) -> Result<StudyId, String> {
+    pub(crate) fn study_for_new(&mut self) -> Result<StudyId, String> {
         if !self.in_analysis() {
             self.analysis_begin()?;
         }
@@ -1396,6 +1416,29 @@ impl Workbench {
             Some(Panel::Load(p)) => load(&p.faces, &p.edges, &p.shown(), t.accent),
             _ => {}
         }
+        // Kept faces (DEC-123): a diamond on each, in the kept colour; what is being set up in
+        // the accent colour.
+        let diamond = |faces: &[FaceRef], color: Color32| {
+            for f in faces {
+                let Some(c) = self.face_at(f).and_then(|(at, _)| screen(at)) else { continue };
+                mark("kept", c);
+                let d = |r: f32| vec![c + vec2(0.0, -r), c + vec2(r, 0.0), c + vec2(0.0, r), c + vec2(-r, 0.0)];
+                painter.add(egui::Shape::convex_polygon(d(8.5), edge, Stroke::NONE));
+                painter.add(egui::Shape::convex_polygon(d(6.5), color, Stroke::NONE));
+            }
+        };
+        let keeping = match &self.panel {
+            Some(Panel::Keep(p)) => Some(p),
+            _ => None,
+        };
+        if let Some(study) = self.active_study().filter(|_| !hidden) {
+            for k in study.optimize.iter().flat_map(|o| o.kept.iter()).filter(|k| keeping.and_then(|p| p.editing) != Some(k.id)) {
+                diamond(&k.faces, crate::shape::KEPT);
+            }
+        }
+        if let Some(p) = keeping {
+            diamond(&p.faces, t.accent);
+        }
         // (Tests look for a mark where a face is.)
         #[cfg(test)]
         ui.data_mut(|d| d.insert_temp(egui::Id::new("tn_analysis_marks"), marks.into_inner()));
@@ -1449,6 +1492,31 @@ impl Workbench {
         // (What is being worked out of the study worked on: Some(true) its answer, Some(false)
         // its mesh alone.)
         let running: Option<bool> = self.analysis.as_ref().and_then(|e| e.running.as_ref()).filter(|r| Some(r.study) == active).map(|r| r.solving);
+        // Optimize Shape's row (DEC-123): the shape there is, or the run going on.
+        let shaping = self.shaping().filter(|r| Some(r.study) == active).map(|r| {
+            let report = *r.progress.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            report
+                .last
+                .map_or_else(|| "Shape: being worked out...".to_owned(), |i| format!("Shape: round {} of at most {}...", i.number, report.most))
+        });
+        let shape_row: (String, &str, bool) = match (shaping, self.shape_view()) {
+            (Some(text), _) => (text, "Esc stops it and keeps the shape so far", false),
+            (None, Some(v)) => {
+                let stopped =
+                    matches!(v.shaped.optimized.stop, tenon_fea::topo::Stop::Stopped | tenon_fea::topo::Stop::Budget | tenon_fea::topo::Stop::Limit);
+                let text = format!(
+                    "Shape: {:.0}% removed{}{}",
+                    100.0 * (1.0 - v.shaped.fraction),
+                    if stopped { " (stopped early)" } else { "" },
+                    if v.visible { "" } else { " (hidden)" }
+                );
+                (text, "Click to show or hide it; double-click to work it out again", true)
+            }
+            (None, None) if self.shape_is_stale() => {
+                ("Shape: out of date (Optimize Shape)".to_owned(), "The part or the study has changed since it was worked out", false)
+            }
+            (None, None) => ("Shape: none yet (Optimize Shape)".to_owned(), "Optimize Shape works out where material is needed", false),
+        };
         let mut action: Option<StudyAction> = None;
         egui::ScrollArea::vertical().id_salt("tn_study_scroll").auto_shrink([false, false]).show(ui, |ui| {
             row(ui, t, 0, Icon::Part, &name, None, RowStyle::Normal);
@@ -1567,6 +1635,44 @@ impl Workbench {
                         }
                     }
                 }
+                // Optimize Shape (DEC-123): the faces it keeps, its planes, its shape.
+                let o = study.optimize.clone().unwrap_or_default();
+                let (resp, _) = row(ui, t, 2, Icon::Folder, &format!("Keep Faces({})", o.kept.len()), None, RowStyle::Normal);
+                if resp.on_hover_text("Faces Optimize Shape keeps solid. Double-click to keep more").double_clicked() {
+                    action = Some(StudyAction::Run("analysis.keep_faces"));
+                }
+                for k in &o.kept {
+                    let deep = k.depth.map_or(String::new(), |d| format!(" ({} mm deep)", figures(d)));
+                    let label = format!("{}{deep}{}", k.name, gone(k.id, k.faces.len(), 0));
+                    let (resp, _) = row(ui, t, 3, Icon::KeepFaces, &label, None, style(k.id, false));
+                    kept_row(resp, study.id, k.id, &k.name, &mut action);
+                }
+                if !o.symmetry.is_empty() {
+                    let n = o.symmetry.len();
+                    let (resp, _) =
+                        row(ui, t, 2, Icon::SymmetryPlane, &format!("Symmetry: {n} plane{}", if n == 1 { "" } else { "s" }), None, RowStyle::Normal);
+                    if resp.on_hover_text("Double-click to change the planes").double_clicked() {
+                        action = Some(StudyAction::Run("analysis.symmetry"));
+                    }
+                }
+                let (text, tip, there) = &shape_row;
+                let (resp, _) = row(ui, t, 2, Icon::OptimizeShape, text, None, if *there { RowStyle::Normal } else { RowStyle::Dim });
+                let resp = resp.on_hover_text(*tip);
+                if resp.double_clicked() {
+                    action = Some(StudyAction::Run("analysis.optimize"));
+                } else if resp.clicked() && *there {
+                    action = Some(StudyAction::Run("analysis.show_shape"));
+                }
+                resp.context_menu(|ui| {
+                    if ui.button("Optimize Again").on_hover_text("With the settings the study has").clicked() {
+                        action = Some(StudyAction::Run("analysis.optimize.now"));
+                        ui.close();
+                    }
+                    if *there && ui.button("Export Shape").clicked() {
+                        action = Some(StudyAction::Run("analysis.export_shape"));
+                        ui.close();
+                    }
+                });
             }
         });
         let study = self.active_study().map(|s| s.id.0);
@@ -1620,6 +1726,9 @@ impl Workbench {
     /// Opens the panel of the study's support or load `id`.
     fn edit_study_item(&mut self, id: u32) -> Result<(), String> {
         let Some(study) = self.active_study() else { return Err("there is no study".into()) };
+        if study.optimize.as_ref().is_some_and(|o| o.kept.iter().any(|k| k.id == id)) {
+            return self.open_keep(Some(id));
+        }
         if let Some(s) = study.supports.iter().find(|s| s.id == id) {
             return self.open_support(s.kind, Some(id));
         }
@@ -1629,6 +1738,30 @@ impl Workbench {
             None => Err("no such support or load".into()),
         }
     }
+}
+
+/// Kept faces' row: as a support's, but kept faces are not suppressed: they are removed.
+fn kept_row(resp: egui::Response, study: StudyId, id: u32, name: &str, action: &mut Option<StudyAction>) {
+    let resp = resp.on_hover_text("Click to see which faces; double-click to change them; right-click for more");
+    if resp.double_clicked() {
+        *action = Some(StudyAction::Edit(id));
+    } else if resp.clicked() {
+        *action = Some(StudyAction::Select(id));
+    }
+    resp.context_menu(|ui| {
+        if ui.button("Edit").clicked() {
+            *action = Some(StudyAction::Edit(id));
+            ui.close();
+        }
+        if ui.button("Rename").clicked() {
+            *action = Some(StudyAction::Rename(study, Some(id), name.to_owned()));
+            ui.close();
+        }
+        if ui.button("Delete").clicked() {
+            *action = Some(StudyAction::Remove(id));
+            ui.close();
+        }
+    });
 }
 
 /// A support's or a load's row: a click picks its faces (or edges) out, a double click opens

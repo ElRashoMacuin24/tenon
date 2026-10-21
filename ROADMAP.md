@@ -552,6 +552,23 @@ Not started (plan section 10): only after M5 and M6, unless the owner says other
 operation's default moves to the native kernel only after it matches OCCT on the differential
 corpus.
 
+## Optimize Shape: topology optimization (asked for by the owner on 2026-10-20)
+
+"Add in a Topology Optimization feature to go along with the stress testing feature" (DEC-123,
+docs/topology.md).
+
+| Item | Status | Proof / gap |
+|---|---|---|
+| Settings kept with the study: share or mass to keep, smallest member, resolution or element size, kept faces with a depth, planes of symmetry, sharpening, rounds | done | `optimize_shape_settings_are_kept_with_the_study` (a [study.optimize] table, read back the same; kept faces share the study's ids, changed and removed as supports are; out-of-range values refused in words) |
+| The solver run by stiffness level, each element's energy read back | done | fea: `a_shape_input_has_a_set_a_material_and_a_section_for_each_level_used`, `element_energies_are_read_from_the_last_block`, `a_stress_input_is_written_as_before`; with the programs: `element_energies_add_up_to_half_the_work_of_the_loads` (7e-8), `rust_volumes_are_the_solvers` (curved elements too), `a_uniform_level_scales_the_work_by_its_stiffness`, `sensitivities_agree_with_a_finite_difference` |
+| The density filter, with planes of symmetry | done | `the_back_pass_is_the_transpose`, `a_mirrored_block_gets_a_mirrored_field`, `each_plane_through_the_part_doubles_the_rows_away_from_it`, `a_hundred_thousand_elements_are_filtered_in_moments` and the rest of topo::filter's tests |
+| The optimizer: SIMP, optimality criteria, sharpening in stages, stop rules, stopping keeps the design so far | done | with stand-in solvers: `material_goes_to_the_stiffer_springs`, `the_sensitivity_matches_a_finite_difference_of_the_fake_work`, `the_update_meets_the_volume_after_projection`, `stopping_keeps_the_design_so_far`, `the_same_inputs_give_the_same_design_bit_for_bit` and the rest of topo::oc's tests |
+| What must stay; the kept surface (exact cut volumes, marching tetrahedra, caps, islands); smoothing | done | `one_cut_tet_has_the_closed_form_volume`, `the_matched_threshold_keeps_the_share_asked`, `the_skin_is_closed_and_faces_out`, `the_skin_encloses_the_volume_it_says`, `islands_away_from_kept_elements_are_dropped`, `taubin_keeps_a_blobs_volume_where_laplace_shrinks_it` and the rest of topo::iso, region and smooth |
+| `study.optimize`: worked out with the real programs | done | `a_cantilever_puts_material_at_its_top_and_bottom` (the work falls to under half, hardly ever rising; the share kept to 1e-6; a closed surface enclosing it within 1%; material in the root's top and bottom fibres; no stiffer than the solid), `the_same_study_gives_the_same_shape_bit_for_bit`, `study_optimize_writes_a_closed_stl_and_3mf`, `a_stopped_optimization_keeps_the_shape_so_far`, `a_kept_bore_keeps_a_ring_of_the_depth_asked`, `a_mirrored_study_gives_a_mirrored_shape`, `a_part_that_is_not_symmetric_is_refused`, `sharpening_makes_the_shape_crisper_and_no_less_stiff`, `the_shape_solved_once_keeps_what_must_stay_then_the_densest`; refusals before any program starts: `optimize_shape_refuses_what_it_cannot_take_before_anything_is_started` |
+| In the app: Optimize panel, settings, progress, Esc, the shape drawn, slider, export | done | `a_shape_is_worked_out_shown_on_a_slider_and_exported` (from the ribbon, 60% removed, worked out and shown with the stress colours off; another share on the slider; exported as STL; hidden from its row; out of date when the study changes), `faces_are_kept_and_planes_of_symmetry_chosen_by_clicks`, `esc_and_finish_analysis_stop_a_shape_being_worked_out` |
+| Gap | | stiffness only, one load set, no stress limit; no Gravity or Body loads; the shape is not kept in the part file (export it; a decision for the owner); no box or cylinder keep regions, no work planes picked for symmetry in the panel; Mesh View shows the stress mesh; the geometry is busy while a run goes on |
+
 ## Not planned now
 
-CAM, generative design, cable and harness, tube and pipe, dynamic simulation.
+CAM, generative design beyond Optimize Shape (DEC-123), cable and harness, tube and pipe, dynamic
+simulation.

@@ -37,6 +37,7 @@ mod recovery;
 mod repair_ui;
 mod results;
 pub mod settings;
+mod shape;
 mod sheet;
 mod sketch_tools;
 mod sketcher;

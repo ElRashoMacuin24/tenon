@@ -115,4 +115,5 @@ taken away), without a check.
     `points` (DEC-116); `sketch.center_point` and `center` of `sketch.point` (DEC-117); `sketch.arc_slot`
     (DEC-118); `sketch.stretch` (DEC-119); `sketch.ellipse` (DEC-120); point ids among `sketch.spline`'s `points`, and the
     constraint type `smooth` (DEC-121); `end_radius`, `radii` and `faces` of `model.fillet`, whose
-    `edges` may be left out for `faces` (DEC-122). 232 commands.
+    `edges` may be left out for `faces` (DEC-122); `study.keep`, `study.shape` and `study.optimize`,
+    and `depth` of `study.set` (DEC-123). 235 commands.

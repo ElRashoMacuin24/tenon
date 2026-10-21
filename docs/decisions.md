@@ -3271,3 +3271,50 @@ as Symmetry's second pick does; a click on a set's row makes it the one clicks a
 
 `model.fillet` takes `end_radius` or `radii`, and `faces` in place of `edges`; files gain the
 two fields, additive.
+
+## DEC-123 Optimize Shape: topology optimization (2026-10-20)
+
+The owner asked: "Add in a Topology Optimization feature to go along with the stress testing
+feature". Inventor's counterpart is its Shape Generator. "Generative design" had been under
+"Not now" in the plan; the request lifts this part of it.
+
+**Where it is.** On the stress study as it is: the same supports, loads and material, in the
+Stress Analysis environment, on a new Optimize panel of the Analysis tab (Optimize Shape, Keep
+Faces, Symmetry, Export Shape). No study kind of its own: the optimize, remodel, Simulate loop is
+one study. Inventor's own names for the command and its parts are not used (DEC-019).
+
+**The method** (docs/topology.md): SIMP with a penalty of 3, an optimality-criteria update, a
+density filter whose radius is half the smallest member, and a projection raised in stages
+(Sharpen, on by default). Written from the papers; no optimization program's code was read in.
+Elements held or loaded, and kept faces as deep as asked, stay solid. Planes of symmetry are
+images in the filter, so the design stays the same on both sides; a part that is not is refused.
+
+**The solver** is CalculiX, once a round (DEC-098 covers it: a separate program): the mesh with a
+material for each of 1001 stiffness levels in use, and each element's energy read back (`ELSE`).
+No solver of Tenon's own: a `Stiffness` trait is where one would go.
+
+**Sizes.** The mesh is sized from a node target (Coarse 12,000, Medium 30,000, Fine 80,000), not
+from the stress study's element size, and at most 100,000 nodes; three elements to the smallest
+member when one is given.
+
+**What is kept.** The settings, kept faces and planes are kept with the study, as a
+`[study.optimize]` table: an addition to format version 2, as the plan allows for additions (the
+design workflow had proposed asking first; it is additive and small, so it is kept). The shape
+itself is not kept in the part file or beside it: that would be a container decision (a mesh in a
+part file, or a mesh feature), which goes to the owner. Meanwhile it is shown until the part or
+study changes or the environment is left, and Export Shape writes it as STL or 3MF.
+
+**Refused, in words, before anything starts:** no study or a study not ready; Gravity or a body's
+turning not suppressed (their load depends on the material kept); out-of-range settings; a mass
+not less than the part's or under 5% of it; planes not at right angles. After meshing: too many
+nodes, a part not the same on both sides of a plane, and kept material already over the share.
+
+**The run** goes on the kernel's worker as Simulate does; the view says which round it is on;
+Esc or Finish Analysis stops it, and a run stopped after a round keeps the shape so far. The
+shape is drawn over the part (the part as edges), with a slider for other shares (where material
+ranks, not an optimum for them). It is solved once, the densest elements up to the share solid,
+to say how much of the part's stiffness it keeps.
+
+**Built** as a foundation (mesh volumes, the module's types and contracts), then three parts in
+parallel worktrees (the solver's protocol, the optimizer, the surface), each reviewed
+adversarially and fixed, then the command and the app.

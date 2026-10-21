@@ -876,7 +876,8 @@ fn study_keep(s: &mut Session, p: &Value) -> CmdResult {
 /// The planes of a list, each as `plane_value` reads one.
 fn planes_value(p: &Value, key: &str) -> Result<Vec<PlaneRef>, CmdError> {
     let list = arg(p, key).and_then(Value::as_array).ok_or_else(|| CmdError(format!("`{key}` must be a list of planes")))?;
-    list.iter().map(|v| plane_value(&json!({ "plane": v }), "plane")).collect()
+    // (As work.plane takes a plane, or as the study keeps it: { origin = "XZ" }, { face = ... }.)
+    list.iter().map(|v| serde_json::from_value::<PlaneRef>(v.clone()).or_else(|_| plane_value(&json!({ "plane": v }), "plane"))).collect()
 }
 
 /// What Optimize Shape is asked of a study (DEC-123): what is given takes the place of what

@@ -170,7 +170,8 @@ impl Workbench {
     /// Something of a study is drawn over the part: its results, or its mesh.
     pub(crate) fn results_shown(&self) -> bool {
         let lines = self.analysis.as_ref().is_some_and(|e| e.mesh_view);
-        self.outcome().is_some_and(|o| o.solved.is_some() || lines)
+        // (A shape shown and the stress in colour are not drawn together.)
+        !self.shape_shown() && self.outcome().is_some_and(|o| o.solved.is_some() || lines)
     }
 
     /// Simulate, or (not `solving`) the mesh alone: sets it going where the kernel is.
@@ -311,16 +312,19 @@ impl Workbench {
 
     /// The keys of a study being worked out: Esc stops it.
     pub(crate) fn study_keys(&mut self, ui: &Ui) {
-        if self.analysis.as_ref().is_some_and(|e| e.running.is_some()) && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        let busy = self.analysis.as_ref().is_some_and(|e| e.running.is_some() || e.shaping.is_some());
+        if busy && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.stop_study();
         }
     }
 
     /// Esc while a study is being worked out stops it. True when there was one to stop.
     pub(crate) fn stop_study(&mut self) -> bool {
-        match self.analysis.as_ref().and_then(|e| e.running.as_ref()) {
-            Some(r) => {
-                r.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        let env = self.analysis.as_ref();
+        let cancel = env.and_then(|e| e.running.as_ref().map(|r| r.cancel.clone()).or_else(|| e.shaping.as_ref().map(|r| r.cancel.clone())));
+        match cancel {
+            Some(c) => {
+                c.store(true, std::sync::atomic::Ordering::Relaxed);
                 self.set_status("Stopping...");
                 true
             }

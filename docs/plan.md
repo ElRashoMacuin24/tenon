@@ -329,7 +329,8 @@ Done in order; stop and report after each, and start the next only when the owne
 
 ### Not now
 
-CAM, generative design, cable and harness, tube and pipe, dynamic simulation.
+CAM, generative design beyond Optimize Shape (DEC-123), cable and harness, tube and pipe, dynamic
+simulation.
 
 ### Asking first
 

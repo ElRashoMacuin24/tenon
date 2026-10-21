@@ -6336,6 +6336,18 @@
           "name": {
             "type": "string",
             "description": "its new name"
+          },
+          "depth": {
+            "anyOf": [
+              {
+                "type": "number",
+                "x-unit": "mm"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "kept faces: how deep material is kept under them, mm; null: one layer"
           }
         },
         "additionalProperties": false,
@@ -6348,7 +6360,7 @@
       "id": "study.remove",
       "label": "Remove Support or Load",
       "undoable": true,
-      "description": "study; item: the id of a support or a load of it",
+      "description": "study; item: the id of a support, a load or kept faces of it",
       "params": {
         "type": "object",
         "properties": {
@@ -6360,13 +6372,144 @@
           "item": {
             "type": "integer",
             "minimum": 0,
-            "description": "the id of a support or a load of the study"
+            "description": "the id of a support, a load or kept faces of the study"
           }
         },
         "additionalProperties": false,
         "required": [
           "item"
         ]
+      }
+    },
+    {
+      "id": "study.keep",
+      "label": "Keep Faces",
+      "undoable": true,
+      "description": "Faces Optimize Shape keeps solid (DEC-123). study; faces; depth (mm of material kept under them; default: one layer of elements); name. Returns the study, and the kept faces' id (`kept`), one of the study's run of ids: study.set changes them (faces, depth, name), study.remove takes them away",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "the faces to keep solid"
+          },
+          "depth": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "how deep material is kept under them, mm (default: one layer of elements)"
+          },
+          "name": {
+            "type": "string",
+            "description": "its name (default Keep1, Keep2...)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "faces"
+        ]
+      }
+    },
+    {
+      "id": "study.shape",
+      "label": "Optimize Shape Settings",
+      "undoable": true,
+      "description": "What Optimize Shape is asked of a study, kept with it (DEC-123); what is given takes the place of what was said. study; remove (percent of the mass taken away, 5 to 95; default 50) or grams (the mass to come to); min_member (the thinnest member, mm; null: three elements); resolution (coarse, medium or fine: about 12,000, 30,000 or 80,000 nodes); element_size (mm, in place of the resolution; null: from it); symmetry (a list of up to three planes at right angles, as work.plane takes them; [] for none); sharpen (default true: toward solid and empty); iterations (the most rounds, 1 to 300; null: as the method needs)",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "which study (default: the part's only one)"
+          },
+          "remove": {
+            "type": "number",
+            "description": "percent of the mass to take away, 5 to 95"
+          },
+          "grams": {
+            "type": "number",
+            "description": "or the mass to come to, g"
+          },
+          "min_member": {
+            "anyOf": [
+              {
+                "type": "number",
+                "x-unit": "mm"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the thinnest member, mm; null: three elements"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "coarse",
+              "medium",
+              "fine"
+            ],
+            "description": "about 12,000, 30,000 or 80,000 nodes"
+          },
+          "element_size": {
+            "anyOf": [
+              {
+                "type": "number",
+                "x-unit": "mm"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the size of the elements, mm, in place of the resolution; null: from it"
+          },
+          "symmetry": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "xy",
+                    "yz",
+                    "xz"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/face_ref"
+                },
+                {
+                  "type": "object"
+                }
+              ]
+            },
+            "description": "up to three planes at right angles the shape is the same on both sides of; [] for none"
+          },
+          "sharpen": {
+            "type": "boolean",
+            "description": "sharpen the shape toward solid and empty (default true)"
+          },
+          "iterations": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the most rounds, 1 to 300; null: as the method needs"
+          }
+        },
+        "additionalProperties": false
       }
     },
     {
@@ -6971,6 +7114,88 @@
               }
             ],
             "description": "a folder to leave the mesher's and the solver's files in (default: they go when it is done)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "study.optimize",
+      "label": "Optimize Shape",
+      "undoable": false,
+      "description": "Works out where in the part material is needed to carry a stress study's loads to its supports, for a share of its mass kept (topology optimization, DEC-123), with Gmsh and CalculiX as for study.solve. It takes the study's settings (study.shape, study.keep); remove (percent of the mass taken away, 5 to 95) or grams, min_member, resolution (coarse, medium, fine), element_size, sharpen and iterations given here take their place for this run only. stl, threemf: files to write the shape to; shown: the share of the part those files keep (default: the share asked; another share shows where material ranks, not an optimum for it); smooth: pairs of smoothing passes (0 to 50, default 10); keep: a folder to leave the programs' files in. Returns nodes, elements, element_size, member_size, target {fraction, grams}, iterations, stopped (settled, levelled_off, limit, budget, stopped), history [{iteration, compliance, fraction, change, sharpness, grey, seconds}], compliance {solid, optimizer, shape}, stiffness_kept (solid over shape), mass {part_grams, shape_grams}, surface {share, threshold, triangles, watertight, islands_dropped, volume}, written, warnings, seconds, note. A guide to model over, not a finished part. Gravity and a body's turning are refused (suppress them to optimize), and so is what the study lacks, before anything is started",
+      "params": {
+        "type": "object",
+        "properties": {
+          "study": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the study's id (default: the part's only one)"
+          },
+          "remove": {
+            "type": "number",
+            "description": "percent of the mass to take away, 5 to 95 (for this run)"
+          },
+          "grams": {
+            "type": "number",
+            "description": "or the mass to come to, g (for this run)"
+          },
+          "min_member": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the thinnest member, mm (for this run)"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "coarse",
+              "medium",
+              "fine"
+            ],
+            "description": "about 12,000, 30,000 or 80,000 nodes (for this run)"
+          },
+          "element_size": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the size of the elements, mm (for this run)"
+          },
+          "sharpen": {
+            "type": "boolean",
+            "description": "sharpen toward solid and empty (for this run)"
+          },
+          "iterations": {
+            "type": "integer",
+            "description": "the most rounds, 1 to 300 (for this run)"
+          },
+          "smooth": {
+            "type": "integer",
+            "description": "pairs of smoothing passes, 0 to 50 (default 10)"
+          },
+          "shown": {
+            "type": "number",
+            "description": "the share of the part the files keep, 0.05 to 1 (default: the share asked)"
+          },
+          "stl": {
+            "type": "string",
+            "x-path": true,
+            "description": "a file to write the shape to, STL"
+          },
+          "threemf": {
+            "type": "string",
+            "x-path": true,
+            "description": "a file to write the shape to, 3MF"
+          },
+          "keep": {
+            "anyOf": [
+              {
+                "type": "string",
+                "x-path": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "a folder to leave the programs' files in (default: they go when it is done)"
           }
         },
         "additionalProperties": false

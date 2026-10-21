@@ -501,6 +501,22 @@ Other loads, as they are written in `loads`:
   now, and keeps it. Written only when true.
 - **`mesh_size`:** optional: the size of the elements the part is divided into, mm. Without it
   the size is chosen from the part's.
+- **`[study.optimize]`:** optional, a table under the study once Optimize Shape has been told
+  anything of it (DEC-123): `remove` (percent of the mass taken away, 5 to 95) or `grams` (the
+  mass to come to); optional `min_member` (mm), `resolution` (`"medium"` or `"fine"`; coarse
+  when not written), `element_size` (mm), `kept` (`{ id, name, faces, depth }`: faces kept
+  solid, `depth` mm of material under them when written, one layer of elements otherwise; ids
+  are of the study's one run with its supports and loads), `symmetry` (up to three planes, as
+  features name planes), `sharpen` (written only when false), `iterations`. The shape itself is
+  not kept.
+
+```toml
+[study.optimize]
+remove = 60.0
+min_member = 4.0
+kept = [{ id = 3, name = "Bolt", faces = [{ origin = { ... }, fingerprint = { ... } }], depth = 3.0 }]
+symmetry = [{ origin = "XZ" }]
+```
 - Supports and loads of one study share one run of ids. A study with no supports, no loads
   and no size is its `id` and its `name`.
 

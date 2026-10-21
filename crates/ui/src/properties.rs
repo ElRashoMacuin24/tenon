@@ -468,6 +468,9 @@ impl Workbench {
                     | Panel::Primitive(_)
                     | Panel::Support(_)
                     | Panel::Load(_)
+                    | Panel::Shape(_)
+                    | Panel::Keep(_)
+                    | Panel::Symmetry(_)
                     | Panel::Asm(_)
             )
         )
@@ -536,6 +539,9 @@ impl Workbench {
             Panel::Primitive(p) => (p.shape.title(), None),
             Panel::Support(p) => (p.title(), p.editing.and_then(|id| self.study_item_name(id))),
             Panel::Load(p) => (p.title(), p.editing.and_then(|id| self.study_item_name(id))),
+            Panel::Shape(_) => ("Optimize Shape", self.active_study().map(|s| s.name.clone())),
+            Panel::Keep(p) => ("Keep Faces", p.editing.and_then(|id| self.study_item_name(id))),
+            Panel::Symmetry(_) => ("Symmetry", self.active_study().map(|s| s.name.clone())),
             Panel::Asm(p) => {
                 (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
             }
@@ -544,6 +550,8 @@ impl Workbench {
         let mut clear = false;
         // (For a force said by its parts: the way its first face looks.)
         let face_normal = self.load_face_normal();
+        // (How many kept faces and planes of symmetry Optimize Shape has.)
+        let shape_counts = self.active_study().and_then(|s| s.optimize.as_ref()).map_or((0, 0), |o| (o.kept.len(), o.symmetry.len()));
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             ui.label(egui::RichText::new(kind).font(theme::heading()).color(t.text));
@@ -558,6 +566,13 @@ impl Workbench {
                 ui.spacing_mut().indent = 10.0;
                 match &mut panel {
                     Panel::Support(p) => clear |= crate::analysis::support_fields(ui, p),
+                    Panel::Shape(p) => enter |= crate::shape::shape_fields(ui, p, shape_counts.0, shape_counts.1, t),
+                    Panel::Keep(p) => {
+                        let (cleared, entered) = crate::shape::keep_fields(ui, p, t);
+                        clear |= cleared;
+                        enter |= entered;
+                    }
+                    Panel::Symmetry(p) => clear |= crate::shape::symmetry_fields(ui, p),
                     Panel::Load(p) => {
                         let (cleared, entered) = crate::analysis::load_fields(ui, p, face_normal, t);
                         clear |= cleared;
@@ -1890,7 +1905,10 @@ impl Workbench {
                 | Panel::CornerSeam(_)
                 | Panel::Bend(_)
                 | Panel::Support(_)
-                | Panel::Load(_),
+                | Panel::Load(_)
+                | Panel::Shape(_)
+                | Panel::Keep(_)
+                | Panel::Symmetry(_),
             ) => self.panel_anchor().or_else(|| self.scene.bbox().map(|b| b.center())),
             Some(Panel::Hole(p)) => p
                 .points

@@ -337,3 +337,15 @@ fn sharpening_makes_the_shape_crisper_and_no_less_stiff() {
     let (ca, cb) = (a.shape_compliance.unwrap(), b.shape_compliance.unwrap());
     assert!(cb <= 1.02 * ca, "the sharpened shape's work {cb} against {ca}");
 }
+
+#[test]
+fn the_shape_solved_once_keeps_what_must_stay_then_the_densest() {
+    // (No programs: which elements are solid in the check.)
+    let (density, volumes, passive) = ([0.2, 0.9, 0.5, 0.1], [1.0, 1.0, 1.0, 1.0], [false, false, false, true]);
+    let solid = tenon_fea::topo::LEVELS;
+    assert_eq!(tenon_io::shape::kept_levels(&density, &volumes, &passive, 0.5), vec![0, solid, 0, solid]);
+    assert_eq!(tenon_io::shape::kept_levels(&density, &volumes, &passive, 0.75), vec![0, solid, solid, solid]);
+    // What must stay is kept however little is asked; equal densities go by order.
+    assert_eq!(tenon_io::shape::kept_levels(&density, &volumes, &passive, 0.0), vec![0, 0, 0, solid]);
+    assert_eq!(tenon_io::shape::kept_levels(&[0.5, 0.5], &[1.0, 1.0], &[false, false], 0.5), vec![solid, 0]);
+}

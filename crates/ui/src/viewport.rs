@@ -461,7 +461,9 @@ impl Workbench {
         }
         self.primitive_overlay(ui, rect, t);
         self.results_overlay(ui, rect, t);
+        self.shape_overlay(ui, rect, t);
         self.analysis_overlay(ui, rect, t);
+        self.shape_slider(ui, rect, t);
         self.print_overlay(ui, rect, t);
         if self.has_properties() {
             self.hole_markers(ui, rect, t);
@@ -859,7 +861,7 @@ impl Workbench {
     /// The style the part is drawn in: its own, but as edges only under a study's results,
     /// which are drawn over it in its place (bent, they would not cover it).
     fn shown_style(&self) -> VisualStyle {
-        if self.results_shown() { VisualStyle::Wireframe } else { self.view.style }
+        if self.results_shown() || self.shape_shown() { VisualStyle::Wireframe } else { self.view.style }
     }
 
     /// The colours body `bi` is drawn in: (faces, edges, faces with a cosmetic thread). A part

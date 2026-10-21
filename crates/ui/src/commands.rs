@@ -622,6 +622,21 @@ pub const RIBBON: &[RibbonTab] = &[
                 )],
             },
             RibbonPanel {
+                title: "Optimize",
+                commands: &[
+                    large(
+                        "analysis.optimize",
+                        "Optimize\nShape",
+                        "Where material is needed to carry the study's loads, for a share of the mass kept: a shape to model over",
+                        Icon::OptimizeShape,
+                        0,
+                    ),
+                    small("analysis.keep_faces", "Keep Faces", "Faces the shape must keep (bolt holes, mating faces), as deep as asked", Icon::KeepFaces, 0),
+                    small("analysis.symmetry", "Symmetry", "Planes the shape is the same on both sides of", Icon::SymmetryPlane, 0),
+                    small("analysis.export_shape", "Export Shape", "Write the shape shown as STL or 3MF, to model over or print", Icon::Save, 0),
+                ],
+            },
+            RibbonPanel {
                 title: "Display",
                 commands: &[
                     large("analysis.marks", "Boundary\nConditions", "Show or hide the supports and loads drawn on the part", Icon::BoundaryConditions, 0),

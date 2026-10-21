@@ -5,6 +5,18 @@ shows it in [ROADMAP.md](ROADMAP.md).
 
 ## Unreleased
 
+### Stress checks
+
+- **Optimize Shape** (topology optimization): in Stress Analysis, the Optimize panel works out
+  where material is needed to carry a study's loads to its supports, for a share of the mass
+  kept or a mass in grams. Keep Faces keeps bolt holes and mating faces (as deep as asked),
+  Symmetry makes the shape the same on both sides of up to three planes. It runs with Gmsh and
+  CalculiX as Simulate does, shows which round it is on (Esc stops it and keeps the shape so
+  far), draws the shape over the part with a slider for the share shown, says how much of the
+  part's stiffness it keeps, and exports it as STL or 3MF. A guide to model over: check what
+  you make with Simulate. Settings are kept with the study (`[study.optimize]` in the part
+  file). New commands `study.keep`, `study.shape`, `study.optimize`; docs/topology.md.
+
 ### Sketches
 
 - **Text.** Sketch > Create > Text: click where it starts, type it in the Format Text box

@@ -314,10 +314,11 @@ pub fn work_out(
     let field = Field { rho: topo::iso::node_density(mesh, &optimized.density, &passive), mesh: mesh.clone(), passive_node, held_node, loaded_node };
     let shown = topo::iso::extract(&field, fraction, smooth.min(MAX_SMOOTHING));
 
-    // The shape as it is shown, solved once: how stiff it is against the part.
+    // The shape solved once, solid where it is kept and empty elsewhere: how stiff it is against
+    // the part. (Kept: the densest elements, those that must stay first, up to the share kept.
+    // Densities averaged onto the nodes would thin a member one element thick until it broke.)
     report(progress, Phase::Checking, most, None);
-    let inside = topo::iso::crisp(&field, shown.threshold);
-    let levels: Vec<u16> = inside.iter().map(|i| if *i { topo::LEVELS } else { 0 }).collect();
+    let levels = kept_levels(&optimized.density, &design.volumes, &passive, shown.share);
     let shape_compliance = match tenon_fea::solve_shape(&tools, &deck, &levels, e0, nu, &scratch.dir, cancel, false) {
         Ok((u, _)) => Some(2.0 * u.iter().sum::<f64>()),
         Err(e) if e == tenon_fea::tools::STOPPED => None,
@@ -361,6 +362,26 @@ pub fn work_out(
         took: Took { meshing, solving: (started.elapsed().as_secs_f64() - meshing).max(0.0) },
         warnings,
     })
+}
+
+/// Each element solid (the top level) or empty (0): those that must stay, then the densest, until
+/// `share` of the volume is kept. Ties go by element order.
+pub fn kept_levels(density: &[f64], volumes: &[f64], passive: &[bool], share: f64) -> Vec<u16> {
+    let total: f64 = volumes.iter().sum();
+    let mut order: Vec<usize> = (0..density.len()).collect();
+    let rank = |i: usize| if passive.get(i).copied().unwrap_or(false) { f64::INFINITY } else { density.get(i).copied().unwrap_or(0.0) };
+    order.sort_by(|a, b| rank(*b).total_cmp(&rank(*a)).then(a.cmp(b)));
+    let mut levels = vec![0; density.len()];
+    let mut kept = 0.0;
+    for i in order {
+        let solid = passive.get(i).copied().unwrap_or(false);
+        if !solid && kept >= share * total {
+            break;
+        }
+        levels[i] = topo::LEVELS;
+        kept += volumes.get(i).copied().unwrap_or(0.0);
+    }
+    levels
 }
 
 /// Writes a shape's surface to `path`: STL (binary) or 3MF, by the file's ending.

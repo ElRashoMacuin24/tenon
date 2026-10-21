@@ -1225,3 +1225,154 @@ fn a_study_is_worked_out_on_the_geometry_thread_and_esc_stops_it() {
     d.frame(&mut wb, vec![]);
     browser_row(&d, "Results: out of date (Simulate)");
 }
+
+/// How many triangles of a shape the last frame drew.
+fn shape_drawn(d: &Driver) -> Option<usize> {
+    d.ctx.data(|x| x.get_temp(egui::Id::new("tn_shape_drawn")))
+}
+
+#[test]
+fn faces_are_kept_and_planes_of_symmetry_chosen_by_clicks() {
+    // Keep Faces and Symmetry need no programs: they are kept with the study (DEC-123).
+    let (mut wb, mut d) = bar();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.look_from(Vec3::new(1.0, -1.0, 1.0));
+    d.settle(&mut wb);
+    d.click(&mut wb, pressable(&d, "ribbon analysis.keep_faces"));
+    assert!(matches!(wb.panel, Some(Panel::Keep(_))), "{}", wb.status());
+    assert!(wb.status().starts_with("Keep Faces: click the faces"), "{}", wb.status());
+    // OK with no face is refused in words; the right end clicked, as deep as 3 mm.
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.status().contains("click at least one face") && matches!(wb.panel, Some(Panel::Keep(_))), "{}", wb.status());
+    let right = face(&wb, RIGHT);
+    d.click(&mut wb, right);
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_keep_deep"));
+    type_into(&mut d, &mut wb, "tn_props_keep_depth", "3");
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let kept = study(&wb).optimize.clone().unwrap().kept;
+    assert_eq!((kept.len(), kept[0].name.as_str(), kept[0].faces.len(), kept[0].depth), (1, "Keep1", 1, Some(3.0)));
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Keep Faces(1)");
+    browser_row(&d, "Keep1 (3 mm deep)");
+    browser_row(&d, "Shape: none yet (Optimize Shape)");
+    assert!(marked(&d, &wb, "kept", RIGHT), "a mark on the kept face");
+    // Double-clicked, its panel opens again: one layer now.
+    let row = browser_row(&d, "Keep1 (3 mm deep)").center();
+    double_click(&mut d, &mut wb, row);
+    let Some(Panel::Keep(p)) = &wb.panel else { panic!("no panel: {}", wb.status()) };
+    assert_eq!((p.editing, p.faces.len(), p.deep), (Some(kept[0].id), 1, true));
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_keep_deep"));
+    click_text(&mut d, &mut wb, "OK");
+    assert_eq!(study(&wb).optimize.clone().unwrap().kept[0].depth, None, "{}", wb.status());
+
+    // Symmetry: the XZ plane ticked (the bar lies from y = 0 to 20, so it is not symmetric about
+    // it: that is said when a shape is worked out, not here).
+    d.click(&mut wb, pressable(&d, "ribbon analysis.symmetry"));
+    assert!(matches!(wb.panel, Some(Panel::Symmetry(_))), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "tn_symmetry_XZ"));
+    click_text(&mut d, &mut wb, "OK");
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(study(&wb).optimize.clone().unwrap().symmetry, vec![tenon_model::PlaneRef::Origin(tenon_model::OriginPlane::XZ)]);
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Symmetry: 1 plane");
+    // Export Shape with no shape says so.
+    assert!(wb.run_ui("analysis.export_shape").unwrap_err().contains("Optimize Shape first"));
+}
+
+#[test]
+fn esc_and_finish_analysis_stop_a_shape_being_worked_out() {
+    let (mut wb, mut d) = bar();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    // A run going on, as the worker would have it.
+    let cancel = tenon_fea::Cancel::default();
+    let progress = std::sync::Arc::new(std::sync::Mutex::new(tenon_fea::topo::Report {
+        phase: tenon_fea::topo::Phase::Iterating,
+        last: Some(tenon_fea::topo::Iteration { number: 12, seconds: 1.1, ..Default::default() }),
+        most: 100,
+    }));
+    let shaping = crate::shape::Shaping { study: study(&wb).id, cancel: cancel.clone(), since: std::time::Instant::now(), progress };
+    wb.analysis.as_mut().unwrap().shaping = Some(shaping.clone());
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Shape: round 12 of at most 100...");
+    assert!(d.texts().iter().any(|t| t.starts_with("Optimize Shape: round 12 of at most 100 (1.1 s each)")), "{:?}", d.texts());
+    // A second run is refused while it goes on.
+    assert!(wb.optimize_shape().unwrap_err().contains("being worked out"));
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(cancel.load(std::sync::atomic::Ordering::Relaxed) && wb.status() == "Stopping...", "{}", wb.status());
+    // Finish Analysis stops one too.
+    let other = tenon_fea::Cancel::default();
+    wb.analysis.as_mut().unwrap().shaping = Some(crate::shape::Shaping { cancel: other.clone(), ..shaping });
+    wb.run_ui("analysis.finish").unwrap();
+    assert!(other.load(std::sync::atomic::Ordering::Relaxed) && !wb.in_analysis());
+}
+
+#[test]
+fn a_shape_is_worked_out_shown_on_a_slider_and_exported() {
+    if !programs("Optimize Shape in the app") {
+        return;
+    }
+    let (mut wb, mut d) = bar();
+    let find =
+        |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
+    // (Quick settings by command, for a quick test: the panel keeps what it does not show.)
+    wb.exec("study.shape", json!({ "element_size": 3, "iterations": 4, "sharpen": false })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, pressable(&d, "ribbon analysis.optimize"));
+    assert!(matches!(wb.panel, Some(Panel::Shape(_))), "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    // The part is 100 x 20 x 10 of steel: 157 g. Remove 60 %.
+    assert!(d.texts().iter().any(|t| t == "Part 157 g, about 78.5 g kept"), "{:?}", d.texts());
+    type_into(&mut d, &mut wb, "tn_props_shape_remove", "60");
+    d.frame(&mut wb, vec![]);
+    click_text(&mut d, &mut wb, "OK");
+    // Worked out (here at once: the kernel is on this thread), kept with the study, shown.
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let o = study(&wb).optimize.clone().unwrap();
+    assert_eq!((o.target, o.element_size, o.iterations, o.sharpen), (tenon_model::study::Target::Remove(60.0), Some(3.0), Some(4), false));
+    assert!(wb.status().starts_with("Study1: a shape of ") && wb.status().contains("for a part of 157 g (60% removed)"), "{}", wb.status());
+    assert!(wb.shape_shown() && !wb.results_shown(), "the shape is drawn, the stress colours are not");
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Shape: 60% removed (stopped early)");
+    let first = shape_drawn(&d).expect("the shape is drawn");
+    assert!(first > 50, "{first} triangles");
+    // Another share on the slider: another surface, and a note that it is not an optimum.
+    type_into(&mut d, &mut wb, "tn_shape_keep", "70");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let v = wb.shape_view().unwrap();
+    assert!((v.percent - 70.0).abs() < 1e-9 && (v.shown.share - 0.7).abs() < 0.02, "{} {}", v.percent, v.shown.share);
+    assert!(d.texts().iter().any(|t| t.starts_with("Optimized for 40%: other shares show where material ranks")), "{:?}", d.texts());
+    assert_ne!(shape_drawn(&d), Some(first));
+    // Export Shape: the shape shown, written where the user chose.
+    let to = std::env::temp_dir().join(format!("tenon-shape-ui-{}.stl", std::process::id()));
+    let chosen = to.clone();
+    wb.services.pick_save = Some(Box::new(move |_: &str, _: &str| Some(chosen.clone())));
+    d.click(&mut wb, pressable(&d, "ribbon analysis.export_shape"));
+    let data = std::fs::read(&to).unwrap_or_else(|e| panic!("{e}: {}", wb.status()));
+    assert_eq!(tenon_io::stl::binary_triangle_count(&data).map(|n| n as usize), Some(wb.shape_view().unwrap().shown.skin.triangles.len()));
+    std::fs::remove_file(&to).ok();
+    // Its row clicked: hidden, and the part is drawn as it was.
+    let row = browser_row(&d, "Shape: 60% removed (stopped early)").center();
+    d.click(&mut wb, row);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.shape_shown() && shape_drawn(&d).is_none());
+    browser_row(&d, "Shape: 60% removed (stopped early) (hidden)");
+    // The study changed: the shape is out of date.
+    wb.exec("study.set", json!({ "item": 2, "newtons": 150 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Shape: out of date (Optimize Shape)");
+}

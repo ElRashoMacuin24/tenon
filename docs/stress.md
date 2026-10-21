@@ -128,6 +128,9 @@ Mesh View shows the elements.
 
 Change a load, a face or the part, and the results are out of date: Simulate again.
 
+The Optimize panel works out a shape for the study's loads with the same two programs:
+[topology.md](topology.md).
+
 ## How it is checked
 
 `cargo xtask ci` (and so CI, on Windows, Linux and macOS) works these studies out through
