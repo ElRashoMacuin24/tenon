@@ -42,6 +42,10 @@ pub struct Filter {
 impl Filter {
     /// The filter for elements with these middles and volumes, over `radius` (mm), the same on
     /// both sides of each of `mirrors`.
+    ///
+    /// Each plane through the part about doubles the table and the time of each pass, not
+    /// only near the plane: every element's image lands inside the part, and the neighbours of
+    /// the image are other elements, each a new entry in the row.
     pub fn new(centroids: &[Vec3], volumes: &[f64], radius: f64, mirrors: &[Mirror]) -> Result<Filter, String> {
         Filter::within(centroids, volumes, radius, mirrors, MOST_BYTES)
     }
@@ -97,9 +101,9 @@ impl Filter {
                 f.coef.push(w * volumes[*i as usize] / sum);
             }
             let bytes = 4 * (f.start.len() + 1) + 12 * f.near.len();
-            let Ok(end) = u32::try_from(f.near.len()) else { return Err(too_big(radius, centroids.len(), most)) };
+            let Ok(end) = u32::try_from(f.near.len()) else { return Err(too_big(radius, centroids.len(), mirrors.len(), most)) };
             if bytes > most {
-                return Err(too_big(radius, centroids.len(), most));
+                return Err(too_big(radius, centroids.len(), mirrors.len(), most));
             }
             f.start.push(end);
         }
@@ -144,13 +148,19 @@ impl Filter {
     }
 }
 
-/// The refusal of a table too large to keep.
-fn too_big(radius: f64, elements: usize, most: usize) -> String {
+/// The refusal of a table too large to keep, for so many `planes` of symmetry.
+fn too_big(radius: f64, elements: usize, planes: usize, most: usize) -> String {
     let radius = (radius * 1000.0).round() / 1000.0;
-    format!(
-        "smoothing the densities of {elements} elements over {radius} mm would take more than {} MB: ask for a smaller smallest member, or larger elements",
-        most / (1024 * 1024)
-    )
+    let most = most / (1024 * 1024);
+    match planes {
+        0 => format!(
+            "smoothing the densities of {elements} elements over {radius} mm would take more than {most} MB: ask for a smaller smallest member, or larger elements"
+        ),
+        _ => format!(
+            "smoothing the densities of {elements} elements over {radius} mm with {planes} plane{} of symmetry would take more than {most} MB: ask for a smaller smallest member, larger elements, or fewer planes (each plane through the part doubles the memory)",
+            if planes == 1 { "" } else { "s" }
+        ),
+    }
 }
 
 /// The elements in cubes `cell` across, to find those near a point without looking at all.
@@ -324,23 +334,31 @@ pub(crate) mod tests {
 
     #[test]
     fn the_filter_is_its_definition() {
-        let (c, mut v) = block([3, 2, 2], Vec3::new(3.0, 2.0, 2.0));
+        let (corner, mut v) = block([3, 2, 2], Vec3::new(3.0, 2.0, 2.0));
         let mut rng = Lcg(11);
         v.iter_mut().for_each(|v| *v *= 0.5 + rng.next());
-        for mirrors in [
-            vec![],
-            vec![plane(Vec3::new(0.0, 0.0, 0.0), Vec3::X)],
-            vec![plane(Vec3::ZERO, Vec3::X), plane(Vec3::ZERO, Vec3::Y), plane(Vec3::ZERO, Vec3::Z)],
-        ] {
-            let f = Filter::new(&c, &v, 1.3, &mirrors).unwrap();
-            let full = by_hand(&c, &v, 1.3, &mirrors);
-            for (e, want) in full.iter().enumerate() {
-                let (near, coef) = f.row(e);
-                let mut got = vec![0.0; c.len()];
-                near.iter().zip(coef).for_each(|(i, a)| got[*i as usize] = *a);
-                assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-14), "row {e}");
-                // Only the elements with a weight are in the row.
-                assert_eq!(near.len(), want.iter().filter(|a| **a > 0.0).count());
+        // The block from the origin, the planes on its faces; then a longer one with its middle
+        // at the origin, the planes through it, so that every element's images land inside,
+        // some of them farther than the radius from the element.
+        let (long, mut lv) = block([5, 3, 2], Vec3::new(5.0, 3.0, 2.0));
+        lv.iter_mut().for_each(|v| *v *= 0.5 + rng.next());
+        let middle: Vec<Vec3> = long.iter().map(|p| *p - Vec3::new(2.5, 1.5, 1.0)).collect();
+        for (c, v) in [(corner, v), (middle, lv)] {
+            for mirrors in [
+                vec![],
+                vec![plane(Vec3::new(0.0, 0.0, 0.0), Vec3::X)],
+                vec![plane(Vec3::ZERO, Vec3::X), plane(Vec3::ZERO, Vec3::Y), plane(Vec3::ZERO, Vec3::Z)],
+            ] {
+                let f = Filter::new(&c, &v, 1.3, &mirrors).unwrap();
+                let full = by_hand(&c, &v, 1.3, &mirrors);
+                for (e, want) in full.iter().enumerate() {
+                    let (near, coef) = f.row(e);
+                    let mut got = vec![0.0; c.len()];
+                    near.iter().zip(coef).for_each(|(i, a)| got[*i as usize] = *a);
+                    assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-14), "row {e}");
+                    // Only the elements with a weight are in the row.
+                    assert_eq!(near.len(), want.iter().filter(|a| **a > 0.0).count());
+                }
             }
         }
     }
@@ -425,6 +443,56 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn each_plane_through_the_part_doubles_the_rows_away_from_it() {
+        // A block and its images in one, two and three planes, made here so that the whole is
+        // the same on both sides of each plane, element for element (the images are exact: the
+        // middles are in quarters).
+        let (half, mut hv) = block([4, 4, 4], Vec3::new(4.0, 4.0, 4.0));
+        let mut rng = Lcg(31);
+        hv.iter_mut().for_each(|v| *v *= 0.5 + rng.next());
+        let planes = [plane(Vec3::ZERO, Vec3::X), plane(Vec3::new(0.0, 4.0, 0.0), Vec3::Y), plane(Vec3::new(0.0, 0.0, 4.0), Vec3::Z)];
+        let r = 1.6;
+        for k in 1..=3 {
+            let group = mirror_group(&planes[..k]).unwrap();
+            let c: Vec<Vec3> = group.iter().flat_map(|g| half.iter().map(|p| g.iter().fold(*p, |p, m| m.image(p)))).collect();
+            let v: Vec<f64> = group.iter().flat_map(|_| hv.iter().copied()).collect();
+            let (plain, mirrored) = (Filter::new(&c, &v, r, &[]).unwrap(), Filter::new(&c, &v, r, &planes[..k]).unwrap());
+            let mut away = 0;
+            for (e, ce) in c.iter().enumerate() {
+                let ((near0, coef0), (near, coef)) = (plain.row(e), mirrored.row(e));
+                // Each image's neighbours are as many as the element's own, and some may be
+                // the same ones.
+                assert!(near.len() <= near0.len() << k, "row {e}");
+                if planes[..k].iter().all(|m| (*ce - m.point).dot(m.normal).abs() >= r) {
+                    away += 1;
+                    // Away from the planes no two images share a neighbour: the row takes in a
+                    // whole neighbourhood for each.
+                    assert_eq!(near.len(), near0.len() << k, "row {e}");
+                    // Its own neighbours keep their weights, shared out over 2^k as many.
+                    for (i, a) in near0.iter().zip(coef0) {
+                        let at = near.binary_search(i).unwrap();
+                        assert!((coef[at] * (1 << k) as f64 - a).abs() < 1e-12 * a, "row {e}, column {i}");
+                    }
+                }
+            }
+            // Many are away from the planes: about 0.6^k of them.
+            assert!(away * 8 > c.len(), "{k} planes: {away} of {}", c.len());
+            // A table too large says to leave out a plane.
+            let bytes = 4 * mirrored.start.len() + 12 * mirrored.near.len();
+            assert!(Filter::within(&c, &v, r, &planes[..k], bytes).is_ok());
+            assert_eq!(
+                Filter::within(&c, &v, r, &planes[..k], bytes - 1).unwrap_err(),
+                format!(
+                    "smoothing the densities of {} elements over 1.6 mm with {k} plane{} of symmetry would take more than {} MB: ask for a smaller smallest member, larger elements, or fewer planes (each plane through the part doubles the memory)",
+                    c.len(),
+                    if k == 1 { "" } else { "s" },
+                    (bytes - 1) >> 20
+                )
+            );
+        }
+    }
+
+    #[test]
     fn planes_not_at_right_angles_are_refused() {
         let x = plane(Vec3::ZERO, Vec3::X);
         let tilted = plane(Vec3::ZERO, Vec3::new(1.0, 1.0, 0.0).normalized());
@@ -501,21 +569,39 @@ pub(crate) mod tests {
                 (bytes - 1) >> 20
             )
         );
-        assert!(too_big(1.5, 100_000, MOST_BYTES).contains("more than 512 MB"));
+        assert!(too_big(1.5, 100_000, 0, MOST_BYTES).contains("more than 512 MB"));
+        // With planes, leaving one out halves the table.
+        assert_eq!(
+            too_big(1.5004, 101_400, 1, MOST_BYTES),
+            "smoothing the densities of 101400 elements over 1.5 mm with 1 plane of symmetry would take more than 512 MB: ask for a smaller smallest member, larger elements, or fewer planes (each plane through the part doubles the memory)"
+        );
+        assert!(too_big(2.0, 101_400, 3, MOST_BYTES).contains("over 2 mm with 3 planes of symmetry would take more than 512 MB: ask for a smaller"));
     }
 
     #[test]
     fn a_hundred_thousand_elements_are_filtered_in_moments() {
         // 26 x 26 x 25 cubes of six: 101,400 elements, each taking in its neighbours within one
-        // and a half cubes.
+        // and a half cubes; then the same with a plane of symmetry through the middle, as on a
+        // part that is the same on both sides of it, where each element takes in its image's
+        // neighbours too.
         let (c, v) = block([26, 26, 25], Vec3::new(26.0, 26.0, 25.0));
+        let c: Vec<Vec3> = c.iter().map(|p| *p - Vec3::new(13.0, 13.0, 12.5)).collect();
+        let longest = |f: &Filter| (0..f.rows()).map(|e| f.row(e).0.len()).max().unwrap();
         let began = std::time::Instant::now();
+        let plain = Filter::new(&c, &v, 1.5, &[]).unwrap();
+        let (entries, most) = (plain.near.len(), longest(&plain));
+        drop(plain);
         let f = Filter::new(&c, &v, 1.5, &[plane(Vec3::ZERO, Vec3::X)]).unwrap();
         let x = f.apply(&vec![1.0; c.len()]);
         let built = began.elapsed();
         assert!(x.iter().all(|x| (x - 1.0).abs() < 1e-12));
-        let most = (0..f.rows()).map(|e| f.row(e).0.len()).max().unwrap();
-        assert!(most < 200, "{most}");
+        assert!(most < 100, "{most}");
+        assert!(longest(&f) <= 2 * most, "{} against {most}", longest(&f));
+        // The elements farther than the radius from the plane, nine in ten of them, take in two
+        // neighbourhoods; those nearer, where the two overlap, fewer.
+        let grown = f.near.len() as f64 / entries as f64;
+        assert!(grown > 1.8 && grown < 2.0, "{grown}");
+        assert!(4 * f.start.len() + 12 * f.near.len() < MOST_BYTES / 2);
         assert!(built.as_secs_f64() < 30.0, "{built:?}");
     }
 }
