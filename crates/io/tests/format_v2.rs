@@ -1050,3 +1050,80 @@ fn a_stress_study_and_a_materials_strength_are_written_as_text_and_read_back() {
     // The same file against itself: nothing.
     assert!(diff::diff_files(&dir.join("b.tenon"), &dir.join("b.tenon")).unwrap().same());
 }
+
+#[test]
+fn optimize_shape_settings_are_kept_with_the_study() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let mut go =
+        |s: &mut Session, id: &str, p: Value| tenon_io::cmd::run(s, id, &p, Some(&mut k as &mut dyn Kernel)).unwrap_or_else(|e| panic!("{id}: {e}"));
+    go(&mut s, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    let face = |s: &mut Session, go: &mut dyn FnMut(&mut Session, &str, Value) -> Value, way: &str| {
+        go(s, "model.find", json!({ "what": "faces", "facing": way }))["found"][0]["reference"].clone()
+    };
+    let (left, right) = (face(&mut s, &mut go, "left"), face(&mut s, &mut go, "right"));
+    go(&mut s, "study.new", json!({ "name": "Bracket" }));
+    go(&mut s, "study.fix", json!({ "faces": [left] }));
+    go(&mut s, "study.force", json!({ "faces": [right], "newtons": 150, "direction": "down" }));
+    // Kept faces share the study's run of ids (DEC-123), and are named Keep1... unless named.
+    let r = go(&mut s, "study.keep", json!({ "faces": [right], "depth": 3, "name": "Bolt" }));
+    assert_eq!(r["kept"], 3, "{r}");
+    let r = go(&mut s, "study.keep", json!({ "faces": [left] }));
+    assert_eq!((r["kept"].as_u64(), r["optimize"]["kept"][1]["name"].as_str()), (Some(4), Some("Keep1")), "{r}");
+    let r = go(
+        &mut s,
+        "study.shape",
+        json!({ "remove": 60, "min_member": 4, "resolution": "medium", "symmetry": ["xz"], "sharpen": false, "iterations": 80 }),
+    );
+    assert_eq!(
+        (
+            r["optimize"]["remove"].as_f64(),
+            r["optimize"]["resolution"].as_str(),
+            r["optimize"]["symmetry"].as_u64(),
+            r["optimize"]["sharpen"].as_bool()
+        ),
+        (Some(60.0), Some("medium"), Some(1), Some(false)),
+        "{r}"
+    );
+    let extra = Map::new();
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    // A table of its own under the study's record.
+    assert!(text.contains("\n[study.optimize]\nremove = 60.0\nmin_member = 4.0\nresolution = \"medium\"\n"), "{text}");
+    for said in ["name = \"Bolt\"", "depth = 3.0", "name = \"Keep1\"", "sharpen = false", "iterations = 80", "symmetry = ["] {
+        assert!(text.contains(said), "{said} is not in:\n{text}");
+    }
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+    let (was, now) = (s.document().studies()[0].optimize.clone().unwrap(), back.studies()[0].optimize.clone().unwrap());
+    assert_eq!(
+        (now.target, now.min_member, now.resolution, now.sharpen, now.iterations),
+        (was.target, was.min_member, was.resolution, was.sharpen, was.iterations)
+    );
+    assert_eq!(now.symmetry, was.symmetry);
+    assert_eq!(
+        now.kept.iter().map(|k| (k.id, k.name.clone(), k.depth, k.faces[0].origin)).collect::<Vec<_>>(),
+        was.kept.iter().map(|k| (k.id, k.name.clone(), k.depth, k.faces[0].origin)).collect::<Vec<_>>()
+    );
+
+    // Changed and taken away as supports and loads are; a support's id is no kept faces.
+    let r = go(&mut s, "study.set", json!({ "item": 3, "depth": null, "name": "Bore" }));
+    assert_eq!((r["optimize"]["kept"][0]["name"].as_str(), r["optimize"]["kept"][0]["depth"].is_null()), (Some("Bore"), true), "{r}");
+    let r = go(&mut s, "study.remove", json!({ "item": 4 }));
+    assert_eq!(r["optimize"]["kept"].as_array().unwrap().len(), 1, "{r}");
+    // Refused in words, the study as it was.
+    let before = s.document().clone();
+    for (id, p, said) in [
+        ("study.shape", json!({ "remove": 99 }), "from 5 to 95 %"),
+        ("study.shape", json!({ "remove": 40, "grams": 10 }), "not both"),
+        ("study.shape", json!({ "iterations": 0 }), "from 1 to 300"),
+        ("study.shape", json!({ "symmetry": ["xy", "yz", "xz", "xy"] }), "at most 3 planes"),
+        ("study.shape", json!({ "resolution": "huge" }), "coarse"),
+        ("study.set", json!({ "item": 3, "suppressed": true }), "removed"),
+        ("study.set", json!({ "item": 1, "depth": 2 }), "depth"),
+        ("study.keep", json!({ "faces": [right], "depth": -1 }), "depth"),
+    ] {
+        let e = tenon_io::cmd::run(&mut s, id, &p, Some(&mut k as &mut dyn Kernel)).unwrap_err();
+        assert!(e.to_string().contains(said), "{id} {p}: {e}");
+    }
+    assert_eq!(s.document(), &before);
+}

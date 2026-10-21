@@ -46,7 +46,7 @@ pub(crate) const PART: Shape = Shape {
     ],
     kinds: &[("features", &["id", "name", "suppressed", "visible"])],
     computed: &[],
-    tables: &[],
+    tables: &["study.optimize"],
 };
 
 pub(crate) const ASSEMBLY: Shape = Shape {

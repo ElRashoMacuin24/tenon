@@ -14,12 +14,15 @@
 use serde::{Deserialize, Serialize};
 use tenon_geom::Vec3;
 
+use crate::document::PlaneRef;
 use crate::naming::{EdgeRef, FaceRef};
 
 /// The most studies a part has, and the most supports or loads a study has (hostile-input
 /// caps).
 pub const MAX_STUDIES: usize = 100;
 pub const MAX_ITEMS: usize = 1000;
+/// The longest length a study takes, mm (a kilometre).
+const MAX_SIZE: f64 = 1.0e6;
 /// The most faces one support or load is on.
 pub const MAX_FACES: usize = 10_000;
 /// The largest force (N) and pressure (MPa) taken: beyond any part a study is for.
@@ -210,6 +213,8 @@ pub struct ItemChange {
     pub point: Option<Vec3>,
     /// How fast a body spins.
     pub rpm: Option<f64>,
+    /// How deep kept faces keep material (`Some(None)`: one layer of elements).
+    pub depth: Option<Option<f64>>,
 }
 
 impl ItemChange {
@@ -229,6 +234,7 @@ impl ItemChange {
             ("radial", self.radial.is_some()),
             ("axial", self.axial.is_some()),
             ("tangential", self.tangential.is_some()),
+            ("depth", self.depth.is_some()),
         ];
         given.into_iter().find(|(key, given)| *given && !allowed.contains(key)).map(|(key, _)| key)
     }
@@ -247,6 +253,168 @@ pub struct Study {
     /// part's size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh_size: Option<f64>,
+    /// What Optimize Shape is asked of the study (DEC-123), once anything has been said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optimize: Option<Optimize>,
+}
+
+/// The least and most share of the mass Optimize Shape takes away, percent.
+pub const MIN_REMOVE: f64 = 5.0;
+pub const MAX_REMOVE: f64 = 95.0;
+/// The most planes of symmetry, and rounds, Optimize Shape takes.
+pub const MAX_SYMMETRY: usize = 3;
+pub const MAX_SHAPE_ITERATIONS: u32 = 300;
+
+/// How much of the part Optimize Shape keeps: a share of its mass taken away, or a mass to
+/// come to.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Target {
+    /// Percent of the mass to take away.
+    Remove(f64),
+    /// The mass to come to, grams.
+    Grams(f64),
+}
+
+/// How finely the part is divided for Optimize Shape: about how many nodes its mesh has.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Resolution {
+    #[default]
+    Coarse,
+    Medium,
+    Fine,
+}
+
+impl Resolution {
+    /// About how many nodes the mesh is to have.
+    pub fn nodes(self) -> usize {
+        match self {
+            Resolution::Coarse => 12_000,
+            Resolution::Medium => 30_000,
+            Resolution::Fine => 80_000,
+        }
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            Resolution::Coarse => "coarse",
+            Resolution::Medium => "medium",
+            Resolution::Fine => "fine",
+        }
+    }
+
+    fn is_coarse(&self) -> bool {
+        *self == Resolution::Coarse
+    }
+}
+
+/// Faces Optimize Shape keeps solid, with material under them as deep as `depth` (mm; none:
+/// one layer of elements). Its id is one of the study's run of ids.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Kept {
+    pub id: u32,
+    pub name: String,
+    pub faces: Vec<FaceRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<f64>,
+}
+
+impl Kept {
+    fn check(&self) -> Result<(), String> {
+        name_ok(&self.name).map_err(|e| format!("kept faces {}: {e}", self.id))?;
+        places_ok(&self.faces, &[], &self.name, false)?;
+        if let Some(d) = self.depth
+            && !(d.is_finite() && d > 0.0 && d <= MAX_SIZE)
+        {
+            return Err(format!("{}: the depth kept must be more than 0", self.name));
+        }
+        Ok(())
+    }
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// What Optimize Shape is asked (DEC-123): how much to keep, how fine, what must stay, which
+/// planes the shape is the same on both sides of.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Optimize {
+    #[serde(flatten)]
+    pub target: Target,
+    /// The thinnest member wanted, mm. None: three elements across.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_member: Option<f64>,
+    #[serde(default, skip_serializing_if = "Resolution::is_coarse")]
+    pub resolution: Resolution,
+    /// The size of the elements, mm, in place of what `resolution` gives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_size: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept: Vec<Kept>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub symmetry: Vec<PlaneRef>,
+    /// The design sharpened toward solid and empty as it goes (written only when false).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub sharpen: bool,
+    /// The most rounds. None: as many as the method takes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<u32>,
+}
+
+impl Default for Optimize {
+    fn default() -> Optimize {
+        Optimize {
+            target: Target::Remove(50.0),
+            min_member: None,
+            resolution: Resolution::Coarse,
+            element_size: None,
+            kept: Vec::new(),
+            symmetry: Vec::new(),
+            sharpen: true,
+            iterations: None,
+        }
+    }
+}
+
+impl Optimize {
+    /// Whether it can be asked, in words when not.
+    pub fn check(&self) -> Result<(), String> {
+        match self.target {
+            Target::Remove(r) if !(MIN_REMOVE..=MAX_REMOVE).contains(&r) => {
+                return Err(format!("the share taken away must be from {MIN_REMOVE} to {MAX_REMOVE} %"));
+            }
+            Target::Grams(g) if !(g.is_finite() && g > 0.0) => return Err("the mass to come to must be more than 0 g".into()),
+            _ => {}
+        }
+        let size = |v: Option<f64>, what: &str| match v {
+            Some(v) if !(v.is_finite() && v > 0.0 && v <= MAX_SIZE) => Err(format!("{what} must be more than 0")),
+            _ => Ok(()),
+        };
+        size(self.min_member, "the thinnest member")?;
+        size(self.element_size, "the element size")?;
+        if self.symmetry.len() > MAX_SYMMETRY {
+            return Err(format!("a shape is the same on both sides of at most {MAX_SYMMETRY} planes"));
+        }
+        if let Some(n) = self.iterations
+            && !(1..=MAX_SHAPE_ITERATIONS).contains(&n)
+        {
+            return Err(format!("the most rounds must be from 1 to {MAX_SHAPE_ITERATIONS}"));
+        }
+        if self.kept.len() > MAX_ITEMS {
+            return Err(format!("at most {MAX_ITEMS} sets of kept faces"));
+        }
+        for k in &self.kept {
+            k.check()?;
+        }
+        Ok(())
+    }
 }
 
 fn name_ok(name: &str) -> Result<(), String> {
@@ -394,7 +562,7 @@ impl LoadKind {
 
 impl Study {
     pub fn new(id: StudyId, name: String) -> Study {
-        Study { id, name, supports: Vec::new(), loads: Vec::new(), mesh_size: None }
+        Study { id, name, supports: Vec::new(), loads: Vec::new(), mesh_size: None, optimize: None }
     }
 
     /// Whether the study is whole in itself: names, sizes, ids that are not repeated. (Whether
@@ -404,10 +572,13 @@ impl Study {
         if self.supports.len() > MAX_ITEMS || self.loads.len() > MAX_ITEMS {
             return Err(format!("{}: at most {MAX_ITEMS} supports and {MAX_ITEMS} loads", self.name));
         }
-        let mut ids: Vec<u32> = self.supports.iter().map(|s| s.id).chain(self.loads.iter().map(|l| l.id)).collect();
+        let mut ids: Vec<u32> = self.item_ids().collect();
         ids.sort_unstable();
         if ids.windows(2).any(|w| w[0] == w[1]) {
-            return Err(format!("{}: two of its supports and loads have the same id", self.name));
+            return Err(format!("{}: two of its supports, loads and kept faces have the same id", self.name));
+        }
+        if let Some(o) = &self.optimize {
+            o.check().map_err(|e| format!("{}: {e}", self.name))?;
         }
         for s in &self.supports {
             s.check().map_err(|e| format!("{}: {e}", self.name))?;
@@ -430,11 +601,18 @@ impl Study {
         Ok(())
     }
 
-    /// The id the next support or load gets, and the name of the next of `word`'s kind
-    /// ("Fixed1", "Force2").
+    /// The ids of its supports, loads and kept faces (one run of ids).
+    fn item_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        let kept = self.optimize.iter().flat_map(|o| o.kept.iter().map(|k| k.id));
+        self.supports.iter().map(|s| s.id).chain(self.loads.iter().map(|l| l.id)).chain(kept)
+    }
+
+    /// The id the next support, load or kept faces get, and the name of the next of `word`'s
+    /// kind ("Fixed1", "Force2", "Keep1").
     fn next(&self, word: &str) -> (u32, String) {
-        let id = self.supports.iter().map(|s| s.id).chain(self.loads.iter().map(|l| l.id)).max().map_or(1, |m| m.saturating_add(1));
-        let taken = |n: &str| self.supports.iter().any(|s| s.name == n) || self.loads.iter().any(|l| l.name == n);
+        let id = self.item_ids().max().map_or(1, |m| m.saturating_add(1));
+        let kept = |n: &str| self.optimize.iter().any(|o| o.kept.iter().any(|k| k.name == n));
+        let taken = |n: &str| self.supports.iter().any(|s| s.name == n) || self.loads.iter().any(|l| l.name == n) || kept(n);
         let name = (1..=MAX_ITEMS as u32 + 1).map(|i| format!("{word}{i}")).find(|n| !taken(n)).unwrap_or_else(|| format!("{word}{id}"));
         (id, name)
     }
@@ -453,6 +631,19 @@ impl Study {
         let support = Support { id, name: name.map_or(auto, |n| n.trim().to_owned()), kind, faces, edges, suppressed: false };
         support.check()?;
         self.supports.push(support);
+        Ok(id)
+    }
+
+    /// Keeps `faces` solid in Optimize Shape, as deep as `depth` (DEC-123). Returns its id.
+    pub fn keep(&mut self, faces: Vec<FaceRef>, depth: Option<f64>, name: Option<String>) -> Result<u32, String> {
+        let before = self.clone();
+        let (id, auto) = self.next("Keep");
+        let kept = Kept { id, name: name.map_or(auto, |n| n.trim().to_owned()), faces, depth };
+        self.optimize.get_or_insert_with(Optimize::default).kept.push(kept);
+        if let Err(e) = self.check() {
+            *self = before;
+            return Err(e);
+        }
         Ok(id)
     }
 
@@ -489,6 +680,22 @@ impl Study {
             None => Ok(()),
         };
         let alter = |this: &mut Study| -> Result<(), String> {
+            if let Some(k) = this.optimize.iter_mut().flat_map(|o| o.kept.iter_mut()).find(|k| k.id == id) {
+                stray(&k.name, "kept faces", "they have faces, a name and a depth", &["faces", "depth"])?;
+                if change.suppressed.is_some() {
+                    return Err(format!("{} are kept faces: they are not suppressed, but removed", k.name));
+                }
+                if let Some(f) = &change.faces {
+                    k.faces = f.clone();
+                }
+                if let Some(d) = change.depth {
+                    k.depth = d;
+                }
+                if let Some(n) = &change.name {
+                    k.name = n.trim().to_owned();
+                }
+                return Ok(());
+            }
             if let Some(s) = this.supports.iter_mut().find(|s| s.id == id) {
                 match &mut s.kind {
                     SupportKind::Pin { radial, axial, tangential } => {
@@ -525,7 +732,7 @@ impl Study {
                 s.suppressed = change.suppressed.unwrap_or(s.suppressed);
                 return Ok(());
             }
-            let Some(l) = this.loads.iter_mut().find(|l| l.id == id) else { return Err(format!("{} has no support or load {id}", this.name)) };
+            let Some(l) = this.loads.iter_mut().find(|l| l.id == id) else { return Err(format!("{} has no support, load or kept faces {id}", this.name)) };
             match &mut l.kind {
                 LoadKind::Force { newtons, direction } => {
                     stray(&l.name, "a force", "its size is in `newtons`, its way in `direction`", &["faces", "edges", "newtons", "direction"])?;
@@ -626,12 +833,16 @@ impl Study {
         Study { id, name, ..self.clone() }
     }
 
-    /// Takes the support or load `id` away. False when there is none.
+    /// Takes the support, load or kept faces `id` away. False when there is none.
     pub fn remove(&mut self, id: u32) -> bool {
-        let before = self.supports.len() + self.loads.len();
+        let count = |s: &Study| s.supports.len() + s.loads.len() + s.optimize.as_ref().map_or(0, |o| o.kept.len());
+        let before = count(self);
         self.supports.retain(|s| s.id != id);
         self.loads.retain(|l| l.id != id);
-        self.supports.len() + self.loads.len() < before
+        if let Some(o) = &mut self.optimize {
+            o.kept.retain(|k| k.id != id);
+        }
+        count(self) < before
     }
 
     /// What the study still needs before it can be solved, in words; empty when it is ready.
@@ -727,7 +938,7 @@ mod tests {
         told(s.set(more, ItemChange { radial: Some(true), ..ItemChange::default() }), "is a force: `radial`");
         told(s.set(more, ItemChange { faces: Some(vec![]), ..newtons(3.0) }), "at least one face");
         told(s.set(more, newtons(0.0)), "other than 0");
-        told(s.set(77, ItemChange::default()), "no support or load 77");
+        told(s.set(77, ItemChange::default()), "no support, load or kept faces 77");
         assert_eq!(s, was);
 
         // Suppressed: kept, and for now not there. A study with nothing else lacks it again.

@@ -71,7 +71,7 @@ fn a_study_says_where_a_part_is_held_and_what_pushes_on_it() {
     // Removed by id; the element size set and left to be chosen again; renamed.
     let fewer = run(&mut s, &mut k, "study.remove", json!({ "item": 4 }));
     assert_eq!((fewer["removed"].as_u64(), fewer["loads"].as_array().map(Vec::len)), (Some(4), Some(3)));
-    assert!(refused(&mut s, &mut k, "study.remove", json!({ "item": 4 })).contains("no support or load 4"));
+    assert!(refused(&mut s, &mut k, "study.remove", json!({ "item": 4 })).contains("no support, load or kept faces 4"));
     assert_eq!(run(&mut s, &mut k, "study.mesh_size", json!({ "size": 2.5 }))["mesh_size"], 2.5);
     assert_eq!(run(&mut s, &mut k, "study.mesh_size", json!({ "size": null }))["mesh_size"], Value::Null);
     assert!(refused(&mut s, &mut k, "study.mesh_size", json!({ "size": 0 })).contains("more than 0"));
@@ -93,7 +93,7 @@ fn a_study_says_where_a_part_is_held_and_what_pushes_on_it() {
     assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 3, "direction": "down" })).contains("is a pressure"));
     assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 2, "megapascals": 1 })).contains("is a force"));
     assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 2, "faces": [], "newtons": 1 })).contains("at least one face"));
-    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 9, "name": "x" })).contains("no support or load 9"));
+    assert!(refused(&mut s, &mut k, "study.set", json!({ "item": 9, "name": "x" })).contains("no support, load or kept faces 9"));
     assert!(matches!(s.document().study(StudyId(1)).unwrap().loads[0].kind, LoadKind::Force { newtons, .. } if newtons == 220.0));
 
     // What is not a load is refused in words, and nothing is added.

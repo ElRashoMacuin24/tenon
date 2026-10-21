@@ -542,7 +542,7 @@ fn document_materials(s: &mut Session, _: &Value) -> CmdResult {
 
 // ---- stress studies ---------------------------------------------------------------------------
 
-use crate::study::{ItemChange, LoadKind, Study, StudyId, SupportKind};
+use crate::study::{ItemChange, LoadKind, Study, StudyId, SupportKind, Target};
 
 /// The study a command is about: the one named, or the part's only one.
 fn study_of(s: &Session, p: &Value) -> Result<StudyId, CmdError> {
@@ -561,7 +561,7 @@ fn study_of(s: &Session, p: &Value) -> Result<StudyId, CmdError> {
 }
 
 fn study_json(st: &Study) -> Value {
-    json!({
+    let mut out = json!({
         "study": st.id.0,
         "name": st.name,
         "mesh_size": st.mesh_size,
@@ -630,7 +630,25 @@ fn study_json(st: &Study) -> Value {
             v
         }).collect::<Vec<_>>(),
         "needs": st.missing(),
-    })
+    });
+    // What Optimize Shape is asked of it, when anything has been said (DEC-123).
+    if let Some(o) = &st.optimize {
+        let mut v = json!({
+            "resolution": o.resolution.word(),
+            "min_member": o.min_member,
+            "element_size": o.element_size,
+            "symmetry": o.symmetry.len(),
+            "sharpen": o.sharpen,
+            "iterations": o.iterations,
+            "kept": o.kept.iter().map(|k| json!({ "id": k.id, "name": k.name, "faces": k.faces.len(), "depth": k.depth })).collect::<Vec<_>>(),
+        });
+        match o.target {
+            Target::Remove(r) => v["remove"] = json!(r),
+            Target::Grams(g) => v["grams"] = json!(g),
+        }
+        out["optimize"] = v;
+    }
+    out
 }
 
 fn opt_name(p: &Value) -> Result<Option<String>, CmdError> {
@@ -839,8 +857,72 @@ fn study_set(s: &mut Session, p: &Value) -> CmdResult {
         radial: opt_bool(p, "radial")?,
         axial: opt_bool(p, "axial")?,
         tangential: opt_bool(p, "tangential")?,
+        depth: match arg(p, "depth") {
+            None => None,
+            Some(Value::Null) => Some(None),
+            Some(_) => Some(Some(num(p, "depth")?)),
+        },
     };
     study_edit(s, id, "item", |st| st.set(item, change).map(|()| item))
+}
+
+/// Keeps faces solid in Optimize Shape (DEC-123).
+fn study_keep(s: &mut Session, p: &Value) -> CmdResult {
+    let (id, faces, name): (_, Vec<FaceRef>, _) = (study_of(s, p)?, parse(p, "faces")?, opt_name(p)?);
+    let depth = opt_num(p, "depth")?;
+    study_edit(s, id, "kept", |st| st.keep(faces, depth, name))
+}
+
+/// The planes of a list, each as `plane_value` reads one.
+fn planes_value(p: &Value, key: &str) -> Result<Vec<PlaneRef>, CmdError> {
+    let list = arg(p, key).and_then(Value::as_array).ok_or_else(|| CmdError(format!("`{key}` must be a list of planes")))?;
+    list.iter().map(|v| plane_value(&json!({ "plane": v }), "plane")).collect()
+}
+
+/// What Optimize Shape is asked of a study (DEC-123): what is given takes the place of what
+/// was said; the rest stays.
+fn study_shape(s: &mut Session, p: &Value) -> CmdResult {
+    let id = study_of(s, p)?;
+    let mut o = s.document().study(id).and_then(|st| st.optimize.clone()).unwrap_or_default();
+    match (opt_num(p, "remove")?, opt_num(p, "grams")?) {
+        (Some(_), Some(_)) => return Err("give `remove` or `grams`, not both".into()),
+        (Some(r), None) => o.target = Target::Remove(r),
+        (None, Some(g)) => o.target = Target::Grams(g),
+        (None, None) => {}
+    }
+    let maybe = |key: &str| -> Result<Option<Option<f64>>, CmdError> {
+        match arg(p, key) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(_) => Ok(Some(Some(num(p, key)?))),
+        }
+    };
+    if let Some(v) = maybe("min_member")? {
+        o.min_member = v;
+    }
+    if let Some(v) = maybe("element_size")? {
+        o.element_size = v;
+    }
+    if let Some(r) = arg(p, "resolution").filter(|v| !v.is_null()) {
+        o.resolution = serde_json::from_value(r.clone()).map_err(|_| CmdError("`resolution` is coarse, medium or fine".into()))?;
+    }
+    if arg(p, "symmetry").is_some() {
+        o.symmetry = planes_value(p, "symmetry")?;
+    }
+    if let Some(b) = opt_bool(p, "sharpen")? {
+        o.sharpen = b;
+    }
+    match arg(p, "iterations") {
+        None => {}
+        Some(Value::Null) => o.iterations = None,
+        Some(_) => o.iterations = Some(id_u32(p, "iterations")?),
+    }
+    o.check().map_err(CmdError)?;
+    s.edit(|d| {
+        let st = d.study_mut(id).ok_or("no such study")?;
+        st.optimize = Some(o);
+        Ok(study_json(st))
+    })
 }
 
 fn study_pressure(s: &mut Session, p: &Value) -> CmdResult {
@@ -851,7 +933,7 @@ fn study_pressure(s: &mut Session, p: &Value) -> CmdResult {
 
 fn study_remove(s: &mut Session, p: &Value) -> CmdResult {
     let (id, item) = (study_of(s, p)?, id_u32(p, "item")?);
-    study_edit(s, id, "removed", |st| if st.remove(item) { Ok(item) } else { Err(format!("{} has no support or load {item}", st.name)) })
+    study_edit(s, id, "removed", |st| if st.remove(item) { Ok(item) } else { Err(format!("{} has no support, load or kept faces {item}", st.name)) })
 }
 
 fn study_mesh_size(s: &mut Session, p: &Value) -> CmdResult {
@@ -4411,7 +4493,21 @@ static COMMANDS: &[CommandSpec] = &[
         true,
         study_set
     ),
-    doc_cmd!("study.remove", "Remove Support or Load", "study; item: the id of a support or a load of it", true, study_remove),
+    doc_cmd!("study.remove", "Remove Support or Load", "study; item: the id of a support, a load or kept faces of it", true, study_remove),
+    doc_cmd!(
+        "study.keep",
+        "Keep Faces",
+        "Faces Optimize Shape keeps solid (DEC-123). study; faces; depth (mm of material kept under them; default: one layer of elements); name. Returns the study, and the kept faces' id (`kept`), one of the study's run of ids: study.set changes them (faces, depth, name), study.remove takes them away",
+        true,
+        study_keep
+    ),
+    doc_cmd!(
+        "study.shape",
+        "Optimize Shape Settings",
+        "What Optimize Shape is asked of a study, kept with it (DEC-123); what is given takes the place of what was said. study; remove (percent of the mass taken away, 5 to 95; default 50) or grams (the mass to come to); min_member (the thinnest member, mm; null: three elements); resolution (coarse, medium or fine: about 12,000, 30,000 or 80,000 nodes); element_size (mm, in place of the resolution; null: from it); symmetry (a list of up to three planes at right angles, as work.plane takes them; [] for none); sharpen (default true: toward solid and empty); iterations (the most rounds, 1 to 300; null: as the method needs)",
+        true,
+        study_shape
+    ),
     doc_cmd!(
         "study.mesh_size",
         "Element Size",
