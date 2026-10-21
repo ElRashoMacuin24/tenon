@@ -118,10 +118,17 @@ fn library_folders(program: &Path) -> Vec<PathBuf> {
     }
 }
 
+/// Why a program that ran longer than `limit` was stopped, with `slow`: what to try so that
+/// it takes less.
+fn too_long(name: &str, limit: Duration, slow: &str) -> String {
+    format!("{name} ran for more than {} minutes and was stopped: {slow}", limit.as_secs() / 60)
+}
+
 /// Starts `program` in `dir` and waits for it, with all it says kept in the file `log` there.
 /// Returns what it said. It is stopped, and an error returned, when `cancel` is set or it
-/// runs longer than `limit`; an error too when it ends saying it failed.
-pub fn run(program: &Path, args: &[&str], dir: &Path, log: &str, cancel: &Cancel, limit: Duration) -> Result<String, String> {
+/// runs longer than `limit` (the error then says `slow`: what to try so that it takes less);
+/// an error too when it ends saying it failed.
+pub fn run(program: &Path, args: &[&str], dir: &Path, log: &str, cancel: &Cancel, limit: Duration, slow: &str) -> Result<String, String> {
     // One at a time: each takes every thread the machine has, and several at once (the tests,
     // which run side by side) get in each other's way and take many times as long.
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -162,7 +169,7 @@ pub fn run(program: &Path, args: &[&str], dir: &Path, log: &str, cancel: &Cancel
         let stop = if cancel.load(Ordering::Relaxed) {
             Some(STOPPED.to_owned())
         } else if started.elapsed() > limit {
-            Some(format!("{name} ran for more than {} minutes and was stopped: a quick check is of fewer, larger elements", limit.as_secs() / 60))
+            Some(too_long(&name, limit, slow))
         } else {
             None
         };
@@ -250,18 +257,30 @@ mod tests {
         let me = std::env::current_exe().unwrap();
         let scratch = Scratch::new().unwrap();
         let cancel = Cancel::default();
-        let said = run(&me, &["--list"], &scratch.dir, "out.log", &cancel, Duration::from_secs(60)).unwrap();
+        let said = run(&me, &["--list"], &scratch.dir, "out.log", &cancel, Duration::from_secs(60), "").unwrap();
         assert!(said.contains("a_program_is_run_and_what_it_says_is_kept"), "{said}");
         assert!(scratch.dir.join("out.log").is_file());
         // Ending in failure is an error with what it said.
-        let e = run(&me, &["--no-such-option"], &scratch.dir, "out.log", &cancel, Duration::from_secs(60)).unwrap_err();
+        let e = run(&me, &["--no-such-option"], &scratch.dir, "out.log", &cancel, Duration::from_secs(60), "").unwrap_err();
         assert!(e.contains("failed") && e.contains("no-such-option"), "{e}");
         // Asked to stop before it starts: stopped. A program that is not there says so.
         cancel.store(true, Ordering::Relaxed);
-        let e = run(&me, &["--list"], &scratch.dir, "out.log", &cancel, Duration::from_secs(60));
+        let e = run(&me, &["--list"], &scratch.dir, "out.log", &cancel, Duration::from_secs(60), "");
         assert!(e.is_ok() || e.as_ref().is_err_and(|e| e == STOPPED), "{e:?}");
-        let e = run(&scratch.dir.join("nothing-here"), &[], &scratch.dir, "out.log", &Cancel::default(), Duration::from_secs(1)).unwrap_err();
+        let e = run(&scratch.dir.join("nothing-here"), &[], &scratch.dir, "out.log", &Cancel::default(), Duration::from_secs(1), "").unwrap_err();
         assert!(e.contains("cannot start"), "{e}");
         assert_eq!(tail("a\n\nb\nc\n \n", 2), "b\nc");
+    }
+
+    #[test]
+    fn ran_too_long_says_what_to_try() {
+        assert_eq!(
+            too_long("ccx", Duration::from_secs(30 * 60), "a shape is found sooner at Coarse"),
+            "ccx ran for more than 30 minutes and was stopped: a shape is found sooner at Coarse"
+        );
+        assert_eq!(
+            too_long("gmsh", Duration::from_secs(10 * 60 + 59), "a quick check is of fewer, larger elements"),
+            "gmsh ran for more than 10 minutes and was stopped: a quick check is of fewer, larger elements"
+        );
     }
 }

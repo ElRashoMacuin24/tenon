@@ -18,6 +18,7 @@ pub mod iso;
 pub mod oc;
 pub mod region;
 pub mod smooth;
+pub mod solver;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,6 +28,7 @@ use tenon_geom::Vec3;
 pub use filter::{Filter, mirror_group};
 pub use iso::{Extracted, Field, Skin};
 pub use oc::optimize;
+pub use solver::Ccx;
 
 /// How many stiffness levels the solver is given: an element's density is rounded to the
 /// nearest thousandth for it (level 0 is the floor, 1000 the material itself).
