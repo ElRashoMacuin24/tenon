@@ -18,6 +18,7 @@ pub mod mesh;
 pub mod problem;
 pub mod result;
 pub mod tools;
+pub mod topo;
 
 use std::path::Path;
 use std::time::{Duration, Instant};

@@ -137,6 +137,122 @@ impl TetMesh {
             .collect()
     }
 
+    /// The volume of a tetrahedron, curved as its mid-side nodes make it: the four-point rule
+    /// on the second-order element (the rule the solver itself reckons element volumes by).
+    pub fn volume(&self, t: &[u32; 10]) -> f64 {
+        const A: f64 = 0.585_410_196_624_969;
+        const B: f64 = 0.138_196_601_125_011;
+        let p = t.map(|n| self.nodes.get(n as usize).copied().unwrap_or(Vec3::ZERO));
+        // Mid-side nodes 4 to 9 lie between these corners (the mesher's order).
+        const MID: [(usize, usize); 6] = [(0, 1), (1, 2), (2, 0), (0, 3), (2, 3), (1, 3)];
+        let signed: f64 = [[A, B, B, B], [B, A, B, B], [B, B, A, B], [B, B, B, A]]
+            .iter()
+            .map(|l| {
+                // How the point moves with each of the four corner weights.
+                let mut d = [Vec3::ZERO; 4];
+                for (i, di) in d.iter_mut().enumerate() {
+                    *di = p[i] * (4.0 * l[i] - 1.0);
+                }
+                for (k, (i, j)) in MID.iter().enumerate() {
+                    d[*i] = d[*i] + p[4 + k] * (4.0 * l[*j]);
+                    d[*j] = d[*j] + p[4 + k] * (4.0 * l[*i]);
+                }
+                let (gx, gy, gz) = (d[1] - d[0], d[2] - d[0], d[3] - d[0]);
+                gx.dot(gy.cross(gz)) / 24.0
+            })
+            .sum();
+        signed.abs()
+    }
+
+    /// The volume of the straight tetrahedron between a tetrahedron's four corners.
+    pub fn corner_volume(&self, t: &[u32; 10]) -> f64 {
+        let [a, b, c, d] = [0, 1, 2, 3].map(|i| self.nodes.get(t[i] as usize).copied().unwrap_or(Vec3::ZERO));
+        ((b - a).dot((c - a).cross(d - a)) / 6.0).abs()
+    }
+
+    /// The middle of a tetrahedron: the mean of its four corners.
+    pub fn centroid(&self, t: &[u32; 10]) -> Vec3 {
+        let sum = (0..4).fold(Vec3::ZERO, |s, i| s + self.nodes.get(t[i] as usize).copied().unwrap_or(Vec3::ZERO));
+        sum * 0.25
+    }
+
+    /// A box `size` long on each side, from the origin, divided into `cells` cubes along each
+    /// axis and each cube into six tetrahedra about its diagonal (so that neighbours share
+    /// whole faces), with mid-side nodes at the middles of the sides. Its boundary triangles
+    /// are on surfaces 1 to 6: x = 0, x = size.x, y = 0, y = size.y, z = 0, z = size.z, each
+    /// wound to face out. For checks that need a mesh without the mesher.
+    pub fn block(cells: [usize; 3], size: Vec3) -> TetMesh {
+        let [nx, ny, nz] = cells.map(|c| c.max(1));
+        let corner = |i: usize, j: usize, k: usize| (i + (nx + 1) * (j + (ny + 1) * k)) as u32;
+        let mut nodes: Vec<Vec3> = Vec::with_capacity((nx + 1) * (ny + 1) * (nz + 1));
+        for k in 0..=nz {
+            for j in 0..=ny {
+                for i in 0..=nx {
+                    nodes.push(Vec3::new(size.x * i as f64 / nx as f64, size.y * j as f64 / ny as f64, size.z * k as f64 / nz as f64));
+                }
+            }
+        }
+        let mut mids: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut mid = |a: u32, b: u32, nodes: &mut Vec<Vec3>| -> u32 {
+            let key = (a.min(b), a.max(b));
+            *mids.entry(key).or_insert_with(|| {
+                nodes.push((nodes[a as usize] + nodes[b as usize]) * 0.5);
+                (nodes.len() - 1) as u32
+            })
+        };
+        let mut tets = Vec::with_capacity(nx * ny * nz * 6);
+        // The six paths from a cube's first corner to its far one, one step along each axis.
+        const PATHS: [[usize; 3]; 6] = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    for path in PATHS {
+                        let mut at = [i, j, k];
+                        let mut c = [corner(i, j, k); 4];
+                        for (step, axis) in path.iter().enumerate() {
+                            at[*axis] += 1;
+                            c[step + 1] = corner(at[0], at[1], at[2]);
+                        }
+                        let [a, b, cc, d] = c.map(|n| nodes[n as usize]);
+                        if (b - a).dot((cc - a).cross(d - a)) < 0.0 {
+                            c.swap(1, 2);
+                        }
+                        let m = [(0, 1), (1, 2), (2, 0), (0, 3), (2, 3), (1, 3)].map(|(x, y)| mid(c[x], c[y], &mut nodes));
+                        tets.push([c[0], c[1], c[2], c[3], m[0], m[1], m[2], m[3], m[4], m[5]]);
+                    }
+                }
+            }
+        }
+        // The faces of tetrahedra that lie on a side of the box, wound away from the corner
+        // they are not on.
+        let eps = 1e-9 * (size.x + size.y + size.z);
+        let on = |p: Vec3, s: u32| -> bool {
+            let (v, at) = match s {
+                1 => (p.x, 0.0),
+                2 => (p.x, size.x),
+                3 => (p.y, 0.0),
+                4 => (p.y, size.y),
+                5 => (p.z, 0.0),
+                _ => (p.z, size.z),
+            };
+            (v - at).abs() <= eps
+        };
+        let mut tris = Vec::new();
+        for t in &tets {
+            for (face, other) in [([0, 1, 2], 3), ([0, 1, 3], 2), ([0, 2, 3], 1), ([1, 2, 3], 0)] {
+                let [a, b, c] = face.map(|f| t[f]);
+                let pts = [a, b, c].map(|n| nodes[n as usize]);
+                // The side all three corners share, if they share one.
+                let Some(s) = (1..=6).find(|s| pts.iter().all(|p| on(*p, *s))) else { continue };
+                let inside = nodes[t[other] as usize];
+                let (a, b, c) = if (pts[1] - pts[0]).cross(pts[2] - pts[0]).dot(inside - pts[0]) > 0.0 { (a, c, b) } else { (a, b, c) };
+                let m = [(a, b), (b, c), (c, a)].map(|(x, y)| mids.get(&(x.min(y), x.max(y))).copied().unwrap_or(x));
+                tris.push(Tri6 { surface: s, nodes: [a, b, c, m[0], m[1], m[2]] });
+            }
+        }
+        TetMesh { nodes, tets, tris, lines: Vec::new() }
+    }
+
     /// The size of the box the mesh fits in, corner to corner.
     pub fn extent(&self) -> f64 {
         let Some(first) = self.nodes.first() else { return 0.0 };
@@ -268,6 +384,81 @@ pub(crate) mod tests {
         5 9 2 0 4 2 3 4 6 9 10\n\
         6 11 2 0 1 1 2 3 4 5 6 7 8 9 10\n\
         $EndElements\n";
+
+    #[test]
+    fn a_straight_tets_volume_is_a_sixth_of_its_determinant() {
+        let m = read_msh(ONE_TET).unwrap();
+        let t = &m.tets[0];
+        assert!((m.volume(t) - 1.0 / 6.0).abs() < 1e-12 && (m.corner_volume(t) - 1.0 / 6.0).abs() < 1e-12, "{}", m.volume(t));
+        // Stretched and sheared, with its mid-side nodes still half way: the same as its corners.
+        let mut s = m.clone();
+        s.nodes.iter_mut().for_each(|p| *p = Vec3::new(2.0 * p.x + 0.3 * p.y, 3.0 * p.y, 0.5 * p.z + p.x));
+        assert!((s.volume(t) - s.corner_volume(t)).abs() < 1e-12 && (s.corner_volume(t) - 0.5).abs() < 1e-12, "{}", s.volume(t));
+    }
+
+    #[test]
+    fn a_blocks_tets_add_up_to_the_box() {
+        let m = TetMesh::block([3, 2, 4], Vec3::new(30.0, 20.0, 10.0));
+        assert_eq!(m.tets.len(), 3 * 2 * 4 * 6);
+        assert_eq!(m.nodes.len(), 4 * 3 * 5 + count_mids(&m), "the corners of the cubes, then the middles of the sides");
+        let (whole, corners): (f64, f64) = m.tets.iter().map(|t| (m.volume(t), m.corner_volume(t))).fold((0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
+        assert!((whole - 6000.0).abs() < 1e-9 && (corners - 6000.0).abs() < 1e-9, "{whole} {corners}");
+    }
+
+    /// How many nodes of a mesh are in the middle of a side.
+    fn count_mids(m: &TetMesh) -> usize {
+        let mut mids: Vec<u32> = m.tets.iter().flat_map(|t| t[4..].to_vec()).collect();
+        mids.sort_unstable();
+        mids.dedup();
+        mids.len()
+    }
+
+    #[test]
+    fn a_curved_side_adds_volume() {
+        let mut m = read_msh(ONE_TET).unwrap();
+        // The middle of the side from the origin along x, pushed out of the tetrahedron.
+        m.nodes[4] = Vec3::new(0.5, -0.2, -0.2);
+        let t = &m.tets[0];
+        assert!(m.volume(t) > m.corner_volume(t) + 1e-3, "{} {}", m.volume(t), m.corner_volume(t));
+    }
+
+    #[test]
+    fn centroids_are_the_mean_of_the_corners() {
+        let m = read_msh(ONE_TET).unwrap();
+        assert!(m.centroid(&m.tets[0]).dist(Vec3::new(0.25, 0.25, 0.25)) < 1e-15);
+        let b = TetMesh::block([2, 2, 2], Vec3::new(2.0, 2.0, 2.0));
+        let mean = b.tets.iter().fold(Vec3::ZERO, |s, t| s + b.centroid(t) * b.volume(t)) * (1.0 / 8.0);
+        assert!(mean.dist(Vec3::new(1.0, 1.0, 1.0)) < 1e-12, "{mean:?}");
+    }
+
+    #[test]
+    fn a_block_is_closed_and_wound_out() {
+        let (nx, ny, nz) = (3, 2, 4);
+        let m = TetMesh::block([nx, ny, nz], Vec3::new(3.0, 2.0, 4.0));
+        assert_eq!(m.tris.len(), 2 * 2 * (nx * ny + ny * nz + nx * nz));
+        assert!(m.outward().unwrap().iter().all(|s| *s == 1.0), "every boundary triangle faces out");
+        // Every side of a boundary triangle is the side of exactly one other, the other way round.
+        let mut sides: HashMap<(u32, u32), i32> = HashMap::new();
+        for t in &m.tris {
+            for (a, b) in [(t.nodes[0], t.nodes[1]), (t.nodes[1], t.nodes[2]), (t.nodes[2], t.nodes[0])] {
+                *sides.entry((a, b)).or_default() += 1;
+            }
+        }
+        assert!(sides.iter().all(|((a, b), n)| *n == 1 && sides.get(&(*b, *a)) == Some(&1)));
+        // Each side of the box has its own surface, and its mid-side nodes are on it.
+        for t in &m.tris {
+            let p = m.nodes[t.nodes[3] as usize];
+            let on = match t.surface {
+                1 => p.x == 0.0,
+                2 => (p.x - 3.0).abs() < 1e-12,
+                3 => p.y == 0.0,
+                4 => (p.y - 2.0).abs() < 1e-12,
+                5 => p.z == 0.0,
+                _ => (p.z - 4.0).abs() < 1e-12,
+            };
+            assert!(on, "{t:?}");
+        }
+    }
 
     #[test]
     fn a_mesh_is_read_from_the_meshers_file() {
