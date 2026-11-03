@@ -117,6 +117,11 @@ pub struct Workbench {
     step_export: Option<(u64, PathBuf)>,
     /// Mesh exports and print checks sent to the worker, by request.
     pub(crate) part_jobs: std::collections::BTreeMap<u64, crate::print_dialog::PartJob>,
+    /// A study being worked out for the control port.
+    pub(crate) port_run: Option<crate::results::PortRun>,
+    /// As the last frame ended, a text field had the keys or a menu was open. (Asked of the frame
+    /// before: by the time a frame begins, Esc has already taken the focus from a field.)
+    pub(crate) keys_elsewhere: bool,
     /// The last modelling or sketch command (for "Repeat").
     pub(crate) last_command: Option<&'static str>,
     /// OK, Cancel or Apply asked for from outside the open panel (properties, radial menu).
@@ -181,6 +186,8 @@ impl Workbench {
             control_touched: 0,
             step_export: None,
             part_jobs: Default::default(),
+            port_run: None,
+            keys_elsewhere: false,
             last_command: None,
             panel_request: None,
             pending_tool: None,
@@ -265,6 +272,7 @@ impl Workbench {
         self.waiting
             || self.step_export.is_some()
             || !self.part_jobs.is_empty()
+            || self.port_run.is_some()
             || self.asm.as_ref().is_some_and(|a| !a.jobs.is_empty())
             || self.drw.as_ref().is_some_and(|d| !d.jobs.is_empty())
     }
@@ -1047,6 +1055,7 @@ impl Workbench {
         self.save_prompt(ui);
         self.recover_prompt(ui);
         self.autosave();
+        self.keys_elsewhere = ui.ctx().egui_wants_keyboard_input() || egui::Popup::is_any_open(ui.ctx());
         // (Requests of the control port that wait for the geometry thread are looked at again
         // every frame.)
         if self.waiting || self.is_busy() || self.control_busy() {

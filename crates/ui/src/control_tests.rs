@@ -14,6 +14,142 @@ use tenon_kernel_occt::OcctKernel;
 use crate::tests::Driver;
 use crate::{Services, Workbench};
 
+/// A study, worked out on the geometry thread for the control port, is a run as one begun in the
+/// window is: one at a time, said so in the window, and stopped by what stops one.
+#[test]
+fn a_study_over_the_port_is_a_run_the_window_can_stop() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let required = std::env::var("TENON_FEA_REQUIRED").is_ok_and(|v| !v.is_empty() && v != "0");
+    if let Err(why) = tenon_fea::Tools::find() {
+        assert!(!required, "{why}");
+        eprintln!("NOT RUN: a study over the port: {why}");
+        return;
+    }
+    let _quiet = crate::tests::timing_lock();
+    /// A bar held at its left end and pushed down at its right, with a run of it sent to the port,
+    /// and frames until that run has begun.
+    fn sent() -> (Workbench, Driver, Client) {
+        let mut wb = Workbench::new(|| Box::new(OcctKernel::new()) as Box<dyn Kernel>, None, Services::default());
+        let mut d = Driver::new(vec2(1400.0, 860.0));
+        wb.listen(0, None).unwrap();
+        let mut c = Client::to(&wb);
+        c.ok(&mut wb, &mut d, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+        c.ok(&mut wb, &mut d, "document.material", json!({ "name": "Steel, mild" }));
+        let found = |c: &mut Client, wb: &mut Workbench, d: &mut Driver, way: &str| {
+            c.ok(wb, d, "model.find", json!({ "what": "faces", "facing": way }))["found"][0]["reference"].clone()
+        };
+        let (left, right) = (found(&mut c, &mut wb, &mut d, "left"), found(&mut c, &mut wb, &mut d, "right"));
+        c.ok(&mut wb, &mut d, "study.new", json!({}));
+        c.ok(&mut wb, &mut d, "study.fix", json!({ "faces": [left] }));
+        c.ok(&mut wb, &mut d, "study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" }));
+        c.next += 1;
+        let line = json!({ "id": c.next, "token": c.token, "run": "study.optimize", "with": { "element_size": 5, "iterations": 300 } });
+        writeln!(c.out, "{line}").unwrap();
+        for _ in 0..4000 {
+            d.frame(&mut wb, vec![]);
+            if wb.port_run.is_some() {
+                return (wb, d, c);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        panic!("the run never began");
+    }
+    /// Frames until the answer to the run comes.
+    fn answered(c: &mut Client, wb: &mut Workbench, d: &mut Driver) -> Value {
+        let mut answer = String::new();
+        let began = std::time::Instant::now();
+        loop {
+            d.frame(wb, vec![]);
+            match c.reader.read_line(&mut answer) {
+                Ok(n) if n > 0 && answer.ends_with('\n') => return serde_json::from_str(&answer).unwrap(),
+                _ => {}
+            }
+            assert!(began.elapsed().as_secs() < 300, "no answer");
+        }
+    }
+    const BUSY: &str = "A study is being worked out: wait for it, or press Esc to stop it.";
+
+    // Going on: said in the window, and nothing else that needs the geometry thread starts.
+    let (mut wb, mut d, mut c) = sent();
+    assert!(wb.is_busy() && wb.status() == crate::results::PORT_RUN_GOES, "{}", wb.status());
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == crate::results::PORT_RUN_GOES), "{:?}", d.texts());
+    wb.run_ui("analysis.begin").unwrap();
+    assert!(!wb.port_run.as_ref().unwrap().cancel.load(Relaxed), "going into the environment does not stop it");
+    for id in ["analysis.simulate", "analysis.optimize.now", "analysis.mesh_view"] {
+        assert_eq!(wb.run_ui(id).unwrap_err(), BUSY, "{id}");
+    }
+    assert!(wb.analysis.as_ref().unwrap().running.is_none() && wb.shaping().is_none());
+    // Esc meant for a panel leaves it; Esc stops it, and the port is told.
+    wb.run_ui("study.new").unwrap();
+    wb.run_ui("study.mesh_size").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(!wb.port_run.as_ref().unwrap().cancel.load(Relaxed));
+    wb.panel = None;
+    // (A frame for the field that is gone to lose the keys, and one for that to be known.)
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(wb.port_run.as_ref().unwrap().cancel.load(Relaxed) && wb.status() == "Stopping...", "{}", wb.status());
+    let told = answered(&mut c, &mut wb, &mut d);
+    assert!(told["ok"] == false && told["error"] == tenon_fea::tools::STOPPED || told["result"]["stopped"] == "stopped", "{told}");
+    // Over: nothing is said to be going on any more.
+    assert!(wb.port_run.is_none() && wb.status() == "Ready", "{}", wb.status());
+    for _ in 0..4000 {
+        d.frame(&mut wb, vec![]);
+        if !wb.is_busy() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!wb.is_busy());
+    d.frame(&mut wb, vec![]);
+    assert!(!d.texts().iter().any(|t| t == crate::results::PORT_RUN_GOES), "{:?}", d.texts());
+
+    // Finish Analysis and File New stop it, and the new part's geometry comes.
+    let (mut wb, mut d, mut c) = sent();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("analysis.finish").unwrap();
+    assert!(wb.port_run.as_ref().unwrap().cancel.load(Relaxed));
+    answered(&mut c, &mut wb, &mut d);
+    let (mut wb, mut d, mut c) = sent();
+    wb.run_unprompted("file.new").unwrap();
+    assert!(wb.port_run.as_ref().unwrap().cancel.load(Relaxed));
+    wb.exec("model.box", json!({ "plane": "xy", "width": 30, "depth": 30, "height": 30 })).unwrap();
+    answered(&mut c, &mut wb, &mut d);
+    for _ in 0..4000 {
+        d.frame(&mut wb, vec![]);
+        if !wb.is_busy() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let volume: f64 = wb.scene().bodies.iter().map(|b| b.volume).sum();
+    assert!((volume - 27000.0).abs() < 1.0, "{volume}");
+
+    // Closing stops it: the window does not wait.
+    let (mut wb, _d, c) = sent();
+    let cancel = wb.port_run.as_ref().unwrap().cancel.clone();
+    wb.shutdown();
+    assert!(cancel.load(Relaxed));
+    let closing = std::time::Instant::now();
+    drop(wb);
+    assert!(closing.elapsed().as_secs_f64() < 20.0, "{:?} to close", closing.elapsed());
+    drop(c);
+
+    // A run going in the window: the port is told so, and one is not started behind it.
+    let (mut wb, mut d, mut c) = sent();
+    wb.stop_runs();
+    answered(&mut c, &mut wb, &mut d);
+    wb.run_ui("analysis.begin").unwrap();
+    wb.exec("study.shape", json!({ "element_size": 5, "iterations": 300 })).unwrap();
+    wb.run_ui("analysis.optimize.now").unwrap();
+    assert_eq!(c.ask(&mut wb, &mut d, "study.optimize", json!({})).unwrap_err(), BUSY);
+    assert_eq!(c.ask(&mut wb, &mut d, "study.solve", json!({})).unwrap_err(), BUSY);
+    wb.shutdown();
+}
+
 /// A connection to a workbench's control port.
 struct Client {
     out: TcpStream,

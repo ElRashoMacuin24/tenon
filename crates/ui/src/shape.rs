@@ -50,7 +50,9 @@ impl ShapePanel {
     fn of(study: StudyId, o: &Optimize, part_grams: f64) -> ShapePanel {
         let (by_grams, remove, grams) = match o.target {
             Target::Remove(r) => (false, r, part_grams * (1.0 - r / 100.0)),
-            Target::Grams(g) => (true, 100.0 * (1.0 - g / part_grams.max(1e-9)), g),
+            // (Of a part not built yet, its mass says nothing of the share: see `part_is`.)
+            Target::Grams(g) if part_grams > 0.0 => (true, 100.0 * (1.0 - g / part_grams), g),
+            Target::Grams(g) => (true, 50.0, g),
         };
         ShapePanel {
             study,
@@ -84,6 +86,22 @@ impl ShapePanel {
             p["remove"] = json!(self.remove);
         }
         p
+    }
+
+    /// The part weighs `part_grams`, as the scene now has it: it may not have when this was opened.
+    /// What goes by it follows, and what was asked does not.
+    pub(crate) fn part_is(&mut self, part_grams: f64) {
+        if part_grams == self.part_grams {
+            return;
+        }
+        self.part_grams = part_grams;
+        if part_grams > 0.0 {
+            if self.by_grams {
+                self.remove = 100.0 * (1.0 - self.grams / part_grams);
+            } else {
+                self.grams = part_grams * (1.0 - self.remove / 100.0);
+            }
+        }
     }
 
     /// About how much is kept, g.
@@ -162,6 +180,17 @@ pub(crate) struct ShapeView {
     /// The share on the slider, percent.
     pub percent: f64,
     pub visible: bool,
+    /// The surface drawn is closed.
+    pub closed: bool,
+}
+
+impl ShapeView {
+    /// What there is to know of the shape, beside how it ended: the run's warnings, and whether the
+    /// surface drawn is closed (the run's is said of the share it was worked out for).
+    pub(crate) fn said(&self) -> impl Iterator<Item = &str> {
+        let closed = (!self.closed).then_some(tenon_io::shape::NOT_CLOSED);
+        self.shaped.warnings.iter().map(String::as_str).filter(|w| *w != tenon_io::shape::NOT_CLOSED).chain(closed)
+    }
 }
 
 /// A run of Optimize Shape: where it is, and how to stop it.
@@ -170,6 +199,8 @@ pub(crate) struct Shaping {
     /// Which run it is: what comes back is taken only by the run that waits for it.
     pub run: u64,
     pub study: StudyId,
+    /// The revision of the part it is of: once that moves on, the run is for nothing.
+    pub revision: u64,
     pub cancel: Cancel,
     pub since: Instant,
     pub progress: Progress,
@@ -211,7 +242,12 @@ pub(crate) fn shape_fields(ui: &mut Ui, p: &mut ShapePanel, kept: usize, symmetr
             }
             ui.end_row();
             ui.label("");
-            ui.label(egui::RichText::new(format!("Part {} g, about {} g kept", figures(p.part_grams), figures(p.kept_grams()))).color(t.text_dim));
+            let said = if p.part_grams > 0.0 {
+                format!("Part {} g, about {} g kept", figures(p.part_grams), figures(p.kept_grams()))
+            } else {
+                "The part is being built".to_owned()
+            };
+            ui.label(egui::RichText::new(said).color(t.text_dim));
             ui.end_row();
         });
     });
@@ -342,7 +378,7 @@ pub(crate) fn symmetry_fields(ui: &mut Ui, p: &mut SymmetryPanel) {
 
 impl Workbench {
     /// The part's mass, g, as the scene has it.
-    fn part_grams(&self) -> f64 {
+    pub(crate) fn part_grams(&self) -> f64 {
         let volume: f64 = self.scene.bodies.iter().map(|b| b.volume).sum();
         volume * self.document().density() / 1000.0
     }
@@ -482,7 +518,7 @@ impl Workbench {
         let progress: Progress = Arc::new(Mutex::new(Report::default()));
         self.step_seq += 1;
         let run = self.step_seq;
-        let shaping = Shaping { run, study, cancel: cancel.clone(), since: Instant::now(), progress: progress.clone() };
+        let shaping = Shaping { run, study, revision, cancel: cancel.clone(), since: Instant::now(), progress: progress.clone() };
         let work = move |s: &mut Session, k: &mut dyn tenon_kernel::Kernel| -> Box<dyn std::any::Any + Send> {
             let settings = s.document().study(study).and_then(|st| st.optimize.clone()).unwrap_or_default();
             Box::new(tenon_io::shape::work_out(s, k, study, &settings, SMOOTHING, None, &cancel, Some(&progress)))
@@ -527,6 +563,11 @@ impl Workbench {
             return;
         };
         let name = self.document().study(study).map_or_else(|| "The study".to_owned(), |s| s.name.clone());
+        // (The part or the study changed while it went on: whatever it came to is of what was.)
+        if revision != self.session.revision() {
+            self.set_status(format!("{name}: the part or the study changed while the shape was worked out, so it is out of date and was not kept."));
+            return;
+        }
         let shaped = match result.downcast::<Result<Shaped, String>>().map_or_else(|_| Err("internal: unexpected result".to_owned()), |b| *b) {
             Ok(s) => s,
             Err(e) if e == tenon_fea::tools::STOPPED => {
@@ -538,11 +579,6 @@ impl Workbench {
                 return;
             }
         };
-        // (The part or the study changed while it went on: the shape is of what was.)
-        if revision != self.session.revision() {
-            self.set_status(format!("{name}: the part or the study changed while the shape was worked out, so it is out of date and was not kept."));
-            return;
-        }
         let o = &shaped.optimized;
         let ending = match o.stop {
             tenon_fea::topo::Stop::Settled => format!("settled after {} rounds", o.history.len()),
@@ -555,23 +591,53 @@ impl Workbench {
             Some(c) if c > 0.0 => format!(" It keeps {} of the part's stiffness.", figures(o.solid_compliance / c)),
             _ => String::new(),
         };
-        let mut said = format!(
-            "{name}: a shape of {} g for a part of {} g ({:.0}% removed), {ending} in {} s.{kept} A guide to model over: Export Shape keeps it.",
+        // The share it came to, and the share asked when that is not it (stopped early, or pieces
+        // left out).
+        let removed = 100.0 * (1.0 - shaped.shown.share);
+        let asked = 100.0 * (1.0 - shaped.fraction);
+        let removed =
+            if (removed - asked).abs() > 1.0 { format!("{removed:.0}% removed, {asked:.0}% asked") } else { format!("{removed:.0}% removed") };
+        // (Export Shape goes by the study being worked on: another may be, by now.)
+        let keeps = if self.active_study().map(|s| s.id) == Some(study) {
+            "Export Shape keeps it.".to_owned()
+        } else {
+            format!("Work on {name} to see it and export it.")
+        };
+        // (What else there is to know of it does not fit here: it is written over the view.)
+        let said = format!(
+            "{name}: a shape of {} g for a part of {} g ({removed}), {ending} in {} s.{kept} A guide to model over: {keeps}",
             figures(shaped.grams(shaped.shown.share)),
             figures(shaped.grams(1.0)),
-            100.0 * (1.0 - shaped.fraction),
             figures(took)
         );
-        for w in &shaped.warnings {
-            said = format!("{said} {w}");
-        }
         let percent = 100.0 * shaped.fraction;
-        let view =
-            ShapeView { study, revision, shown: shaped.shown.clone(), shown_percent: percent, shaped: Arc::new(shaped), percent, visible: true };
+        let closed = shaped.shown.skin.is_closed();
+        let view = ShapeView {
+            study,
+            revision,
+            shown: shaped.shown.clone(),
+            shown_percent: percent,
+            shaped: Arc::new(shaped),
+            percent,
+            visible: true,
+            closed,
+        };
         if let Some(env) = &mut self.analysis {
             env.shape = Some(view);
         }
         self.set_status(said);
+    }
+
+    /// A run of a part or a study that has changed since it began comes to nothing, as Esc would
+    /// find: it is stopped now, and said so now, and not at the end of however long it has left.
+    pub(crate) fn stop_a_run_gone_stale(&mut self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let revision = self.session.revision();
+        let Some(r) = self.shaping().filter(|r| r.revision != revision && !r.cancel.load(Relaxed)) else { return };
+        r.cancel.store(true, Relaxed);
+        let study = r.study;
+        let name = self.document().study(study).map_or_else(|| "The study".to_owned(), |s| s.name.clone());
+        self.set_status(format!("{name}: the part or the study changed, so the shape being worked out is out of date: it is being stopped."));
     }
 
     /// The shape of the study worked on, if it is of the part as it is.
@@ -615,6 +681,7 @@ impl Workbench {
         v.percent = percent;
         v.shown = v.shaped.reshaped(percent / 100.0, SMOOTHING);
         v.shown_percent = percent;
+        v.closed = v.shown.skin.is_closed();
     }
 
     /// Export Shape: the shape shown, as STL or 3MF.
@@ -622,7 +689,16 @@ impl Workbench {
         let Some(v) = self.shape_view() else {
             return Err("There is no shape to export: Optimize Shape first.".into());
         };
-        let skin = v.shown.skin.clone();
+        // (A share still in its field when the button was pressed: the ribbon is drawn before the
+        // slider has seen the field lose the focus, and it is this share that is meant.)
+        let (percent, made_for) = (v.percent, v.shown_percent);
+        if (percent - made_for).abs() > 1e-9 {
+            self.set_shape_share(percent);
+        }
+        let Some(v) = self.shape_view() else {
+            return Err("There is no shape to export: Optimize Shape first.".into());
+        };
+        let (skin, closed) = (v.shown.skin.clone(), v.closed);
         let doc = self.document();
         let name = doc.name.clone();
         let (color, material) = (doc.color().unwrap_or([0xb8, 0xc0, 0xc8]), doc.material().map_or_else(|| "Generic".to_owned(), |m| m.name.clone()));
@@ -633,7 +709,16 @@ impl Workbench {
         };
         let Some(path) = chosen else { return Ok(()) };
         tenon_io::shape::write_shape(&path, &skin, &name, &material, color)?;
-        self.set_status(format!("Exported the shape to {} ({} triangles).", path.display(), skin.triangles.len()));
+        let triangles = skin.triangles.len();
+        if closed {
+            self.set_status(format!("Exported the shape to {} ({triangles} triangles).", path.display()));
+        } else {
+            // (Written all the same, as a part's export is: the file is what was asked for.)
+            self.set_error(format!(
+                "Exported the shape to {} ({triangles} triangles), but its surface is not closed: a slicer may refuse it.",
+                path.display()
+            ));
+        }
         Ok(())
     }
 
@@ -643,9 +728,23 @@ impl Workbench {
         #[cfg(test)]
         ui.data_mut(|d| d.remove::<usize>(egui::Id::new("tn_shape_drawn")));
         let painter = ui.painter().with_clip_rect(rect);
+        let over_the_view = |text: &str, at: Pos2| {
+            let (dark, light) = (Color32::from_black_alpha(150), t.viewport_text);
+            let wide = (rect.width() - 36.0).max(100.0);
+            let galley = |color| painter.layout(text.to_owned(), theme::body(), color, wide);
+            let (shadow, written) = (galley(dark), galley(light));
+            let high = written.size().y;
+            painter.galley(at + vec2(1.0, 1.0), shadow, dark);
+            painter.galley(at, written, light);
+            high
+        };
+        if self.port_run.is_some() {
+            over_the_view(crate::results::PORT_RUN_GOES, pos2(rect.left() + 18.0, rect.top() + 40.0));
+        }
         if let Some(r) = self.shaping() {
             let report = *r.progress.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let text = match (report.phase, report.last) {
+                _ if r.cancel.load(std::sync::atomic::Ordering::Relaxed) => "Optimize Shape: stopping...".to_owned(),
                 (Phase::Meshing, _) => "Optimize Shape: dividing the part into elements...".to_owned(),
                 (Phase::Solid, _) => "Optimize Shape: the part solved solid...".to_owned(),
                 (Phase::Iterating, Some(i)) => format!(
@@ -663,6 +762,13 @@ impl Workbench {
             painter.text(at, Align2::LEFT_TOP, &text, theme::body(), t.viewport_text);
         }
         let Some(v) = self.shape_view().filter(|v| v.visible) else { return };
+        // What there is to know of it, written out: it is longer than the status bar has room for.
+        // (Below where a run going on says where it is.)
+        let going = self.shaping().is_some() || self.port_run.is_some();
+        let mut y = rect.top() + if going { 62.0 } else { 40.0 };
+        for said in v.said() {
+            y += over_the_view(said, pos2(rect.left() + 18.0, y)) + 3.0;
+        }
         let skin = &v.shown.skin;
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
         let cam = &self.view.camera;
@@ -716,8 +822,10 @@ impl Workbench {
                         at_rest = !r.dragged() && !ui.memory(|m| m.has_focus(field));
                         ui.label(format!("{:.0}% of the part", 100.0 * share));
                     });
-                    let note = if (percent - asked).abs() < 0.5 {
+                    let note = if (percent - asked).abs() < 0.5 && (100.0 * share - asked).abs() <= 1.0 {
                         "The share it was optimized for.".to_owned()
+                    } else if (percent - asked).abs() < 0.5 {
+                        format!("Optimized for {asked:.0}%: it came to {:.0}%, stopped early or with pieces left out.", 100.0 * share)
                     } else {
                         format!("Optimized for {asked:.0}%: other shares show where material ranks, not an optimum for that share.")
                     };

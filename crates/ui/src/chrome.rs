@@ -772,8 +772,7 @@ impl Workbench {
     pub(crate) fn status_bar(&mut self, ui: &mut Ui, t: &Tokens) {
         let r = ui.max_rect();
         let color = if self.status_error { t.history_marker } else { t.text_dim };
-        let status = if self.status.is_empty() { "Ready" } else { &self.status };
-        ui.painter().text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, status, theme::small(), color);
+        let status = if self.status.is_empty() { "Ready".to_owned() } else { self.status.clone() };
         let mut right = Vec::new();
         // (An agent may drive this window: said for as long as it may.)
         if let Some((port, _)) = self.control_address() {
@@ -797,6 +796,14 @@ impl Workbench {
         let right = right.join("      ");
         let width = ui.painter().layout_no_wrap(right.clone(), theme::small(), t.text_dim).size().x;
         ui.painter().text(pos2(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, right, theme::small(), t.text_dim);
+        // What is said, as far as there is room, and all of it to read under the pointer. (Long ones
+        // would run under the counts and off the window.)
+        let room = Rect::from_min_max(r.min, pos2((r.right() - 18.0 - width).max(r.left()), r.max.y));
+        let said = ui.painter().layout_no_wrap(status.clone(), theme::small(), color).size().x;
+        ui.painter().with_clip_rect(room).text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, status.clone(), theme::small(), color);
+        if said + 8.0 > room.width() {
+            ui.interact(room, egui::Id::new("tn_status_said"), Sense::hover()).on_hover_text(status);
+        }
         if !self.is_sketching() {
             return;
         }

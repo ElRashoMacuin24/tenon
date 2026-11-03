@@ -378,6 +378,13 @@ impl Workbench {
 
     /// The geometry thread has answered job `request`. Ok when it was one of the control port's.
     pub(crate) fn control_job_done(&mut self, request: u64, result: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
+        if self.port_run.as_ref().is_some_and(|r| r.request == request) {
+            self.port_run = None;
+            // (What is said of it goes with it; what has been said since stays.)
+            if self.status == crate::results::PORT_RUN_GOES || self.status == crate::results::STOPPING {
+                self.set_status("Ready");
+            }
+        }
         let Some(mut control) = self.control.take() else { return Err(result) };
         let awaited = match control.queue.front_mut().map(|r| &mut r.waiting) {
             Some(w @ (Waiting::Job { .. } | Waiting::BaseView { .. })) if w.job() == Some(request) => std::mem::replace(w, Waiting::Nothing),
@@ -728,6 +735,12 @@ impl Workbench {
         if on_this_thread {
             return Begun::Done(self.exec(id, params.clone()));
         }
+        // (A study worked out is a run as one begun in the window is: one at a time, and stopped by
+        // Esc and by whatever stops those.)
+        let long = matches!(id, "study.solve" | "study.optimize");
+        if long && let Err(why) = self.no_run_going() {
+            return Begun::Done(Err(why));
+        }
         let Geo::Worker(worker) = &self.geo else {
             return Begun::Done(Err(format!("{id} needs the geometry kernel, and there is none")));
         };
@@ -736,18 +749,25 @@ impl Workbench {
         let (id, params) = (id.to_owned(), params.clone());
         self.step_seq += 1;
         let request = self.step_seq;
+        let cancel = tenon_fea::Cancel::default();
+        let stops = cancel.clone();
         worker.job(
             request,
             Box::new(move |k, _| {
                 let before = doc.clone();
                 let mut session = Session::new(doc);
-                let result = tenon_io::cmd::run(&mut session, &id, &params, Some(&mut *k)).map_err(|e| e.to_string());
+                let result =
+                    tenon_io::stress::stopped_by(&stops, || tenon_io::cmd::run(&mut session, &id, &params, Some(&mut *k)).map_err(|e| e.to_string()));
                 let after = session.document().clone();
                 session.release(k);
                 let changed = (after != before).then_some(after);
                 Box::new((result, changed)) as Box<dyn Any + Send>
             }),
         );
+        if long {
+            self.port_run = Some(crate::results::PortRun { request, cancel });
+            self.set_status(crate::results::PORT_RUN_GOES);
+        }
         Begun::Wait(Waiting::Job { request, revision })
     }
 

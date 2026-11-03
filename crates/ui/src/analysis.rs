@@ -612,8 +612,8 @@ impl Workbench {
     /// The environment's own commands. While it is entered, the commands that change the part
     /// are refused: the part is changed in the part environment.
     pub(crate) fn analysis_command(&mut self, id: &str) -> Option<Result<(), String>> {
-        // (Esc stops a study that is being worked out, before it is anything else.)
-        if id == "ui.cancel" && self.stop_study() {
+        // (Esc stops a study that is being worked out, unless it is for something on the screen.)
+        if id == "ui.cancel" && !self.esc_is_taken() && self.stop_study() {
             return Some(Ok(()));
         }
         if !id.starts_with("analysis.") && !id.starts_with("study.") {
@@ -673,7 +673,7 @@ impl Workbench {
         self.view.selection.clear();
         self.panel = None;
         let study = self.document().studies().first().map(|s| s.id);
-        self.stop_runs();
+        self.stop_runs_of_the_environment();
         self.analysis = Some(Env { study, ..Env::default() });
         self.chrome.tab = ANALYSIS_TAB;
         self.set_status(match study {
@@ -685,10 +685,12 @@ impl Workbench {
 
     /// Finish Analysis: back to the part.
     pub(crate) fn analysis_finish(&mut self) {
-        if matches!(
-            self.panel,
-            Some(Panel::Support(_) | Panel::Load(_) | Panel::RenameStudy { .. } | Panel::Shape(_) | Panel::Keep(_) | Panel::Symmetry(_))
-        ) {
+        let of_the_environment = match &self.panel {
+            Some(Panel::Support(_) | Panel::Load(_) | Panel::RenameStudy { .. } | Panel::Shape(_) | Panel::Keep(_) | Panel::Symmetry(_)) => true,
+            Some(Panel::Value(v)) => matches!(v.what, crate::panels::ValueFor::MeshSize { .. }),
+            _ => false,
+        };
+        if of_the_environment {
             self.panel = None;
         }
         self.stop_runs();
@@ -697,10 +699,18 @@ impl Workbench {
         self.set_status("Ready");
     }
 
-    /// Stops what is being worked out in the environment. Called wherever the environment goes:
-    /// nothing could reach the run after that, it would keep the geometry thread for as long as
-    /// it lasts, and what it came to would come back to nothing.
+    /// Stops what is being worked out, in the environment and for the control port. Called wherever
+    /// the environment or the part goes: nothing could reach a run after that, it would keep the
+    /// geometry thread for as long as it lasts, and what it came to would come back to nothing.
     pub(crate) fn stop_runs(&self) {
+        if let Some(run) = &self.port_run {
+            run.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.stop_runs_of_the_environment();
+    }
+
+    /// Stops what is being worked out in the environment.
+    pub(crate) fn stop_runs_of_the_environment(&self) {
         let Some(env) = &self.analysis else { return };
         let (running, shaping) = (env.running.as_ref().map(|r| &r.cancel), env.shaping.as_ref().map(|r| &r.cancel));
         for cancel in running.into_iter().chain(shaping) {
@@ -1508,23 +1518,28 @@ impl Workbench {
                 .last
                 .map_or_else(|| "Shape: being worked out...".to_owned(), |i| format!("Shape: round {} of at most {}...", i.number, report.most))
         });
-        let shape_row: (String, &str, bool) = match (shaping, self.shape_view()) {
-            (Some(text), _) => (text, "Esc stops it and keeps the shape so far", false),
+        let stopping = self.shaping().is_some_and(|r| r.cancel.load(std::sync::atomic::Ordering::Relaxed));
+        let shape_row: (String, String, bool) = match (shaping, self.shape_view()) {
+            (Some(_), _) if stopping => ("Shape: stopping...".to_owned(), "It stops at the end of this round".to_owned(), false),
+            (Some(text), _) => (text, "Esc stops it and keeps the shape so far".to_owned(), false),
             (None, Some(v)) => {
                 let stopped =
                     matches!(v.shaped.optimized.stop, tenon_fea::topo::Stop::Stopped | tenon_fea::topo::Stop::Budget | tenon_fea::topo::Stop::Limit);
                 let text = format!(
                     "Shape: {:.0}% removed{}{}",
-                    100.0 * (1.0 - v.shaped.fraction),
+                    100.0 * (1.0 - v.shaped.shown.share),
                     if stopped { " (stopped early)" } else { "" },
                     if v.visible { "" } else { " (hidden)" }
                 );
-                (text, "Click to show or hide it; double-click to work it out again", true)
+                // (What there is to know of it can be read here, as in the view while it is shown.)
+                let tip =
+                    std::iter::once("Click to show or hide it; double-click to work it out again").chain(v.said()).collect::<Vec<_>>().join("\n");
+                (text, tip, true)
             }
             (None, None) if self.shape_is_stale() => {
-                ("Shape: out of date (Optimize Shape)".to_owned(), "The part or the study has changed since it was worked out", false)
+                ("Shape: out of date (Optimize Shape)".to_owned(), "The part or the study has changed since it was worked out".to_owned(), false)
             }
-            (None, None) => ("Shape: none yet (Optimize Shape)".to_owned(), "Optimize Shape works out where material is needed", false),
+            (None, None) => ("Shape: none yet (Optimize Shape)".to_owned(), "Optimize Shape works out where material is needed".to_owned(), false),
         };
         let mut action: Option<StudyAction> = None;
         egui::ScrollArea::vertical().id_salt("tn_study_scroll").auto_shrink([false, false]).show(ui, |ui| {
@@ -1671,7 +1686,7 @@ impl Workbench {
                 }
                 let (text, tip, there) = &shape_row;
                 let (resp, _) = row(ui, t, 2, Icon::OptimizeShape, text, None, if *there { RowStyle::Normal } else { RowStyle::Dim });
-                let resp = resp.on_hover_text(*tip);
+                let resp = resp.on_hover_text(tip.as_str());
                 if resp.double_clicked() {
                     action = Some(if *there { StudyAction::OptimizeAgain } else { StudyAction::Run("analysis.optimize") });
                 } else if resp.clicked() && *there {

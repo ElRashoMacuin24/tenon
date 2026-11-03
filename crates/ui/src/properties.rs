@@ -552,6 +552,7 @@ impl Workbench {
         let face_normal = self.load_face_normal();
         // (How many kept faces and planes of symmetry Optimize Shape has.)
         let shape_counts = self.active_study().and_then(|s| s.optimize.as_ref()).map_or((0, 0), |o| (o.kept.len(), o.symmetry.len()));
+        let part_grams = self.part_grams();
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             ui.label(egui::RichText::new(kind).font(theme::heading()).color(t.text));
@@ -566,7 +567,10 @@ impl Workbench {
                 ui.spacing_mut().indent = 10.0;
                 match &mut panel {
                     Panel::Support(p) => clear |= crate::analysis::support_fields(ui, p),
-                    Panel::Shape(p) => enter |= crate::shape::shape_fields(ui, p, shape_counts.0, shape_counts.1, t),
+                    Panel::Shape(p) => {
+                        p.part_is(part_grams);
+                        enter |= crate::shape::shape_fields(ui, p, shape_counts.0, shape_counts.1, t);
+                    }
                     Panel::Keep(p) => {
                         let (cleared, entered) = crate::shape::keep_fields(ui, p, t);
                         clear |= cleared;

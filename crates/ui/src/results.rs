@@ -63,6 +63,19 @@ const SAFETY_TOP: f64 = 15.0;
 
 /// What is said to a run asked for while another goes on.
 const BEING_WORKED_OUT: &str = "A study is being worked out: wait for it, or press Esc to stop it.";
+/// What Esc says of a run it has stopped, until it has.
+pub(crate) const STOPPING: &str = "Stopping...";
+/// What is said while the control port has a study being worked out.
+pub(crate) const PORT_RUN_GOES: &str = "A study is being worked out for the control port. Esc stops it.";
+
+/// A study being worked out for the control port: `study.solve` or `study.optimize`, on the
+/// geometry thread as a run begun in the window is. (It is the port's to answer: all the window
+/// has of it is how to stop it, and that it is going on.)
+#[derive(Clone, Debug)]
+pub(crate) struct PortRun {
+    pub request: u64,
+    pub cancel: Cancel,
+}
 
 /// What is being worked out.
 #[derive(Clone, Debug)]
@@ -183,7 +196,7 @@ impl Workbench {
     /// and is still stopping. (The geometry thread does one thing at a time; a run queued behind
     /// another would take Esc from it.)
     pub(crate) fn no_run_going(&self) -> Result<(), String> {
-        if self.analysis.as_ref().is_some_and(|e| e.running.is_some() || e.shaping.is_some()) {
+        if self.port_run.is_some() || self.analysis.as_ref().is_some_and(|e| e.running.is_some() || e.shaping.is_some()) {
             return Err(BEING_WORKED_OUT.into());
         }
         if self.part_jobs.values().any(|j| matches!(j, PartJob::Study { .. } | PartJob::Shape { .. })) {
@@ -328,7 +341,7 @@ impl Workbench {
         if !self.in_analysis() {
             self.analysis_begin()?;
         }
-        if self.shaping().is_some() {
+        if self.shaping().is_some() || self.port_run.is_some() {
             return Err(BEING_WORKED_OUT.into());
         }
         // (While a study is being worked out the lines are asked for, and come with its mesh.)
@@ -346,10 +359,37 @@ impl Workbench {
         Ok(())
     }
 
-    /// The keys of a study being worked out: Esc stops it.
+    /// Whether something on the screen takes Esc before a study being worked out does: a menu, a
+    /// panel, a dialog. (A run that was stopped cannot be taken up again, and Esc meant for one of
+    /// these would stop it.)
+    pub(crate) fn esc_is_taken(&self) -> bool {
+        let c = &self.chrome;
+        self.panel.is_some()
+            || self.is_sketching()
+            || self.pick_plane
+            || c.sheet.pick_a_side
+            || c.file_menu.is_some()
+            || c.browser_menu.is_some()
+            || c.dropdown.is_some()
+            || c.radial.is_some()
+            || c.save_prompt.is_some()
+            || c.crash.is_some()
+            || c.about
+            || c.mass
+            || c.options
+            || c.table
+            || c.library
+            || c.params
+            || c.print.open
+            || c.sheet.defaults.is_some()
+            || self.recover_offer.is_some()
+    }
+
+    /// The keys of a study being worked out: Esc stops it, when it is meant for that.
     pub(crate) fn study_keys(&mut self, ui: &Ui) {
-        let busy = self.analysis.as_ref().is_some_and(|e| e.running.is_some() || e.shaping.is_some());
-        if busy && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        self.stop_a_run_gone_stale();
+        let busy = self.port_run.is_some() || self.analysis.as_ref().is_some_and(|e| e.running.is_some() || e.shaping.is_some());
+        if busy && ui.input(|i| i.key_pressed(egui::Key::Escape)) && !self.esc_is_taken() && !self.keys_elsewhere {
             self.stop_study();
         }
     }
@@ -357,11 +397,12 @@ impl Workbench {
     /// Esc while a study is being worked out stops it. True when there was one to stop.
     pub(crate) fn stop_study(&mut self) -> bool {
         let env = self.analysis.as_ref();
-        let cancel = env.and_then(|e| e.running.as_ref().map(|r| r.cancel.clone()).or_else(|| e.shaping.as_ref().map(|r| r.cancel.clone())));
+        let in_env = env.and_then(|e| e.running.as_ref().map(|r| r.cancel.clone()).or_else(|| e.shaping.as_ref().map(|r| r.cancel.clone())));
+        let cancel = self.port_run.as_ref().map(|r| r.cancel.clone()).or(in_env);
         match cancel {
             Some(c) => {
                 c.store(true, std::sync::atomic::Ordering::Relaxed);
-                self.set_status("Stopping...");
+                self.set_status(STOPPING);
                 true
             }
             None => false,
