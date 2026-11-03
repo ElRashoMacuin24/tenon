@@ -178,9 +178,10 @@ A part can really have such a side: a line of no thickness, where it touches its
 touching, a bore just touching a side). The kernel draws that line too, so it is told from a hole
 closed up, and the part is worked out. The surface of a shape through that line is not closed, and
 is said to be so. The mesher itself can fail on such a part, at any size (a bore just touching one
-side of a plate, and not the side opposite), as it does for a stress check: then what it said is
-said, with that the part touches itself along a line and that moving the hole a little off it helps
-(0.05 did on those tried), and no word of sizes.
+side of a plate, and not the side opposite), as it does for a stress check; which parts goes by the
+platform's build of it, as some that fail on Windows are divided on Linux and macOS. Then what it
+said is said, with that the part touches itself along a line and that moving the hole a little off
+it helps (0.05 did on those tried), and no word of sizes.
 
 **How large the elements are.** From the part's volume V and the resolution's nodes N,
 h = (9 V / N)^(1/3): about nine nodes to each cube of h. With a smallest member m, h is no more

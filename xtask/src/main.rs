@@ -181,7 +181,9 @@ fn cmd_ci() -> Result<(), String> {
             "test",
             Box::new(|| {
                 let mut c = cargo();
-                c.args(["test", "--workspace"]);
+                // (All the failures in one run: CI takes half an hour, and one binary failing
+                // would hide those of the binaries after it.)
+                c.args(["test", "--workspace", "--no-fail-fast"]);
                 // The gate holds stress studies against textbook answers through the real
                 // mesher and solver: here their absence is a failure, not a test left out
                 // (`pixi install -e fea`).

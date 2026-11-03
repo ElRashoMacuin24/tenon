@@ -317,7 +317,7 @@ fn a_part_that_is_not_symmetric_is_refused() {
     let mut p = cantilever();
     let mut o = quick(3);
     o.symmetry = vec![tenon_model::PlaneRef::Origin(tenon_model::OriginPlane::YZ)];
-    let e = p.shape(&o, &Cancel::default(), None).unwrap_err();
+    let e = refused(p.shape(&o, &Cancel::default(), None));
     assert!(e.contains("is not the same on both sides of YZ"), "{e}");
 }
 
@@ -383,6 +383,15 @@ fn bolted_plate() -> Part {
 /// A few rounds of a shape at a resolution, on what it asks of the mesh.
 fn few_rounds(resolution: Resolution) -> Optimize {
     Optimize { target: Target::Remove(60.0), sharpen: false, iterations: Some(3), resolution, ..Optimize::default() }
+}
+
+/// What a study that is to be refused says. (Should it be worked out, that is said in a line: the
+/// debug form of a shape would fill a CI log and cut it off.)
+fn refused(worked_out: Result<Shaped, String>) -> String {
+    match worked_out {
+        Ok(_) => panic!("it was worked out, and was to be refused"),
+        Err(e) => e,
+    }
 }
 
 /// The settings of a study made to hold a face as a plane of symmetry, as a file edited by hand
@@ -517,7 +526,7 @@ fn elements_are_not_made_so_large_that_the_layers_leave_no_room() {
     assert!(shaped.element_size < 6.0, "{} against a first size of {first}", shaped.element_size);
     // Where no size has room it is said, with what would make the layers thinner.
     let o = Optimize { target: Target::Remove(95.0), ..o };
-    let e = p.shape(&o, &Cancel::default(), None).unwrap_err();
+    let e = refused(p.shape(&o, &Cancel::default(), None));
     assert!(e.contains("% kept. Remove less, or choose Medium: smaller elements make the layers thinner."), "{e}");
 }
 
@@ -570,15 +579,21 @@ fn a_part_the_mesher_cannot_divide_where_it_touches_itself_is_told_to_come_off_t
         return;
     }
     // A bore of 10 just touching a side: the mirror image of the one above, and others like it, on
-    // which the mesher fails at every resolution. `Choose Medium`, `Choose Fine` and `Suppress` led
-    // nowhere, and there is no small hole.
+    // which Windows's build of the mesher fails at every resolution. `Choose Medium`, `Choose Fine`
+    // and `Suppress` led nowhere, and there is no small hole. (Linux's and macOS's divide some of
+    // these: what comes of a part that touches itself goes by the build.)
+    let mut failed = 0;
     for (depth, x, y) in [(30.0, 0.0, -10.0), (40.0, 0.0, -15.0), (40.0, 0.0, 15.0), (40.0, -25.0, 0.0)] {
         for resolution in [Resolution::Coarse, Resolution::Medium, Resolution::Fine] {
             let mut p = held_by_a_side_it_may_cut(plate(60.0, depth, 10.0, &[(x, y, 10.0)]));
-            let e = p.shape(&few_rounds(resolution), &Cancel::default(), None).unwrap_err();
+            let Err(e) = p.shape(&few_rounds(resolution), &Cancel::default(), None) else { continue };
+            failed += 1;
             assert!(e.contains("It said") && e.ends_with("move the hole a little off it."), "60 x {depth}, at ({x}, {y}), {resolution:?}: {e}");
             assert!(!e.contains("Choose") && !e.contains("Suppress"), "60 x {depth}, at ({x}, {y}), {resolution:?}: {e}");
         }
+    }
+    if cfg!(windows) {
+        assert_eq!(failed, 12);
     }
     // And what it says does help.
     for (depth, x, y) in [(30.0, 0.0, -9.95), (40.0, 0.0, -14.95), (40.0, 0.0, 14.95), (40.0, -24.95, 0.0)] {
@@ -781,7 +796,7 @@ fn many_small_holes_at_fine_are_worked_out_or_refused_in_words_that_help() {
         })
     };
     let dir = std::env::temp_dir().join(format!("tenon-shape-fine-{}", std::process::id()));
-    let e = work_out(&mut p.s, &mut p.k, StudyId(1), &few_rounds(Resolution::Fine), 0, Some(&dir), &cancel, Some(&progress)).unwrap_err();
+    let e = refused(work_out(&mut p.s, &mut p.k, StudyId(1), &few_rounds(Resolution::Fine), 0, Some(&dir), &cancel, Some(&progress)));
     cancel.store(true, Ordering::Relaxed);
     watcher.join().unwrap();
     if e == tenon_fea::tools::STOPPED {
@@ -958,9 +973,9 @@ fn what_only_a_shape_needs_is_said_before_anything_is_started() {
     let top = p.facing("top");
     let face: tenon_model::FaceRef = serde_json::from_value(top).unwrap();
     let o = Optimize { symmetry: vec![tenon_model::PlaneRef::Face(face)], ..Optimize::default() };
-    assert_eq!(p.shape(&o, &Cancel::default(), None).unwrap_err(), FACE_PLANE_REFUSED);
+    assert_eq!(refused(p.shape(&o, &Cancel::default(), None)), FACE_PLANE_REFUSED);
     let o = Optimize { symmetry: vec![tenon_model::PlaneRef::Work(tenon_model::FeatureId(99))], ..Optimize::default() };
-    let e = p.shape(&o, &Cancel::default(), None).unwrap_err();
+    let e = refused(p.shape(&o, &Cancel::default(), None));
     assert_eq!(e, "work plane 99 cannot be a plane of symmetry: it is not a plane that is on the part");
 }
 
