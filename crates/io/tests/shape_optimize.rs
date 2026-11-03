@@ -174,19 +174,22 @@ fn a_cantilever_puts_material_at_its_top_and_bottom() {
 }
 
 #[test]
-fn the_same_study_gives_the_same_shape_bit_for_bit() {
+fn the_same_study_gives_the_same_mesh_and_nearly_the_same_shape() {
     if !programs("the same shape twice") {
         return;
     }
     let mut p = cantilever();
     let a = p.shape(&quick(5), &Cancel::default(), None).unwrap();
     let b = p.shape(&quick(5), &Cancel::default(), None).unwrap();
-    assert_eq!(a.optimized.density, b.optimized.density);
-    assert_eq!(
-        a.optimized.history.iter().map(|i| i.compliance).collect::<Vec<_>>(),
-        b.optimized.history.iter().map(|i| i.compliance).collect::<Vec<_>>()
-    );
-    assert_eq!(a.shown.skin, b.shown.skin);
+    // The mesh to the bit. What the solver says, as near as a solver on many threads says it twice.
+    assert_eq!(a.field.mesh, b.field.mesh);
+    for (x, y) in a.optimized.history.iter().zip(&b.optimized.history) {
+        assert!((x.compliance - y.compliance).abs() < 1e-7 * x.compliance, "{} against {}", x.compliance, y.compliance);
+    }
+    for (x, y) in a.optimized.density.iter().zip(&b.optimized.density) {
+        assert!((x - y).abs() < 1e-4, "{x} against {y}");
+    }
+    assert!((a.shown.skin.volume() - b.shown.skin.volume()).abs() < 1e-3 * a.shown.skin.volume());
 }
 
 #[test]
@@ -393,6 +396,116 @@ fn with_a_face_as_a_plane_in_its_file(p: &mut Part, face: &Value) {
     p.s = Session::new(opened);
 }
 
+/// The points of a mesh's boundary within `slack` of a circle of `radius` about the z axis.
+fn on_the_bore(mesh: &tenon_fea::TetMesh, radius: f64, slack: f64) -> usize {
+    let corners: std::collections::BTreeSet<u32> = mesh.tris.iter().flat_map(|t| t.nodes[..3].iter().copied()).collect();
+    corners.iter().filter(|n| (mesh.nodes[**n as usize].x.hypot(mesh.nodes[**n as usize].y) - radius).abs() < slack).count()
+}
+
+#[test]
+fn a_plate_with_one_small_bore_is_worked_out_at_coarse() {
+    if !programs("a plate with one small bore") {
+        return;
+    }
+    // Bores much narrower than the elements. Their walls would fold flat at a third of the size,
+    // and the mesher fails on that; they stay open, and are there in the mesh.
+    for (width, depth, thick, across) in [(200.0, 100.0, 5.0, 1.0), (300.0, 200.0, 10.0, 1.5), (200.0, 100.0, 5.0, 0.5), (200.0, 100.0, 20.0, 1.0)] {
+        let mut p = plate(width, depth, thick, &[(0.0, 0.0, across)]);
+        held_at_the_left(&mut p);
+        let shaped = p.shape(&few_rounds(Resolution::Coarse), &Cancel::default(), None).unwrap();
+        let mesh = &shaped.field.mesh;
+        let told = format!("{width} x {depth} x {thick} with a bore of {across}");
+        assert!(mesh.boundary_is_closed(), "{told}");
+        assert!(on_the_bore(mesh, across / 2.0, 1e-6) >= 6, "{told}: {}", on_the_bore(mesh, across / 2.0, 1e-6));
+        assert!(shaped.shown.skin.is_closed() && !shaped.warnings.iter().any(|w| w.contains("not closed")), "{told}: {:?}", shaped.warnings);
+        assert!(mesh.nodes.len() <= 18_000, "{told}: {} nodes", mesh.nodes.len());
+    }
+}
+
+#[test]
+fn elements_made_larger_leave_small_bores_open() {
+    if !programs("a plate with many small bores") {
+        return;
+    }
+    // 100 bores of 1 on 110 x 110 x 3. Elements grown past them once left the bores folded flat,
+    // and so no such bores in the mesh, and a surface not closed, with no word of it.
+    let bores: Vec<(f64, f64, f64)> =
+        (0..10).flat_map(|i| (0..10).map(move |j| (-49.5 + 11.0 * f64::from(i), -49.5 + 11.0 * f64::from(j), 1.0))).collect();
+    let mut p = plate(110.0, 110.0, 3.0, &bores);
+    held_at_the_left(&mut p);
+    let shaped = p.shape(&few_rounds(Resolution::Coarse), &Cancel::default(), None).unwrap();
+    assert!(shaped.field.mesh.boundary_is_closed());
+    assert!(shaped.shown.skin.is_closed(), "{:?}", shaped.warnings);
+    assert!(!shaped.warnings.iter().any(|w| w.contains("not closed")), "{:?}", shaped.warnings);
+}
+
+#[test]
+fn a_thin_rim_is_told_from_the_flat_faces_beside_it() {
+    if !programs("a thin rim") {
+        return;
+    }
+    // A disc 100 across and 0.5 thick, on a shape's real mesh. With elements thirty times its
+    // thickness the rim's strips are long flats, with their middles well inside the disc, nearer
+    // the top and the bottom than the rim itself.
+    let mut p = Part::new();
+    p.run("model.cylinder", json!({ "x": 0, "y": 0, "diameter": 100, "height": 0.5 }));
+    let r = p.s.regen(&mut p.k).clone();
+    let body = &r.bodies[0];
+    let step = p.k.export_step(&[body.shape]).unwrap();
+    let drawn = p.k.tessellate(body.shape, &tenon_kernel::MeshTol::exact()).unwrap();
+    let closed = tenon_fea::faces::shortest_closed_edge(&drawn);
+    assert!(closed.is_some_and(|c| (c - 100.0 * std::f64::consts::PI).abs() < 0.1), "{closed:?}");
+    let (tools, scratch, cancel) = (Tools::find().unwrap(), tenon_fea::Scratch::new().unwrap(), Cancel::default());
+    for size in [15.0, 20.0, 30.0] {
+        let mesh = tenon_fea::mesh_for_shape(&tools, &step, size, closed, &scratch.dir, &cancel).unwrap();
+        let on = tenon_fea::faces::match_surfaces(&mesh, &drawn).unwrap();
+        // Each surface is of the face its corners say: at one height a flat face, at two the rim.
+        assert_eq!(on.len(), 3, "{on:?}");
+        for (surface, face) in &on {
+            let heights: std::collections::BTreeSet<i64> = mesh
+                .tris
+                .iter()
+                .filter(|t| t.surface == *surface)
+                .flat_map(|t| t.nodes[..3].iter().map(|n| (mesh.nodes[*n as usize].z * 1000.0).round() as i64))
+                .collect();
+            let info = p.k.face_info(body.shape.face(*face)).unwrap();
+            let is_round = matches!(info.surface, tenon_kernel::SurfaceKind::Cylinder { .. });
+            assert_eq!(
+                heights.len() == 2,
+                is_round,
+                "at {size}: surface {surface} at heights {heights:?} is said to be face {face}, {:?}",
+                info.surface
+            );
+            if !is_round {
+                assert!((info.centroid.z * 1000.0).round() as i64 == *heights.first().unwrap(), "at {size}: {heights:?} against {:?}", info.centroid);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_part_cut_in_two_is_refused_as_it_cannot_be_solved() {
+    if !programs("a part cut in two") {
+        return;
+    }
+    // A bore wider than the plate: one solid to the kernel, two pieces to the mesh. Its left end
+    // is held and its right end pushed, and the right piece floats.
+    let mut p = plate(100.0, 40.0, 10.0, &[(0.0, 0.0, 60.0)]);
+    held_at_the_left(&mut p);
+    assert_eq!(p.run("study.check", json!({}))["ready"], true);
+    let said = "The part is in 2 pieces, and one of them is not held fast: there is no one answer. Hold every piece, or join them up.";
+    assert_eq!(p.refused("study.solve", json!({})), said);
+    assert_eq!(p.refused("study.optimize", json!({ "element_size": 5 })), said);
+    // Each held, it can be worked out: as two pieces, each with what it takes.
+    let mut p = plate(100.0, 40.0, 10.0, &[(0.0, 0.0, 60.0)]);
+    let (left, right) = (p.facing("left"), p.facing("right"));
+    let top = p.run("model.find", json!({ "what": "faces", "facing": "top" }))["found"][0]["reference"].clone();
+    p.run("study.new", json!({}));
+    p.run("study.fix", json!({ "faces": [left, right] }));
+    p.run("study.force", json!({ "faces": [top], "newtons": 100, "direction": "down" }));
+    assert!(p.run("study.solve", json!({}))["max_displacement"]["millimetres"].as_f64().unwrap() < 1.0);
+}
+
 #[test]
 fn a_plate_with_small_holes_is_worked_out_near_its_resolution() {
     if !programs("a plate with small holes") {
@@ -588,8 +701,27 @@ fn a_face_held_as_a_plane_in_a_file_is_refused_before_anything_is_started() {
     p.run("study.fix", json!({ "faces": [left] }));
     p.run("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" }));
     p.run("study.shape", json!({ "remove": 60, "element_size": 12 }));
+    // The same through an origin plane that lies where its bottom does: held to the plate's own
+    // thickness, whatever the size of the elements or however they were made larger.
+    p.run("study.shape", json!({ "symmetry": ["xy"] }));
+    let off = "The part is not the same on both sides of XY (it reaches 1 mm to one side of it and 0 mm to the other)";
+    let e = p.refused("study.optimize", json!({}));
+    assert!(e.starts_with(off), "{e}");
+    assert!(p.refused("study.optimize", json!({ "element_size": null, "resolution": "coarse" })).starts_with(off));
+    p.run("study.shape", json!({ "symmetry": [] }));
     with_a_face_as_a_plane_in_its_file(&mut p, &bottom);
     assert_eq!(p.refused("study.optimize", json!({})), format!("A shape of Study1 cannot be worked out yet. {FACE_PLANE_REFUSED}"));
+    // A work plane at its bottom too.
+    let mut p = Part::new();
+    p.run("model.box", json!({ "width": 120, "depth": 120, "height": 1 }));
+    p.run("document.material", json!({ "name": "Steel, mild" }));
+    let (left, right) = (p.facing("left"), p.facing("right"));
+    p.run("study.new", json!({}));
+    p.run("study.fix", json!({ "faces": [left] }));
+    p.run("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" }));
+    let bottom_plane = p.run("work.plane", json!({ "base": "xy", "distance": 0 }))["feature"].as_u64().unwrap();
+    p.run("study.shape", json!({ "remove": 60, "element_size": 12, "symmetry": [{ "work": bottom_plane }] }));
+    assert!(p.refused("study.optimize", json!({})).contains("(it reaches 1 mm to one side of it and 0 mm to the other)"));
 }
 
 #[test]
@@ -614,6 +746,12 @@ fn what_only_a_shape_needs_is_said_before_anything_is_started() {
     let e = p.refused("study.optimize", json!({}));
     assert!(e.contains("Keep1: its face is no longer on the part. Give it its faces again (study.set, with faces)."), "{e}");
     assert!(!e.contains(".."), "{e}");
+    // A load that goes with the material kept is one of these, and comes in the same words.
+    let mut p = plate(80.0, 40.0, 10.0, &[]);
+    held_at_the_left(&mut p);
+    p.run("study.gravity", json!({}));
+    let e = p.refused("study.optimize", json!({}));
+    assert!(e.starts_with("A shape of Study1 cannot be worked out yet. Optimize Shape does not take Gravity1 yet"), "{e}");
     // Settings given that are not the study's own say the same of a plane.
     let mut p = plate(80.0, 40.0, 10.0, &[]);
     held_at_the_left(&mut p);
@@ -638,6 +776,10 @@ fn where_the_files_go_is_refused_before_anything_is_started() {
         (json!({ "stl": at("y.3mf") }), "`stl` must be a file ending in .stl"),
         (json!({ "threemf": at("x.stl") }), "`threemf` must be a file ending in .3mf"),
         (json!({ "stl": dir.join("no").join("such").join("z.stl").display().to_string() }), "there is no folder"),
+        (
+            json!({ "stl": at(if cfg!(windows) { "bad:name.stl" } else { "no/such/x.stl" }) }),
+            if cfg!(windows) { "a file cannot be called" } else { "there is no folder" },
+        ),
     ] {
         let e = p.refused("study.optimize", asked.clone());
         assert!(e.contains(said), "{asked}: {e}");

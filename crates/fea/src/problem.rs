@@ -81,6 +81,13 @@ pub struct Setup {
     pub material: Material,
 }
 
+/// How many pieces a mesh is in, and how many of them are not held fast.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Loose {
+    pub pieces: usize,
+    pub loose: usize,
+}
+
 /// What a solver is asked.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Problem {
@@ -165,13 +172,20 @@ fn force_and_moment(name: &str, spots: &[Spot], area: f64, force: Vec3, moment: 
 /// The pushes of a bearing load: on each round face, on the half that the load pushes
 /// against, square to the face, most where the face squarely faces the load and nothing at
 /// the sides; scaled so that they add up to `newtons` along the load.
+///
+/// What is square to the face is worked out from where the spot is on the round face, not from
+/// the triangle it is on: a small bore at a shape's mesh is a few flat sides (straight mid-side
+/// nodes), and pushed square to those it would be pushed well off the way asked. On so few sides
+/// a little across the load is still left over: that is taken back in shares of the pushes.
 fn bearing(name: &str, spots: &[Spot], newtons: f64, direction: Vec3) -> Result<Vec<Vec3>, String> {
     // (A negative load presses the other way.)
     let (newtons, direction) = if newtons < 0.0 { (-newtons, -direction) } else { (newtons, direction) };
-    let mut shares: Vec<(f64, Vec3)> = Vec::with_capacity(spots.len());
+    // Each spot: how squarely it is pushed against, the way out of the solid there, its area, and
+    // the way the load presses across its axis.
+    let mut shares: Vec<(f64, Vec3, f64, Vec3)> = Vec::with_capacity(spots.len());
     let mut sum = 0.0;
     for s in spots {
-        let Surface::Cylinder { dir, .. } = s.surface else {
+        let Surface::Cylinder { origin, dir } = s.surface else {
             return Err(format!("{name}: a bearing load is on round (cylindrical) faces, and one of its faces is not"));
         };
         let across = direction - dir * direction.dot(dir);
@@ -179,15 +193,34 @@ fn bearing(name: &str, spots: &[Spot], newtons: f64, direction: Vec3) -> Result<
             return Err(format!("{name}: a bearing load presses across the axis of its face, and its direction is along it"));
         }
         let (d, a) = (across.normalized(), s.da.len());
+        // Square to the round face, on the side the triangle says is out of the solid (toward the
+        // axis in a bore, away from it on a boss).
+        let radial = (s.at - origin) - dir * (s.at - origin).dot(dir);
+        let side = s.da.dot(radial);
+        let out = if a == 0.0 {
+            Vec3::ZERO
+        } else if side != 0.0 {
+            radial.normalized() * side.signum()
+        } else {
+            s.da * (1.0 / a)
+        };
         // How squarely this bit of the face is pushed against (0 when it faces away).
-        let facing = if a > 0.0 { (-s.da.dot(d) / a).max(0.0) } else { 0.0 };
+        let facing = (-out.dot(d)).max(0.0);
         sum += facing * facing * a;
-        shares.push((facing, s.da));
+        shares.push((facing, out, a, d));
     }
     if sum <= 0.0 {
         return Err(format!("{name}: none of its faces is pushed against by a load that way"));
     }
-    Ok(shares.into_iter().map(|(facing, da)| da * (-facing * newtons / sum)).collect())
+    let k = newtons / sum;
+    let mut pushes: Vec<Vec3> = shares.iter().map(|(facing, out, a, _)| *out * (-facing * a * k)).collect();
+    // What the pushes come to, less what each was to come to along the load.
+    let over = shares.iter().zip(&pushes).fold(Vec3::ZERO, |sum, ((facing, _, a, d), push)| sum + *push - *d * (facing * facing * a * k));
+    let whole: f64 = pushes.iter().map(|p| p.len()).sum();
+    if whole > 0.0 {
+        pushes.iter_mut().for_each(|p| *p = *p - over * (p.len() / whole));
+    }
+    Ok(pushes)
 }
 
 /// The axis a moment turns about when none is said: its faces' own (a flat face's normal, a
@@ -384,15 +417,59 @@ impl Problem {
     /// fast; up to 6 (three ways to slide, three to turn) when nothing holds it. A part that
     /// can still move has no one answer.
     pub fn free_motions(&self) -> usize {
+        self.free_motions_of(&self.mesh.nodes, &mut self.held.iter())
+    }
+
+    /// How many pieces the mesh is in (those no element joins), and how many of them can still
+    /// move as a whole. A bore wider than a plate leaves a part in two pieces that is still one
+    /// solid to the kernel: with one piece held fast [`Problem::free_motions`] is 0, and the
+    /// other floats, with no one answer.
+    pub fn loose_pieces(&self) -> Loose {
+        fn root(parent: &mut [u32], mut n: u32) -> u32 {
+            while parent[n as usize] != n {
+                let up = parent[parent[n as usize] as usize];
+                parent[n as usize] = up;
+                n = up;
+            }
+            n
+        }
+        // The nodes of one element are of one piece.
+        let mut parent: Vec<u32> = (0..self.mesh.nodes.len() as u32).collect();
+        for t in &self.mesh.tets {
+            let first = root(&mut parent, t[0]);
+            for n in &t[1..] {
+                let other = root(&mut parent, *n);
+                parent[other as usize] = first;
+            }
+        }
+        // Each piece: its nodes, and what holds them. (A node of no element is of no piece.)
+        let mut of_piece: BTreeMap<u32, (Vec<Vec3>, Vec<(&u32, &Vec<Vec3>)>)> = BTreeMap::new();
+        let mut seen = vec![false; self.mesh.nodes.len()];
+        for n in self.mesh.tets.iter().flatten() {
+            if !std::mem::replace(&mut seen[*n as usize], true) {
+                of_piece.entry(root(&mut parent, *n)).or_default().0.push(self.mesh.nodes[*n as usize]);
+            }
+        }
+        for (n, dirs) in &self.held {
+            if let Some(piece) = of_piece.get_mut(&root(&mut parent, *n)) {
+                piece.1.push((n, dirs));
+            }
+        }
+        let loose = of_piece.values().filter(|(nodes, held)| self.free_motions_of(nodes, &mut held.iter().copied()) > 0).count();
+        Loose { pieces: of_piece.len(), loose }
+    }
+
+    /// How many ways what has the nodes `nodes` can still move as a whole, held by `held`.
+    fn free_motions_of<'a>(&self, nodes: &[Vec3], held: &mut dyn Iterator<Item = (&'a u32, &'a Vec<Vec3>)>) -> usize {
         // A move of the whole part is a slide t and a turn w about a point c: a node at p
         // moves by t + w x (p - c). Held along d, it gives d.t + (r x d).w = 0. The ways left
         // are six less the number of such conditions that are independent.
-        let Some(first) = self.mesh.nodes.first() else { return 6 };
-        let (lo, hi) = self.mesh.nodes.iter().fold((*first, *first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        let Some(first) = nodes.first() else { return 6 };
+        let (lo, hi) = nodes.iter().fold((*first, *first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
         let (c, size) = ((lo + hi) * 0.5, (hi - lo).len().max(1e-9));
         let mut rows: Vec<[f64; 6]> = Vec::new();
-        for (n, dirs) in &self.held {
-            // (Lengths scaled by the part's size, so that sliding and turning weigh alike.)
+        for (n, dirs) in held {
+            // (Lengths scaled by its size, so that sliding and turning weigh alike.)
             let r = (self.mesh.nodes[*n as usize] - c) * (1.0 / size);
             for d in dirs {
                 let m = r.cross(*d);
@@ -729,6 +806,93 @@ mod tests {
         assert!(bearing("Bearing1", &wall, 100.0, Vec3::Z).unwrap_err().contains("across the axis"));
         let flat = [Spot { at: Vec3::ZERO, da: Vec3::Z, surface: Surface::Plane { normal: Vec3::Z }, nodes: [0; 6], weights: [0.0; 6] }];
         assert!(bearing("Bearing1", &flat, 100.0, Vec3::X).unwrap_err().contains("round (cylindrical) faces"));
+    }
+
+    /// The wall of a bore of radius 1 along z with `sides` flat sides, each with `spots` spots
+    /// along it, as a shape's mesh has a small one, turned by `turn` degrees.
+    fn flat_sided_bore(sides: u32, spots: u32, turn: f64) -> Vec<Spot> {
+        let corner = |i: u32| {
+            let a = f64::from(i) * std::f64::consts::TAU / f64::from(sides) + turn.to_radians();
+            Vec3::new(a.cos(), a.sin(), 0.0)
+        };
+        (0..sides)
+            .flat_map(|i| {
+                let (a, b) = (corner(i), corner(i + 1));
+                // (Out of the solid is into the hole: square to the side, toward the axis.)
+                let square = ((a + b) * 0.5).normalized() * -1.0;
+                (0..spots).map(move |k| Spot {
+                    at: a + (b - a) * ((f64::from(k) + 0.5) / f64::from(spots)),
+                    da: square * (a.dist(b) / f64::from(spots)),
+                    surface: Surface::Cylinder { origin: Vec3::ZERO, dir: Vec3::Z },
+                    nodes: [0; 6],
+                    weights: [0.0; 6],
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_bearing_load_on_a_bore_of_few_flat_sides_goes_the_way_asked() {
+        // From a triangle up, and every way round: all of it along the load, nothing across it
+        // and nothing along the axis.
+        let d = Vec3::new(1.0, 1.0, 0.0).normalized();
+        for sides in [3, 4, 5, 6, 7, 12] {
+            for turn in [0.0, 10.0, 17.0, 33.0, 45.0, 60.0, 90.0] {
+                for spots in [1, 3, 6] {
+                    let wall = flat_sided_bore(sides, spots, turn);
+                    let pushes = bearing("Bearing1", &wall, 100.0, d).unwrap();
+                    let sum = pushes.iter().fold(Vec3::ZERO, |s, f| s + *f);
+                    assert!((sum - d * 100.0).len() < 1e-9, "{sides} sides, turned {turn}, {spots} spots: {sum:?}");
+                    assert!(pushes.iter().all(|p| p.z == 0.0));
+                }
+            }
+        }
+        // Each push goes away from the axis at its spot on a bore: into the material.
+        let wall = flat_sided_bore(12, 3, 0.0);
+        let pushes = bearing("Bearing1", &wall, 100.0, Vec3::X).unwrap();
+        assert!(wall.iter().zip(&pushes).all(|(s, p)| p.dot(s.at) >= -1e-9));
+        // And toward it on a boss, where out of the solid is the other way.
+        let boss: Vec<Spot> = wall.iter().map(|s| Spot { at: s.at, da: s.da * -1.0, surface: s.surface, nodes: [0; 6], weights: [0.0; 6] }).collect();
+        let pushes = bearing("Bearing1", &boss, 100.0, Vec3::X).unwrap();
+        assert!(boss.iter().zip(&pushes).all(|(s, p)| p.dot(s.at) <= 1e-9));
+        assert!((pushes.iter().fold(Vec3::ZERO, |s, f| s + *f) - Vec3::X * 100.0).len() < 1e-9);
+    }
+
+    /// Two tetrahedra joined by nothing: nodes 0 to 9 one, 10 to 19 the other, a long way off.
+    fn two_pieces() -> TetMesh {
+        let mut mesh = read_msh(ONE_TET).unwrap();
+        let (nodes, tet) = (mesh.nodes.clone(), mesh.tets[0]);
+        mesh.nodes.extend(nodes.iter().map(|p| *p + Vec3::new(10.0, 0.0, 0.0)));
+        mesh.tets.push(tet.map(|n| n + nodes.len() as u32));
+        mesh
+    }
+
+    #[test]
+    fn a_piece_that_is_not_held_is_found() {
+        let problem = |mesh: TetMesh, held: &[u32]| Problem {
+            mesh,
+            material: steel(),
+            held: held.iter().map(|n| (*n, vec![Vec3::X, Vec3::Y, Vec3::Z])).collect(),
+            forces: BTreeMap::new(),
+            gravity: None,
+            spin: None,
+        };
+        let loose = |pieces, loose| Loose { pieces, loose };
+        // One piece: held fast, not held, or held at one node (it can turn).
+        let one = read_msh(ONE_TET).unwrap();
+        assert_eq!(problem(one.clone(), &[0, 1, 2]).loose_pieces(), loose(1, 0));
+        assert_eq!(problem(one.clone(), &[]).loose_pieces(), loose(1, 1));
+        assert_eq!(problem(one, &[0]).loose_pieces(), loose(1, 1));
+        // Two: the first held fast passes the check on the whole, and the second floats.
+        let held_first = problem(two_pieces(), &[0, 1, 2]);
+        assert_eq!(held_first.free_motions(), 0);
+        assert_eq!(held_first.loose_pieces(), loose(2, 1));
+        // Each held fast: none is loose. One held at a node and one at two: each can turn, which
+        // the whole does not see.
+        assert_eq!(problem(two_pieces(), &[0, 1, 2, 10, 11, 12]).loose_pieces(), loose(2, 0));
+        let barely = problem(two_pieces(), &[0, 10, 12]);
+        assert_eq!(barely.free_motions(), 0);
+        assert_eq!(barely.loose_pieces(), loose(2, 2));
     }
 
     #[test]

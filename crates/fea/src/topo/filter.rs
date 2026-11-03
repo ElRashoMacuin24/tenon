@@ -24,10 +24,6 @@ use super::Mirror;
 /// The most memory the filter's table may take.
 const MOST_BYTES: usize = 512 * 1024 * 1024;
 
-/// How far from a right angle two planes of symmetry may be (the cosine of the angle between
-/// them).
-const SQUARE: f64 = 1e-6;
-
 /// The filter as a sparse matrix, row by row.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Filter {
@@ -162,10 +158,10 @@ fn too_big(radius: f64, elements: usize, planes: usize, most: usize) -> String {
     let most = most / (1024 * 1024);
     match planes {
         0 => format!(
-            "smoothing the densities of {elements} elements over {radius} mm would take more than {most} MB: ask for a smaller smallest member, or larger elements"
+            "smoothing the densities of {elements} elements over {radius} mm would take more than {most} MB: ask for a smaller smallest member, or suppress the part's small holes and rounds"
         ),
         _ => format!(
-            "smoothing the densities of {elements} elements over {radius} mm with {planes} plane{} of symmetry would take more than {most} MB: ask for a smaller smallest member, larger elements, or fewer planes (each plane through the part doubles the memory)",
+            "smoothing the densities of {elements} elements over {radius} mm with {planes} plane{} of symmetry would take more than {most} MB: ask for a smaller smallest member, suppress the part's small holes and rounds, or take fewer planes (each plane through the part doubles the memory)",
             if planes == 1 { "" } else { "s" }
         ),
     }
@@ -250,22 +246,7 @@ pub fn mirror_group(mirrors: &[Mirror]) -> Result<Vec<Vec<Mirror>>, String> {
         }
         planes.push(Mirror { point: m.point, normal: m.normal.normalized() });
     }
-    for (i, a) in planes.iter().enumerate() {
-        for b in planes.iter().skip(i + 1) {
-            let cos = a.normal.dot(b.normal).abs();
-            if cos >= 1.0 - 1e-12 {
-                return Err("two of the planes of symmetry are parallel: they must be at right angles to each other".into());
-            }
-            if cos >= SQUARE {
-                let angle = (cos.min(1.0).acos().to_degrees() * 10.0).round() / 10.0;
-                // (Off by too little to show, "meet at 90°" would read as no fault at all.)
-                if angle >= 90.0 {
-                    return Err("two of the planes of symmetry are a little off a right angle: they must be at right angles to each other".into());
-                }
-                return Err(format!("two of the planes of symmetry meet at {angle}°: they must be at right angles to each other"));
-            }
-        }
-    }
+    tenon_model::study::planes_square(&planes.iter().map(|m| m.normal).collect::<Vec<_>>())?;
     Ok((0..1usize << planes.len()).map(|set| planes.iter().enumerate().filter(|(i, _)| set >> i & 1 == 1).map(|(_, m)| *m).collect()).collect())
 }
 
@@ -495,7 +476,7 @@ pub(crate) mod tests {
             assert_eq!(
                 Filter::within(&c, &v, r, &planes[..k], bytes - 1).unwrap_err(),
                 format!(
-                    "smoothing the densities of {} elements over 1.6 mm with {k} plane{} of symmetry would take more than {} MB: ask for a smaller smallest member, larger elements, or fewer planes (each plane through the part doubles the memory)",
+                    "smoothing the densities of {} elements over 1.6 mm with {k} plane{} of symmetry would take more than {} MB: ask for a smaller smallest member, suppress the part's small holes and rounds, or take fewer planes (each plane through the part doubles the memory)",
                     c.len(),
                     if k == 1 { "" } else { "s" },
                     (bytes - 1) >> 20
@@ -580,7 +561,7 @@ pub(crate) mod tests {
         assert_eq!(
             e,
             format!(
-                "smoothing the densities of 384 elements over 2 mm would take more than {} MB: ask for a smaller smallest member, or larger elements",
+                "smoothing the densities of 384 elements over 2 mm would take more than {} MB: ask for a smaller smallest member, or suppress the part's small holes and rounds",
                 (bytes - 1) >> 20
             )
         );
@@ -591,7 +572,7 @@ pub(crate) mod tests {
         // With planes, leaving one out halves the table.
         assert_eq!(
             too_big(1.5004, 101_400, 1, MOST_BYTES),
-            "smoothing the densities of 101400 elements over 1.5 mm with 1 plane of symmetry would take more than 512 MB: ask for a smaller smallest member, larger elements, or fewer planes (each plane through the part doubles the memory)"
+            "smoothing the densities of 101400 elements over 1.5 mm with 1 plane of symmetry would take more than 512 MB: ask for a smaller smallest member, suppress the part's small holes and rounds, or take fewer planes (each plane through the part doubles the memory)"
         );
         assert!(too_big(2.0, 101_400, 3, MOST_BYTES).contains("over 2 mm with 3 planes of symmetry would take more than 512 MB: ask for a smaller"));
     }

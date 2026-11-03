@@ -14,6 +14,26 @@ use tenon_model::schema::arg;
 use tenon_model::study::StudyId;
 use tenon_model::{CmdError, CmdResult, Session};
 
+thread_local! {
+    /// What stops a long command on this thread, when what runs the command says.
+    static STOPS: std::cell::RefCell<Option<Cancel>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `work` with `cancel` stopping any `study.solve` or `study.optimize` it runs on this thread.
+/// (The commands take their parameters as words, and a command can be run by what holds no more
+/// of it than that: the app's control port.)
+pub fn stopped_by<R>(cancel: &Cancel, work: impl FnOnce() -> R) -> R {
+    STOPS.with(|s| *s.borrow_mut() = Some(cancel.clone()));
+    let done = work();
+    STOPS.with(|s| *s.borrow_mut() = None);
+    done
+}
+
+/// What stops a long command being run here: what [`stopped_by`] says, or nothing.
+pub(crate) fn command_cancel() -> Cancel {
+    STOPS.with(|s| s.borrow().clone()).unwrap_or_default()
+}
+
 /// What every result is to be read as.
 pub const NOTE: &str = "An engineering aid, not a certified analysis: linear, static, one solid of one material.";
 
@@ -189,7 +209,7 @@ pub(crate) fn solve(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult
         Some(_) => Some(crate::cmd::path_in(p, "keep")?),
         None => None,
     };
-    let solved = work_out(s, k, id, keep.as_deref(), &Cancel::default()).map_err(CmdError)?;
+    let solved = work_out(s, k, id, keep.as_deref(), &command_cancel()).map_err(CmdError)?;
     let mut out = solved.summary(&name);
     if let Some(dir) = keep {
         out["kept"] = json!(dir.display().to_string());

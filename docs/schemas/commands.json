@@ -6556,7 +6556,7 @@
       "id": "study.check",
       "label": "Check Study",
       "undoable": false,
-      "description": "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has; shape_needs: what Optimize Shape needs beyond that, in words (kept faces that are no longer on the part, a work plane of symmetry that is gone or not a plane, a face used as a plane of symmetry), which does not stop a stress check",
+      "description": "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has; shape_needs: what study.optimize needs beyond that, in words (Gravity or a body's turning suppressed, kept faces that are no longer on the part, a work plane of symmetry that is gone or not a plane, a face used as a plane of symmetry, planes not at right angles), which does not stop a stress check. What only meshing can tell (pieces not held fast, too many nodes, a part not the same on both sides of a plane) is said when it is worked out",
       "params": {
         "type": "object",
         "properties": {

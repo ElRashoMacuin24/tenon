@@ -111,6 +111,19 @@ impl TetMesh {
         (0..6).fold(Vec3::ZERO, |v, i| v + p[i] * n[i])
     }
 
+    /// Whether each side of a boundary triangle is the side of just one other: what a closed
+    /// surface is. A hole folded flat leaves sides with four triangles on them.
+    pub fn boundary_is_closed(&self) -> bool {
+        let mut sides: HashMap<[u32; 2], u32> = HashMap::with_capacity(self.tris.len() * 2);
+        for t in &self.tris {
+            for (a, b) in [(0, 1), (1, 2), (2, 0)] {
+                let (a, b) = (t.nodes[a], t.nodes[b]);
+                *sides.entry([a.min(b), a.max(b)]).or_default() += 1;
+            }
+        }
+        sides.values().all(|n| *n == 2)
+    }
+
     /// For each boundary triangle, +1 when its corners wind so that its normal points out of
     /// the solid, -1 when into it: found from the tetrahedron it is a face of.
     pub fn outward(&self) -> Result<Vec<f64>, String> {

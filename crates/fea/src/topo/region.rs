@@ -11,6 +11,9 @@
 //! - `asymmetry(mesh, mirror)`: how far the boundary is from its mirror image: the largest,
 //!   over boundary triangle corners, of the distance from the corner's image to the nearest
 //!   boundary triangle (0 for a symmetric part).
+//! - `off_centre(points, mirror)`: how far the points reach to each side of the plane, when they
+//!   are not about even: a tenth of their whole width, so that a thin part is held to its own
+//!   thickness however large its elements are.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -73,6 +76,16 @@ pub fn asymmetry(mesh: &TetMesh, mirror: &Mirror) -> f64 {
         worst = worst.max(tree.nearest(&tris, image, worst * worst).sqrt());
     }
     worst
+}
+
+/// How far `points` reach to the side of `mirror` its normal looks to, and to the other (mm), when
+/// they are off the plane's middle by more than a tenth of how wide they are along its normal;
+/// None when they are about even. [`asymmetry`] is held to a tenth of an element, which a part
+/// thinner than that passes wherever the plane is: this holds it to its own width.
+pub fn off_centre(points: impl Iterator<Item = Vec3>, mirror: &Mirror) -> Option<(f64, f64)> {
+    let (lo, hi) =
+        points.map(|p| (p - mirror.point).dot(mirror.normal)).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
+    (hi >= lo && (hi + lo).abs() / 2.0 > 0.1 * (hi - lo)).then_some((hi.max(0.0), (-lo).max(0.0)))
 }
 
 /// Triangles filed by the cells of a grid they cross, to find those near a point.
@@ -308,6 +321,13 @@ mod tests {
         // Deeper than an element: the second layer and part of the third.
         let p = passive(&problem(mesh.clone(), &[], &[]), &[(vec![5], Some(2.6))]);
         assert!((0..mesh.tets.len()).all(|e| p[e] == (at(e).z <= 2.6)));
+        // Deeper than the mesh's longest side (1.73 here), so that the grid's cell is the depth's,
+        // and deeper than the block is deep from that face: every element.
+        let p = passive(&problem(mesh.clone(), &[], &[]), &[(vec![1], Some(3.1))]);
+        assert!((0..mesh.tets.len()).all(|e| p[e] == (at(e).x <= 3.1)), "{p:?}");
+        assert!(p.iter().any(|k| !k), "the last layer's far elements are out of reach");
+        let p = passive(&problem(mesh.clone(), &[], &[]), &[(vec![1], Some(9.0))]);
+        assert!(p.iter().all(|k| *k));
         // A depth of nothing, or not a number, is only the layer; a surface the mesh does not
         // have keeps nothing.
         let layer = passive(&problem(mesh.clone(), &[], &[]), &[(vec![1], None)]);
@@ -331,6 +351,28 @@ mod tests {
         assert!((asymmetry(&mesh, &far) - 24.0).abs() < 1e-12, "{}", asymmetry(&mesh, &far));
         // No boundary: nothing to compare.
         assert_eq!(asymmetry(&TetMesh::default(), &x), 0.0);
+    }
+
+    #[test]
+    fn a_part_is_held_to_its_own_width_about_a_plane() {
+        let z = Mirror { point: Vec3::ZERO, normal: Vec3::Z };
+        let at = |heights: &[f64]| heights.iter().map(|h| Vec3::new(3.0, -2.0, *h)).collect::<Vec<_>>();
+        // Lying on the plane, however thin: all to one side.
+        assert_eq!(off_centre(at(&[0.0, 1.0]).into_iter(), &z), Some((1.0, 0.0)));
+        assert_eq!(off_centre(at(&[-0.1, 0.0]).into_iter(), &z), Some((0.0, 0.1)));
+        // Across the plane about evenly: within a tenth of its width of the middle, and not.
+        assert_eq!(off_centre(at(&[-0.5, 0.5]).into_iter(), &z), None);
+        assert_eq!(off_centre(at(&[-0.46, 0.54]).into_iter(), &z), None);
+        assert_eq!(off_centre(at(&[-0.3, 0.7]).into_iter(), &z), Some((0.7, 0.3)));
+        // Off to one side altogether.
+        assert_eq!(off_centre(at(&[2.0, 5.0]).into_iter(), &z), Some((5.0, 0.0)));
+        // Where the plane is counts, and which way round it looks.
+        let up = Mirror { point: Vec3::new(9.0, 9.0, 3.0), normal: -Vec3::Z };
+        assert_eq!(off_centre(at(&[2.0, 4.0]).into_iter(), &up), None);
+        assert_eq!(off_centre(at(&[3.0, 5.0]).into_iter(), &up), Some((0.0, 2.0)));
+        // Nothing, or one point on the plane: nothing to say.
+        assert_eq!(off_centre(std::iter::empty(), &z), None);
+        assert_eq!(off_centre(at(&[0.0]).into_iter(), &z), None);
     }
 
     #[test]

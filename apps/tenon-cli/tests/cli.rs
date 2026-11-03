@@ -197,6 +197,61 @@ fn programs(test: &str) -> bool {
 }
 
 #[test]
+fn a_shape_worked_out_twice_has_the_same_mesh_and_nearly_the_same_answer() {
+    if !programs("a shape worked out twice") {
+        return;
+    }
+    // A plate with bores, in two processes of their own. The mesher is on one thread, and what is
+    // done with what comes back goes in a fixed order, so the mesh is the same to the byte; the
+    // solver is on all of them and adds up in the order they finish, so the figures are the same
+    // only as far as docs/topology.md says.
+    let dir = scratch("twice");
+    let script = dir.join("twice.json");
+    let steps = serde_json::json!([
+        { "run": "model.box", "with": { "width": 80, "depth": 40, "height": 10, "centered": true } },
+        { "run": "model.cylinder", "with": { "x": -25, "y": 0, "diameter": 6, "height": 10, "operation": "cut" } },
+        { "run": "model.cylinder", "with": { "x": 25, "y": 0, "diameter": 6, "height": 10, "operation": "cut" } },
+        { "run": "document.material", "with": { "name": "Steel, mild" } },
+        { "run": "model.find", "with": { "what": "faces", "facing": "left" }, "as": "left" },
+        { "run": "model.find", "with": { "what": "faces", "facing": "right" }, "as": "right" },
+        { "run": "study.new" },
+        { "run": "study.fix", "with": { "faces": ["$left.found.0.reference"] } },
+        { "run": "study.force", "with": { "faces": ["$right.found.0.reference"], "newtons": 100, "direction": "down" } },
+        { "run": "study.optimize", "with": { "keep": "kept", "resolution": "coarse", "iterations": 6, "sharpen": false }, "as": "shape" }
+    ]);
+    std::fs::write(&script, steps.to_string()).unwrap();
+    let once = |name: &str| -> (Vec<u8>, serde_json::Value) {
+        let out = dir.join(name);
+        let run = std::process::Command::new(env!("CARGO_BIN_EXE_tenon-cli"))
+            .args(["run".as_ref(), script.as_os_str(), "--json".as_ref(), "--out".as_ref(), out.as_os_str()])
+            .output()
+            .expect("run tenon-cli");
+        assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+        let said: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+        let last = said.as_array().or_else(|| said["steps"].as_array()).unwrap().last().unwrap()["result"].clone();
+        (std::fs::read(out.join("kept").join("part.msh")).unwrap(), last)
+    };
+    let ((mesh_a, a), (mesh_b, b)) = (once("a"), once("b"));
+    assert!(mesh_a == mesh_b, "the mesh is the same to the byte");
+    assert_eq!((&a["nodes"], &a["elements"], &a["element_size"]), (&b["nodes"], &b["elements"], &b["element_size"]));
+    let near = |x: &serde_json::Value, y: &serde_json::Value, within: f64| {
+        let (x, y) = (x.as_f64().unwrap(), y.as_f64().unwrap());
+        assert!((x - y).abs() <= within * x.abs().max(y.abs()), "{x} against {y}");
+    };
+    let (ha, hb) = (a["history"].as_array().unwrap(), b["history"].as_array().unwrap());
+    assert_eq!(ha.len(), hb.len());
+    // Each round's work to about ten figures, as the review measured it; what the shape keeps to
+    // about four, as a share rounded to elements can go one element either way.
+    for (x, y) in ha.iter().zip(hb) {
+        near(&x["compliance"], &y["compliance"], 1e-7);
+    }
+    near(&a["compliance"]["shape"], &b["compliance"]["shape"], 1e-2);
+    near(&a["stiffness_kept"], &b["stiffness_kept"], 1e-2);
+    near(&a["surface"]["volume"], &b["surface"]["volume"], 1e-3);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_folder_to_keep_the_programs_files_in_is_under_out_as_a_file_is() {
     if !programs("the folders kept") {
         return;

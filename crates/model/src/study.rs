@@ -308,6 +308,16 @@ impl Resolution {
         }
     }
 
+    /// The resolution a command gives, as its word in any case, or the words for one that is none.
+    pub fn of(v: &serde_json::Value) -> Result<Resolution, String> {
+        match v.as_str().map(str::to_ascii_lowercase).as_deref() {
+            Some("coarse") => Ok(Resolution::Coarse),
+            Some("medium") => Ok(Resolution::Medium),
+            Some("fine") => Ok(Resolution::Fine),
+            _ => Err("`resolution` is coarse, medium or fine".into()),
+        }
+    }
+
     fn is_coarse(&self) -> bool {
         *self == Resolution::Coarse
     }
@@ -331,7 +341,7 @@ impl Kept {
         if let Some(d) = self.depth
             && !(d.is_finite() && d > 0.0 && d <= MAX_SIZE)
         {
-            return Err(format!("{}: the depth kept must be more than 0", self.name));
+            return Err(format!("{}: the depth kept must be more than 0 and at most {MAX_SIZE} mm", self.name));
         }
         Ok(())
     }
@@ -422,6 +432,32 @@ impl TryFrom<OptimizeRead> for Optimize {
     }
 }
 
+/// How far from a right angle two planes of symmetry may be (the cosine of the angle between
+/// them).
+const SQUARE: f64 = 1e-6;
+
+/// Whether planes of symmetry with these normals (of unit length) are at right angles to each
+/// other, in words when they are not.
+pub fn planes_square(normals: &[Vec3]) -> Result<(), String> {
+    for (i, a) in normals.iter().enumerate() {
+        for b in normals.iter().skip(i + 1) {
+            let cos = a.dot(*b).abs();
+            if cos >= 1.0 - 1e-12 {
+                return Err("two of the planes of symmetry are parallel: they must be at right angles to each other".into());
+            }
+            if cos >= SQUARE {
+                let angle = (cos.min(1.0).acos().to_degrees() * 10.0).round() / 10.0;
+                // (Off by too little to show, "meet at 90°" would read as no fault at all.)
+                if angle >= 90.0 {
+                    return Err("two of the planes of symmetry are a little off a right angle: they must be at right angles to each other".into());
+                }
+                return Err(format!("two of the planes of symmetry meet at {angle}°: they must be at right angles to each other"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// What is said of a number of rounds that cannot be asked.
 fn rounds_refused() -> String {
     format!("the most rounds must be from 1 to {MAX_SHAPE_ITERATIONS}")
@@ -459,7 +495,7 @@ impl Optimize {
             _ => {}
         }
         let size = |v: Option<f64>, what: &str| match v {
-            Some(v) if !(v.is_finite() && v > 0.0 && v <= MAX_SIZE) => Err(format!("{what} must be more than 0")),
+            Some(v) if !(v.is_finite() && v > 0.0 && v <= MAX_SIZE) => Err(format!("{what} must be more than 0 and at most {MAX_SIZE} mm")),
             _ => Ok(()),
         };
         size(self.min_member, "the thinnest member")?;

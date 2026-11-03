@@ -376,6 +376,61 @@ fn the_check_says_apart_what_only_optimize_shape_needs() {
         needs(&check(&mut s, &mut k)),
         [format!("{axis_name} cannot be a plane of symmetry: it is not a plane. Choose another (study.shape, with symmetry)")]
     );
+    // Nor is a feature of another kind: it is on the part, and it was never a plane.
+    run(&mut s, &mut k, "study.shape", json!({ "symmetry": [{ "work": cut }] }));
+    let cut_name = named(&s, cut);
+    assert_eq!(
+        needs(&check(&mut s, &mut k)),
+        [format!("{cut_name} cannot be a plane of symmetry: it is not a plane. Choose another (study.shape, with symmetry)")]
+    );
+    // Two that are not at right angles, whatever each is.
+    run(&mut s, &mut k, "study.shape", json!({ "symmetry": ["xz", "xz"] }));
+    assert_eq!(
+        needs(&check(&mut s, &mut k)),
+        ["two of the planes of symmetry are parallel: they must be at right angles to each other. Choose others (study.shape, with symmetry)"]
+    );
+    run(&mut s, &mut k, "study.shape", json!({ "symmetry": [] }));
+    assert_eq!(check(&mut s, &mut k)["shape_needs"], json!([]));
+    // A load that goes with the material kept, until it is suppressed. A stress check takes it.
+    let weight = run(&mut s, &mut k, "study.gravity", json!({}));
+    let c = check(&mut s, &mut k);
+    assert_eq!(c["ready"], true, "{c}");
+    assert_eq!(needs(&c), ["Optimize Shape does not take Gravity1 yet: its load depends on how much material is kept. Suppress it to optimize."]);
+    run(&mut s, &mut k, "study.set", json!({ "item": weight["load"], "suppressed": true }));
+    assert_eq!(check(&mut s, &mut k)["shape_needs"], json!([]));
+}
+
+#[test]
+fn what_is_not_a_plane_of_symmetry_is_said_of_the_list() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    run(&mut s, &mut k, "study.new", json!({}));
+    for bad in [json!({ "origin": "xz" }), json!({}), json!({ "work": "x" })] {
+        let e = refused(&mut s, &mut k, "study.shape", json!({ "symmetry": [bad.clone()] }));
+        assert_eq!(e, format!("`symmetry`: each plane is xy, yz, xz or {{work: id}}, not {bad}"));
+    }
+    // A word that is no plane is the schema's to say; the planes that are taken still are.
+    assert!(refused(&mut s, &mut k, "study.shape", json!({ "symmetry": ["xx"] })).contains("xy | yz | xz"));
+    run(&mut s, &mut k, "study.shape", json!({ "symmetry": ["XZ", { "origin": "XZ" }, { "work": 1 }] }));
+}
+
+#[test]
+fn a_resolution_is_taken_in_any_case_and_a_size_past_all_sizes_is_said_so() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    run(&mut s, &mut k, "study.new", json!({}));
+    for word in ["Fine", "FINE", "fine"] {
+        let r = run(&mut s, &mut k, "study.shape", json!({ "resolution": word }));
+        assert_eq!(r["optimize"]["resolution"], "fine", "{r}");
+    }
+    // A size past what any is takes the words that say so, in a command and in a file's check.
+    assert!(refused(&mut s, &mut k, "study.shape", json!({ "resolution": "huge" })).contains("coarse | medium | fine"));
+    assert_eq!(refused(&mut s, &mut k, "study.shape", json!({ "element_size": 2_000_000 })), "`element_size` is out of range");
+    use tenon_model::study::Optimize;
+    let past = Optimize { element_size: Some(2e6), ..Optimize::default() };
+    assert_eq!(past.check().unwrap_err(), "the element size must be more than 0 and at most 1000000 mm");
+    let past = Optimize { min_member: Some(-1.0), ..Optimize::default() };
+    assert_eq!(past.check().unwrap_err(), "the thinnest member must be more than 0 and at most 1000000 mm");
 }
 
 #[test]

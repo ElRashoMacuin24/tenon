@@ -1157,11 +1157,15 @@ fn optimize_shape_with_both_targets_or_neither_is_refused_in_words() {
         let line = text[..text.find("[[study]]").unwrap()].lines().count() + 1;
         assert!(e.contains(&format!("line {line}: study 1 (Bracket): ")), "{e}");
         std::fs::write(dir.join("both.tenon"), &hand).unwrap();
+        // Comparing files says the same, and of which file.
         let e = diff::diff_files(&dir.join("both.tenon"), &dir.join("both.tenon")).unwrap_err().to_string();
-        assert!(e.contains("give `remove` or `grams`, not both"), "{e}");
+        assert!(e.contains(&format!("both.tenon: line {line}: study 1 (Bracket): give `remove` or `grams`, not both")), "{e}");
     }
     // Neither.
     let e = project::from_bytes(text.replace(one, "").as_bytes()).unwrap_err().to_string();
+    assert!(e.contains("[study.optimize] needs `remove` or `grams`") && e.contains("study 1 (Bracket)"), "{e}");
+    std::fs::write(dir.join("neither.tenon"), text.replace(one, "")).unwrap();
+    let e = diff::diff_files(&dir.join("neither.tenon"), &dir.join("neither.tenon")).unwrap_err().to_string();
     assert!(e.contains("[study.optimize] needs `remove` or `grams`") && e.contains("study 1 (Bracket)"), "{e}");
     let _ = std::fs::remove_dir_all(&dir);
 }

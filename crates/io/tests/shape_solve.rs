@@ -282,7 +282,7 @@ fn a_pin_and_a_bearing_load_need_no_mid_side_node_on_the_bore() {
     let size = 3.0;
     // The stress check's mesh, and a shape's: the same study put on each.
     let curved = tenon_fea::prepare(&tools, &step, &drawn, &setup, size, &scratch_a.dir, &cancel).unwrap().problem;
-    let mesh = tenon_fea::mesh_for_shape(&tools, &step, size, &scratch_b.dir, &cancel).unwrap();
+    let mesh = tenon_fea::mesh_for_shape(&tools, &step, size, None, &scratch_b.dir, &cancel).unwrap();
     let straight = tenon_fea::put_on(mesh, &drawn, &setup, 0.0).unwrap().problem;
     // Its mid-side nodes are off the bore, by enough to tell, where the stress check's are on it.
     let off_bore = |p: &Problem, radius: f64| {
@@ -303,10 +303,9 @@ fn a_pin_and_a_bearing_load_need_no_mid_side_node_on_the_bore() {
     // What is held and what pushes are as they were: the load adds up, and the part is held fast.
     for p in [&curved, &straight] {
         assert_eq!(p.free_motions(), 0);
-        // (All of it along the load, by how it is scaled; across it, what the mesh's not being the
-        // same on both sides comes to.)
+        // (All of it along the load, and none across it, whatever the mesh's sides are like.)
         let f = p.total_force();
-        assert!((f.y + 500.0).abs() < 1e-6 * 500.0 && f.x.abs() + f.z.abs() < 1e-2 * 500.0, "{f:?}");
+        assert!((f.y + 500.0).abs() < 1e-6 * 500.0 && f.x.abs() + f.z.abs() < 1e-6 * 500.0, "{f:?}");
         assert!(p.held.len() > 10, "{}", p.held.len());
         for dirs in p.held.values() {
             assert_eq!(dirs.len(), 3, "a pin held every way holds each of its nodes so");
@@ -320,4 +319,47 @@ fn a_pin_and_a_bearing_load_need_no_mid_side_node_on_the_bore() {
     };
     let (a, b) = (work_of(&curved, &scratch_a.dir), work_of(&straight, &scratch_b.dir));
     assert!((a - b).abs() < 0.05 * a, "{a} against {b}");
+    // The 8 bore with elements nearly twice as wide, so it is a few flat sides, and a load that
+    // squares with none of them: it goes the way asked, all of it, and none along the axis.
+    let aslant = Vec3::new(1.0, 1.0, 0.0).normalized();
+    let few_sides = Setup {
+        pushed: vec![Pushed {
+            name: "Bearing1".into(),
+            kind: LoadKind::Bearing { newtons: 100.0, direction: aslant },
+            faces: bore,
+            edges: Vec::new(),
+        }],
+        ..setup
+    };
+    let mesh = tenon_fea::mesh_for_shape(&tools, &step, 15.0, None, &scratch_b.dir, &cancel).unwrap();
+    let f = tenon_fea::put_on(mesh, &drawn, &few_sides, 0.0).unwrap().problem.total_force();
+    assert!((f - aslant * 100.0).len() < 1e-6, "{f:?}");
+}
+
+#[test]
+fn a_long_command_is_stopped_by_what_runs_it() {
+    if !programs("a long command stopped") {
+        return;
+    }
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let run = |s: &mut Session, k: &mut OcctKernel, id: &str, p: serde_json::Value| {
+        tenon_io::cmd::run(s, id, &p, Some(&mut *k as &mut dyn Kernel)).unwrap();
+    };
+    run(&mut s, &mut k, "model.box", json!({ "width": 60, "depth": 10, "height": 30 }));
+    run(&mut s, &mut k, "document.material", json!({ "name": "Steel, mild" }));
+    let found = |s: &mut Session, k: &mut OcctKernel, way: &str| {
+        tenon_io::cmd::run(s, "model.find", &json!({ "what": "faces", "facing": way }), Some(&mut *k as &mut dyn Kernel)).unwrap()["found"][0]["reference"].clone()
+    };
+    let (left, right) = (found(&mut s, &mut k, "left"), found(&mut s, &mut k, "right"));
+    run(&mut s, &mut k, "study.new", json!({}));
+    run(&mut s, &mut k, "study.fix", json!({ "faces": [left] }));
+    run(&mut s, &mut k, "study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" }));
+    let cancel = Cancel::default();
+    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    for id in ["study.solve", "study.optimize"] {
+        let done = tenon_io::stress::stopped_by(&cancel, || tenon_io::cmd::run(&mut s, id, &json!({}), Some(&mut k as &mut dyn Kernel)));
+        assert_eq!(done.unwrap_err().0, tenon_fea::tools::STOPPED, "{id}");
+    }
+    // That is for what it runs: the next is not stopped by it.
+    assert!(tenon_io::cmd::run(&mut s, "study.solve", &json!({}), Some(&mut k as &mut dyn Kernel)).is_ok());
 }

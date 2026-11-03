@@ -123,11 +123,17 @@ fn document(data: &[u8]) -> Result<(&'static str, Value), ProjectError> {
     ];
     for (format, shape, version) in kinds {
         match project::read_head(data, format, shape, version) {
-            Ok((head, _)) => {
+            Ok((head, lines)) => {
                 let body = head[shape.body].clone();
                 let through = |e: serde_json::Error| ProjectError::Damaged(e.to_string());
                 let body = match shape.what {
-                    "part" => serde_json::to_value(serde_json::from_value::<tenon_model::Document>(body).map_err(through)?),
+                    // (A record that does not read is said by its line and its name, as opening the
+                    // file says it.)
+                    "part" => serde_json::to_value(serde_json::from_value::<tenon_model::Document>(body).map_err(|e| {
+                        project::locate::<tenon_model::Feature>(&head, shape, "features", &lines)
+                            .or_else(|| project::locate::<tenon_model::study::Study>(&head, shape, "studies", &lines))
+                            .unwrap_or_else(|| through(e))
+                    })?),
                     "assembly" => serde_json::to_value(serde_json::from_value::<tenon_assembly::Assembly>(body).map_err(through)?),
                     _ => serde_json::to_value(serde_json::from_value::<tenon_drawing::Drawing>(body).map_err(through)?),
                 };
