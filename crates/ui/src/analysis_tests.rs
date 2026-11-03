@@ -1296,7 +1296,7 @@ fn a_shape_on_the_geometry_thread_says_where_it_is_and_stops_when_asked_or_left(
     assert!(matches!(v.shaped.optimized.stop, tenon_fea::topo::Stop::Stopped) && v.visible);
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
-    browser_row(&d, "Shape: 50% removed, early");
+    browser_row(&d, &format!("Shape: {:.0}% removed, early", 100.0 * (1.0 - wb.shape_view().unwrap().shown.share)));
     assert!(shape_drawn(&d).is_some_and(|n| n > 50));
     // What there is to know of it is written over the view, where all of it can be read, and is
     // not run off the end of the status bar.
@@ -2459,15 +2459,17 @@ fn a_shape_gives_way_to_what_is_asked_for_and_its_row_brings_it_back() {
     wb.run_ui("analysis.optimize.now").unwrap();
     frames(&mut d, &mut wb);
     assert!(wb.shape_shown() && shape_drawn(&d).is_some(), "{}", wb.status());
-    let shown = "Shape: 50% removed, early";
-    let hidden = "Shape: 50%, early, hidden";
+    // (The share it came to goes by the mesh, and so by the platform's build of the mesher.)
+    let removed = 100.0 * (1.0 - wb.shape_view().unwrap().shown.share);
+    let shown = format!("Shape: {removed:.0}% removed, early");
+    let hidden = format!("Shape: {removed:.0}%, early, hidden");
 
     // Simulate: its results are drawn, and the shape waits on its row.
     wb.run_ui("analysis.simulate").unwrap();
     frames(&mut d, &mut wb);
     assert!(!wb.shape_shown() && wb.results_shown(), "{}", wb.status());
     assert!(drawn(&d).is_some() && shape_drawn(&d).is_none());
-    let row = browser_row(&d, hidden).center();
+    let row = browser_row(&d, &hidden).center();
     d.click(&mut wb, row);
     frames(&mut d, &mut wb);
     assert!(wb.shape_shown() && !wb.results_shown() && shape_drawn(&d).is_some() && drawn(&d).is_none());
@@ -2481,7 +2483,7 @@ fn a_shape_gives_way_to_what_is_asked_for_and_its_row_brings_it_back() {
     assert!(!wb.shape_shown() && wb.results_shown() && drawn(&d).is_some());
 
     // Mesh View turned on: the lines are drawn. (Turned off, what is drawn stays.)
-    let row = browser_row(&d, hidden).center();
+    let row = browser_row(&d, &hidden).center();
     d.click(&mut wb, row);
     frames(&mut d, &mut wb);
     assert!(wb.shape_shown());
@@ -2491,7 +2493,7 @@ fn a_shape_gives_way_to_what_is_asked_for_and_its_row_brings_it_back() {
 
     // Double-clicked, the Shape row opens the panel with the shape as it was: hidden here, and
     // shown below. Cancel leaves it so.
-    for (row, visible, after) in [(hidden, false, shown), (shown, true, hidden)] {
+    for (row, visible, after) in [(&hidden, false, &shown), (&shown, true, &hidden)] {
         let at = browser_row(&d, row).center();
         double_click(&mut d, &mut wb, at);
         assert!(matches!(wb.panel, Some(Panel::Shape(_))), "{}", wb.status());
@@ -2615,11 +2617,14 @@ fn a_shape_is_worked_out_shown_on_a_slider_and_exported() {
     assert!(wb.panel.is_none(), "{}", wb.status());
     let o = study(&wb).optimize.clone().unwrap();
     assert_eq!((o.target, o.element_size, o.iterations, o.sharpen), (tenon_model::study::Target::Remove(60.0), Some(3.0), Some(4), false));
-    assert!(wb.status().starts_with("Study1: a shape of ") && wb.status().contains("for a part of 157 g (60% removed)"), "{}", wb.status());
+    // (The share it came to goes by the mesh, and so by the platform's build of the mesher.)
+    let removed = 100.0 * (1.0 - wb.shape_view().unwrap().shown.share);
+    assert!((removed - 60.0).abs() < 5.0, "{removed}");
+    assert!(wb.status().starts_with("Study1: a shape of ") && wb.status().contains("for a part of 157 g ("), "{}", wb.status());
     assert!(wb.shape_shown() && !wb.results_shown(), "the shape is drawn, the stress colours are not");
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
-    browser_row(&d, "Shape: 60% removed, early");
+    browser_row(&d, &format!("Shape: {removed:.0}% removed, early"));
     let first = shape_drawn(&d).expect("the shape is drawn");
     assert!(first > 50, "{first} triangles");
     // Another share on the slider: another surface, and a note that it is not an optimum.

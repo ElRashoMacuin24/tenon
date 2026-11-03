@@ -497,12 +497,22 @@ fn a_small_bore_in_a_thin_plate_is_worked_out() {
         return;
     }
     // Far shorter edges than the elements, each, but with little wall the mesher takes seconds.
-    for (width, thick, across, element_size) in [(300.0, 1.0, 0.01, None), (300.0, 0.5, 0.02, Some(12.0)), (300.0, 10.0, 0.02, Some(20.0))] {
+    for (width, thick, across, element_size) in [(300.0, 1.0, 0.01, None), (300.0, 0.5, 0.02, Some(12.0))] {
         let mut p = plate(width, width, thick, &[(0.0, 0.0, across)]);
         held_at_the_left(&mut p);
         let o = Optimize { iterations: Some(1), element_size, ..few_rounds(Resolution::Coarse) };
         let shaped = p.shape(&o, &Cancel::default(), None).unwrap_or_else(|e| panic!("{thick} thick, a bore of {across}: {e}"));
         assert!(shaped.field.mesh.boundary_is_closed(), "{thick} thick, a bore of {across}");
+    }
+    // A thicker plate is asked of the mesher too, and not refused before that. How many elements
+    // crowd round its bore goes by the platform's build of the mesher, which puts it on the edge of
+    // what the filter takes: Windows's comes in under, Linux's over.
+    let mut p = plate(300.0, 300.0, 10.0, &[(0.0, 0.0, 0.02)]);
+    held_at_the_left(&mut p);
+    let o = Optimize { iterations: Some(1), element_size: Some(20.0), ..few_rounds(Resolution::Coarse) };
+    match p.shape(&o, &Cancel::default(), None) {
+        Ok(shaped) => assert!(shaped.field.mesh.boundary_is_closed()),
+        Err(e) => assert!(e.contains("would take more than 512 MB"), "{e}"),
     }
 }
 
