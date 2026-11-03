@@ -3275,13 +3275,13 @@ two fields, additive.
 ## DEC-123 Optimize Shape: topology optimization (2026-10-20)
 
 The owner asked: "Add in a Topology Optimization feature to go along with the stress testing
-feature". Inventor's counterpart is its Shape Generator. "Generative design" had been under
-"Not now" in the plan; the request lifts this part of it.
+feature". How it stands against the program Tenon's UI follows is in docs/inventor-fidelity.md.
+"Generative design" had been under "Not now" in the plan; the request lifts this part of it.
 
 **Where it is.** On the stress study as it is: the same supports, loads and material, in the
 Stress Analysis environment, on a new Optimize panel of the Analysis tab (Optimize Shape, Keep
 Faces, Symmetry, Export Shape). No study kind of its own: the optimize, remodel, Simulate loop is
-one study. Inventor's own names for the command and its parts are not used (DEC-019).
+one study. That program's own names for the command and its parts are not used (DEC-019).
 
 **The method** (docs/topology.md): SIMP with a penalty of 3, an optimality-criteria update, a
 density filter whose radius is half the smallest member, and a projection raised in stages
@@ -3308,8 +3308,8 @@ study changes or the environment is left, and Export Shape writes it as STL or 3
 **Refused, in words, before anything starts:** no study or a study not ready; what only a shape
 needs (kept faces the part no longer has, a plane of symmetry that cannot be one); Gravity or a
 body's turning not suppressed (their load depends on the material kept); out-of-range settings; a
-mass not less than the part's or under 5% of it; planes not at right angles; files to write that
-cannot be written. After meshing: too many nodes, a part not the same on both sides of a plane,
+mass not less than the part's or under 5% of it; a closed edge far shorter than the elements; planes
+not at right angles; files to write that cannot be written. After meshing: too many nodes, a part not the same on both sides of a plane,
 and kept material already over the share.
 
 **The run** goes on the kernel's worker as Simulate does; the view says which round it is on; Esc
@@ -3390,15 +3390,27 @@ against the code as it was before it:
   set with no surface is now refused by name, as a support and a load are.
 - *A bearing load* takes its direction from the round face at each spot, not from the flat side of
   the triangle it is on, and what is left over across the load is taken back: on a small bore the
-  resultant went well off the way asked. A stress check's are the same to within what its curved
-  sides came to, and no longer a little off.
+  resultant went well off the way asked. On a whole round with flat ends, a stress check's is the
+  same to within what its curved sides came to (38 studies: peaks within 0.06%, displacements within
+  0.08%). On a wall not symmetric about the load (part of a round, a slot's end, a bore with slanted
+  ends) it is not: what is left over can be more than the load (about 1.75 times, on a rounded corner),
+  the old load came out off the way asked, about twice its size there, and the new one goes the way
+  asked with its pushes no longer square to the face. Peaks and displacements on such walls move by tens of percent, up to about 50%, either way, and the far field
+  is nearer an even force of the same size than it was. No square load can do this in general: pushes
+  square to a 45 degree wedge cannot add up to a direction outside it. Whether so large a remainder
+  should also bring a warning is left to the owner.
 - *A piece not held fast is refused.* A bore wider than a plate leaves a part in two pieces that is
   still one solid to the kernel, and the supports on one piece satisfied the check on the whole:
   stress checks and shapes came out of a singular solve, with displacements in the tens of billions
-  of millimetres and "it holds". Found on the mesh, as the kernel's solid does not tell it.
+  of millimetres and "it holds". Found on the mesh, as the kernel's solid does not tell it. It covers
+  a loose piece that carries nothing too, for which the old answer was sound: that piece stayed at
+  exactly zero and the rest matched the same piece modelled alone. It is refused as a part with a
+  free motion always was; to let it through, with a warning naming the piece, is the owner's choice.
 - *Not bit for bit.* The solver's equation solving on many threads adds up in the order they finish
   (on one thread it comes out the same, by trial, and threads for the stiffness and the results make
-  no difference), so a shape is the same only to about ten figures. One thread takes one and a half
+  no difference), so a shape need not be the same to the last figure: a solve repeated on the same
+  densities agrees to about fourteen figures, and over a whole run a round's work can part by a few
+  in a million (3.6e-6 at most on a plate with eight bores over 87 rounds). One thread takes one and a half
   times as long at Coarse and two and a half at Medium, against an hour's budget, so it is not done,
   and the sentence that said otherwise is changed. The mesh is the same to the byte.
 - *A run over the control port is a run.* It held the geometry thread with no way to stop it and no
@@ -3412,8 +3424,56 @@ against the code as it was before it:
   ones that matter most last. They are written over the view while the shape is shown and in its
   row's tip; the status bar keeps to the mass, the ending and the stiffness, and a long status is
   cut off at the counts and comes up whole under the pointer.
-- *`shape_needs` is what `study.optimize` refuses before it starts:* Gravity and a body's turning,
-  and planes not at right angles, came to it, and it no longer calls a feature that is there "no
-  longer on the part". What only a mesh can tell is said when it is worked out.
+- *`shape_needs` is most of what `study.optimize` refuses before it starts:* Gravity and a body's
+  turning, and planes not at right angles, came to it, and it no longer calls a feature that is there
+  "no longer on the part". What it leaves to `study.optimize` is said when that is asked: at once, a
+  mass the part cannot come to, a part off a plane by more than a tenth of its own width, and a closed
+  edge far shorter than the elements, which `study.check` would need the part's mass or its drawing to
+  say; and once the part is divided, what only a mesh can tell.
 - *A thin plate is held to its own thickness about a plane of symmetry,* before anything starts: a
   tenth of an element was more than its thickness, so that a plate on its own bottom plane passed.
+
+**After a third review (2026-11-03).** What changed, and why:
+
+- *One small hole no longer costs the whole part.* The floor a small closed edge sets is global to the
+  mesher, which has no floor for one curve, so every round face went by its curvature down to it: one
+  more bore of 0.1 took a plate with 32 holes from 16,000 nodes to 34,000. With a floor from such an
+  edge, the first try now goes by four elements to a full turn in place of twelve (16,500 nodes on
+  that plate); a second try, twelve. The stress check's arguments do not change. A size field near that curve was looked at: it
+  would need the mesher's own curve numbers, and with a global floor still under it the other round
+  faces would need sizes of their own. A closed edge more than a hundred times shorter than the
+  elements is refused before the mesher is asked: it took nearly ten minutes, to be refused anyway.
+- *A second try is finer than the first.* It went to a tenth of the size, which did nothing once a
+  floor from a closed edge was under that, so a hole closing up there had no second try, and every
+  resolution's refusal sent the user on to the next. It now also goes to half the first floor, and
+  is not made after the mesher ran out of time. The refusal does not offer what cannot help.
+- *A line of no thickness is the part's own.* Two bores just touching have sides with four triangles
+  in the kernel's drawing as in the mesh, and were refused as a hole closed up, though a stress check
+  solves them. Such sides are now compared with the part's, and the part is worked out; its shape's
+  surface is said not to be closed.
+- *The mesh kept is one with room.* The check that the layers leave room for the share kept ran after
+  the loop on the last mesh, so the loop could walk away from a mesh with room and then refuse. It is
+  part of whether a mesh will do.
+- *A filter refusal is not final while fewer elements would help.* With a smallest member setting the
+  radius, larger elements are fewer within it, so a mesh already due to be made larger is.
+- *What a refusal offers can be done.* No "keep less" with no faces kept, no "remove less" at the
+  least that can be removed, no mass as large as the part's; smaller elements for layers too thick,
+  not for a filter they need not help. A share or mass given by a command goes by `Optimize::check`,
+  in its words with its range, and not the limit on a coordinate, which refused a reachable mass of a
+  heavy part.
+- *Where a shape goes is tried under a name of its own.* Trying the name asked for, then removing it,
+  could remove a file saved meanwhile (or a link). What is there is opened without being made, and
+  what is not has its folder tried by a file only this makes and removes.
+- *Esc goes to what uses it.* The list of what takes Esc held windows that do nothing with it, with
+  which it neither closed them nor stopped the run, and a sketch with nothing to end; it lacked repair,
+  so one press ended that and the run. Held down, a press is one press. Define A-Side now does give up
+  on Esc, as it says, and is not carried into the environment.
+- *What is said over the view is of what is drawn.* Whether a surface joins the loads and what it
+  leaves out were the run's, whatever the slider said; now each share's, on the Shape row too and on
+  Export Shape. The words are painted after the shape, not under it, and beside the legend when there
+  are results; a shadow in the light theme is light.
+- *A stop stops the batch.* A `study.optimize` stopped after a round answers with the shape so far, and
+  the steps after it ran, starting a new run at once. They are no longer run.
+- *A rename is no change to a shape.* A run of up to an hour was thrown away for a name. A shape and
+  its run now go by what they hang on (the part and that study, names and other studies set aside), and
+  Simulate, whose results do go out of date with any change, now stops when they do, as a shape's did.

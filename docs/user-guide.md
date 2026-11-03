@@ -185,7 +185,7 @@ carry the study's loads, for a share of the mass kept: Keep Faces for bolt holes
 faces, Symmetry to tick the origin planes or work planes the shape is the same on both sides
 of, then Optimize Shape. The shape is drawn over the part; a slider shows other shares; Export
 Shape writes it as STL or 3MF to model over. It takes minutes; Esc stops it and keeps the shape
-so far (with a menu, a panel or a dialog open, Esc is that one's first), and leaving the environment
+so far (with a menu, a panel or a prompt open, Esc is that one's first), and leaving the environment
 or changing the part stops it and drops what it came to. What there is to know of the shape is
 written over the view. Simulate's results hide the shape, and its row in the browser brings it
 back. [topology.md](topology.md) says how it works and what it cannot do.

@@ -82,7 +82,7 @@ strength over the largest stress. Below 1 the part yields somewhere.
 | **Pressure** | faces | megapascals, square to the faces and into them; negative pulls |
 | **Gravity** | the whole part | its own weight, from the material's density: a direction and an acceleration (9810 mm/s² on the Earth). Once in a study |
 | **Moment** | faces | newton millimetres in all, about an axis: one you give, or the faces' own (the way a flat face looks, the axis of a round one). Seen from the axis's tip it turns anticlockwise. Put on as forces round the axis that grow with the distance from it and add up to no force at all |
-| **Bearing Load** | round faces | the load of a shaft in its bore, in newtons: pressed on the half of the bore the shaft pushes against, square to the round face, most where it pushes squarely and nothing at the sides. All of it goes the way it is asked to, whatever the mesh's sides are like. Its direction is across the bore |
+| **Bearing Load** | round faces | the load of a shaft in its bore, in newtons: pressed on the half of the bore the shaft pushes against, square to the round face, most where it pushes squarely and nothing at the sides. All of it goes the way it is asked to, whatever the mesh's sides are like. On a wall not symmetric about the load (a rounded corner, a slot's end, a bore with slanted ends) pushes square to the face cannot add up to the way asked: what is left over is taken back from them, so the load is still in full and the way asked, and the pushes are then no longer square to the face. Its direction is across the bore |
 | **Remote Force** | faces | a force that acts at a point away from the part and is carried by these faces: they get the force, and the turning it has about them |
 | **Body** | the whole part | the part turning at so many turns a minute about an axis through a point: every bit of it is flung outward. Once in a study |
 
@@ -126,7 +126,8 @@ scale and a mark where the most is. The part is drawn bent, large enough to see
 (Displacement Display changes that, and the scale says how many times over it is drawn).
 Mesh View shows the elements.
 
-Change a load, a face or the part, and the results are out of date: Simulate again.
+Change a load, a face or the part, and the results are out of date: Simulate again. A change while
+Simulate goes on stops it there and then, and says so.
 
 The Optimize panel works out a shape for the study's loads with the same two programs, on a
 mesh of its own: [topology.md](topology.md).

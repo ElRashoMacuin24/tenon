@@ -58,7 +58,9 @@ folder, whatever it is called, and for no other.
 undo step, or, when one fails, takes back what the steps before it did and leaves the document
 as it was (a file a step wrote stays written). Its steps have names of their own, so in a script
 their references are written with two dollar signs (`"$s.feature"`): one would be looked up
-among the outer script's names. With `as_one: false` the steps before a failure stand. Steps
+among the outer script's names. With `as_one: false` the steps before a failure stand. In the app,
+a step that is stopped from the window (Esc, on a `study.optimize` that has a shape so far) ends the
+batch: the steps after it are not run, and the answer says so under `not_run`. Steps
 run as one may not open or start a document, nor undo or redo. The MCP server's `run_commands`
 is this command.
 

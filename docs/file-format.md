@@ -847,9 +847,12 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
 - **A change to what a document holds** bumps `version` and adds a migration step in
   `project::read_head`, from the previous version. The fixture files of every older version stay
   in `crates/io/tests/fixtures` and are tested.
-- **Until a version has shipped in a release,** new feature types and new optional fields join
-  it without a bump (DEC-029, DEC-035): files without them are unchanged, and a build that does
-  not know a type refuses the file naming the record. Version 2 has gained the M6 feature types
+- **New feature types and new optional fields** join a version without a bump (DEC-029, DEC-035),
+  before it has shipped in a release and, as this has gone since 0.1.0, after: files without them
+  are unchanged, and a build that does not know a type refuses the file naming the record. A build
+  that does not know an optional field or table of a record opens the file and drops it when it
+  saves (a 0.1.0 build does that to a study's `[study.optimize]`, and so loses those settings).
+  Version 2 has gained the M6 feature types
   this way (`sweep`, `coil`, `loft`, `draft`, `split`, `combine`, `thread`), the optional
   `taper` of an extrusion, the optional `at` and `driven` of a sketch dimension, region keys by
   side (`{ left, right, nth }`) beside the lists of curves they were, the optional `row` of an
@@ -864,7 +867,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   material's optional `strength` and the `[[study]]` records (DEC-093); in them, the
   `pin` and `frictionless` supports, the `gravity` load and `suppressed` (DEC-097), then
   `edges` and the `moment`, `bearing`, `remote_force` and `body` loads (DEC-100), then a
-  part's `part_number` and `description` (DEC-101).
+  part's `part_number` and `description` (DEC-101), and after 0.1.0, among others, a study's
+  `[study.optimize]` (DEC-123).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

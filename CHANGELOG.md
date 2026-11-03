@@ -14,7 +14,7 @@ shows it in [ROADMAP.md](ROADMAP.md).
   It runs with Gmsh and CalculiX as Simulate does, on a mesh of its own, coarser round small
   details; when thin walls or small details take far more nodes than the resolution's, the
   elements are made larger, and it says so. It shows which round it is on (Esc stops it and
-  keeps the shape so far, unless a menu, a panel or a dialog takes the Esc; leaving the
+  keeps the shape so far, unless a menu, a panel or a prompt takes the Esc; leaving the
   environment stops it and drops what it came to, and so does changing the part), draws the shape
   over the part with what there is to know of it written beside it and a slider for the share
   shown, says how much of the part's stiffness it keeps, and exports it as STL or 3MF from one
@@ -26,9 +26,16 @@ shows it in [ROADMAP.md](ROADMAP.md).
   the window can stop; docs/topology.md.
 - **A part in pieces.** A bore wider than a plate leaves a part in two pieces that is one solid to
   the kernel. A stress check of it held by one piece used to solve, with a displacement in the tens
-  of billions of millimetres and "it holds". A piece not held fast is now refused, in words.
-- **Bearing loads** push square to the round face at each spot, not to the side of the element
-  it is on, so all of the load goes the way asked.
+  of billions of millimetres and "it holds". A piece not held fast is now refused, in words, also
+  when nothing pushes on it, where the rest of the old answer was sound.
+- **Bearing loads** go the way asked, in full. They push square to the round face at each spot, not
+  to the side of the element it is on. On a whole round with flat ends that changes little (at most
+  0.08% in the 38 studies compared). On a wall not symmetric about the load (a rounded corner, a
+  slot's end, a bore with slanted ends) it changes results by tens of percent, up or down: the old
+  load came out off the way asked, about twice its size on a rounded corner, and the new one goes
+  the way asked, with its pushes then no longer square to the face, since pushes square to such a
+  wall cannot add up to that direction. Studies with a bearing load on such a wall should be solved
+  again.
 
 ### Sketches
 
