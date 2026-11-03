@@ -51,9 +51,9 @@ make. What is written over the view, the Shape row and its tip go by the share s
 surface is closed, the pieces it leaves out, whether it joins the loads to the supports. A run
 stopped early may have no material ranked above a share: the surface then comes to less than the
 slider says, and the note under it says so. The browser's study has Keep Faces and Shape rows, and a
-Symmetry row once there are planes. A click on a kept set picks its faces out. A click on the Shape row shows or hides the shape, a
-double-click opens Optimize Shape's settings, and its menu works it out again with the settings
-the study has. **Export Shape** writes the shape shown as STL or 3MF, a share still in the slider's
+Symmetry row once there are planes. A click on a kept set picks its faces out. A click on the Shape
+row shows or hides the shape, a double-click opens Optimize Shape's settings, and its menu works it
+out again with the settings the study has. **Export Shape** writes the shape shown as STL or 3MF, a share still in the slider's
 field being the one meant: its save dialog offers both, and a name given with no ending is STL,
 unless the system's dialog adds the ending of the kind picked. A surface that is not closed, or
 that does not join a load to a support at that share, is written, and said to be so. Esc in the
@@ -102,8 +102,8 @@ of symmetry (a file that holds one still opens), planes not at right angles. `re
 `lost` leave these out, so they do not stop `study.solve`; `study.optimize` refuses them before
 anything starts. Not there, and said only when `study.optimize` is asked: at once, with no program
 started, a mass the part cannot come to, a part off a plane of symmetry by more than a tenth of its
-own width, and a closed edge far shorter than the elements on a long wall; once the part is divided, what cannot
-be told before: too many nodes, a piece not held fast, a part not the same on both sides of a plane
+own width, and a closed edge far shorter than the elements on a long wall; once the part is
+divided, what cannot be told before: too many nodes, a piece not held fast, a part not the same on both sides of a plane
 to within a tenth of an element, too much kept. `study.optimize` also tries its `stl` and `threemf`
 before anything starts (the ending, a name the system does not take, the folder, a file that cannot
 be written). A file that still cannot be written at the end does not lose the run: `not_written`
@@ -146,11 +146,12 @@ a shape's differs in two ways (`mesh_for_shape` in `crates/fea/src/lib.rs`):
   turn, at the first try. A closed edge is refused before anything starts when the elements are more
   than fifty times its length and the wall under it more than 250 times: the mesher must go down to
   it all along that wall, and every part tried past both came to nothing, after anything from seconds
-  to ten minutes of the mesher's (nearly ten for a bore of 0.005 on a 10 mm plate): more than the filter
-  can take, or the mesher out of time. A wall is the round face the edge bounds, by its area over the
-  edge's length, and not a large round face a small bore comes out on. A thin plate has little wall, and a bore far smaller than the elements runs on it (0.01 on a
-  plate 300 x 300 x 1, in eight seconds). Short of that line the mesher is asked, with no word but that
-  the part is being divided, and the smaller the bore the longer it takes at the same proportions: a
+  to ten minutes of the mesher's (nearly ten for a bore of 0.005 on a 10 mm plate): more than the
+  filter can take, or the mesher out of time. A wall is the round face the edge bounds, by its area
+  over the edge's length, and not a large round face a small bore comes out on. A thin plate has
+  little wall, and a bore far smaller than the elements runs on it (0.01 on a plate 300 x 300 x 1,
+  in eight seconds). Short of that line the mesher is asked, with no word but that the part is being
+  divided, and the smaller the bore the longer it takes at the same proportions: a
   bore of 0.004 on a 3 mm plate takes it nearly two minutes, only for the filter to refuse the mesh.
 - **Straight mid-side nodes.** Curved ones can turn an element inside out on a small hole at these
   sizes, and the solver refuses such an element; straight ones cannot. A shape is a guide, and does
