@@ -25,7 +25,7 @@ pub const HOST_COMMANDS: &[(&str, &str, &str)] = &[
     (
         "batch.run",
         "Run as One",
-        "steps: [{run: a command id, with: its parameters, as: a name for its result, expect: {path: value}}, ...], as a script's (docs/scripts.md): a string \"$name.path\" in `with` is that part of the result of the step saved as `name`. as_one (default true): every step is done and they are one undo step in each document they changed, or, when a step fails, none of them is (what the steps before it did is taken back; a file a step wrote stays written); such steps may not open or start a document, nor undo or redo. With as_one false the steps before a failure stand. Returns each step's result",
+        "steps: [{run: a command id, with: its parameters, as: a name for its result, expect: {path: value}}, ...], as a script's (docs/scripts.md): a string \"$name.path\" in `with` is that part of the result of the step saved as `name`. as_one (default true): every step is done and they are one undo step in each document they changed, or, when a step fails, none of them is (what the steps before it did is taken back; a file a step wrote stays written); such steps may not open or start a document, nor undo or redo. With as_one false the steps before a failure stand. Returns each step's result. In the app, a step stopped from the window ends the batch: not_run says the steps after it were not run",
     ),
 ];
 

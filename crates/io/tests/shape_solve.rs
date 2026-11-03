@@ -282,7 +282,7 @@ fn a_pin_and_a_bearing_load_need_no_mid_side_node_on_the_bore() {
     let size = 3.0;
     // The stress check's mesh, and a shape's: the same study put on each.
     let curved = tenon_fea::prepare(&tools, &step, &drawn, &setup, size, &scratch_a.dir, &cancel).unwrap().problem;
-    let mesh = tenon_fea::mesh_for_shape(&tools, &step, size, None, &scratch_b.dir, &cancel).unwrap();
+    let mesh = tenon_fea::mesh_for_shape(&tools, &step, size, None, &[], &scratch_b.dir, &cancel).unwrap();
     let straight = tenon_fea::put_on(mesh, &drawn, &setup, 0.0).unwrap().problem;
     // Its mid-side nodes are off the bore, by enough to tell, where the stress check's are on it.
     let off_bore = |p: &Problem, radius: f64| {
@@ -331,7 +331,7 @@ fn a_pin_and_a_bearing_load_need_no_mid_side_node_on_the_bore() {
         }],
         ..setup
     };
-    let mesh = tenon_fea::mesh_for_shape(&tools, &step, 15.0, None, &scratch_b.dir, &cancel).unwrap();
+    let mesh = tenon_fea::mesh_for_shape(&tools, &step, 15.0, None, &[], &scratch_b.dir, &cancel).unwrap();
     let f = tenon_fea::put_on(mesh, &drawn, &few_sides, 0.0).unwrap().problem.total_force();
     assert!((f - aslant * 100.0).len() < 1e-6, "{f:?}");
 }

@@ -894,7 +894,8 @@ fn planes_value(p: &Value, key: &str) -> Result<Vec<PlaneRef>, CmdError> {
 fn study_shape(s: &mut Session, p: &Value) -> CmdResult {
     let id = study_of(s, p)?;
     let mut o = s.document().study(id).and_then(|st| st.optimize.clone()).unwrap_or_default();
-    match (opt_num(p, "remove")?, opt_num(p, "grams")?) {
+    let number = |key: &str| Optimize::number_of(p, key).map_err(CmdError);
+    match (number("remove")?, number("grams")?) {
         (Some(_), Some(_)) => return Err("give `remove` or `grams`, not both".into()),
         (Some(r), None) => o.target = Target::Remove(r),
         (None, Some(g)) => o.target = Target::Grams(g),
@@ -904,7 +905,7 @@ fn study_shape(s: &mut Session, p: &Value) -> CmdResult {
         match arg(p, key) {
             None => Ok(None),
             Some(Value::Null) => Ok(Some(None)),
-            Some(_) => Ok(Some(Some(num(p, key)?))),
+            Some(_) => number(key).map(Some),
         }
     };
     if let Some(v) = maybe("min_member")? {
@@ -4608,7 +4609,7 @@ static COMMANDS: &[CommandSpec] = &[
     geo_cmd!(
         "study.check",
         "Check Study",
-        "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has; shape_needs: what study.optimize needs beyond that, in words (Gravity or a body's turning suppressed, kept faces that are no longer on the part, a work plane of symmetry that is gone or not a plane, a face used as a plane of symmetry, planes not at right angles), which does not stop a stress check. What only meshing can tell (pieces not held fast, too many nodes, a part not the same on both sides of a plane) is said when it is worked out",
+        "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has; shape_needs: what study.optimize needs beyond that, in words (Gravity or a body's turning suppressed, kept faces that are no longer on the part, a work plane of symmetry that is gone or not a plane, a face used as a plane of symmetry, planes not at right angles), which does not stop a stress check. What study.optimize says only when it is asked: at once, a mass the part cannot come to, a part well off a plane of symmetry and a closed edge far shorter than the elements; once the part is divided, what only meshing can tell (pieces not held fast, too many nodes, a part not the same on both sides of a plane)",
         study_check
     ),
     doc_cmd!(

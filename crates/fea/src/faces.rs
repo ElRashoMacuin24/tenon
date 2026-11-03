@@ -129,6 +129,35 @@ pub fn shortest_closed_edge(part: &Mesh) -> Option<f64> {
         .min_by(f64::total_cmp)
 }
 
+/// The lines where the part touches itself (two bores just touching, a bore just touching a side):
+/// sides on which more than two of the triangles the kernel draws it with meet, whichever faces
+/// those are of. A mesh of such a part has sides with four triangles on them there too, as a hole
+/// folded flat does, and it is no fault of the mesher's.
+pub fn lines_of_no_thickness(part: &Mesh) -> Vec<(Vec3, Vec3)> {
+    let key = |p: &[f32; 3]| p.map(|c| (c + 0.0).to_bits());
+    let mut sides: BTreeMap<([u32; 3], [u32; 3]), (u32, [f32; 3], [f32; 3])> = BTreeMap::new();
+    for tri in part.indices.as_chunks::<3>().0 {
+        let at = |i: u32| part.positions.get(i as usize).copied();
+        let (Some(a), Some(b), Some(c)) = (at(tri[0]), at(tri[1]), at(tri[2])) else { continue };
+        for (p, q) in [(a, b), (b, c), (c, a)] {
+            let (kp, kq) = (key(&p), key(&q));
+            if kp != kq {
+                sides.entry((kp.min(kq), kp.max(kq))).or_insert((0, p, q)).0 += 1;
+            }
+        }
+    }
+    let at = |p: [f32; 3]| Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+    sides.into_values().filter(|(n, _, _)| *n > 2).map(|(_, p, q)| (at(p), at(q))).collect()
+}
+
+/// Whether the mesh's sides `open` all lie along `lines`: within `near` at both ends.
+pub(crate) fn all_along(mesh: &TetMesh, open: &[[u32; 2]], lines: &[(Vec3, Vec3)], near: f64) -> bool {
+    open.iter().all(|side| {
+        let (p, q) = (mesh.nodes[side[0] as usize], mesh.nodes[side[1] as usize]);
+        lines.iter().any(|(a, b)| dist2_to_segment(p, *a, *b).sqrt() <= near && dist2_to_segment(q, *a, *b).sqrt() <= near)
+    })
+}
+
 /// The square of the distance from `p` to the piece of line from `a` to `b`.
 fn dist2_to_segment(p: Vec3, a: Vec3, b: Vec3) -> f64 {
     let ab = b - a;
@@ -291,6 +320,23 @@ mod tests {
             tri(Vec3::new(0.0, 0.0, thick), d, c, 9);
         }
         TetMesh { nodes, tris, ..TetMesh::default() }
+    }
+
+    #[test]
+    fn a_line_where_the_part_touches_itself_is_found_from_how_it_is_drawn() {
+        // A tetrahedron has none: each side has two triangles on it.
+        assert!(lines_of_no_thickness(&drawn()).is_empty());
+        // Two tetrahedra sharing just one side: four triangles on it, whichever face they are of,
+        // whatever way round it is drawn, and with its own copies of the points.
+        let (a, b) = ([0.0, 0.0, 0.0], [0.0, 0.0, 10.0]);
+        let positions = vec![a, b, [1.0, 0.0, 5.0], [0.0, 1.0, 5.0], b, a, [-1.0, 0.0, 5.0], [0.0, -1.0, 5.0], [-0.0, 0.0, 0.0]];
+        let indices = vec![0, 1, 2, 1, 0, 3, 4, 5, 6, 5, 4, 7];
+        let faces = (0..4).map(|f| FaceRange { face: f, first: f * 3, count: 3 }).collect();
+        let part = Mesh { positions, normals: Vec::new(), indices, faces, edges: Vec::new(), ..Mesh::default() };
+        let lines = lines_of_no_thickness(&part);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let (p, q) = lines[0];
+        assert!(p.z.min(q.z) == 0.0 && p.z.max(q.z) == 10.0 && p.x == 0.0 && q.y == 0.0, "{lines:?}");
     }
 
     #[test]

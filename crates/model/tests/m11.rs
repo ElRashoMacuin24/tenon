@@ -425,7 +425,15 @@ fn a_resolution_is_taken_in_any_case_and_a_size_past_all_sizes_is_said_so() {
     }
     // A size past what any is takes the words that say so, in a command and in a file's check.
     assert!(refused(&mut s, &mut k, "study.shape", json!({ "resolution": "huge" })).contains("coarse | medium | fine"));
-    assert_eq!(refused(&mut s, &mut k, "study.shape", json!({ "element_size": 2_000_000 })), "`element_size` is out of range");
+    assert_eq!(
+        refused(&mut s, &mut k, "study.shape", json!({ "element_size": 2_000_000 })),
+        "the element size must be more than 0 and at most 1000000 mm"
+    );
+    assert_eq!(refused(&mut s, &mut k, "study.shape", json!({ "remove": 2_000_000 })), "the share taken away must be from 5 to 95 %");
+    // A mass has no limit but the part's own, which is said when it is worked out: a part of a
+    // tonne and more can be asked for hundreds of kilograms, from a command as from a file.
+    let r = run(&mut s, &mut k, "study.shape", json!({ "grams": 1_500_000 }));
+    assert_eq!(r["optimize"]["grams"], 1_500_000.0, "{r}");
     use tenon_model::study::Optimize;
     let past = Optimize { element_size: Some(2e6), ..Optimize::default() };
     assert_eq!(past.check().unwrap_err(), "the element size must be more than 0 and at most 1000000 mm");

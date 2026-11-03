@@ -111,9 +111,10 @@ impl TetMesh {
         (0..6).fold(Vec3::ZERO, |v, i| v + p[i] * n[i])
     }
 
-    /// Whether each side of a boundary triangle is the side of just one other: what a closed
-    /// surface is. A hole folded flat leaves sides with four triangles on them.
-    pub fn boundary_is_closed(&self) -> bool {
+    /// The sides of the boundary's triangles that are not the side of just one other: none, on a
+    /// closed surface. A hole folded flat leaves sides with four triangles on them. So does a line
+    /// of no thickness that the part really has (see `faces::lines_of_no_thickness`).
+    pub fn open_sides(&self) -> Vec<[u32; 2]> {
         let mut sides: HashMap<[u32; 2], u32> = HashMap::with_capacity(self.tris.len() * 2);
         for t in &self.tris {
             for (a, b) in [(0, 1), (1, 2), (2, 0)] {
@@ -121,7 +122,13 @@ impl TetMesh {
                 *sides.entry([a.min(b), a.max(b)]).or_default() += 1;
             }
         }
-        sides.values().all(|n| *n == 2)
+        sides.into_iter().filter(|(_, n)| *n != 2).map(|(side, _)| side).collect()
+    }
+
+    /// Whether each side of a boundary triangle is the side of just one other: what a closed
+    /// surface is.
+    pub fn boundary_is_closed(&self) -> bool {
+        self.open_sides().is_empty()
     }
 
     /// For each boundary triangle, +1 when its corners wind so that its normal points out of

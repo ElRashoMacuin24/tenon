@@ -240,8 +240,9 @@ fn a_shape_worked_out_twice_has_the_same_mesh_and_nearly_the_same_answer() {
     };
     let (ha, hb) = (a["history"].as_array().unwrap(), b["history"].as_array().unwrap());
     assert_eq!(ha.len(), hb.len());
-    // Each round's work to about ten figures, as the review measured it; what the shape keeps to
-    // about four, as a share rounded to elements can go one element either way.
+    // Each round's work to seven figures over these few rounds (over a whole run it can part by a
+    // few in a million); what the shape keeps to about four, as a share rounded to elements can go
+    // one element either way.
     for (x, y) in ha.iter().zip(hb) {
         near(&x["compliance"], &y["compliance"], 1e-7);
     }

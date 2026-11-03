@@ -33,6 +33,8 @@ pub const ROUNDS_SHARPENED: usize = 100;
 pub const ROUNDS_QUICK: usize = 60;
 /// What is said of a surface that is not closed.
 pub const NOT_CLOSED: &str = "The surface of the shape is not closed: a slicer may refuse it, and it is no solid to model from.";
+/// What is said of a surface that leaves a load cut off from the supports.
+pub const NOT_JOINED: &str = "The material kept does not join every load to a support: keep a larger share, or ask for a smaller smallest member.";
 /// How many pairs of smoothing passes the shape is given when none are asked.
 pub const SMOOTHING: usize = 10;
 /// The most smoothing passes taken.
@@ -48,6 +50,12 @@ const WORTH_HAVING: f64 = 0.8;
 /// How many sizes between are tried when the part is too many nodes at one size and too much for
 /// the filter at the next.
 const SIZES_BETWEEN: usize = 2;
+/// How many times shorter than the elements a closed edge may be. The mesher must go down to its
+/// length along all of the wall under it: a bore of 0.01 on a 10 mm plate took it a minute and one
+/// of 0.005 nearly ten, and neither could be worked out on after that.
+const SMALLEST_CLOSED_EDGE: f64 = 0.01;
+/// How the filter's refusal of a table too large is known (`topo::filter`).
+const TOO_MUCH_TO_SMOOTH: &str = " would take more than ";
 
 /// A shape worked out.
 #[derive(Clone, Debug)]
@@ -207,12 +215,16 @@ fn mirror_of(plane: &PlaneRef, r: &tenon_model::Regen, doc: &tenon_model::Docume
 /// What is kept is the last mesh a shape can be worked out on: one within the nodes that `take`
 /// takes. Larger elements that bring the nodes down by little are not worth having, and the mesh
 /// before them stands. So does it when `divide` or `take` cannot do with a larger size (the study
-/// does not lie on it, say, or it is too much for the filter). When one size is too many nodes
-/// and the next is too much for the filter, a size between them is tried. A size that was asked
-/// for is left as it is, and at the first size what `take` says is said: it is not of the size.
+/// does not lie on it, say, or the layers it keeps are too thick, or it is too much for the
+/// filter). When one size is too many nodes and the next will not do, a size between them is
+/// tried. A size that was asked for is left as it is. At the first size what `take` says is said,
+/// with one exception: too much for the filter on a mesh over the nodes, with a smallest member
+/// setting the radius. There fewer elements are fewer to smooth, so the size is made larger as it
+/// was going to be, and it is said only if nothing fits.
 fn divided<T>(
     o: &Optimize,
     h: f64,
+    closed_edge: Option<f64>,
     divide: &mut dyn FnMut(f64) -> Result<TetMesh, String>,
     take: &mut dyn FnMut(TetMesh, f64) -> Result<T, String>,
 ) -> Result<(T, f64), String> {
@@ -223,19 +235,20 @@ fn divided<T>(
     // The largest size that was too many nodes, and the smallest that would not do.
     let (mut too_fine, mut too_much): (Option<f64>, Option<f64>) = (None, None);
     let mut why = None;
-    let (mut now, mut nodes) = (h, 0);
+    // The last size tried, and of the last mesh made, how large its elements and how many its nodes.
+    let (mut now, mut made, mut nodes) = (h, h, 0);
     for tried in 0..=MORE_TRIES {
         let mesh = match divide(now) {
             Ok(mesh) => mesh,
             Err(e) if e == STOPPED => return Err(e),
-            Err(e) if tried == 0 => return Err(cannot_divide(o, &e)),
+            Err(e) if tried == 0 => return Err(cannot_divide(o, now, closed_edge, &e)),
             Err(e) => {
-                why = Some(cannot_divide(o, &e));
+                why = Some(cannot_divide(o, now, closed_edge, &e));
                 too_much = Some(now);
                 break;
             }
         };
-        nodes = mesh.nodes.len();
+        (made, nodes) = (now, mesh.nodes.len());
         if nodes as f64 > NODES_OVER * target && fit_nodes.is_some_and(|n| nodes as f64 > WORTH_HAVING * n as f64) {
             break;
         }
@@ -244,7 +257,9 @@ fn divided<T>(
         } else {
             match take(mesh, now) {
                 Ok(taken) => (fits, fit_nodes) = (Some((taken, now)), Some(nodes)),
-                Err(e) if e == STOPPED || tried == 0 => return Err(e),
+                Err(e) if e == STOPPED => return Err(e),
+                Err(e) if fits.is_none() && nodes as f64 > NODES_OVER * target && fewer_would_smooth(o, now, &e) => why = Some(e),
+                Err(e) if tried == 0 => return Err(e),
                 Err(e) => {
                     why = Some(e);
                     too_much = Some(now);
@@ -272,19 +287,34 @@ fn divided<T>(
                 Err(e) => (why, too_much) = (Some(e), Some(now)),
             },
             Err(e) if e == STOPPED => return Err(e),
-            Err(e) => (why, too_much) = (Some(cannot_divide(o, &e)), Some(now)),
+            Err(e) => (why, too_much) = (Some(cannot_divide(o, now, closed_edge, &e)), Some(now)),
         }
     }
-    fits.ok_or_else(|| why.unwrap_or_else(|| too_many_nodes(o, now, nodes)))
+    fits.ok_or_else(|| why.unwrap_or_else(|| too_many_nodes(o, made, nodes)))
 }
 
-/// What the mesher's failing (`e`) comes to for what was asked, with what helps when it did try:
-/// smaller elements hold a small hole open.
-fn cannot_divide(o: &Optimize, e: &str) -> String {
+/// What is said of a closed edge (`closed_edge`, its length) too short to divide a part round, with
+/// elements of size `h`, before the mesher is asked.
+fn closed_edge_too_short(h: f64, closed_edge: Option<f64>) -> Option<String> {
+    closed_edge.filter(|c| *c < SMALLEST_CLOSED_EDGE * h).map(|c| {
+        format!(
+            "The part has a closed edge only {} mm long (a small hole or round), against elements of {} mm: dividing it would take many minutes, and likely come to nothing. Suppress its small holes and rounds to optimize.",
+            round(c),
+            round(h)
+        )
+    })
+}
+
+/// What the mesher's failing (`e`) at elements of size `h` comes to for what was asked, with what
+/// helps when it did try: smaller elements hold a small hole open, unless it is the part's shortest
+/// closed edge (`closed_edge`) that the mesher goes by, as no size of element then changes that.
+fn cannot_divide(o: &Optimize, h: f64, closed_edge: Option<f64>, e: &str) -> String {
     if !(e.contains("It said") || e.contains("closed up")) {
         return e.to_owned();
     }
-    let helps = if o.element_size.is_some() {
+    let helps = if tenon_fea::only_the_closed_edge_matters(h, closed_edge) {
+        "Suppress its small holes and rounds to optimize."
+    } else if o.element_size.is_some() {
         "Make the elements smaller, or suppress its small holes and rounds to optimize."
     } else {
         match o.resolution {
@@ -316,20 +346,26 @@ fn kept_surfaces(
 
 /// What the filter's refusing a table too large (`e`) comes to for what was asked, of elements of
 /// size `h` and so many planes of symmetry. The table is the elements within the radius of each
-/// other: a smaller smallest member helps while it sets the radius, and when one and a half
-/// elements set it, smaller elements do where small details crowd them together.
+/// other: a smaller smallest member helps while it sets the radius. When one and a half elements
+/// set it, the size of the elements does not say which way it goes: larger ones are fewer but the
+/// radius grows with them, and smaller ones can come out the same.
 fn too_much_to_smooth(o: &Optimize, h: f64, planes: usize, e: String) -> String {
     let Some((what, _)) = e.split_once(": ask for") else { return e };
-    let first = if o.min_member.is_some() && radius_for(o, h) > 1.5 * h {
-        Some("ask for a smaller smallest member")
-    } else if o.element_size.is_some() {
-        Some("make the elements smaller")
-    } else {
-        None
-    };
+    let first = member_sets_the_radius(o, h).then_some("ask for a smaller smallest member");
     let last = (planes > 0).then_some("take fewer planes (each plane through the part doubles the memory)");
     let helps: Vec<&str> = first.into_iter().chain(Some("suppress the part's small holes and rounds")).chain(last).collect();
     format!("{what}: {}", helps.join(", or "))
+}
+
+/// Whether a smallest member asked, and not the size of the elements, sets the filter's radius.
+fn member_sets_the_radius(o: &Optimize, h: f64) -> bool {
+    o.min_member.is_some() && radius_for(o, h) > 1.5 * h
+}
+
+/// Whether the filter's refusal `e`, at elements of size `h`, can be got past by fewer elements:
+/// for a size that may still be made larger, with the radius staying as it is.
+fn fewer_would_smooth(o: &Optimize, h: f64, e: &str) -> bool {
+    o.element_size.is_none() && member_sets_the_radius(o, h) && e.contains(TOO_MUCH_TO_SMOOTH)
 }
 
 /// The filter's radius for elements of size `h`: half the thinnest member (as asked, or three
@@ -338,11 +374,16 @@ fn radius_for(o: &Optimize, h: f64) -> f64 {
     (o.min_member.unwrap_or(3.0 * h) / 2.0).max(1.5 * h)
 }
 
+/// Whether a smallest member asked is what holds elements of size `h` down: three across it.
+fn member_holds_the_size(o: &Optimize, h: f64) -> bool {
+    o.min_member.is_some_and(|m| h >= (1.0 - 1e-9) * m / 3.0)
+}
+
 /// Why a mesh is more than a shape is worked out on, and what helps for what was asked.
 fn too_many_nodes(o: &Optimize, h: f64, nodes: usize) -> String {
     let helps = if o.element_size.is_some() {
         "Make the elements larger."
-    } else if o.min_member.is_some_and(|m| h >= (1.0 - 1e-9) * m / 3.0) {
+    } else if member_holds_the_size(o, h) {
         "Ask for a larger smallest member."
     } else {
         match o.resolution {
@@ -358,19 +399,78 @@ fn too_many_nodes(o: &Optimize, h: f64, nodes: usize) -> String {
     )
 }
 
+/// What makes the elements smaller, for what was asked and elements of size `h`, if anything does.
+fn what_makes_elements_smaller(o: &Optimize, h: f64) -> Option<&'static str> {
+    if o.element_size.is_some() {
+        Some("make the elements smaller")
+    } else if member_holds_the_size(o, h) {
+        Some("ask for a smaller smallest member")
+    } else {
+        match o.resolution {
+            Resolution::Coarse => Some("choose Medium"),
+            Resolution::Medium => Some("choose Fine"),
+            Resolution::Fine => None,
+        }
+    }
+}
+
 /// What is said when what must stay (`what`, with the least the rest can come to `least` of the
 /// part: `topo::no_room`) leaves no room for the share kept (`fraction`) of a part of `part_grams`:
-/// with as many figures as it takes for the two to read differently, and for a mass asked, the
-/// mass that would leave room (a mass just above it does).
-fn too_much_stays(what: &str, least: f64, fraction: f64, target: Target, part_grams: f64) -> String {
+/// with as many figures as it takes for the two to read differently, and what would leave room.
+/// A share or a mass is offered only if one can be asked that does (a mass just above the one said
+/// does), `keep less` only if faces are kept (`any_kept`), and smaller elements (`smaller`: what
+/// makes them so) as the layers go with them. When no share or mass will do, it is the faces held
+/// and loaded that are too large for the part: all of a thin plate, say.
+fn too_much_stays(what: &str, least: f64, fraction: f64, target: Target, part_grams: f64, any_kept: bool, smaller: Option<&str>) -> String {
     let (stays, kept) = (100.0 * least, 100.0 * fraction);
     let figures = (0..6).find(|n| format!("{stays:.n$}", n = *n) != format!("{kept:.n$}", n = *n)).unwrap_or(6);
-    let helps = match target {
-        Target::Remove(_) => "Remove less, or keep less.".to_owned(),
-        // (Up, so that what is said is not itself too little; the less is for the sums' dust.)
-        Target::Grams(_) => format!("Ask for more than {} g, or keep less.", (least * part_grams * 1000.0 - 1e-6).ceil() / 1000.0),
+    // (Up, so that what is said is not itself too little; the less is for the sums' dust.)
+    let enough = (least * part_grams * 1000.0 - 1e-6).ceil() / 1000.0;
+    let other = match target {
+        Target::Remove(_) => (least < 1.0 - tenon_model::study::MIN_REMOVE / 100.0).then(|| "remove less".to_owned()),
+        Target::Grams(_) => (enough < part_grams).then(|| format!("ask for more than {enough} g")),
     };
-    format!("{what} are already {stays:.figures$}% of the part: more than the {kept:.figures$}% kept. {helps}")
+    let (said, first) = match other {
+        Some(other) => (format!("more than the {kept:.figures$}% kept."), other),
+        None => ("too little is left to take away.".to_owned(), "hold or load smaller faces".to_owned()),
+    };
+    let smaller = smaller.map(|s| format!("{s}: smaller elements make the layers thinner"));
+    let helps: Vec<String> = Some(first).into_iter().chain(any_kept.then(|| "keep less".to_owned())).chain(smaller).collect();
+    let helps = match helps.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{}, or {last}", rest.join(", ")),
+        _ => helps.concat(),
+    };
+    let mut letters = helps.chars();
+    let helps = letters.next().map_or_else(String::new, |c| c.to_uppercase().chain(letters).collect());
+    format!("{what} are already {stays:.figures$}% of the part: {said} {helps}.")
+}
+
+/// What is said of a mesh of `nodes` nodes against the `target` of a resolution, at elements of
+/// size `h`, with what would bring it down.
+fn many_nodes(o: &Optimize, h: f64, nodes: usize, target: usize) -> String {
+    let helps = if member_holds_the_size(o, h) { "ask for a larger smallest member" } else { "suppress the part's small holes and rounds" };
+    format!("It comes to {nodes} nodes, against about {target} at this resolution, so each round takes that much longer: {helps} to go faster.")
+}
+
+/// What is to be said of a surface, for whatever share it was made: not closed (`closed` being
+/// whether it is: to work that out takes a look at all of it), pieces left out, a load not joined.
+pub fn said_of_surface(closed: bool, shown: &Extracted) -> Vec<String> {
+    let mut said = Vec::new();
+    if !closed {
+        said.push(NOT_CLOSED.to_owned());
+    }
+    if shown.islands_dropped > 0 {
+        let n = shown.islands_dropped;
+        said.push(format!(
+            "{n} piece{} of material cut off from everything that must stay {} left out.",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "was" } else { "were" }
+        ));
+    }
+    if shown.load_not_joined {
+        said.push(NOT_JOINED.to_owned());
+    }
+    said
 }
 
 /// What the one solve of the shape comes to, `was_stopped` when the run had been stopped before
@@ -451,6 +551,10 @@ pub fn work_out(
             ));
         }
     }
+    let closed_edge = tenon_fea::faces::shortest_closed_edge(&drawn);
+    if let Some(said) = closed_edge_too_short(first_size, closed_edge) {
+        return Err(said);
+    }
 
     let tools = Tools::find()?;
     let scratch = match keep {
@@ -459,21 +563,37 @@ pub fn work_out(
     };
     let most = settings.iterations.map_or(if settings.sharpen { ROUNDS_SHARPENED } else { ROUNDS_QUICK }, |n| n as usize);
     report(progress, Phase::Meshing, most, None);
-    let closed_edge = tenon_fea::faces::shortest_closed_edge(&drawn);
+    let own_lines = tenon_fea::faces::lines_of_no_thickness(&drawn);
     let only_mirrors: Vec<Mirror> = mirrors.iter().map(|(m, _)| *m).collect();
     let began = Instant::now();
     let (last_mesh, fit_mesh) = (scratch.dir.join("part.msh"), scratch.dir.join("part.fits.msh"));
+    let part_grams = part_volume * density / 1000.0;
     let (taken, h) = divided(
         settings,
         first_size,
-        &mut |size| tenon_fea::mesh_for_shape(&tools, &step, size, closed_edge, &scratch.dir, cancel),
+        closed_edge,
+        &mut |size| tenon_fea::mesh_for_shape(&tools, &step, size, closed_edge, &own_lines, &scratch.dir, cancel),
         // The study put on the mesh, what must stay solid on it (what is held or loaded, and the
-        // kept faces as deep as asked), and whether the filter can take it.
+        // kept faces as deep as asked), that it leaves room for the share kept (the layers are as
+        // thick as the elements), and whether the filter can take it.
         &mut |mesh, size| {
             let prepared = tenon_fea::put_on(mesh, &drawn, &on.setup, 0.0)?;
             let kept_sets = kept_surfaces(&kept_faces, &prepared.on)?;
             let passive = region::passive(&prepared.problem, &kept_sets);
             let design = region::design(&prepared.problem.mesh, passive.clone());
+            let total: f64 = design.volumes.iter().sum();
+            let solid: f64 = design.volumes.iter().zip(&passive).filter(|(_, p)| **p).map(|(v, _)| *v).sum();
+            if topo::no_room(solid, total, fraction * total) {
+                let names: Vec<&str> = kept_faces.iter().map(|(_, _, n)| n.as_str()).collect();
+                let what = if names.is_empty() {
+                    "The layers under the supports and loads".to_owned()
+                } else {
+                    format!("{} and the layers under the supports and loads", names.join(", "))
+                };
+                let least = (solid + topo::X_MIN * (total - solid)) / total;
+                let smaller = what_makes_elements_smaller(settings, size);
+                return Err(too_much_stays(&what, least, fraction, settings.target, part_grams, !names.is_empty(), smaller));
+            }
             topo::filter::Filter::new(&design.centroids, &design.volumes, radius_for(settings, size), &only_mirrors)
                 .map_err(|e| too_much_to_smooth(settings, size, only_mirrors.len(), e))?;
             // (The folder asked to keep the files gets the mesh that was used, not the last tried.)
@@ -496,18 +616,6 @@ pub fn work_out(
                 round(off)
             ));
         }
-    }
-    let total: f64 = design.volumes.iter().sum();
-    let solid: f64 = design.volumes.iter().zip(&passive).filter(|(_, p)| **p).map(|(v, _)| *v).sum();
-    if topo::no_room(solid, total, fraction * total) {
-        let names: Vec<&str> = kept_faces.iter().map(|(_, _, n)| n.as_str()).collect();
-        let what = if names.is_empty() {
-            "The layers under the supports and loads".to_owned()
-        } else {
-            format!("{} and the layers under the supports and loads", names.join(", "))
-        };
-        let least = (solid + topo::X_MIN * (total - solid)) / total;
-        return Err(too_much_stays(&what, least, fraction, settings.target, part_volume * density / 1000.0));
     }
 
     let radius = radius_for(settings, h);
@@ -559,9 +667,7 @@ pub fn work_out(
     }
     let (nodes, target) = (mesh.nodes.len(), settings.resolution.nodes());
     if settings.element_size.is_none() && nodes as f64 > NODES_OVER * target as f64 {
-        warnings.push(format!(
-            "It comes to {nodes} nodes, against about {target} at this resolution, so each round takes that much longer: suppress the part's small holes and rounds to go faster."
-        ));
+        warnings.push(many_nodes(settings, h, nodes, target));
     }
     match optimized.stop {
         Stop::Limit => {
@@ -572,21 +678,7 @@ pub fn work_out(
         Stop::Settled | Stop::LevelledOff => {}
     }
     warnings.extend(check_said);
-    if !shown.skin.is_closed() {
-        warnings.push(NOT_CLOSED.to_owned());
-    }
-    if shown.islands_dropped > 0 {
-        let n = shown.islands_dropped;
-        warnings.push(format!(
-            "{n} piece{} of material cut off from everything that must stay {} left out.",
-            if n == 1 { "" } else { "s" },
-            if n == 1 { "was" } else { "were" }
-        ));
-    }
-    if shown.load_not_joined {
-        warnings
-            .push("The material kept does not join every load to a support: keep a larger share, or ask for a smaller smallest member.".to_owned());
-    }
+    warnings.extend(said_of_surface(shown.skin.is_closed(), &shown));
     Ok(Shaped {
         study: id,
         settings: settings.clone(),
@@ -648,16 +740,8 @@ pub fn write_shape(path: &Path, skin: &topo::Skin, name: &str, material: &str, c
 /// for this run.
 fn asked(s: &Session, id: StudyId, p: &Value) -> Result<Optimize, CmdError> {
     let mut o = s.document().study(id).and_then(|st| st.optimize.clone()).unwrap_or_default();
-    // (In the words `study.shape` has for them.)
-    let num = |key: &str| -> Result<Option<f64>, CmdError> {
-        match arg(p, key).filter(|v| !v.is_null()) {
-            None => Ok(None),
-            Some(v) => {
-                let v = v.as_f64().ok_or_else(|| CmdError(format!("`{key}` must be a number")))?;
-                if tenon_geom::tol::is_valid_coord(v) { Ok(Some(v)) } else { Err(CmdError(format!("`{key}` is out of range"))) }
-            }
-        }
-    };
+    // (As `study.shape` reads them; `check`, at the end of this, says how large they may be.)
+    let num = |key: &str| Optimize::number_of(p, key).map_err(CmdError);
     match (num("remove")?, num("grams")?) {
         (Some(_), Some(_)) => return Err("give `remove` or `grams`, not both".into()),
         (Some(r), None) => o.target = Target::Remove(r),
@@ -695,10 +779,31 @@ fn asked(s: &Session, id: StudyId, p: &Value) -> Result<Optimize, CmdError> {
     Ok(o)
 }
 
+/// Whether a file can be made in `folder`: one of a name of its own is tried, and removed at once.
+/// (Made only if no such file is there, so that what is removed is only ever that one.)
+fn folder_takes_a_file(folder: &Path) -> std::io::Result<()> {
+    let mut last = std::io::Error::from(std::io::ErrorKind::AlreadyExists);
+    for tried in 0..100 {
+        let probe = folder.join(format!(".tenon-try-{}-{tried}.tmp", std::process::id()));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
+            Ok(made) => {
+                drop(made);
+                let _ = std::fs::remove_file(&probe);
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = e,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last)
+}
+
 /// Whether a shape can be written to `file` for the parameter `key`, which takes the ending `ext`:
-/// said before a run that may take an hour, not after it. The file itself is tried, opened to
-/// add to and not to write over, so that what is there is not touched, and a file that was not
-/// there is removed again.
+/// said before a run that may take an hour, not after it. A file that is there is opened to add to
+/// and not to write over, so that it is not touched. No file of the name asked for is ever made
+/// here, as one made would have to be removed, and what is under that name by then (a file saved
+/// meanwhile, a link) need not be this one's: when nothing is there its folder is tried, and the
+/// name goes by the words below.
 fn can_write(key: &str, ext: &str, file: &Path) -> Result<(), CmdError> {
     if !file.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(ext)) {
         return Err(format!("`{key}` must be a file ending in .{ext}, not {}", file.display()).into());
@@ -711,6 +816,9 @@ fn can_write(key: &str, ext: &str, file: &Path) -> Result<(), CmdError> {
     if cfg!(windows) && name.chars().any(|c| "<>:\"|?*".contains(c) || c.is_control()) {
         return Err(format!("`{key}`: a file cannot be called {name}: the name cannot have any of < > : \" | ? * in it").into());
     }
+    if (if cfg!(windows) { name.encode_utf16().count() } else { name.len() }) > 255 {
+        return Err(format!("`{key}`: a file cannot be called {name}: the name is too long").into());
+    }
     let folder = file.parent().filter(|f| !f.as_os_str().is_empty()).unwrap_or(Path::new("."));
     if !folder.is_dir() {
         return Err(format!("`{key}`: there is no folder {}", folder.display()).into());
@@ -718,15 +826,12 @@ fn can_write(key: &str, ext: &str, file: &Path) -> Result<(), CmdError> {
     if std::fs::metadata(file).is_ok_and(|m| m.permissions().readonly()) {
         return Err(format!("`{key}`: {} is read-only", file.display()).into());
     }
-    let there = file.exists();
-    match std::fs::OpenOptions::new().append(true).create(true).open(file) {
-        Ok(_) if there => Ok(()),
-        Ok(_) => {
-            let _ = std::fs::remove_file(file);
-            Ok(())
-        }
-        Err(e) => Err(format!("`{key}`: {} cannot be written: {e}", file.display()).into()),
-    }
+    let tried = match std::fs::OpenOptions::new().append(true).open(file) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => folder_takes_a_file(folder),
+        Err(e) => Err(e),
+    };
+    tried.map_err(|e| format!("`{key}`: {} cannot be written: {e}", file.display()).into())
 }
 
 /// Writes the shape's files, as `write` does, and says in the result `out` what came of each. A
@@ -826,6 +931,7 @@ mod tests {
         let done = divided(
             o,
             h,
+            None,
             &mut |size| {
                 let n = counts[asked.len()];
                 asked.push(size);
@@ -931,7 +1037,7 @@ mod tests {
     #[test]
     fn a_mesher_that_cannot_divide_it_is_said_with_what_helps() {
         let failed = "The part could not be divided into elements. gmsh failed (exit code: 1). It said: Invalid boundary mesh on surface 7";
-        let refused = |o: &Optimize| divided(o, 3.0, &mut |_| Err(failed.to_owned()), &mut |mesh: TetMesh, _| Ok(mesh)).unwrap_err();
+        let refused = |o: &Optimize| divided(o, 3.0, None, &mut |_| Err(failed.to_owned()), &mut |mesh: TetMesh, _| Ok(mesh)).unwrap_err();
         assert_eq!(refused(&at(Resolution::Coarse)), format!("{failed}. Choose Medium, or suppress its small holes and rounds to optimize."));
         assert_eq!(refused(&at(Resolution::Medium)), format!("{failed}. Choose Fine, or suppress its small holes and rounds to optimize."));
         assert_eq!(refused(&at(Resolution::Fine)), format!("{failed}. Suppress its small holes and rounds to optimize."));
@@ -940,11 +1046,18 @@ mod tests {
         // Said of a hole closed up too, and not of a mesher that could not be started.
         let closed = "The part could not be divided into elements of 3 mm: a small hole or round closed up at that size.";
         assert_eq!(
-            cannot_divide(&at(Resolution::Coarse), closed),
+            cannot_divide(&at(Resolution::Coarse), 3.0, None, closed),
             format!("{}. Choose Medium, or suppress its small holes and rounds to optimize.", closed.trim_end_matches('.'))
         );
         let not_started = "The part could not be divided into elements. cannot start gmsh";
-        assert_eq!(cannot_divide(&at(Resolution::Coarse), not_started), not_started);
+        assert_eq!(cannot_divide(&at(Resolution::Coarse), 3.0, None, not_started), not_started);
+        // Where the mesher goes by a closed edge, not by the size, no size helps: not said.
+        for o in [at(Resolution::Coarse), at(Resolution::Medium), sized.clone()] {
+            let e = cannot_divide(&o, 3.0, Some(0.3), closed);
+            assert_eq!(e, format!("{}. Suppress its small holes and rounds to optimize.", closed.trim_end_matches('.')));
+        }
+        // A closed edge not far under the size: the size still has a say.
+        assert!(cannot_divide(&at(Resolution::Coarse), 3.0, Some(2.0), closed).contains("Choose Medium"));
     }
 
     #[test]
@@ -955,11 +1068,12 @@ mod tests {
         // A smallest member that sets the radius.
         let o = Optimize { min_member: Some(60.0), ..Optimize::default() };
         assert_eq!(too_much_to_smooth(&o, 5.0, 0, said.into()), format!("{what}ask for a smaller smallest member, or {holes}"));
-        // Elements asked for, with one and a half of them setting it: a smaller member would not help.
+        // Elements asked for, with one and a half of them setting it: a smaller member would not
+        // help, and smaller elements can come out the same.
         let o = Optimize { element_size: Some(12.0), ..Optimize::default() };
-        assert_eq!(too_much_to_smooth(&o, 12.0, 0, said.into()), format!("{what}make the elements smaller, or {holes}"));
+        assert_eq!(too_much_to_smooth(&o, 12.0, 0, said.into()), format!("{what}{holes}"));
         let o = Optimize { element_size: Some(12.0), min_member: Some(3.0), ..Optimize::default() };
-        assert_eq!(too_much_to_smooth(&o, 12.0, 0, said.into()), format!("{what}make the elements smaller, or {holes}"));
+        assert_eq!(too_much_to_smooth(&o, 12.0, 0, said.into()), format!("{what}{holes}"));
         // Sized from the resolution: the size has been made as it can be.
         assert_eq!(too_much_to_smooth(&Optimize::default(), 20.0, 0, said.into()), format!("{what}{holes}"));
         // With planes, those too; and what is not of this kind is left as it is.
@@ -968,6 +1082,15 @@ mod tests {
             format!("{what}{holes}, or take fewer planes (each plane through the part doubles the memory)")
         );
         assert_eq!(too_much_to_smooth(&Optimize::default(), 20.0, 0, "something else".into()), "something else");
+    }
+
+    #[test]
+    fn a_closed_edge_far_shorter_than_the_elements_is_said_before_the_mesher_is_asked() {
+        assert_eq!(closed_edge_too_short(3.0, None), None);
+        assert_eq!(closed_edge_too_short(3.0, Some(0.031)), None);
+        let said = closed_edge_too_short(3.0, Some(0.0157)).unwrap();
+        assert!(said.starts_with("The part has a closed edge only 0.016 mm long (a small hole or round), against elements of 3 mm"), "{said}");
+        assert!(said.ends_with("Suppress its small holes and rounds to optimize."), "{said}");
     }
 
     #[test]
@@ -1020,9 +1143,57 @@ mod tests {
         let coarse = said(&at(Resolution::Coarse), 1.0, 900_000);
         ends(&coarse, "Suppress its small holes and rounds to optimize.");
         assert!(!coarse.contains("Coarse"), "{coarse}");
-        // It is said of the last size tried.
-        assert!(coarse.starts_with("Divided into elements of "), "{coarse}");
-        assert!(!coarse.contains("of 1 mm"), "{coarse}");
+        // It is said of the last mesh made, at the size that mesh was made at.
+        let (done, asked) = dividing(&at(Resolution::Coarse), 1.0, &[900_000, 500_000, 300_000, 200_000]);
+        assert_eq!(asked.len(), 4);
+        let e = done.unwrap_err();
+        assert!(e.starts_with(&format!("Divided into elements of {} mm the part has 200000 nodes", round(asked[3]))), "{e} {asked:?}");
+    }
+
+    #[test]
+    fn too_much_to_smooth_at_the_first_size_is_not_final_when_fewer_elements_would_do() {
+        let said = "smoothing the densities of 10788 elements over 50 mm would take more than 512 MB: ask for a smaller smallest member";
+        let refuses_below = |least: f64| move |mesh: TetMesh, size: f64| if size < least { Err(said.to_owned()) } else { Ok(mesh) };
+        // A smallest member sets the radius, and the mesh is over its resolution's nodes: as it
+        // was going to be made larger anyway, that is tried, and it fits.
+        let o = Optimize { min_member: Some(100.0), ..Optimize::default() };
+        let (done, asked) = dividing_with(&o, 3.0, &[20_473, 13_323], &mut refuses_below(3.5));
+        assert_eq!(done.as_ref().map(|(n, _)| *n), Ok(13_323), "{asked:?}");
+        assert_eq!(asked.len(), 2);
+        // Nothing fits: what the filter said of the last.
+        let (done, asked) = dividing_with(&o, 3.0, &[20_473, 11_000], &mut refuses_below(1e9));
+        assert_eq!(done.unwrap_err(), said);
+        assert_eq!(asked.len(), 2, "{asked:?}");
+        // Within its resolution's nodes: not to be made larger, so it is said at once.
+        let (done, asked) = dividing_with(&o, 3.0, &[11_000], &mut refuses_below(1e9));
+        assert_eq!((done.unwrap_err().as_str(), asked.len()), (said, 1));
+        // One and a half elements set the radius: it grows with the elements. Said at once.
+        let (done, asked) = dividing_with(&Optimize::default(), 3.0, &[20_473], &mut refuses_below(1e9));
+        assert_eq!((done.unwrap_err().as_str(), asked.len()), (said, 1));
+        // Likewise a size asked for, which is not made larger.
+        let sized = Optimize { element_size: Some(3.0), min_member: Some(100.0), ..Optimize::default() };
+        let (done, asked) = dividing_with(&sized, 3.0, &[20_473], &mut refuses_below(1e9));
+        assert_eq!((done.unwrap_err().as_str(), asked.len()), (said, 1));
+        // What else `take` says at the first size is said at once, over the nodes or not.
+        let (done, asked) = dividing_with(&o, 3.0, &[20_473], &mut |_, _| Err("Fixed1: none of the mesh lies on its faces".to_owned()));
+        assert_eq!((done.unwrap_err().as_str(), asked.len()), ("Fixed1: none of the mesh lies on its faces", 1));
+    }
+
+    #[test]
+    fn many_nodes_says_what_holds_them_up() {
+        let tail = "to go faster.";
+        let by_details = many_nodes(&Optimize::default(), 3.0, 29_986, 12_000);
+        assert_eq!(
+            by_details,
+            format!(
+                "It comes to 29986 nodes, against about 12000 at this resolution, so each round takes that much longer: suppress the part's small holes and rounds {tail}"
+            )
+        );
+        // A smallest member that holds the size down: a block with no small details at all.
+        let o = Optimize { min_member: Some(5.0), ..Optimize::default() };
+        assert!(many_nodes(&o, 5.0 / 3.0, 29_986, 12_000).ends_with(&format!("ask for a larger smallest member {tail}")));
+        // A smallest member with room to spare: the details again.
+        assert!(many_nodes(&o, 1.0, 29_986, 12_000).ends_with(&format!("suppress the part's small holes and rounds {tail}")));
     }
 
     #[test]
@@ -1034,6 +1205,7 @@ mod tests {
             divided(
                 &o,
                 3.0,
+                None,
                 &mut |_| {
                     calls += 1;
                     if calls == 1 { Ok(of(50_000)) } else { Err(why.to_owned()) }
@@ -1050,6 +1222,7 @@ mod tests {
         let e = divided(
             &o,
             3.0,
+            None,
             &mut |_| {
                 calls += 1;
                 if calls == 1 { Ok(of(500_000)) } else { Err("the mesher fell over".to_owned()) }
@@ -1059,38 +1232,85 @@ mod tests {
         .unwrap_err();
         assert_eq!(e, "the mesher fell over");
         // And one that fails at once, as it is.
-        assert_eq!(divided(&o, 3.0, &mut |_| Err("no mesher".to_owned()), &mut |mesh, _| Ok(mesh)).unwrap_err(), "no mesher");
+        assert_eq!(divided(&o, 3.0, None, &mut |_| Err("no mesher".to_owned()), &mut |mesh, _| Ok(mesh)).unwrap_err(), "no mesher");
     }
 
     #[test]
     fn too_much_kept_is_said_so_that_it_can_be_read() {
         let what = "The layers under the supports and loads";
+        let said = |least: f64, fraction: f64, target: Target, grams: f64| too_much_stays(what, least, fraction, target, grams, true, None);
         // Two whole figures that differ are enough.
         assert_eq!(
-            too_much_stays(what, 0.7, 0.57, Target::Remove(43.0), 141.3),
+            said(0.7, 0.57, Target::Remove(43.0), 141.3),
             "The layers under the supports and loads are already 70% of the part: more than the 57% kept. Remove less, or keep less."
         );
         // Two that would read the same are given to a tenth.
         assert_eq!(
-            too_much_stays(what, 0.503, 0.5, Target::Remove(50.0), 141.3),
+            said(0.503, 0.5, Target::Remove(50.0), 141.3),
             "The layers under the supports and loads are already 50.3% of the part: more than the 50.0% kept. Remove less, or keep less."
         );
         // A mass asked for: the mass that would leave room. (70% of 141.3 g.)
         assert_eq!(
-            too_much_stays(what, 0.7, 0.57, Target::Grams(80.0), 141.3),
+            said(0.7, 0.57, Target::Grams(80.0), 141.3),
             "The layers under the supports and loads are already 70% of the part: more than the 57% kept. Ask for more than 98.91 g, or keep less."
         );
         // Asked just above what was said, the two shares read differently, however close.
         assert_eq!(
-            too_much_stays(what, 0.699555, 0.699545, Target::Grams(98.84), 141.3),
+            said(0.699555, 0.699545, Target::Grams(98.84), 141.3),
             "The layers under the supports and loads are already 69.96% of the part: more than the 69.95% kept. Ask for more than 98.848 g, or keep less."
         );
         // Up, not to the nearest: what is said is enough.
-        assert!(too_much_stays(what, 0.123_456, 0.1, Target::Grams(1.0), 100.0).ends_with("Ask for more than 12.346 g, or keep less."));
+        assert!(said(0.123_456, 0.1, Target::Grams(1.0), 100.0).ends_with("Ask for more than 12.346 g, or keep less."));
         // The same to six figures: as they are.
-        assert!(
-            too_much_stays(what, 0.5, 0.5, Target::Remove(50.0), 100.0).contains("already 50.000000% of the part: more than the 50.000000% kept.")
+        assert!(said(0.5, 0.5, Target::Remove(50.0), 100.0).contains("already 50.000000% of the part: more than the 50.000000% kept."));
+    }
+
+    #[test]
+    fn too_much_kept_offers_only_what_can_be_asked_and_would_help() {
+        let what = "The layers under the supports and loads";
+        let medium = Some("choose Medium");
+        // No faces kept: nothing to keep less of. Smaller elements make the layers thinner.
+        assert_eq!(
+            too_much_stays(what, 0.12, 0.1, Target::Remove(90.0), 776.0, false, medium),
+            "The layers under the supports and loads are already 12% of the part: more than the 10% kept. Remove less, or choose Medium: smaller elements make the layers thinner."
         );
+        assert_eq!(
+            too_much_stays(what, 0.12, 0.1, Target::Remove(90.0), 776.0, true, medium),
+            "The layers under the supports and loads are already 12% of the part: more than the 10% kept. Remove less, keep less, or choose Medium: smaller elements make the layers thinner."
+        );
+        assert_eq!(
+            too_much_stays(what, 0.12, 0.1, Target::Remove(90.0), 776.0, false, None),
+            "The layers under the supports and loads are already 12% of the part: more than the 10% kept. Remove less."
+        );
+        // All of a thin plate stays: 5% is the least that can be removed, so "remove less" is no use.
+        let whole =
+            "The layers under the supports and loads are already 100% of the part: too little is left to take away. Hold or load smaller faces";
+        assert_eq!(
+            too_much_stays(what, 1.0, 0.95, Target::Remove(5.0), 113.04, false, medium),
+            format!("{whole}, or choose Medium: smaller elements make the layers thinner.")
+        );
+        assert_eq!(too_much_stays(what, 1.0, 0.5, Target::Remove(50.0), 113.04, false, None), format!("{whole}."));
+        assert_eq!(too_much_stays(what, 1.0, 0.5, Target::Remove(50.0), 113.04, true, None), format!("{whole}, or keep less."));
+        // Likewise a mass that would be the part's own, which is refused in its turn.
+        assert_eq!(too_much_stays(what, 1.0, 0.44, Target::Grams(50.0), 113.04, false, None), format!("{whole}."));
+        // Just under the most that can be kept: asking for that does leave room.
+        assert!(too_much_stays(what, 0.949, 0.5, Target::Remove(50.0), 100.0, false, None).ends_with("Remove less."));
+        assert!(too_much_stays(what, 0.951, 0.5, Target::Remove(50.0), 100.0, false, None).contains("too little is left"));
+        // By mass, there is no such limit short of the part's own.
+        assert!(too_much_stays(what, 0.97, 0.5, Target::Grams(50.0), 100.0, false, None).ends_with("Ask for more than 97 g."));
+    }
+
+    #[test]
+    fn what_makes_the_elements_smaller_goes_by_what_was_asked() {
+        assert_eq!(what_makes_elements_smaller(&at(Resolution::Coarse), 3.0), Some("choose Medium"));
+        assert_eq!(what_makes_elements_smaller(&at(Resolution::Medium), 3.0), Some("choose Fine"));
+        assert_eq!(what_makes_elements_smaller(&at(Resolution::Fine), 3.0), None);
+        let sized = Optimize { element_size: Some(3.0), ..at(Resolution::Fine) };
+        assert_eq!(what_makes_elements_smaller(&sized, 3.0), Some("make the elements smaller"));
+        // A smallest member that holds the size down is what the resolution's size cannot get past.
+        let member = Optimize { min_member: Some(9.0), ..at(Resolution::Coarse) };
+        assert_eq!(what_makes_elements_smaller(&member, 3.0), Some("ask for a smaller smallest member"));
+        assert_eq!(what_makes_elements_smaller(&member, 2.0), Some("choose Medium"));
     }
 
     #[test]
@@ -1139,6 +1359,10 @@ mod tests {
         // A name with no folder is in the working one.
         assert!(can_write("stl", "stl", Path::new("in-the-working-folder.stl")).is_ok());
         assert!(!Path::new("in-the-working-folder.stl").exists());
+        // A name longer than any the system takes, which the folder would have let through.
+        let e = can_write("stl", "stl", &dir.join(format!("{}.stl", "x".repeat(252)))).unwrap_err().0;
+        assert!(e.contains("a file cannot be called") && e.ends_with("the name is too long"), "{e}");
+        assert!(can_write("stl", "stl", &dir.join(format!("{}.stl", "x".repeat(251)))).is_ok());
         // An ending of the other kind, or none.
         let refused = |key: &str, ext: &str, file: &Path| can_write(key, ext, file).unwrap_err().0;
         assert!(refused("stl", "stl", &dir.join("y.3mf")).starts_with("`stl` must be a file ending in .stl"));
@@ -1168,6 +1392,56 @@ mod tests {
         read_only.set_readonly(false);
         std::fs::set_permissions(&there, read_only).unwrap();
         assert!(e.ends_with("is read-only"), "{e}");
+    }
+
+    #[test]
+    fn trying_where_a_shape_goes_makes_no_file_of_that_name() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // Something saving a file under that name while it is tried must not lose it: it would, if
+        // the name itself were made and removed. So the name is never there, however closely it is
+        // watched.
+        let scratch = folder();
+        let target = scratch.dir.join("being-saved.stl");
+        let (seen, done) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let watcher = {
+            let (target, seen, done) = (target.clone(), seen.clone(), done.clone());
+            std::thread::spawn(move || {
+                while !done.load(Ordering::Relaxed) {
+                    if target.exists() {
+                        seen.store(true, Ordering::Relaxed);
+                    }
+                }
+            })
+        };
+        for _ in 0..500 {
+            can_write("stl", "stl", &target).unwrap();
+        }
+        done.store(true, Ordering::Relaxed);
+        watcher.join().unwrap();
+        assert!(!seen.load(Ordering::Relaxed), "the name was made");
+        assert_eq!(std::fs::read_dir(&scratch.dir).unwrap().count(), 0, "and what was tried in its place is gone");
+        // A file there already is opened, and that is all.
+        std::fs::write(&target, b"there").unwrap();
+        can_write("stl", "stl", &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"there");
+        // A name of its own that is taken is passed over, and left as it is.
+        let taken = scratch.dir.join(format!(".tenon-try-{}-0.tmp", std::process::id()));
+        std::fs::write(&taken, b"not this one's").unwrap();
+        folder_takes_a_file(&scratch.dir).unwrap();
+        assert_eq!(std::fs::read(&taken).unwrap(), b"not this one's");
+        assert_eq!(std::fs::read_dir(&scratch.dir).unwrap().count(), 2);
+        // A link that points nowhere is left as it is, and nothing is made where it points. (Where
+        // the system lets a link be made at all: Windows may need a right for that.)
+        let (link, nowhere) = (scratch.dir.join("link.stl"), scratch.dir.join("nowhere.stl"));
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&nowhere, &link);
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&nowhere, &link);
+        if linked.is_ok() {
+            can_write("stl", "stl", &link).unwrap();
+            assert!(std::fs::symlink_metadata(&link).is_ok(), "the link is gone");
+            assert!(!nowhere.exists(), "a file was made through the link");
+        }
     }
 
     #[test]
@@ -1237,12 +1511,18 @@ mod tests {
             assert_eq!(asked_of(stored.clone(), json!({ "resolution": word })).unwrap().resolution, Resolution::Fine);
         }
         assert_eq!(asked_of(stored.clone(), json!({ "resolution": "huge" })).unwrap_err(), "`resolution` is coarse, medium or fine");
-        // Past what any size is, in study.shape's words.
-        for key in ["element_size", "min_member", "grams"] {
-            let e = asked_of(json!({ "remove": 40 }), json!({ key: 1e300 })).unwrap_err();
-            assert_eq!(e, format!("`{key}` is out of range"));
-        }
+        // Past what any size is, or a share can be: in words with the range, as study.shape has.
+        let e = asked_of(json!({ "remove": 40 }), json!({ "element_size": 1e300 })).unwrap_err();
+        assert_eq!(e, "the element size must be more than 0 and at most 1000000 mm");
+        let e = asked_of(json!({ "remove": 40 }), json!({ "min_member": 1e300 })).unwrap_err();
+        assert_eq!(e, "the thinnest member must be more than 0 and at most 1000000 mm");
         let e = asked_of(stored, json!({ "element_size": 2_000_000 })).unwrap_err();
-        assert_eq!(e, "`element_size` is out of range");
+        assert_eq!(e, "the element size must be more than 0 and at most 1000000 mm");
+        let e = asked_of(json!({ "remove": 40 }), json!({ "remove": 2_000_000 })).unwrap_err();
+        assert_eq!(e, "the share taken away must be from 5 to 95 %");
+        // A mass has no limit but the part's own, which the run says: a heavy part can be asked one.
+        let o = asked_of(json!({ "remove": 40 }), json!({ "grams": 1_500_000 })).unwrap();
+        assert_eq!(o.target, Target::Grams(1_500_000.0));
+        assert_eq!(asked_of(json!({ "remove": 40 }), json!({ "grams": "much" })).unwrap_err(), "`grams` must be a number");
     }
 }

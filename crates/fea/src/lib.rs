@@ -65,9 +65,9 @@ fn stress_check_args(size: f64) -> Vec<String> {
 }
 
 /// What the mesher is told for a shape, elements no smaller than `floor`: see [`mesh_for_shape`]
-/// for how, and why, it differs.
-fn shape_args(size: f64, floor: f64) -> Vec<String> {
-    let (largest, smallest) = (format!("{size}"), format!("{floor}"));
+/// for how, and why, it differs. `to_a_turn`: how many elements go to a full turn of a round face.
+fn shape_args(size: f64, floor: f64, to_a_turn: u32) -> Vec<String> {
+    let (largest, smallest, to_a_turn) = (format!("{size}"), format!("{floor}"), format!("{to_a_turn}"));
     [
         "part.step",
         "-3",
@@ -78,7 +78,7 @@ fn shape_args(size: f64, floor: f64) -> Vec<String> {
         "-clmin",
         &smallest,
         "-clcurv",
-        "12",
+        &to_a_turn,
         "-setnumber",
         "Mesh.MeshSizeExtendFromBoundary",
         "0",
@@ -160,16 +160,48 @@ fn shape_floor(size: f64, closed_edge: Option<f64>) -> f64 {
     closed_edge.filter(|c| c.is_finite() && *c > 0.0).map_or(third, |c| third.min(c / 3.0))
 }
 
+/// How many elements go to a full turn of a round face, as a stress check has it.
+const TO_A_TURN: u32 = 12;
+
 /// How many times smaller than the size a stress check's elements may be, and so a shape's when
 /// what [`shape_floor`] says will not do.
 const STRESS_CHECK_FLOOR: f64 = 10.0;
 
+/// How many elements go to a full turn of a round face, at the first try. The floor is the mesher's
+/// for the whole part, so one taken from a small closed edge lets every round face go by its
+/// curvature down to it, and at twelve to a full turn one small hole doubled the nodes of a plate
+/// with others. So with such a floor it is four: the small hole has what its floor gives it, and
+/// the other round faces about what they would have had. (The second try is twelve whatever the
+/// floor: what it costs in nodes is better than no mesh.)
+fn to_a_turn_at_first(size: f64, floor: f64) -> u32 {
+    if floor < size / 3.0 { 4 } else { TO_A_TURN }
+}
+
+/// How small the elements may go when `floor` would not do: as small as a stress check's, and in
+/// any case half the first floor.
+fn second_floor(size: f64, floor: f64) -> f64 {
+    (size / STRESS_CHECK_FLOOR).min(floor / 2.0)
+}
+
+/// Whether both tries at a size go by the closed edge (`closed_edge`, its length) and not by the
+/// size: a hole that closes up then does so whatever size of element is asked for, near this one.
+pub fn only_the_closed_edge_matters(size: f64, closed_edge: Option<f64>) -> bool {
+    closed_edge.is_some() && second_floor(size, shape_floor(size, closed_edge)) < size / STRESS_CHECK_FLOOR
+}
+
 /// A mesh by `divide` with elements no smaller than `floor`. Should that fail, or come out with a
-/// hole closed up, once more as finely as a stress check's goes: what it costs in nodes is better
-/// than no mesh. What is said of the first failure stands if both fail.
-fn divided_at_floor(size: f64, floor: f64, divide: &mut dyn FnMut(f64) -> Result<TetMesh, String>) -> Result<TetMesh, String> {
+/// hole closed up, once more with elements as small as [`second_floor`] says: what it costs in
+/// nodes is better than no mesh. (Not when the mesher ran out of time: the second try is the
+/// slower.) What is said of the first failure stands if both fail. A mesh is sound when its
+/// boundary is closed, but for the part's own lines of no thickness (`own_lines`).
+fn divided_at_floor(
+    size: f64,
+    floor: f64,
+    own_lines: &[(tenon_geom::Vec3, tenon_geom::Vec3)],
+    divide: &mut dyn FnMut(f64) -> Result<TetMesh, String>,
+) -> Result<TetMesh, String> {
     let sound = |mesh: TetMesh| {
-        if mesh.boundary_is_closed() {
+        if faces::all_along(&mesh, &mesh.open_sides(), own_lines, 0.1 * size) {
             Ok(mesh)
         } else {
             Err(format!(
@@ -178,9 +210,8 @@ fn divided_at_floor(size: f64, floor: f64, divide: &mut dyn FnMut(f64) -> Result
             ))
         }
     };
-    let finest = size / STRESS_CHECK_FLOOR;
     match divide(floor).and_then(sound) {
-        Err(e) if e != tools::STOPPED && floor > finest => match divide(finest).and_then(sound) {
+        Err(e) if e != tools::STOPPED && !tools::ran_too_long(&e) => match divide(second_floor(size, floor)).and_then(sound) {
             Ok(mesh) => Ok(mesh),
             Err(later) if later == tools::STOPPED => Err(later),
             Err(_) => Err(e),
@@ -190,8 +221,9 @@ fn divided_at_floor(size: f64, floor: f64, divide: &mut dyn FnMut(f64) -> Result
 }
 
 /// Divides a part into ten-node tetrahedra about `size` across, for a shape to be worked out on.
-/// `closed_edge` is the length of the part's shortest closed edge, if it has one. The mesher's
-/// files are left in `dir`.
+/// `closed_edge` is the length of the part's shortest closed edge, if it has one, and `own_lines`
+/// the lines where the part touches itself ([`faces::lines_of_no_thickness`]). The mesher's files
+/// are left in `dir`.
 ///
 /// It differs from [`mesh_part`] in three ways: no finer than a third of `size` round small
 /// details (unless a closed edge takes it, see [`shape_floor`]), the size not carried in from the
@@ -201,9 +233,19 @@ fn divided_at_floor(size: f64, floor: f64, divide: &mut dyn FnMut(f64) -> Result
 /// for, and one with many to seventy times). Straight mid-side nodes cannot turn an element
 /// inside out, as curved ones do on a small hole at these sizes (the solver refuses those), and a
 /// shape is a guide: it does not need the bore's roundness.
-pub fn mesh_for_shape(tools: &Tools, step: &[u8], size: f64, closed_edge: Option<f64>, dir: &Path, cancel: &Cancel) -> Result<TetMesh, String> {
-    divided_at_floor(size, shape_floor(size, closed_edge), &mut |floor| {
-        run_mesher(tools, step, size, &shape_args(size, floor), dir, cancel, SHAPE_SLOW)
+pub fn mesh_for_shape(
+    tools: &Tools,
+    step: &[u8],
+    size: f64,
+    closed_edge: Option<f64>,
+    own_lines: &[(tenon_geom::Vec3, tenon_geom::Vec3)],
+    dir: &Path,
+    cancel: &Cancel,
+) -> Result<TetMesh, String> {
+    let first = shape_floor(size, closed_edge);
+    divided_at_floor(size, first, own_lines, &mut |floor| {
+        let to_a_turn = if floor == first { to_a_turn_at_first(size, first) } else { TO_A_TURN };
+        run_mesher(tools, step, size, &shape_args(size, floor, to_a_turn), dir, cancel, SHAPE_SLOW)
     })
 }
 
@@ -373,12 +415,12 @@ mod tests {
         let scratch = Scratch::new().unwrap();
         for size in [0.0, -1.0, f64::NAN] {
             assert!(mesh_part(&tools, b"", size, &scratch.dir, &Cancel::default()).unwrap_err().contains("more than 0"));
-            assert!(mesh_for_shape(&tools, b"", size, None, &scratch.dir, &Cancel::default()).unwrap_err().contains("more than 0"));
+            assert!(mesh_for_shape(&tools, b"", size, None, &[], &scratch.dir, &Cancel::default()).unwrap_err().contains("more than 0"));
         }
         // A mesher that is not there says so, as the reason the part was not divided.
         let e = mesh_part(&tools, b"", 1.0, &scratch.dir, &Cancel::default()).unwrap_err();
         assert!(e.starts_with("The part could not be divided into elements.") && e.contains("cannot start"), "{e}");
-        let e = mesh_for_shape(&tools, b"", 1.0, None, &scratch.dir, &Cancel::default()).unwrap_err();
+        let e = mesh_for_shape(&tools, b"", 1.0, None, &[], &scratch.dir, &Cancel::default()).unwrap_err();
         assert!(e.starts_with("The part could not be divided into elements.") && e.contains("cannot start"), "{e}");
         // Preparing a study starts with the dividing, and says the same.
         let part = tenon_kernel::Mesh::default();
@@ -393,8 +435,13 @@ mod tests {
         assert_eq!(stress_check_args(2.5).join(" "), "part.step -3 -order 2 -clmax 2.5 -clmin 0.25 -clcurv 12 -nt 1 -format msh2 -o part.msh");
         // A shape's has a floor on the size, and straight mid-side nodes.
         assert_eq!(
-            shape_args(3.0, shape_floor(3.0, None)).join(" "),
+            shape_args(3.0, shape_floor(3.0, None), to_a_turn_at_first(3.0, shape_floor(3.0, None))).join(" "),
             "part.step -3 -order 2 -clmax 3 -clmin 1 -clcurv 12 -setnumber Mesh.MeshSizeExtendFromBoundary 0 -setnumber Mesh.SecondOrderLinear 1 -nt 1 -format msh2 -o part.msh"
+        );
+        // With a floor taken from a small closed edge, the other round faces do not go down to it.
+        assert_eq!(
+            shape_args(3.0, shape_floor(3.0, Some(1.5)), to_a_turn_at_first(3.0, shape_floor(3.0, Some(1.5)))).join(" "),
+            "part.step -3 -order 2 -clmax 3 -clmin 0.5 -clcurv 4 -setnumber Mesh.MeshSizeExtendFromBoundary 0 -setnumber Mesh.SecondOrderLinear 1 -nt 1 -format msh2 -o part.msh"
         );
     }
 
@@ -427,7 +474,7 @@ mod tests {
         let run = |answers: Vec<Result<TetMesh, String>>| {
             let mut floors = Vec::new();
             let mut answers = answers.into_iter();
-            let got = divided_at_floor(3.0, 1.0, &mut |floor| {
+            let got = divided_at_floor(3.0, 1.0, &[], &mut |floor| {
                 floors.push(floor);
                 answers.next().unwrap()
             });
@@ -452,13 +499,61 @@ mod tests {
         assert_eq!((got.unwrap_err().as_str(), floors), (tools::STOPPED, vec![1.0]));
         let (got, floors) = run(vec![Err("it failed".into()), Err(tools::STOPPED.into())]);
         assert_eq!((got.unwrap_err().as_str(), floors), (tools::STOPPED, vec![1.0, 0.3]));
-        // Already as fine as that: no second try.
+        // The mesher out of time: the second try is the slower, and would only come to the same.
+        let late = "The part could not be divided into elements. gmsh ran for more than 10 minutes and was stopped: a shape is found sooner";
+        let (got, floors) = run(vec![Err(late.into())]);
+        assert_eq!((got.unwrap_err().as_str(), floors), (late, vec![1.0]));
+    }
+
+    #[test]
+    fn a_line_of_no_thickness_the_part_has_is_not_a_hole_closed_up() {
+        // Sides with more than two triangles, all along a line of the part's own: that mesh stands.
+        let mesh = folded();
+        let t = mesh.tris[0];
+        let at = |i: usize| mesh.nodes[t.nodes[i] as usize];
+        let own = [(at(0), at(1)), (at(1), at(2)), (at(2), at(0))];
         let mut tries = 0;
-        let got = divided_at_floor(3.0, 0.3, &mut |_| {
+        let got = divided_at_floor(3.0, 1.0, &own, &mut |_| {
             tries += 1;
+            Ok(folded())
+        });
+        assert!(got.is_ok() && tries == 1, "{tries}");
+        // A line of the part's own elsewhere, or along only some of them, does not excuse it.
+        let far = tenon_geom::Vec3::new(50.0, 50.0, 50.0);
+        for elsewhere in [vec![(far, far + tenon_geom::Vec3::X)], vec![(at(0), at(1))]] {
+            let got = divided_at_floor(3.0, 1.0, &elsewhere, &mut |_| Ok(folded()));
+            assert!(got.unwrap_err().contains("closed up"));
+        }
+    }
+
+    #[test]
+    fn a_floor_taken_from_a_closed_edge_still_has_a_finer_second_try() {
+        // A floor from a small closed edge may be under a tenth of the size already. The second
+        // try goes finer still, not back to the same (or up): a hole that closed up at the first
+        // holds at half of it.
+        let mut floors = Vec::new();
+        let got = divided_at_floor(3.0, 0.1, &[], &mut |floor| {
+            floors.push(floor);
+            if floors.len() == 1 { Ok(folded()) } else { Ok(closed()) }
+        });
+        assert!(got.is_ok() && floors == [0.1, 0.05], "{floors:?}");
+        // Exactly at a tenth of the size, too.
+        let mut floors = Vec::new();
+        let _ = divided_at_floor(3.0, 0.3, &[], &mut |floor| {
+            floors.push(floor);
             Err("it failed".into())
         });
-        assert!(got.is_err() && tries == 1);
+        assert_eq!(floors, [0.3, 0.15]);
+        // While the tenth is the smaller, it is the tenth.
+        assert_eq!(second_floor(3.0, 1.0), 0.3);
+        // Whether the size of the elements has any say. A closed edge of 0.3 at elements of 2.4:
+        // the floors are 0.1 and 0.05, and at elements of 1.2 they are the same.
+        assert!(only_the_closed_edge_matters(2.4, Some(0.3)));
+        assert!(only_the_closed_edge_matters(1.2, Some(0.3)));
+        // A closed edge not much under the size: the second floor is the size's tenth.
+        assert!(!only_the_closed_edge_matters(3.0, Some(2.0)));
+        // None to go by.
+        assert!(!only_the_closed_edge_matters(3.0, None));
     }
 
     #[test]

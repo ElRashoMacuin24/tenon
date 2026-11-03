@@ -175,8 +175,14 @@ fn force_and_moment(name: &str, spots: &[Spot], area: f64, force: Vec3, moment: 
 ///
 /// What is square to the face is worked out from where the spot is on the round face, not from
 /// the triangle it is on: a small bore at a shape's mesh is a few flat sides (straight mid-side
-/// nodes), and pushed square to those it would be pushed well off the way asked. On so few sides
-/// a little across the load is still left over: that is taken back in shares of the pushes.
+/// nodes), and pushed square to those it would be pushed well off the way asked.
+///
+/// What is left over across the load is taken back in shares of the pushes, however much it is, so
+/// that what the pushes come to is the load asked. On a whole round with flat ends that is little.
+/// On a wall not symmetric about the load (a rounded corner, a slot's end, a bore with slanted
+/// ends) it can be more than the load: pushes square to a 45 degree wedge cannot add up to a
+/// direction outside it at all. There the load goes the way asked, and the pushes are no longer
+/// square to the face.
 fn bearing(name: &str, spots: &[Spot], newtons: f64, direction: Vec3) -> Result<Vec<Vec3>, String> {
     // (A negative load presses the other way.)
     let (newtons, direction) = if newtons < 0.0 { (-newtons, -direction) } else { (newtons, direction) };
@@ -856,6 +862,53 @@ mod tests {
         let pushes = bearing("Bearing1", &boss, 100.0, Vec3::X).unwrap();
         assert!(boss.iter().zip(&pushes).all(|(s, p)| p.dot(s.at) <= 1e-9));
         assert!((pushes.iter().fold(Vec3::ZERO, |s, f| s + *f) - Vec3::X * 100.0).len() < 1e-9);
+    }
+
+    /// A piece of a round wall of radius 1 along z, from `from` to `to` degrees, in bits of a degree
+    /// each, out of the solid being toward the axis.
+    fn part_of_a_round(from: i32, to: i32) -> Vec<Spot> {
+        (from..to)
+            .map(|deg| {
+                let a = (f64::from(deg) + 0.5).to_radians();
+                let radial = Vec3::new(a.cos(), a.sin(), 0.0);
+                Spot {
+                    at: radial,
+                    da: radial * -(1.0f64.to_radians()),
+                    surface: Surface::Cylinder { origin: Vec3::ZERO, dir: Vec3::Z },
+                    nodes: [0; 6],
+                    weights: [0.0; 6],
+                }
+            })
+            .collect()
+    }
+
+    /// How much of the pushes on a wall is square to it, as a share of all of them.
+    fn square_share(wall: &[Spot], pushes: &[Vec3]) -> f64 {
+        let square: f64 = wall.iter().zip(pushes).map(|(s, p)| p.dot(s.at).abs()).sum();
+        square / pushes.iter().map(|p| p.len()).sum::<f64>()
+    }
+
+    #[test]
+    fn a_bearing_load_on_part_of_a_round_goes_the_way_asked_and_is_square_only_if_it_can_be() {
+        let sum = |pushes: &[Vec3]| pushes.iter().fold(Vec3::ZERO, |s, f| s + *f);
+        // The part of a round the load squarely faces, its middle along the load: the pushes come
+        // out along the load of themselves, and they stay square.
+        let wall = part_of_a_round(-45, 45);
+        let pushes = bearing("Bearing1", &wall, 100.0, Vec3::X).unwrap();
+        assert!((sum(&pushes) - Vec3::X * 100.0).len() < 1e-9, "{:?}", sum(&pushes));
+        assert!(square_share(&wall, &pushes) > 1.0 - 1e-9, "{}", square_share(&wall, &pushes));
+        // A wall not centred on the load: pushes square to a wedge from 0 to 45 degrees cannot add
+        // up to a direction outside it. What was asked goes the way asked, in full, and it is the
+        // pushes that are no longer square to the wall.
+        for (from, to, along) in [(0, 45, Vec3::Y), (0, 90, Vec3::X), (10, 40, Vec3::Y)] {
+            let wall = part_of_a_round(from, to);
+            let pushes = bearing("Bearing1", &wall, 600.0, along).unwrap();
+            assert!((sum(&pushes) - along * 600.0).len() < 1e-9, "{from} to {to}: {:?}", sum(&pushes));
+            assert!(square_share(&wall, &pushes) < 0.99, "{from} to {to}: {}", square_share(&wall, &pushes));
+            assert!(pushes.iter().all(|p| p.z == 0.0));
+        }
+        // A wall that faces away from the load has nothing to press on.
+        assert!(bearing("Bearing1", &part_of_a_round(0, 90), 100.0, Vec3::new(-1.0, -1.0, 0.0)).unwrap_err().contains("none of its faces"));
     }
 
     /// Two tetrahedra joined by nothing: nodes 0 to 9 one, 10 to 19 the other, a long way off.

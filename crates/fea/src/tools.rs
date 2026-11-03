@@ -124,6 +124,12 @@ fn too_long(name: &str, limit: Duration, slow: &str) -> String {
     format!("{name} ran for more than {} minutes and was stopped: {slow}", limit.as_secs() / 60)
 }
 
+/// Whether a program's failure (`e`, with whatever was said before it) was its running past its
+/// limit: running it again, on the same limit, is only more of the same wait.
+pub fn ran_too_long(e: &str) -> bool {
+    e.contains(" ran for more than ") && e.contains(" minutes and was stopped: ")
+}
+
 /// Starts `program` in `dir` and waits for it, with all it says kept in the file `log` there.
 /// Returns what it said. It is stopped, and an error returned, when `cancel` is set or it
 /// runs longer than `limit` (the error then says `slow`: what to try so that it takes less);
@@ -282,5 +288,8 @@ mod tests {
             too_long("gmsh", Duration::from_secs(10 * 60 + 59), "a quick check is of fewer, larger elements"),
             "gmsh ran for more than 10 minutes and was stopped: a quick check is of fewer, larger elements"
         );
+        assert!(ran_too_long(&format!("The part could not be divided. {}", too_long("gmsh", Duration::from_secs(600), "try less"))));
+        assert!(!ran_too_long("gmsh failed (exit code: 1). It said: Invalid boundary mesh"));
+        assert!(!ran_too_long(STOPPED));
     }
 }

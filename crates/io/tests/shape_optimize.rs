@@ -422,6 +422,119 @@ fn a_plate_with_one_small_bore_is_worked_out_at_coarse() {
     }
 }
 
+/// The 200 x 100 x 5 plate with 32 bores of 3, and whatever more.
+fn plate_of_many_bores(more: &[(f64, f64, f64)]) -> Part {
+    let mut bores: Vec<(f64, f64, f64)> =
+        (0..8).flat_map(|i| (0..4).map(move |j| (-84.0 + 24.0 * f64::from(i), -36.0 + 24.0 * f64::from(j), 3.0))).collect();
+    bores.extend_from_slice(more);
+    plate(200.0, 100.0, 5.0, &bores)
+}
+
+#[test]
+fn one_small_bore_does_not_take_every_other_round_face_down_with_it() {
+    if !programs("one small bore among others") {
+        return;
+    }
+    // A floor from a small closed edge is the mesher's for the whole part. At twelve to a full
+    // turn the other bores went by their curvature down to it, and one more bore of 0.1 made 16,000
+    // nodes 34,000.
+    let without = {
+        let mut p = plate_of_many_bores(&[]);
+        held_at_the_left(&mut p);
+        p.shape(&few_rounds(Resolution::Coarse), &Cancel::default(), None).unwrap()
+    };
+    let nodes = without.field.mesh.nodes.len();
+    for across in [1.0, 0.1] {
+        let mut p = plate_of_many_bores(&[(1.0, 0.0, across)]);
+        held_at_the_left(&mut p);
+        let shaped = p.shape(&few_rounds(Resolution::Coarse), &Cancel::default(), None).unwrap();
+        let mesh = &shaped.field.mesh;
+        assert!(mesh.boundary_is_closed() && shaped.shown.skin.is_closed(), "{across}");
+        assert!(mesh.nodes.len() < nodes * 5 / 4, "a bore of {across}: {} nodes against {nodes}", mesh.nodes.len());
+    }
+}
+
+#[test]
+fn a_hole_that_closes_up_at_its_own_floor_is_tried_once_more() {
+    if !programs("a hole that closes up") {
+        return;
+    }
+    // This bore's wall folds at a third of its edge: the floor does not change with the resolution
+    // here, so all three were refused, each saying to try the next.
+    let mut p = plate(60.0, 30.0, 10.0, &[(0.0, 0.0, 0.1)]);
+    held_at_the_left(&mut p);
+    let shaped = p.shape(&few_rounds(Resolution::Coarse), &Cancel::default(), None).unwrap();
+    assert!(shaped.field.mesh.boundary_is_closed());
+    assert!(on_the_bore(&shaped.field.mesh, 0.05, 1e-6) >= 6, "{}", on_the_bore(&shaped.field.mesh, 0.05, 1e-6));
+}
+
+#[test]
+fn a_closed_edge_far_shorter_than_the_elements_is_refused_before_anything_is_started() {
+    // (No programs: it is said before any is looked for. It used to take the mesher nine minutes.)
+    let mut p = plate(60.0, 30.0, 10.0, &[(0.0, 0.0, 0.005)]);
+    held_at_the_left(&mut p);
+    p.run("study.shape", json!({ "remove": 50 }));
+    let e = p.refused("study.optimize", json!({}));
+    assert!(e.starts_with("The part has a closed edge only 0.016 mm long") && e.ends_with("Suppress its small holes and rounds to optimize."), "{e}");
+}
+
+#[test]
+fn elements_are_not_made_so_large_that_the_layers_leave_no_room() {
+    if !programs("layers with no room") {
+        return;
+    }
+    // Held on one long side and pushed on the other, 90% away. At the first size there is room for
+    // the 10% kept; it is the larger sizes tried for the many bores that have too thick a layer.
+    // The mesh with room stands.
+    let mut p = plate_of_many_bores(&[]);
+    let (front, back) = (p.facing("front"), p.facing("back"));
+    p.run("study.new", json!({}));
+    p.run("study.fix", json!({ "faces": [front] }));
+    p.run("study.force", json!({ "faces": [back], "newtons": 100, "direction": "down" }));
+    let o = Optimize { target: Target::Remove(90.0), iterations: Some(1), ..few_rounds(Resolution::Coarse) };
+    let shaped = p.shape(&o, &Cancel::default(), None).unwrap();
+    assert!((shaped.fraction - 0.1).abs() < 1e-12);
+    let first = (9.0 * shaped.part_volume / 12_000.0).cbrt();
+    assert!(shaped.element_size < 6.0, "{} against a first size of {first}", shaped.element_size);
+    // Where no size has room it is said, with what would make the layers thinner.
+    let o = Optimize { target: Target::Remove(95.0), ..o };
+    let e = p.shape(&o, &Cancel::default(), None).unwrap_err();
+    assert!(e.contains("% kept. Remove less, or choose Medium: smaller elements make the layers thinner."), "{e}");
+}
+
+#[test]
+fn a_smallest_member_too_much_for_the_filter_at_the_first_size_is_tried_on_fewer_elements() {
+    if !programs("too much to smooth at the first size") {
+        return;
+    }
+    // The first mesh of this plate is over its resolution's nodes, and so due to be made larger,
+    // and it is the smallest member that sets the radius: on fewer elements it can be smoothed.
+    let mut p = bolted_plate();
+    let o = Optimize { min_member: Some(100.0), iterations: Some(1), ..few_rounds(Resolution::Coarse) };
+    let shaped = p.shape(&o, &Cancel::default(), None).unwrap();
+    assert!(shaped.field.mesh.nodes.len() <= 18_000, "{}", shaped.field.mesh.nodes.len());
+    assert_eq!(shaped.member_size, 100.0);
+    assert!(shaped.warnings.iter().any(|w| w.contains("so the elements were made larger")), "{:?}", shaped.warnings);
+}
+
+#[test]
+fn a_part_that_touches_itself_along_a_line_is_not_taken_for_a_hole_closed_up() {
+    if !programs("a part that touches itself") {
+        return;
+    }
+    // Two bores just touching: the part really has a line of no thickness, as a stress check finds.
+    // No small hole closed up, and nothing to suppress.
+    let mut p = plate(60.0, 30.0, 10.0, &[(-5.0, 0.0, 10.0), (5.0, 0.0, 10.0)]);
+    held_at_the_left(&mut p);
+    let shaped = p.shape(&few_rounds(Resolution::Coarse), &Cancel::default(), None).unwrap();
+    assert!(!shaped.field.mesh.boundary_is_closed(), "this part's boundary has that line");
+    assert!(shaped.shape_compliance.is_some());
+    // A bore just touching the plate's side, the same.
+    let mut p = plate(60.0, 30.0, 10.0, &[(0.0, 10.0, 10.0)]);
+    held_at_the_left(&mut p);
+    p.shape(&few_rounds(Resolution::Coarse), &Cancel::default(), None).unwrap();
+}
+
 #[test]
 fn elements_made_larger_leave_small_bores_open() {
     if !programs("a plate with many small bores") {
@@ -457,7 +570,7 @@ fn a_thin_rim_is_told_from_the_flat_faces_beside_it() {
     assert!(closed.is_some_and(|c| (c - 100.0 * std::f64::consts::PI).abs() < 0.1), "{closed:?}");
     let (tools, scratch, cancel) = (Tools::find().unwrap(), tenon_fea::Scratch::new().unwrap(), Cancel::default());
     for size in [15.0, 20.0, 30.0] {
-        let mesh = tenon_fea::mesh_for_shape(&tools, &step, size, closed, &scratch.dir, &cancel).unwrap();
+        let mesh = tenon_fea::mesh_for_shape(&tools, &step, size, closed, &[], &scratch.dir, &cancel).unwrap();
         let on = tenon_fea::faces::match_surfaces(&mesh, &drawn).unwrap();
         // Each surface is of the face its corners say: at one height a flat face, at two the rim.
         assert_eq!(on.len(), 3, "{on:?}");
@@ -670,7 +783,7 @@ fn too_much_kept_for_a_mass_asked_says_the_mass() {
     p.run("study.shape", json!({ "grams": 80, "sharpen": false, "element_size": 3 }));
     let e = p.refused("study.optimize", json!({}));
     assert!(e.contains("Keep1 and the layers under the supports and loads are already"), "{e}");
-    assert!(e.contains("% kept. Ask for more than ") && e.ends_with(" g, or keep less."), "{e}");
+    assert!(e.contains("% kept. Ask for more than ") && e.contains(" g, keep less, or make the elements smaller: "), "{e}");
 }
 
 #[test]

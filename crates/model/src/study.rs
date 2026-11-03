@@ -485,6 +485,16 @@ impl Optimize {
         v.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| (1..=MAX_SHAPE_ITERATIONS).contains(n)).ok_or_else(rounds_refused)
     }
 
+    /// A number of these settings as a command gives it, under `key`, if it does. How large it may
+    /// be is for `check` to say, in words with the range: a file's goes the same way, and a mass
+    /// has no limit but the part's own.
+    pub fn number_of(p: &serde_json::Value, key: &str) -> Result<Option<f64>, String> {
+        match crate::schema::arg(p, key).filter(|v| !v.is_null()) {
+            None => Ok(None),
+            Some(v) => v.as_f64().filter(|n| n.is_finite()).map(Some).ok_or_else(|| format!("`{key}` must be a number")),
+        }
+    }
+
     /// Whether it can be asked, in words when not.
     pub fn check(&self) -> Result<(), String> {
         match self.target {
