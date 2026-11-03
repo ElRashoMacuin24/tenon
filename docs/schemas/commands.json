@@ -6421,7 +6421,7 @@
       "id": "study.shape",
       "label": "Optimize Shape Settings",
       "undoable": true,
-      "description": "What Optimize Shape is asked of a study, kept with it (DEC-123); what is given takes the place of what was said. study; remove (percent of the mass taken away, 5 to 95; default 50) or grams (the mass to come to); min_member (the thinnest member, mm; null: three elements); resolution (coarse, medium or fine: about 12,000, 30,000 or 80,000 nodes); element_size (mm, in place of the resolution; null: from it); symmetry (a list of up to three planes at right angles, as work.plane takes them; [] for none); sharpen (default true: toward solid and empty); iterations (the most rounds, 1 to 300; null: as the method needs)",
+      "description": "What Optimize Shape is asked of a study, kept with it (DEC-123); what is given takes the place of what was said. study; remove (percent of the mass taken away, 5 to 95; default 50) or grams (the mass to come to); min_member (the thinnest member, mm; null: three elements); resolution (coarse, medium or fine: about 12,000, 30,000 or 80,000 nodes; without element_size it takes the place of a size kept); element_size (mm, in place of the resolution; null: from it); symmetry (a list of up to three planes at right angles, each an origin plane, xy, yz or xz, or a work plane, {work: id}; a face of the part is refused; [] for none); sharpen (default true: toward solid and empty); iterations (the most rounds, 1 to 300; null: as the method needs)",
       "params": {
         "type": "object",
         "properties": {
@@ -6457,7 +6457,7 @@
               "medium",
               "fine"
             ],
-            "description": "about 12,000, 30,000 or 80,000 nodes"
+            "description": "about 12,000, 30,000 or 80,000 nodes; without element_size it takes the place of a size kept"
           },
           "element_size": {
             "anyOf": [
@@ -6491,7 +6491,7 @@
                 }
               ]
             },
-            "description": "up to three planes at right angles the shape is the same on both sides of; [] for none"
+            "description": "up to three planes at right angles the shape is the same on both sides of, each an origin plane or a work plane, {\"work\": id} (a face of the part is refused); [] for none"
           },
           "sharpen": {
             "type": "boolean",
@@ -6556,7 +6556,7 @@
       "id": "study.check",
       "label": "Check Study",
       "undoable": false,
-      "description": "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has",
+      "description": "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has; shape_needs: what Optimize Shape needs beyond that, in words (kept faces that are no longer on the part, a work plane of symmetry that is gone or not a plane, a face used as a plane of symmetry), which does not stop a stress check",
       "params": {
         "type": "object",
         "properties": {

@@ -259,6 +259,126 @@ fn a_study_is_checked_against_the_part_as_it_now_is() {
 }
 
 #[test]
+fn what_optimize_shape_is_asked_by_command() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    let (left, right) = (face(&mut s, &mut k, "left"), face(&mut s, &mut k, "right"));
+    let plane = run(&mut s, &mut k, "work.plane", json!({ "base": "yz", "distance": 50 }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "study.new", json!({}));
+    let shape = |s: &mut Session, k: &mut OcctKernel, p: Value| run(s, k, "study.shape", p)["optimize"].clone();
+
+    // A null is not given: the planes said stay.
+    assert_eq!(shape(&mut s, &mut k, json!({ "symmetry": ["xz"] }))["symmetry"], 1);
+    let o = shape(&mut s, &mut k, json!({ "symmetry": null, "remove": 40 }));
+    assert_eq!((o["symmetry"].as_u64(), o["remove"].as_f64()), (Some(1), Some(40.0)), "{o}");
+    assert_eq!(shape(&mut s, &mut k, json!({ "symmetry": [] }))["symmetry"], 0);
+
+    // The most rounds out of range, however far: the one thing to say.
+    for far in [json!(-1), json!(0), json!(301), json!(5_000_000_000_u64)] {
+        assert_eq!(refused(&mut s, &mut k, "study.shape", json!({ "iterations": far })), "the most rounds must be from 1 to 300", "{far}");
+    }
+    assert_eq!(shape(&mut s, &mut k, json!({ "iterations": 80 }))["iterations"], 80);
+    assert_eq!(shape(&mut s, &mut k, json!({ "iterations": null }))["iterations"], Value::Null);
+
+    // A resolution asked takes the place of a size kept, unless a size is said with it.
+    assert_eq!(shape(&mut s, &mut k, json!({ "element_size": 3 }))["element_size"], 3.0);
+    let o = shape(&mut s, &mut k, json!({ "resolution": "fine" }));
+    assert_eq!((o["resolution"].as_str(), o["element_size"].clone()), (Some("fine"), Value::Null), "{o}");
+    let o = shape(&mut s, &mut k, json!({ "resolution": "medium", "element_size": 3 }));
+    assert_eq!((o["resolution"].as_str(), o["element_size"].as_f64()), (Some("medium"), Some(3.0)), "{o}");
+    // Saying nothing of either keeps both; a null clears the size.
+    let o = shape(&mut s, &mut k, json!({ "remove": 50 }));
+    assert_eq!((o["resolution"].as_str(), o["element_size"].as_f64()), (Some("medium"), Some(3.0)), "{o}");
+    let o = shape(&mut s, &mut k, json!({ "resolution": null }));
+    assert_eq!(o["element_size"].as_f64(), Some(3.0), "a null resolution asks for none: {o}");
+    let o = shape(&mut s, &mut k, json!({ "element_size": null }));
+    assert_eq!((o["resolution"].as_str(), o["element_size"].clone()), (Some("medium"), Value::Null), "{o}");
+
+    // A face of the part is no plane of symmetry, however it is said; a work plane is.
+    let before = s.document().clone();
+    for said in [json!([left]), json!([{ "face": left }]), json!(["xz", right])] {
+        assert_eq!(refused(&mut s, &mut k, "study.shape", json!({ "symmetry": said })), tenon_model::study::FACE_PLANE_REFUSED);
+        assert_eq!(s.document(), &before, "as it was");
+    }
+    assert_eq!(shape(&mut s, &mut k, json!({ "symmetry": ["xz", { "work": plane }] }))["symmetry"], 2);
+
+    // A depth of null on what has none is nothing to clear; a depth is still not its to have.
+    run(&mut s, &mut k, "study.fix", json!({ "faces": [left] }));
+    run(&mut s, &mut k, "study.force", json!({ "faces": [right], "newtons": 10, "direction": "down" }));
+    let (held, pushed) = (run(&mut s, &mut k, "study.list", json!({}))["studies"][0]["supports"][0]["id"].clone(), 2);
+    assert_eq!(held, 1);
+    let before = s.document().clone();
+    for item in [json!(held), json!(pushed)] {
+        run(&mut s, &mut k, "study.set", json!({ "item": item, "depth": null }));
+        assert_eq!(s.document(), &before);
+        assert!(refused(&mut s, &mut k, "study.set", json!({ "item": item, "depth": 2 })).contains("`depth` is not its to have"));
+    }
+}
+
+#[test]
+fn the_check_says_apart_what_only_optimize_shape_needs() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    let hole = run(&mut s, &mut k, "model.cylinder", json!({ "x": 50, "y": 10, "diameter": 8, "height": 10, "operation": "cut" }));
+    let cut = hole["feature"].as_u64().expect("the id of the feature that cuts the hole");
+    let bore = run(&mut s, &mut k, "model.find", json!({ "what": "faces", "kind": "cylinder" }))["found"][0]["reference"].clone();
+    let (left, right) = (face(&mut s, &mut k, "left"), face(&mut s, &mut k, "right"));
+    run(&mut s, &mut k, "document.material", json!({ "name": "Steel, mild" }));
+    run(&mut s, &mut k, "study.new", json!({}));
+    run(&mut s, &mut k, "study.fix", json!({ "faces": [left] }));
+    run(&mut s, &mut k, "study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" }));
+    let check = |s: &mut Session, k: &mut OcctKernel| run(s, k, "study.check", json!({}));
+    let needs = |c: &Value| c["shape_needs"].as_array().unwrap().iter().map(|n| n.as_str().unwrap().to_owned()).collect::<Vec<_>>();
+    // Always there, and usually empty: before anything is asked of Optimize Shape, and after.
+    assert_eq!(check(&mut s, &mut k)["shape_needs"], json!([]));
+    run(&mut s, &mut k, "study.keep", json!({ "faces": [bore] }));
+    run(&mut s, &mut k, "study.keep", json!({ "faces": [bore, right], "name": "Ends" }));
+    assert_eq!(check(&mut s, &mut k)["shape_needs"], json!([]));
+
+    // The hole taken out: the kept faces are said by the name of their set. A stress check does
+    // not hold them against the study: it needs nothing of them.
+    run(&mut s, &mut k, "feature.suppress", json!({ "feature": cut, "suppressed": true }));
+    let c = check(&mut s, &mut k);
+    assert_eq!((c["ready"].clone(), c["needs"].clone(), c["lost"].clone()), (json!(true), json!([]), json!([])), "{c}");
+    assert_eq!(
+        needs(&c),
+        [
+            "Keep1: its face is no longer on the part. Give it its faces again (study.set, with faces)",
+            "Ends: 1 of its 2 faces are no longer on the part. Give it its faces again (study.set, with faces)",
+        ]
+    );
+    run(&mut s, &mut k, "feature.suppress", json!({ "feature": cut, "suppressed": false }));
+    assert_eq!(check(&mut s, &mut k)["shape_needs"], json!([]));
+
+    // A work plane is a plane of symmetry while it is there; an origin plane always is.
+    let plane = run(&mut s, &mut k, "work.plane", json!({ "base": "yz", "distance": 50 }))["feature"].as_u64().unwrap();
+    let axis = run(&mut s, &mut k, "work.axis", json!({ "a": "xz", "b": "yz" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "study.shape", json!({ "symmetry": ["xz", { "work": plane }] }));
+    assert_eq!(check(&mut s, &mut k)["shape_needs"], json!([]));
+    let named = |s: &Session, id: u64| s.document().features().iter().find(|f| u64::from(f.id.0) == id).unwrap().name.clone();
+    let (plane_name, axis_name) = (named(&s, plane), named(&s, axis));
+    // Left out for now, or gone altogether.
+    run(&mut s, &mut k, "feature.suppress", json!({ "feature": plane, "suppressed": true }));
+    let c = check(&mut s, &mut k);
+    assert_eq!(
+        needs(&c),
+        [format!("{plane_name} cannot be a plane of symmetry: it is no longer on the part. Choose another (study.shape, with symmetry)")]
+    );
+    assert_eq!((c["ready"].clone(), c["needs"].clone()), (json!(true), json!([])), "{c}");
+    run(&mut s, &mut k, "feature.delete", json!({ "feature": plane }));
+    assert_eq!(
+        needs(&check(&mut s, &mut k)),
+        [format!("Work plane {plane} cannot be a plane of symmetry: it is no longer on the part. Choose another (study.shape, with symmetry)")]
+    );
+    // A work axis is not a plane.
+    run(&mut s, &mut k, "study.shape", json!({ "symmetry": [{ "work": axis }] }));
+    assert_eq!(
+        needs(&check(&mut s, &mut k)),
+        [format!("{axis_name} cannot be a plane of symmetry: it is not a plane. Choose another (study.shape, with symmetry)")]
+    );
+}
+
+#[test]
 fn moments_bearing_loads_remote_forces_turning_and_edges_by_command() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     run(&mut s, &mut k, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));

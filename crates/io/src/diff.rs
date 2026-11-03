@@ -224,8 +224,85 @@ fn study_item(v: &Value) -> String {
     if v["suppressed"] == true { format!("{said}, suppressed") } else { said }
 }
 
+/// Kept faces of a study, in a few words: how many, and how deep.
+fn kept_item(v: &Value) -> String {
+    let deep = if v["depth"].is_null() { "one layer deep".to_owned() } else { format!("{} mm deep", show(&v["depth"])) };
+    format!("{} kept, {deep}", count(v["faces"].as_array().map_or(0, Vec::len), "face", "faces"))
+}
+
+/// What of kept faces changed. (The same number of faces may still be other faces.)
+fn kept_change(p: &Value, q: &Value) -> Vec<String> {
+    let mut d = Vec::new();
+    if p["name"] != q["name"] {
+        d.push(format!("name {} -> {}", show(&p["name"]), show(&q["name"])));
+    }
+    let (was, now) = (kept_item(p), kept_item(q));
+    if was != now {
+        d.push(format!("{was} -> {now}"));
+    } else if !same(&p["faces"], &q["faces"]) {
+        d.push(format!("{now}, on other faces"));
+    }
+    d
+}
+
+/// What Optimize Shape is asked of a study, setting by setting, in a reader's words. (What a file
+/// leaves out reads as what that means.)
+fn shape_settings(o: &Value) -> [(&'static str, String); 7] {
+    let said = |key: &str, unit: &str, none: &str| if o[key].is_null() { none.to_owned() } else { format!("{}{unit}", show(&o[key])) };
+    let target = if o["grams"].is_null() { format!("remove {} %", show(&o["remove"])) } else { format!("come to {} g", show(&o["grams"])) };
+    let plane = |v: &Value| match (v["origin"].as_str(), v["work"].as_u64()) {
+        (Some(origin), _) => origin.to_owned(),
+        (_, Some(id)) => format!("work plane {id}"),
+        _ => format!("the face {}", show(&v["face"]["origin"])),
+    };
+    let planes: Vec<String> = o["symmetry"].as_array().into_iter().flatten().map(plane).collect();
+    [
+        ("target", target),
+        ("thinnest member", said("min_member", " mm", "three elements across")),
+        ("resolution", said("resolution", "", "coarse")),
+        ("element size", said("element_size", " mm", "from the resolution")),
+        ("symmetry", if planes.is_empty() { "none".to_owned() } else { planes.join(", ") }),
+        ("sharpen", said("sharpen", "", "yes")),
+        ("most rounds", said("iterations", "", "as the method needs")),
+    ]
+}
+
+/// What changed of a list of a study's items (its supports, its loads, its kept faces), each in a
+/// few words.
+fn item_changes(a: &Value, b: &Value, summary: &dyn Fn(&Value) -> String, change: &dyn Fn(&Value, &Value) -> Vec<String>, d: &mut Vec<String>) {
+    let mut items = Vec::new();
+    records("", a, b, &|r| r["name"].as_str().unwrap_or("?").to_owned(), summary, change, &mut items);
+    d.extend(items.into_iter().filter(|c| c.op != '>').map(|c| match c.op {
+        '+' => format!("+ {} ({})", c.item, c.detail),
+        '-' => format!("- {}", c.item),
+        _ => format!("{}: {}", c.item, c.detail),
+    }));
+}
+
+/// What of Optimize Shape's settings changed: given or taken away as a whole, or setting by
+/// setting and its kept faces as supports and loads are.
+fn shape_changes(was: &Value, now: &Value, d: &mut Vec<String>) {
+    match (was.is_object(), now.is_object()) {
+        (false, false) => {}
+        (false, true) => {
+            let mut said: Vec<String> = shape_settings(now).iter().map(|(what, value)| format!("{what} {value}")).collect();
+            said.push(count(now["kept"].as_array().map_or(0, Vec::len), "set of kept faces", "sets of kept faces"));
+            d.push(format!("+ Optimize Shape ({})", said.join(", ")));
+        }
+        (true, false) => d.push("- Optimize Shape".into()),
+        (true, true) => {
+            for ((what, p), (_, q)) in shape_settings(was).iter().zip(&shape_settings(now)) {
+                if p != q {
+                    d.push(format!("Optimize Shape {what} {p} -> {q}"));
+                }
+            }
+            item_changes(&was["kept"], &now["kept"], &kept_item, &kept_change, d);
+        }
+    }
+}
+
 /// Stress studies: made, deleted, and what of each changed (its name, its element size, its
-/// supports and its loads).
+/// supports and its loads, what Optimize Shape is asked of it).
 fn part_studies(a: &Value, b: &Value, out: &mut Vec<Change>) {
     let count = |s: &Value, key: &str| s[key].as_array().map_or(0, Vec::len);
     let summary = |s: &Value| format!("{} supports, {} loads", count(s, "supports"), count(s, "loads"));
@@ -239,22 +316,10 @@ fn part_studies(a: &Value, b: &Value, out: &mut Vec<Change>) {
             d.push(format!("element size {} -> {}", size(&x["mesh_size"]), size(&y["mesh_size"])));
         }
         for key in ["supports", "loads"] {
-            let mut items = Vec::new();
-            records(
-                "",
-                &x[key],
-                &y[key],
-                &|r| r["name"].as_str().unwrap_or("?").to_owned(),
-                &study_item,
-                &|p, q| if same(p, q) { Vec::new() } else { vec![format!("{} -> {}", study_item(p), study_item(q))] },
-                &mut items,
-            );
-            d.extend(items.into_iter().filter(|c| c.op != '>').map(|c| match c.op {
-                '+' => format!("+ {} ({})", c.item, c.detail),
-                '-' => format!("- {}", c.item),
-                _ => format!("{}: {}", c.item, c.detail),
-            }));
+            let change = |p: &Value, q: &Value| if same(p, q) { Vec::new() } else { vec![format!("{} -> {}", study_item(p), study_item(q))] };
+            item_changes(&x[key], &y[key], &study_item, &change, &mut d);
         }
+        shape_changes(&x["optimize"], &y["optimize"], &mut d);
         d
     };
     records("Studies", a, b, &|s| label(s), &summary, &detail, out);

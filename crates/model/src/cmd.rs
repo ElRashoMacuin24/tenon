@@ -18,7 +18,7 @@ use crate::document::{
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
-use crate::regen::{Regen, regenerate};
+use crate::regen::{Regen, WorkGeom, regenerate};
 use crate::schema::arg;
 use crate::{Document, FeatureId};
 
@@ -542,7 +542,7 @@ fn document_materials(s: &mut Session, _: &Value) -> CmdResult {
 
 // ---- stress studies ---------------------------------------------------------------------------
 
-use crate::study::{ItemChange, LoadKind, Study, StudyId, SupportKind, Target};
+use crate::study::{FACE_PLANE_REFUSED, ItemChange, LoadKind, Optimize, Study, StudyId, SupportKind, Target};
 
 /// The study a command is about: the one named, or the part's only one.
 fn study_of(s: &Session, p: &Value) -> Result<StudyId, CmdError> {
@@ -906,9 +906,16 @@ fn study_shape(s: &mut Session, p: &Value) -> CmdResult {
     }
     if let Some(r) = arg(p, "resolution").filter(|v| !v.is_null()) {
         o.resolution = serde_json::from_value(r.clone()).map_err(|_| CmdError("`resolution` is coarse, medium or fine".into()))?;
+        // (Asking for a resolution asks for its size, unless a size is said with it.)
+        if arg(p, "element_size").is_none() {
+            o.element_size = None;
+        }
     }
-    if arg(p, "symmetry").is_some() {
+    if arg(p, "symmetry").is_some_and(|v| !v.is_null()) {
         o.symmetry = planes_value(p, "symmetry")?;
+        if o.symmetry.iter().any(|plane| matches!(plane, PlaneRef::Face(_))) {
+            return Err(FACE_PLANE_REFUSED.into());
+        }
     }
     if let Some(b) = opt_bool(p, "sharpen")? {
         o.sharpen = b;
@@ -916,7 +923,7 @@ fn study_shape(s: &mut Session, p: &Value) -> CmdResult {
     match arg(p, "iterations") {
         None => {}
         Some(Value::Null) => o.iterations = None,
-        Some(_) => o.iterations = Some(id_u32(p, "iterations")?),
+        Some(v) => o.iterations = Some(Optimize::rounds_of(v).map_err(CmdError)?),
     }
     o.check().map_err(CmdError)?;
     s.edit(|d| {
@@ -958,9 +965,50 @@ fn study_list(s: &mut Session, _: &Value) -> CmdResult {
     }))
 }
 
+/// What is said of a support, a load or kept faces with `gone` of its `of` faces or edges no
+/// longer on the part.
+fn no_longer_there(name: &str, gone: usize, of: usize, what: &str) -> String {
+    let which = if of == 1 { format!("its {what} is") } else { format!("{gone} of its {of} {what}s are") };
+    format!("{name}: {which} no longer on the part. Give it its {what}s again (study.set, with {what}s)")
+}
+
+/// What Optimize Shape needs of the part beyond what a stress check does, in words: its kept
+/// faces still there, and planes of symmetry that can be mirrored in.
+fn shape_needs(o: &Optimize, r: &Regen, k: &dyn Kernel, d: &Document) -> Vec<String> {
+    let mut needs = Vec::new();
+    for kept in &o.kept {
+        let gone = kept.faces.iter().filter(|f| r.resolve(f, k).is_err()).count();
+        if gone > 0 {
+            needs.push(no_longer_there(&kept.name, gone, kept.faces.len(), "face"));
+        }
+    }
+    for plane in &o.symmetry {
+        match plane {
+            PlaneRef::Origin(_) => {}
+            // (Said once, however many there are.)
+            PlaneRef::Face(_) => {
+                if !needs.iter().any(|n| n == FACE_PLANE_REFUSED) {
+                    needs.push(FACE_PLANE_REFUSED.to_owned());
+                }
+            }
+            PlaneRef::Work(id) => {
+                let why = match r.work.get(id) {
+                    Some(WorkGeom::Plane(_)) => continue,
+                    Some(_) => "it is not a plane",
+                    None => "it is no longer on the part",
+                };
+                let name = d.feature(*id).map_or_else(|| format!("Work plane {}", id.0), |f| f.name.clone());
+                needs.push(format!("{name} cannot be a plane of symmetry: {why}. Choose another (study.shape, with symmetry)"));
+            }
+        }
+    }
+    needs
+}
+
 /// A study held against the part as it now is: whether it can be worked out, and if not what
 /// it lacks. Its faces are looked for on the part: one that a later change took away, or
-/// turned into a face its support cannot hold, is said by name.
+/// turned into a face its support cannot hold, is said by name. What only Optimize Shape needs
+/// is said apart from that, and does not stop a stress check.
 fn study_check(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     let id = study_of(s, p)?;
     let r = s.regen(k).clone();
@@ -1006,8 +1054,7 @@ fn study_check(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
         if gone > 0 {
             let (of, what) = if edges.is_empty() { (faces.len(), "face") } else { (edges.len(), "edge") };
             lost.push(json!({ "item": item, "name": name, "lost": gone, "of": of }));
-            let which = if of == 1 { format!("its {what} is") } else { format!("{gone} of its {of} {what}s are") };
-            needs.push(format!("{name}: {which} no longer on the part. Give it its {what}s again (study.set, with {what}s)"));
+            needs.push(no_longer_there(name, gone, of, what));
         }
         // (A face that is still there may have become one its support cannot hold.)
         if let Some(kind) = kind
@@ -1016,7 +1063,8 @@ fn study_check(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
             needs.push(format!("{name}: {why}"));
         }
     }
-    Ok(json!({ "study": id.0, "name": st.name, "ready": needs.is_empty(), "needs": needs, "lost": lost }))
+    let shape_needs = st.optimize.as_ref().map_or_else(Vec::new, |o| shape_needs(o, &r, k, d));
+    Ok(json!({ "study": id.0, "name": st.name, "ready": needs.is_empty(), "needs": needs, "lost": lost, "shape_needs": shape_needs }))
 }
 
 // ---- design table -----------------------------------------------------------------------------
@@ -4505,7 +4553,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "study.shape",
         "Optimize Shape Settings",
-        "What Optimize Shape is asked of a study, kept with it (DEC-123); what is given takes the place of what was said. study; remove (percent of the mass taken away, 5 to 95; default 50) or grams (the mass to come to); min_member (the thinnest member, mm; null: three elements); resolution (coarse, medium or fine: about 12,000, 30,000 or 80,000 nodes); element_size (mm, in place of the resolution; null: from it); symmetry (a list of up to three planes at right angles, as work.plane takes them; [] for none); sharpen (default true: toward solid and empty); iterations (the most rounds, 1 to 300; null: as the method needs)",
+        "What Optimize Shape is asked of a study, kept with it (DEC-123); what is given takes the place of what was said. study; remove (percent of the mass taken away, 5 to 95; default 50) or grams (the mass to come to); min_member (the thinnest member, mm; null: three elements); resolution (coarse, medium or fine: about 12,000, 30,000 or 80,000 nodes; without element_size it takes the place of a size kept); element_size (mm, in place of the resolution; null: from it); symmetry (a list of up to three planes at right angles, each an origin plane, xy, yz or xz, or a work plane, {work: id}; a face of the part is refused; [] for none); sharpen (default true: toward solid and empty); iterations (the most rounds, 1 to 300; null: as the method needs)",
         true,
         study_shape
     ),
@@ -4526,7 +4574,7 @@ static COMMANDS: &[CommandSpec] = &[
     geo_cmd!(
         "study.check",
         "Check Study",
-        "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has",
+        "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has; shape_needs: what Optimize Shape needs beyond that, in words (kept faces that are no longer on the part, a work plane of symmetry that is gone or not a plane, a face used as a plane of symmetry), which does not stop a stress check",
         study_check
     ),
     doc_cmd!(

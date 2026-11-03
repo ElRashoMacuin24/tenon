@@ -127,6 +127,40 @@ fn diff_says_what_changed_and_exits_like_diff() {
 }
 
 #[test]
+fn diff_sees_what_optimize_shape_is_asked() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let part = std::fs::read_to_string(root.join("examples/m2-enclosure/enclosure.tenon")).unwrap().replace("\r\n", "\n");
+    let dir = scratch("diff-shape");
+    let file = |name: &str, target: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("{part}\n[[study]]\nid = 1\nname = \"Study1\"\n\n[study.optimize]\n{target}\n")).unwrap();
+        path
+    };
+    let (mass, share, deep) =
+        (file("mass.tenon", "grams = 12.5"), file("share.tenon", "remove = 60.0"), file("fine.tenon", "grams = 12.5\nresolution = \"fine\""));
+    // The same settings: exit 0.
+    let out = cli(&["diff".as_ref(), mass.as_os_str(), mass.as_os_str()]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "No changes.");
+    // Settings that are all that differ: exit 1, and what changed.
+    let out = cli(&["diff".as_ref(), mass.as_os_str(), share.as_os_str()]);
+    assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stderr));
+    let shown = String::from_utf8_lossy(&out.stdout);
+    assert!(shown.contains("Study1 [1]  Optimize Shape target come to 12.5 g -> remove 60 %"), "{shown}");
+    let out = cli(&["diff".as_ref(), mass.as_os_str(), deep.as_os_str(), "--json".as_ref()]);
+    assert_eq!(out.status.code(), Some(1));
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).expect("one JSON document");
+    assert_eq!(j["same"].as_bool(), Some(false), "{j}");
+    assert_eq!(j["changes"][0]["detail"].as_str(), Some("Optimize Shape resolution coarse -> fine"), "{j}");
+    // A file with both targets is refused in words: exit 2.
+    let both = file("both.tenon", "grams = 12.5\nremove = 60.0");
+    let out = cli(&["diff".as_ref(), mass.as_os_str(), both.as_os_str()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("give `remove` or `grams`, not both"), "{}", String::from_utf8_lossy(&out.stderr));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn upgrade_rewrites_version_1_files_and_keeps_them() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let dir = scratch("upgrade");

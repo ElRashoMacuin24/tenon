@@ -1127,3 +1127,137 @@ fn optimize_shape_settings_are_kept_with_the_study() {
     }
     assert_eq!(s.document(), &before);
 }
+
+#[test]
+fn optimize_shape_with_both_targets_or_neither_is_refused_in_words() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let mut go =
+        |s: &mut Session, id: &str, p: Value| tenon_io::cmd::run(s, id, &p, Some(&mut k as &mut dyn Kernel)).unwrap_or_else(|e| panic!("{id}: {e}"));
+    go(&mut s, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    go(&mut s, "study.new", json!({ "name": "Bracket" }));
+    go(&mut s, "study.shape", json!({ "grams": 12.5, "min_member": 4 }));
+    let extra = Map::new();
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    // Written with its one key, in its place; read back and written the same.
+    assert!(text.contains("\n[study.optimize]\ngrams = 12.5\nmin_member = 4.0\n"), "{text}");
+    assert!(!text.contains("remove"), "{text}");
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(back.studies()[0].optimize, s.document().studies()[0].optimize);
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+
+    // Both keys, whichever comes first: neither wins, and the file is not read.
+    let dir = scratch("shape-targets");
+    let one = "grams = 12.5\n";
+    for both in ["remove = 40.0\ngrams = 12.5\n", "grams = 12.5\nremove = 40.0\n"] {
+        let hand = text.replace(one, both);
+        let e = project::from_bytes(hand.as_bytes()).unwrap_err().to_string();
+        assert!(e.contains("give `remove` or `grams`, not both"), "{e}");
+        // Which study, and where it is, as a feature that does not read is told.
+        let line = text[..text.find("[[study]]").unwrap()].lines().count() + 1;
+        assert!(e.contains(&format!("line {line}: study 1 (Bracket): ")), "{e}");
+        std::fs::write(dir.join("both.tenon"), &hand).unwrap();
+        let e = diff::diff_files(&dir.join("both.tenon"), &dir.join("both.tenon")).unwrap_err().to_string();
+        assert!(e.contains("give `remove` or `grams`, not both"), "{e}");
+    }
+    // Neither.
+    let e = project::from_bytes(text.replace(one, "").as_bytes()).unwrap_err().to_string();
+    assert!(e.contains("[study.optimize] needs `remove` or `grams`") && e.contains("study 1 (Bracket)"), "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_face_held_as_a_plane_of_symmetry_in_a_file_opens_and_the_check_says_so() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let mut go =
+        |s: &mut Session, id: &str, p: Value| tenon_io::cmd::run(s, id, &p, Some(&mut k as &mut dyn Kernel)).unwrap_or_else(|e| panic!("{id}: {e}"));
+    go(&mut s, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    let face = |s: &mut Session, go: &mut dyn FnMut(&mut Session, &str, Value) -> Value, way: &str| {
+        go(s, "model.find", json!({ "what": "faces", "facing": way }))["found"][0]["reference"].clone()
+    };
+    let (left, right) = (face(&mut s, &mut go, "left"), face(&mut s, &mut go, "right"));
+    go(&mut s, "document.material", json!({ "name": "Steel, mild" }));
+    go(&mut s, "study.new", json!({}));
+    go(&mut s, "study.fix", json!({ "faces": [left] }));
+    go(&mut s, "study.force", json!({ "faces": [right], "newtons": 150, "direction": "down" }));
+    go(&mut s, "study.shape", json!({ "remove": 60 }));
+    // As a file edited by hand, or written before faces were refused, has it.
+    let mut v = serde_json::to_value(s.document()).unwrap();
+    v["studies"][0]["optimize"]["symmetry"] = json!([{ "face": left }]);
+    let doc: Document = serde_json::from_value(v).unwrap();
+    let extra = Map::new();
+    let bytes = project::to_bytes(&doc, &extra).unwrap();
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes, "kept as it was");
+    let held = back.studies()[0].optimize.as_ref().unwrap();
+    assert!(matches!(held.symmetry.as_slice(), [tenon_model::PlaneRef::Face(_)]), "{held:?}");
+
+    // A stress check is not held up by it; what Optimize Shape needs says it.
+    let mut opened = Session::new(back);
+    let c = tenon_io::cmd::run(&mut opened, "study.check", &json!({}), Some(&mut k as &mut dyn Kernel)).unwrap();
+    assert_eq!((c["ready"].clone(), c["needs"].clone()), (json!(true), json!([])), "{c}");
+    assert_eq!(c["shape_needs"], json!([tenon_model::study::FACE_PLANE_REFUSED]), "{c}");
+}
+
+#[test]
+fn diff_says_what_changed_of_what_optimize_shape_is_asked() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let mut go =
+        |s: &mut Session, id: &str, p: Value| tenon_io::cmd::run(s, id, &p, Some(&mut k as &mut dyn Kernel)).unwrap_or_else(|e| panic!("{id}: {e}"));
+    go(&mut s, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+    let face = |s: &mut Session, go: &mut dyn FnMut(&mut Session, &str, Value) -> Value, way: &str| {
+        go(s, "model.find", json!({ "what": "faces", "facing": way }))["found"][0]["reference"].clone()
+    };
+    let (left, right) = (face(&mut s, &mut go, "left"), face(&mut s, &mut go, "right"));
+    let plane = go(&mut s, "work.plane", json!({ "base": "yz", "distance": 50 }))["feature"].as_u64().unwrap();
+    go(&mut s, "study.new", json!({}));
+    let extra = Map::new();
+    let dir = scratch("shape-diff");
+    let (a, b) = (dir.join("a.tenon"), dir.join("b.tenon"));
+    let write = |s: &Session, to: &Path| std::fs::write(to, project::to_bytes(s.document(), &extra).unwrap()).unwrap();
+
+    // The settings given and taken away as a whole.
+    write(&s, &a);
+    go(&mut s, "study.shape", json!({ "grams": 12.5 }));
+    let kept = go(&mut s, "study.keep", json!({ "faces": [left] }))["kept"].as_u64().unwrap();
+    write(&s, &b);
+    let whole = "+ Optimize Shape (target come to 12.5 g, thinnest member three elements across, resolution coarse, element size from the resolution, symmetry none, sharpen yes, most rounds as the method needs, 1 set of kept faces)";
+    let d = diff::diff_files(&a, &b).unwrap();
+    assert!(d.text().contains(whole), "{}", d.text());
+    let d = diff::diff_files(&b, &a).unwrap();
+    assert!(d.text().contains("- Optimize Shape"), "{}", d.text());
+
+    // Each setting, on its own, is a change: the file against itself is none.
+    write(&s, &a);
+    assert!(diff::diff_files(&a, &a).unwrap().same());
+    let planes = format!("Optimize Shape symmetry none -> XZ, work plane {plane}");
+    for (id, p, said) in [
+        ("study.shape", json!({ "remove": 60 }), "Optimize Shape target come to 12.5 g -> remove 60 %"),
+        ("study.shape", json!({ "min_member": 4 }), "Optimize Shape thinnest member three elements across -> 4 mm"),
+        ("study.shape", json!({ "resolution": "fine" }), "Optimize Shape resolution coarse -> fine"),
+        ("study.shape", json!({ "element_size": 3 }), "Optimize Shape element size from the resolution -> 3 mm"),
+        ("study.shape", json!({ "symmetry": ["xz", { "work": plane }] }), planes.as_str()),
+        ("study.shape", json!({ "sharpen": false }), "Optimize Shape sharpen yes -> no"),
+        ("study.shape", json!({ "iterations": 80 }), "Optimize Shape most rounds as the method needs -> 80"),
+        ("study.set", json!({ "item": kept, "depth": 9 }), "Keep1: 1 face kept, one layer deep -> 1 face kept, 9 mm deep"),
+        ("study.set", json!({ "item": kept, "faces": [right] }), "Keep1: 1 face kept, one layer deep, on other faces"),
+        ("study.set", json!({ "item": kept, "faces": [left, right] }), "Keep1: 1 face kept, one layer deep -> 2 faces kept, one layer deep"),
+        ("study.set", json!({ "item": kept, "name": "Bolt" }), "Bolt: name Keep1 -> Bolt"),
+        ("study.keep", json!({ "faces": [right], "depth": 2 }), "+ Keep2 (1 face kept, 2 mm deep)"),
+        ("study.remove", json!({ "item": kept }), "- Keep1"),
+    ] {
+        go(&mut s, id, p.clone());
+        write(&s, &b);
+        let d = diff::diff_files(&a, &b).unwrap();
+        assert!(!d.same() && d.text().starts_with("Studies\n") && d.text().contains(said), "{id} {p}: {}", d.text());
+        // And the command says the same as the function.
+        let told = go(&mut s, "file.diff", json!({ "a": a, "b": b }));
+        assert!(told["same"] == false && told["text"].as_str().unwrap().contains(said), "{id} {p}: {told}");
+        go(&mut s, "edit.undo", json!({}));
+    }
+    // A target as it was, though the file says it another way (a number is a number).
+    let text = std::fs::read_to_string(&a).unwrap();
+    std::fs::write(&b, text.replace("grams = 12.5", "grams = 12.50000000001")).unwrap();
+    assert!(diff::diff_files(&a, &b).unwrap().same());
+    let _ = std::fs::remove_dir_all(&dir);
+}

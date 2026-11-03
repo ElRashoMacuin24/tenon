@@ -167,7 +167,9 @@ pub(crate) fn locate<T: serde::de::DeserializeOwned>(head: &Value, shape: &Shape
 pub fn from_bytes(data: &[u8]) -> Result<(Document, Map<String, Value>), ProjectError> {
     let (head, lines) = read_head(data, FORMAT, &layout::PART, VERSION)?;
     let file: ProjectFile = serde_json::from_value(head.clone()).map_err(|e| {
-        locate::<tenon_model::Feature>(&head, &layout::PART, "features", &lines).unwrap_or_else(|| ProjectError::Damaged(e.to_string()))
+        locate::<tenon_model::Feature>(&head, &layout::PART, "features", &lines)
+            .or_else(|| locate::<tenon_model::study::Study>(&head, &layout::PART, "studies", &lines))
+            .unwrap_or_else(|| ProjectError::Damaged(e.to_string()))
     })?;
     let mut document = file.document;
     document.validate().map_err(ProjectError::Damaged)?;

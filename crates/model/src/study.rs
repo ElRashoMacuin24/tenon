@@ -234,7 +234,8 @@ impl ItemChange {
             ("radial", self.radial.is_some()),
             ("axial", self.axial.is_some()),
             ("tangential", self.tangential.is_some()),
-            ("depth", self.depth.is_some()),
+            // (A depth of null clears one, and what has none has nothing to clear.)
+            ("depth", matches!(self.depth, Some(Some(_)))),
         ];
         given.into_iter().find(|(key, given)| *given && !allowed.contains(key)).map(|(key, _)| key)
     }
@@ -264,6 +265,9 @@ pub const MAX_REMOVE: f64 = 95.0;
 /// The most planes of symmetry, and rounds, Optimize Shape takes.
 pub const MAX_SYMMETRY: usize = 3;
 pub const MAX_SHAPE_ITERATIONS: u32 = 300;
+/// Why a face of the part is no plane of symmetry. A file may still hold one: it opens, and
+/// `study.check` says this under `shape_needs`.
+pub const FACE_PLANE_REFUSED: &str = "A face of the part cannot be a plane of symmetry: a solid has material on one side of its own face and none on the other. Choose an origin plane, or make a work plane through the part's middle.";
 
 /// How much of the part Optimize Shape keeps: a share of its mass taken away, or a mass to
 /// come to.
@@ -343,29 +347,84 @@ fn yes() -> bool {
 }
 
 /// What Optimize Shape is asked (DEC-123): how much to keep, how fine, what must stay, which
-/// planes the shape is the same on both sides of.
+/// planes the shape is the same on both sides of. Written with one key for its target, and read
+/// through `OptimizeRead`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "OptimizeRead")]
 pub struct Optimize {
     #[serde(flatten)]
     pub target: Target,
     /// The thinnest member wanted, mm. None: three elements across.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub min_member: Option<f64>,
-    #[serde(default, skip_serializing_if = "Resolution::is_coarse")]
+    #[serde(skip_serializing_if = "Resolution::is_coarse")]
     pub resolution: Resolution,
     /// The size of the elements, mm, in place of what `resolution` gives.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub element_size: Option<f64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub kept: Vec<Kept>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub symmetry: Vec<PlaneRef>,
     /// The design sharpened toward solid and empty as it goes (written only when false).
-    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    #[serde(skip_serializing_if = "is_true")]
     pub sharpen: bool,
     /// The most rounds. None: as many as the method takes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub iterations: Option<u32>,
+}
+
+/// `[study.optimize]` as a file has it. The target's two keys are read each for itself: a file
+/// edited by hand may hold both or neither, and that is said in words. (Read straight into a
+/// [`Target`], the first key would win and the other be lost on the next save.)
+#[derive(Deserialize)]
+struct OptimizeRead {
+    #[serde(default)]
+    remove: Option<f64>,
+    #[serde(default)]
+    grams: Option<f64>,
+    #[serde(default)]
+    min_member: Option<f64>,
+    #[serde(default)]
+    resolution: Resolution,
+    #[serde(default)]
+    element_size: Option<f64>,
+    #[serde(default)]
+    kept: Vec<Kept>,
+    #[serde(default)]
+    symmetry: Vec<PlaneRef>,
+    #[serde(default = "yes")]
+    sharpen: bool,
+    #[serde(default)]
+    iterations: Option<u32>,
+}
+
+impl TryFrom<OptimizeRead> for Optimize {
+    type Error = String;
+
+    fn try_from(r: OptimizeRead) -> Result<Optimize, String> {
+        let target = match (r.remove, r.grams) {
+            (Some(_), Some(_)) => return Err("give `remove` or `grams`, not both".into()),
+            (Some(share), None) => Target::Remove(share),
+            (None, Some(mass)) => Target::Grams(mass),
+            (None, None) => return Err("[study.optimize] needs `remove` or `grams`".into()),
+        };
+        Ok(Optimize {
+            target,
+            min_member: r.min_member,
+            resolution: r.resolution,
+            element_size: r.element_size,
+            kept: r.kept,
+            symmetry: r.symmetry,
+            sharpen: r.sharpen,
+            iterations: r.iterations,
+        })
+    }
+}
+
+/// What is said of a number of rounds that cannot be asked.
+fn rounds_refused() -> String {
+    format!("the most rounds must be from 1 to {MAX_SHAPE_ITERATIONS}")
 }
 
 impl Default for Optimize {
@@ -384,6 +443,12 @@ impl Default for Optimize {
 }
 
 impl Optimize {
+    /// The most rounds as a command gives them: a whole number that can be asked, or the words
+    /// for one that cannot (`check` says the same).
+    pub fn rounds_of(v: &serde_json::Value) -> Result<u32, String> {
+        v.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| (1..=MAX_SHAPE_ITERATIONS).contains(n)).ok_or_else(rounds_refused)
+    }
+
     /// Whether it can be asked, in words when not.
     pub fn check(&self) -> Result<(), String> {
         match self.target {
@@ -405,7 +470,7 @@ impl Optimize {
         if let Some(n) = self.iterations
             && !(1..=MAX_SHAPE_ITERATIONS).contains(&n)
         {
-            return Err(format!("the most rounds must be from 1 to {MAX_SHAPE_ITERATIONS}"));
+            return Err(rounds_refused());
         }
         if self.kept.len() > MAX_ITEMS {
             return Err(format!("at most {MAX_ITEMS} sets of kept faces"));
@@ -610,7 +675,14 @@ impl Study {
     /// The id the next support, load or kept faces get, and the name of the next of `word`'s
     /// kind ("Fixed1", "Force2", "Keep1").
     fn next(&self, word: &str) -> (u32, String) {
-        let id = self.item_ids().max().map_or(1, |m| m.saturating_add(1));
+        // (One more than the largest. A file may hold the largest there is: then the smallest that
+        // is free, so that no two have one id.)
+        let id = self.item_ids().max().map_or(1, |m| {
+            m.checked_add(1).unwrap_or_else(|| {
+                let taken: std::collections::BTreeSet<u32> = self.item_ids().collect();
+                (1..m).find(|i| !taken.contains(i)).unwrap_or(m)
+            })
+        });
         let kept = |n: &str| self.optimize.iter().any(|o| o.kept.iter().any(|k| k.name == n));
         let taken = |n: &str| self.supports.iter().any(|s| s.name == n) || self.loads.iter().any(|l| l.name == n) || kept(n);
         let name = (1..=MAX_ITEMS as u32 + 1).map(|i| format!("{word}{i}")).find(|n| !taken(n)).unwrap_or_else(|| format!("{word}{id}"));
@@ -1043,6 +1115,50 @@ mod tests {
         let mut heavy = s.clone();
         heavy.loads[0].kind = LoadKind::Force { newtons: 1.0e20, direction: None };
         assert!(heavy.check().unwrap_err().contains("at most"));
+    }
+
+    #[test]
+    fn an_id_at_the_largest_there_is_makes_no_second_of_it() {
+        let mut s = Study::new(StudyId(1), "Study1".into());
+        s.add_support(SupportKind::Fixed, vec![face(2)], None).unwrap();
+        s.add_load(LoadKind::Force { newtons: 5.0, direction: None }, vec![face(3)], None).unwrap();
+        // (As a file edited by hand may have them.)
+        s.supports[0].id = u32::MAX;
+        s.check().unwrap();
+        // The smallest that is free: 1, then past the force's 2.
+        assert_eq!(s.add_load(LoadKind::Pressure { megapascals: 1.0 }, vec![face(4)], None).unwrap(), 1);
+        assert_eq!(s.add_support(SupportKind::Fixed, vec![face(5)], None).unwrap(), 3);
+        assert_eq!(s.keep(vec![face(6)], None, None).unwrap(), 4);
+        s.check().unwrap();
+    }
+
+    #[test]
+    fn the_most_rounds_are_read_as_they_are_checked() {
+        use serde_json::json;
+        assert_eq!(Optimize::rounds_of(&json!(1)), Ok(1));
+        assert_eq!(Optimize::rounds_of(&json!(MAX_SHAPE_ITERATIONS)), Ok(MAX_SHAPE_ITERATIONS));
+        let words = Optimize { iterations: Some(0), ..Optimize::default() }.check().unwrap_err();
+        assert_eq!(words, "the most rounds must be from 1 to 300");
+        for not in [json!(0), json!(-1), json!(301), json!(5_000_000_000_u64), json!(1.5), json!("many")] {
+            assert_eq!(Optimize::rounds_of(&not), Err(words.clone()), "{not}");
+        }
+    }
+
+    #[test]
+    fn a_depth_of_null_is_nothing_to_clear_on_a_support_or_a_load() {
+        let mut s = Study::new(StudyId(1), "Study1".into());
+        let held = s.add_support(SupportKind::Fixed, vec![face(2)], None).unwrap();
+        let push = s.add_load(LoadKind::Force { newtons: 5.0, direction: None }, vec![face(3)], None).unwrap();
+        let was = s.clone();
+        for id in [held, push] {
+            s.set(id, ItemChange { depth: Some(None), ..ItemChange::default() }).unwrap();
+            assert_eq!(s, was);
+            told(s.set(id, ItemChange { depth: Some(Some(2.0)), ..ItemChange::default() }), "`depth` is not its to have");
+        }
+        // Kept faces have one to clear.
+        let kept = s.keep(vec![face(4)], Some(3.0), None).unwrap();
+        s.set(kept, ItemChange { depth: Some(None), ..ItemChange::default() }).unwrap();
+        assert_eq!(s.optimize.as_ref().unwrap().kept[0].depth, None);
     }
 
     #[test]
