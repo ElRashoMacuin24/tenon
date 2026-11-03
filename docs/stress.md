@@ -128,8 +128,8 @@ Mesh View shows the elements.
 
 Change a load, a face or the part, and the results are out of date: Simulate again.
 
-The Optimize panel works out a shape for the study's loads with the same two programs:
-[topology.md](topology.md).
+The Optimize panel works out a shape for the study's loads with the same two programs, on a
+mesh of its own: [topology.md](topology.md).
 
 ## How it is checked
 

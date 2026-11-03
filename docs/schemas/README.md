@@ -117,3 +117,8 @@ taken away), without a check.
     constraint type `smooth` (DEC-121); `end_radius`, `radii` and `faces` of `model.fillet`, whose
     `edges` may be left out for `faces` (DEC-122); `study.keep`, `study.shape` and `study.optimize`,
     and `depth` of `study.set` (DEC-123). 235 commands.
+  - `study.shape`'s `symmetry` still has the plane's type, so a face passes the schema and is
+    refused by the command, in words: a schema that took less would break a program written
+    against it, and its description says what is refused. `null` for `min_member`, `element_size`
+    and `iterations` of `study.optimize` is new (a wider type: none of them for this run). In what
+    comes back, `study.check` has `shape_needs` and `study.optimize` has `not_written`.

@@ -59,7 +59,8 @@ The rules for all three kinds of document:
 - **Errors.**
   - Text that is not valid TOML is reported with its line and column.
   - A record that does not read gives the record's first line, which record it is and why:
-    "line 41: feature 3 (Fillet1): invalid type: string "six", expected f64".
+    "line 41: feature 3 (Fillet1): invalid type: string "six", expected f64". A study is told the
+    same way: "line 52: study 1 (Bracket): give `remove` or `grams`, not both".
   - A file of the wrong kind is named ("this is an assembly (.tenonasm), not a part").
   - A file from a newer Tenon is refused: "made by a newer Tenon (format version 3; this build
     reads up to 2)".
@@ -503,12 +504,17 @@ Other loads, as they are written in `loads`:
   the size is chosen from the part's.
 - **`[study.optimize]`:** optional, a table under the study once Optimize Shape has been told
   anything of it (DEC-123): `remove` (percent of the mass taken away, 5 to 95) or `grams` (the
-  mass to come to); optional `min_member` (mm), `resolution` (`"medium"` or `"fine"`; coarse
+  mass to come to), one and only one: a table with both, or with neither, is refused in words
+  ("give `remove` or `grams`, not both", "[study.optimize] needs `remove` or `grams`"), with the
+  study and its line. Optional `min_member` (mm), `resolution` (`"medium"` or `"fine"`; coarse
   when not written), `element_size` (mm), `kept` (`{ id, name, faces, depth }`: faces kept
   solid, `depth` mm of material under them when written, one layer of elements otherwise; ids
-  are of the study's one run with its supports and loads), `symmetry` (up to three planes, as
-  features name planes), `sharpen` (written only when false), `iterations`. The shape itself is
-  not kept.
+  are of the study's one run with its supports and loads), `symmetry` (up to three planes at
+  right angles, each an origin plane or a work plane, as features name planes), `sharpen`
+  (written only when false), `iterations`. The commands do not write a face as a plane of
+  symmetry: a file that holds `{ face = ... }` still opens and is written back as it was, and
+  `study.check` says it under `shape_needs`, so that a shape is refused until it is taken away.
+  The shape itself is not kept.
 
 ```toml
 [study.optimize]
@@ -533,7 +539,8 @@ After reading, a part is checked:
 - a study has a name; its supports and loads have names, ids of their own and at least one
   face each, or edges where they may be on edges, and not both; every size is a number other
   than 0 within range, and every direction and axis is one; gravity and a body's turning
-  are there at most once;
+  are there at most once; what Optimize Shape is asked is in range, and its kept faces have
+  names, ids of the study's run and at least one face each;
 - a design table names parameters of the part, each once; its rows have names of their own and
   one number for each parameter; its active row is one of them.
 
@@ -791,7 +798,10 @@ Features
 - **What is compared:**
   - parts: the name, material (with its strength) and appearance, parameters, features, the
     design table (its active row, its parameters, and each row that was added, removed or
-    changed), and stress studies (each support and load that was added, removed or changed);
+    changed), and stress studies (each support and load that was added, removed or changed, and
+    what Optimize Shape is asked: its target, thinnest member, resolution, element size, symmetry,
+    sharpening and most rounds, each set of kept faces that was added, removed or changed with its
+    depth, and the settings given or taken away as a whole);
   - assemblies: components (a changed placement shows as "moved"), relationships and explode
     steps;
   - drawings: the drawing's own fields, sheets, views and annotations.

@@ -182,10 +182,12 @@ does not know.
 
 **Optimize Shape** (the Analysis tab's Optimize panel) works out where material is needed to
 carry the study's loads, for a share of the mass kept: Keep Faces for bolt holes and mating
-faces, Symmetry for planes the shape is the same on both sides of, then Optimize Shape. The
-shape is drawn over the part; a slider shows other shares; Export Shape writes it as STL or
-3MF to model over. It takes minutes; Esc stops it and keeps the shape so far.
-[topology.md](topology.md) says how it works and what it cannot do.
+faces, Symmetry to tick the origin planes or work planes the shape is the same on both sides
+of, then Optimize Shape. The shape is drawn over the part; a slider shows other shares; Export
+Shape writes it as STL or 3MF to model over. It takes minutes; Esc stops it and keeps the shape
+so far, and leaving the environment stops it and drops what it came to. Simulate's results hide
+the shape, and its row in the browser brings it back. [topology.md](topology.md) says how it
+works and what it cannot do.
 
 ## Files
 

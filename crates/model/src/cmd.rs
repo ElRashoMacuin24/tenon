@@ -4553,7 +4553,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "study.shape",
         "Optimize Shape Settings",
-        "What Optimize Shape is asked of a study, kept with it (DEC-123); what is given takes the place of what was said. study; remove (percent of the mass taken away, 5 to 95; default 50) or grams (the mass to come to); min_member (the thinnest member, mm; null: three elements); resolution (coarse, medium or fine: about 12,000, 30,000 or 80,000 nodes; without element_size it takes the place of a size kept); element_size (mm, in place of the resolution; null: from it); symmetry (a list of up to three planes at right angles, each an origin plane, xy, yz or xz, or a work plane, {work: id}; a face of the part is refused; [] for none); sharpen (default true: toward solid and empty); iterations (the most rounds, 1 to 300; null: as the method needs)",
+        "What Optimize Shape is asked of a study, kept with it (DEC-123); what is given takes the place of what was said. study; remove (percent of the mass taken away, 5 to 95; default 50) or grams (the mass to come to); min_member (the thinnest member, mm; null: three elements); resolution (coarse, medium or fine: about 12,000, 30,000 or 80,000 nodes on a plain solid; without element_size it takes the place of a size kept); element_size (mm, in place of the resolution; null: from it); symmetry (a list of up to three planes at right angles, each an origin plane, xy, yz or xz, or a work plane, {work: id}; a face of the part is refused; [] for none); sharpen (default true: toward solid and empty); iterations (the most rounds, 1 to 300; null: as the method needs)",
         true,
         study_shape
     ),

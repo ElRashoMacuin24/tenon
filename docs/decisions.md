@@ -3293,9 +3293,10 @@ images in the filter, so the design stays the same on both sides; a part that is
 material for each of 1001 stiffness levels in use, and each element's energy read back (`ELSE`).
 No solver of Tenon's own: a `Stiffness` trait is where one would go.
 
-**Sizes.** The mesh is sized from a node target (Coarse 12,000, Medium 30,000, Fine 80,000), not
-from the stress study's element size, and at most 100,000 nodes; three elements to the smallest
-member when one is given.
+**Sizes.** The mesh is sized from a node target (Coarse 12,000, Medium 30,000, Fine 80,000, for a
+plain solid), not from the stress study's element size, and at most 100,000 nodes; three elements
+to the smallest member when one is given. A size that comes to well over its target is made
+larger and the part divided again (below).
 
 **What is kept.** The settings, kept faces and planes are kept with the study, as a
 `[study.optimize]` table: an addition to format version 2, as the plan allows for additions (the
@@ -3304,17 +3305,63 @@ itself is not kept in the part file or beside it: that would be a container deci
 part file, or a mesh feature), which goes to the owner. Meanwhile it is shown until the part or
 study changes or the environment is left, and Export Shape writes it as STL or 3MF.
 
-**Refused, in words, before anything starts:** no study or a study not ready; Gravity or a body's
-turning not suppressed (their load depends on the material kept); out-of-range settings; a mass
-not less than the part's or under 5% of it; planes not at right angles. After meshing: too many
-nodes, a part not the same on both sides of a plane, and kept material already over the share.
+**Refused, in words, before anything starts:** no study or a study not ready; what only a shape
+needs (kept faces the part no longer has, a plane of symmetry that cannot be one); Gravity or a
+body's turning not suppressed (their load depends on the material kept); out-of-range settings; a
+mass not less than the part's or under 5% of it; planes not at right angles; files to write that
+cannot be written. After meshing: too many nodes, a part not the same on both sides of a plane,
+and kept material already over the share.
 
-**The run** goes on the kernel's worker as Simulate does; the view says which round it is on;
-Esc or Finish Analysis stops it, and a run stopped after a round keeps the shape so far. The
-shape is drawn over the part (the part as edges), with a slider for other shares (where material
-ranks, not an optimum for them). It is solved once, the densest elements up to the share solid,
-to say how much of the part's stiffness it keeps.
+**The run** goes on the kernel's worker as Simulate does; the view says which round it is on; Esc
+stops it, and a run stopped after a round keeps the shape so far. Any way of leaving the
+environment stops it too, and what it came to is dropped. The shape is drawn over the part (the
+part as edges), with a slider for other shares (where material ranks, not an optimum for them). It
+is solved once, the densest elements up to the share solid, to say how much of the part's stiffness
+it keeps.
 
 **Built** as a foundation (mesh volumes, the module's types and contracts), then three parts in
 parallel worktrees (the solver's protocol, the optimizer, the surface), each reviewed
 adversarially and fixed, then the command and the app.
+
+**After a review of the whole (2026-11-02).** Before release, the finished feature was tried
+against what it says. What changed, and why:
+
+- *A shape has a mesh of its own.* Sized for a plain solid and graded as a stress check is, an
+  ordinary 120 x 80 x 6 plate with eight bolt holes came to over 100,000 nodes even at Coarse and
+  was refused at every resolution, though bolt holes are what Keep Faces is for. `mesh_for_shape`
+  goes no finer than a third of the size and has straight mid-side nodes: the filter cannot use
+  finer detail than about one and a half elements, straight sides cannot turn an element inside out
+  as curved ones did on small holes (which the solver refuses), and a shape is a guide. A stress
+  check's mesh is not touched. A size from the resolution that still comes out over one and a half
+  times its nodes, or past 100,000, is made larger (with a warning), a few times at most and never
+  past three elements across a smallest member; a size asked for is left as it is. A refusal says
+  what helps for what was asked.
+- *A face is no plane of symmetry.* A solid has material on one side of its own face and none on
+  the other, so no part is the same on both sides of one; beyond the origin planes the panel
+  offered only that, so a part not centred on an origin plane had no working symmetry. The panel
+  now ticks origin planes and work planes, and `study.shape` refuses a face. A file that holds one
+  still opens (the format is additive) and is refused when a shape is worked out: a face meaning a
+  half-model's cut would be a new feature, not this one.
+- *`study.check` says what only a shape needs apart*, as `shape_needs`, and not in `needs`: a kept
+  face that is lost must not stop Simulate, which does not use it.
+- *Runs are kept apart.* Each run has an id, and what comes back is taken only by the run the
+  environment waits for. Every way out of the environment stops the run: nothing else could reach
+  it, it would hold the geometry thread for up to an hour, and closing the window would wait for
+  it. One run goes on at a time, and a run still stopping refuses the next, so that Esc cannot go
+  to the wrong one. A shape whose part or study changed during its run is not kept. Simulate and
+  Mesh View had the same faults and are treated alike.
+- *What is asked is drawn.* A shape shown hid Simulate's results and Mesh View with nothing said,
+  so what was asked for now hides the shape, and the Shape row brings it back.
+- *A long run is not lost at its end.* The files to write are tried before it starts; one that still
+  fails, or a solve of the finished shape that fails or is stopped, leaves the shape with a warning,
+  since only the file, or the stiffness figure, hung on it.
+- *Export Shape offers what it says.* Its save dialog offered only STL; one dialog now offers STL
+  and 3MF, and a name given with no ending takes the first.
+- *What is given takes the place of what is kept.* A resolution given without an element size now
+  clears a stored size, in `study.shape` and in `study.optimize` for its run, and `null` clears for
+  a run; the panel shows a stored size and most rounds, with a button to clear each, since once a
+  script had stored a size the Resolution buttons did nothing.
+- *The file says what it holds.* `[study.optimize]` with both `remove` and `grams`, or neither, is
+  refused in words with the study and the line, where the first key used to win and the other was
+  lost on the next save. `tenon-cli diff` and `file.diff` compare these settings, where two files
+  that differed only in them were "No changes." with exit code 0.

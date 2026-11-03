@@ -1118,7 +1118,7 @@ static SCHEMAS: &[C] = &[
             opt(
                 "resolution",
                 Word(&["coarse", "medium", "fine"]),
-                "about 12,000, 30,000 or 80,000 nodes; without element_size it takes the place of a size kept",
+                "about 12,000, 30,000 or 80,000 nodes on a plain solid; without element_size it takes the place of a size kept",
             ),
             opt("element_size", Either(&[Length, Null]), "the size of the elements, mm, in place of the resolution; null: from it"),
             opt(

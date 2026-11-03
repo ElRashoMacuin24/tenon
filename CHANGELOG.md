@@ -10,12 +10,17 @@ shows it in [ROADMAP.md](ROADMAP.md).
 - **Optimize Shape** (topology optimization): in Stress Analysis, the Optimize panel works out
   where material is needed to carry a study's loads to its supports, for a share of the mass
   kept or a mass in grams. Keep Faces keeps bolt holes and mating faces (as deep as asked),
-  Symmetry makes the shape the same on both sides of up to three planes. It runs with Gmsh and
-  CalculiX as Simulate does, shows which round it is on (Esc stops it and keeps the shape so
-  far), draws the shape over the part with a slider for the share shown, says how much of the
-  part's stiffness it keeps, and exports it as STL or 3MF. A guide to model over: check what
-  you make with Simulate. Settings are kept with the study (`[study.optimize]` in the part
-  file). New commands `study.keep`, `study.shape`, `study.optimize`; docs/topology.md.
+  Symmetry makes the shape the same on both sides of up to three origin planes or work planes.
+  It runs with Gmsh and CalculiX as Simulate does, on a mesh of its own, coarser round small
+  details; when those take far more nodes than the resolution's, the elements are made larger,
+  and it says so. It shows which round it is on (Esc stops it and keeps the shape so far;
+  leaving the environment stops it and drops what it came to), draws the shape over the part
+  with a slider for the share shown, says how much of the part's stiffness it keeps, and exports
+  it as STL or 3MF from one save dialog. A guide to model over: check what you make with
+  Simulate. Settings are kept with the study (`[study.optimize]` in the part file; `remove` or
+  `grams`, not both), and `tenon-cli diff` compares them. New commands `study.keep`,
+  `study.shape`, `study.optimize`; `study.check` gains `shape_needs`, what only a shape needs,
+  which does not stop Simulate; docs/topology.md.
 
 ### Sketches
 
@@ -101,6 +106,12 @@ shows it in [ROADMAP.md](ROADMAP.md).
   start hints named a button that does not exist; Application Options opened over the ribbon.
 - A shell thicker than a chamfer of the part fails in the kernel: the message now says to make
   the shell before the chamfer.
+- Leaving Stress Analysis while Simulate ran (Finish Analysis, File New, opening another document,
+  closing Tenon) left it running: the new part's geometry waited behind it, and closing the window
+  did too. Every way out now stops it, and what it came to is dropped.
+- In a script, `study.solve`'s `keep` folder went to the working folder, not under `--out` as
+  every other file and folder does.
+- A study that does not read now gives its line and its name, as a feature does.
 
 ## 0.1.0 (2026-10-13)
 
