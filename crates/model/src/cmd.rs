@@ -134,7 +134,9 @@ impl Session {
         doc.name_values();
         self.doc = doc;
         self.undo.clear();
-        self.steps = 0;
+        // (Counted on, not begun again: a mark of the document that is gone must not come to mean
+        // a place in this one's steps. It is one more than the steps undone can take it back to.)
+        self.steps += 1;
         self.redo.clear();
         self.revision += 1;
         self.saved_revision = self.revision;
@@ -4609,7 +4611,7 @@ static COMMANDS: &[CommandSpec] = &[
     geo_cmd!(
         "study.check",
         "Check Study",
-        "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has; shape_needs: what study.optimize needs beyond that, in words (Gravity or a body's turning suppressed, kept faces that are no longer on the part, a work plane of symmetry that is gone or not a plane, a face used as a plane of symmetry, planes not at right angles), which does not stop a stress check. What study.optimize says only when it is asked: at once, a mass the part cannot come to, a part well off a plane of symmetry and a closed edge far shorter than the elements; once the part is divided, what only meshing can tell (pieces not held fast, too many nodes, a part not the same on both sides of a plane)",
+        "A study held against the part as it now is. study (default: the part's only one). Returns ready: whether it can be worked out; needs: what it lacks, in words (a support, a load, a part that builds, one solid, a material that says how strong it is, faces that are no longer on the part or that its support cannot hold); lost: [{item, name, lost, of}] for each support and load with faces the part no longer has; shape_needs: what study.optimize needs beyond that, in words (Gravity or a body's turning suppressed, kept faces that are no longer on the part, a work plane of symmetry that is gone or not a plane, a face used as a plane of symmetry, planes not at right angles), which does not stop a stress check. What study.optimize says only when it is asked: at once, a mass the part cannot come to, a part well off a plane of symmetry and a closed edge far shorter than the elements on a long wall; once the part is divided, what only meshing can tell (pieces not held fast, too many nodes, a part not the same on both sides of a plane)",
         study_check
     ),
     doc_cmd!(

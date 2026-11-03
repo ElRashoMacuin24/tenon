@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use tenon_fea::topo::{self, Ccx, Extracted, Field, Mirror, Optimized, Phase, Progress, Report, Stop, region};
 use tenon_fea::{Cancel, Deck, Scratch, TetMesh, Took, Tools};
-use tenon_kernel::Kernel;
+use tenon_kernel::{Kernel, Mesh, ShapeHandle, SurfaceKind};
 use tenon_model::PlaneRef;
 use tenon_model::schema::arg;
 use tenon_model::study::{FACE_PLANE_REFUSED, Optimize, Resolution, StudyId, Target};
@@ -50,10 +50,16 @@ const WORTH_HAVING: f64 = 0.8;
 /// How many sizes between are tried when the part is too many nodes at one size and too much for
 /// the filter at the next.
 const SIZES_BETWEEN: usize = 2;
-/// How many times shorter than the elements a closed edge may be. The mesher must go down to its
-/// length along all of the wall under it: a bore of 0.01 on a 10 mm plate took it a minute and one
-/// of 0.005 nearly ten, and neither could be worked out on after that.
-const SMALLEST_CLOSED_EDGE: f64 = 0.01;
+/// When the mesher is not asked at all, for a closed edge's sake: when the elements are more than
+/// this many times its length, and the wall under it longer than `LONG_WALL` times. The mesher must
+/// go down to its length all along that wall, and the elements it takes crowd together. Every part
+/// tried past both, of any size, came to nothing, after up to ten minutes of the mesher's: too much
+/// for the filter, or the mesher out of time. A thin plate has little wall, however small the bore,
+/// and short of either line a part can come out well: on a wall of 265 times, elements of 46 times
+/// were too much for the filter and 38 times came out, and elements of 59 times, on a wall of 177
+/// times, came out.
+const ELEMENTS_OVER_EDGE: f64 = 50.0;
+const LONG_WALL: f64 = 250.0;
 /// How the filter's refusal of a table too large is known (`topo::filter`).
 const TOO_MUCH_TO_SMOOTH: &str = " would take more than ";
 
@@ -225,6 +231,7 @@ fn divided<T>(
     o: &Optimize,
     h: f64,
     closed_edge: Option<f64>,
+    touches_itself: bool,
     divide: &mut dyn FnMut(f64) -> Result<TetMesh, String>,
     take: &mut dyn FnMut(TetMesh, f64) -> Result<T, String>,
 ) -> Result<(T, f64), String> {
@@ -241,9 +248,9 @@ fn divided<T>(
         let mesh = match divide(now) {
             Ok(mesh) => mesh,
             Err(e) if e == STOPPED => return Err(e),
-            Err(e) if tried == 0 => return Err(cannot_divide(o, now, closed_edge, &e)),
+            Err(e) if tried == 0 => return Err(cannot_divide(o, now, closed_edge, touches_itself, &e)),
             Err(e) => {
-                why = Some(cannot_divide(o, now, closed_edge, &e));
+                why = Some(cannot_divide(o, now, closed_edge, touches_itself, &e));
                 too_much = Some(now);
                 break;
             }
@@ -287,32 +294,66 @@ fn divided<T>(
                 Err(e) => (why, too_much) = (Some(e), Some(now)),
             },
             Err(e) if e == STOPPED => return Err(e),
-            Err(e) => (why, too_much) = (Some(cannot_divide(o, now, closed_edge, &e)), Some(now)),
+            Err(e) => (why, too_much) = (Some(cannot_divide(o, now, closed_edge, touches_itself, &e)), Some(now)),
         }
     }
     fits.ok_or_else(|| why.unwrap_or_else(|| too_many_nodes(o, made, nodes)))
 }
 
-/// What is said of a closed edge (`closed_edge`, its length) too short to divide a part round, with
-/// elements of size `h`, before the mesher is asked.
-fn closed_edge_too_short(h: f64, closed_edge: Option<f64>) -> Option<String> {
-    closed_edge.filter(|c| *c < SMALLEST_CLOSED_EDGE * h).map(|c| {
-        format!(
-            "The part has a closed edge only {} mm long (a small hole or round), against elements of {} mm: dividing it would take many minutes, and likely come to nothing. Suppress its small holes and rounds to optimize.",
-            round(c),
-            round(h)
-        )
-    })
+/// The closed edges of the part (`shape`, drawn as `drawn`) that elements of size `h` are far larger
+/// than: each by its length, with how long the wall under it is. That is the largest round face it
+/// bounds, by area over the edge's length, of those no further across than that length would make
+/// them. (A flat face round a bore is no wall of it, nor a large round one that a small bore comes
+/// out on: the mesher does not go down to the edge's length all over those, and the wall of a bore
+/// in a tube is as long as the tube is thick.)
+fn walls_of_short_closed_edges(k: &dyn Kernel, shape: ShapeHandle, drawn: &Mesh, h: f64) -> Result<Vec<(f64, f64)>, String> {
+    let short: Vec<(u32, f64)> = tenon_fea::faces::closed_edges(drawn).into_iter().filter(|(_, length)| h > ELEMENTS_OVER_EDGE * length).collect();
+    if short.is_empty() {
+        return Ok(Vec::new());
+    }
+    let topology = k.topology(shape).map_err(|e| e.to_string())?;
+    let mut walls = Vec::with_capacity(short.len());
+    for (edge, _) in short {
+        // (Its true length: the drawing's chords are short of it, by a little on so small an edge.)
+        let length = k.edge_info(shape.edge(edge)).map_err(|e| e.to_string())?.length;
+        let mut wall = 0.0_f64;
+        for face in topology.edge_faces.get(edge as usize).into_iter().flatten() {
+            let info = k.face_info(shape.face(*face)).map_err(|e| e.to_string())?;
+            let long = info.area / length;
+            if !matches!(info.surface, SurfaceKind::Plane { .. }) && long <= 1.5 * tenon_fea::faces::across_face(drawn, *face) {
+                wall = wall.max(long);
+            }
+        }
+        walls.push((length, wall));
+    }
+    Ok(walls)
+}
+
+/// What is said of a part with closed edges (`closed`: each by its length and the length of the
+/// wall under it) too short to divide round, with elements of size `h`, before the mesher is asked.
+fn closed_edge_too_short(h: f64, closed: &[(f64, f64)]) -> Option<String> {
+    let worst = closed.iter().filter(|(c, wall)| h > ELEMENTS_OVER_EDGE * c && *wall > LONG_WALL * c).min_by(|a, b| a.0.total_cmp(&b.0))?;
+    Some(format!(
+        "The part has a closed edge only {} mm long (a small hole or round) on a wall {} mm long, against elements of {} mm: the mesher would have to go down to that length all along the wall, and that many elements crowded together would be too much to smooth. Suppress its small holes and rounds to optimize.",
+        round(worst.0),
+        round(worst.1),
+        round(h)
+    ))
 }
 
 /// What the mesher's failing (`e`) at elements of size `h` comes to for what was asked, with what
 /// helps when it did try: smaller elements hold a small hole open, unless it is the part's shortest
-/// closed edge (`closed_edge`) that the mesher goes by, as no size of element then changes that.
-fn cannot_divide(o: &Optimize, h: f64, closed_edge: Option<f64>, e: &str) -> String {
+/// closed edge (`closed_edge`) that the mesher goes by, as no size of element then changes that. On
+/// a part that touches itself along a line (`touches_itself`) the mesher often fails at that line,
+/// at any size, and no small hole need be there at all; what helps is to come off it. (A hole said
+/// to be closed up is another matter: that is not along those lines, or it would not be said.)
+fn cannot_divide(o: &Optimize, h: f64, closed_edge: Option<f64>, touches_itself: bool, e: &str) -> String {
     if !(e.contains("It said") || e.contains("closed up")) {
         return e.to_owned();
     }
-    let helps = if tenon_fea::only_the_closed_edge_matters(h, closed_edge) {
+    let helps = if touches_itself && e.contains("It said") {
+        "The part touches itself along a line (a hole just touching a side of it, or another hole), which the mesher often cannot divide at any size: move the hole a little off it."
+    } else if tenon_fea::only_the_closed_edge_matters(h, closed_edge) {
         "Suppress its small holes and rounds to optimize."
     } else if o.element_size.is_some() {
         "Make the elements smaller, or suppress its small holes and rounds to optimize."
@@ -551,10 +592,10 @@ pub fn work_out(
             ));
         }
     }
-    let closed_edge = tenon_fea::faces::shortest_closed_edge(&drawn);
-    if let Some(said) = closed_edge_too_short(first_size, closed_edge) {
+    if let Some(said) = closed_edge_too_short(first_size, &walls_of_short_closed_edges(k, on.shape, &drawn, first_size)?) {
         return Err(said);
     }
+    let closed_edge = tenon_fea::faces::shortest_closed_edge(&drawn);
 
     let tools = Tools::find()?;
     let scratch = match keep {
@@ -572,6 +613,7 @@ pub fn work_out(
         settings,
         first_size,
         closed_edge,
+        !own_lines.is_empty(),
         &mut |size| tenon_fea::mesh_for_shape(&tools, &step, size, closed_edge, &own_lines, &scratch.dir, cancel),
         // The study put on the mesh, what must stay solid on it (what is held or loaded, and the
         // kept faces as deep as asked), that it leaves room for the share kept (the layers are as
@@ -932,6 +974,7 @@ mod tests {
             o,
             h,
             None,
+            false,
             &mut |size| {
                 let n = counts[asked.len()];
                 asked.push(size);
@@ -1037,7 +1080,7 @@ mod tests {
     #[test]
     fn a_mesher_that_cannot_divide_it_is_said_with_what_helps() {
         let failed = "The part could not be divided into elements. gmsh failed (exit code: 1). It said: Invalid boundary mesh on surface 7";
-        let refused = |o: &Optimize| divided(o, 3.0, None, &mut |_| Err(failed.to_owned()), &mut |mesh: TetMesh, _| Ok(mesh)).unwrap_err();
+        let refused = |o: &Optimize| divided(o, 3.0, None, false, &mut |_| Err(failed.to_owned()), &mut |mesh: TetMesh, _| Ok(mesh)).unwrap_err();
         assert_eq!(refused(&at(Resolution::Coarse)), format!("{failed}. Choose Medium, or suppress its small holes and rounds to optimize."));
         assert_eq!(refused(&at(Resolution::Medium)), format!("{failed}. Choose Fine, or suppress its small holes and rounds to optimize."));
         assert_eq!(refused(&at(Resolution::Fine)), format!("{failed}. Suppress its small holes and rounds to optimize."));
@@ -1046,18 +1089,27 @@ mod tests {
         // Said of a hole closed up too, and not of a mesher that could not be started.
         let closed = "The part could not be divided into elements of 3 mm: a small hole or round closed up at that size.";
         assert_eq!(
-            cannot_divide(&at(Resolution::Coarse), 3.0, None, closed),
+            cannot_divide(&at(Resolution::Coarse), 3.0, None, false, closed),
             format!("{}. Choose Medium, or suppress its small holes and rounds to optimize.", closed.trim_end_matches('.'))
         );
         let not_started = "The part could not be divided into elements. cannot start gmsh";
-        assert_eq!(cannot_divide(&at(Resolution::Coarse), 3.0, None, not_started), not_started);
+        assert_eq!(cannot_divide(&at(Resolution::Coarse), 3.0, None, false, not_started), not_started);
         // Where the mesher goes by a closed edge, not by the size, no size helps: not said.
         for o in [at(Resolution::Coarse), at(Resolution::Medium), sized.clone()] {
-            let e = cannot_divide(&o, 3.0, Some(0.3), closed);
+            let e = cannot_divide(&o, 3.0, Some(0.3), false, closed);
             assert_eq!(e, format!("{}. Suppress its small holes and rounds to optimize.", closed.trim_end_matches('.')));
         }
         // A closed edge not far under the size: the size still has a say.
-        assert!(cannot_divide(&at(Resolution::Coarse), 3.0, Some(2.0), closed).contains("Choose Medium"));
+        assert!(cannot_divide(&at(Resolution::Coarse), 3.0, Some(2.0), false, closed).contains("Choose Medium"));
+        // A part that touches itself along a line: the mesher's failing there is no matter of the
+        // size of the elements, at any resolution. A hole closed up off those lines still is.
+        for o in [at(Resolution::Coarse), at(Resolution::Medium), at(Resolution::Fine), sized.clone()] {
+            let e = cannot_divide(&o, 3.0, None, true, failed);
+            assert!(e.starts_with(failed) && e.contains("touches itself along a line") && e.ends_with("move the hole a little off it."), "{e}");
+            assert!(!e.contains("Choose") && !e.contains("smaller") && !e.contains("Suppress"), "{e}");
+        }
+        assert!(cannot_divide(&at(Resolution::Coarse), 3.0, None, true, closed).contains("Choose Medium"));
+        assert_eq!(cannot_divide(&at(Resolution::Coarse), 3.0, None, true, not_started), not_started);
     }
 
     #[test]
@@ -1085,12 +1137,48 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_edge_far_shorter_than_the_elements_is_said_before_the_mesher_is_asked() {
-        assert_eq!(closed_edge_too_short(3.0, None), None);
-        assert_eq!(closed_edge_too_short(3.0, Some(0.031)), None);
-        let said = closed_edge_too_short(3.0, Some(0.0157)).unwrap();
-        assert!(said.starts_with("The part has a closed edge only 0.016 mm long (a small hole or round), against elements of 3 mm"), "{said}");
+    fn the_wall_under_a_closed_edge_is_the_bores_and_not_what_it_comes_out_on() {
+        use tenon_kernel_occt::OcctKernel;
+        let mut k = OcctKernel::new();
+        let mut s = Session::default();
+        let mut run = |s: &mut Session, id: &str, p: Value| {
+            s.exec(id, &p, Some(&mut k as &mut dyn Kernel)).unwrap_or_else(|e| panic!("{id} {p}: {e}"));
+        };
+        // A tube 100 across with a wall of 1, and a bore of 0.02 through one side of it, from the
+        // plane of its axis: on neither round face of the tube is that bore's wall.
+        run(&mut s, "model.cylinder", json!({ "diameter": 100, "height": 100 }));
+        run(&mut s, "model.cylinder", json!({ "diameter": 98, "height": 100, "operation": "cut" }));
+        run(&mut s, "model.cylinder", json!({ "plane": "xz", "y": 50, "diameter": 0.02, "height": 60, "operation": "cut" }));
+        let shape = s.regen(&mut k).bodies[0].shape;
+        let drawn = k.tessellate(shape, &tenon_kernel::MeshTol::exact()).unwrap();
+        let walls = walls_of_short_closed_edges(&k, shape, &drawn, 10.0).unwrap();
+        assert!(!walls.is_empty(), "the bore's edges are short");
+        for (length, wall) in &walls {
+            assert!((length - 0.0628).abs() < 1e-3 && (wall - 1.0).abs() < 0.1, "{walls:?}");
+        }
+        assert_eq!(closed_edge_too_short(10.0, &walls), None);
+        // Elements that are not far larger than any edge: none looked at.
+        assert!(walls_of_short_closed_edges(&k, shape, &drawn, 1.0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_closed_edge_far_shorter_than_the_elements_on_a_long_wall_is_said_before_the_mesher_is_asked() {
+        assert_eq!(closed_edge_too_short(3.0, &[]), None);
+        // Past both, whichever it is that says so of it, and it goes by the shortest.
+        let said = closed_edge_too_short(3.0, &[(0.09, 25.0), (0.0157, 10.0), (0.03, 10.0)]).unwrap();
+        assert!(
+            said.starts_with("The part has a closed edge only 0.016 mm long (a small hole or round) on a wall 10 mm long, against elements of 3 mm"),
+            "{said}"
+        );
         assert!(said.ends_with("Suppress its small holes and rounds to optimize."), "{said}");
+        // Elements not so large against it: bore of 0.1 on a block 100 thick, elements of 9.
+        assert_eq!(closed_edge_too_short(9.0, &[(0.3142, 100.0)]), None);
+        assert_eq!(closed_edge_too_short(15.0, &[(0.3142, 100.0)]), None);
+        assert!(closed_edge_too_short(16.0, &[(0.3142, 100.0)]).is_some());
+        // Little wall, however small the edge and large the elements: bores on thin plates.
+        assert_eq!(closed_edge_too_short(4.1, &[(0.0314, 1.0)]), None);
+        assert_eq!(closed_edge_too_short(20.0, &[(0.0628, 10.0)]), None);
+        assert!(closed_edge_too_short(20.0, &[(0.0314, 10.0)]).is_some());
     }
 
     #[test]
@@ -1206,6 +1294,7 @@ mod tests {
                 &o,
                 3.0,
                 None,
+                false,
                 &mut |_| {
                     calls += 1;
                     if calls == 1 { Ok(of(50_000)) } else { Err(why.to_owned()) }
@@ -1223,6 +1312,7 @@ mod tests {
             &o,
             3.0,
             None,
+            false,
             &mut |_| {
                 calls += 1;
                 if calls == 1 { Ok(of(500_000)) } else { Err("the mesher fell over".to_owned()) }
@@ -1232,7 +1322,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(e, "the mesher fell over");
         // And one that fails at once, as it is.
-        assert_eq!(divided(&o, 3.0, None, &mut |_| Err("no mesher".to_owned()), &mut |mesh, _| Ok(mesh)).unwrap_err(), "no mesher");
+        assert_eq!(divided(&o, 3.0, None, false, &mut |_| Err("no mesher".to_owned()), &mut |mesh, _| Ok(mesh)).unwrap_err(), "no mesher");
     }
 
     #[test]

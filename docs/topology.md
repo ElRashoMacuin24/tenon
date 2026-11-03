@@ -88,8 +88,11 @@ on is kept for its own, and the status bar says to work on that one to see it an
 `study.solve` and `study.optimize` sent over the control port (`tenon --control`, `mcp --attach`)
 are runs like these: one sent while a run goes on in the window is refused, and the window refuses
 one while they go. The status bar and the view say one is going on, and Esc, and whatever else stops
-a run, stops them, and the port is told. A step of `batch.run` stopped so ends the batch: its answer
-has the steps done and, under `not_run`, that the rest were not run.
+a run, stops them, and the port is told. A step of `batch.run` stopped so ends the batch. Run as one
+(the default), it is a step that failed, whenever it was stopped: nothing is changed, and the answer
+is the error; a shape so far is not given, though a file it wrote stays written. With `as_one: false`
+the steps before it stand: stopped with a shape so far, the answer has the steps done and, under
+`not_run`, that the rest were not run; stopped before it has one, it fails, as any step can.
 
 For agents and scripts: `study.keep`, `study.shape` and `study.optimize` ([commands.md](commands.md)).
 `study.shape` refuses a face as a plane of symmetry. `study.check` says what a shape needs beyond
@@ -99,7 +102,7 @@ of symmetry (a file that holds one still opens), planes not at right angles. `re
 `lost` leave these out, so they do not stop `study.solve`; `study.optimize` refuses them before
 anything starts. Not there, and said only when `study.optimize` is asked: at once, with no program
 started, a mass the part cannot come to, a part off a plane of symmetry by more than a tenth of its
-own width, and a closed edge far shorter than the elements; once the part is divided, what cannot
+own width, and a closed edge far shorter than the elements on a long wall; once the part is divided, what cannot
 be told before: too many nodes, a piece not held fast, a part not the same on both sides of a plane
 to within a tenth of an element, too much kept. `study.optimize` also tries its `stl` and `threemf`
 before anything starts (the ending, a name the system does not take, the folder, a file that cannot
@@ -140,9 +143,15 @@ a shape's differs in two ways (`mesh_for_shape` in `crates/fea/src/lib.rs`):
   mesher then fails, or gives a mesh with no hole there at all. That floor is the mesher's for the
   whole part, and at twelve elements to a full turn every other round face would go down to it (one
   more small bore took a plate from 16,000 nodes to 34,000), so with it they go by four to a full
-  turn, at the first try. A closed edge more than a hundred times shorter than the elements is refused before
-  anything starts: the mesher must go down to it along all of the wall under it, which took it
-  nearly ten minutes for a bore of 0.005 on a 10 mm plate, only for it to be refused all the same.
+  turn, at the first try. A closed edge is refused before anything starts when the elements are more
+  than fifty times its length and the wall under it more than 250 times: the mesher must go down to
+  it all along that wall, and every part tried past both came to nothing, after anything from seconds
+  to ten minutes of the mesher's (nearly ten for a bore of 0.005 on a 10 mm plate): more than the filter
+  can take, or the mesher out of time. A wall is the round face the edge bounds, by its area over the
+  edge's length, and not a large round face a small bore comes out on. A thin plate has little wall, and a bore far smaller than the elements runs on it (0.01 on a
+  plate 300 x 300 x 1, in eight seconds). Short of that line the mesher is asked, with no word but that
+  the part is being divided, and the smaller the bore the longer it takes at the same proportions: a
+  bore of 0.004 on a 3 mm plate takes it nearly two minutes, only for the filter to refuse the mesh.
 - **Straight mid-side nodes.** Curved ones can turn an element inside out on a small hole at these
   sizes, and the solver refuses such an element; straight ones cannot. A shape is a guide, and does
   not need a bore's roundness: a bore can still be kept, and a plate on a pin with a bearing load,
@@ -150,9 +159,10 @@ a shape's differs in two ways (`mesh_for_shape` in `crates/fea/src/lib.rs`):
   hangs on the mid-side nodes, a mesh's surfaces are told from the part's faces by their corners,
   which lie on the part's own faces (the middle of a flat strip on a thin round rim lies inside the
   material, nearer the flat faces), and a bearing load pushes square to the round face at each
-  spot, not square to the flat side it is on, so all of it goes the way asked. (The corners tell a
-  face to within how far the kernel's drawing of a round stands off it, 0.01 mm: on a plate of 5
-  micrometres or thinner, a bore's wall can be taken for the flat face beside it.)
+  spot, not square to the flat side it is on, so all of it goes the way asked. (On a plate thinner than
+  the kernel's drawing of a round stands off it, 0.01 mm, the corners of a bore's wall lie nearer the
+  flat faces beside it than that drawing. They lie at two heights, as nothing on a flat face does, so
+  the wall is still told, down to a plate about a millionth as thick as it is wide.)
 
 The mesh a shape is worked out on is not the one Mesh View shows, which is a stress check's. Should
 the mesher fail on it, or a hole close up all the same (a side of the boundary with more than two
@@ -166,7 +176,10 @@ closed edge and not the size that the floors go by, no size helps, and only the 
 A part can really have such a side: a line of no thickness, where it touches itself (two bores just
 touching, a bore just touching a side). The kernel draws that line too, so it is told from a hole
 closed up, and the part is worked out. The surface of a shape through that line is not closed, and
-is said to be so.
+is said to be so. The mesher itself can fail on such a part, at any size (a bore just touching one
+side of a plate, and not the side opposite), as it does for a stress check: then what it said is
+said, with that the part touches itself along a line and that moving the hole a little off it helps
+(0.05 did on those tried), and no word of sizes.
 
 **How large the elements are.** From the part's volume V and the resolution's nodes N,
 h = (9 V / N)^(1/3): about nine nodes to each cube of h. With a smallest member m, h is no more
@@ -195,7 +208,7 @@ Nodes as measured on plates held at one end (where the size was made larger, wha
 | 120 x 80 x 6, eight holes of 4 | 13,422 (4.16 mm) | 37,382 | 82,846 |
 | 200 x 100 x 5, 32 holes of 3 | 16,103 (6.62 mm) | 36,635 (3.72 mm) | 92,162 (2.51 mm) |
 | 200 x 100 x 5, one hole of 1 | 14,079 (4.84 mm) | 31,230 | 82,955 |
-| 110 x 110 x 3, 100 holes of 1 | 32,275 (4.59 mm) | 42,713 (3.01 mm) | 89,168 (1.94 mm) |
+| 110 x 110 x 3, 100 holes of 1 | 32,748 (4.6 mm) | 38,650 (3.47 mm) | 88,595 (1.94 mm) |
 
 **Past 100,000 nodes** a mesh is refused, in words that say what helps: for an element size asked,
 to make the elements larger; for a smallest member that holds the size down, to ask for a larger
@@ -254,7 +267,7 @@ under them), with the volume kept fixed at the share asked: the stiffest structu
 - **The same answer twice, nearly.** Sums here run in a fixed order and the mesher runs on one
   thread, so the same study gives the same mesh, to the byte. The solver runs on all the machine's
   threads and adds up in the order they finish, so what it says need not be the same to the last
-  figure: a solve repeated on the same densities agrees to about fourteen figures, and over a whole
+  figure: a solve repeated on the same densities agrees to about eleven figures, and over a whole
   run a round's work can part by a few in a million as the densities it goes on part. The surface's
   points come out within thousandths of a millimetre on most parts, and within a hundredth or two on
   a thin plate; the work on the finished shape within a few parts in a hundred thousand; an STL's

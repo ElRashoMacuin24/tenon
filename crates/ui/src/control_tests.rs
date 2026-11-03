@@ -108,7 +108,9 @@ fn a_study_over_the_port_is_a_run_the_window_can_stop() {
     assert!(!d.texts().iter().any(|t| t == crate::results::PORT_RUN_GOES), "{:?}", d.texts());
 
     // Stopped, it ends its batch: the steps after it are not run, a new run least of all.
-    {
+    /// `steps` sent as one batch on that bar, and what is told when Esc comes `after` seconds into
+    /// the run; and the part's name then, and how many undo steps were added.
+    fn batch_stopped(steps: &Value, as_one: bool, after: u64) -> (Value, String, u64) {
         let mut wb = Workbench::new(|| Box::new(OcctKernel::new()) as Box<dyn Kernel>, None, Services::default());
         let mut d = Driver::new(vec2(1400.0, 860.0));
         wb.listen(0, None).unwrap();
@@ -122,10 +124,9 @@ fn a_study_over_the_port_is_a_run_the_window_can_stop() {
         c.ok(&mut wb, &mut d, "study.new", json!({}));
         c.ok(&mut wb, &mut d, "study.fix", json!({ "faces": [left] }));
         c.ok(&mut wb, &mut d, "study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" }));
-        let shape = json!({ "run": "study.optimize", "with": { "element_size": 5, "iterations": 300 } });
-        let steps = json!([shape, { "run": "document.rename", "with": { "name": "After the first" } }, shape]);
+        let before = wb.session.mark();
         c.next += 1;
-        writeln!(c.out, "{}", json!({ "id": c.next, "token": c.token, "run": "batch.run", "with": { "steps": steps, "as_one": false } })).unwrap();
+        writeln!(c.out, "{}", json!({ "id": c.next, "token": c.token, "run": "batch.run", "with": { "steps": steps, "as_one": as_one } })).unwrap();
         for _ in 0..4000 {
             d.frame(&mut wb, vec![]);
             if wb.port_run.is_some() {
@@ -134,25 +135,45 @@ fn a_study_over_the_port_is_a_run_the_window_can_stop() {
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(wb.port_run.is_some(), "the run never began");
-        // (Long enough on this bar for some rounds: stopped after one, it comes back as a shape.)
         let began = std::time::Instant::now();
-        while began.elapsed().as_secs() < 10 {
+        while began.elapsed().as_secs() < after {
             d.frame(&mut wb, vec![]);
             std::thread::sleep(Duration::from_millis(5));
         }
         d.tap(&mut wb, egui::Key::Escape);
         let told = answered(&mut c, &mut wb, &mut d);
         assert!(wb.port_run.is_none(), "another run began: {told}");
-        assert_eq!(wb.document().name, "Part1", "a step after it was run: {told}");
-        if told["ok"] == true {
-            let steps = told["result"]["steps"].as_array().unwrap();
-            assert_eq!(steps.len(), 1, "{told}");
-            assert_eq!(steps[0]["result"]["stopped"], "stopped", "{told}");
-            assert_eq!(told["result"]["not_run"], "Step 1 (study.optimize) was stopped, so the 2 step(s) after it were not run.", "{told}");
-        } else {
-            // (Stopped before a round was done: an error, which ends it too.)
-            assert!(told["error"].as_str().unwrap().contains("stopped"), "{told}");
-        }
+        let (name, added) = (wb.document().name.clone(), wb.session.mark() - before);
+        wb.shutdown();
+        (told, name, added)
+    }
+    // (Long enough on this bar for some rounds: stopped after one, it comes back as a shape.)
+    const SOME_ROUNDS: u64 = 10;
+    let shape = json!({ "run": "study.optimize", "with": { "element_size": 5, "iterations": 300 } });
+    let rename = |name: &str| json!({ "run": "document.rename", "with": { "name": name } });
+    let (told, name, _) = batch_stopped(&json!([shape, rename("After the first"), shape]), false, SOME_ROUNDS);
+    assert_eq!(name, "Part1", "a step after it was run: {told}");
+    if told["ok"] == true {
+        let steps = told["result"]["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 1, "{told}");
+        assert_eq!(steps[0]["result"]["stopped"], "stopped", "{told}");
+        assert_eq!(told["result"]["not_run"], "Step 1 (study.optimize) was stopped, so the 2 step(s) after it were not run.", "{told}");
+    } else {
+        // (Stopped before a round was done: an error, which ends it too.)
+        assert!(told["error"].as_str().unwrap().contains("stopped"), "{told}");
+    }
+    // Run as one, every step is done or none is, so stopped, whenever it was, none is: it comes back
+    // the same whether a round was done or not, and whether steps were left to do or not.
+    let taken_back = "step 2 (study.optimize): stopped. Nothing was changed: the 1 step(s) before it were taken back.";
+    for (steps, after) in [
+        (json!([rename("Before it"), shape, rename("After it")]), SOME_ROUNDS),
+        (json!([rename("Before it"), shape]), SOME_ROUNDS),
+        (json!([rename("Before it"), shape, rename("After it")]), 0),
+    ] {
+        let (told, name, added) = batch_stopped(&steps, true, after);
+        assert_eq!(told["ok"], false, "{steps}, Esc after {after} s: {told}");
+        assert_eq!(told["error"], taken_back, "{steps}, Esc after {after} s: {told}");
+        assert_eq!((name.as_str(), added), ("Part1", 0), "{steps}, Esc after {after} s: {told}");
     }
 
     // Finish Analysis and File New stop it, and the new part's geometry comes.

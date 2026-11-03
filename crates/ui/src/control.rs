@@ -518,6 +518,11 @@ impl Workbench {
                 }
             };
             let step = r.steps.get(r.at).cloned();
+            // A batch run as one is every step done or none: a step stopped from the window is not
+            // done, whatever it came back with (a shape stopped after a round comes back as the shape
+            // so far), so that what Esc does to the batch does not go by when it was pressed.
+            let stopped = std::mem::take(&mut r.stopped);
+            let outcome = if stopped && r.batch == Some(true) { outcome.and(Err(tenon_fea::tools::STOPPED.to_owned())) } else { outcome };
             let outcome = outcome.and_then(|result| match &step {
                 Some(step) => steps::check(&result, &step.expect, step.within.unwrap_or(steps::EXPECT_REL)).map(|()| result),
                 None => Ok(result),
@@ -540,7 +545,7 @@ impl Workbench {
                     // What stops a run stops the steps after it. (A shape stopped after a round
                     // comes back as the shape so far; Esc did not mean only that one step.)
                     let left = r.steps.len() - r.at;
-                    if std::mem::take(&mut r.stopped) && left > 0 {
+                    if stopped && left > 0 {
                         r.steps.truncate(r.at);
                         r.not_run = Some(format!("Step {} ({}) was stopped, so the {left} step(s) after it were not run.", r.at, step.run));
                     }

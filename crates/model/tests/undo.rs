@@ -122,3 +122,40 @@ fn undo_and_redo_through_failing_rebuilds_match_a_rebuild_from_scratch() {
     assert!(failures >= 5 && undone_failures == failures, "the walk failed {failures} times");
     cache.release(&mut k);
 }
+
+/// What was done to one document is not what is to be taken back of another: a run of commands
+/// that fails after the document was replaced under it (File New, while its run stops) leaves alone
+/// what has been done to the new one, however few steps the old one had.
+#[test]
+fn a_mark_made_before_the_document_was_replaced_takes_nothing_back() {
+    let rename = |s: &mut Session, name: &str| {
+        let name = name.to_owned();
+        s.edit(|d| {
+            d.name = name;
+            Ok(())
+        })
+        .unwrap();
+    };
+    let mut s = Session::default();
+    let at_the_start = s.mark();
+    rename(&mut s, "Old");
+    let later = s.mark();
+    s.replace_document(Document::default(), None);
+    rename(&mut s, "New");
+    rename(&mut s, "Newer");
+    for mark in [at_the_start, later] {
+        s.roll_back_to(mark);
+        assert_eq!(s.document().name, "Newer");
+        s.squash_since(mark);
+        assert!(s.undo(), "the new document's steps are still there");
+        assert_eq!(s.document().name, "New");
+        assert!(s.redo());
+    }
+    // A mark made since does its work.
+    let now = s.mark();
+    rename(&mut s, "Newest");
+    s.roll_back_to(now);
+    assert_eq!(s.document().name, "Newer");
+    assert!(s.undo());
+    assert_eq!(s.document().name, "New");
+}

@@ -469,13 +469,32 @@ fn a_hole_that_closes_up_at_its_own_floor_is_tried_once_more() {
 }
 
 #[test]
-fn a_closed_edge_far_shorter_than_the_elements_is_refused_before_anything_is_started() {
-    // (No programs: it is said before any is looked for. It used to take the mesher nine minutes.)
-    let mut p = plate(60.0, 30.0, 10.0, &[(0.0, 0.0, 0.005)]);
-    held_at_the_left(&mut p);
-    p.run("study.shape", json!({ "remove": 50 }));
-    let e = p.refused("study.optimize", json!({}));
-    assert!(e.starts_with("The part has a closed edge only 0.016 mm long") && e.ends_with("Suppress its small holes and rounds to optimize."), "{e}");
+fn a_closed_edge_far_shorter_than_the_elements_on_a_long_wall_is_refused_before_anything_is_started() {
+    // (No programs: it is said before any is looked for. These took the mesher nine minutes and a
+    // minute, to be refused all the same by the filter.)
+    for (across, length) in [(0.005, "0.016"), (0.01, "0.031")] {
+        let mut p = plate(60.0, 30.0, 10.0, &[(0.0, 0.0, across)]);
+        held_at_the_left(&mut p);
+        p.run("study.shape", json!({ "remove": 50 }));
+        let e = p.refused("study.optimize", json!({}));
+        assert!(e.starts_with(&format!("The part has a closed edge only {length} mm long (a small hole or round) on a wall 10 mm long")), "{e}");
+        assert!(e.ends_with("Suppress its small holes and rounds to optimize."), "{e}");
+    }
+}
+
+#[test]
+fn a_small_bore_in_a_thin_plate_is_worked_out() {
+    if !programs("a small bore in a thin plate") {
+        return;
+    }
+    // Far shorter edges than the elements, each, but with little wall the mesher takes seconds.
+    for (width, thick, across, element_size) in [(300.0, 1.0, 0.01, None), (300.0, 0.5, 0.02, Some(12.0)), (300.0, 10.0, 0.02, Some(20.0))] {
+        let mut p = plate(width, width, thick, &[(0.0, 0.0, across)]);
+        held_at_the_left(&mut p);
+        let o = Optimize { iterations: Some(1), element_size, ..few_rounds(Resolution::Coarse) };
+        let shaped = p.shape(&o, &Cancel::default(), None).unwrap_or_else(|e| panic!("{thick} thick, a bore of {across}: {e}"));
+        assert!(shaped.field.mesh.boundary_is_closed(), "{thick} thick, a bore of {across}");
+    }
 }
 
 #[test]
@@ -535,6 +554,41 @@ fn a_part_that_touches_itself_along_a_line_is_not_taken_for_a_hole_closed_up() {
     p.shape(&few_rounds(Resolution::Coarse), &Cancel::default(), None).unwrap();
 }
 
+/// Held at its right end, 100 N down on the first face of its left, which a bore may have cut in two.
+fn held_by_a_side_it_may_cut(mut p: Part) -> Part {
+    let right = p.facing("right");
+    let left = p.run("model.find", json!({ "what": "faces", "facing": "left" }))["found"][0]["reference"].clone();
+    p.run("study.new", json!({}));
+    p.run("study.fix", json!({ "faces": [right] }));
+    p.run("study.force", json!({ "faces": [left], "newtons": 100, "direction": "down" }));
+    p
+}
+
+#[test]
+fn a_part_the_mesher_cannot_divide_where_it_touches_itself_is_told_to_come_off_the_line() {
+    if !programs("a part the mesher cannot divide at a line") {
+        return;
+    }
+    // A bore of 10 just touching a side: the mirror image of the one above, and others like it, on
+    // which the mesher fails at every resolution. `Choose Medium`, `Choose Fine` and `Suppress` led
+    // nowhere, and there is no small hole.
+    for (depth, x, y) in [(30.0, 0.0, -10.0), (40.0, 0.0, -15.0), (40.0, 0.0, 15.0), (40.0, -25.0, 0.0)] {
+        for resolution in [Resolution::Coarse, Resolution::Medium, Resolution::Fine] {
+            let mut p = held_by_a_side_it_may_cut(plate(60.0, depth, 10.0, &[(x, y, 10.0)]));
+            let e = p.shape(&few_rounds(resolution), &Cancel::default(), None).unwrap_err();
+            assert!(e.contains("It said") && e.ends_with("move the hole a little off it."), "60 x {depth}, at ({x}, {y}), {resolution:?}: {e}");
+            assert!(!e.contains("Choose") && !e.contains("Suppress"), "60 x {depth}, at ({x}, {y}), {resolution:?}: {e}");
+        }
+    }
+    // And what it says does help.
+    for (depth, x, y) in [(30.0, 0.0, -9.95), (40.0, 0.0, -14.95), (40.0, 0.0, 14.95), (40.0, -24.95, 0.0)] {
+        let mut p = held_by_a_side_it_may_cut(plate(60.0, depth, 10.0, &[(x, y, 10.0)]));
+        let shaped =
+            p.shape(&few_rounds(Resolution::Coarse), &Cancel::default(), None).unwrap_or_else(|e| panic!("60 x {depth}, at ({x}, {y}): {e}"));
+        assert!(shaped.field.mesh.boundary_is_closed(), "60 x {depth}, at ({x}, {y})");
+    }
+}
+
 #[test]
 fn elements_made_larger_leave_small_bores_open() {
     if !programs("a plate with many small bores") {
@@ -592,6 +646,39 @@ fn a_thin_rim_is_told_from_the_flat_faces_beside_it() {
             if !is_round {
                 assert!((info.centroid.z * 1000.0).round() as i64 == *heights.first().unwrap(), "at {size}: {heights:?} against {:?}", info.centroid);
             }
+        }
+    }
+}
+
+#[test]
+fn a_bores_wall_on_a_plate_thinner_than_the_kernels_chords_is_the_wall() {
+    if !programs("a plate thinner than the kernel's chords") {
+        return;
+    }
+    // A bore of 300 in a plate 400 across. Thinner than the drawing of the wall stands off it, the
+    // wall went to a flat face, and a support on it was said to have none of the mesh on its faces.
+    for thick in [0.05, 0.006, 0.005, 0.003, 0.002] {
+        let mut p = plate(400.0, 400.0, thick, &[(0.0, 0.0, 300.0)]);
+        let r = p.s.regen(&mut p.k).clone();
+        let body = &r.bodies[0];
+        let step = p.k.export_step(&[body.shape]).unwrap();
+        let drawn = p.k.tessellate(body.shape, &tenon_kernel::MeshTol::exact()).unwrap();
+        let (tools, scratch, cancel) = (Tools::find().unwrap(), tenon_fea::Scratch::new().unwrap(), Cancel::default());
+        let is_round = |face: u32| matches!(p.k.face_info(body.shape.face(face)).unwrap().surface, tenon_kernel::SurfaceKind::Cylinder { .. });
+        let wall = drawn.faces.iter().map(|f| f.face).find(|f| is_round(*f)).unwrap();
+        let mesh = tenon_fea::mesh_part(&tools, &step, 60.0, &scratch.dir, &cancel).unwrap();
+        let on = tenon_fea::faces::match_surfaces(&mesh, &drawn).unwrap();
+        assert_eq!(on.values().filter(|f| **f == wall).count(), 1, "{thick} thick: {on:?}");
+        for (surface, face) in &on {
+            let heights: std::collections::BTreeSet<i64> = mesh
+                .tris
+                .iter()
+                .filter(|t| t.surface == *surface)
+                .flat_map(|t| t.nodes[..3].iter().map(|n| (mesh.nodes[*n as usize].z * 1e6).round() as i64))
+                .collect();
+            let info = p.k.face_info(body.shape.face(*face)).unwrap();
+            let flat = matches!(info.surface, tenon_kernel::SurfaceKind::Plane { normal, .. } if normal.z.abs() > 0.5);
+            assert_eq!(heights.len() == 1, flat, "{thick} thick: surface {surface} at {heights:?} is said to be face {face}");
         }
     }
 }

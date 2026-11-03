@@ -123,5 +123,6 @@ taken away), without a check.
     and `iterations` of `study.optimize` is new (a wider type: none of them for this run). In what
     comes back, `study.check` has `shape_needs` and `study.optimize` has `not_written`. `study.check`'s
     description lists all `shape_needs` says, Gravity and planes not at right angles among it.
-  - `batch.run` over the app's control port has `not_run` in what comes back, when a step was stopped
-    from the window and the steps after it were not run.
+  - `batch.run` over the app's control port has `not_run` in what comes back, with `as_one: false`,
+    when a step stopped from the window came back with a shape so far and the steps after it were not
+    run. Run as one, such a step is a failure, and everything is taken back.

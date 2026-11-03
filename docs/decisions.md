@@ -3308,7 +3308,7 @@ study changes or the environment is left, and Export Shape writes it as STL or 3
 **Refused, in words, before anything starts:** no study or a study not ready; what only a shape
 needs (kept faces the part no longer has, a plane of symmetry that cannot be one); Gravity or a
 body's turning not suppressed (their load depends on the material kept); out-of-range settings; a
-mass not less than the part's or under 5% of it; a closed edge far shorter than the elements; planes
+mass not less than the part's or under 5% of it; a closed edge far shorter than the elements on a long wall; planes
 not at right angles; files to write that cannot be written. After meshing: too many nodes, a part not the same on both sides of a plane,
 and kept material already over the share.
 
@@ -3409,8 +3409,8 @@ against the code as it was before it:
 - *Not bit for bit.* The solver's equation solving on many threads adds up in the order they finish
   (on one thread it comes out the same, by trial, and threads for the stiffness and the results make
   no difference), so a shape need not be the same to the last figure: a solve repeated on the same
-  densities agrees to about fourteen figures, and over a whole run a round's work can part by a few
-  in a million (3.6e-6 at most on a plate with eight bores over 87 rounds). One thread takes one and a half
+  densities agrees to about eleven figures, and over a whole run a round's work can part by a few
+  in a million (about 5e-6 at most on a plate with eight bores over 87 rounds). One thread takes one and a half
   times as long at Coarse and two and a half at Medium, against an hour's budget, so it is not done,
   and the sentence that said otherwise is changed. The mesh is the same to the byte.
 - *A run over the control port is a run.* It held the geometry thread with no way to stop it and no
@@ -3441,8 +3441,9 @@ against the code as it was before it:
   edge, the first try now goes by four elements to a full turn in place of twelve (16,500 nodes on
   that plate); a second try, twelve. The stress check's arguments do not change. A size field near that curve was looked at: it
   would need the mesher's own curve numbers, and with a global floor still under it the other round
-  faces would need sizes of their own. A closed edge more than a hundred times shorter than the
-  elements is refused before the mesher is asked: it took nearly ten minutes, to be refused anyway.
+  faces would need sizes of their own. A closed edge far shorter than the elements on a long wall is
+  refused before the mesher is asked (the rule is further on): it took nearly ten minutes, to be
+  refused anyway.
 - *A second try is finer than the first.* It went to a tenth of the size, which did nothing once a
   floor from a closed edge was under that, so a hole closing up there had no second try, and every
   resolution's refusal sent the user on to the next. It now also goes to half the first floor, and
@@ -3473,7 +3474,41 @@ against the code as it was before it:
   Export Shape. The words are painted after the shape, not under it, and beside the legend when there
   are results; a shadow in the light theme is light.
 - *A stop stops the batch.* A `study.optimize` stopped after a round answers with the shape so far, and
-  the steps after it ran, starting a new run at once. They are no longer run.
+  the steps after it ran, starting a new run at once. They are no longer run. Run as one, the batch is
+  taken back: every step done or none, and what Esc does to it does not go by when it was pressed.
 - *A rename is no change to a shape.* A run of up to an hour was thrown away for a name. A shape and
   its run now go by what they hang on (the part and that study, names and other studies set aside), and
   Simulate, whose results do go out of date with any change, now stops when they do, as a shape's did.
+
+**After a check of that repair (2026-11-03).** What it left, or brought in:
+
+- *A batch stopped is taken back, whenever.* Stopping a run in a batch run as one (the default) ended
+  the batch with the steps before it standing and those after it not run, when a round had been done;
+  taken back whole when none had. It is now a failure in both, so the command's every-step-or-none
+  holds, and the shape so far goes with it. That is what the caller of an as-one batch asked for; one
+  who wants the shape so far runs it with `as_one: false`, or on its own.
+- *A closed edge is judged with the wall under it.* A closed edge a hundred times shorter than the
+  elements was refused, in the words "many minutes": but what the mesher does goes with how long the wall
+  is, and thin plates that had worked out in seconds were stopped. The rule is now both: elements more
+  than 50 times the edge, and a wall more than 250 times it (the largest round face it bounds, by
+  area over its length, that is itself as long as that says: a small bore's wall, and not the tube it
+  goes through). 119 parts, up to 5000 mm across, were tried on the build without the refusal. 37 are
+  past both, and none came to anything: 36 too much for the filter and one the mesher out of its ten
+  minutes, at every scale. Neither line can come down much: on a wall of 265 times, elements of 46
+  times were too much for the filter and 38 times came out, and elements of 59 times, on a wall of 177
+  times, came out. So the words now say that, and the mesher's two minutes just above the old line on
+  a 10 mm plate are gone too (it is under a minute there). Short of the line
+  the time is left: it does not go by the proportions (the same part at a fifth of the scale took seven
+  times as long), and a bore of 0.004 on a 3 mm plate takes the mesher nearly two minutes, then the filter
+  refuses. A size field near the curve remains the real cure, and is the owner's choice.
+- *A part that touches itself is told so.* The mesher fails on some such parts at every size, and
+  `Choose Medium`, `Choose Fine` and `Suppress` sent the user round for nothing, with no small hole in
+  the part. Where the kernel's drawing shows such a line and the mesher fails, it now says so, and to
+  come off it. (A hole said to be closed up keeps its advice: that was not along those lines.)
+- *A wall on a plate thinner than the chords.* The corners of a bore's wall lie further from the drawing
+  of the wall than from the flat faces beside it when the plate is thinner than the chords stand off,
+  and the wall went to a flat face: a support on it said none of the mesh lay on its faces, which was
+  false. A surface whose corners lie at two heights cannot be on a flat face, so that face now gives
+  way to one they all lie on to within the chords. Only then, so as not to move a surface off a flat
+  face whose edges the kernel holds loosely. Below about a millionth of the plate's width the two
+  heights cannot be told from the drawing's rounding, and it is as it was.

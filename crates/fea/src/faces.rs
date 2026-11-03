@@ -16,6 +16,13 @@ use crate::mesh::TetMesh;
 /// at to tell which face or edge it is.
 const SAMPLES: usize = 12;
 
+/// How far along its normal what lies on a flat face can part, as a share of the mesh's size: more
+/// than what the drawing's single precision leaves of the face and its normal.
+const FLAT: f64 = 1e-6;
+
+/// How far off a round face its drawing may stand, and a little: the kernel's chords, and rounding.
+const CHORDS: f64 = 1.5 * tenon_geom::tol::MESH_LINEAR;
+
 /// The square of the distance from `p` to the triangle `a`, `b`, `c`.
 pub(crate) fn dist2_to_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
     // (The closest point of a triangle, region by region: a corner, an edge, or its inside.)
@@ -63,6 +70,11 @@ pub(crate) fn dist2_to_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
 /// beside it than the round face itself.) The face taken is the one all the corners looked at lie
 /// nearest, as the squares of their distances add up: of a thin rim's corners, half lie on the
 /// edge it shares with a flat face, but the other half lie off that face and on the rim.
+///
+/// The drawing of a round face stands off it, by as much as the kernel's chords are allowed. Where
+/// a plate is thinner than that, the corners of a bore's wall are nearer the flat faces beside it
+/// than the drawing of the wall itself. But they lie at two heights, and nothing on a flat face does:
+/// so such a face gives way to one they all lie on to within the chords, if there is one.
 pub fn match_surfaces(mesh: &TetMesh, part: &Mesh) -> Result<BTreeMap<u32, u32>, String> {
     let at = |i: u32| part.positions.get(i as usize).map(|p| Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])));
     // The part's triangles, face by face.
@@ -90,19 +102,12 @@ pub fn match_surfaces(mesh: &TetMesh, part: &Mesh) -> Result<BTreeMap<u32, u32>,
         let step = (tris.len() / SAMPLES).max(1);
         let corners: Vec<Vec3> =
             tris.iter().step_by(step).take(SAMPLES).flat_map(|t| mesh.tris[*t].nodes[..3].iter().map(|n| mesh.nodes[*n as usize])).collect();
-        let mut best: Option<(f64, u32)> = None;
-        // (A corner off a face rules it out at once, so most faces take one look.)
-        'faces: for (face, triangles) in &drawn {
-            let mut sum = 0.0;
-            for p in &corners {
-                let d2 = triangles.iter().map(|(a, b, c)| dist2_to_triangle(*p, *a, *b, *c)).fold(f64::INFINITY, f64::min);
-                sum += d2;
-                if d2.sqrt() > near || best.is_some_and(|(least, _)| sum >= least) {
-                    continue 'faces;
-                }
-            }
-            best = Some((sum, *face));
-        }
+        let off_it = |face: u32| off_a_flat_face(&drawn[&face], &corners, FLAT * mesh.extent());
+        let best = nearest_of(&drawn, &corners, near, &|_| true);
+        let best = match best {
+            Some((_, face)) if off_it(face) => nearest_of(&drawn, &corners, CHORDS, &|other| !off_it(other)).or(best),
+            _ => best,
+        };
         match best {
             Some((_, face)) => {
                 found.insert(*surface, face);
@@ -113,10 +118,44 @@ pub fn match_surfaces(mesh: &TetMesh, part: &Mesh) -> Result<BTreeMap<u32, u32>,
     Ok(found)
 }
 
-/// The length of the shortest edge of the part that closes on itself (a round hole's edge, say),
-/// if it has one. A closed edge has nothing to hold it open but its own length: an element much
-/// longer than a third of it closes the hole up.
-pub fn shortest_closed_edge(part: &Mesh) -> Option<f64> {
+/// Of the faces `drawn` that `wanted` says, the one `corners` lie nearest, as the squares of their
+/// distances add up, with how much that comes to: none if a corner is further than `near` off each.
+fn nearest_of(drawn: &BTreeMap<u32, Vec<(Vec3, Vec3, Vec3)>>, corners: &[Vec3], near: f64, wanted: &dyn Fn(u32) -> bool) -> Option<(f64, u32)> {
+    let mut best: Option<(f64, u32)> = None;
+    // (A corner off a face rules it out at once, so most faces take one look.)
+    'faces: for (face, triangles) in drawn.iter().filter(|(face, _)| wanted(**face)) {
+        let mut sum = 0.0;
+        for p in corners {
+            let d2 = triangles.iter().map(|(a, b, c)| dist2_to_triangle(*p, *a, *b, *c)).fold(f64::INFINITY, f64::min);
+            sum += d2;
+            if d2.sqrt() > near || best.is_some_and(|(least, _)| sum >= least) {
+                continue 'faces;
+            }
+        }
+        best = Some((sum, *face));
+    }
+    best
+}
+
+/// Whether the face drawn by `triangles` is flat, and `corners` lie further apart along its normal
+/// than `within`: at two heights, so that they cannot all be on it.
+fn off_a_flat_face(triangles: &[(Vec3, Vec3, Vec3)], corners: &[Vec3], within: f64) -> bool {
+    let across = |t: &(Vec3, Vec3, Vec3)| (t.1 - t.0).cross(t.2 - t.0);
+    let Some(normal) = triangles.iter().map(across).max_by(|a, b| a.len2().total_cmp(&b.len2())) else { return false };
+    if normal.len2() == 0.0 {
+        return false;
+    }
+    let normal = normal * (1.0 / normal.len());
+    let apart = |points: &mut dyn Iterator<Item = Vec3>| {
+        let (lo, hi) = points.map(|p| p.dot(normal)).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
+        hi - lo
+    };
+    apart(&mut triangles.iter().flat_map(|t| [t.0, t.1, t.2])) <= within && apart(&mut corners.iter().copied()) > within
+}
+
+/// The edges of the part that close on themselves (a round hole's edge, say): each by its number,
+/// with its length.
+pub fn closed_edges(part: &Mesh) -> Vec<(u32, f64)> {
     let at = |p: &[f32; 3]| Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
     part.edges
         .iter()
@@ -124,9 +163,29 @@ pub fn shortest_closed_edge(part: &Mesh) -> Option<f64> {
             let (first, last) = (e.points.first()?, e.points.last()?);
             let length: f64 = e.points.windows(2).map(|w| at(&w[0]).dist(at(&w[1]))).sum();
             // (Its two ends, which are single-precision here, within a thousandth of its length.)
-            (e.points.len() > 2 && at(first).dist(at(last)) <= 1e-3 * length).then_some(length)
+            // (An edge with no length, at a cone's tip, say, holds nothing open.)
+            (e.points.len() > 2 && length > 0.0 && at(first).dist(at(last)) <= 1e-3 * length).then_some((e.edge, length))
         })
-        .min_by(f64::total_cmp)
+        .collect()
+}
+
+/// How far it is across a face of the part, as the kernel draws it: the diagonal of its box.
+pub fn across_face(part: &Mesh, face: u32) -> f64 {
+    let at = |p: &[f32; 3]| Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+    let mut corners = part.faces.iter().filter(|range| range.face == face).flat_map(|range| {
+        let (first, end) = (range.first as usize, (range.first as usize).saturating_add(range.count as usize));
+        part.indices.get(first..end.min(part.indices.len())).unwrap_or(&[]).iter().filter_map(|i| part.positions.get(*i as usize)).map(at)
+    });
+    let Some(first) = corners.next() else { return 0.0 };
+    let (lo, hi) = corners.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p)));
+    (hi - lo).len()
+}
+
+/// The length of the shortest edge of the part that closes on itself, if it has one. A closed edge
+/// has nothing to hold it open but its own length: an element much longer than a third of it closes
+/// the hole up.
+pub fn shortest_closed_edge(part: &Mesh) -> Option<f64> {
+    closed_edges(part).into_iter().map(|(_, length)| length).min_by(f64::total_cmp)
 }
 
 /// The lines where the part touches itself (two bores just touching, a bore just touching a side):
@@ -349,6 +408,87 @@ mod tests {
         }
     }
 
+    /// A plate with a bore of radius 150 as a kernel draws it, on chords that stand off the round by
+    /// about 0.01: face 0 the wall, 1 the bottom, 2 the top. And as a mesh has it, on few sides whose
+    /// corners are on the true round: the wall surface 7, the bottom 8, the top 9. Its corners lie
+    /// further into the material than the drawing of the wall, where the flat faces are drawn too.
+    fn bored_plate(thick: f64) -> (Mesh, TetMesh) {
+        let (bore, outside, sides) = (150.0, 200.0, 272u32);
+        let at = |r: f64, a: f64, z: f64| Vec3::new(r * a.cos(), r * a.sin(), z);
+        let turn = |i: u32, n: u32| f64::from(i) * std::f64::consts::TAU / f64::from(n);
+        let (mut positions, mut indices, mut faces) = (Vec::new(), Vec::new(), Vec::new());
+        let single = |p: Vec3| [p.x as f32, p.y as f32, p.z as f32];
+        let mut face = |number: u32, corners: &mut dyn FnMut(u32) -> [Vec3; 4]| {
+            let first = indices.len() as u32;
+            for i in 0..sides {
+                let [a, b, c, d] = corners(i);
+                let base = positions.len() as u32;
+                positions.extend([single(a), single(b), single(c), single(d)]);
+                indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+            }
+            faces.push(FaceRange { face: number, first, count: indices.len() as u32 - first });
+        };
+        face(0, &mut |i| {
+            let (a, b) = (turn(i, sides), turn(i + 1, sides));
+            [at(bore, b, 0.0), at(bore, a, 0.0), at(bore, a, thick), at(bore, b, thick)]
+        });
+        for (number, z) in [(1, 0.0), (2, thick)] {
+            face(number, &mut |i| {
+                let (a, b) = (turn(i, sides), turn(i + 1, sides));
+                [at(bore, a, z), at(bore, b, z), at(outside, b, z), at(outside, a, z)]
+            });
+        }
+        let part = Mesh { positions, normals: Vec::new(), indices, faces, ..Mesh::default() };
+        // (Half a chord on from the drawing's corners, so as far off the drawing of the wall as can be.)
+        let few = 34u32;
+        let mine = |i: u32| (f64::from(i) * 8.0 + 0.5) * std::f64::consts::TAU / f64::from(sides);
+        let (mut nodes, mut tris) = (Vec::new(), Vec::new());
+        let mut tri = |a: Vec3, b: Vec3, c: Vec3, surface: u32| {
+            let first = nodes.len() as u32;
+            nodes.extend([a, b, c, (a + b) * 0.5, (b + c) * 0.5, (c + a) * 0.5]);
+            tris.push(crate::mesh::Tri6 { nodes: [first, first + 1, first + 2, first + 3, first + 4, first + 5], surface });
+        };
+        for i in 0..few {
+            let (a, b) = (mine(i), mine(i + 1));
+            tri(at(bore, b, 0.0), at(bore, a, 0.0), at(bore, a, thick), 7);
+            tri(at(bore, b, 0.0), at(bore, a, thick), at(bore, b, thick), 7);
+            tri(at(bore, a, 0.0), at(bore, b, 0.0), at(outside, b, 0.0), 8);
+            tri(at(bore, a, thick), at(outside, b, thick), at(bore, b, thick), 9);
+        }
+        (part, TetMesh { nodes, tris, ..TetMesh::default() })
+    }
+
+    #[test]
+    fn a_bores_wall_on_a_plate_thinner_than_the_chords_is_told_from_the_flat_faces_beside_it() {
+        // At 0.005 and under the corners came out nearer a flat face than the wall as it is drawn.
+        for thick in [0.5, 0.02, 0.01, 0.006, 0.005, 0.003, 0.002, 0.001] {
+            let (part, mesh) = bored_plate(thick);
+            let on = match_surfaces(&mesh, &part).unwrap();
+            assert_eq!(on.into_iter().collect::<Vec<_>>(), [(7, 0), (8, 1), (9, 2)], "{thick} thick");
+        }
+    }
+
+    #[test]
+    fn a_flat_face_gives_way_only_to_one_within_the_chords() {
+        // Corners at two heights, on a flat face and nothing else within the chords: that face stands.
+        let (mut part, mesh) = bored_plate(0.5);
+        let wall = part.faces.remove(0);
+        part.indices.drain(wall.first as usize..(wall.first + wall.count) as usize);
+        for f in &mut part.faces {
+            f.first -= wall.count;
+        }
+        let on = match_surfaces(&mesh, &part).unwrap();
+        assert!(matches!(on.get(&7), Some(1 | 2)), "{on:?}");
+        // What is not flat, or not at two heights, is not off a flat face.
+        let flat = [(Vec3::ZERO, Vec3::X, Vec3::Y)];
+        assert!(off_a_flat_face(&flat, &[Vec3::ZERO, Vec3::new(0.0, 0.0, 0.01)], 1e-3));
+        assert!(!off_a_flat_face(&flat, &[Vec3::ZERO, Vec3::new(5.0, 3.0, 0.0)], 1e-3));
+        assert!(!off_a_flat_face(&flat, &[Vec3::ZERO, Vec3::new(0.0, 0.0, 1e-4)], 1e-3));
+        let bent = [(Vec3::ZERO, Vec3::X, Vec3::Y), (Vec3::X, Vec3::Y, Vec3::new(1.0, 1.0, 0.5))];
+        assert!(!off_a_flat_face(&bent, &[Vec3::ZERO, Vec3::new(0.0, 0.0, 0.01)], 1e-3));
+        assert!(!off_a_flat_face(&[], &[Vec3::ZERO, Vec3::Z], 1e-3));
+    }
+
     #[test]
     fn the_shortest_edge_that_closes_on_itself_is_found() {
         let line = |edge: u32, points: Vec<[f32; 3]>| tenon_kernel::EdgePolyline { edge, points };
@@ -358,8 +498,21 @@ mod tests {
         let part = |edges| Mesh { edges, ..Mesh::default() };
         // An open edge does not count, however short; a closed one does, by its length.
         assert_eq!(shortest_closed_edge(&part(vec![line(0, vec![[0.0; 3], [1.0, 0.0, 0.0]])])), None);
-        let found = shortest_closed_edge(&part(vec![line(0, vec![[0.0; 3], [0.1, 0.0, 0.0]]), line(1, round(10.0)), line(2, round(2.0))])).unwrap();
+        let some = part(vec![line(0, vec![[0.0; 3], [0.1, 0.0, 0.0]]), line(1, round(10.0)), line(2, round(2.0))]);
+        let found = shortest_closed_edge(&some).unwrap();
         assert!((found - 2.0 * std::f64::consts::TAU).abs() < 1e-2, "{found}");
+        // And each by its number. One with no length is none.
+        assert_eq!(closed_edges(&some).iter().map(|(edge, _)| *edge).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(closed_edges(&part(vec![line(0, vec![[1.0; 3]; 5])])), []);
+    }
+
+    #[test]
+    fn how_far_it_is_across_a_face_goes_by_that_faces_triangles() {
+        // The unit tetrahedron: its slanted face goes from corner to corner, and so does the base.
+        let part = drawn();
+        assert!((across_face(&part, 0) - 3f64.sqrt()).abs() < 1e-6, "{}", across_face(&part, 0));
+        assert!((across_face(&part, 3) - 2f64.sqrt()).abs() < 1e-6, "{}", across_face(&part, 3));
+        assert_eq!(across_face(&part, 9), 0.0);
     }
 
     #[test]

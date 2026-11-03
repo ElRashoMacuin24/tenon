@@ -59,10 +59,12 @@ undo step, or, when one fails, takes back what the steps before it did and leave
 as it was (a file a step wrote stays written). Its steps have names of their own, so in a script
 their references are written with two dollar signs (`"$s.feature"`): one would be looked up
 among the outer script's names. With `as_one: false` the steps before a failure stand. In the app,
-a step that is stopped from the window (Esc, on a `study.optimize` that has a shape so far) ends the
-batch: the steps after it are not run, and the answer says so under `not_run`. Steps
-run as one may not open or start a document, nor undo or redo. The MCP server's `run_commands`
-is this command.
+a step that is stopped from the window (Esc) ends the batch. Run as one, it is a step that failed,
+whenever it was stopped: everything is taken back, a shape so far is not given, and the answer is
+the error. With `as_one: false` the steps before it stand; a `study.optimize` that has a shape so far
+comes back as a step done, and the answer says under `not_run` that the steps after it were not run,
+and one stopped before it has one is a failure like any other. Steps run as one may not open or
+start a document, nor undo or redo. The MCP server's `run_commands` is this command.
 
 Besides the registry, scripts can use `render.png`, which renders the part with the software
 rasteriser (no GPU needed), and can pick faces and edges out in colour by their numbers
