@@ -5,13 +5,13 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use egui::{Align2, Color32, Pos2, Rect, Ui, pos2, vec2};
+use egui::{Color32, Pos2, Rect, Ui, pos2, vec2};
 use serde_json::{Value, json};
 use tenon_fea::Cancel;
 use tenon_fea::topo::{Extracted, Phase, Progress, Report};
 use tenon_io::shape::{SMOOTHING, Shaped};
 use tenon_model::study::{Optimize, Resolution, StudyId, Target};
-use tenon_model::{FaceRef, FeatureId, FeatureKind, OriginPlane, PlaneRef, Session, WorkGeom};
+use tenon_model::{Document, FaceRef, FeatureId, FeatureKind, OriginPlane, PlaneRef, Session, WorkGeom};
 
 use crate::panels::Panel;
 use crate::print_dialog::PartJob;
@@ -170,8 +170,8 @@ impl SymmetryPanel {
 #[derive(Clone, Debug)]
 pub(crate) struct ShapeView {
     pub study: StudyId,
-    /// The revision of the part it is of.
-    pub revision: u64,
+    /// What it hangs on (`basis_of`), as it was when it was worked out.
+    pub basis: u64,
     pub shaped: Arc<Shaped>,
     /// The surface drawn: for the share asked, or another on the slider.
     pub shown: Extracted,
@@ -185,12 +185,36 @@ pub(crate) struct ShapeView {
 }
 
 impl ShapeView {
-    /// What there is to know of the shape, beside how it ended: the run's warnings, and whether the
-    /// surface drawn is closed (the run's is said of the share it was worked out for).
-    pub(crate) fn said(&self) -> impl Iterator<Item = &str> {
-        let closed = (!self.closed).then_some(tenon_io::shape::NOT_CLOSED);
-        self.shaped.warnings.iter().map(String::as_str).filter(|w| *w != tenon_io::shape::NOT_CLOSED).chain(closed)
+    /// What there is to know of the shape, beside how it ended: the run's warnings, and in place of
+    /// what they say of its surface, which is of the share it was worked out for, the same of the
+    /// surface drawn: whether it is closed, the pieces it leaves out, whether it joins the loads.
+    pub(crate) fn said(&self) -> Vec<String> {
+        let of_the_run = tenon_io::shape::said_of_surface(false, &self.shaped.shown);
+        let run = self.shaped.warnings.iter().filter(|w| !of_the_run.contains(w)).cloned();
+        run.chain(tenon_io::shape::said_of_surface(self.closed, &self.shown)).collect()
     }
+}
+
+/// What a shape of `study` hangs on, as a number that moves when that does: the part and that
+/// study. Not what they are called, nor the other studies there are, so that naming the part does
+/// not throw away a run of up to an hour.
+pub(crate) fn basis_of(doc: &Document, study: StudyId) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut v = serde_json::to_value(doc).unwrap_or(Value::Null);
+    if let Some(d) = v.as_object_mut() {
+        for key in ["name", "part_number", "description"] {
+            d.remove(key);
+        }
+        if let Some(Value::Array(studies)) = d.get_mut("studies") {
+            studies.retain(|s| s["id"] == study.0);
+            for s in studies.iter_mut().filter_map(Value::as_object_mut) {
+                s.remove("name");
+            }
+        }
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    v.to_string().hash(&mut h);
+    h.finish()
 }
 
 /// A run of Optimize Shape: where it is, and how to stop it.
@@ -199,8 +223,8 @@ pub(crate) struct Shaping {
     /// Which run it is: what comes back is taken only by the run that waits for it.
     pub run: u64,
     pub study: StudyId,
-    /// The revision of the part it is of: once that moves on, the run is for nothing.
-    pub revision: u64,
+    /// What it hangs on (`basis_of`): once that moves on, the run is for nothing.
+    pub basis: u64,
     pub cancel: Cancel,
     pub since: Instant,
     pub progress: Progress,
@@ -514,11 +538,11 @@ impl Workbench {
             return Err("There is no study yet: Create Study, then say where the part is held and what pushes on it.".into());
         };
         self.panel = None;
-        let (cancel, revision) = (Cancel::default(), self.session.revision());
+        let (cancel, basis) = (Cancel::default(), self.shape_basis(study));
         let progress: Progress = Arc::new(Mutex::new(Report::default()));
         self.step_seq += 1;
         let run = self.step_seq;
-        let shaping = Shaping { run, study, revision, cancel: cancel.clone(), since: Instant::now(), progress: progress.clone() };
+        let shaping = Shaping { run, study, basis, cancel: cancel.clone(), since: Instant::now(), progress: progress.clone() };
         let work = move |s: &mut Session, k: &mut dyn tenon_kernel::Kernel| -> Box<dyn std::any::Any + Send> {
             let settings = s.document().study(study).and_then(|st| st.optimize.clone()).unwrap_or_default();
             Box::new(tenon_io::shape::work_out(s, k, study, &settings, SMOOTHING, None, &cancel, Some(&progress)))
@@ -535,11 +559,11 @@ impl Workbench {
             }
             Geo::Sync(k) => {
                 let done = work(&mut self.session, k.as_mut());
-                self.shape_job_done(run, study, revision, done);
+                self.shape_job_done(run, study, basis, done);
             }
             Geo::Worker(w) => {
                 let doc = self.session.document().clone();
-                self.part_jobs.insert(run, PartJob::Shape { run, study, revision });
+                self.part_jobs.insert(run, PartJob::Shape { run, study, basis });
                 w.job(
                     run,
                     Box::new(move |k, _| {
@@ -558,13 +582,13 @@ impl Workbench {
 
     /// A shape came back. It is taken only by the run the environment there is waits for: one
     /// that was left behind is dropped, and says nothing (the status bar has moved on).
-    pub(crate) fn shape_job_done(&mut self, run: u64, study: StudyId, revision: u64, result: Box<dyn std::any::Any + Send>) {
+    pub(crate) fn shape_job_done(&mut self, run: u64, study: StudyId, basis: u64, result: Box<dyn std::any::Any + Send>) {
         let Some(took) = self.analysis.as_mut().and_then(|e| e.shaping.take_if(|r| r.run == run)).map(|r| r.since.elapsed().as_secs_f64()) else {
             return;
         };
         let name = self.document().study(study).map_or_else(|| "The study".to_owned(), |s| s.name.clone());
         // (The part or the study changed while it went on: whatever it came to is of what was.)
-        if revision != self.session.revision() {
+        if basis != self.shape_basis(study) {
             self.set_status(format!("{name}: the part or the study changed while the shape was worked out, so it is out of date and was not kept."));
             return;
         }
@@ -612,16 +636,8 @@ impl Workbench {
         );
         let percent = 100.0 * shaped.fraction;
         let closed = shaped.shown.skin.is_closed();
-        let view = ShapeView {
-            study,
-            revision,
-            shown: shaped.shown.clone(),
-            shown_percent: percent,
-            shaped: Arc::new(shaped),
-            percent,
-            visible: true,
-            closed,
-        };
+        let view =
+            ShapeView { study, basis, shown: shaped.shown.clone(), shown_percent: percent, shaped: Arc::new(shaped), percent, visible: true, closed };
         if let Some(env) = &mut self.analysis {
             env.shape = Some(view);
         }
@@ -630,28 +646,46 @@ impl Workbench {
 
     /// A run of a part or a study that has changed since it began comes to nothing, as Esc would
     /// find: it is stopped now, and said so now, and not at the end of however long it has left.
+    /// (A shape goes by what it hangs on; what Simulate and Mesh View come to goes by the revision.)
     pub(crate) fn stop_a_run_gone_stale(&mut self) {
         use std::sync::atomic::Ordering::Relaxed;
         let revision = self.session.revision();
-        let Some(r) = self.shaping().filter(|r| r.revision != revision && !r.cancel.load(Relaxed)) else { return };
-        r.cancel.store(true, Relaxed);
-        let study = r.study;
+        let env = self.analysis.as_ref();
+        let simulating =
+            env.and_then(|e| e.running.as_ref()).filter(|r| r.revision != revision && !r.cancel.load(Relaxed)).map(|r| (r.study, &r.cancel));
+        let shaping = self.shaping().filter(|r| !r.cancel.load(Relaxed) && r.basis != self.shape_basis(r.study)).map(|r| (r.study, &r.cancel));
+        let Some((study, cancel)) = shaping.or(simulating) else { return };
+        cancel.store(true, Relaxed);
         let name = self.document().study(study).map_or_else(|| "The study".to_owned(), |s| s.name.clone());
-        self.set_status(format!("{name}: the part or the study changed, so the shape being worked out is out of date: it is being stopped."));
+        self.set_status(format!("{name}: the part or the study changed, so what is being worked out is out of date: it is being stopped."));
+    }
+
+    /// What a shape of `study` hangs on, as the part and the study now are: see [`basis_of`].
+    /// (Worked out once for each revision: it is asked many times a frame.)
+    pub(crate) fn shape_basis(&self, study: StudyId) -> u64 {
+        let revision = self.session.revision();
+        match self.shape_basis_memo.get() {
+            Some((r, s, basis)) if r == revision && s == study => basis,
+            _ => {
+                let basis = basis_of(self.document(), study);
+                self.shape_basis_memo.set(Some((revision, study, basis)));
+                basis
+            }
+        }
     }
 
     /// The shape of the study worked on, if it is of the part as it is.
     pub(crate) fn shape_view(&self) -> Option<&ShapeView> {
         let env = self.analysis.as_ref().filter(|_| self.in_analysis())?;
         let active = self.active_study()?.id;
-        env.shape.as_ref().filter(|v| v.study == active && v.revision == self.session.revision())
+        env.shape.as_ref().filter(|v| v.study == active && v.basis == self.shape_basis(active))
     }
 
     /// The study worked on has a shape, and the part or the study has changed since.
     pub(crate) fn shape_is_stale(&self) -> bool {
         let Some(env) = self.analysis.as_ref() else { return false };
         let active = self.active_study().map(|s| s.id);
-        env.shape.as_ref().is_some_and(|v| Some(v.study) == active && v.revision != self.session.revision())
+        env.shape.as_ref().is_some_and(|v| Some(v.study) == active && v.basis != self.shape_basis(v.study))
     }
 
     /// A shape is drawn over the part.
@@ -698,7 +732,7 @@ impl Workbench {
         let Some(v) = self.shape_view() else {
             return Err("There is no shape to export: Optimize Shape first.".into());
         };
-        let (skin, closed) = (v.shown.skin.clone(), v.closed);
+        let (skin, closed, joined) = (v.shown.skin.clone(), v.closed, !v.shown.load_not_joined);
         let doc = self.document();
         let name = doc.name.clone();
         let (color, material) = (doc.color().unwrap_or([0xb8, 0xc0, 0xc8]), doc.material().map_or_else(|| "Generic".to_owned(), |m| m.name.clone()));
@@ -710,36 +744,79 @@ impl Workbench {
         let Some(path) = chosen else { return Ok(()) };
         tenon_io::shape::write_shape(&path, &skin, &name, &material, color)?;
         let triangles = skin.triangles.len();
-        if closed {
+        // (Written all the same, as a part's export is: the file is what was asked for.)
+        let wrong: Vec<&str> = [
+            (!closed).then_some("its surface is not closed: a slicer may refuse it"),
+            (!joined).then_some("what is kept at this share does not join every load to a support"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if wrong.is_empty() {
             self.set_status(format!("Exported the shape to {} ({triangles} triangles).", path.display()));
         } else {
-            // (Written all the same, as a part's export is: the file is what was asked for.)
-            self.set_error(format!(
-                "Exported the shape to {} ({triangles} triangles), but its surface is not closed: a slicer may refuse it.",
-                path.display()
-            ));
+            self.set_error(format!("Exported the shape to {} ({triangles} triangles), but {}.", path.display(), wrong.join(", and ")));
         }
         Ok(())
     }
 
     /// The shape drawn over the part (shaded flat, toward the eye), and while a run goes on,
-    /// where it is.
+    /// where it is. The words go on last: a shape is large on the screen when zoomed in, and they are
+    /// to be read over it.
     pub(crate) fn shape_overlay(&self, ui: &Ui, rect: Rect, t: &Tokens) {
         #[cfg(test)]
         ui.data_mut(|d| d.remove::<usize>(egui::Id::new("tn_shape_drawn")));
         let painter = ui.painter().with_clip_rect(rect);
+        let shown = self.shape_view().filter(|v| v.visible);
+        if let Some(v) = shown {
+            let skin = &v.shown.skin;
+            let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+            let cam = &self.view.camera;
+            let seen: Vec<Option<(Pos2, f64)>> =
+                skin.positions.iter().map(|p| cam.project(*p, w, h).map(|(x, y, d)| (rect.min + vec2(x as f32, y as f32), d))).collect();
+            // (Lit from the eye: what faces it is brightest.)
+            let light = cam.eye_dir();
+            let mut facing: Vec<(f64, usize, f32)> = Vec::with_capacity(skin.triangles.len() / 2);
+            for (i, [a, b, c]) in skin.triangles.iter().enumerate() {
+                let (Some((pa, da)), Some((pb, db)), Some((pc, dc))) = (seen[*a as usize], seen[*b as usize], seen[*c as usize]) else { continue };
+                // (Wound to face out: seen from outside, clockwise on a screen whose y runs down.)
+                let turn = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
+                if turn >= 0.0 {
+                    continue;
+                }
+                let (pa3, pb3, pc3) = (skin.positions[*a as usize], skin.positions[*b as usize], skin.positions[*c as usize]);
+                let n = (pb3 - pa3).cross(pc3 - pa3);
+                let lit = if n.len() > 0.0 { n.dot(light) / n.len() } else { 0.0 };
+                facing.push((da + db + dc, i, (0.45 + 0.55 * lit.abs()) as f32));
+            }
+            facing.sort_by(|x, y| y.0.total_cmp(&x.0));
+            let mut drawn = egui::Mesh::default();
+            for (_, i, shade) in &facing {
+                let color = Color32::from_rgb((SHAPE[0] * shade * 255.0) as u8, (SHAPE[1] * shade * 255.0) as u8, (SHAPE[2] * shade * 255.0) as u8);
+                let first = drawn.vertices.len() as u32;
+                for k in skin.triangles[*i] {
+                    drawn.colored_vertex(seen[k as usize].map_or(Pos2::ZERO, |s| s.0), color);
+                }
+                drawn.add_triangle(first, first + 1, first + 2);
+            }
+            painter.add(egui::Shape::mesh(drawn));
+            #[cfg(test)]
+            ui.data_mut(|d| d.insert_temp(egui::Id::new("tn_shape_drawn"), facing.len()));
+        }
         let over_the_view = |text: &str, at: Pos2| {
-            let (dark, light) = (Color32::from_black_alpha(150), t.viewport_text);
-            let wide = (rect.width() - 36.0).max(100.0);
+            let wide = (rect.right() - at.x - 18.0).max(100.0);
             let galley = |color| painter.layout(text.to_owned(), theme::body(), color, wide);
-            let (shadow, written) = (galley(dark), galley(light));
+            let (shadow, written) = (galley(t.viewport_text_shadow), galley(t.viewport_text));
             let high = written.size().y;
-            painter.galley(at + vec2(1.0, 1.0), shadow, dark);
-            painter.galley(at, written, light);
+            painter.galley(at + vec2(1.0, 1.0), shadow, t.viewport_text_shadow);
+            painter.galley(at, written, t.viewport_text);
             high
         };
-        if self.port_run.is_some() {
-            over_the_view(crate::results::PORT_RUN_GOES, pos2(rect.left() + 18.0, rect.top() + 40.0));
+        // (Beside the legend, when a study's results are drawn: it starts just as high.)
+        let going = pos2(rect.left() + if self.results_shown() { crate::results::LEGEND_REACHES + 10.0 } else { 18.0 }, rect.top() + 40.0);
+        if let Some(r) = &self.port_run {
+            let stopping = r.cancel.load(std::sync::atomic::Ordering::Relaxed);
+            over_the_view(if stopping { crate::results::PORT_RUN_STOPS } else { crate::results::PORT_RUN_GOES }, going);
         }
         if let Some(r) = self.shaping() {
             let report = *r.progress.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -757,51 +834,17 @@ impl Workbench {
                 (Phase::Shaping, _) => "Optimize Shape: making the surface of what is kept...".to_owned(),
                 (Phase::Checking, _) => "Optimize Shape: the shape solved once...".to_owned(),
             };
-            let at = pos2(rect.left() + 18.0, rect.top() + 40.0);
-            painter.text(at + vec2(1.0, 1.0), Align2::LEFT_TOP, &text, theme::body(), Color32::from_black_alpha(150));
-            painter.text(at, Align2::LEFT_TOP, &text, theme::body(), t.viewport_text);
+            over_the_view(&text, going);
         }
-        let Some(v) = self.shape_view().filter(|v| v.visible) else { return };
         // What there is to know of it, written out: it is longer than the status bar has room for.
         // (Below where a run going on says where it is.)
-        let going = self.shaping().is_some() || self.port_run.is_some();
-        let mut y = rect.top() + if going { 62.0 } else { 40.0 };
-        for said in v.said() {
-            y += over_the_view(said, pos2(rect.left() + 18.0, y)) + 3.0;
-        }
-        let skin = &v.shown.skin;
-        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
-        let cam = &self.view.camera;
-        let seen: Vec<Option<(Pos2, f64)>> =
-            skin.positions.iter().map(|p| cam.project(*p, w, h).map(|(x, y, d)| (rect.min + vec2(x as f32, y as f32), d))).collect();
-        // (Lit from the eye: what faces it is brightest.)
-        let light = cam.eye_dir();
-        let mut facing: Vec<(f64, usize, f32)> = Vec::with_capacity(skin.triangles.len() / 2);
-        for (i, [a, b, c]) in skin.triangles.iter().enumerate() {
-            let (Some((pa, da)), Some((pb, db)), Some((pc, dc))) = (seen[*a as usize], seen[*b as usize], seen[*c as usize]) else { continue };
-            // (Wound to face out: seen from outside, clockwise on a screen whose y runs down.)
-            let turn = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
-            if turn >= 0.0 {
-                continue;
+        if let Some(v) = shown {
+            let running = self.shaping().is_some() || self.port_run.is_some();
+            let mut y = rect.top() + if running { 62.0 } else { 40.0 };
+            for said in v.said() {
+                y += over_the_view(&said, pos2(rect.left() + 18.0, y)) + 3.0;
             }
-            let (pa3, pb3, pc3) = (skin.positions[*a as usize], skin.positions[*b as usize], skin.positions[*c as usize]);
-            let n = (pb3 - pa3).cross(pc3 - pa3);
-            let lit = if n.len() > 0.0 { n.dot(light) / n.len() } else { 0.0 };
-            facing.push((da + db + dc, i, (0.45 + 0.55 * lit.abs()) as f32));
         }
-        facing.sort_by(|x, y| y.0.total_cmp(&x.0));
-        let mut drawn = egui::Mesh::default();
-        for (_, i, shade) in &facing {
-            let color = Color32::from_rgb((SHAPE[0] * shade * 255.0) as u8, (SHAPE[1] * shade * 255.0) as u8, (SHAPE[2] * shade * 255.0) as u8);
-            let first = drawn.vertices.len() as u32;
-            for k in skin.triangles[*i] {
-                drawn.colored_vertex(seen[k as usize].map_or(Pos2::ZERO, |s| s.0), color);
-            }
-            drawn.add_triangle(first, first + 1, first + 2);
-        }
-        painter.add(egui::Shape::mesh(drawn));
-        #[cfg(test)]
-        ui.data_mut(|d| d.insert_temp(egui::Id::new("tn_shape_drawn"), facing.len()));
     }
 
     /// The share kept, on a slider at the foot of the view, while a shape is shown.
@@ -818,7 +861,10 @@ impl Workbench {
                         ui.label("Kept");
                         let r = ui.add(egui::Slider::new(&mut percent, 5.0..=100.0).show_value(false));
                         let field = egui::Id::new("tn_shape_keep");
-                        eq_field(ui, field, &mut percent, None, "%", 5.0..=100.0, 70.0, t);
+                        // (Esc gives up what was typed.)
+                        if eq_field(ui, field, &mut percent, None, "%", 5.0..=100.0, 70.0, t).given_up {
+                            percent = made_for;
+                        }
                         at_rest = !r.dragged() && !ui.memory(|m| m.has_focus(field));
                         ui.label(format!("{:.0}% of the part", 100.0 * share));
                     });
@@ -826,6 +872,9 @@ impl Workbench {
                         "The share it was optimized for.".to_owned()
                     } else if (percent - asked).abs() < 0.5 {
                         format!("Optimized for {asked:.0}%: it came to {:.0}%, stopped early or with pieces left out.", 100.0 * share)
+                    } else if (percent - made_for).abs() < 1e-9 && percent - 100.0 * share > 1.0 {
+                        // (A run stopped early: the rest of the part is at the lowest density still.)
+                        format!("Optimized for {asked:.0}%: no more material ranks above this, or the rest is in pieces left out, so {percent:.0}% comes to {:.0}%.", 100.0 * share)
                     } else {
                         format!("Optimized for {asked:.0}%: other shares show where material ranks, not an optimum for that share.")
                     };
@@ -834,7 +883,8 @@ impl Workbench {
             },
         );
         // (The slider follows the pointer and the field what is typed; the surface is made again
-        // when the one is let go or the other left, by Enter or by a click elsewhere.)
+        // when the one is let go or the other left, by Enter or by a click elsewhere. Esc in the
+        // field leaves it as it is.)
         if let Some(v) = self.analysis.as_mut().and_then(|e| e.shape.as_mut()) {
             v.percent = percent;
         }

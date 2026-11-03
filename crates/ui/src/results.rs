@@ -67,6 +67,10 @@ const BEING_WORKED_OUT: &str = "A study is being worked out: wait for it, or pre
 pub(crate) const STOPPING: &str = "Stopping...";
 /// What is said while the control port has a study being worked out.
 pub(crate) const PORT_RUN_GOES: &str = "A study is being worked out for the control port. Esc stops it.";
+/// What is said of that when it has been told to stop, until it has.
+pub(crate) const PORT_RUN_STOPS: &str = "A study is being worked out for the control port: stopping...";
+/// How far from the view's left the legend of a study's results reaches.
+pub(crate) const LEGEND_REACHES: f32 = 204.0;
 
 /// A study being worked out for the control port: `study.solve` or `study.optimize`, on the
 /// geometry thread as a run begun in the window is. (It is the port's to answer: all the window
@@ -83,6 +87,8 @@ pub(crate) struct Running {
     /// Which run it is: what comes back is taken only by the run that waits for it.
     pub run: u64,
     pub study: StudyId,
+    /// The revision of the part it is of: once that moves on, the run is for nothing.
+    pub revision: u64,
     /// True for Simulate; false for the mesh alone (Mesh View).
     pub solving: bool,
     pub cancel: Cancel,
@@ -218,7 +224,7 @@ impl Workbench {
         let (cancel, revision) = (Cancel::default(), self.session.revision());
         self.step_seq += 1;
         let run = self.step_seq;
-        let running = Running { run, study, solving, cancel: cancel.clone(), since: Instant::now() };
+        let running = Running { run, study, revision, solving, cancel: cancel.clone(), since: Instant::now() };
         let job = PartJob::Study { run, study, revision, solving };
         // (The answer is boxed as what `study_job_done` takes it for.)
         let work = move |s: &mut Session, k: &mut dyn tenon_kernel::Kernel| -> Box<dyn std::any::Any + Send> {
@@ -271,6 +277,13 @@ impl Workbench {
             return;
         };
         let name = self.document().study(study).map_or_else(|| "The study".to_owned(), |s| s.name.clone());
+        // (The part or the study changed while it went on: what it found is of what was.)
+        if revision != self.session.revision() {
+            self.set_status(format!(
+                "{name}: the part or the study changed while it was worked out, so what it found is out of date and was not kept."
+            ));
+            return;
+        }
         let outcome = if solving {
             let solved = result.downcast::<Result<Solved, String>>().map_or_else(|_| Err("internal: unexpected result".to_owned()), |b| *b);
             solved.and_then(|s| {
@@ -292,13 +305,6 @@ impl Workbench {
                 return;
             }
         };
-        // (The part or the study changed while it went on: what it found is of what was.)
-        if revision != self.session.revision() {
-            self.set_status(format!(
-                "{name}: the part or the study changed while it was worked out, so what it found is out of date and was not kept."
-            ));
-            return;
-        }
         let said = match &outcome.solved {
             Some(s) => {
                 let r = &s.results;
@@ -359,13 +365,16 @@ impl Workbench {
         Ok(())
     }
 
-    /// Whether something on the screen takes Esc before a study being worked out does: a menu, a
-    /// panel, a dialog. (A run that was stopped cannot be taken up again, and Esc meant for one of
-    /// these would stop it.)
+    /// Whether something on the screen takes Esc before a study being worked out does. (A run that
+    /// was stopped cannot be taken up again, and Esc meant for one of these would stop it.) Only
+    /// what does something with Esc is listed: the windows closed by their own buttons (About, the
+    /// part's properties, the options, the tables, the print check) take no Esc, and were they
+    /// listed, it would neither close them nor stop the run while they stayed open.
     pub(crate) fn esc_is_taken(&self) -> bool {
         let c = &self.chrome;
         self.panel.is_some()
-            || self.is_sketching()
+            || self.sketch_takes_esc()
+            || self.repair.is_some()
             || self.pick_plane
             || c.sheet.pick_a_side
             || c.file_menu.is_some()
@@ -373,23 +382,18 @@ impl Workbench {
             || c.dropdown.is_some()
             || c.radial.is_some()
             || c.save_prompt.is_some()
-            || c.crash.is_some()
-            || c.about
-            || c.mass
-            || c.options
-            || c.table
-            || c.library
-            || c.params
-            || c.print.open
-            || c.sheet.defaults.is_some()
             || self.recover_offer.is_some()
     }
 
-    /// The keys of a study being worked out: Esc stops it, when it is meant for that.
+    /// The keys of a study being worked out: Esc stops it, when it is meant for that. (One press:
+    /// Esc held down on a panel closes the panel, and what the system repeats of it is not meant
+    /// for the run.)
     pub(crate) fn study_keys(&mut self, ui: &Ui) {
         self.stop_a_run_gone_stale();
         let busy = self.port_run.is_some() || self.analysis.as_ref().is_some_and(|e| e.running.is_some() || e.shaping.is_some());
-        if busy && ui.input(|i| i.key_pressed(egui::Key::Escape)) && !self.esc_is_taken() && !self.keys_elsewhere {
+        let pressed =
+            ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, repeat: false, .. })));
+        if busy && pressed && !self.esc_is_taken() && !self.keys_elsewhere {
             self.stop_study();
         }
     }
@@ -551,7 +555,7 @@ impl Workbench {
         // colours are the other way up, and red is still the bad end).
         let title = if env.field.unit().is_empty() { env.field.title().to_owned() } else { format!("{} ({})", env.field.title(), env.field.unit()) };
         let bar = Rect::from_min_size(pos2(rect.left() + 18.0, rect.top() + 64.0), vec2(16.0, 220.0));
-        let back = Rect::from_min_max(bar.min - vec2(10.0, 30.0), pos2(bar.right() + 170.0, bar.bottom() + 58.0));
+        let back = Rect::from_min_max(bar.min - vec2(10.0, 30.0), pos2(rect.left() + LEGEND_REACHES, bar.bottom() + 58.0));
         painter.rect_filled(back, 4.0, t.panel.gamma_multiply(0.88));
         painter.text(back.min + vec2(10.0, 8.0), Align2::LEFT_TOP, title, theme::body(), t.text);
         const BANDS: usize = 10;

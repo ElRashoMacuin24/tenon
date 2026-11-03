@@ -1296,7 +1296,7 @@ fn a_shape_on_the_geometry_thread_says_where_it_is_and_stops_when_asked_or_left(
     assert!(matches!(v.shaped.optimized.stop, tenon_fea::topo::Stop::Stopped) && v.visible);
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
-    browser_row(&d, "Shape: 50% removed (stopped early)");
+    browser_row(&d, "Shape: 50% removed, early");
     assert!(shape_drawn(&d).is_some_and(|n| n > 50));
     // What there is to know of it is written over the view, where all of it can be read, and is
     // not run off the end of the status bar.
@@ -1413,15 +1413,6 @@ fn esc_meant_for_something_else_does_not_stop_a_run() {
     wb.exec("study.shape", json!({ "element_size": 5, "iterations": 300 })).unwrap();
     // With nothing open, it stops the run.
     assert!(esc_with(&mut d, &mut wb, &mut |_, _| {}));
-    // A dialog, which keeps the Esc it does not use.
-    for (name, set) in [
-        ("About", (|c| c.about = true) as fn(&mut crate::chrome::Chrome)),
-        ("Properties", |c| c.mass = true),
-        ("Application Options", |c| c.options = true),
-    ] {
-        assert!(!esc_with(&mut d, &mut wb, &mut |_, wb| set(&mut wb.chrome)), "{name}");
-        (wb.chrome.about, wb.chrome.mass, wb.chrome.options) = (false, false, false);
-    }
     // The File menu: closed by it.
     let stopped = esc_with(&mut d, &mut wb, &mut |_, wb| wb.chrome.file_menu = Some(egui::pos2(10.0, 30.0)));
     assert!(!stopped && wb.chrome.file_menu.is_none());
@@ -1452,6 +1443,10 @@ fn esc_meant_for_something_else_does_not_stop_a_run() {
         assert!(egui::Popup::is_any_open(&d.ctx), "a menu is open");
     });
     assert!(!stopped);
+    // A window that takes no Esc, closed by its own button: it leaves the Esc to the run.
+    let stopped = esc_with(&mut d, &mut wb, &mut |_, wb| wb.run_ui("analysis.material").unwrap());
+    assert!(stopped && wb.chrome.mass, "Esc neither closes it nor is anything else's");
+    wb.chrome.mass = false;
     // ui.cancel, as the radial menu has it, goes the same way.
     wb.run_ui("analysis.optimize.now").unwrap();
     to_round(&mut d, &mut wb, 1);
@@ -1464,6 +1459,494 @@ fn esc_meant_for_something_else_does_not_stop_a_run() {
     wb.run_ui("ui.cancel").unwrap();
     assert!(cancel.load(std::sync::atomic::Ordering::Relaxed));
     settle(&mut d, &mut wb);
+}
+
+/// A run for the control port (nothing is working it out: it goes on until it is told otherwise),
+/// and how to tell it was stopped.
+fn fake_port_run(wb: &mut Workbench) -> tenon_fea::Cancel {
+    let cancel = tenon_fea::Cancel::default();
+    wb.port_run = Some(crate::results::PortRun { request: 9_999_999, cancel: cancel.clone() });
+    cancel
+}
+
+/// A few frames, for what was opened or left to be known.
+fn frames(d: &mut Driver, wb: &mut Workbench) {
+    for _ in 0..4 {
+        d.frame(wb, vec![]);
+    }
+}
+
+#[test]
+fn esc_goes_to_what_has_a_use_for_it_and_otherwise_to_the_run() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (mut wb, mut d) = bar();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    frames(&mut d, &mut wb);
+    let cancel = fake_port_run(&mut wb);
+    type Set = fn(&mut Workbench);
+    type Open = fn(&Workbench) -> bool;
+    // These have no use for Esc: they stay as they are, and it stops the run at the first press. It
+    // used to do neither, however many times it was pressed, with the view saying Esc stops it.
+    let leave: [(&str, Set, Open); 9] = [
+        ("about", |w| w.chrome.about = true, |w| w.chrome.about),
+        ("the mass window", |w| w.run_ui("analysis.material").unwrap(), |w| w.chrome.mass),
+        ("options", |w| w.chrome.options = true, |w| w.chrome.options),
+        ("design table", |w| w.chrome.table = true, |w| w.chrome.table),
+        ("standard parts", |w| w.chrome.library = true, |w| w.chrome.library),
+        ("parameters", |w| w.chrome.params = true, |w| w.chrome.params),
+        ("3D print check", |w| w.chrome.print.open = true, |w| w.chrome.print.open),
+        ("the crash notice", |w| w.chrome.crash = Some(std::path::PathBuf::from("x.txt")), |w| w.chrome.crash.is_some()),
+        ("sheet metal defaults", |w| w.open_sheet_defaults(), |w| w.chrome.sheet.defaults.is_some()),
+    ];
+    for (name, set, open) in leave {
+        cancel.store(false, Relaxed);
+        set(&mut wb);
+        frames(&mut d, &mut wb);
+        assert!(open(&wb), "{name}");
+        d.tap(&mut wb, egui::Key::Escape);
+        assert!(cancel.load(Relaxed) && open(&wb), "{name}: stopped {}", cancel.load(Relaxed));
+        assert_eq!(wb.status(), "Stopping...", "{name}");
+        let c = &mut wb.chrome;
+        (c.about, c.mass, c.options, c.table, c.library, c.params, c.print.open) = (false, false, false, false, false, false, false);
+        (c.crash, c.sheet.defaults) = (None, None);
+        frames(&mut d, &mut wb);
+    }
+    // These do: it goes to them, and the next is the run's.
+    let takes: [(&str, Set, Open); 4] = [
+        ("the file menu", |w| w.chrome.file_menu = Some(egui::pos2(10.0, 40.0)), |w| w.chrome.file_menu.is_some()),
+        ("a panel", |w| w.run_ui("analysis.keep_faces").unwrap(), |w| w.panel.is_some()),
+        ("picking a plane", |w| w.pick_plane = true, |w| w.pick_plane),
+        ("picking the A-side", |w| w.chrome.sheet.pick_a_side = true, |w| w.chrome.sheet.pick_a_side),
+    ];
+    for (name, set, open) in takes {
+        cancel.store(false, Relaxed);
+        set(&mut wb);
+        frames(&mut d, &mut wb);
+        assert!(open(&wb), "{name}");
+        d.tap(&mut wb, egui::Key::Escape);
+        assert!(!cancel.load(Relaxed) && !open(&wb), "{name}: open {}, stopped {}", open(&wb), cancel.load(Relaxed));
+        frames(&mut d, &mut wb);
+        d.tap(&mut wb, egui::Key::Escape);
+        assert!(cancel.load(Relaxed), "{name}");
+        frames(&mut d, &mut wb);
+    }
+}
+
+#[test]
+fn esc_held_down_on_a_panel_does_not_go_on_to_the_run() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (mut wb, mut d) = bar();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    frames(&mut d, &mut wb);
+    let cancel = fake_port_run(&mut wb);
+    wb.run_ui("analysis.keep_faces").unwrap();
+    frames(&mut d, &mut wb);
+    let esc = |pressed: bool, repeat: bool| egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed,
+        repeat,
+        modifiers: egui::Modifiers::default(),
+    };
+    d.frame(&mut wb, vec![esc(true, false)]);
+    assert!(wb.panel.is_none() && !cancel.load(Relaxed));
+    frames(&mut d, &mut wb);
+    // What the system repeats while it is held is not a press.
+    d.frame(&mut wb, vec![esc(true, true)]);
+    assert!(!cancel.load(Relaxed), "a key repeat stopped the run");
+    // Let go and pressed again, it is.
+    d.frame(&mut wb, vec![esc(false, false)]);
+    assert!(!cancel.load(Relaxed), "letting go is not a press");
+    d.frame(&mut wb, vec![esc(true, false)]);
+    assert!(cancel.load(Relaxed));
+}
+
+#[test]
+fn a_sketch_takes_esc_while_it_has_a_use_for_it_and_no_longer() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (mut wb, mut d) = bar();
+    frames(&mut d, &mut wb);
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    frames(&mut d, &mut wb);
+    let cancel = fake_port_run(&mut wb);
+    // With a tool running, Esc ends the tool.
+    wb.run_ui("sketch.line").unwrap();
+    frames(&mut d, &mut wb);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(!cancel.load(Relaxed) && wb.active_tool_id().is_none());
+    frames(&mut d, &mut wb);
+    // With none, it has no use for it: it used to stop nothing, with `Esc stops it` on the screen.
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(cancel.load(Relaxed) && wb.is_sketching());
+}
+
+#[test]
+fn define_a_side_is_given_up_by_esc_and_is_not_taken_into_the_environment() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut wb = Workbench::headless(Box::new(tenon_kernel_occt::OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.run_ui("file.new_sheet_metal").unwrap();
+    let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].as_u64().unwrap();
+    wb.exec("sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 })).unwrap();
+    wb.exec("sheet.face", json!({ "sketch": sk })).unwrap();
+    d.settle(&mut wb);
+    frames(&mut d, &mut wb);
+    // The status says Esc gives it up, and it does.
+    wb.run_ui("sheet.a_side").unwrap();
+    assert!(wb.status().contains("Esc cancels"), "{}", wb.status());
+    frames(&mut d, &mut wb);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(!wb.chrome.sheet.pick_a_side && wb.status() == "Ready", "{}", wb.status());
+    // Not given up: going into the environment does. A click there would write into the part, and
+    // while it stood no Esc could stop a run.
+    wb.run_ui("sheet.a_side").unwrap();
+    wb.run_ui("analysis.begin").unwrap();
+    assert!(!wb.chrome.sheet.pick_a_side);
+    wb.run_ui("study.new").unwrap();
+    frames(&mut d, &mut wb);
+    let cancel = fake_port_run(&mut wb);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(cancel.load(Relaxed));
+}
+
+#[test]
+fn repair_has_its_esc_and_the_run_goes_on() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut wb = Workbench::headless(Box::new(tenon_kernel_occt::OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let crate::workbench::Mode::Sketch(s) = &wb.mode else { panic!("not sketching") };
+    let sk = s.feature;
+    let rect = wb.exec("sketch.rectangle", json!({ "sketch": sk.0, "x1": 0, "y1": 0, "x2": 40, "y2": 30 })).unwrap();
+    wb.finish_sketch();
+    let extruded = wb.exec("model.extrude", json!({ "sketch": sk.0, "distance": 10 })).unwrap()["feature"].clone();
+    let right = rect["lines"][1].clone();
+    let edge = wb
+        .exec(
+            "model.edge_ref",
+            json!({ "faces": [{ "type": "cap", "feature": extruded, "end": "end" }, { "type": "side", "feature": extruded, "curve": right }] }),
+        )
+        .unwrap();
+    wb.exec("model.fillet", json!({ "edges": [edge], "radius": 2 })).unwrap();
+    d.settle(&mut wb);
+    // The line the rounded edge came from, drawn again: the fillet's edge is lost.
+    let info = wb.exec("sketch.info", json!({ "sketch": sk.0 })).unwrap();
+    let line = info["entities"].as_array().unwrap().iter().find(|e| e["id"] == right).unwrap().clone();
+    wb.exec("sketch.delete", json!({ "sketch": sk.0, "entities": [right] })).unwrap();
+    wb.exec("sketch.line", json!({ "sketch": sk.0, "start": line["start"], "end": line["end"] })).unwrap();
+    d.settle(&mut wb);
+    frames(&mut d, &mut wb);
+    let at = crate::tests::pressable(&d, "tn_repair");
+    d.click(&mut wb, at);
+    assert!(wb.repair.is_some(), "{}", wb.status());
+    let cancel = fake_port_run(&mut wb);
+    frames(&mut d, &mut wb);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(wb.repair.is_none() && !cancel.load(Relaxed), "one press ended the repair and stopped the run: {}", wb.status());
+    frames(&mut d, &mut wb);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(cancel.load(Relaxed));
+}
+
+#[test]
+fn a_change_a_shape_does_not_hang_on_leaves_it_and_its_run_alone() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (mut wb, mut d) = bar();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    frames(&mut d, &mut wb);
+    let id = study(&wb).id;
+    let going = |wb: &mut Workbench| {
+        let cancel = tenon_fea::Cancel::default();
+        let shaping = crate::shape::Shaping {
+            run: 987_654,
+            study: id,
+            basis: wb.shape_basis(id),
+            cancel: cancel.clone(),
+            since: std::time::Instant::now(),
+            progress: Default::default(),
+        };
+        wb.analysis.as_mut().unwrap().shaping = Some(shaping);
+        wb.set_status("A run");
+        cancel
+    };
+    // The names of things, and another study: an hour's run is not thrown away for those.
+    let cancel = going(&mut wb);
+    let basis = wb.shape_basis(id);
+    wb.exec("study.rename", json!({ "study": id.0, "name": "Another name" })).unwrap();
+    wb.exec("document.rename", json!({ "name": "Another part" })).unwrap();
+    wb.exec("study.new", json!({})).unwrap();
+    frames(&mut d, &mut wb);
+    assert!(!cancel.load(Relaxed), "{}", wb.status());
+    assert_eq!(wb.status(), "A run");
+    assert_eq!(wb.shape_basis(id), basis);
+    // What it is of: its study, and the part. The other study's own settings are not.
+    wb.exec("study.mesh_size", json!({ "study": id.0, "size": 7 })).unwrap();
+    frames(&mut d, &mut wb);
+    assert!(cancel.load(Relaxed) && wb.status().contains("out of date") && wb.status().contains("being stopped"), "{}", wb.status());
+    let cancel = going(&mut wb);
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    frames(&mut d, &mut wb);
+    assert!(cancel.load(Relaxed), "{}", wb.status());
+    // What came back of a run stopped so says it is out of date, and is not kept.
+    wb.analysis.as_mut().unwrap().shaping = None;
+    let cancel = going(&mut wb);
+    let old = wb.shape_basis(id);
+    wb.exec("model.box", json!({ "plane": "xy", "width": 10, "depth": 10, "height": 30, "operation": "join" })).unwrap();
+    frames(&mut d, &mut wb);
+    assert!(cancel.load(Relaxed));
+    wb.shape_job_done(987_654, id, old, Box::new(Err::<tenon_io::shape::Shaped, String>(tenon_fea::tools::STOPPED.into())));
+    assert!(wb.status().contains("out of date and was not kept"), "{}", wb.status());
+}
+
+#[test]
+fn simulate_of_what_has_changed_stops_there_and_then_as_a_shape_does() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (mut wb, mut d) = bar();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    frames(&mut d, &mut wb);
+    let (id, cancel, revision) = (study(&wb).id, tenon_fea::Cancel::default(), wb.session.revision());
+    let since = std::time::Instant::now();
+    wb.analysis.as_mut().unwrap().running =
+        Some(crate::results::Running { run: 5, study: id, revision, solving: true, cancel: cancel.clone(), since });
+    frames(&mut d, &mut wb);
+    assert!(!cancel.load(Relaxed));
+    wb.exec("study.mesh_size", json!({ "study": id.0, "size": 7 })).unwrap();
+    frames(&mut d, &mut wb);
+    assert!(cancel.load(Relaxed) && wb.status().contains("being stopped"), "{}", wb.status());
+    // What comes back says why, and not that it was asked to stop.
+    wb.study_job_done(5, id, revision, true, Box::new(Err::<tenon_io::stress::Solved, String>(tenon_fea::tools::STOPPED.into())));
+    assert!(wb.status().contains("out of date and was not kept"), "{}", wb.status());
+}
+
+#[test]
+fn the_light_theme_writes_over_the_view_with_a_light_shadow() {
+    use crate::theme::{ThemeName, Tokens};
+    let light = Tokens::of(ThemeName::Light);
+    let dark = Tokens::of(ThemeName::Dark);
+    // (How bright it is, unpremultiplied: under dark words a dark shadow only smears them.)
+    let bright = |c: egui::Color32| egui::Rgba::from(c).intensity() / egui::Rgba::from(c).a().max(1e-3);
+    assert!(bright(light.viewport_text_shadow) > bright(light.viewport_text), "{:?}", light.viewport_text_shadow);
+    assert!(bright(dark.viewport_text_shadow) < bright(dark.viewport_text), "{:?}", dark.viewport_text_shadow);
+}
+
+#[test]
+fn a_port_run_says_it_is_stopping_once_it_has_been_told() {
+    let (mut wb, mut d) = bar();
+    frames(&mut d, &mut wb);
+    let _cancel = fake_port_run(&mut wb);
+    frames(&mut d, &mut wb);
+    assert!(d.texts().iter().any(|t| t == crate::results::PORT_RUN_GOES), "{:?}", d.texts());
+    d.tap(&mut wb, egui::Key::Escape);
+    frames(&mut d, &mut wb);
+    assert!(!d.texts().iter().any(|t| t == crate::results::PORT_RUN_GOES), "{:?}", d.texts());
+    assert!(d.texts().iter().any(|t| t == crate::results::PORT_RUN_STOPS), "{:?}", d.texts());
+}
+
+#[test]
+fn what_is_said_of_a_run_is_beside_the_legend_of_a_studys_results() {
+    if !programs("the words of a run beside the legend") {
+        return;
+    }
+    let (mut wb, mut d) = bar();
+    let find =
+        |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
+    wb.exec("study.mesh_size", json!({ "size": 5 })).unwrap();
+    wb.run_ui("analysis.simulate").unwrap();
+    frames(&mut d, &mut wb);
+    let title = d.text_rect("Von Mises Stress (MPa)").unwrap_or_else(|| panic!("no legend: {:?}", d.texts()));
+    let _cancel = fake_port_run(&mut wb);
+    frames(&mut d, &mut wb);
+    let words = d.text_rect(crate::results::PORT_RUN_GOES).unwrap_or_else(|| panic!("{:?}", d.texts()));
+    assert!(!title.intersects(words), "{title:?} and {words:?}");
+    assert!(words.left() >= title.right(), "{title:?} and {words:?}");
+    // With no results, it is where it always was.
+    wb.analysis.as_mut().unwrap().outcome = None;
+    frames(&mut d, &mut wb);
+    let words = d.text_rect(crate::results::PORT_RUN_GOES).unwrap();
+    assert!(words.left() < title.right());
+}
+
+#[test]
+fn a_shape_says_of_the_share_on_the_slider_what_it_says_of_the_one_worked_out() {
+    if !programs("what is said of the share on the slider") {
+        return;
+    }
+    let (mut wb, mut d) = bar();
+    let find =
+        |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
+    wb.exec("study.shape", json!({ "remove": 50, "element_size": 5, "iterations": 1 })).unwrap();
+    wb.run_ui("analysis.optimize.now").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(wb.shape_view().is_some(), "{}", wb.status());
+    let (mut joined, mut not_joined, mut pieces, mut no_pieces) = (false, false, false, false);
+    for percent in [5.0, 10.0, 20.0, 30.0, 50.0, 70.0, 90.0, 100.0] {
+        wb.set_shape_share(percent);
+        frames(&mut d, &mut wb);
+        let v = wb.shape_view().unwrap();
+        let said = v.said();
+        let told = |words: &str| said.iter().filter(|w| w.contains(words)).count();
+        // Of the surface drawn, not the run's; and said once, not over the run's own copy.
+        assert_eq!(told("does not join every load"), usize::from(v.shown.load_not_joined), "{percent}: {said:?}");
+        assert_eq!(told("left out."), usize::from(v.shown.islands_dropped > 0), "{percent}: {said:?}");
+        let written = |words: &str| d.texts().iter().any(|t| t.contains(words));
+        assert_eq!(written("does not join every load"), v.shown.load_not_joined, "{percent}: {:?}", d.texts());
+        // How it ended stays whatever the share.
+        assert_eq!(told("It stopped at the most rounds"), 1, "{percent}: {said:?}");
+        (joined, not_joined) = (joined || !v.shown.load_not_joined, not_joined || v.shown.load_not_joined);
+        (pieces, no_pieces) = (pieces || v.shown.islands_dropped > 0, no_pieces || v.shown.islands_dropped == 0);
+        // The Shape row goes with it.
+        let row = shape_row(&d);
+        assert!(row.starts_with(&format!("Shape: {:.0}%", 100.0 * (1.0 - v.shown.share))), "{percent}: {row}");
+    }
+    assert!(joined && not_joined, "the slider ought to cross from one to the other here");
+    assert!(no_pieces, "{pieces}");
+    // Export Shape says so of the share it writes.
+    let to = std::env::temp_dir().join(format!("tenon-shape-unjoined-{}.stl", std::process::id()));
+    let chosen = to.clone();
+    wb.services.pick_save = Some(Box::new(move |_: &str, _: &str| Some(chosen.clone())));
+    wb.analysis.as_mut().unwrap().shape.as_mut().unwrap().shown.load_not_joined = true;
+    wb.run_ui("analysis.export_shape").unwrap();
+    assert!(to.is_file());
+    assert!(wb.status_error && wb.status().contains("does not join every load to a support"), "{}", wb.status());
+    wb.analysis.as_mut().unwrap().shape.as_mut().unwrap().shown.load_not_joined = false;
+    wb.run_ui("analysis.export_shape").unwrap();
+    assert!(!wb.status_error && wb.status().starts_with("Exported the shape to"), "{}", wb.status());
+    std::fs::remove_file(&to).ok();
+}
+
+#[test]
+fn the_words_over_the_view_are_on_top_of_the_shape() {
+    if !programs("the words over the shape") {
+        return;
+    }
+    let (mut wb, mut d) = bar();
+    let find =
+        |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
+    wb.exec("study.shape", json!({ "remove": 50, "element_size": 5, "iterations": 1 })).unwrap();
+    wb.run_ui("analysis.optimize.now").unwrap();
+    frames(&mut d, &mut wb);
+    let said = wb.shape_view().unwrap_or_else(|| panic!("{}", wb.status())).said();
+    let words = said.iter().find(|w| w.contains("most rounds")).unwrap_or_else(|| panic!("{said:?}"));
+    let (written, mesh) = d.painted_at(words, 300);
+    let (written, mesh) = (written.unwrap_or_else(|| panic!("{:?}", d.texts())), mesh.expect("the shape's mesh"));
+    assert!(written > mesh, "written at {written}, under the shape at {mesh}");
+    // And so is what is said of a run going on, over a shape from before.
+    let _cancel = fake_port_run(&mut wb);
+    frames(&mut d, &mut wb);
+    let (written, mesh) = d.painted_at(crate::results::PORT_RUN_GOES, 300);
+    assert!(written.unwrap() > mesh.unwrap());
+}
+
+#[test]
+fn the_slider_says_why_a_share_is_not_reached_and_esc_in_its_field_gives_up_what_was_typed() {
+    if !programs("the slider of a run stopped early") {
+        return;
+    }
+    let (mut wb, mut d) = bar();
+    let find =
+        |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
+    wb.exec("study.shape", json!({ "remove": 90, "element_size": 5, "iterations": 4 })).unwrap();
+    wb.run_ui("analysis.optimize.now").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(wb.shape_view().is_some(), "{}", wb.status());
+    // Stopped early, what has left the lowest density is all a surface can come to.
+    wb.set_shape_share(60.0);
+    frames(&mut d, &mut wb);
+    let share = wb.shape_view().unwrap().shown.share;
+    assert!(share < 0.59, "{share}: this run's rest ought to be at the lowest density still");
+    assert!(
+        d.texts().iter().any(|t| t.contains("no more material ranks above this") && t.contains(&format!("60% comes to {:.0}%", 100.0 * share))),
+        "{:?}",
+        d.texts()
+    );
+    // Typed, and Esc: as it was, and the surface is not made again.
+    wb.set_shape_share(30.0);
+    frames(&mut d, &mut wb);
+    let before = wb.shape_view().unwrap().shown.share;
+    type_into(&mut d, &mut wb, "tn_shape_keep", "70");
+    frames(&mut d, &mut wb);
+    assert_eq!(wb.shape_view().unwrap().percent, 70.0);
+    d.tap(&mut wb, egui::Key::Escape);
+    frames(&mut d, &mut wb);
+    let v = wb.shape_view().unwrap();
+    assert!((v.percent, v.shown_percent) == (30.0, 30.0) && v.shown.share == before, "{} {} {}", v.percent, v.shown_percent, v.shown.share);
+}
+
+#[test]
+fn what_matters_in_the_shape_and_symmetry_rows_fits_the_browser_as_it_opens() {
+    if !programs("the rows of the browser") {
+        return;
+    }
+    let (mut wb, mut d) = bar();
+    let find =
+        |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
+    // A plane that cannot be one, as a file may hold, among three.
+    wb.exec("study.shape", json!({ "remove": 90, "element_size": 5, "iterations": 1, "symmetry": ["xy", "yz"] })).unwrap();
+    let cut = |d: &Driver| -> Vec<String> { d.ctx.data(|x| x.get_temp(egui::Id::new("tn_browser_rows_cut"))).unwrap_or_default() };
+    let rows = |d: &Driver| -> Vec<String> {
+        d.ctx
+            .data(|x| x.get_temp::<Vec<(String, egui::Rect)>>(egui::Id::new("tn_browser_rows")))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| r.0)
+            .collect()
+    };
+    let mut v = serde_json::to_value(wb.document()).unwrap();
+    v["studies"][0]["optimize"]["symmetry"] = json!([{ "origin": "XY" }, { "work": 999 }, { "origin": "YZ" }]);
+    let doc: tenon_model::Document = serde_json::from_value(v).unwrap();
+    wb.session.replace_document(doc, None);
+    wb.run_ui("analysis.begin").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(rows(&d).iter().any(|r| r == "Symmetry: 1 of 3 lost"), "{:?}", rows(&d));
+    assert!(!cut(&d).iter().any(|r| r.starts_with("Symmetry:")), "{:?}", cut(&d));
+    wb.exec("study.shape", json!({ "symmetry": [] })).unwrap();
+    // How a shape's row can read, at the widest figures.
+    wb.run_ui("analysis.optimize.now").unwrap();
+    frames(&mut d, &mut wb);
+    assert!(wb.shape_view().is_some(), "{}", wb.status());
+    for (percent, visible) in [(5.0, true), (5.0, false), (100.0, true), (100.0, false)] {
+        wb.set_shape_share(percent);
+        wb.analysis.as_mut().unwrap().shape.as_mut().unwrap().visible = visible;
+        frames(&mut d, &mut wb);
+        let row = shape_row(&d);
+        assert!(row.contains("early"), "{row}");
+        assert!(!cut(&d).iter().any(|r| r.starts_with("Shape:")), "{row}: {:?}", cut(&d));
+    }
+    // The tip has the rest in full.
 }
 
 #[test]
@@ -1483,7 +1966,7 @@ fn a_shape_says_whose_it_is_when_another_study_is_being_worked_on() {
     // (Another study is made here, and the run's result given to it by hand: a study made is an
     // edit of the part's file, which a run going on would stop for.)
     wb.exec("study.copy", json!({ "study": id.0 })).unwrap();
-    let revision_now = wb.session.revision();
+    let basis_now = wb.shape_basis(id);
     let made = wb.document().studies().iter().find(|s| s.id != id).unwrap().id;
     wb.analysis.as_mut().unwrap().study = Some(made);
     wb.step_seq += 1;
@@ -1491,12 +1974,12 @@ fn a_shape_says_whose_it_is_when_another_study_is_being_worked_on() {
     wb.analysis.as_mut().unwrap().shaping = Some(crate::shape::Shaping {
         run,
         study: id,
-        revision: revision_now,
+        basis: basis_now,
         cancel: tenon_fea::Cancel::default(),
         since: std::time::Instant::now(),
         progress: std::sync::Arc::new(std::sync::Mutex::new(tenon_fea::topo::Report::default())),
     });
-    wb.shape_job_done(run, id, revision_now, Box::new(Ok::<_, String>((*shaped).clone())));
+    wb.shape_job_done(run, id, basis_now, Box::new(Ok::<_, String>((*shaped).clone())));
     assert!(wb.status().contains("Work on Study1 to see it and export it.") && !wb.status().contains("Export Shape keeps it"), "{}", wb.status());
     assert_eq!(wb.run_ui("analysis.export_shape").unwrap_err(), "There is no shape to export: Optimize Shape first.");
     wb.analysis.as_mut().unwrap().study = Some(id);
@@ -1510,16 +1993,16 @@ fn a_shape_says_whose_it_is_when_another_study_is_being_worked_on() {
     wb.analysis.as_mut().unwrap().shaping = Some(crate::shape::Shaping {
         run,
         study: id,
-        revision: revision_now,
+        basis: basis_now,
         cancel: tenon_fea::Cancel::default(),
         since: std::time::Instant::now(),
         progress: std::sync::Arc::new(std::sync::Mutex::new(tenon_fea::topo::Report::default())),
     });
-    wb.shape_job_done(run, id, revision_now, Box::new(Ok::<_, String>(off)));
+    wb.shape_job_done(run, id, basis_now, Box::new(Ok::<_, String>(off)));
     assert!(wb.status().contains("(23% removed, 50% asked)") && wb.status().contains("Export Shape keeps it"), "{}", wb.status());
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
-    assert_eq!(shape_row(&d), "Shape: 23% removed (stopped early)");
+    assert_eq!(shape_row(&d), "Shape: 23% removed, early");
     assert!(d.texts().iter().any(|t| t == "Optimized for 50%: it came to 77%, stopped early or with pieces left out."), "{:?}", d.texts());
     assert!(!d.texts().iter().any(|t| t == "The share it was optimized for."), "{:?}", d.texts());
 }
@@ -1717,7 +2200,7 @@ fn faces_are_kept_and_planes_of_symmetry_chosen_by_clicks() {
     wb.exec("feature.delete", json!({ "feature": plane.id.0 })).unwrap();
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
-    let lost = "Symmetry: 2 planes (1 of 2 planes lost)";
+    let lost = "Symmetry: 1 of 2 lost";
     assert_eq!(d.text_color(lost), Some(red));
     let row = browser_row(&d, lost).center();
     double_click(&mut d, &mut wb, row);
@@ -1746,7 +2229,7 @@ fn faces_are_kept_and_planes_of_symmetry_chosen_by_clicks() {
         .unwrap();
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
-    let lost = "Symmetry: 2 planes (1 of 2 planes lost)";
+    let lost = "Symmetry: 1 of 2 lost";
     assert_eq!(d.text_color(lost), Some(red));
     wb.run_ui("analysis.symmetry").unwrap();
     d.frame(&mut wb, vec![]);
@@ -1897,9 +2380,10 @@ fn every_way_out_of_the_environment_stops_what_is_being_worked_out() {
         wb.run_ui("study.new").unwrap();
         let (solving, shaping) = (tenon_fea::Cancel::default(), tenon_fea::Cancel::default());
         let (id, since) = (study(&wb).id, std::time::Instant::now());
+        let (revision, basis) = (wb.session.revision(), wb.shape_basis(id));
         let env = wb.analysis.as_mut().unwrap();
-        env.running = Some(crate::results::Running { run: 1, study: id, solving: true, cancel: solving.clone(), since });
-        env.shaping = Some(crate::shape::Shaping { run: 2, study: id, revision: 0, cancel: shaping.clone(), since, progress: Default::default() });
+        env.running = Some(crate::results::Running { run: 1, study: id, revision, solving: true, cancel: solving.clone(), since });
+        env.shaping = Some(crate::shape::Shaping { run: 2, study: id, basis, cancel: shaping.clone(), since, progress: Default::default() });
         match way {
             "file.open" => wb.open(&file).unwrap(),
             "shutdown" => wb.shutdown(),
@@ -1923,20 +2407,22 @@ fn what_comes_back_is_taken_only_by_the_run_that_waits_for_it() {
     wb.run_ui("analysis.begin").unwrap();
     wb.run_ui("study.new").unwrap();
     let (id, since, revision) = (study(&wb).id, std::time::Instant::now(), wb.session.revision());
+    let basis = wb.shape_basis(id);
     let a_shape = || -> Came { Box::new(Err::<tenon_io::shape::Shaped, String>("it failed".into())) };
     let a_study = || -> Came { Box::new(Err::<tenon_io::stress::Solved, String>("it failed".into())) };
 
     // A shape: another run's comes back to nothing, its own is taken.
     wb.analysis.as_mut().unwrap().shaping =
-        Some(crate::shape::Shaping { run: 7, study: id, revision, cancel: Default::default(), since, progress: Default::default() });
+        Some(crate::shape::Shaping { run: 7, study: id, basis, cancel: Default::default(), since, progress: Default::default() });
     wb.set_status("as it was");
-    wb.shape_job_done(6, id, revision, a_shape());
+    wb.shape_job_done(6, id, basis, a_shape());
     assert!(wb.shaping().is_some() && wb.status() == "as it was", "{}", wb.status());
-    wb.shape_job_done(7, id, revision, a_shape());
+    wb.shape_job_done(7, id, basis, a_shape());
     assert!(wb.shaping().is_none() && wb.status() == "it failed", "{}", wb.status());
 
     // Simulate: the same.
-    wb.analysis.as_mut().unwrap().running = Some(crate::results::Running { run: 9, study: id, solving: true, cancel: Default::default(), since });
+    wb.analysis.as_mut().unwrap().running =
+        Some(crate::results::Running { run: 9, study: id, revision, solving: true, cancel: Default::default(), since });
     wb.set_status("as it was");
     wb.study_job_done(8, id, revision, true, a_study());
     assert!(wb.analysis.as_ref().unwrap().running.is_some() && wb.status() == "as it was", "{}", wb.status());
@@ -1945,10 +2431,10 @@ fn what_comes_back_is_taken_only_by_the_run_that_waits_for_it() {
 
     // With no run waiting, or no environment, nothing is said.
     wb.set_status("as it was");
-    wb.shape_job_done(7, id, revision, a_shape());
+    wb.shape_job_done(7, id, basis, a_shape());
     wb.study_job_done(9, id, revision, true, a_study());
     wb.analysis = None;
-    wb.shape_job_done(7, id, revision, a_shape());
+    wb.shape_job_done(7, id, basis, a_shape());
     wb.study_job_done(9, id, revision, true, a_study());
     assert!(wb.status() == "as it was" && !wb.status_error, "{}", wb.status());
 }
@@ -1973,8 +2459,8 @@ fn a_shape_gives_way_to_what_is_asked_for_and_its_row_brings_it_back() {
     wb.run_ui("analysis.optimize.now").unwrap();
     frames(&mut d, &mut wb);
     assert!(wb.shape_shown() && shape_drawn(&d).is_some(), "{}", wb.status());
-    let shown = "Shape: 50% removed (stopped early)";
-    let hidden = "Shape: 50% removed (stopped early) (hidden)";
+    let shown = "Shape: 50% removed, early";
+    let hidden = "Shape: 50%, early, hidden";
 
     // Simulate: its results are drawn, and the shape waits on its row.
     wb.run_ui("analysis.simulate").unwrap();
@@ -2081,9 +2567,9 @@ fn esc_and_finish_analysis_stop_a_shape_being_worked_out() {
         last: Some(tenon_fea::topo::Iteration { number: 12, seconds: 1.1, ..Default::default() }),
         most: 100,
     }));
-    let revision = wb.session.revision();
+    let id = study(&wb).id;
     let shaping =
-        crate::shape::Shaping { run: 0, study: study(&wb).id, revision, cancel: cancel.clone(), since: std::time::Instant::now(), progress };
+        crate::shape::Shaping { run: 0, study: id, basis: wb.shape_basis(id), cancel: cancel.clone(), since: std::time::Instant::now(), progress };
     wb.analysis.as_mut().unwrap().shaping = Some(shaping.clone());
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
@@ -2133,7 +2619,7 @@ fn a_shape_is_worked_out_shown_on_a_slider_and_exported() {
     assert!(wb.shape_shown() && !wb.results_shown(), "the shape is drawn, the stress colours are not");
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
-    browser_row(&d, "Shape: 60% removed (stopped early)");
+    browser_row(&d, "Shape: 60% removed, early");
     let first = shape_drawn(&d).expect("the shape is drawn");
     assert!(first > 50, "{first} triangles");
     // Another share on the slider: another surface, and a note that it is not an optimum.
@@ -2167,12 +2653,13 @@ fn a_shape_is_worked_out_shown_on_a_slider_and_exported() {
     let data = std::fs::read(&to).unwrap_or_else(|e| panic!("{e}: {}", wb.status()));
     assert_eq!(tenon_io::stl::binary_triangle_count(&data).map(|n| n as usize), Some(wb.shape_view().unwrap().shown.skin.triangles.len()));
     std::fs::remove_file(&to).ok();
-    // Its row clicked: hidden, and the part is drawn as it was.
-    let row = browser_row(&d, "Shape: 60% removed (stopped early)").center();
+    // Its row clicked: hidden, and the part is drawn as it was. (The row is of the share shown.)
+    let removed = 100.0 * (1.0 - wb.shape_view().unwrap().shown.share);
+    let row = browser_row(&d, &format!("Shape: {removed:.0}% removed, early")).center();
     d.click(&mut wb, row);
     d.frame(&mut wb, vec![]);
     assert!(!wb.shape_shown() && shape_drawn(&d).is_none());
-    browser_row(&d, "Shape: 60% removed (stopped early) (hidden)");
+    browser_row(&d, &format!("Shape: {removed:.0}%, early, hidden"));
     // The study changed: the shape is out of date.
     wb.exec("study.set", json!({ "item": 2, "newtons": 150 })).unwrap();
     d.frame(&mut wb, vec![]);

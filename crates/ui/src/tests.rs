@@ -222,6 +222,35 @@ impl Driver {
         }
         self.shapes.iter().find_map(|c| walk(&c.shape, text))
     }
+    /// Where on the screen the last frame wrote `text`.
+    pub(crate) fn text_rect(&self, text: &str) -> Option<Rect> {
+        fn walk(s: &egui::Shape, text: &str) -> Option<Rect> {
+            match s {
+                egui::Shape::Text(t) if t.galley.text() == text => Some(t.visual_bounding_rect()),
+                egui::Shape::Vec(v) => v.iter().find_map(|x| walk(x, text)),
+                _ => None,
+            }
+        }
+        self.shapes.iter().find_map(|c| walk(&c.shape, text))
+    }
+    /// How far along what the last frame painted it first wrote `text`, and last painted a mesh of
+    /// more than `vertices` vertices: what is painted later is on top.
+    pub(crate) fn painted_at(&self, text: &str, vertices: usize) -> (Option<usize>, Option<usize>) {
+        fn walk(s: &egui::Shape, text: &str, vertices: usize, at: &mut usize, out: &mut (Option<usize>, Option<usize>)) {
+            match s {
+                egui::Shape::Vec(v) => v.iter().for_each(|x| walk(x, text, vertices, at, out)),
+                egui::Shape::Text(t) if t.galley.text() == text && out.0.is_none() => out.0 = Some(*at),
+                egui::Shape::Mesh(m) if m.vertices.len() > vertices => out.1 = Some(*at),
+                _ => {}
+            }
+            *at += 1;
+        }
+        let (mut at, mut out) = (0, (None, None));
+        for c in &self.shapes {
+            walk(&c.shape, text, vertices, &mut at, &mut out);
+        }
+        out
+    }
     /// The colour the last frame wrote `text` in.
     pub(crate) fn text_color(&self, text: &str) -> Option<egui::Color32> {
         fn walk(s: &egui::Shape, text: &str) -> Option<egui::Color32> {

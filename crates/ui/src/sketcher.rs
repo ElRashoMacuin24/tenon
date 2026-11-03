@@ -1554,6 +1554,18 @@ impl Workbench {
         }
     }
 
+    /// Whether a sketch has anything for Esc to do, as `sketch_escape` goes: with no tool running and
+    /// nothing picked, it has none.
+    pub(crate) fn sketch_takes_esc(&self) -> bool {
+        matches!(&self.mode, Mode::Sketch(sm) if sm.text_box.is_some()
+            || !sm.hud.is_empty()
+            || !sm.clicks.is_empty()
+            || !sm.picks.is_empty()
+            || sm.tool != Tool::Select
+            || !sm.selection.is_empty()
+            || !sm.constraints.is_empty())
+    }
+
     fn sketch_escape(&mut self) {
         if let Mode::Sketch(sm) = &mut self.mode {
             if sm.text_box.is_some() {

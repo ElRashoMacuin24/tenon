@@ -107,6 +107,54 @@ fn a_study_over_the_port_is_a_run_the_window_can_stop() {
     d.frame(&mut wb, vec![]);
     assert!(!d.texts().iter().any(|t| t == crate::results::PORT_RUN_GOES), "{:?}", d.texts());
 
+    // Stopped, it ends its batch: the steps after it are not run, a new run least of all.
+    {
+        let mut wb = Workbench::new(|| Box::new(OcctKernel::new()) as Box<dyn Kernel>, None, Services::default());
+        let mut d = Driver::new(vec2(1400.0, 860.0));
+        wb.listen(0, None).unwrap();
+        let mut c = Client::to(&wb);
+        c.ok(&mut wb, &mut d, "model.box", json!({ "width": 100, "depth": 20, "height": 10 }));
+        c.ok(&mut wb, &mut d, "document.material", json!({ "name": "Steel, mild" }));
+        let found = |c: &mut Client, wb: &mut Workbench, d: &mut Driver, way: &str| {
+            c.ok(wb, d, "model.find", json!({ "what": "faces", "facing": way }))["found"][0]["reference"].clone()
+        };
+        let (left, right) = (found(&mut c, &mut wb, &mut d, "left"), found(&mut c, &mut wb, &mut d, "right"));
+        c.ok(&mut wb, &mut d, "study.new", json!({}));
+        c.ok(&mut wb, &mut d, "study.fix", json!({ "faces": [left] }));
+        c.ok(&mut wb, &mut d, "study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" }));
+        let shape = json!({ "run": "study.optimize", "with": { "element_size": 5, "iterations": 300 } });
+        let steps = json!([shape, { "run": "document.rename", "with": { "name": "After the first" } }, shape]);
+        c.next += 1;
+        writeln!(c.out, "{}", json!({ "id": c.next, "token": c.token, "run": "batch.run", "with": { "steps": steps, "as_one": false } })).unwrap();
+        for _ in 0..4000 {
+            d.frame(&mut wb, vec![]);
+            if wb.port_run.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(wb.port_run.is_some(), "the run never began");
+        // (Long enough on this bar for some rounds: stopped after one, it comes back as a shape.)
+        let began = std::time::Instant::now();
+        while began.elapsed().as_secs() < 10 {
+            d.frame(&mut wb, vec![]);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        d.tap(&mut wb, egui::Key::Escape);
+        let told = answered(&mut c, &mut wb, &mut d);
+        assert!(wb.port_run.is_none(), "another run began: {told}");
+        assert_eq!(wb.document().name, "Part1", "a step after it was run: {told}");
+        if told["ok"] == true {
+            let steps = told["result"]["steps"].as_array().unwrap();
+            assert_eq!(steps.len(), 1, "{told}");
+            assert_eq!(steps[0]["result"]["stopped"], "stopped", "{told}");
+            assert_eq!(told["result"]["not_run"], "Step 1 (study.optimize) was stopped, so the 2 step(s) after it were not run.", "{told}");
+        } else {
+            // (Stopped before a round was done: an error, which ends it too.)
+            assert!(told["error"].as_str().unwrap().contains("stopped"), "{told}");
+        }
+    }
+
     // Finish Analysis and File New stop it, and the new part's geometry comes.
     let (mut wb, mut d, mut c) = sent();
     wb.run_ui("analysis.begin").unwrap();

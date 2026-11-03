@@ -670,6 +670,8 @@ impl Workbench {
             self.finish_sketch();
         }
         self.chrome.sheet.flat_view = false;
+        // (A face picked for Define A-Side would change the part, which the environment does not.)
+        self.chrome.sheet.pick_a_side = false;
         self.view.selection.clear();
         self.panel = None;
         let study = self.document().studies().first().map(|s| s.id);
@@ -1525,15 +1527,21 @@ impl Workbench {
             (None, Some(v)) => {
                 let stopped =
                     matches!(v.shaped.optimized.stop, tenon_fea::topo::Stop::Stopped | tenon_fea::topo::Stop::Budget | tenon_fea::topo::Stop::Limit);
-                let text = format!(
-                    "Shape: {:.0}% removed{}{}",
-                    100.0 * (1.0 - v.shaped.shown.share),
-                    if stopped { " (stopped early)" } else { "" },
-                    if v.visible { "" } else { " (hidden)" }
-                );
+                // (Of the surface drawn, which the slider moves. What is written here has to fit the
+                // browser as it first opens: the tip has it in full.)
+                let removed = 100.0 * (1.0 - v.shown.share);
+                let text = match (stopped, v.visible) {
+                    (false, true) => format!("Shape: {removed:.0}% removed"),
+                    (true, true) => format!("Shape: {removed:.0}% removed, early"),
+                    (false, false) => format!("Shape: {removed:.0}% removed, hidden"),
+                    (true, false) => format!("Shape: {removed:.0}%, early, hidden"),
+                };
                 // (What there is to know of it can be read here, as in the view while it is shown.)
-                let tip =
-                    std::iter::once("Click to show or hide it; double-click to work it out again").chain(v.said()).collect::<Vec<_>>().join("\n");
+                let said = v.said();
+                let tip = std::iter::once("Click to show or hide it; double-click to work it out again")
+                    .chain(said.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 (text, tip, true)
             }
             (None, None) if self.shape_is_stale() => {
@@ -1673,7 +1681,12 @@ impl Workbench {
                 }
                 if !o.symmetry.is_empty() {
                     let n = o.symmetry.len();
-                    let label = format!("Symmetry: {n} plane{}{}", if n == 1 { "" } else { "s" }, lost_note(planes_lost, n, "plane"));
+                    // (Short, to fit the browser as it first opens: this is what makes the row red.)
+                    let label = if planes_lost > 0 {
+                        format!("Symmetry: {planes_lost} of {n} lost")
+                    } else {
+                        format!("Symmetry: {n} plane{}", if n == 1 { "" } else { "s" })
+                    };
                     let (resp, _) = row(ui, t, 2, Icon::SymmetryPlane, &label, None, needed(planes_lost > 0));
                     let tip = if planes_lost > 0 {
                         "It holds a plane that cannot be a plane of symmetry: a work plane that is gone, or a face. Double-click to untick it"

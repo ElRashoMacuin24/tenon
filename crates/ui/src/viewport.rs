@@ -755,6 +755,12 @@ impl Workbench {
             return;
         }
         if self.chrome.sheet.pick_a_side {
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.chrome.sheet.pick_a_side = false;
+                self.view.hover = None;
+                self.set_status("Ready");
+                return;
+            }
             // Define A-Side: a flat face that can be referred to.
             let (meshes, tree) = (self.scene.placed(), self.body_tree());
             let hover = resp.hover_pos().and_then(|p| {

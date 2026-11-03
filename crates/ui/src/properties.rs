@@ -32,6 +32,8 @@ pub(crate) struct FieldOut {
     pub changed: bool,
     /// Enter was pressed in the field.
     pub entered: bool,
+    /// Esc was pressed in the field.
+    pub given_up: bool,
 }
 
 /// Parameter values by name, for fields that take equations (set every frame).
@@ -154,6 +156,7 @@ pub(crate) fn eq_field(
         }
     }
     if resp.lost_focus() {
+        out.given_up = ui.input(|i| i.key_pressed(egui::Key::Escape));
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
         // What is left in the box is refused when it is no value the field takes: said, and
         // never taken for OK with the value from before. (Enter leaves the box as it is, to be

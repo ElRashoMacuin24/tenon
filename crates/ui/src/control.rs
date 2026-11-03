@@ -150,6 +150,10 @@ struct Running {
     began_at: u64,
     /// What the step that was waited for came to.
     landed: Option<Result<Value, String>>,
+    /// The run that step was had been stopped from the window, when it came back.
+    stopped: bool,
+    /// Why the steps after it were not run, for the answer.
+    not_run: Option<String>,
 }
 
 /// The control port of a workbench.
@@ -319,6 +323,8 @@ impl Running {
             waiting: Waiting::Nothing,
             began_at: 0,
             landed: None,
+            stopped: false,
+            not_run: None,
         })
     }
 }
@@ -378,8 +384,8 @@ impl Workbench {
 
     /// The geometry thread has answered job `request`. Ok when it was one of the control port's.
     pub(crate) fn control_job_done(&mut self, request: u64, result: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
-        if self.port_run.as_ref().is_some_and(|r| r.request == request) {
-            self.port_run = None;
+        let stopped = self.port_run.take_if(|r| r.request == request).map(|r| r.cancel.load(Ordering::Relaxed));
+        if stopped.is_some() {
             // (What is said of it goes with it; what has been said since stays.)
             if self.status == crate::results::PORT_RUN_GOES || self.status == crate::results::STOPPING {
                 self.set_status("Ready");
@@ -441,6 +447,7 @@ impl Workbench {
         };
         if let Some(front) = control.queue.front_mut() {
             front.landed = Some(landed);
+            front.stopped = stopped == Some(true);
         }
         self.control = Some(control);
         Ok(())
@@ -474,7 +481,13 @@ impl Workbench {
                                 self.squash_since(&marks);
                             }
                             let result = match r.batch {
-                                Some(as_one) => json!({ "steps": std::mem::take(&mut r.done), "as_one": as_one }),
+                                Some(as_one) => {
+                                    let mut all = json!({ "steps": std::mem::take(&mut r.done), "as_one": as_one });
+                                    if let Some(why) = r.not_run.take() {
+                                        all["not_run"] = json!(why);
+                                    }
+                                    all
+                                }
                                 None => r.done.pop().map_or(Value::Null, |d| d["result"].clone()),
                             };
                             return Some(json!({ "id": r.id, "ok": true, "result": result }));
@@ -524,6 +537,13 @@ impl Workbench {
                     }
                     r.done.push(json!({ "step": r.at + 1, "run": step.run, "result": result }));
                     r.at += 1;
+                    // What stops a run stops the steps after it. (A shape stopped after a round
+                    // comes back as the shape so far; Esc did not mean only that one step.)
+                    let left = r.steps.len() - r.at;
+                    if std::mem::take(&mut r.stopped) && left > 0 {
+                        r.steps.truncate(r.at);
+                        r.not_run = Some(format!("Step {} ({}) was stopped, so the {left} step(s) after it were not run.", r.at, step.run));
+                    }
                 }
                 (Ok(_), None) => r.at += 1,
                 (Err(e), step) => {

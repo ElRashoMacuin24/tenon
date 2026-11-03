@@ -83,7 +83,13 @@ pub(crate) fn row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, e
     };
     ui.painter().text(pos2(ir.right() + 6.0, rr.center().y), Align2::LEFT_CENTER, label, theme::body(), color);
     #[cfg(test)]
-    ui.data_mut(|d| d.get_temp_mut_or_default::<Vec<(String, Rect)>>(egui::Id::new("tn_browser_rows")).push((label.to_owned(), rr)));
+    {
+        ui.data_mut(|d| d.get_temp_mut_or_default::<Vec<(String, Rect)>>(egui::Id::new("tn_browser_rows")).push((label.to_owned(), rr)));
+        let wide = ui.painter().layout_no_wrap(label.to_owned(), theme::body(), color).size().x;
+        if ir.right() + 6.0 + wide > rr.right() {
+            ui.data_mut(|d| d.get_temp_mut_or_default::<Vec<String>>(egui::Id::new("tn_browser_rows_cut")).push(label.to_owned()));
+        }
+    }
     (resp, toggled)
 }
 
