@@ -222,6 +222,17 @@ impl Driver {
         }
         self.shapes.iter().find_map(|c| walk(&c.shape, text))
     }
+    /// The colour the last frame wrote `text` in.
+    pub(crate) fn text_color(&self, text: &str) -> Option<egui::Color32> {
+        fn walk(s: &egui::Shape, text: &str) -> Option<egui::Color32> {
+            match s {
+                egui::Shape::Text(t) if t.galley.text() == text => Some(t.fallback_color),
+                egui::Shape::Vec(v) => v.iter().find_map(|x| walk(x, text)),
+                _ => None,
+            }
+        }
+        self.shapes.iter().find_map(|c| walk(&c.shape, text))
+    }
     /// Holds (or releases) modifier keys from the next frame on.
     pub(crate) fn modifiers(&mut self, wb: &mut Workbench, m: egui::Modifiers) {
         self.frame(wb, vec![egui::Event::ModifiersChanged(m)]);

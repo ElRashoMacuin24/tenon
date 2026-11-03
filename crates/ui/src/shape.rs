@@ -11,7 +11,7 @@ use tenon_fea::Cancel;
 use tenon_fea::topo::{Extracted, Phase, Progress, Report};
 use tenon_io::shape::{SMOOTHING, Shaped};
 use tenon_model::study::{Optimize, Resolution, StudyId, Target};
-use tenon_model::{FaceRef, OriginPlane, PlaneRef, Session};
+use tenon_model::{FaceRef, FeatureId, FeatureKind, OriginPlane, PlaneRef, Session, WorkGeom};
 
 use crate::panels::Panel;
 use crate::print_dialog::PartJob;
@@ -36,6 +36,11 @@ pub(crate) struct ShapePanel {
     pub auto_member: bool,
     pub member: f64,
     pub resolution: Resolution,
+    /// A size of element the study holds (from a command or a file), in place of the
+    /// resolution's. Picking a resolution clears it.
+    pub element_size: Option<f64>,
+    /// The most rounds the study holds (from a command or a file).
+    pub iterations: Option<u32>,
     pub sharpen: bool,
     /// What the part weighs, g, to say what is kept.
     pub part_grams: f64,
@@ -55,17 +60,22 @@ impl ShapePanel {
             auto_member: o.min_member.is_none(),
             member: o.min_member.unwrap_or(5.0),
             resolution: o.resolution,
+            element_size: o.element_size,
+            iterations: o.iterations,
             sharpen: o.sharpen,
             part_grams,
         }
     }
 
-    /// The settings as `study.shape` takes them.
+    /// The settings as `study.shape` takes them. (The size and the rounds are each said, as a
+    /// number or as null: OK keeps what the panel shows.)
     pub(crate) fn command(&self) -> Value {
         let mut p = json!({
             "study": self.study.0,
             "min_member": if self.auto_member { Value::Null } else { json!(self.member) },
             "resolution": self.resolution.word(),
+            "element_size": self.element_size,
+            "iterations": self.iterations,
             "sharpen": self.sharpen,
         });
         if self.by_grams {
@@ -113,40 +123,28 @@ impl KeepPanel {
     }
 }
 
-/// Symmetry: the planes the shape is to be the same on both sides of: origin planes, and flat
-/// faces clicked.
+/// Symmetry: the planes the shape is to be the same on both sides of: origin planes and work
+/// planes, each ticked. (A face of the part cannot be one: a solid has material on one side of
+/// its own face and none on the other.)
 #[derive(Clone, Debug)]
 pub(crate) struct SymmetryPanel {
     pub study: StudyId,
     /// XY, YZ, XZ.
     pub origin: [bool; 3],
-    pub faces: Vec<FaceRef>,
-    /// Planes it had that are neither (work planes), kept as they are.
-    pub others: Vec<PlaneRef>,
+    /// The part's work planes: which, what it is called, and whether it is ticked.
+    pub work: Vec<(FeatureId, String, bool)>,
+    /// What it holds that cannot be a plane of symmetry (a work plane that is gone, a face from
+    /// a file): what it is called, and whether it is still ticked. It goes when it is unticked.
+    pub lost: Vec<(PlaneRef, String, bool)>,
 }
 
 const ORIGINS: [OriginPlane; 3] = [OriginPlane::XY, OriginPlane::YZ, OriginPlane::XZ];
 
 impl SymmetryPanel {
-    fn of(study: StudyId, planes: &[PlaneRef]) -> SymmetryPanel {
-        let mut p = SymmetryPanel { study, origin: [false; 3], faces: Vec::new(), others: Vec::new() };
-        for plane in planes {
-            match plane {
-                PlaneRef::Origin(o) => {
-                    if let Some(i) = ORIGINS.iter().position(|x| x == o) {
-                        p.origin[i] = true;
-                    }
-                }
-                PlaneRef::Face(f) => p.faces.push(f.clone()),
-                other => p.others.push(other.clone()),
-            }
-        }
-        p
-    }
-
     pub(crate) fn planes(&self) -> Vec<PlaneRef> {
         let origin = ORIGINS.iter().zip(self.origin).filter(|(_, on)| *on).map(|(o, _)| PlaneRef::Origin(*o));
-        origin.chain(self.faces.iter().map(|f| PlaneRef::Face(f.clone()))).chain(self.others.iter().cloned()).collect()
+        let work = self.work.iter().filter(|w| w.2).map(|w| PlaneRef::Work(w.0));
+        origin.chain(work).chain(self.lost.iter().filter(|l| l.2).map(|l| l.0.clone())).collect()
     }
 }
 
@@ -159,6 +157,8 @@ pub(crate) struct ShapeView {
     pub shaped: Arc<Shaped>,
     /// The surface drawn: for the share asked, or another on the slider.
     pub shown: Extracted,
+    /// The share that surface was made for, percent.
+    pub shown_percent: f64,
     /// The share on the slider, percent.
     pub percent: f64,
     pub visible: bool,
@@ -167,10 +167,23 @@ pub(crate) struct ShapeView {
 /// A run of Optimize Shape: where it is, and how to stop it.
 #[derive(Clone, Debug)]
 pub(crate) struct Shaping {
+    /// Which run it is: what comes back is taken only by the run that waits for it.
+    pub run: u64,
     pub study: StudyId,
     pub cancel: Cancel,
     pub since: Instant,
     pub progress: Progress,
+}
+
+/// A value the study holds, with a button to clear it. True when that was pressed.
+fn held_value(ui: &mut Ui, value: &str, key: &str) -> bool {
+    ui.horizontal(|ui| {
+        ui.label(value);
+        let r = ui.small_button("✖").on_hover_text("Clear");
+        crate::drawing::remember(ui, key, r.rect);
+        r.clicked()
+    })
+    .inner
 }
 
 /// The fields of Optimize Shape's panel. Returns Enter was pressed.
@@ -224,10 +237,26 @@ pub(crate) fn shape_fields(ui: &mut Ui, p: &mut ShapePanel, kept: usize, symmetr
                     crate::drawing::remember(ui, &format!("tn_shape_{}", r.word()), resp.rect);
                     if resp.clicked() {
                         p.resolution = r;
+                        p.element_size = None;
                     }
                 }
             });
             ui.end_row();
+            // (Set by a command or a file: shown while they are, and cleared here.)
+            if let Some(size) = p.element_size {
+                ui.label("Element size").on_hover_text("The size of the elements the study holds, in place of the resolution's");
+                if held_value(ui, &format!("{} mm", figures(size)), "tn_shape_clear_size") {
+                    p.element_size = None;
+                }
+                ui.end_row();
+            }
+            if let Some(rounds) = p.iterations {
+                ui.label("Most rounds").on_hover_text("It stops at this many rounds, settled or not");
+                if held_value(ui, &rounds.to_string(), "tn_shape_clear_rounds") {
+                    p.iterations = None;
+                }
+                ui.end_row();
+            }
             ui.label("Sharpen");
             ui.checkbox(&mut p.sharpen, "Toward solid and empty").on_hover_text("Fewer half-filled places, in more rounds");
             ui.end_row();
@@ -272,9 +301,8 @@ pub(crate) fn keep_fields(ui: &mut Ui, p: &mut KeepPanel, t: &Tokens) -> (bool, 
     (clear, enter)
 }
 
-/// The fields of Symmetry. Returns clear the faces.
-pub(crate) fn symmetry_fields(ui: &mut Ui, p: &mut SymmetryPanel) -> bool {
-    let mut clear = false;
+/// The fields of Symmetry.
+pub(crate) fn symmetry_fields(ui: &mut Ui, p: &mut SymmetryPanel) {
     section(ui, "Planes", true, |ui| {
         egui::Grid::new("tn_props_symmetry").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
             ui.label("Origin planes");
@@ -285,24 +313,31 @@ pub(crate) fn symmetry_fields(ui: &mut Ui, p: &mut SymmetryPanel) -> bool {
                 }
             });
             ui.end_row();
-            ui.label("Faces").on_hover_text("Flat faces of the part to be the same on both sides of: click them");
-            ui.horizontal(|ui| {
-                let n = p.faces.len();
-                ui.label(if n == 0 { "click flat faces".to_owned() } else { format!("{n} face{}", if n == 1 { "" } else { "s" }) });
-                if n > 0 && ui.small_button("✖").on_hover_text("Clear").clicked() {
-                    clear = true;
+            ui.label("Work planes")
+                .on_hover_text("A part that is not centred on an origin plane is the same on both sides of a work plane through its middle");
+            ui.vertical(|ui| {
+                if p.work.is_empty() {
+                    ui.label("none (Finish Analysis to make one)");
+                }
+                for (id, name, on) in &mut p.work {
+                    let r = ui.checkbox(on, name.as_str());
+                    crate::drawing::remember(ui, &format!("tn_symmetry_work_{}", id.0), r.rect);
                 }
             });
             ui.end_row();
-            if !p.others.is_empty() {
-                ui.label("Work planes");
-                ui.label(format!("{}", p.others.len()));
+            if !p.lost.is_empty() {
+                ui.label("Lost").on_hover_text("These cannot be planes of symmetry: untick them, then OK");
+                ui.vertical(|ui| {
+                    for (i, (_, name, on)) in p.lost.iter_mut().enumerate() {
+                        let r = ui.checkbox(on, format!("{name} (lost)"));
+                        crate::drawing::remember(ui, &format!("tn_symmetry_lost_{i}"), r.rect);
+                    }
+                });
                 ui.end_row();
             }
         });
         ui.label(egui::RichText::new("Up to three, at right angles; the supports and loads should be the same on both sides too.").small());
     });
-    clear
 }
 
 impl Workbench {
@@ -329,29 +364,72 @@ impl Workbench {
         Ok(())
     }
 
-    /// Keep Faces: new, or the set `editing`.
+    /// Keep Faces: new, or the set `editing`. (Of a set being changed: the faces the part still
+    /// has, as a support's are.)
     pub(crate) fn open_keep(&mut self, editing: Option<u32>) -> Result<(), String> {
         let study = self.study_for_new()?;
+        let mut told = false;
         let panel = match editing {
             Some(id) => {
                 let k = self.shape_settings(study).kept.into_iter().find(|k| k.id == id).ok_or("no such kept faces")?;
-                KeepPanel { study, editing, faces: k.faces, deep: k.depth.is_some(), depth: k.depth.unwrap_or(3.0) }
+                let (faces, _, lost) = self.still_there(&k.name, &k.faces, &[]);
+                told = lost;
+                KeepPanel { study, editing, faces, deep: k.depth.is_some(), depth: k.depth.unwrap_or(3.0) }
             }
             None => KeepPanel { study, editing, faces: self.picked_faces(), deep: false, depth: 3.0 },
         };
         self.view.selection.clear();
         self.panel = Some(Panel::Keep(panel));
-        self.set_status("Keep Faces: click the faces the shape must keep (bolt holes, mating faces), then OK.");
+        if !told {
+            self.set_status("Keep Faces: click the faces the shape must keep (bolt holes, mating faces), then OK.");
+        }
         Ok(())
     }
 
-    /// Symmetry: the planes the shape is the same on both sides of.
+    /// Whether work plane `id` is a plane on the part. (While the part is being built, whether
+    /// the part says it is one.)
+    fn work_plane_there(&self, id: FeatureId) -> bool {
+        let said = self.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)) && !f.suppressed);
+        let built = self.shown.is_some() && !self.is_busy() && !self.scene.bodies.is_empty();
+        said && (!built || self.scene.work.iter().any(|(w, g)| *w == id && matches!(g, WorkGeom::Plane(_))))
+    }
+
+    /// Whether a plane of symmetry the study holds cannot be one: a work plane that is gone or
+    /// that is not a plane, a face of the part (from a file: the commands refuse one).
+    pub(crate) fn plane_lost(&self, plane: &PlaneRef) -> bool {
+        match plane {
+            PlaneRef::Origin(_) => false,
+            PlaneRef::Face(_) => true,
+            PlaneRef::Work(id) => !self.work_plane_there(*id),
+        }
+    }
+
+    /// Symmetry: the planes the shape is the same on both sides of. Its work planes are the
+    /// part's; what the study holds besides is shown as lost, to be unticked.
     pub(crate) fn open_symmetry(&mut self) -> Result<(), String> {
         let study = self.study_for_new()?;
-        let p = SymmetryPanel::of(study, &self.shape_settings(study).symmetry);
+        let features = self.document().features().iter();
+        let work = features.filter(|f| self.work_plane_there(f.id)).map(|f| (f.id, f.name.clone(), false)).collect();
+        let mut p = SymmetryPanel { study, origin: [false; 3], work, lost: Vec::new() };
+        for plane in &self.shape_settings(study).symmetry {
+            let listed = p.work.iter_mut().find(|w| PlaneRef::Work(w.0) == *plane);
+            match (plane, listed) {
+                (_, Some(w)) => w.2 = true,
+                (PlaneRef::Origin(o), None) => {
+                    if let Some(i) = ORIGINS.iter().position(|x| x == o) {
+                        p.origin[i] = true;
+                    }
+                }
+                (PlaneRef::Face(_), None) => p.lost.push((plane.clone(), "A face of the part".to_owned(), true)),
+                (PlaneRef::Work(id), None) => {
+                    let name = self.document().feature(*id).map_or_else(|| format!("Work plane {}", id.0), |f| f.name.clone());
+                    p.lost.push((plane.clone(), name, true));
+                }
+            }
+        }
         self.view.selection.clear();
         self.panel = Some(Panel::Symmetry(p));
-        self.set_status("Symmetry: tick origin planes or click flat faces the shape is to be the same on both sides of, then OK.");
+        self.set_status("Symmetry: tick the origin planes or work planes the part is the same on both sides of, then OK.");
         Ok(())
     }
 
@@ -395,16 +473,16 @@ impl Workbench {
         if !self.in_analysis() {
             self.analysis_begin()?;
         }
-        if self.shaping().is_some() || self.analysis.as_ref().is_some_and(|e| e.running.is_some()) {
-            return Err("A study is being worked out: wait for it, or press Esc to stop it.".into());
-        }
+        self.no_run_going()?;
         let Some(study) = self.active_study().map(|s| s.id) else {
             return Err("There is no study yet: Create Study, then say where the part is held and what pushes on it.".into());
         };
         self.panel = None;
         let (cancel, revision) = (Cancel::default(), self.session.revision());
         let progress: Progress = Arc::new(Mutex::new(Report::default()));
-        let shaping = Shaping { study, cancel: cancel.clone(), since: Instant::now(), progress: progress.clone() };
+        self.step_seq += 1;
+        let run = self.step_seq;
+        let shaping = Shaping { run, study, cancel: cancel.clone(), since: Instant::now(), progress: progress.clone() };
         let work = move |s: &mut Session, k: &mut dyn tenon_kernel::Kernel| -> Box<dyn std::any::Any + Send> {
             let settings = s.document().study(study).and_then(|st| st.optimize.clone()).unwrap_or_default();
             Box::new(tenon_io::shape::work_out(s, k, study, &settings, SMOOTHING, None, &cancel, Some(&progress)))
@@ -421,14 +499,13 @@ impl Workbench {
             }
             Geo::Sync(k) => {
                 let done = work(&mut self.session, k.as_mut());
-                self.shape_job_done(study, revision, done);
+                self.shape_job_done(run, study, revision, done);
             }
             Geo::Worker(w) => {
                 let doc = self.session.document().clone();
-                self.step_seq += 1;
-                self.part_jobs.insert(self.step_seq, PartJob::Shape { study, revision });
+                self.part_jobs.insert(run, PartJob::Shape { run, study, revision });
                 w.job(
-                    self.step_seq,
+                    run,
                     Box::new(move |k, _| {
                         let mut s = Session::default();
                         s.replace_document(doc, None);
@@ -443,9 +520,12 @@ impl Workbench {
         Ok(())
     }
 
-    /// A shape came back.
-    pub(crate) fn shape_job_done(&mut self, study: StudyId, revision: u64, result: Box<dyn std::any::Any + Send>) {
-        let took = self.analysis.as_mut().and_then(|e| e.shaping.take()).map(|r| r.since.elapsed().as_secs_f64());
+    /// A shape came back. It is taken only by the run the environment there is waits for: one
+    /// that was left behind is dropped, and says nothing (the status bar has moved on).
+    pub(crate) fn shape_job_done(&mut self, run: u64, study: StudyId, revision: u64, result: Box<dyn std::any::Any + Send>) {
+        let Some(took) = self.analysis.as_mut().and_then(|e| e.shaping.take_if(|r| r.run == run)).map(|r| r.since.elapsed().as_secs_f64()) else {
+            return;
+        };
         let name = self.document().study(study).map_or_else(|| "The study".to_owned(), |s| s.name.clone());
         let shaped = match result.downcast::<Result<Shaped, String>>().map_or_else(|_| Err("internal: unexpected result".to_owned()), |b| *b) {
             Ok(s) => s,
@@ -458,6 +538,11 @@ impl Workbench {
                 return;
             }
         };
+        // (The part or the study changed while it went on: the shape is of what was.)
+        if revision != self.session.revision() {
+            self.set_status(format!("{name}: the part or the study changed while the shape was worked out, so it is out of date and was not kept."));
+            return;
+        }
         let o = &shaped.optimized;
         let ending = match o.stop {
             tenon_fea::topo::Stop::Settled => format!("settled after {} rounds", o.history.len()),
@@ -471,17 +556,18 @@ impl Workbench {
             _ => String::new(),
         };
         let mut said = format!(
-            "{name}: a shape of {} g for a part of {} g ({:.0}% removed), {ending}{}.{kept} A guide to model over: Export Shape keeps it.",
+            "{name}: a shape of {} g for a part of {} g ({:.0}% removed), {ending} in {} s.{kept} A guide to model over: Export Shape keeps it.",
             figures(shaped.grams(shaped.shown.share)),
             figures(shaped.grams(1.0)),
             100.0 * (1.0 - shaped.fraction),
-            took.map_or(String::new(), |t| format!(" in {} s", figures(t)))
+            figures(took)
         );
         for w in &shaped.warnings {
             said = format!("{said} {w}");
         }
         let percent = 100.0 * shaped.fraction;
-        let view = ShapeView { study, revision, shown: shaped.shown.clone(), shaped: Arc::new(shaped), percent, visible: true };
+        let view =
+            ShapeView { study, revision, shown: shaped.shown.clone(), shown_percent: percent, shaped: Arc::new(shaped), percent, visible: true };
         if let Some(env) = &mut self.analysis {
             env.shape = Some(view);
         }
@@ -514,12 +600,21 @@ impl Workbench {
         }
     }
 
+    /// The shape not drawn, so that what was asked for in its place can be. Its row brings it
+    /// back.
+    pub(crate) fn hide_shape(&mut self) {
+        if let Some(v) = self.analysis.as_mut().and_then(|e| e.shape.as_mut()) {
+            v.visible = false;
+        }
+    }
+
     /// The share on the slider, percent: the surface made again for it.
     pub(crate) fn set_shape_share(&mut self, percent: f64) {
         let Some(v) = self.analysis.as_mut().and_then(|e| e.shape.as_mut()) else { return };
         let percent = percent.clamp(5.0, 100.0);
         v.percent = percent;
         v.shown = v.shaped.reshaped(percent / 100.0, SMOOTHING);
+        v.shown_percent = percent;
     }
 
     /// Export Shape: the shape shown, as STL or 3MF.
@@ -531,7 +626,12 @@ impl Workbench {
         let doc = self.document();
         let name = doc.name.clone();
         let (color, material) = (doc.color().unwrap_or([0xb8, 0xc0, 0xc8]), doc.material().map_or_else(|| "Generic".to_owned(), |m| m.name.clone()));
-        let Some(path) = self.services.pick_save.as_ref().and_then(|f| f(&format!("{name} shape.stl"), "stl")) else { return Ok(()) };
+        let file = format!("{name} shape.stl");
+        let chosen = match &self.services.pick_save_of {
+            Some(pick) => pick(&file, &["stl", "3mf"]),
+            None => self.services.pick_save.as_ref().and_then(|pick| pick(&file, "stl")),
+        };
+        let Some(path) = chosen else { return Ok(()) };
         tenon_io::shape::write_shape(&path, &skin, &name, &material, color)?;
         self.set_status(format!("Exported the shape to {} ({} triangles).", path.display(), skin.triangles.len()));
         Ok(())
@@ -601,8 +701,8 @@ impl Workbench {
     /// The share kept, on a slider at the foot of the view, while a shape is shown.
     pub(crate) fn shape_slider(&mut self, ui: &Ui, rect: Rect, t: &Tokens) {
         let Some(v) = self.shape_view().filter(|v| v.visible) else { return };
-        let (mut percent, asked, share) = (v.percent, 100.0 * v.shaped.fraction, v.shown.share);
-        let mut rebuild = None;
+        let (mut percent, asked, share, made_for) = (v.percent, 100.0 * v.shaped.fraction, v.shown.share, v.shown_percent);
+        let mut at_rest = false;
         // (Clear of the axes in the corner.)
         egui::Area::new(egui::Id::new("tn_shape_slider")).fixed_pos(pos2(rect.left() + 110.0, rect.bottom() - 70.0)).fade_in(false).show(
             ui.ctx(),
@@ -611,13 +711,9 @@ impl Workbench {
                     ui.horizontal(|ui| {
                         ui.label("Kept");
                         let r = ui.add(egui::Slider::new(&mut percent, 5.0..=100.0).show_value(false));
-                        if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                            rebuild = Some(percent);
-                        }
-                        let typed = eq_field(ui, egui::Id::new("tn_shape_keep"), &mut percent, None, "%", 5.0..=100.0, 70.0, t);
-                        if typed.entered {
-                            rebuild = Some(percent);
-                        }
+                        let field = egui::Id::new("tn_shape_keep");
+                        eq_field(ui, field, &mut percent, None, "%", 5.0..=100.0, 70.0, t);
+                        at_rest = !r.dragged() && !ui.memory(|m| m.has_focus(field));
                         ui.label(format!("{:.0}% of the part", 100.0 * share));
                     });
                     let note = if (percent - asked).abs() < 0.5 {
@@ -629,12 +725,13 @@ impl Workbench {
                 });
             },
         );
-        // (The slider follows the pointer; the surface is made again when it is let go.)
+        // (The slider follows the pointer and the field what is typed; the surface is made again
+        // when the one is let go or the other left, by Enter or by a click elsewhere.)
         if let Some(v) = self.analysis.as_mut().and_then(|e| e.shape.as_mut()) {
             v.percent = percent;
         }
-        if let Some(p) = rebuild {
-            self.set_shape_share(p);
+        if at_rest && (percent - made_for).abs() > 1e-9 {
+            self.set_shape_share(percent);
         }
     }
 }

@@ -29,6 +29,9 @@ pub struct Services {
     pub pick_open_ext: Option<Box<dyn Fn(&str) -> Option<PathBuf>>>,
     /// Choose where to save: `(suggested file name, extension without dot)`.
     pub pick_save: Option<Box<dyn Fn(&str, &str) -> Option<PathBuf>>>,
+    /// Choose where to save a file that can be of several kinds: `(suggested file name,
+    /// extensions without dots)`. A name given without an extension takes the first.
+    pub pick_save_of: Option<Box<dyn Fn(&str, &[&str]) -> Option<PathBuf>>>,
     /// Choose a program (Application Options: where Gmsh and CalculiX are).
     pub pick_program: Option<Box<dyn Fn() -> Option<PathBuf>>>,
 }
@@ -509,6 +512,7 @@ impl Workbench {
                 self.panel = None;
                 self.view = View::default();
                 self.chrome.sheet = Default::default();
+                self.stop_runs();
                 self.analysis = None;
                 self.set_status("New part.");
             }
@@ -609,6 +613,7 @@ impl Workbench {
                 self.panel = None;
                 self.view = View::default();
                 self.chrome.sheet = Default::default();
+                self.stop_runs();
                 self.analysis = None;
                 self.chrome.library = false;
                 self.set_status(format!("New part from {name}, {size}: save it under a name of its own."));
@@ -685,6 +690,7 @@ impl Workbench {
         self.panel = None;
         self.view = View::default();
         self.chrome.sheet = Default::default();
+        self.stop_runs();
         self.analysis = None;
         self.chrome.tab = self.home_tab();
         self.set_status(format!("Opened {}", path.display()));

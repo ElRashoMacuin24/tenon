@@ -740,6 +740,7 @@ impl Workbench {
     pub(crate) fn keep_tab_shown(&mut self) {
         if self.in_assembly() || self.in_drawing() {
             // (The Stress Analysis environment was of a part that has been left.)
+            self.stop_runs();
             self.analysis = None;
             return;
         }
@@ -786,6 +787,7 @@ impl Workbench {
                 self.panel = None;
                 self.view = Default::default();
                 self.chrome.sheet = SheetUi::default();
+                self.stop_runs();
                 self.analysis = None;
                 self.chrome.tab = SHEET_TAB;
                 self.set_status("New sheet metal part, 1 mm thick: Sheet Metal Defaults changes that. Start with a sketch, then Face.");

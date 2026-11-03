@@ -593,6 +593,8 @@ enum StudyAction {
     Run(&'static str),
     /// Shows a result in colour on the part.
     Show(crate::results::Field),
+    /// The Shape row double-clicked: Optimize Shape's panel, with the shape as it was.
+    OptimizeAgain,
 }
 
 impl Workbench {
@@ -671,6 +673,7 @@ impl Workbench {
         self.view.selection.clear();
         self.panel = None;
         let study = self.document().studies().first().map(|s| s.id);
+        self.stop_runs();
         self.analysis = Some(Env { study, ..Env::default() });
         self.chrome.tab = ANALYSIS_TAB;
         self.set_status(match study {
@@ -688,13 +691,21 @@ impl Workbench {
         ) {
             self.panel = None;
         }
-        // (A shape being worked out is stopped: it would come back to nothing.)
-        if let Some(r) = self.analysis.as_ref().and_then(|e| e.shaping.as_ref()) {
-            r.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
+        self.stop_runs();
         self.analysis = None;
         self.chrome.tab = self.home_tab();
         self.set_status("Ready");
+    }
+
+    /// Stops what is being worked out in the environment. Called wherever the environment goes:
+    /// nothing could reach the run after that, it would keep the geometry thread for as long as
+    /// it lasts, and what it came to would come back to nothing.
+    pub(crate) fn stop_runs(&self) {
+        let Some(env) = &self.analysis else { return };
+        let (running, shaping) = (env.running.as_ref().map(|r| &r.cancel), env.shaping.as_ref().map(|r| &r.cancel));
+        for cancel in running.into_iter().chain(shaping) {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     /// Displacement Display: how the part's bending is drawn (the button goes round the three).
@@ -782,7 +793,7 @@ impl Workbench {
 
     /// What a support or load that is opened to be changed is on: the faces and edges the part
     /// still has. The rest are left out, and the status bar says so (the last is true then).
-    fn still_there(&mut self, name: &str, faces: &[FaceRef], edges: &[EdgeRef]) -> (Vec<FaceRef>, Vec<EdgeRef>, bool) {
+    pub(crate) fn still_there(&mut self, name: &str, faces: &[FaceRef], edges: &[EdgeRef]) -> (Vec<FaceRef>, Vec<EdgeRef>, bool) {
         let lost = self.lost(faces, edges);
         if lost == 0 {
             return (faces.to_vec(), edges.to_vec(), false);
@@ -1090,15 +1101,15 @@ impl Workbench {
         })
     }
 
-    /// The faces (or edges) of the support or load clicked in the browser, picked out as
-    /// selected. (The others are shown by their marks alone: a part with its faces all
+    /// The faces (or edges) of the support, load or kept faces clicked in the browser, picked
+    /// out as selected. (The others are shown by their marks alone: a part with its faces all
     /// coloured in hides the marks, and the part.)
     pub(crate) fn analysis_highlights(&self) -> Vec<(Pick, Color32)> {
         let (Some(study), Some(selected)) = (self.active_study(), self.analysis.as_ref().and_then(|e| e.selected)) else { return Vec::new() };
         let face = |r: &FaceRef| find_face(&self.scene, r).map(|(body, face)| Pick::Face { body, face });
         let edge = |r: &EdgeRef| find_edge(&self.scene, r).map(|(body, edge)| Pick::Edge { body, edge });
-        let on = study.supports.iter().map(|s| (s.id, &s.faces, &s.edges)).chain(study.loads.iter().map(|l| (l.id, &l.faces, &l.edges)));
-        on.filter(|(id, ..)| *id == selected)
+        items_on(study)
+            .filter(|(id, ..)| *id == selected)
             .flat_map(|(_, faces, edges)| faces.iter().filter_map(face).chain(edges.iter().filter_map(edge)))
             .map(|pick| (pick, crate::viewport::SELECTED))
             .collect()
@@ -1465,15 +1476,13 @@ impl Workbench {
         let material = self.document().material().map(|m| m.name.clone());
         let strong = self.document().strength().is_some();
         let name = self.document().name.clone();
-        // (How many faces or edges of each support and load of the study worked on the part no
-        // longer has.)
-        let lost: std::collections::BTreeMap<u32, usize> = studies
-            .iter()
-            .filter(|s| Some(s.id) == active)
-            .flat_map(|s| s.supports.iter().map(|x| (x.id, &x.faces, &x.edges)).chain(s.loads.iter().map(|l| (l.id, &l.faces, &l.edges))))
-            .map(|(id, faces, edges)| (id, self.lost(faces, edges)))
-            .collect();
+        // (How many faces or edges of each support, load and set of kept faces of the study worked
+        // on the part no longer has, and how many of its planes of symmetry cannot be.)
+        let lost: std::collections::BTreeMap<u32, usize> =
+            studies.iter().filter(|s| Some(s.id) == active).flat_map(items_on).map(|(id, faces, edges)| (id, self.lost(faces, edges))).collect();
         let lost = |id: u32| lost.get(&id).copied().unwrap_or(0);
+        let planes_lost =
+            self.active_study().and_then(|s| s.optimize.as_ref()).map_or(0, |o| o.symmetry.iter().filter(|p| self.plane_lost(p)).count());
         // What there is to show of the study worked on: its mesh's size, and its results in words.
         use crate::results::{Field, figures};
         let shown: Option<(usize, usize, Option<Vec<(Field, String)>>)> = self.outcome().and_then(|o| {
@@ -1645,13 +1654,18 @@ impl Workbench {
                     let deep = k.depth.map_or(String::new(), |d| format!(" ({} mm deep)", figures(d)));
                     let label = format!("{}{deep}{}", k.name, gone(k.id, k.faces.len(), 0));
                     let (resp, _) = row(ui, t, 3, Icon::KeepFaces, &label, None, style(k.id, false));
-                    kept_row(resp, study.id, k.id, &k.name, &mut action);
+                    kept_row(resp, study.id, k.id, &k.name, lost(k.id) > 0, &mut action);
                 }
                 if !o.symmetry.is_empty() {
                     let n = o.symmetry.len();
-                    let (resp, _) =
-                        row(ui, t, 2, Icon::SymmetryPlane, &format!("Symmetry: {n} plane{}", if n == 1 { "" } else { "s" }), None, RowStyle::Normal);
-                    if resp.on_hover_text("Double-click to change the planes").double_clicked() {
+                    let label = format!("Symmetry: {n} plane{}{}", if n == 1 { "" } else { "s" }, lost_note(planes_lost, n, "plane"));
+                    let (resp, _) = row(ui, t, 2, Icon::SymmetryPlane, &label, None, needed(planes_lost > 0));
+                    let tip = if planes_lost > 0 {
+                        "It holds a plane that cannot be a plane of symmetry: a work plane that is gone, or a face. Double-click to untick it"
+                    } else {
+                        "Double-click to change the planes"
+                    };
+                    if resp.on_hover_text(tip).double_clicked() {
                         action = Some(StudyAction::Run("analysis.symmetry"));
                     }
                 }
@@ -1659,7 +1673,7 @@ impl Workbench {
                 let (resp, _) = row(ui, t, 2, Icon::OptimizeShape, text, None, if *there { RowStyle::Normal } else { RowStyle::Dim });
                 let resp = resp.on_hover_text(*tip);
                 if resp.double_clicked() {
-                    action = Some(StudyAction::Run("analysis.optimize"));
+                    action = Some(if *there { StudyAction::OptimizeAgain } else { StudyAction::Run("analysis.optimize") });
                 } else if resp.clicked() && *there {
                     action = Some(StudyAction::Run("analysis.show_shape"));
                 }
@@ -1708,7 +1722,13 @@ impl Workbench {
                 if let Some(env) = &mut self.analysis {
                     env.field = field;
                 }
+                self.hide_shape();
                 Ok(())
+            }
+            // (The first click of the two showed or hid the shape: that is undone.)
+            Some(StudyAction::OptimizeAgain) => {
+                self.toggle_shape();
+                self.run_ui("analysis.optimize")
             }
         };
         if let Err(e) = done {
@@ -1716,11 +1736,13 @@ impl Workbench {
         }
     }
 
-    /// The name of the study's support or load `id`.
+    /// The name of the study's support, load or kept faces `id`.
     pub(crate) fn study_item_name(&self, id: u32) -> Option<String> {
         let study = self.active_study()?;
         let support = study.supports.iter().find(|s| s.id == id).map(|s| s.name.clone());
-        support.or_else(|| study.loads.iter().find(|l| l.id == id).map(|l| l.name.clone()))
+        let load = || study.loads.iter().find(|l| l.id == id).map(|l| l.name.clone());
+        let kept = || study.optimize.iter().flat_map(|o| &o.kept).find(|k| k.id == id).map(|k| k.name.clone());
+        support.or_else(load).or_else(kept)
     }
 
     /// Opens the panel of the study's support or load `id`.
@@ -1740,9 +1762,22 @@ impl Workbench {
     }
 }
 
+/// Each support, load and set of kept faces of a study: its id and what it is on. (Kept faces are
+/// on faces alone.)
+fn items_on(study: &Study) -> impl Iterator<Item = (u32, &[FaceRef], &[EdgeRef])> {
+    let supports = study.supports.iter().map(|s| (s.id, s.faces.as_slice(), s.edges.as_slice()));
+    let loads = study.loads.iter().map(|l| (l.id, l.faces.as_slice(), l.edges.as_slice()));
+    let kept = study.optimize.iter().flat_map(|o| &o.kept).map(|k| (k.id, k.faces.as_slice(), &[][..]));
+    supports.chain(loads).chain(kept)
+}
+
 /// Kept faces' row: as a support's, but kept faces are not suppressed: they are removed.
-fn kept_row(resp: egui::Response, study: StudyId, id: u32, name: &str, action: &mut Option<StudyAction>) {
-    let resp = resp.on_hover_text("Click to see which faces; double-click to change them; right-click for more");
+fn kept_row(resp: egui::Response, study: StudyId, id: u32, name: &str, lost: bool, action: &mut Option<StudyAction>) {
+    let resp = resp.on_hover_text(if lost {
+        "It is on a face the part no longer has (a feature that made it was deleted or changed): double-click it and click them again"
+    } else {
+        "Click to see which faces; double-click to change them; right-click for more"
+    });
     if resp.double_clicked() {
         *action = Some(StudyAction::Edit(id));
     } else if resp.clicked() {

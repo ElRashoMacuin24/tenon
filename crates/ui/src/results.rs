@@ -61,9 +61,14 @@ pub(crate) enum Deform {
 /// A safety factor is drawn up to this: beyond it, "plenty".
 const SAFETY_TOP: f64 = 15.0;
 
+/// What is said to a run asked for while another goes on.
+const BEING_WORKED_OUT: &str = "A study is being worked out: wait for it, or press Esc to stop it.";
+
 /// What is being worked out.
 #[derive(Clone, Debug)]
 pub(crate) struct Running {
+    /// Which run it is: what comes back is taken only by the run that waits for it.
+    pub run: u64,
     pub study: StudyId,
     /// True for Simulate; false for the mesh alone (Mesh View).
     pub solving: bool,
@@ -174,21 +179,34 @@ impl Workbench {
         !self.shape_shown() && self.outcome().is_some_and(|o| o.solved.is_some() || lines)
     }
 
+    /// Whether a run may start: none going on in the environment, and none that was left behind
+    /// and is still stopping. (The geometry thread does one thing at a time; a run queued behind
+    /// another would take Esc from it.)
+    pub(crate) fn no_run_going(&self) -> Result<(), String> {
+        if self.analysis.as_ref().is_some_and(|e| e.running.is_some() || e.shaping.is_some()) {
+            return Err(BEING_WORKED_OUT.into());
+        }
+        if self.part_jobs.values().any(|j| matches!(j, PartJob::Study { .. } | PartJob::Shape { .. })) {
+            return Err("The last run is still stopping: try again in a moment.".into());
+        }
+        Ok(())
+    }
+
     /// Simulate, or (not `solving`) the mesh alone: sets it going where the kernel is.
     pub(crate) fn work_study_out(&mut self, solving: bool) -> Result<(), String> {
         if !self.in_analysis() {
             self.analysis_begin()?;
         }
-        if self.analysis.as_ref().is_some_and(|e| e.running.is_some()) {
-            return Err("A study is being worked out: wait for it, or press Esc to stop it.".into());
-        }
+        self.no_run_going()?;
         let Some(study) = self.active_study().map(|s| s.id) else {
             return Err("There is no study yet: Create Study, then say where the part is held and what pushes on it.".into());
         };
         self.panel = None;
         let (cancel, revision) = (Cancel::default(), self.session.revision());
-        let running = Running { study, solving, cancel: cancel.clone(), since: Instant::now() };
-        let job = PartJob::Study { study, revision, solving };
+        self.step_seq += 1;
+        let run = self.step_seq;
+        let running = Running { run, study, solving, cancel: cancel.clone(), since: Instant::now() };
+        let job = PartJob::Study { run, study, revision, solving };
         // (The answer is boxed as what `study_job_done` takes it for.)
         let work = move |s: &mut Session, k: &mut dyn tenon_kernel::Kernel| -> Box<dyn std::any::Any + Send> {
             if solving {
@@ -204,15 +222,14 @@ impl Workbench {
                 if let Some(env) = &mut self.analysis {
                     env.running = Some(running);
                 }
-                self.study_job_done(study, revision, solving, done);
+                self.study_job_done(run, study, revision, solving, done);
             }
             Geo::Worker(w) => {
                 // On the kernel's thread, of the part as it is now: a session of its own there.
                 let doc = self.session.document().clone();
-                self.step_seq += 1;
-                self.part_jobs.insert(self.step_seq, job);
+                self.part_jobs.insert(run, job);
                 w.job(
-                    self.step_seq,
+                    run,
                     Box::new(move |k, _| {
                         let mut s = Session::default();
                         s.replace_document(doc, None);
@@ -234,9 +251,12 @@ impl Workbench {
         Ok(())
     }
 
-    /// A study's job came back.
-    pub(crate) fn study_job_done(&mut self, study: StudyId, revision: u64, solving: bool, result: Box<dyn std::any::Any + Send>) {
-        let took = self.analysis.as_mut().and_then(|e| e.running.take()).map(|r| r.since.elapsed().as_secs_f64());
+    /// A study's job came back. It is taken only by the run the environment there is waits for:
+    /// one that was left behind is dropped, and says nothing (the status bar has moved on).
+    pub(crate) fn study_job_done(&mut self, run: u64, study: StudyId, revision: u64, solving: bool, result: Box<dyn std::any::Any + Send>) {
+        let Some(took) = self.analysis.as_mut().and_then(|e| e.running.take_if(|r| r.run == run)).map(|r| r.since.elapsed().as_secs_f64()) else {
+            return;
+        };
         let name = self.document().study(study).map_or_else(|| "The study".to_owned(), |s| s.name.clone());
         let outcome = if solving {
             let solved = result.downcast::<Result<Solved, String>>().map_or_else(|_| Err("internal: unexpected result".to_owned()), |b| *b);
@@ -259,6 +279,13 @@ impl Workbench {
                 return;
             }
         };
+        // (The part or the study changed while it went on: what it found is of what was.)
+        if revision != self.session.revision() {
+            self.set_status(format!(
+                "{name}: the part or the study changed while it was worked out, so what it found is out of date and was not kept."
+            ));
+            return;
+        }
         let said = match &outcome.solved {
             Some(s) => {
                 let r = &s.results;
@@ -269,12 +296,12 @@ impl Workbench {
                     None => "nothing works it".to_owned(),
                 };
                 format!(
-                    "{name}: at most {} MPa where {material} yields at {} ({holds}), and it moves {} mm at most. {} nodes{}. {}",
+                    "{name}: at most {} MPa where {material} yields at {} ({holds}), and it moves {} mm at most. {} nodes, {} s. {}",
                     figures(r.max_von_mises.value),
                     figures(s.yield_strength),
                     figures(r.max_displacement.value),
                     r.mesh.nodes.len(),
-                    took.map_or(String::new(), |t| format!(", {} s", figures(t))),
+                    figures(took),
                     tenon_io::stress::NOTE
                 )
             }
@@ -290,6 +317,8 @@ impl Workbench {
             }
             env.outcome = Some(outcome);
         }
+        // (What was asked for is what is drawn. The Shape row brings a shape back.)
+        self.hide_shape();
         if yields { self.set_error(said) } else { self.set_status(said) }
     }
 
@@ -299,6 +328,9 @@ impl Workbench {
         if !self.in_analysis() {
             self.analysis_begin()?;
         }
+        if self.shaping().is_some() {
+            return Err(BEING_WORKED_OUT.into());
+        }
         // (While a study is being worked out the lines are asked for, and come with its mesh.)
         let running = self.analysis.as_ref().is_some_and(|e| e.running.is_some());
         if self.outcome().is_none() && !running {
@@ -306,6 +338,10 @@ impl Workbench {
         }
         if let Some(env) = &mut self.analysis {
             env.mesh_view = !env.mesh_view;
+            // (The lines asked for are drawn: not under a shape.)
+            if env.mesh_view {
+                self.hide_shape();
+            }
         }
         Ok(())
     }

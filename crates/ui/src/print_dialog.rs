@@ -66,13 +66,17 @@ pub(crate) enum PartJob {
         revision: u64,
     },
     /// A stress study of this revision of the part: worked out (`solving`), or its mesh alone.
+    /// `run`: which run it is, as the environment knows it.
     Study {
+        run: u64,
         study: tenon_model::study::StudyId,
         revision: u64,
         solving: bool,
     },
-    /// Optimize Shape of a study, of this revision of the part (DEC-123).
+    /// Optimize Shape of a study, of this revision of the part (DEC-123). `run`: which run it
+    /// is, as the environment knows it.
     Shape {
+        run: u64,
         study: tenon_model::study::StudyId,
         revision: u64,
     },
@@ -195,8 +199,8 @@ impl Workbench {
                 }
             }
             PartJob::Flat { revision } => self.flat_done(revision, result),
-            PartJob::Study { study, revision, solving } => self.study_job_done(study, revision, solving, result),
-            PartJob::Shape { study, revision } => self.shape_job_done(study, revision, result),
+            PartJob::Study { run, study, revision, solving } => self.study_job_done(run, study, revision, solving, result),
+            PartJob::Shape { run, study, revision } => self.shape_job_done(run, study, revision, result),
             PartJob::FlatEdges { sketch } => self.flat_edges_done(sketch, result),
             PartJob::Print { revision, setup } => {
                 let report = result.downcast::<Result<Report, String>>().map_or_else(|_| unexpected(), |b| *b);

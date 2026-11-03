@@ -572,7 +572,7 @@ impl Workbench {
                         clear |= cleared;
                         enter |= entered;
                     }
-                    Panel::Symmetry(p) => clear |= crate::shape::symmetry_fields(ui, p),
+                    Panel::Symmetry(p) => crate::shape::symmetry_fields(ui, p),
                     Panel::Load(p) => {
                         let (cleared, entered) = crate::analysis::load_fields(ui, p, face_normal, t);
                         clear |= cleared;

@@ -66,9 +66,9 @@ impl Workbench {
                 Some(Wants { edges: true, faces: false })
             }
             Some(Panel::Chamfer(p)) => Some(Wants { edges: true, faces: p.method != ChamferMethod::Distance }),
-            Some(
-                Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_) | Panel::Keep(_) | Panel::Symmetry(_),
-            ) => Some(Wants { edges: false, faces: true }),
+            Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_) | Panel::Keep(_)) => {
+                Some(Wants { edges: false, faces: true })
+            }
             // A support is on faces. A fixed one may be on edges in their place: it is on
             // whichever was clicked first, until that is cleared.
             Some(Panel::Support(s)) => {
@@ -150,7 +150,6 @@ impl Workbench {
             }
             Some(Panel::Shell(p)) => p.faces.iter().filter_map(face).collect(),
             Some(Panel::Keep(p)) => p.faces.iter().filter_map(face).collect(),
-            Some(Panel::Symmetry(p)) => p.faces.iter().filter_map(face).collect(),
             Some(Panel::Support(p)) => p.faces.iter().filter_map(face).chain(edges(&p.edges)).collect(),
             Some(Panel::Load(p)) => p.faces.iter().filter_map(face).chain(edges(&p.edges)).collect(),
             Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => self.bodies_picks(),
@@ -303,10 +302,6 @@ impl Workbench {
             (Pick::Face { body, face }, Some(Panel::Support(s))) => {
                 wants.faces && self.face_ref_of(body, face).is_some_and(|r| s.kind.takes(&r.fingerprint.surface).is_ok())
             }
-            // A plane of symmetry is a flat face.
-            (Pick::Face { body, face }, Some(Panel::Symmetry(_))) => {
-                wants.faces && self.face_ref_of(body, face).is_some_and(|r| r.fingerprint.surface == "plane")
-            }
             // A load, the faces it can be on: a bearing load round ones.
             (Pick::Face { body, face }, Some(Panel::Load(l))) => {
                 wants.faces && self.face_ref_of(body, face).is_some_and(|r| l.shown().takes(&r.fingerprint.surface).is_ok())
@@ -449,7 +444,6 @@ impl Workbench {
             }
             (Some(Panel::Shell(s)), None, Some(r)) => edit_list(&mut s.faces, r, present, toggle, same_face),
             (Some(Panel::Keep(p)), None, Some(r)) => edit_list(&mut p.faces, r, present, toggle, same_face),
-            (Some(Panel::Symmetry(p)), None, Some(r)) => edit_list(&mut p.faces, r, present, toggle, same_face),
             // (A support or a load is on faces or on edges, never on both.)
             (Some(Panel::Support(s)), None, Some(r)) if s.edges.is_empty() => edit_list(&mut s.faces, r, present, toggle, same_face),
             (Some(Panel::Support(s)), Some(r), _) if s.faces.is_empty() && s.kind == tenon_model::study::SupportKind::Fixed => {
@@ -814,7 +808,6 @@ impl Workbench {
             Some(Panel::Chamfer(c)) => c.edges.clear(),
             Some(Panel::Shell(s)) => s.faces.clear(),
             Some(Panel::Keep(p)) => p.faces.clear(),
-            Some(Panel::Symmetry(p)) => p.faces.clear(),
             Some(Panel::Support(s)) => {
                 s.faces.clear();
                 s.edges.clear();

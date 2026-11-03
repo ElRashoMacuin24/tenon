@@ -135,6 +135,15 @@ fn templates_dir() -> Option<PathBuf> {
         .find(|dir| dir.join("templates.json").is_file())
 }
 
+/// A name a save dialog gave without an extension (some platforms leave off the chosen filter's)
+/// takes the first that is offered.
+fn or_first_extension(path: PathBuf, exts: &[&str]) -> PathBuf {
+    match exts.first() {
+        Some(ext) if path.extension().is_none() => path.with_extension(ext),
+        _ => path,
+    }
+}
+
 /// Native file dialogs.
 fn services() -> Services {
     fn label(ext: &str) -> &str {
@@ -144,6 +153,7 @@ fn services() -> Services {
             "tenondrw" => "Tenon drawing",
             "step" => "STEP",
             "stl" => "STL",
+            "3mf" => "3MF",
             "pdf" => "PDF",
             "svg" => "SVG",
             "dxf" => "DXF",
@@ -176,6 +186,12 @@ fn services() -> Services {
             let path = rfd::FileDialog::new().set_file_name(name).add_filter(label(ext), &[ext]).save_file()?;
             // Some platforms return the name without the chosen filter's extension.
             Some(if path.extension().is_none() { path.with_extension(ext) } else { path })
+        })),
+        // (A file that can be of several kinds: one filter for each.)
+        pick_save_of: Some(Box::new(|name: &str, exts: &[&str]| {
+            let dialog = rfd::FileDialog::new().set_file_name(name);
+            let path = exts.iter().fold(dialog, |dialog, ext| dialog.add_filter(label(ext), &[*ext])).save_file()?;
+            Some(or_first_extension(path, exts))
         })),
         pick_program: Some(Box::new(|| {
             let dialog = rfd::FileDialog::new();
@@ -352,6 +368,15 @@ mod tests {
         // (Here, a checkout's: the test program is in target/<profile>/deps.)
         let dir = super::templates_dir().expect("the templates");
         assert!(dir.join("ansi-b.tenondrw").is_file() && dir.join("iso-a3.tenondrw").is_file(), "{}", dir.display());
+    }
+
+    #[test]
+    fn a_name_saved_without_an_extension_takes_the_first_offered() {
+        use std::path::PathBuf;
+        let exts = ["stl", "3mf"];
+        assert_eq!(super::or_first_extension(PathBuf::from("a shape"), &exts), PathBuf::from("a shape.stl"));
+        assert_eq!(super::or_first_extension(PathBuf::from("a shape.3mf"), &exts), PathBuf::from("a shape.3mf"));
+        assert_eq!(super::or_first_extension(PathBuf::from("a shape"), &[]), PathBuf::from("a shape"));
     }
 
     #[test]
