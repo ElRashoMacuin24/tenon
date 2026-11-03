@@ -128,7 +128,8 @@ pub fn match_curves(mesh: &TetMesh, part: &Mesh) -> BTreeMap<u32, u32> {
         let mut votes: BTreeMap<u32, usize> = BTreeMap::new();
         let mut asked = 0;
         for l in lines.iter().step_by(step).take(SAMPLES) {
-            // (Its middle node is on the curve itself.)
+            // (Its middle node is on the curve itself; or, in a shape's mesh with straight
+            // mid-side nodes, on the straight line beside it, well within `near`.)
             let p = mesh.nodes[mesh.lines[*l].nodes[2] as usize];
             let nearest = drawn
                 .iter()

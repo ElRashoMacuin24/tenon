@@ -8,14 +8,14 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{Value, json};
-use tenon_fea::topo::{Report, Stop};
+use serde_json::{Map, Value, json};
+use tenon_fea::topo::{Phase, Report, Stop};
 use tenon_fea::{Cancel, Tools};
 use tenon_io::shape::{Shaped, work_out};
 use tenon_kernel::Kernel;
 use tenon_kernel_occt::OcctKernel;
-use tenon_model::Session;
-use tenon_model::study::{Optimize, StudyId, Target};
+use tenon_model::study::{FACE_PLANE_REFUSED, Optimize, Resolution, StudyId, Target};
+use tenon_model::{Document, Session};
 
 /// True when the programs are there. When they are not: a failure where they are required,
 /// and otherwise a line saying that the test did not run.
@@ -348,4 +348,305 @@ fn the_shape_solved_once_keeps_what_must_stay_then_the_densest() {
     // What must stay is kept however little is asked; equal densities go by order.
     assert_eq!(tenon_io::shape::kept_levels(&density, &volumes, &passive, 0.0), vec![0, 0, 0, solid]);
     assert_eq!(tenon_io::shape::kept_levels(&[0.5, 0.5], &[1.0, 1.0], &[false, false], 0.5), vec![solid, 0]);
+}
+
+/// A plate centred on the origin, with bores (x, y, across) right through it, of mild steel.
+fn plate(width: f64, depth: f64, thick: f64, bores: &[(f64, f64, f64)]) -> Part {
+    let mut p = Part::new();
+    p.run("model.box", json!({ "width": width, "depth": depth, "height": thick, "centered": true }));
+    for (x, y, across) in bores {
+        p.run("model.cylinder", json!({ "x": x, "y": y, "diameter": across, "height": thick, "operation": "cut" }));
+    }
+    p.run("document.material", json!({ "name": "Steel, mild" }));
+    p
+}
+
+/// Held at its left end, 100 N down on its right.
+fn held_at_the_left(p: &mut Part) {
+    let (left, right) = (p.facing("left"), p.facing("right"));
+    p.run("study.new", json!({}));
+    p.run("study.fix", json!({ "faces": [left] }));
+    p.run("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" }));
+}
+
+/// The 120 x 80 x 6 plate with eight bores of 4: bolt holes, as Keep Faces is for.
+fn bolted_plate() -> Part {
+    let bores: Vec<(f64, f64, f64)> = [-50.0, -17.0, 17.0, 50.0].iter().flat_map(|x| [(*x, -30.0, 4.0), (*x, 30.0, 4.0)]).collect();
+    let mut p = plate(120.0, 80.0, 6.0, &bores);
+    held_at_the_left(&mut p);
+    p
+}
+
+/// A few rounds of a shape at a resolution, on what it asks of the mesh.
+fn few_rounds(resolution: Resolution) -> Optimize {
+    Optimize { target: Target::Remove(60.0), sharpen: false, iterations: Some(3), resolution, ..Optimize::default() }
+}
+
+/// The settings of a study made to hold a face as a plane of symmetry, as a file edited by hand
+/// has it, the document opened from those bytes.
+fn with_a_face_as_a_plane_in_its_file(p: &mut Part, face: &Value) {
+    let mut v = serde_json::to_value(p.s.document()).unwrap();
+    v["studies"][0]["optimize"]["symmetry"] = json!([{ "face": face }]);
+    let doc: Document = serde_json::from_value(v).unwrap();
+    let bytes = tenon_io::project::to_bytes(&doc, &Map::new()).unwrap();
+    let (opened, _) = tenon_io::project::from_bytes(&bytes).unwrap();
+    p.s = Session::new(opened);
+}
+
+#[test]
+fn a_plate_with_small_holes_is_worked_out_near_its_resolution() {
+    if !programs("a plate with small holes") {
+        return;
+    }
+    let mut p = bolted_plate();
+    let bores = p.run("model.find", json!({ "what": "faces", "kind": "cylinder" }));
+    assert_eq!(bores["count"], 8, "{bores}");
+    // One bore kept, 2 mm deep; which one is told from its wall.
+    p.run("study.keep", json!({ "faces": [bores["found"][0]["reference"].clone()], "depth": 2 }));
+    let kept = p.s.document().study(StudyId(1)).unwrap().optimize.clone().unwrap().kept;
+    let (mut x, mut y) = (0.0, 0.0);
+    {
+        let r = p.s.regen(&mut p.k).clone();
+        let (body, face) = r.resolve(&kept[0].faces[0], &p.k).unwrap();
+        let c = p.k.face_info(r.bodies[body].shape.face(face)).unwrap().centroid;
+        x += c.x;
+        y += c.y;
+    }
+    let shaped = p.shape(&Optimize { kept, ..few_rounds(Resolution::Coarse) }, &Cancel::default(), None).unwrap();
+    let mesh = &shaped.field.mesh;
+    // Under one and a half times the nodes it asks for, and the elements made larger to get
+    // there, which the run says; the filter goes with the size it came to.
+    let nodes = mesh.nodes.len();
+    assert!((6_000..=18_000).contains(&nodes), "{nodes} nodes");
+    let first = (9.0 * shaped.part_volume / 12_000.0).cbrt();
+    assert!(shaped.element_size > first, "{} against {first}", shaped.element_size);
+    assert_eq!(shaped.member_size, 3.0 * shaped.element_size);
+    let said = format!("so the elements were made larger ({} mm)", (shaped.element_size * 1000.0).round() / 1000.0);
+    assert!(shaped.warnings.iter().any(|w| w.contains(&said)), "{:?}", shaped.warnings);
+    // Straight mid-side nodes: no element is any but its corners' shape, and none is inside out.
+    for t in &mesh.tets {
+        let (curved, corners) = (mesh.volume(t), mesh.corner_volume(t));
+        assert!(corners > 0.0 && (curved - corners).abs() < 1e-9 * corners.max(1.0), "{curved} against {corners}");
+    }
+    // The kept bore still found on such a mesh: every element about it stays solid.
+    let mut near = 0;
+    for (t, density) in mesh.tets.iter().zip(&shaped.optimized.density) {
+        let c = mesh.centroid(t);
+        let from_axis = ((c.x - x).powi(2) + (c.y - y).powi(2)).sqrt();
+        if from_axis < 2.0 + 1.5 {
+            near += 1;
+            assert_eq!(*density, 1.0, "an element {from_axis} mm from the bore's axis is at {density}");
+        }
+    }
+    assert!(near > 5, "{near} elements round the bore");
+    assert!(shaped.shape_compliance.is_some() && shaped.shown.skin.is_closed());
+}
+
+#[test]
+fn many_small_holes_at_fine_are_worked_out_or_refused_in_words_that_help() {
+    if !programs("many small holes") {
+        return;
+    }
+    // The 200 x 100 x 5 plate with 32 bores of 3. It is stopped once it is divided: how many
+    // nodes it took is what is looked at, and a whole round at this size is many seconds.
+    let bores: Vec<(f64, f64, f64)> =
+        (0..8).flat_map(|i| (0..4).map(move |j| (-84.0 + 24.0 * f64::from(i), -36.0 + 24.0 * f64::from(j), 3.0))).collect();
+    let mut p = plate(200.0, 100.0, 5.0, &bores);
+    held_at_the_left(&mut p);
+    let cancel = Cancel::default();
+    let progress = Arc::new(Mutex::new(Report::default()));
+    let watcher = {
+        let (cancel, progress) = (cancel.clone(), progress.clone());
+        std::thread::spawn(move || {
+            for _ in 0..60_000 {
+                if progress.lock().unwrap().phase == Phase::Solid {
+                    cancel.store(true, Ordering::Relaxed);
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        })
+    };
+    let dir = std::env::temp_dir().join(format!("tenon-shape-fine-{}", std::process::id()));
+    let e = work_out(&mut p.s, &mut p.k, StudyId(1), &few_rounds(Resolution::Fine), 0, Some(&dir), &cancel, Some(&progress)).unwrap_err();
+    cancel.store(true, Ordering::Relaxed);
+    watcher.join().unwrap();
+    if e == tenon_fea::tools::STOPPED {
+        let mesh = tenon_fea::mesh::read_msh(&std::fs::read_to_string(dir.join("part.msh")).unwrap()).unwrap();
+        assert!(mesh.nodes.len() <= tenon_fea::topo::MAX_SHAPE_NODES, "{} nodes", mesh.nodes.len());
+    } else {
+        assert!(e.ends_with("Choose Medium."), "{e}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_plain_solid_comes_to_about_its_resolutions_nodes() {
+    if !programs("a plain solid") {
+        return;
+    }
+    let mut p = plate(60.0, 30.0, 10.0, &[]);
+    held_at_the_left(&mut p);
+    let shaped = p.shape(&few_rounds(Resolution::Coarse), &Cancel::default(), None).unwrap();
+    let nodes = shaped.field.mesh.nodes.len();
+    assert!((9_000..=15_000).contains(&nodes), "{nodes} nodes");
+    // The size it was first given, with nothing to say of it.
+    assert!((shaped.element_size - (9.0 * shaped.part_volume / 12_000.0).cbrt()).abs() < 1e-9, "{}", shaped.element_size);
+    assert!(!shaped.warnings.iter().any(|w| w.contains("made larger")), "{:?}", shaped.warnings);
+}
+
+#[test]
+fn a_size_asked_is_kept_and_a_resolution_given_takes_its_place() {
+    if !programs("a size asked") {
+        return;
+    }
+    let mut p = cantilever();
+    p.run("study.shape", json!({ "element_size": 6, "remove": 60, "sharpen": false, "iterations": 1 }));
+    let r = p.run("study.optimize", json!({}));
+    assert_eq!(r["element_size"], 6.0, "{r}");
+    // A resolution given with no size: its size, for this run, and the file's still 6.
+    let by_resolution = (9.0 * 18_000.0f64 / 12_000.0).cbrt();
+    let r = p.run("study.optimize", json!({ "resolution": "coarse" }));
+    assert!((r["element_size"].as_f64().unwrap() - by_resolution).abs() < 1e-6, "{r}");
+    let r = p.run("study.optimize", json!({ "element_size": null }));
+    assert!((r["element_size"].as_f64().unwrap() - by_resolution).abs() < 1e-6, "{r}");
+    assert_eq!(p.s.document().study(StudyId(1)).unwrap().optimize.as_ref().unwrap().element_size, Some(6.0));
+    // Both given: the size, as it is documented.
+    let r = p.run("study.optimize", json!({ "resolution": "coarse", "element_size": 5 }));
+    assert_eq!(r["element_size"], 5.0, "{r}");
+}
+
+#[test]
+fn stopped_while_the_shape_is_solved_once_says_so() {
+    if !programs("a shape stopped at its check") {
+        return;
+    }
+    let mut p = cantilever();
+    let cancel = Cancel::default();
+    let progress = Arc::new(Mutex::new(Report::default()));
+    let watcher = {
+        let (cancel, progress) = (cancel.clone(), progress.clone());
+        std::thread::spawn(move || {
+            for _ in 0..60_000 {
+                if progress.lock().unwrap().phase == Phase::Checking {
+                    cancel.store(true, Ordering::Relaxed);
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        })
+    };
+    let shaped = p.shape(&quick(3), &cancel, Some(&progress)).unwrap();
+    watcher.join().unwrap();
+    // It ended as it would have, and the shape stands; what it lacks is said.
+    assert_eq!(shaped.optimized.stop, Stop::Limit);
+    assert!(shaped.shape_compliance.is_none() && shaped.shown.skin.is_closed() && !shaped.shown.skin.triangles.is_empty());
+    assert!(shaped.warnings.iter().any(|w| w.contains("stopped while the shape was being solved once")), "{:?}", shaped.warnings);
+    let r = shaped.summary("Study1");
+    assert!(r["stiffness_kept"].is_null() && r["compliance"]["shape"].is_null(), "{r}");
+}
+
+#[test]
+fn too_much_kept_for_a_mass_asked_says_the_mass() {
+    if !programs("too much kept") {
+        return;
+    }
+    let mut p = cantilever();
+    let (top, bottom) = (p.facing("top"), p.facing("bottom"));
+    p.run("study.keep", json!({ "faces": [top, bottom], "depth": 10 }));
+    p.run("study.shape", json!({ "grams": 80, "sharpen": false, "element_size": 3 }));
+    let e = p.refused("study.optimize", json!({}));
+    assert!(e.contains("Keep1 and the layers under the supports and loads are already"), "{e}");
+    assert!(e.contains("% kept. Ask for more than ") && e.ends_with(" g, or keep less."), "{e}");
+}
+
+#[test]
+fn a_face_held_as_a_plane_in_a_file_is_refused_before_anything_is_started() {
+    // (No programs: it is said before any is looked for.)
+    let mut p = Part::new();
+    p.run("model.box", json!({ "width": 80, "depth": 10, "height": 20, "centered": true }));
+    p.run("document.material", json!({ "name": "Steel, mild" }));
+    let (left, right, front) = (p.facing("left"), p.facing("right"), p.facing("front"));
+    p.run("study.new", json!({}));
+    p.run("study.fix", json!({ "faces": [left, right] }));
+    p.run("study.force", json!({ "faces": [front], "newtons": 100, "direction": "back" }));
+    p.run("study.shape", json!({ "remove": 60 }));
+    with_a_face_as_a_plane_in_its_file(&mut p, &front);
+    let e = p.refused("study.optimize", json!({}));
+    assert_eq!(e, format!("A shape of Study1 cannot be worked out yet. {FACE_PLANE_REFUSED}"));
+    // A stress check of that study is not held up: it goes on to look for its programs, or runs.
+    let c = p.run("study.check", json!({}));
+    assert_eq!(c["ready"], true, "{c}");
+
+    // The corner the asymmetry check cannot see: a plate thinner than a tenth of its elements
+    // lies within that of its own image, and it would have run to the end on a meaningless plane.
+    let mut p = Part::new();
+    p.run("model.box", json!({ "width": 120, "depth": 120, "height": 1 }));
+    p.run("document.material", json!({ "name": "Steel, mild" }));
+    let (left, right, bottom) = (p.facing("left"), p.facing("right"), p.facing("bottom"));
+    p.run("study.new", json!({}));
+    p.run("study.fix", json!({ "faces": [left] }));
+    p.run("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" }));
+    p.run("study.shape", json!({ "remove": 60, "element_size": 12 }));
+    with_a_face_as_a_plane_in_its_file(&mut p, &bottom);
+    assert_eq!(p.refused("study.optimize", json!({})), format!("A shape of Study1 cannot be worked out yet. {FACE_PLANE_REFUSED}"));
+}
+
+#[test]
+fn what_only_a_shape_needs_is_said_before_anything_is_started() {
+    // (No programs: it is said before any is looked for.)
+    let mut p = plate(80.0, 40.0, 10.0, &[]);
+    let cut = p.run("model.cylinder", json!({ "x": 20, "y": 0, "diameter": 8, "height": 10, "operation": "cut" }))["feature"].as_u64().unwrap();
+    held_at_the_left(&mut p);
+    let bore = p.face(json!({ "kind": "cylinder" }));
+    p.run("study.keep", json!({ "faces": [bore] }));
+    let plane = p.run("work.plane", json!({ "base": "yz", "distance": 0 }))["feature"].as_u64().unwrap();
+    p.run("study.shape", json!({ "symmetry": [{ "work": plane }] }));
+    assert_eq!(p.run("study.check", json!({}))["shape_needs"], json!([]));
+    // The work plane taken away: its name, or its number when the feature is gone.
+    p.run("feature.delete", json!({ "feature": plane }));
+    let e = p.refused("study.optimize", json!({}));
+    assert!(e.starts_with("A shape of Study1 cannot be worked out yet. "), "{e}");
+    assert!(e.contains("cannot be a plane of symmetry: it is no longer on the part. Choose another (study.shape, with symmetry)."), "{e}");
+    p.run("study.shape", json!({ "symmetry": [] }));
+    // The bore's feature taken away: the kept set by name, each thing said as a sentence.
+    p.run("feature.delete", json!({ "feature": cut }));
+    let e = p.refused("study.optimize", json!({}));
+    assert!(e.contains("Keep1: its face is no longer on the part. Give it its faces again (study.set, with faces)."), "{e}");
+    assert!(!e.contains(".."), "{e}");
+    // Settings given that are not the study's own say the same of a plane.
+    let mut p = plate(80.0, 40.0, 10.0, &[]);
+    held_at_the_left(&mut p);
+    let top = p.facing("top");
+    let face: tenon_model::FaceRef = serde_json::from_value(top).unwrap();
+    let o = Optimize { symmetry: vec![tenon_model::PlaneRef::Face(face)], ..Optimize::default() };
+    assert_eq!(p.shape(&o, &Cancel::default(), None).unwrap_err(), FACE_PLANE_REFUSED);
+    let o = Optimize { symmetry: vec![tenon_model::PlaneRef::Work(tenon_model::FeatureId(99))], ..Optimize::default() };
+    let e = p.shape(&o, &Cancel::default(), None).unwrap_err();
+    assert_eq!(e, "work plane 99 cannot be a plane of symmetry: it is not a plane that is on the part");
+}
+
+#[test]
+fn where_the_files_go_is_refused_before_anything_is_started() {
+    // (No programs: it is said before any is looked for.)
+    let mut p = cantilever();
+    let dir = std::env::temp_dir().join(format!("tenon-shape-refused-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let at = |name: &str| dir.join(name).display().to_string();
+    for (asked, said) in [
+        (json!({ "stl": at("shape.obj") }), "`stl` must be a file ending in .stl"),
+        (json!({ "stl": at("y.3mf") }), "`stl` must be a file ending in .stl"),
+        (json!({ "threemf": at("x.stl") }), "`threemf` must be a file ending in .3mf"),
+        (json!({ "stl": dir.join("no").join("such").join("z.stl").display().to_string() }), "there is no folder"),
+    ] {
+        let e = p.refused("study.optimize", asked.clone());
+        assert!(e.contains(said), "{asked}: {e}");
+    }
+    // The first file is good and is there; the second is refused: the first is as it was.
+    std::fs::write(dir.join("there.stl"), b"what was there").unwrap();
+    let e = p.refused("study.optimize", json!({ "stl": at("there.stl"), "threemf": at("x.obj") }));
+    assert!(e.contains("`threemf`"), "{e}");
+    assert_eq!(std::fs::read(dir.join("there.stl")).unwrap(), b"what was there");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "nothing is left behind");
+    std::fs::remove_dir_all(&dir).ok();
 }

@@ -40,7 +40,7 @@ const SOLVE_LIMIT: Duration = Duration::from_secs(30 * 60);
 
 /// What to try when a program runs too long: for a stress check, and for a shape.
 const QUICK: &str = "a quick check is of fewer, larger elements";
-const SHAPE_SLOW: &str = "a shape is found sooner at Coarse";
+const SHAPE_SLOW: &str = "a shape is found sooner on fewer, larger elements";
 
 /// The size of the elements a part is divided into when none is said: a twentieth of the box
 /// it fits in, corner to corner.
@@ -53,27 +53,84 @@ fn said(what: &str, e: String) -> String {
     if e == tools::STOPPED { e } else { format!("{what} {e}") }
 }
 
-/// Divides a part into ten-node tetrahedra about `size` across. `step` is the part as a STEP
-/// file's bytes. The mesher's files are left in `dir`.
-pub fn mesh_part(tools: &Tools, step: &[u8], size: f64, dir: &Path, cancel: &Cancel) -> Result<TetMesh, String> {
+/// What the mesher is told for a stress check: second-order tetrahedra, sized `size` at most and
+/// finer round small curves (twelve to a full turn), written in the 2.2 format as text. On one
+/// thread: with more the mesher gives a slightly different mesh each time, and the same part
+/// would not give the same answer twice.
+fn stress_check_args(size: f64) -> Vec<String> {
+    let (largest, smallest) = (format!("{size}"), format!("{}", size / 10.0));
+    ["part.step", "-3", "-order", "2", "-clmax", &largest, "-clmin", &smallest, "-clcurv", "12", "-nt", "1", "-format", "msh2", "-o", "part.msh"]
+        .map(str::to_owned)
+        .to_vec()
+}
+
+/// What the mesher is told for a shape: see [`mesh_for_shape`] for how, and why, it differs.
+fn shape_args(size: f64) -> Vec<String> {
+    let (largest, smallest) = (format!("{size}"), format!("{}", size / 3.0));
+    [
+        "part.step",
+        "-3",
+        "-order",
+        "2",
+        "-clmax",
+        &largest,
+        "-clmin",
+        &smallest,
+        "-clcurv",
+        "12",
+        "-setnumber",
+        "Mesh.MeshSizeExtendFromBoundary",
+        "0",
+        "-setnumber",
+        "Mesh.SecondOrderLinear",
+        "1",
+        "-nt",
+        "1",
+        "-format",
+        "msh2",
+        "-o",
+        "part.msh",
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
+/// Has the mesher divide the part (`step`, as a STEP file's bytes) as `args` say, elements about
+/// `size` across. Its files are left in `dir`.
+fn run_mesher(tools: &Tools, step: &[u8], size: f64, args: &[String], dir: &Path, cancel: &Cancel, slow: &str) -> Result<TetMesh, String> {
     if !(size.is_finite() && size > 0.0) {
         return Err("the element size must be more than 0".into());
     }
     std::fs::write(dir.join("part.step"), step).map_err(|e| format!("cannot write the part for the mesher: {e}"))?;
-    let (largest, smallest) = (format!("{size}"), format!("{}", size / 10.0));
-    // Second-order tetrahedra, sized `size` at most and finer round small curves (twelve to a
-    // full turn), written in the 2.2 format as text. On one thread: with more the mesher
-    // gives a slightly different mesh each time, and the same part would not give the same
-    // answer twice.
-    let args =
-        ["part.step", "-3", "-order", "2", "-clmax", &largest, "-clmin", &smallest, "-clcurv", "12", "-nt", "1", "-format", "msh2", "-o", "part.msh"];
-    tools::run(&tools.gmsh, &args, dir, "mesher.log", cancel, MESH_LIMIT, QUICK)
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    tools::run(&tools.gmsh, &args, dir, "mesher.log", cancel, MESH_LIMIT, slow)
         .map_err(|e| said("The part could not be divided into elements.", e))?;
     let text = std::fs::read_to_string(dir.join("part.msh")).map_err(|_| {
         let said = std::fs::read_to_string(dir.join("mesher.log")).unwrap_or_default();
         format!("The mesher wrote no mesh. It said:\n{}", tools::tail(&said, 12))
     })?;
     mesh::read_msh(&text)
+}
+
+/// Divides a part into ten-node tetrahedra about `size` across, for a stress check. `step` is
+/// the part as a STEP file's bytes. The mesher's files are left in `dir`.
+pub fn mesh_part(tools: &Tools, step: &[u8], size: f64, dir: &Path, cancel: &Cancel) -> Result<TetMesh, String> {
+    run_mesher(tools, step, size, &stress_check_args(size), dir, cancel, QUICK)
+}
+
+/// Divides a part into ten-node tetrahedra about `size` across, for a shape to be worked out on.
+/// The mesher's files are left in `dir`.
+///
+/// It differs from [`mesh_part`] in three ways: no finer than a third of `size` round small
+/// details, the size not carried in from the boundary, and the mid-side nodes straight. The
+/// density filter works over at least one and a half elements, so a shape cannot use finer detail
+/// than that, and a stress check's grading only costs nodes (a plate with a few small holes came
+/// to three times the nodes the size was picked for, and one with many to seventy times).
+/// Straight mid-side nodes cannot turn an element inside out, as curved ones do on a small hole
+/// at these sizes (the solver refuses those), and a shape is a guide: it does not need the bore's
+/// roundness.
+pub fn mesh_for_shape(tools: &Tools, step: &[u8], size: f64, dir: &Path, cancel: &Cancel) -> Result<TetMesh, String> {
+    run_mesher(tools, step, size, &shape_args(size), dir, cancel, SHAPE_SLOW)
 }
 
 /// Has the solver work a problem out. Its files are left in `dir`.
@@ -158,9 +215,10 @@ pub struct Prepared {
     pub meshing: f64,
 }
 
-/// The part (`step`, as a STEP file's bytes) divided into elements about `size` across, and
-/// `setup` put on them. `part` is the part as the kernel draws it, to tell its faces on the
-/// mesh. A mesh of more than `max_nodes` nodes is refused, and so is a part not held fast.
+/// The part (`step`, as a STEP file's bytes) divided into elements about `size` across as for a
+/// stress check, and `setup` put on them. `part` is the part as the kernel draws it, to tell its
+/// faces on the mesh. A mesh of more than [`MAX_SOLVE_NODES`] nodes is refused, and so is a part
+/// not held fast.
 pub fn prepare(
     tools: &Tools,
     step: &[u8],
@@ -169,14 +227,19 @@ pub fn prepare(
     size: f64,
     dir: &Path,
     cancel: &Cancel,
-    max_nodes: usize,
 ) -> Result<Prepared, String> {
     let started = Instant::now();
     let mesh = mesh_part(tools, step, size, dir, cancel)?;
     let meshing = started.elapsed().as_secs_f64();
-    if mesh.nodes.len() > max_nodes {
-        return Err(too_many_nodes(size, mesh.nodes.len(), max_nodes));
+    if mesh.nodes.len() > MAX_SOLVE_NODES {
+        return Err(too_many_nodes(size, mesh.nodes.len()));
     }
+    put_on(mesh, part, setup, meshing)
+}
+
+/// `setup` put on a mesh already made (`meshing`: how long that took, in seconds). `part` is the
+/// part as the kernel draws it, to tell its faces on the mesh. A part not held fast is refused.
+pub fn put_on(mesh: TetMesh, part: &tenon_kernel::Mesh, setup: &Setup, meshing: f64) -> Result<Prepared, String> {
     let on = faces::match_surfaces(&mesh, part)?;
     let curves = faces::match_curves(&mesh, part);
     let problem = Problem::build(mesh, &on, &curves, setup)?;
@@ -192,19 +255,12 @@ pub fn prepare(
     Ok(Prepared { problem, on, meshing })
 }
 
-/// Why a mesh of `nodes` nodes is more than is taken (`max_nodes`), and what to do: in the
-/// words of a shape being worked out when that is its limit ([`topo::MAX_SHAPE_NODES`]), and
-/// otherwise of a stress check.
-fn too_many_nodes(size: f64, nodes: usize, max_nodes: usize) -> String {
-    if max_nodes == topo::MAX_SHAPE_NODES {
-        format!(
-            "Divided into elements of {size} mm the part has {nodes} nodes: more than a shape is worked out on ({max_nodes}). Choose Coarse, or a larger smallest member."
-        )
-    } else {
-        format!(
-            "Divided into elements of {size} mm the part has {nodes} nodes: more than a quick check solves ({max_nodes}). Make the elements larger (Mesh Settings)."
-        )
-    }
+/// Why a mesh of `nodes` nodes is more than a stress check takes, and what to do. (A shape has
+/// words of its own, with what helps for what it was asked: `tenon_io::shape`.)
+fn too_many_nodes(size: f64, nodes: usize) -> String {
+    format!(
+        "Divided into elements of {size} mm the part has {nodes} nodes: more than a quick check solves ({MAX_SOLVE_NODES}). Make the elements larger (Mesh Settings)."
+    )
 }
 
 /// A study worked out from start to end: the part (`step`, as a STEP file's bytes) divided
@@ -219,7 +275,7 @@ pub fn work_out(
     dir: &Path,
     cancel: &Cancel,
 ) -> Result<(Results, Took), String> {
-    let Prepared { problem, meshing, .. } = prepare(tools, step, part, setup, size, dir, cancel, MAX_SOLVE_NODES)?;
+    let Prepared { problem, meshing, .. } = prepare(tools, step, part, setup, size, dir, cancel)?;
     let started = Instant::now();
     let solution = solve(tools, &problem, dir, cancel)?;
     let solving = started.elapsed().as_secs_f64();
@@ -238,26 +294,36 @@ mod tests {
         let scratch = Scratch::new().unwrap();
         for size in [0.0, -1.0, f64::NAN] {
             assert!(mesh_part(&tools, b"", size, &scratch.dir, &Cancel::default()).unwrap_err().contains("more than 0"));
+            assert!(mesh_for_shape(&tools, b"", size, &scratch.dir, &Cancel::default()).unwrap_err().contains("more than 0"));
         }
         // A mesher that is not there says so, as the reason the part was not divided.
         let e = mesh_part(&tools, b"", 1.0, &scratch.dir, &Cancel::default()).unwrap_err();
         assert!(e.starts_with("The part could not be divided into elements.") && e.contains("cannot start"), "{e}");
+        let e = mesh_for_shape(&tools, b"", 1.0, &scratch.dir, &Cancel::default()).unwrap_err();
+        assert!(e.starts_with("The part could not be divided into elements.") && e.contains("cannot start"), "{e}");
         // Preparing a study starts with the dividing, and says the same.
         let part = tenon_kernel::Mesh::default();
         let setup = Setup { held: Vec::new(), pushed: Vec::new(), surfaces: Vec::new(), material: Material::of(200.0, 0.3, 7.85) };
-        let e = prepare(&tools, b"", &part, &setup, 1.0, &scratch.dir, &Cancel::default(), MAX_SOLVE_NODES).unwrap_err();
+        let e = prepare(&tools, b"", &part, &setup, 1.0, &scratch.dir, &Cancel::default()).unwrap_err();
         assert!(e.starts_with("The part could not be divided into elements.") && e.contains("cannot start"), "{e}");
     }
 
     #[test]
-    fn too_many_nodes_is_said_in_the_words_of_what_was_asked() {
+    fn a_stress_check_and_a_shape_are_meshed_as_each_needs() {
+        // A stress check's mesh is what its results were judged on: these words do not change.
+        assert_eq!(stress_check_args(2.5).join(" "), "part.step -3 -order 2 -clmax 2.5 -clmin 0.25 -clcurv 12 -nt 1 -format msh2 -o part.msh");
+        // A shape's has a floor on the size, and straight mid-side nodes.
         assert_eq!(
-            too_many_nodes(1.5, 612_345, MAX_SOLVE_NODES),
-            "Divided into elements of 1.5 mm the part has 612345 nodes: more than a quick check solves (600000). Make the elements larger (Mesh Settings)."
+            shape_args(3.0).join(" "),
+            "part.step -3 -order 2 -clmax 3 -clmin 1 -clcurv 12 -setnumber Mesh.MeshSizeExtendFromBoundary 0 -setnumber Mesh.SecondOrderLinear 1 -nt 1 -format msh2 -o part.msh"
         );
+    }
+
+    #[test]
+    fn too_many_nodes_is_said_in_the_words_of_a_stress_check() {
         assert_eq!(
-            too_many_nodes(1.2, 140_000, topo::MAX_SHAPE_NODES),
-            "Divided into elements of 1.2 mm the part has 140000 nodes: more than a shape is worked out on (100000). Choose Coarse, or a larger smallest member."
+            too_many_nodes(1.5, 612_345),
+            "Divided into elements of 1.5 mm the part has 612345 nodes: more than a quick check solves (600000). Make the elements larger (Mesh Settings)."
         );
     }
 

@@ -2,8 +2,9 @@
 //!
 //! CONTRACT (filled in by the loop's implementer):
 //! - Start: x_e = (V* - V_P) / (V - V_P) outside the passive set P, 1 in P (V* = fraction V,
-//!   V the total volume, V_P the passive volume; V_P >= V* is refused in words). One solve with
-//!   every element at level 1000 gives `solid_compliance`.
+//!   V the total volume, V_P the passive volume; a V* the update cannot come down to,
+//!   V_P + X_MIN (V - V_P) >= V*, is refused in words). One solve with every element at level
+//!   1000 gives `solid_compliance`.
 //! - Each round: x~ = A x (the filter); with `sharpen`, x- = P_beta(x~) (tanh projection about
 //!   PROJECT_AT, slope s_e), else x- = x~ and s = 1; x- = 1 on P. Levels q = level_of(x-); the
 //!   energies U from the solver; compliance c = 2 sum U. Sensitivity
@@ -38,6 +39,13 @@ const VOLUME_TOLERANCE: f64 = 1e-10;
 /// The most times one update reckons the volume it would keep.
 const PASSES: usize = 200;
 
+/// Whether `solid` of a part's `total` volume, held solid, leaves no room to come down to `target`:
+/// with every other element at the least the update gives one, [`X_MIN`], it would still keep as
+/// much.
+pub fn no_room(solid: f64, total: f64, target: f64) -> bool {
+    solid + X_MIN * (total - solid) >= target
+}
+
 /// Finds the design: see the module's contract.
 pub fn optimize(d: &Design, g: &Goal, s: &mut dyn Stiffness, cancel: &Cancel, progress: &mut dyn FnMut(&Iteration)) -> Result<Optimized, String> {
     let n = d.volumes.len();
@@ -64,7 +72,7 @@ pub fn optimize(d: &Design, g: &Goal, s: &mut dyn Stiffness, cancel: &Cancel, pr
     let total: f64 = d.volumes.iter().sum();
     let solid: f64 = d.volumes.iter().zip(&d.passive).filter(|(_, p)| **p).map(|(v, _)| *v).sum();
     let target = g.fraction * total;
-    if solid >= target {
+    if no_room(solid, total, target) {
         return Err(format!(
             "the elements that must stay solid (held, loaded or kept) are already {} of the part, and only {} is to be kept: keep a larger share, or keep fewer faces",
             percent(solid / total),
@@ -545,6 +553,15 @@ mod tests {
         let o = run(&d, &goal(0.3, 0.5), &mut t).unwrap();
         assert!((o.history[0].fraction - 0.3).abs() < 1e-15, "{:?}", o.history[0]);
         assert_eq!(t.levels[1], (0..n).map(|i| if i < 29 { 1000 } else { level_of(2.0 / 142.0) }).collect::<Vec<_>>());
+        // A share kept so little above what must stay that the others, at the least the update
+        // gives them, would keep more than it: 60 mm^3 solid, and 0.01 asked of the other 140.
+        d.passive = (0..n).map(|i| i < 30).collect();
+        let mut s = Springs::new(vec![1.0; n]);
+        let e = run(&d, &goal(0.30005, 0.5), &mut s).unwrap_err();
+        assert!(e.starts_with("the elements that must stay solid (held, loaded or kept) are already 30%"), "{e}");
+        assert_eq!(s.calls, 0, "refused before anything is solved");
+        assert!(no_room(60.0, 200.0, 60.0 + X_MIN * 140.0) && !no_room(60.0, 200.0, 60.0 + 1.01 * X_MIN * 140.0));
+        d.passive = (0..n).map(|i| i < 29).collect();
         // And what is asked must make sense.
         for f in [0.0, 1.0, -0.2, f64::NAN] {
             assert!(run(&d, &goal(f, 0.5), &mut s).unwrap_err().starts_with("the share of the part to keep must be more than 0 and less than 1"));
@@ -809,6 +826,28 @@ mod tests {
         assert!(p.history.len() > 20);
         // And the same on both sides of the plane.
         assert!((0..n).all(|e| (p.density[e] - p.density[e + n]).abs() < 1e-9));
+    }
+
+    #[test]
+    fn the_planes_of_symmetry_reach_the_filter() {
+        // A block and its image, stiffer on one side than on the other: the solver's answers pull
+        // the design to one side, and the filter, with the plane, sees the two sides as one. So
+        // what is solved, the filtered densities, is the same on both sides all the same.
+        let (half, hv) = block([3, 2, 2], Vec3::new(3.0, 2.0, 2.0));
+        let m = Mirror { point: Vec3::ZERO, normal: Vec3::X };
+        let n = half.len();
+        let d = Design {
+            centroids: half.iter().copied().chain(half.iter().map(|c| m.image(*c))).collect(),
+            volumes: hv.iter().chain(&hv).copied().collect(),
+            passive: vec![false; 2 * n],
+        };
+        let a: Vec<f64> = (0..2 * n).map(|e| if e < n { 3.0 } else { 1.0 }).collect();
+        let off = |o: &Optimized| (0..n).map(|e| (o.density[e] - o.density[e + n]).abs()).fold(0.0, f64::max);
+        let g = goal(0.4, 1.3);
+        let with = run(&d, &Goal { mirrors: vec![m], ..g.clone() }, &mut Springs::new(a.clone())).unwrap();
+        assert!(off(&with) < 1e-9, "{}", off(&with));
+        let without = run(&d, &g, &mut Springs::new(a)).unwrap();
+        assert!(off(&without) > 0.1, "{}", off(&without));
     }
 
     #[test]

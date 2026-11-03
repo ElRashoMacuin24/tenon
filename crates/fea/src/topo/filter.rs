@@ -95,15 +95,23 @@ impl Filter {
                 }
                 same
             });
+            // Refused before the row is kept. (Left to themselves the lists would double as they
+            // fill, past the limit by as much again: they are only let grow up to it.)
+            let entries = f.near.len() + row.len();
+            let Ok(end) = u32::try_from(entries) else { return Err(too_big(radius, centroids.len(), mirrors.len(), most)) };
+            if 4 * (f.start.len() + 1) + 12 * entries > most {
+                return Err(too_big(radius, centroids.len(), mirrors.len(), most));
+            }
+            if entries > f.near.capacity() {
+                let room = most.saturating_sub(4 * f.start.capacity()) / 12;
+                let grown = (2 * f.near.capacity()).min(room).max(entries);
+                f.near.reserve_exact(grown - f.near.len());
+                f.coef.reserve_exact(grown - f.coef.len());
+            }
             let sum: f64 = row.iter().map(|(i, w)| w * volumes[*i as usize]).sum();
             for (i, w) in &row {
                 f.near.push(*i);
                 f.coef.push(w * volumes[*i as usize] / sum);
-            }
-            let bytes = 4 * (f.start.len() + 1) + 12 * f.near.len();
-            let Ok(end) = u32::try_from(f.near.len()) else { return Err(too_big(radius, centroids.len(), mirrors.len(), most)) };
-            if bytes > most {
-                return Err(too_big(radius, centroids.len(), mirrors.len(), most));
             }
             f.start.push(end);
         }
@@ -250,6 +258,10 @@ pub fn mirror_group(mirrors: &[Mirror]) -> Result<Vec<Vec<Mirror>>, String> {
             }
             if cos >= SQUARE {
                 let angle = (cos.min(1.0).acos().to_degrees() * 10.0).round() / 10.0;
+                // (Off by too little to show, "meet at 90°" would read as no fault at all.)
+                if angle >= 90.0 {
+                    return Err("two of the planes of symmetry are a little off a right angle: they must be at right angles to each other".into());
+                }
                 return Err(format!("two of the planes of symmetry meet at {angle}°: they must be at right angles to each other"));
             }
         }
@@ -504,7 +516,10 @@ pub(crate) mod tests {
         assert!(e.contains("parallel"), "{e}");
         // Nearly square is square enough; not quite is not.
         assert!(mirror_group(&[x, plane(Vec3::ZERO, Vec3::new(5e-7, 1.0, 0.0))]).is_ok());
-        assert!(mirror_group(&[x, plane(Vec3::ZERO, Vec3::new(2e-6, 1.0, 0.0))]).unwrap_err().contains("right angles"));
+        assert_eq!(
+            mirror_group(&[x, plane(Vec3::ZERO, Vec3::new(2e-6, 1.0, 0.0))]).unwrap_err(),
+            "two of the planes of symmetry are a little off a right angle: they must be at right angles to each other"
+        );
         let e = mirror_group(&[x, plane(Vec3::ZERO, Vec3::Y), plane(Vec3::ZERO, Vec3::Z), x]).unwrap_err();
         assert_eq!(e, "a shape can be the same on both sides of at most three planes, not 4");
         assert!(mirror_group(&[plane(Vec3::ZERO, Vec3::ZERO)]).unwrap_err().contains("direction"));
@@ -569,6 +584,9 @@ pub(crate) mod tests {
                 (bytes - 1) >> 20
             )
         );
+        // The lists are not let grow past the limit to find that out, nor when the table fits.
+        let fits = Filter::within(&c, &v, 2.0, &[], bytes).unwrap();
+        assert!(4 * fits.start.capacity() + 8 * fits.coef.capacity() + 4 * fits.near.capacity() <= bytes, "{bytes}");
         assert!(too_big(1.5, 100_000, 0, MOST_BYTES).contains("more than 512 MB"));
         // With planes, leaving one out halves the table.
         assert_eq!(

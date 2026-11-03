@@ -181,3 +181,59 @@ fn upgrade_rewrites_version_1_files_and_keeps_them() {
     assert!(r.text.ends_with("already current"), "{}", r.text);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// True when the mesher and the solver are there. When they are not: a failure where they are
+/// required, and otherwise a line saying that the test did not run.
+fn programs(test: &str) -> bool {
+    match tenon_fea::Tools::find() {
+        Ok(_) => true,
+        Err(why) => {
+            let required = std::env::var("TENON_FEA_REQUIRED").is_ok_and(|v| !v.is_empty() && v != "0");
+            assert!(!required, "{test} needs the mesher and the solver, and they are required here: {why}");
+            eprintln!("NOT RUN: {test}: {why}");
+            false
+        }
+    }
+}
+
+#[test]
+fn a_folder_to_keep_the_programs_files_in_is_under_out_as_a_file_is() {
+    if !programs("the folders kept") {
+        return;
+    }
+    // A bar held at its end and pushed on the other; a stress check and a shape of it, each
+    // leaving the programs' files in a folder named without a path.
+    let dir = scratch("keep");
+    let (out, working) = (dir.join("out"), dir.join("working"));
+    std::fs::create_dir_all(&working).unwrap();
+    let script = dir.join("keep.json");
+    let steps = serde_json::json!([
+        { "run": "model.box", "with": { "width": 60, "depth": 10, "height": 30 } },
+        { "run": "document.material", "with": { "name": "Steel, mild" } },
+        { "run": "model.find", "with": { "what": "faces", "facing": "left" }, "as": "left" },
+        { "run": "model.find", "with": { "what": "faces", "facing": "right" }, "as": "right" },
+        { "run": "study.new" },
+        { "run": "study.fix", "with": { "faces": ["$left.found.0.reference"] } },
+        { "run": "study.force", "with": { "faces": ["$right.found.0.reference"], "newtons": 100, "direction": "down" } },
+        { "run": "study.solve", "with": { "keep": "kept_solve" }, "as": "solved" },
+        { "run": "study.optimize", "with": { "keep": "kept_shape", "stl": "shape.stl", "element_size": 8, "iterations": 1, "sharpen": false }, "as": "shape" }
+    ]);
+    std::fs::write(&script, steps.to_string()).unwrap();
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_tenon-cli"))
+        .args(["run".as_ref(), script.as_os_str(), "--json".as_ref(), "--out".as_ref(), out.as_os_str()])
+        .current_dir(&working)
+        .output()
+        .expect("run tenon-cli");
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    for name in ["kept_solve", "kept_shape"] {
+        assert!(out.join(name).join("part.msh").is_file(), "{name} is under --out");
+        assert!(!working.join(name).exists(), "{name} is not in the working folder");
+    }
+    assert!(out.join("shape.stl").is_file());
+    assert_eq!(std::fs::read_dir(&working).unwrap().count(), 0, "nothing is left in the working folder");
+    let said: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let last = said.as_array().or_else(|| said["steps"].as_array()).unwrap().last().unwrap().clone();
+    let kept = PathBuf::from(last["result"]["kept"].as_str().unwrap());
+    assert!(kept.is_absolute() && kept.ends_with("kept_shape"), "{last}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

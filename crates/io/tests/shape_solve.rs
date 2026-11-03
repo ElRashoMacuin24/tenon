@@ -87,7 +87,7 @@ fn bar(tools: &Tools, dir: &Path, bore: Option<f64>) -> Problem {
     };
     let step = k.export_step(&[body.shape]).unwrap();
     let drawn = k.tessellate(body.shape, &MeshTol::exact()).unwrap();
-    let prepared = tenon_fea::prepare(tools, &step, &drawn, &setup, 2.5, dir, &Cancel::default(), tenon_fea::MAX_SOLVE_NODES).unwrap();
+    let prepared = tenon_fea::prepare(tools, &step, &drawn, &setup, 2.5, dir, &Cancel::default()).unwrap();
     assert!(prepared.meshing >= 0.0 && prepared.on.len() == faces, "the bar's {faces} faces are found on the mesh: {:?}", prepared.on);
     let p = prepared.problem;
     assert!(p.mesh.tets.len() > 1000 && p.held.len() > 10 && p.forces.len() > 10, "{} elements", p.mesh.tets.len());
@@ -226,4 +226,98 @@ fn sensitivities_agree_with_a_finite_difference() {
         let found = (work(&mut solver, &more) - work(&mut solver, &less)) / 0.02;
         assert!(analytic < 0.0 && (found - analytic).abs() <= 0.01 * analytic.abs(), "element {}: {found} found, {analytic} from its energy", e + 1);
     }
+}
+
+#[test]
+fn a_pin_and_a_bearing_load_need_no_mid_side_node_on_the_bore() {
+    if !programs("a pin and a bearing load on a shape's mesh") {
+        return;
+    }
+    // A plate 100 x 40 x 10 about the origin, on a pin through a bore of 16 at one end, a bearing
+    // load of 500 N across a bore of 8 at the other.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let mut go = |s: &mut Session, id: &str, p: serde_json::Value| tenon_io::cmd::run(s, id, &p, Some(&mut k as &mut dyn Kernel)).unwrap();
+    go(&mut s, "model.box", json!({ "width": 100, "depth": 40, "height": 10, "centered": true }));
+    go(&mut s, "model.cylinder", json!({ "x": -30, "y": 0, "diameter": 16, "height": 10, "operation": "cut" }));
+    go(&mut s, "model.cylinder", json!({ "x": 30, "y": 0, "diameter": 8, "height": 10, "operation": "cut" }));
+    let r = s.regen(&mut k).clone();
+    let body = r.bodies.first().unwrap();
+    let (mut surfaces, mut pin, mut bore) = (Vec::new(), Vec::new(), Vec::new());
+    for face in 0..u32::try_from(body.names.len()).unwrap() {
+        let info = k.face_info(body.shape.face(face)).unwrap();
+        surfaces.push(match info.surface {
+            SurfaceKind::Plane { normal, .. } => Surface::Plane { normal },
+            SurfaceKind::Cylinder { axis, .. } => {
+                if axis.origin().x < 0.0 {
+                    pin.push(face)
+                } else {
+                    bore.push(face)
+                }
+                Surface::Cylinder { origin: axis.origin(), dir: axis.dir() }
+            }
+            _ => panic!("the plate has flat faces and round ones: {info:?}"),
+        });
+    }
+    assert_eq!((pin.len(), bore.len()), (1, 1), "{surfaces:?}");
+    let setup = Setup {
+        held: vec![Held {
+            name: "Pin1".into(),
+            kind: SupportKind::Pin { radial: true, axial: true, tangential: true },
+            faces: pin,
+            edges: Vec::new(),
+        }],
+        pushed: vec![Pushed {
+            name: "Bearing1".into(),
+            kind: LoadKind::Bearing { newtons: 500.0, direction: -Vec3::Y },
+            faces: bore.clone(),
+            edges: Vec::new(),
+        }],
+        surfaces,
+        material: Material::of(STEEL.0, STEEL.1, STEEL.2),
+    };
+    let step = k.export_step(&[body.shape]).unwrap();
+    let drawn = k.tessellate(body.shape, &MeshTol::exact()).unwrap();
+    let (tools, cancel) = (Tools::find().unwrap(), Cancel::default());
+    let (scratch_a, scratch_b) = (Scratch::new().unwrap(), Scratch::new().unwrap());
+    let size = 3.0;
+    // The stress check's mesh, and a shape's: the same study put on each.
+    let curved = tenon_fea::prepare(&tools, &step, &drawn, &setup, size, &scratch_a.dir, &cancel).unwrap().problem;
+    let mesh = tenon_fea::mesh_for_shape(&tools, &step, size, &scratch_b.dir, &cancel).unwrap();
+    let straight = tenon_fea::put_on(mesh, &drawn, &setup, 0.0).unwrap().problem;
+    // Its mid-side nodes are off the bore, by enough to tell, where the stress check's are on it.
+    let off_bore = |p: &Problem, radius: f64| {
+        p.mesh
+            .tris
+            .iter()
+            .flat_map(|t| t.nodes[3..].iter())
+            .map(|n| p.mesh.nodes[*n as usize])
+            .map(|q| {
+                let from_axis = ((q.x - 30.0).powi(2) + q.y.powi(2)).sqrt();
+                // (Only those on this bore: nearer its wall than a tenth of the way to the next thing.)
+                if from_axis < radius + 0.5 { radius - from_axis } else { 0.0 }
+            })
+            .fold(0.0f64, f64::max)
+    };
+    assert!(off_bore(&curved, 4.0) < 1e-6, "{}", off_bore(&curved, 4.0));
+    assert!(off_bore(&straight, 4.0) > 0.01, "{}", off_bore(&straight, 4.0));
+    // What is held and what pushes are as they were: the load adds up, and the part is held fast.
+    for p in [&curved, &straight] {
+        assert_eq!(p.free_motions(), 0);
+        // (All of it along the load, by how it is scaled; across it, what the mesh's not being the
+        // same on both sides comes to.)
+        let f = p.total_force();
+        assert!((f.y + 500.0).abs() < 1e-6 * 500.0 && f.x.abs() + f.z.abs() < 1e-2 * 500.0, "{f:?}");
+        assert!(p.held.len() > 10, "{}", p.held.len());
+        for dirs in p.held.values() {
+            assert_eq!(dirs.len(), 3, "a pin held every way holds each of its nodes so");
+        }
+    }
+    // And the part comes out about as stiff.
+    let work_of = |p: &Problem, dir: &Path| {
+        let deck = Deck::new(p).unwrap();
+        let mut solver = Ccx { tools: &tools, deck: &deck, e0: p.material.youngs_modulus, nu: p.material.poisson, dir, cancel: &cancel };
+        work(&mut solver, &vec![LEVELS; p.mesh.tets.len()])
+    };
+    let (a, b) = (work_of(&curved, &scratch_a.dir), work_of(&straight, &scratch_b.dir));
+    assert!((a - b).abs() < 0.05 * a, "{a} against {b}");
 }

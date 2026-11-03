@@ -37,5 +37,7 @@ serde_json = { workspace = true }
 tenon-ui = { workspace = true }
 egui = { workspace = true }
 tenon-dxf = { workspace = true }
+# (To tell whether the mesher and the solver are there, for what needs them.)
+tenon-fea = { workspace = true }
 quick-xml = { workspace = true }
 zip = { workspace = true }

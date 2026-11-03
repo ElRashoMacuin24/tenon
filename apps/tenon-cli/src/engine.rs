@@ -194,7 +194,10 @@ impl Engine {
     fn resolve_paths(&self, id: &str, params: &Value) -> Value {
         let mut p = params.clone();
         let (Some(schema), Some(o)) = (schema(id), p.as_object_mut()) else { return p };
-        for param in schema.params.iter().filter(|x| x.ty == Ty::Path) {
+        // (A path, or a parameter that may be one, such as a folder or null: it is a path when it
+        // is given as a string.)
+        let is_path = |ty: &Ty| *ty == Ty::Path || matches!(ty, Ty::Either(any) if any.contains(&Ty::Path));
+        for param in schema.params.iter().filter(|x| is_path(&x.ty)) {
             let full = o
                 .get(param.name)
                 .and_then(Value::as_str)

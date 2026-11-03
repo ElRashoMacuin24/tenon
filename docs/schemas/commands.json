@@ -7123,7 +7123,7 @@
       "id": "study.optimize",
       "label": "Optimize Shape",
       "undoable": false,
-      "description": "Works out where in the part material is needed to carry a stress study's loads to its supports, for a share of its mass kept (topology optimization, DEC-123), with Gmsh and CalculiX as for study.solve. It takes the study's settings (study.shape, study.keep); remove (percent of the mass taken away, 5 to 95) or grams, min_member, resolution (coarse, medium, fine), element_size, sharpen and iterations given here take their place for this run only. stl, threemf: files to write the shape to; shown: the share of the part those files keep (default: the share asked; another share shows where material ranks, not an optimum for it); smooth: pairs of smoothing passes (0 to 50, default 10); keep: a folder to leave the programs' files in. Returns nodes, elements, element_size, member_size, target {fraction, grams}, iterations, stopped (settled, levelled_off, limit, budget, stopped), history [{iteration, compliance, fraction, change, sharpness, grey, seconds}], compliance {solid, optimizer, shape}, stiffness_kept (solid over shape), mass {part_grams, shape_grams}, surface {share, threshold, triangles, watertight, islands_dropped, volume}, written, warnings, seconds, note. A guide to model over, not a finished part. Gravity and a body's turning are refused (suppress them to optimize), and so is what the study lacks, before anything is started",
+      "description": "Works out where in the part material is needed to carry a stress study's loads to its supports, for a share of its mass kept (topology optimization, DEC-123), with Gmsh and CalculiX as for study.solve. It takes the study's settings (study.shape, study.keep); remove (percent of the mass taken away, 5 to 95) or grams, min_member, resolution (coarse, medium, fine), element_size, sharpen and iterations given here take their place for this run only (null for min_member, element_size or iterations: none for this run; a resolution without element_size: the size it picks, not a size kept). The part is divided as a shape needs, coarser round small details than for a stress check; when a resolution's size comes out well over its nodes the elements are made larger, up to three times more, and a warning says so. stl, threemf: files to write the shape to, ending in .stl and .3mf, refused before anything is started if they cannot be written; shown: the share of the part those files keep (default: the share asked; another share shows where material ranks, not an optimum for it); smooth: pairs of smoothing passes (0 to 50, default 10); keep: a folder to leave the programs' files in. Returns nodes, elements, element_size, member_size, target {fraction, grams}, iterations, stopped (settled, levelled_off, limit, budget, stopped), history [{iteration, compliance, fraction, change, sharpness, grey, seconds}], compliance {solid, optimizer, shape}, stiffness_kept (solid over shape), mass {part_grams, shape_grams}, surface {share, threshold, triangles, watertight, islands_dropped, volume}, written, not_written (only when a file could not be written after all: why, by parameter; the run is kept), warnings, seconds, note. A guide to model over, not a finished part. Gravity and a body's turning are refused (suppress them to optimize), and so is what the study lacks and what study.check says under shape_needs, before anything is started",
       "params": {
         "type": "object",
         "properties": {
@@ -7141,9 +7141,16 @@
             "description": "or the mass to come to, g (for this run)"
           },
           "min_member": {
-            "type": "number",
-            "x-unit": "mm",
-            "description": "the thinnest member, mm (for this run)"
+            "anyOf": [
+              {
+                "type": "number",
+                "x-unit": "mm"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the thinnest member, mm; null: three elements (for this run)"
           },
           "resolution": {
             "type": "string",
@@ -7152,20 +7159,34 @@
               "medium",
               "fine"
             ],
-            "description": "about 12,000, 30,000 or 80,000 nodes (for this run)"
+            "description": "about 12,000, 30,000 or 80,000 nodes on a plain solid; without element_size it takes the place of a size kept (for this run)"
           },
           "element_size": {
-            "type": "number",
-            "x-unit": "mm",
-            "description": "the size of the elements, mm (for this run)"
+            "anyOf": [
+              {
+                "type": "number",
+                "x-unit": "mm"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the size of the elements, mm, in place of the resolution; null: from it (for this run)"
           },
           "sharpen": {
             "type": "boolean",
             "description": "sharpen toward solid and empty (for this run)"
           },
           "iterations": {
-            "type": "integer",
-            "description": "the most rounds, 1 to 300 (for this run)"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the most rounds, 1 to 300; null: as the method needs (for this run)"
           },
           "smooth": {
             "type": "integer",
@@ -7178,12 +7199,12 @@
           "stl": {
             "type": "string",
             "x-path": true,
-            "description": "a file to write the shape to, STL"
+            "description": "a file to write the shape to, ending in .stl; one that cannot be written is refused before anything is started"
           },
           "threemf": {
             "type": "string",
             "x-path": true,
-            "description": "a file to write the shape to, 3MF"
+            "description": "a file to write the shape to, ending in .3mf; one that cannot be written is refused before anything is started"
           },
           "keep": {
             "anyOf": [
