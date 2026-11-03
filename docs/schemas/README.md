@@ -121,4 +121,5 @@ taken away), without a check.
     refused by the command, in words: a schema that took less would break a program written
     against it, and its description says what is refused. `null` for `min_member`, `element_size`
     and `iterations` of `study.optimize` is new (a wider type: none of them for this run). In what
-    comes back, `study.check` has `shape_needs` and `study.optimize` has `not_written`.
+    comes back, `study.check` has `shape_needs` and `study.optimize` has `not_written`. `study.check`'s
+    description lists all `shape_needs` says, Gravity and planes not at right angles among it.

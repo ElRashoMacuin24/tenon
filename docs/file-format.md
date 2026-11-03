@@ -506,7 +506,8 @@ Other loads, as they are written in `loads`:
   anything of it (DEC-123): `remove` (percent of the mass taken away, 5 to 95) or `grams` (the
   mass to come to), one and only one: a table with both, or with neither, is refused in words
   ("give `remove` or `grams`, not both", "[study.optimize] needs `remove` or `grams`"), with the
-  study and its line. Optional `min_member` (mm), `resolution` (`"medium"` or `"fine"`; coarse
+  study and its line, in opening the file and in `tenon-cli diff` and `file.diff`. Optional
+  `min_member` (mm), `resolution` (`"medium"` or `"fine"`; coarse
   when not written), `element_size` (mm), `kept` (`{ id, name, faces, depth }`: faces kept
   solid, `depth` mm of material under them when written, one layer of elements otherwise; ids
   are of the study's one run with its supports and loads), `symmetry` (up to three planes at

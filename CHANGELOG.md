@@ -12,15 +12,23 @@ shows it in [ROADMAP.md](ROADMAP.md).
   kept or a mass in grams. Keep Faces keeps bolt holes and mating faces (as deep as asked),
   Symmetry makes the shape the same on both sides of up to three origin planes or work planes.
   It runs with Gmsh and CalculiX as Simulate does, on a mesh of its own, coarser round small
-  details; when those take far more nodes than the resolution's, the elements are made larger,
-  and it says so. It shows which round it is on (Esc stops it and keeps the shape so far;
-  leaving the environment stops it and drops what it came to), draws the shape over the part
-  with a slider for the share shown, says how much of the part's stiffness it keeps, and exports
-  it as STL or 3MF from one save dialog. A guide to model over: check what you make with
+  details; when thin walls or small details take far more nodes than the resolution's, the
+  elements are made larger, and it says so. It shows which round it is on (Esc stops it and
+  keeps the shape so far, unless a menu, a panel or a dialog takes the Esc; leaving the
+  environment stops it and drops what it came to, and so does changing the part), draws the shape
+  over the part with what there is to know of it written beside it and a slider for the share
+  shown, says how much of the part's stiffness it keeps, and exports it as STL or 3MF from one
+  save dialog. A guide to model over: check what you make with
   Simulate. Settings are kept with the study (`[study.optimize]` in the part file; `remove` or
   `grams`, not both), and `tenon-cli diff` compares them. New commands `study.keep`,
   `study.shape`, `study.optimize`; `study.check` gains `shape_needs`, what only a shape needs,
-  which does not stop Simulate; docs/topology.md.
+  which does not stop Simulate; `study.solve` and `study.optimize` over the control port are runs
+  the window can stop; docs/topology.md.
+- **A part in pieces.** A bore wider than a plate leaves a part in two pieces that is one solid to
+  the kernel. A stress check of it held by one piece used to solve, with a displacement in the tens
+  of billions of millimetres and "it holds". A piece not held fast is now refused, in words.
+- **Bearing loads** push square to the round face at each spot, not to the side of the element
+  it is on, so all of the load goes the way asked.
 
 ### Sketches
 

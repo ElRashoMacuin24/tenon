@@ -209,6 +209,12 @@ or a drawing, each command waits until the app has rebuilt the parts and drawn t
 the one before it changed, so it sees what a person at the window would see. A request line
 over 16 MiB is refused and its connection closed.
 
+`study.solve` and `study.optimize` are runs, as Simulate and Optimize Shape are in the window: one
+goes on at a time, whichever side began it, and the other is refused in words; the window says one
+is going on; and Esc, File New, opening another document, leaving the Stress Analysis environment
+and closing the app stop it. The port is then told what it came to: `stopped`, or from a round on,
+the shape so far with a warning that says so.
+
 ## Details
 
 - Transport: newline-delimited JSON-RPC 2.0. Stdout carries only protocol messages; logs go to

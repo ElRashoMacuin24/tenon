@@ -3365,3 +3365,55 @@ against what it says. What changed, and why:
   refused in words with the study and the line, where the first key used to win and the other was
   lost on the next save. `tenon-cli diff` and `file.diff` compare these settings, where two files
   that differed only in them were "No changes." with exit code 0.
+
+**After a review of those fixes (2026-11-02).** What the first round brought in was tried in turn,
+against the code as it was before it:
+
+- *A small hole stays open.* A third of the size as the floor closed up a bore much narrower than
+  that: the wall folded flat, and an ordinary plate with one small bore was refused at Coarse, where
+  it used to run; or, when elements were made larger, no bore was left in the mesh and the surface
+  was not closed, with no word. The floor is now also a third of the part's shortest closed edge,
+  which nothing else holds open: tried by hand, the wall held at 0.38 of the edge's length and
+  folded at 0.45. A hole closed up all the same counts as the mesher failing. The
+  part is then divided once more as finely as a stress check, and at last refused with what the
+  mesher said (its log ends in a summary that does not say it) and what helps.
+- *Elements are made larger while it is worth it.* Where small details hold the nodes up, nodes
+  stalled and only the filter's radius grew, into a refusal that said to make the elements larger.
+  A larger size that does not bring the nodes down by a fifth is not used, unless that comes to what
+  was asked; a size that is too much for the filter leaves the mesh before it; between one that is
+  too many nodes and one too much for the filter, a size between is tried. Each mesh is tried with
+  the study on it and the filter's table, as any that does not take them cannot be used.
+- *A surface is judged by its corners,* which the mesher puts on the part's own face: with straight
+  mid-side nodes the middle of a triangle lies on the chord, inside the material, and on a thin
+  round part that is nearer a flat face than the rim it belongs to. A load landed on the wrong face,
+  a support on a rim was refused in false words, and Keep Faces on it was silently dropped. A kept
+  set with no surface is now refused by name, as a support and a load are.
+- *A bearing load* takes its direction from the round face at each spot, not from the flat side of
+  the triangle it is on, and what is left over across the load is taken back: on a small bore the
+  resultant went well off the way asked. A stress check's are the same to within what its curved
+  sides came to, and no longer a little off.
+- *A piece not held fast is refused.* A bore wider than a plate leaves a part in two pieces that is
+  still one solid to the kernel, and the supports on one piece satisfied the check on the whole:
+  stress checks and shapes came out of a singular solve, with displacements in the tens of billions
+  of millimetres and "it holds". Found on the mesh, as the kernel's solid does not tell it.
+- *Not bit for bit.* The solver's equation solving on many threads adds up in the order they finish
+  (on one thread it comes out the same, by trial, and threads for the stiffness and the results make
+  no difference), so a shape is the same only to about ten figures. One thread takes one and a half
+  times as long at Coarse and two and a half at Medium, against an hour's budget, so it is not done,
+  and the sentence that said otherwise is changed. The mesh is the same to the byte.
+- *A run over the control port is a run.* It held the geometry thread with no way to stop it and no
+  word in the window. The commands take no cancel, so what runs a command says what stops it, for
+  that thread (`tenon_io::stress::stopped_by`).
+- *Esc for something else is that one's.* It stopped the run, which cannot be taken up again, when
+  it was meant for a menu, a field, a panel or a dialog.
+- *A run of what has changed stops there and then*, rather than going on to its limit for a shape
+  that cannot be kept.
+- *What is to be read is where it can be read.* The warnings ran off the end of the status bar, the
+  ones that matter most last. They are written over the view while the shape is shown and in its
+  row's tip; the status bar keeps to the mass, the ending and the stiffness, and a long status is
+  cut off at the counts and comes up whole under the pointer.
+- *`shape_needs` is what `study.optimize` refuses before it starts:* Gravity and a body's turning,
+  and planes not at right angles, came to it, and it no longer calls a feature that is there "no
+  longer on the part". What only a mesh can tell is said when it is worked out.
+- *A thin plate is held to its own thickness about a plane of symmetry,* before anything starts: a
+  tenth of an element was more than its thickness, so that a plate on its own bottom plane passed.
