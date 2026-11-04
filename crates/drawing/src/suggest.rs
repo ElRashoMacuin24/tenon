@@ -17,7 +17,7 @@ use tenon_kernel::CurveKind;
 use tenon_model::EdgeRef;
 
 use crate::annotate::{self, to_sheet};
-use crate::model::{AnnotId, AnnotKind, Annotation, DimKind, Drawing, GeomPick, PickPoint, View, ViewId, ViewKind};
+use crate::model::{AnnotId, AnnotKind, Annotation, DimKind, Drawing, GeomPick, ModKind, PickPoint, View, ViewId, ViewKind};
 use crate::views::{Evaluation, project};
 
 /// How far outside the view suggested dimensions go (sheet mm), and between rows of them.
@@ -79,8 +79,7 @@ fn seen_edges(ev: &Evaluation, v: &View) -> Result<Vec<Seen>, String> {
     let g = ev.view(v.id).ok_or("the view is not computed yet")?;
     let m = ev.models.get(&v.model).ok_or("the model is not loaded")?;
     let f = &g.frame;
-    let cut = annotate::section_cut(v, ev);
-    let kept = |p: Vec3| cut.is_none_or(|(point, look)| (p - point).dot(look) >= -1e-6);
+    let kept = annotate::shown_test(v, ev);
     let mut out = Vec::new();
     for inst in &m.instances {
         let Some(scene) = m.scenes.get(&inst.part) else { continue };
@@ -120,12 +119,20 @@ pub fn suggest(d: &Drawing, ev: &Evaluation, view: ViewId) -> Result<Vec<Suggest
     let v = d.view(view).ok_or("no such view")?;
     match &v.kind {
         ViewKind::Detail { .. } => return Err("suggestions are for whole views; dimension a detail by hand".into()),
+        ViewKind::Overlay { .. } => return Err("an overlay has nothing of its own to dimension: use the view it goes over".into()),
         ViewKind::Base { orientation: crate::model::Orientation::Iso } => return Err("an isometric view is not dimensioned".into()),
         ViewKind::Projected { side, .. } if side.diagonal() => return Err("an isometric view is not dimensioned".into()),
         _ => {}
     }
     let g = ev.view(view).ok_or("the view is not computed yet")?;
-    let (lo, hi) = g.bounds.ok_or("the view shows nothing")?;
+    let (mut lo, mut hi) = g.bounds.ok_or("the view shows nothing")?;
+    // Of a cropped view, what its crop leaves.
+    for m in v.active_mods() {
+        if let ModKind::Crop { boundary, .. } = &m.kind {
+            let (a, b) = boundary.bounds();
+            (lo, hi) = (lo.max(a), hi.min(b));
+        }
+    }
     let edges = seen_edges(ev, v)?;
     let tol = 1e-6 * (hi - lo).len().max(1.0);
     let (slo, shi) = (to_sheet(v, g, lo), to_sheet(v, g, hi));

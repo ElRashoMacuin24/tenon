@@ -11,18 +11,57 @@ use tenon_kernel::{CurveKind, SurfaceKind};
 use tenon_model::{FeatureKind, FeatureStatus, HoleExtent, HoleType};
 
 use crate::graphics::{Align, EXT_GAP, EXT_OVER, Graphics, Owner, Pen, TEXT};
-use crate::model::{AnnotKind, Annotation, DimKind, Drawing, GeomPick, PickPoint, SheetId, Standard, View, ViewId, ViewKind};
+use crate::model::{AnnotKind, Annotation, BreakLines, DimKind, Drawing, GeomPick, ModKind, PickPoint, SheetId, Standard, View, ViewId, ViewKind};
+use crate::modify::{Clip, Folds, outline};
 use crate::sheets::{BORDER, projection_symbol};
 use crate::views::{Evaluation, ModelGeometry, ViewGeometry, project, section_frame};
 
-/// Where a point of a view (view coordinates) lands on the sheet.
+/// Where a point of a view (view coordinates) lands on the sheet: the bands of its breaks closed up.
 pub fn to_sheet(v: &View, g: &ViewGeometry, p: Vec2) -> Vec2 {
-    v.center + (p - g.center) * v.scale
+    let folds = Folds::of(v);
+    if folds.is_empty() {
+        return v.center + (p - g.center) * v.scale;
+    }
+    let (lo, hi) = g.bounds.unwrap_or((g.center, g.center));
+    v.center + (folds.close(p) - folds.anchor(g.center, lo, hi)) * v.scale
 }
 
 /// Where a point of the sheet is in a view (view coordinates).
 pub fn from_sheet(v: &View, g: &ViewGeometry, p: Vec2) -> Vec2 {
-    g.center + (p - v.center) * (1.0 / v.scale)
+    let folds = Folds::of(v);
+    if folds.is_empty() {
+        return g.center + (p - v.center) * (1.0 / v.scale);
+    }
+    let (lo, hi) = g.bounds.unwrap_or((g.center, g.center));
+    folds.open(folds.anchor(g.center, lo, hi) + (p - v.center) * (1.0 / v.scale))
+}
+
+/// Where what a view draws is on the sheet (of an overlay, what is drawn over its parent).
+pub fn drawn_bounds(v: &View, g: &ViewGeometry) -> Option<(Vec2, Vec2)> {
+    let clip = Clip::of(v);
+    let mut it = g.curves.iter().filter(|c| c.visible).flat_map(|c| clip.pieces(&c.points)).flatten().map(|p| to_sheet(v, g, p));
+    let first = it.next()?;
+    Some(it.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p))))
+}
+
+/// Whether a point of the model, as a view sees it, is drawn in that view: not cut away by a
+/// section or a break-out, inside a detail's circle and its crop, outside the bands of its breaks.
+pub(crate) fn shown_test(v: &View, ev: &Evaluation) -> impl Fn(Vec3) -> bool + use<> {
+    let frame = ev.view(v.id).map_or(Frame::WORLD, |g| g.frame);
+    let cut = section_cut(v, ev);
+    let circle = match &v.kind {
+        ViewKind::Detail { center, radius, .. } => Some((*center, *radius)),
+        _ => None,
+    };
+    let clip = Clip::of(v);
+    let outs = ev.models.get(&v.model).map_or_else(Vec::new, |m| crate::views::break_outs(v, &frame, m));
+    move |p: Vec3| {
+        let q = project(&frame, p);
+        cut.is_none_or(|(point, look)| (p - point).dot(look) >= -1e-6)
+            && circle.is_none_or(|(c, r)| q.dist(c) <= r + 1e-6)
+            && clip.keeps(q)
+            && !outs.iter().any(|(b, floor)| b.contains(q) && floor.is_none_or(|z| p.dot(frame.z()) > z + 1e-6))
+    }
 }
 
 /// A picked edge's geometry in the model (assembly or part coordinates).
@@ -88,19 +127,14 @@ pub struct EdgeHit {
 
 /// The edge of a view's model drawn nearest a sheet point, within `reach` (sheet mm), as a
 /// clicked pick would find it. Of edges drawn on top of each other, the one nearest the eye.
-/// Edges cut away by a section, or outside a detail's circle, are not there to pick.
+/// Edges cut away by a section or a break-out, or outside a detail's circle or a crop, or in the
+/// band of a break, are not there to pick.
 pub fn edge_at(d: &Drawing, ev: &Evaluation, view: ViewId, at: Vec2, reach: f64) -> Option<EdgeHit> {
     let v = d.view(view)?;
     let g = ev.view(view)?;
     let m = ev.models.get(&v.model)?;
     let f = &g.frame;
-    let cut = section_cut(v, ev);
-    let circle = match &v.kind {
-        ViewKind::Detail { center, radius, .. } => Some((*center, *radius)),
-        _ => None,
-    };
-    let shown =
-        |p: Vec3| cut.is_none_or(|(point, look)| (p - point).dot(look) >= -1e-6) && circle.is_none_or(|(c, r)| project(f, p).dist(c) <= r + 1e-6);
+    let shown = shown_test(v, ev);
     // (distance on the sheet, depth towards the eye, the hit)
     let mut best: Option<(f64, f64, EdgeHit)> = None;
     for inst in &m.instances {
@@ -113,14 +147,20 @@ pub fn edge_at(d: &Drawing, ev: &Evaluation, view: ViewId, at: Vec2, reach: f64)
                 // (distance, depth, point in part coordinates)
                 let mut near: Option<(f64, f64, Vec3)> = None;
                 for (i, s) in pts.windows(2).enumerate() {
-                    if !shown(s[0]) && !shown(s[1]) {
-                        continue;
-                    }
                     let (a, b) = (to_sheet(v, g, project(f, s[0])), to_sheet(v, g, project(f, s[1])));
                     let ab = b - a;
                     let l2 = ab.dot(ab);
                     let t = if l2 > 0.0 { ((at - a).dot(ab) / l2).clamp(0.0, 1.0) } else { 0.0 };
                     let dist = at.dist(a + ab * t);
+                    // Along the edge as it truly is: a band closed up moves the sheet's point.
+                    let (qa, qb) = (project(f, s[0]), project(f, s[1]));
+                    let q = from_sheet(v, g, a + ab * t);
+                    let along = (q - qa).dot(qb - qa);
+                    let len2 = (qb - qa).dot(qb - qa);
+                    let t = if len2 > 0.0 { (along / len2).clamp(0.0, 1.0) } else { t };
+                    if !shown(s[0] + (s[1] - s[0]) * t) {
+                        continue;
+                    }
                     let depth = (s[0] + (s[1] - s[0]) * t).dot(f.z());
                     if near.is_none_or(|(nd, ..)| dist < nd) {
                         near = Some((dist, depth, local[i] + (local[i + 1] - local[i]) * t));
@@ -571,11 +611,12 @@ pub fn scale_text(s: f64) -> String {
     if s >= 1.0 { format!("{}:1", format_number(s, 3)) } else { format!("1:{}", format_number(1.0 / s, 3)) }
 }
 
-/// Centre marks (circles seen end-on) and centrelines (cylinders seen side-on) of a view. In a
-/// section (`cut`: the plane's point and the direction it is seen in), only of what is left: no
-/// cylinder cut away, and side-on only those the plane cuts.
-fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &ModelGeometry, cut: Option<(Vec3, Vec3)>) {
+/// Centre marks (circles seen end-on) and centrelines (cylinders seen side-on) of a view. Only of
+/// what is left of it (`shown`): no cylinder cut away or outside a crop. In a section (`cut`: the
+/// plane's point and the direction it is seen in), side-on only those the plane cuts.
+fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &ModelGeometry, cut: Option<(Vec3, Vec3)>, shown: &dyn Fn(Vec3) -> bool) {
     let f = &g.frame;
+    let clip = Clip::of(v);
     let z = f.z();
     let mut marks: Vec<(Vec2, f64)> = Vec::new();
     let mut lines: Vec<(Vec2, Vec2)> = Vec::new();
@@ -611,11 +652,14 @@ fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &Mode
                 if length <= 1e-9 || info.area / (radius * length) < std::f64::consts::PI * 0.98 {
                     continue;
                 }
-                if let Some((point, look)) = cut {
-                    let behind = |p: &Vec3| (*p - point).dot(look) >= -1e-6;
-                    if !pts.iter().any(behind) || (d3.dot(z).abs() < 1e-6 && (o3 - point).dot(look).abs() > radius + 1e-6) {
-                        continue;
-                    }
+                if !pts.iter().any(|p| shown(*p)) {
+                    continue;
+                }
+                if let Some((point, look)) = cut
+                    && d3.dot(z).abs() < 1e-6
+                    && (o3 - point).dot(look).abs() > radius + 1e-6
+                {
+                    continue;
                 }
                 if d3.dot(z).abs() > 1.0 - 1e-6 {
                     let c = project(f, o3);
@@ -632,38 +676,101 @@ fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &Mode
             }
         }
     }
+    let draw = |gr: &mut Graphics, a: Vec2, b: Vec2| {
+        for run in clip.pieces(&[a, b]) {
+            gr.polyline(o, Pen::Center, run.iter().map(|p| to_sheet(v, g, *p)).collect());
+        }
+    };
     for (c, r) in marks {
-        let c = to_sheet(v, g, c);
-        let arm = r * v.scale + CENTER_OVER;
-        gr.line(o, Pen::Center, c - Vec2::new(arm, 0.0), c + Vec2::new(arm, 0.0));
-        gr.line(o, Pen::Center, c - Vec2::new(0.0, arm), c + Vec2::new(0.0, arm));
+        let arm = r + CENTER_OVER / v.scale;
+        draw(gr, c - Vec2::new(arm, 0.0), c + Vec2::new(arm, 0.0));
+        draw(gr, c - Vec2::new(0.0, arm), c + Vec2::new(0.0, arm));
     }
     for (a, b) in lines {
-        gr.line(o, Pen::Center, to_sheet(v, g, a), to_sheet(v, g, b));
+        draw(gr, a, b);
+    }
+}
+
+/// How far break lines run past what they break (sheet mm), and the half length of the zigzag in
+/// their middle.
+const BREAK_OVER: f64 = 4.0;
+const BREAK_ZIG: f64 = 3.0;
+
+/// A break line from `a` to `b`: straight, with a zigzag in its middle.
+fn break_line(gr: &mut Graphics, o: Owner, a: Vec2, b: Vec2) {
+    let u = (b - a).normalized();
+    let n = Vec2::new(-u.y, u.x);
+    let m = (a + b) * 0.5;
+    let z = BREAK_ZIG;
+    gr.polyline(o, Pen::Thin, vec![a, m - u * z, m - u * (z / 3.0) + n * z, m + u * (z / 3.0) - n * z, m + u * z, b]);
+}
+
+/// Draws a view's crop outline and the lines of its breaks, each its own to click.
+fn draw_mods(gr: &mut Graphics, v: &View, g: &ViewGeometry) {
+    let lines_drawn = gr.bounds_of(Owner::View(v.id));
+    for m in v.active_mods() {
+        let o = Owner::Mod(v.id, m.id);
+        match &m.kind {
+            ModKind::Crop { boundary, outline: true } => {
+                gr.polyline(o, Pen::Thin, outline(boundary).into_iter().map(|p| to_sheet(v, g, p)).collect());
+            }
+            ModKind::Break { lines, from, to, .. } => {
+                let Some((lo, hi)) = lines_drawn else { continue };
+                for t in [*from, *to] {
+                    match lines {
+                        BreakLines::Vertical => {
+                            let x = to_sheet(v, g, Vec2::new(t, g.center.y)).x;
+                            break_line(gr, o, Vec2::new(x, lo.y - BREAK_OVER), Vec2::new(x, hi.y + BREAK_OVER));
+                        }
+                        BreakLines::Horizontal => {
+                            let y = to_sheet(v, g, Vec2::new(g.center.x, t)).y;
+                            break_line(gr, o, Vec2::new(lo.x - BREAK_OVER, y), Vec2::new(hi.x + BREAK_OVER, y));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
 /// Draws a view: its lines, hatching, centrelines, the markings of its sections and details, its
-/// label.
+/// label. An overlay's lines go where its parent's go, in phantom.
 fn draw_view(gr: &mut Graphics, d: &Drawing, v: &View, ev: &Evaluation) {
     let o = Owner::View(v.id);
     let Some(g) = ev.view(v.id) else { return };
+    let overlaid = match &v.kind {
+        ViewKind::Overlay { parent, .. } => d.view(*parent).zip(ev.view(*parent)),
+        _ => None,
+    };
+    let (on, on_g) = overlaid.unwrap_or((v, g));
+    let clip = Clip::of(on);
     for c in &g.curves {
-        let pen = if c.visible { Pen::Visible } else { Pen::Hidden };
-        gr.polyline(o, pen, c.points.iter().map(|p| to_sheet(v, g, *p)).collect());
+        let pen = match (&v.kind, c.visible) {
+            (ViewKind::Overlay { .. }, _) => Pen::Phantom,
+            (_, true) => Pen::Visible,
+            (_, false) => Pen::Hidden,
+        };
+        for run in clip.pieces(&c.points) {
+            gr.polyline(o, pen, run.iter().map(|p| to_sheet(on, on_g, *p)).collect());
+        }
     }
     for h in &g.hatch {
-        gr.line(o, Pen::Hatch, to_sheet(v, g, h[0]), to_sheet(v, g, h[1]));
+        for run in clip.pieces(h) {
+            gr.polyline(o, Pen::Hatch, run.iter().map(|p| to_sheet(on, on_g, *p)).collect());
+        }
     }
     if v.centerlines
-        && !matches!(v.kind, ViewKind::Detail { .. })
+        && !matches!(v.kind, ViewKind::Detail { .. } | ViewKind::Overlay { .. })
         && let Some(m) = ev.models.get(&v.model)
     {
-        centerlines(gr, o, v, g, m, section_cut(v, ev));
+        let shown = shown_test(v, ev);
+        centerlines(gr, o, v, g, m, section_cut(v, ev), &shown);
     }
     if let ViewKind::Detail { radius, .. } = &v.kind {
         gr.circle(o, Pen::Thin, v.center, radius * v.scale);
     }
+    draw_mods(gr, v, g);
     // Section lines and detail circles drawn on this view for its children.
     for child in d.views.iter().filter(|c| c.kind.parent() == Some(v.id)) {
         match &child.kind {
@@ -688,18 +795,32 @@ fn draw_view(gr: &mut Graphics, d: &Drawing, v: &View, ev: &Evaluation) {
                 gr.circle(o, Pen::Thin, c, r);
                 gr.text(o, c + Vec2::new(r * 0.75 + 1.0, r * 0.75 + 1.0), 5.0, child.name.clone(), Align::Left);
             }
+            // An arrow to the edge the view looks square to, from the side it is seen from.
+            ViewKind::Auxiliary { edge, a, b, flip, .. } => {
+                let line = ev.models.get(&v.model).and_then(|m| crate::views::auxiliary_line(m, &g.frame, edge, *a, *b).ok()).unwrap_or((*a, *b));
+                let (_, _, look) = section_frame(&g.frame, line.0, line.1, *flip);
+                let look2 = project(&g.frame, look).normalized();
+                let tip = to_sheet(v, g, (line.0 + line.1) * 0.5) - look2 * 2.0;
+                gr.line(o, Pen::Thin, tip - look2 * 14.0, tip);
+                gr.arrow(o, tip, look2);
+                gr.text(o, tip - look2 * 18.0 + Vec2::new(0.0, -TEXT / 2.0), 5.0, child.name.clone(), Align::Center);
+            }
             _ => {}
         }
     }
     if v.label {
-        let low = gr.bounds_of(o).map_or(v.center.y - 10.0, |b| b.0.y);
+        let bounds = gr.bounds_of(o);
+        let low = bounds.map_or(v.center.y - 10.0, |b| b.0.y);
+        // Under what is drawn: a crop may have left that well to one side of the view's middle.
+        let x = if Clip::of(v) == Clip::default() { v.center.x } else { bounds.map_or(v.center.x, |b| (b.0.x + b.1.x) * 0.5) };
         let title = match &v.kind {
             ViewKind::Section { .. } => format!("SECTION {0}-{0}", v.name),
             ViewKind::Detail { .. } => format!("DETAIL {}", v.name),
+            ViewKind::Auxiliary { .. } => format!("VIEW {}", v.name),
             _ => v.name.clone(),
         };
-        gr.text(o, Vec2::new(v.center.x, low - 8.0), 4.0, title, Align::Center);
-        gr.text(o, Vec2::new(v.center.x, low - 13.5), 3.0, format!("SCALE {}", scale_text(v.scale)), Align::Center);
+        gr.text(o, Vec2::new(x, low - 8.0), 4.0, title, Align::Center);
+        gr.text(o, Vec2::new(x, low - 13.5), 3.0, format!("SCALE {}", scale_text(v.scale)), Align::Center);
     }
 }
 
@@ -719,12 +840,16 @@ fn draw_annotation(gr: &mut Graphics, d: &Drawing, ev: &Evaluation, a: &Annotati
             let v = d.view(*view).ok_or("the view is gone")?;
             let g = ev.view(*view).ok_or("the view is not computed")?;
             let mut cells = vec![vec!["HOLE".to_string(), "XDIM".into(), "YDIM".into(), "DESCRIPTION".into()]];
+            let clip = Clip::of(v);
             for r in &rows {
                 cells.push(vec![r.tag.clone(), format_number(r.x, 2), format_number(r.y, 2), r.description.clone()]);
-                // Up and right of the hole, clear of its edge and centre mark.
-                let p = to_sheet(v, g, r.at);
-                let off = r.radius * v.scale * std::f64::consts::FRAC_1_SQRT_2 + 1.5;
-                gr.text(o, p + Vec2::new(off, off), 2.5, r.tag.clone(), Align::Left);
+                // Up and right of the hole, clear of its edge and centre mark; none on a hole that
+                // is not drawn.
+                if clip.keeps(r.at) {
+                    let p = to_sheet(v, g, r.at);
+                    let off = r.radius * v.scale * std::f64::consts::FRAC_1_SQRT_2 + 1.5;
+                    gr.text(o, p + Vec2::new(off, off), 2.5, r.tag.clone(), Align::Left);
+                }
             }
             table(gr, o, *at, &[16.0, 22.0, 22.0, 70.0], &cells);
             Ok(())

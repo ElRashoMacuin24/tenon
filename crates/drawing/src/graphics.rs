@@ -22,6 +22,8 @@ pub enum Pen {
     Border,
     /// Section hatching.
     Hatch,
+    /// An assembly in another position, over its view (long dashes and two short ones).
+    Phantom,
 }
 
 impl Pen {
@@ -30,7 +32,7 @@ impl Pen {
         match self {
             Pen::Visible => 0.5,
             Pen::Hidden => 0.35,
-            Pen::Thin | Pen::Center => 0.25,
+            Pen::Thin | Pen::Center | Pen::Phantom => 0.25,
             Pen::Cutting => 0.6,
             Pen::Border => 0.7,
             Pen::Hatch => 0.18,
@@ -41,6 +43,7 @@ impl Pen {
         match self {
             Pen::Hidden => &[3.0, 1.5],
             Pen::Center | Pen::Cutting => &[12.0, 1.5, 2.0, 1.5],
+            Pen::Phantom => &[10.0, 1.5, 1.5, 1.5, 1.5, 1.5],
             _ => &[],
         }
     }
@@ -54,9 +57,10 @@ impl Pen {
             Pen::Cutting => "CUTTING",
             Pen::Border => "BORDER",
             Pen::Hatch => "HATCH",
+            Pen::Phantom => "PHANTOM",
         }
     }
-    pub const ALL: [Pen; 7] = [Pen::Visible, Pen::Hidden, Pen::Thin, Pen::Center, Pen::Cutting, Pen::Border, Pen::Hatch];
+    pub const ALL: [Pen; 8] = [Pen::Visible, Pen::Hidden, Pen::Thin, Pen::Center, Pen::Cutting, Pen::Border, Pen::Hatch, Pen::Phantom];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +102,8 @@ pub enum Owner {
     Frame,
     View(ViewId),
     Annotation(AnnotId),
+    /// A modifier of a view: a crop's outline, a break's lines.
+    Mod(ViewId, u32),
 }
 
 /// A sheet as primitives.
@@ -182,7 +188,7 @@ impl Graphics {
         };
         let mut best: Option<(f64, Owner)> = None;
         let mut consider = |d: f64, o: Owner| {
-            let rank = if matches!(o, Owner::Annotation(_)) { d } else { d + tol * 0.5 };
+            let rank = if matches!(o, Owner::Annotation(_) | Owner::Mod(..)) { d } else { d + tol * 0.5 };
             if d <= tol && best.is_none_or(|b| rank < b.0) {
                 best = Some((rank, o));
             }

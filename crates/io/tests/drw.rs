@@ -50,6 +50,7 @@ fn sample(dir: &Path) -> Drawing {
         tangent: false,
         centerlines: true,
         label: false,
+        mods: Vec::new(),
     };
     d.views.push(view(base, "VIEW1", ViewKind::Base { orientation: Orientation::Top }));
     let sec = d.take_view_id();

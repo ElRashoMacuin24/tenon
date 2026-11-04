@@ -354,6 +354,15 @@ fn residuals(rels: &[Rel], poses: &[Pose], out: &mut Vec<f64>) {
     }
 }
 
+/// Where a joint stands in the bodies' placements: how far B's origin is from A's along A's Z, and
+/// how far B is turned from A about it (radians), as the joint's own offset and angle are measured.
+pub fn joint_reading(rel: &Rel, bodies: &[Body]) -> (f64, f64) {
+    let pose = |e: &End| e.body.and_then(|i| bodies.get(i)).map_or(Pose { r: M3::IDENTITY, t: Vec3::ZERO }, |b| Pose::of(&b.frame));
+    let (oa, xa, za) = joint_frame(&rel.a.prim, &pose(&rel.a));
+    let (ob, xb, _) = joint_frame(&rel.b.prim, &pose(&rel.b));
+    ((ob - oa).dot(za), turn(xa, xb, za))
+}
+
 /// The result of a solve.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Solution {

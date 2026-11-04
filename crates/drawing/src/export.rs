@@ -326,6 +326,7 @@ fn ltype(pen: Pen) -> &'static str {
     match pen {
         Pen::Hidden => "HIDDEN",
         Pen::Center | Pen::Cutting => "CENTER",
+        Pen::Phantom => "PHANTOM",
         _ => "CONTINUOUS",
     }
 }
@@ -342,11 +343,12 @@ pub fn dxf(g: &Graphics) -> String {
     t.extend([s(9, "$EXTMIN"), f(10, 0.0), f(20, 0.0), f(30, 0.0), s(9, "$EXTMAX"), f(10, w), f(20, h), f(30, 0.0)]);
     t.extend([s(9, "$LIMMIN"), f(10, 0.0), f(20, 0.0), s(9, "$LIMMAX"), f(10, w), f(20, h), s(0, "ENDSEC")]);
     t.extend([s(0, "SECTION"), s(2, "TABLES")]);
-    t.extend([s(0, "TABLE"), s(2, "LTYPE"), i(70, 3)]);
+    t.extend([s(0, "TABLE"), s(2, "LTYPE"), i(70, 4)]);
     for (name, desc, pattern) in [
         ("CONTINUOUS", "Solid line", vec![]),
         ("HIDDEN", "Hidden __ __", Pen::Hidden.dashes().to_vec()),
         ("CENTER", "Center ____ _ ____", Pen::Center.dashes().to_vec()),
+        ("PHANTOM", "Phantom ____ _ _ ____", Pen::Phantom.dashes().to_vec()),
     ] {
         t.extend([s(0, "LTYPE"), s(2, name), i(70, 0), s(3, desc), i(72, 65), i(73, pattern.len() as i64), f(40, pattern.iter().sum())]);
         // Dashes positive, gaps negative.

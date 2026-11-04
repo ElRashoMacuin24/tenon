@@ -19,6 +19,7 @@ use tenon_drawing::views::{Evaluation, base_frame, projected_frame, seen_size};
 use tenon_drawing::{AnnotKind, DrwModel, DrwSession, Graphics, Orientation, Owner, SheetId, Side, Standard, ViewId, ViewKind};
 use tenon_geom::Vec2;
 
+use crate::drw_views::{ModPanel, ModPick, ModWhat, OverlayPanel, draw_panels, source_view};
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 use crate::viewport::{HOVER, Nav, SELECTED};
@@ -31,7 +32,7 @@ const MODEL_CHECK_SECONDS: f64 = 1.0;
 /// Ink on the paper.
 const INK: Color32 = Color32::from_rgb(0x1e, 0x22, 0x28);
 /// Previews of what a tool is about to place.
-const GHOST: Color32 = Color32::from_rgb(0x2f, 0x7f, 0xd8);
+pub(crate) const GHOST: Color32 = Color32::from_rgb(0x2f, 0x7f, 0xd8);
 
 /// The sheet canvas's camera.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -121,6 +122,23 @@ pub(crate) enum DrwTool {
         view: Option<ViewId>,
         a: Option<Value>,
     },
+    /// The view, a straight edge of it, then where the view square to that edge goes. With
+    /// `changing`: the auxiliary view that takes the edge, instead of a new one.
+    Auxiliary {
+        parent: Option<ViewId>,
+        edge: Option<Value>,
+        changing: Option<ViewId>,
+    },
+    /// The view, then what the open Crop, Break or Break Out panel wants clicked (`first`: its first
+    /// point, view coordinates).
+    Modify {
+        what: ModWhat,
+        pick: ModPick,
+        view: Option<ViewId>,
+        first: Option<Vec2>,
+    },
+    /// A view of an assembly, for the Overlay panel.
+    Overlay,
 }
 
 impl DrwTool {
@@ -139,6 +157,9 @@ impl DrwTool {
             DrwTool::CenterMark => "drw.center_mark",
             DrwTool::Centerline { bisector: false, .. } => "drw.centerline",
             DrwTool::Centerline { bisector: true, .. } => "drw.centerline.bisector",
+            DrwTool::Auxiliary { .. } => "drw.auxiliary",
+            DrwTool::Modify { what, .. } => what.id(),
+            DrwTool::Overlay => "drw.overlay",
         }
     }
 
@@ -175,6 +196,19 @@ impl DrwTool {
             DrwTool::Centerline { bisector: false, .. } => "Click the second circle, line or line end.",
             DrwTool::Centerline { a: None, .. } => "Centreline bisector: click a line.",
             DrwTool::Centerline { .. } => "Click the second line: parallel, or meeting the first.",
+            DrwTool::Auxiliary { parent: None, .. } => "Auxiliary view: click the view to project from.",
+            DrwTool::Auxiliary { edge: None, .. } => "Click a straight edge of the view: the new view looks square to it.",
+            DrwTool::Auxiliary { .. } => "Click where the auxiliary view goes: it slides square to the edge, on the side it is seen from.",
+            DrwTool::Modify { what: ModWhat::Crop, view: None, .. } => "Crop: click the view to crop.",
+            DrwTool::Modify { what: ModWhat::Break, view: None, .. } => "Break: click the view to shorten.",
+            DrwTool::Modify { what: ModWhat::BreakOut, view: None, .. } => "Break out: click the view to cut into.",
+            DrwTool::Modify { pick: ModPick::Rect, first: None, .. } => "Click one corner of the rectangle, or type it in the panel.",
+            DrwTool::Modify { pick: ModPick::Rect, .. } => "Click the opposite corner.",
+            DrwTool::Modify { pick: ModPick::Circle, first: None, .. } => "Click the middle of the circle, or type it in the panel.",
+            DrwTool::Modify { pick: ModPick::Circle, .. } => "Click a point on the circle.",
+            DrwTool::Modify { pick: ModPick::Lines, first: None, .. } => "Click where the first break line goes, or type it in the panel.",
+            DrwTool::Modify { pick: ModPick::Lines, .. } => "Click where the second break line goes.",
+            DrwTool::Overlay => "Overlay: click a view of an assembly.",
         }
     }
 }
@@ -197,6 +231,8 @@ pub(crate) struct ViewDialog {
     pub hidden: bool,
     pub centerlines: bool,
     pub label: bool,
+    /// Of an auxiliary view: from which side of its edge it is seen.
+    pub flip: Option<bool>,
 }
 
 /// The Text dialog: new text at `at`, or a note's text being changed.
@@ -244,6 +280,8 @@ pub(crate) struct DrwDoc {
     pub view_dialog: Option<ViewDialog>,
     pub text_dialog: Option<TextDialog>,
     pub suggest_dialog: Option<SuggestDialog>,
+    pub mod_panel: Option<ModPanel>,
+    pub overlay_panel: Option<OverlayPanel>,
     pub jobs: BTreeMap<u64, DrwJob>,
     /// The model being edited from the drawing (its key), while it is.
     pub editing: Option<String>,
@@ -274,6 +312,8 @@ impl DrwDoc {
             view_dialog: None,
             text_dialog: None,
             suggest_dialog: None,
+            mod_panel: None,
+            overlay_panel: None,
             jobs: BTreeMap::new(),
             editing: None,
             pointer: None,
@@ -288,10 +328,11 @@ impl DrwDoc {
         self.session.evaluation().or(self.session.last_evaluation())
     }
 
-    /// The view drawn under a sheet point (its outline, with a margin), the most recent on top.
+    /// The view drawn under a sheet point (its outline, with a margin), the most recent on top. A
+    /// click on an overlay means the view it is over.
     fn view_at(&self, g: &Graphics, at: Vec2) -> Option<ViewId> {
         let d = self.session.drawing();
-        d.views.iter().rev().filter(|v| v.sheet == self.sheet).find_map(|v| {
+        d.views.iter().rev().filter(|v| v.sheet == self.sheet && !matches!(v.kind, ViewKind::Overlay { .. })).find_map(|v| {
             let (lo, hi) = g.bounds_of(Owner::View(v.id))?;
             let m = 3.0;
             (at.x >= lo.x - m && at.x <= hi.x + m && at.y >= lo.y - m && at.y <= hi.y + m).then_some(v.id)
@@ -406,6 +447,7 @@ impl Workbench {
         let gone = |o: &Owner| match o {
             Owner::View(v) => dr.view(*v).is_none(),
             Owner::Annotation(a) => !dr.annotations.iter().any(|x| x.id == *a),
+            Owner::Mod(v, m) => dr.view(*v).is_none_or(|x| !x.mods.iter().any(|y| y.id == *m)),
             Owner::Frame => false,
         };
         if d.selected.as_ref().is_some_and(gone) {
@@ -711,6 +753,8 @@ impl Workbench {
             });
         }
         let selected = self.selected_view();
+        // The view a new one is made from: what is drawn over a view stands for that view.
+        let source = self.drw.as_ref().and_then(|d| source_view(d, d.selected));
         match id {
             "drw.base" => {
                 let file = self.drw.as_ref().and_then(|d| d.session.drawing().views.last().map(|v| v.model.clone())).unwrap_or_default();
@@ -720,9 +764,21 @@ impl Workbench {
                 }
                 self.set_status("Choose the file, orientation and scale of the view.");
             }
-            "drw.projected" => self.start_tool(DrwTool::Projected { parent: selected }),
-            "drw.section" => self.start_tool(DrwTool::Section { parent: selected, line: Vec::new() }),
-            "drw.detail" => self.start_tool(DrwTool::Detail { parent: selected, center: None, radius: None }),
+            "drw.projected" => self.start_tool(DrwTool::Projected { parent: source }),
+            "drw.section" => self.start_tool(DrwTool::Section { parent: source, line: Vec::new() }),
+            "drw.detail" => self.start_tool(DrwTool::Detail { parent: source, center: None, radius: None }),
+            "drw.auxiliary" => self.start_tool(DrwTool::Auxiliary { parent: source, edge: None, changing: None }),
+            "drw.crop" => self.open_mod_panel(ModWhat::Crop, source)?,
+            "drw.break" => self.open_mod_panel(ModWhat::Break, source)?,
+            "drw.break_out" => self.open_mod_panel(ModWhat::BreakOut, source)?,
+            "drw.overlay" => match source {
+                Some(v) => self.open_overlay_panel(v, None)?,
+                None => self.start_tool(DrwTool::Overlay),
+            },
+            "drw.edit_modifier" => match self.drw.as_ref().and_then(|d| d.selected) {
+                Some(Owner::Mod(v, m)) => self.edit_modifier(v, m)?,
+                _ => return Err("select a crop, a break or a break out first".into()),
+            },
             "drw.dimension" => self.start_tool(DrwTool::Dimension { view: None, picks: Vec::new() }),
             "drw.dimension.auto" => match selected {
                 Some(v) => self.open_suggestions(v)?,
@@ -763,6 +819,14 @@ impl Workbench {
             "drw.edit_view" => {
                 let v = selected.ok_or("select a view first")?;
                 let view = self.drw.as_ref().and_then(|d| d.session.drawing().view(v).cloned()).ok_or("the view is gone")?;
+                // An overlay's panel is its position.
+                if let ViewKind::Overlay { parent, .. } = &view.kind {
+                    return self.open_overlay_panel(*parent, Some(v));
+                }
+                let flip = match &view.kind {
+                    ViewKind::Auxiliary { flip, .. } => Some(*flip),
+                    _ => None,
+                };
                 if let Some(d) = self.drw.as_mut() {
                     d.view_dialog = Some(ViewDialog {
                         view: v,
@@ -770,6 +834,7 @@ impl Workbench {
                         hidden: view.hidden,
                         centerlines: view.centerlines,
                         label: view.label,
+                        flip,
                     });
                 }
             }
@@ -867,6 +932,10 @@ impl Workbench {
             Owner::Annotation(a) => {
                 self.drw_exec("drw.delete", json!({ "annotation": a.0 }))?;
                 self.set_status("Deleted.");
+            }
+            Owner::Mod(v, m) => {
+                self.drw_exec("drw.modifier.delete", json!({ "view": v.0, "modifier": m }))?;
+                self.set_status("Deleted: the view is drawn without it.");
             }
             Owner::Frame => return Err("the border and title block stay".into()),
         }
@@ -1106,6 +1175,7 @@ impl Workbench {
         if let (Some(tool), Some(at)) = (&tool, pointer) {
             draw_tool(&p, rect, &cam, d, tool, at, ghost);
         }
+        draw_panels(&p, rect, &cam, d, pointer, ghost);
         // Suggested dimensions still ticked, as they would be drawn.
         if let Some(sd) = &d.suggest_dialog {
             for (g, _) in sd.preview.iter().zip(&sd.items).filter(|(_, (_, on))| *on) {
@@ -1135,13 +1205,14 @@ impl Workbench {
             let r = match o {
                 Owner::View(v) => self.drw_exec("drw.view.edit", json!({ "view": v.0, "by": v2(by) })),
                 Owner::Annotation(a) => self.drw_exec("drw.annotation.edit", json!({ "annotation": a.0, "by": v2(by) })),
-                Owner::Frame => Ok(Value::Null),
+                Owner::Frame | Owner::Mod(..) => Ok(Value::Null),
             };
             if let Err(e) = r {
                 self.set_error(e);
             }
         }
         if right && let Some(d) = self.drw.as_mut() {
+            d.mod_panel = None;
             if d.tool.take().is_some() {
                 self.set_status("Ready");
             } else {
@@ -1149,6 +1220,8 @@ impl Workbench {
             }
         }
         if esc && let Some(d) = self.drw.as_mut() {
+            d.mod_panel = None;
+            d.overlay_panel = None;
             if d.tool.take().is_none() {
                 d.selected = None;
             }
@@ -1176,6 +1249,11 @@ impl Workbench {
             match d.hover {
                 Some(Owner::View(_)) => {
                     if let Err(e) = self.run_drw_ui("drw.edit_view") {
+                        self.set_error(e);
+                    }
+                }
+                Some(Owner::Mod(v, m)) => {
+                    if let Err(e) = self.edit_modifier(v, m) {
                         self.set_error(e);
                     }
                 }
@@ -1209,7 +1287,13 @@ impl Workbench {
                     ui.close();
                 }
             }
-            if matches!(target, Some(Owner::View(_) | Owner::Annotation(_))) && button(ui, "Delete", "tn_ctx_delete").clicked() {
+            if let Some(Owner::Mod(..)) = target
+                && button(ui, "Edit...", "tn_ctx_edit_modifier").clicked()
+            {
+                chosen = Some("drw.edit_modifier");
+                ui.close();
+            }
+            if matches!(target, Some(Owner::View(_) | Owner::Annotation(_) | Owner::Mod(..))) && button(ui, "Delete", "tn_ctx_delete").clicked() {
                 chosen = Some("drw.delete");
                 ui.close();
             }
@@ -1234,6 +1318,9 @@ impl Workbench {
     fn drw_tool_click(&mut self, at: Vec2, over: Option<ViewId>, g: &Graphics) -> Result<(), String> {
         let d = self.drw.as_mut().ok_or("no drawing")?;
         let Some(tool) = d.tool.clone() else { return Ok(()) };
+        if matches!(tool, DrwTool::Modify { .. }) {
+            return self.modifier_click(at, over);
+        }
         let standard = d.session.drawing().standard;
         let need_view = || over.ok_or_else(|| "click inside a view".to_string());
         let next = |wb: &mut Self, t: Option<DrwTool>| {
@@ -1415,6 +1502,30 @@ impl Workbench {
                     "Centreline placed. Click the next place, or Esc to end."
                 });
             }
+            DrwTool::Auxiliary { parent: None, changing, .. } => next(self, Some(DrwTool::Auxiliary { parent: Some(need_view()?), edge: None, changing })),
+            DrwTool::Auxiliary { parent: Some(p), edge: None, changing } => {
+                let pick = self.drw_exec("drw.pick", json!({ "view": p.0, "at": v2(at) })).map_err(|_| "click a straight edge of the view".to_string())?;
+                if pick["kind"] != "line" {
+                    return Err("click a straight edge: a circle or an arc has no direction to look square to".into());
+                }
+                if let Some(v) = changing {
+                    self.drw_exec("drw.view.edit", json!({ "view": v.0, "edge": pick }))?;
+                    next(self, None);
+                    self.set_status("The auxiliary view looks square to that edge now.");
+                } else {
+                    next(self, Some(DrwTool::Auxiliary { parent: Some(p), edge: Some(pick), changing: None }));
+                }
+            }
+            DrwTool::Auxiliary { parent: Some(p), edge: Some(edge), .. } => {
+                let r = self.drw_exec("drw.auxiliary", json!({ "parent": p.0, "edge": edge, "at": v2(at) }))?;
+                next(self, None);
+                self.set_status(format!("View {} placed.", r["name"].as_str().unwrap_or("")));
+            }
+            DrwTool::Modify { .. } => {}
+            DrwTool::Overlay => {
+                let v = need_view()?;
+                self.open_overlay_panel(v, None)?;
+            }
         }
         let _ = g;
         Ok(())
@@ -1508,6 +1619,7 @@ impl Workbench {
             let mut open = true;
             let mut ok = false;
             let mut cancel = false;
+            let mut another_edge = false;
             egui::Window::new("Edit View").open(&mut open).collapsible(false).resizable(false).default_width(300.0).default_pos([320.0, 170.0]).show(
                 &ctx,
                 |ui| {
@@ -1524,6 +1636,16 @@ impl Workbench {
                         ui.label("");
                         ui.checkbox(&mut dlg.label, "Label");
                         ui.end_row();
+                        if let Some(flip) = &mut dlg.flip {
+                            ui.label("Edge");
+                            check(ui, flip, "Seen from its other side", "tn_view_flip");
+                            ui.end_row();
+                            ui.label("");
+                            if button(ui, "Pick Another Edge", "tn_view_edge").clicked() {
+                                another_edge = true;
+                            }
+                            ui.end_row();
+                        }
                     });
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
@@ -1536,12 +1658,23 @@ impl Workbench {
                     });
                 },
             );
-            d.view_dialog = (open && !ok && !cancel).then_some(dlg.clone());
+            d.view_dialog = (open && !ok && !cancel && !another_edge).then_some(dlg.clone());
+            if another_edge {
+                if let Some(ViewKind::Auxiliary { parent, .. }) = d.session.drawing().view(dlg.view).map(|v| &v.kind) {
+                    let tool = DrwTool::Auxiliary { parent: Some(*parent), edge: None, changing: Some(dlg.view) };
+                    let prompt = tool.prompt();
+                    d.tool = Some(tool);
+                    self.set_status(prompt);
+                }
+            }
             if ok {
                 action = Some(parse_scale(&dlg.scale).and_then(|scale| {
                     let mut p = json!({ "view": dlg.view.0, "hidden": dlg.hidden, "centerlines": dlg.centerlines, "label": dlg.label });
                     if let Some(s) = scale {
                         p["scale"] = json!(s);
+                    }
+                    if let Some(f) = dlg.flip {
+                        p["flip"] = json!(f);
                     }
                     self.drw_exec("drw.view.edit", p).map(|_| ())
                 }));
@@ -1619,6 +1752,7 @@ impl Workbench {
         if let Some(Err(e)) = action {
             self.set_error(e);
         }
+        self.drw_view_windows(ui);
     }
 
     /// Right-hand side of the status bar in a drawing.
@@ -1655,6 +1789,8 @@ impl Workbench {
             .unwrap_or_default();
         let mut pick_sheet: Option<SheetId> = None;
         let mut pick_view: Option<(SheetId, ViewId)> = None;
+        let mut pick_mod: Option<(SheetId, ViewId, u32)> = None;
+        let mut suppress: Option<(ViewId, u32, bool, ModWhat)> = None;
         let mut menu: Option<&'static str> = None;
         egui::ScrollArea::vertical().id_salt("tn_drw_browser").auto_shrink([false, false]).show(ui, |ui| {
             browser_row(ui, t, 0, Icon::Drawing, &dr.name, false, false);
@@ -1674,6 +1810,8 @@ impl Workbench {
                         ViewKind::Projected { .. } => (Icon::ProjectedView, v.name.clone()),
                         ViewKind::Section { .. } => (Icon::SectionView, format!("Section {0}-{0}", v.name)),
                         ViewKind::Detail { .. } => (Icon::DetailView, format!("Detail {}", v.name)),
+                        ViewKind::Auxiliary { .. } => (Icon::ProjectedView, format!("Auxiliary {}", v.name)),
+                        ViewKind::Overlay { .. } => (Icon::Explode, format!("Overlay {}", v.name)),
                     };
                     let resp = browser_row(ui, t, depth, icon, &label, selected == Some(Owner::View(id)), errors.contains_key(&id));
                     let resp = match errors.get(&id) {
@@ -1696,6 +1834,39 @@ impl Workbench {
                             }
                         }
                     });
+                    // What modifies it, each with its own panel.
+                    for m in &v.mods {
+                        let (icon, what) = match &m.kind {
+                            tenon_drawing::ModKind::Crop { .. } => (Icon::Rectangle, ModWhat::Crop),
+                            tenon_drawing::ModKind::Break { .. } => (Icon::Split, ModWhat::Break),
+                            tenon_drawing::ModKind::BreakOut { .. } => (Icon::Trim, ModWhat::BreakOut),
+                        };
+                        let name = if what == ModWhat::Crop { m.kind.label().to_owned() } else { format!("{} {}", m.kind.label(), m.id) };
+                        let label = if m.suppressed { format!("{name} (suppressed)") } else { name };
+                        let resp = browser_row(ui, t, depth + 1, icon, &label, selected == Some(Owner::Mod(id, m.id)), false);
+                        if resp.clicked() {
+                            pick_mod = Some((sh.id, id, m.id));
+                        }
+                        if resp.double_clicked() {
+                            pick_mod = Some((sh.id, id, m.id));
+                            menu = Some("drw.edit_modifier");
+                        }
+                        resp.context_menu(|ui| {
+                            pick_mod = Some((sh.id, id, m.id));
+                            if button(ui, "Edit...", "tn_mod_menu_edit").clicked() {
+                                menu = Some("drw.edit_modifier");
+                                ui.close();
+                            }
+                            if button(ui, if m.suppressed { "Use Again" } else { "Suppress" }, "tn_mod_menu_suppress").clicked() {
+                                suppress = Some((id, m.id, !m.suppressed, what));
+                                ui.close();
+                            }
+                            if button(ui, "Delete", "tn_mod_menu_delete").clicked() {
+                                menu = Some("drw.delete");
+                                ui.close();
+                            }
+                        });
+                    }
                     stack.extend(dr.views.iter().rev().filter(|c| c.kind.parent() == Some(id)).map(|c| (c.id, depth + 1)));
                 }
             }
@@ -1715,6 +1886,18 @@ impl Workbench {
                 }
                 d.selected = Some(Owner::View(v));
             }
+            if let Some((s, v, m)) = pick_mod {
+                if s != d.sheet {
+                    d.sheet = s;
+                    d.fitted = false;
+                }
+                d.selected = Some(Owner::Mod(v, m));
+            }
+        }
+        if let Some((v, m, on, what)) = suppress
+            && let Err(e) = self.drw_exec(what.id(), json!({ "view": v.0, "modifier": m, "suppressed": on }))
+        {
+            self.set_error(e);
         }
         if let Some(id) = menu {
             self.command(id);
@@ -1727,9 +1910,11 @@ impl Workbench {
 fn moving_owners(s: &DrwSession, o: Owner) -> Vec<Owner> {
     let Owner::View(v) = o else { return vec![o] };
     let d = s.drawing();
-    let views: Vec<ViewId> =
-        d.family(v).into_iter().filter(|f| *f == v || matches!(d.view(*f).map(|x| &x.kind), Some(ViewKind::Projected { .. }))).collect();
+    let views: Vec<ViewId> = d.family(v).into_iter().filter(|f| *f == v || d.view(*f).is_some_and(|x| x.kind.follows_parent())).collect();
     let mut out: Vec<Owner> = views.iter().map(|x| Owner::View(*x)).collect();
+    for x in views.iter().filter_map(|x| d.view(*x)) {
+        out.extend(x.mods.iter().map(|m| Owner::Mod(x.id, m.id)));
+    }
     for a in &d.annotations {
         let on = match &a.kind {
             AnnotKind::Dimension { view, .. }
@@ -1746,32 +1931,33 @@ fn moving_owners(s: &DrwSession, o: Owner) -> Vec<Owner> {
     out
 }
 
-/// How far a dragged view moves: a view projected beside, above or below its parent only slides
-/// in line with it (as `drw.view.edit` moves it).
+/// How far a dragged view moves: a view that stays lined up with its parent only slides in line
+/// with it (as `drw.view.edit` moves it).
 fn in_line(s: &DrwSession, o: Owner, by: Vec2) -> Vec2 {
     let Owner::View(v) = o else { return by };
-    match s.drawing().view(v).map(|x| &x.kind) {
-        Some(ViewKind::Projected { side: Side::Right | Side::Left, .. }) => Vec2::new(by.x, 0.0),
-        Some(ViewKind::Projected { side: Side::Above | Side::Below, .. }) => Vec2::new(0.0, by.y),
-        _ => by,
-    }
+    s.drawing().view(v).map_or(by, |x| tenon_drawing::cmd::lined_up(&x.kind, by))
 }
 
-/// A picked line's two ends on the sheet.
-fn line_ends(wb: &Workbench, v: ViewId, pick: &Value) -> Option<(Vec2, Vec2)> {
-    let d = wb.drw.as_ref()?;
+/// A picked line's two ends in its view (view coordinates).
+fn line_in_view(d: &DrwDoc, v: ViewId, pick: &Value) -> Option<(Vec2, Vec2)> {
     let ev = d.shown_evaluation()?;
     let view = d.session.drawing().view(v)?;
     let geo = ev.view(v)?;
     let m = ev.models.get(&view.model)?;
     let gp: tenon_drawing::GeomPick = serde_json::from_value(pick.clone()).ok()?;
     match tenon_drawing::annotate::resolve_pick(m, &gp).ok()? {
-        tenon_drawing::annotate::Resolved::Line(a, b) => {
-            let s = |q| tenon_drawing::annotate::to_sheet(view, geo, tenon_drawing::views::project(&geo.frame, q));
-            Some((s(a), s(b)))
-        }
+        tenon_drawing::annotate::Resolved::Line(a, b) => Some((tenon_drawing::views::project(&geo.frame, a), tenon_drawing::views::project(&geo.frame, b))),
         _ => None,
     }
+}
+
+/// A picked line's two ends on the sheet.
+fn line_ends(wb: &Workbench, v: ViewId, pick: &Value) -> Option<(Vec2, Vec2)> {
+    let d = wb.drw.as_ref()?;
+    let (a, b) = line_in_view(d, v, pick)?;
+    let view = d.session.drawing().view(v)?;
+    let geo = d.shown_evaluation()?.view(v)?;
+    Some((tenon_drawing::annotate::to_sheet(view, geo, a), tenon_drawing::annotate::to_sheet(view, geo, b)))
 }
 
 /// "1:2", "2:1", "0.5" or "" (fit): the scale, or None to fit.
@@ -1885,6 +2071,21 @@ fn draw_tool(p: &egui::Painter, rect: Rect, cam: &SheetCam, d: &DrwDoc, tool: &D
             if line.len() == 2 {
                 p.circle_stroke(s(at), 5.0, ghost);
             }
+        }
+        // Where the view would go, and the edge it looks square to.
+        DrwTool::Auxiliary { parent: Some(pv), edge: Some(edge), .. } => {
+            let (Some(v), Some(g), Some((a, b))) = (dr.view(*pv), ev.and_then(|e| e.view(*pv)), line_in_view(d, *pv, edge)) else { return };
+            let third = dr.standard == Standard::Ansi;
+            let to_sheet = |q: Vec2| tenon_drawing::annotate::to_sheet(v, g, q);
+            let flip = tenon_drawing::cmd::auxiliary_flip(third, a, b, to_sheet((a + b) * 0.5), at);
+            let toward = tenon_drawing::cmd::auxiliary_toward(third, a, b, flip);
+            let place = v.center + toward * (at - v.center).dot(toward);
+            let (f, _, _) = tenon_drawing::views::section_frame(&g.frame, a, b, flip);
+            if let Some(half) = model_size(*pv, &f, v.scale) {
+                box_at(place, half);
+            }
+            p.line_segment([s(to_sheet(a)), s(to_sheet(b))], Stroke::new(2.0, GHOST));
+            p.extend(Shape::dashed_line(&[s(v.center), s(place)], Stroke::new(1.0, GHOST.gamma_multiply(0.6)), 4.0, 4.0));
         }
         DrwTool::Detail { center: Some(c), radius, .. } => {
             let r = radius.unwrap_or_else(|| c.dist(at));
