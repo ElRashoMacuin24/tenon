@@ -735,7 +735,8 @@ Implemented in `crates/io/src/drw.rs` and `crates/drawing/src/model.rs`; tested 
     never values, and how they lie is worked out from the model each time:
     - `baseline`: `axis` (`horizontal` or `vertical`: which way it measures), `datum` (a pick),
       `targets` (a list of picks, at least one and at most 500), `offset` from the view's centre
-      (only how far across what is measured counts: it says where the first dimension line goes),
+      (only how far across what is measured counts: it says where the first dimension line goes,
+      and Tenon writes 0 for the other part),
       `spacing` (between dimension lines, sheet millimetres; left out, 8) and `precision` (left
       out, 2);
     - `ordinate`: the same, with `origin` in place of `datum` and no `spacing`; `offset` says

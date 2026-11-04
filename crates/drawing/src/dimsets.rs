@@ -487,7 +487,7 @@ pub fn default_at(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<Vec2, 
         layout(d, ev, &probe)?.draw(&mut drawn, Owner::Frame);
         let Some((l, h)) = drawn.bounds_of(Owner::Frame) else { return Ok(true) };
         let on_paper = axis.across(l) >= crate::sheets::BORDER && axis.across(h) <= paper;
-        Ok(on_paper && !views.iter().any(|(a, b)| a.x < h.x && b.x > l.x && a.y < h.y && b.y > l.y))
+        Ok(on_paper && !views.iter().any(|(vl, vh)| vl.x < h.x && vh.x > l.x && vl.y < h.y && vh.y > l.y))
     };
     let along = (axis.along(lo) + axis.along(hi)) / 2.0;
     let past_high = others.iter().map(|b| axis.across(b.1)).filter(|y| *y > axis.across(hi)).fold(axis.across(hi), f64::max) + OUTSIDE;

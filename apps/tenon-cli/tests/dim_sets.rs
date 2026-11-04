@@ -400,11 +400,17 @@ fn a_set_at_another_scale_reads_model_millimetres_and_what_it_has_lost_is_said()
     assert!(err.contains("isometric"), "{err}");
 
     // Two sets measured from a hole, to be lost with it.
-    let datum_lost = run(&mut e, "drw.baseline", json!({ "view": view, "datum": hole1, "targets": [left, right], "at": [150, 40], "axis": "horizontal" }))
-        ["annotation"]
+    let datum_lost = run(
+        &mut e,
+        "drw.baseline",
+        json!({ "view": view, "datum": hole1, "targets": [left, right], "at": [150, 40], "axis": "horizontal" }),
+    )["annotation"]
         .clone();
-    let origin_lost = run(&mut e, "drw.ordinate", json!({ "view": view, "origin": hole1, "targets": [left, right], "at": [150, 20], "axis": "horizontal" }))
-        ["annotation"]
+    let origin_lost = run(
+        &mut e,
+        "drw.ordinate",
+        json!({ "view": view, "origin": hole1, "targets": [left, right], "at": [150, 20], "axis": "horizontal" }),
+    )["annotation"]
         .clone();
 
     // A hole gone from the model: what can still be found is drawn, and the rest is said. Delete
@@ -508,7 +514,10 @@ fn a_view_made_from_an_isometric_one_is_not_dimensioned_either() {
         ("a section of one", view(&mut e, "drw.view.section", json!({ "parent": iso, "a": [-100, 0], "b": [100, 0], "at": [520, 100] }))),
         ("a projection of one", view(&mut e, "drw.view.projected", json!({ "parent": iso, "side": "right", "at": [320, 330] }))),
         ("a diagonal projection", diagonal.clone()),
-        ("a detail of that", view(&mut e, "drw.view.detail", json!({ "parent": diagonal, "center": [0, 0], "radius": 200, "scale": 1, "at": [520, 330] }))),
+        (
+            "a detail of that",
+            view(&mut e, "drw.view.detail", json!({ "parent": diagonal, "center": [0, 0], "radius": 200, "scale": 1, "at": [520, 330] })),
+        ),
     ];
     let count = annotation_count(&mut e);
     for (what, v) in &slanting {
@@ -570,9 +579,7 @@ fn with_no_place_given_a_set_goes_where_the_whole_of_it_fits() {
     let places = |e: &mut Engine, view: &Value| {
         [pick(e, view, 50.0, 0.0), pick(e, view, 22.0, 12.125), pick(e, view, 42.0, 24.375), pick(e, view, 62.0, 37.625), pick(e, view, 82.0, 49.875)]
     };
-    let ask = |view: &Value, p: &[Value; 5]| {
-        json!({ "view": view, "datum": p[0], "targets": [p[1], p[2], p[3], p[4]], "axis": "vertical", "precision": 3 })
-    };
+    let ask = |view: &Value, p: &[Value; 5]| json!({ "view": view, "datum": p[0], "targets": [p[1], p[2], p[3], p[4]], "axis": "vertical", "precision": 3 });
 
     // Near the right of a sheet 431.8 wide, its paper ending 10 short of that. The view's right
     // side is at 375, so on that side the lines would stand at 385, and on past 431.8. To the left
@@ -671,7 +678,11 @@ fn a_set_turned_with_no_place_given_goes_outside_the_view() {
     let level = 239.0 + width("10") / 2.0 + 10.0;
     rows_are(
         &r,
-        &[("-10", level + 1.0 + width("-10") / 2.0, 120.0), ("0", level + 1.0 + width("0") / 2.0, 130.0), ("10", level + 1.0 + width("10") / 2.0, 140.0)],
+        &[
+            ("-10", level + 1.0 + width("-10") / 2.0, 120.0),
+            ("0", level + 1.0 + width("0") / 2.0, 130.0),
+            ("10", level + 1.0 + width("10") / 2.0, 140.0),
+        ],
     );
     let (x, y) = offset(&mut e, 1);
     assert!((x - (level - 150.0)).abs() < 1e-9 && y == 0.0, "{x} {y}");

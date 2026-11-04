@@ -15,7 +15,8 @@ shows it in [ROADMAP.md](ROADMAP.md).
   Values follow the model. Sets are saved in the drawing, can be added to, taken from, moved,
   changed and deleted, have a row in the browser, and go to PDF, SVG and DXF. New commands
   `drw.baseline` and `drw.ordinate`; `drw.annotation.edit` gains `remove`, `add`, `datum`, `axis`
-  and `spacing`. Suggest Dimensions leaves out what a set already gives.
+  and `spacing`. Suggest Dimensions leaves out what a set already gives, and refuses a section or
+  projection of an isometric view as it does the view itself.
 
 ### Stress checks
 

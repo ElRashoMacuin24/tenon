@@ -656,7 +656,8 @@ fn drw_dimension_auto(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value
 /// target's number in the set, the one that messages, the panel's list and `remove` use (1 for the
 /// first; null for an ordinate set's origin).
 fn set_rows(l: &dimsets::SetLayout) -> Value {
-    let row = |r: &dimsets::SetRow| json!({ "place": r.place.map(|i| i + 1), "value": r.value, "shown": r.shown, "at": v2(r.text), "level": r.level });
+    let row =
+        |r: &dimsets::SetRow| json!({ "place": r.place.map(|i| i + 1), "value": r.value, "shown": r.shown, "at": v2(r.text), "level": r.level });
     json!(l.rows.iter().map(row).collect::<Vec<Value>>())
 }
 
@@ -1240,7 +1241,7 @@ static COMMANDS: &[DrwCommand] = &[
     DrwCommand {
         id: "drw.baseline",
         label: "Baseline",
-        help: "view; datum: a pick to measure from; targets: [picks] of what to measure to (a circle's centre, a line's middle, or the point picked; drw.pick); axis: horizontal | vertical (default: by where it goes, else the way they are most spread); at: where the first dimension line goes on the sheet (default outside the view); spacing: between dimension lines, sheet mm (default 8, more where their text needs it); precision (decimals, default 2). One record with one dimension to each target, the shortest nearest the view, following the model. drw.annotation.edit adds and takes away, moves and changes it",
+        help: "view; datum: a pick to measure from; targets: [picks] of what to measure to (a circle's centre, a line's middle, or the point picked; drw.pick); axis: horizontal | vertical (default: by where it goes, else the way they are most spread); at: where the first dimension line goes on the sheet (default outside the view, on a side where the whole of it fits); spacing: between dimension lines, sheet mm (default 8, more where their text needs it); precision (decimals, default 2). One record with one dimension to each target, the shortest nearest the view, following the model. drw.annotation.edit adds and takes away, moves and changes it",
         mutates: true,
         views: true,
         run: drw_baseline,
@@ -1248,7 +1249,7 @@ static COMMANDS: &[DrwCommand] = &[
     DrwCommand {
         id: "drw.ordinate",
         label: "Ordinate",
-        help: "view; origin: a pick to measure from; targets: [picks] of what to measure to (a circle's centre, a line's middle, or the point picked; drw.pick); axis: horizontal | vertical (default: by where it goes, else the way they are most spread); at: where the values line up on the sheet (default outside the view); precision (decimals, default 2). One record: the origin marked 0 and each target its position from it, signed, on its own extension line with no arrows, the values moved apart where they would touch, following the model. drw.annotation.edit adds and takes away, moves and changes it",
+        help: "view; origin: a pick to measure from; targets: [picks] of what to measure to (a circle's centre, a line's middle, or the point picked; drw.pick); axis: horizontal | vertical (default: by where it goes, else the way they are most spread); at: where the values line up on the sheet (default outside the view, on a side where the whole of it fits); precision (decimals, default 2). One record: the origin marked 0 and each target its position from it, signed, on its own extension line with no arrows, the values moved apart where they would touch, following the model. drw.annotation.edit adds and takes away, moves and changes it",
         mutates: true,
         views: true,
         run: drw_ordinate,

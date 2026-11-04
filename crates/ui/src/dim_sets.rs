@@ -215,7 +215,10 @@ impl Workbench {
         // A line the view draws that is no edge (the side of a hole seen from the side) was meant
         // to be measured, and cannot be.
         if looking_at.is_some_and(|v| g.pick(at, tol) == Some(Owner::View(v))) {
-            return Err("that line of the view is not an edge of the model, so it cannot be measured: click an edge, or clear of the lines to put the set".into());
+            return Err(
+                "that line of the view is not an edge of the model, so it cannot be measured: click an edge, or clear of the lines to put the set"
+                    .into(),
+            );
         }
         // Elsewhere, the set goes there.
         if panel.annotation.is_some() {

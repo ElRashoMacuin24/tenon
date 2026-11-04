@@ -3559,21 +3559,65 @@ and the sheet says what is not (`drw.info` as `problem`), and the browser row sh
 datum or origin nothing can be measured and it is not drawn, and says so.
 
 **What cannot be measured is refused when it is made or changed, in words:** a place where the
-datum or origin is along that direction, two places in one along it, an isometric view (as Suggest
-Dimensions refuses one). When the model later brings two together they are drawn as they stand.
+datum or origin is along that direction, two places in one along it, an isometric view. When the
+model later brings two together they are drawn as they stand. Where the direction went by where
+the set was put, the picks were good, so the words say to put it on another side or choose a
+direction.
+
+**An isometric view, and any view made from one.** A detail or section of an isometric view, a
+detail of a diagonal projected view and a side projection of an isometric base draw the same
+foreshortened lengths: a plate 100 wide read 70.71 and 57.74, with no warning, when only the view
+itself was looked at. The test walks back through the views a view is made from
+(`Drawing::is_isometric`), and Suggest Dimensions goes by it too. In the app a click in such a view
+takes nothing, so that the next can be in a square one; taken and refused only at the end, the
+words sent the user to a view the panel would not go to. A section cut on a slant across a square
+view is not refused: what lies in its plane reads true, and it reads as every dimension on that
+view reads.
 
 **The direction goes by where it is put** when not told: above or below the view, horizontal; to
 its left or right, vertical; at a corner or inside it, the way the places are most spread. In the
 panel "By where it goes", Horizontal or Vertical. A set being changed has one or the other.
 
-**Only across moves it.** `by` and dragging keep what is across what it measures; along, each
-dimension stays with what it measures, so the along part is dropped and is not stored.
+**Turned, with nothing said of where, it goes outside the view** as a new set does, past what is
+already on that side. What it held was how far across the old direction, which means nothing across
+the new: kept, a set above the view became one drawn through the part, with a success status. The
+panel shows it there as soon as the direction is chosen, and back where it stood if the old one is
+chosen again; a click, or `by`, says otherwise (`by` is then from the view's middle, as the offset
+is).
+
+**Where it goes unless told is judged by the whole of it.** The set is laid out above the view or
+to its right and, failing that, on the other side; what it draws must stay on the paper and clear of
+other views. The first version asked for spacing times places in room: that ignored the wider step
+text forces up the sheet, and eight places went off the paper with the other side free. Where
+neither side will do it is refused and told to say where: a set off the paper with a success status
+is what was wrong. Told a place, it goes there, on the paper or not.
+
+**Only across places it.** Where it is put when made, `by` and dragging keep what is across what
+it measures; along, each dimension stays with what it measures, so the along part is dropped and is
+not stored (0 in the file).
+
+**A place has one number,** from 1, in the panel's list, in what is said, in `rows[].place` and in
+`remove`. `place` and `remove` first counted from 0 as an array does, the words from 1 as a list
+does, so a script that believed the words aimed at the wrong place. The numbers are not in the file.
+
+**One place is the same edge found now.** Whether a click is a second click on a place goes by the
+edge each pick finds in the geometry as it is, and the point of it. Comparing what the picks held
+of their edges worked until the model changed: then the click counted as adding, and was refused
+with a number the list did not have.
 
 **The panel stays while clicks go to the view.** A click on an edge picks it, a second takes it
 away, a click clear of the edges puts the set there and ends (as the Dimension tool places a
 dimension); with the set already made, it only moves it until OK. Its state lives in the tool
-(`DrwTool::Set`), so Esc, right-click and undo end it with the tool. It stands at the canvas's top
-right, so that the view stays in reach; a dialog in the middle would cover what is to be clicked.
+(`DrwTool::Set`), so Esc, right-click and undo end it with the tool, and it closes when what it is
+on is deleted. It stands at the canvas's top right, so that the view stays in reach; a dialog in
+the middle would cover what is to be clicked.
+
+"Clear of the edges" means less than "not on the view being measured", which is how it began: a
+click on another view's edge or on another sheet closed the panel and made the set there. Such a
+click is refused as the Centerline tool refuses one, the picks kept. So is a click clear of the
+edges while Change asks for a new datum, and a click on a line the view draws with no edge behind it
+(the far side of a hole seen from the side: its near side happens to have a seam edge): it was
+meant to be measured and cannot be, which is a true gap of picks being edges.
 The browser lists a view's sets (only sets: the sheet shows the rest), because a set has places to
 add to as a feature has inputs, and double-clicking the row opens the panel as it does a feature's.
 

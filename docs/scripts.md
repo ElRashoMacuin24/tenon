@@ -143,8 +143,14 @@ they are now; after a model file changes, `drw.update` reads it again and the va
 
 `drw.baseline` (`datum`) and `drw.ordinate` (`origin`) measure a list of picks (`targets`) from one
 pick, as one record: `drw.info` gives its `rows` as they are now, each with its `place` in the
-list, what it reads and where its text is. `drw.annotation.edit` takes places away (`remove`, by
-those numbers) and adds them (`add`), and moves it (`by`, only across what it measures).
+list, what it reads and where its text is. Places are numbered from 1, in the order of `targets`:
+the same number in `rows[].place`, in `remove`, in the words of a `problem` or refusal and in the
+panel's list. `drw.annotation.edit` takes places away (`remove`, by those numbers) and adds them
+(`add`), and moves it (`by`, only across what it measures). With no `at` a set goes outside the
+view, above it or to its right, or on the other side where the whole of it would otherwise run off
+the paper or into another view; where neither side has room it is refused, and `at` says where.
+Changing `axis` with no `by` puts it outside the view in the same way; with `by`, it goes that far
+from the view's middle. Sets are refused in an isometric view and in any view made from one.
 
 ## Materials and design tables
 

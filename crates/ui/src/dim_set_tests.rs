@@ -701,8 +701,7 @@ fn turned_in_its_panel_a_set_shows_where_it_will_go_and_goes_there() {
     let _quiet = crate::tests::timing_lock();
     let (mut wb, mut d) = drawing_of_plate("turn", Orientation::Top, 1.0);
     press(&mut d, &mut wb, "ribbon drw.baseline");
-    let (a, b, c, place) =
-        (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0), in_view(&mut wb, 109.0, 65.0), in_view(&mut wb, 60.0, 110.0));
+    let (a, b, c, place) = (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0), in_view(&mut wb, 109.0, 65.0), in_view(&mut wb, 60.0, 110.0));
     d.click(&mut wb, a);
     d.click(&mut wb, b);
     d.click(&mut wb, c);
@@ -803,4 +802,47 @@ fn a_set_refused_for_where_it_was_put_is_told_to_go_elsewhere() {
     d.click(&mut wb, beside);
     assert!(panel(&wb).is_none(), "{}", wb.status());
     assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["80"]);
+}
+
+#[test]
+fn with_no_room_outside_the_view_the_tool_says_to_click_where_it_goes() {
+    let _quiet = crate::tests::timing_lock();
+    let (mut wb, mut d) = drawing_of_plate("noroom", Orientation::Top, 1.0);
+    press(&mut d, &mut wb, "ribbon drw.baseline");
+    let (a, b, c, place) = (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0), in_view(&mut wb, 109.0, 65.0), in_view(&mut wb, 60.0, 110.0));
+    d.click(&mut wb, a);
+    d.click(&mut wb, b);
+    d.click(&mut wb, c);
+    // Lines 300 apart fit on neither side of the view: OK says so and stays open.
+    type_into(&mut d, &mut wb, "tn_set_spacing", "300");
+    press(&mut d, &mut wb, "tn_set_axis_h");
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(wb.status().contains("no room") && wb.status().contains("say where"), "{}", wb.status());
+    assert_eq!(panel(&wb).expect("still open").targets.len(), 2);
+    assert!(no_annotations(&mut wb));
+    // As it says: a click where it goes.
+    d.click(&mut wb, place);
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    let was = info(&mut wb)["annotations"][0].clone();
+    assert_eq!(shown(&was), ["15", "105"]);
+    settle(&mut d, &mut wb, 2);
+
+    // Turned in its panel, there is no room that way either: said at once, and the same at OK.
+    let row = browser_row(&d, "Baseline 1: 2 dimension(s)").center();
+    double_click(&mut d, &mut wb, row);
+    press(&mut d, &mut wb, "tn_set_axis_v");
+    assert!(wb.status().contains("no room"), "{}", wb.status());
+    assert_eq!(panel(&wb).unwrap().at, None);
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(wb.status().contains("no room") && panel(&wb).is_some(), "{}", wb.status());
+    assert_eq!(info(&mut wb)["annotations"][0], was);
+    // A click says where, and then it goes.
+    let right = sheet(&mut wb, 170.0, 40.0).x;
+    let at = in_view(&mut wb, 170.0, 40.0);
+    d.click(&mut wb, at);
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    let turned = info(&mut wb)["annotations"][0].clone();
+    assert_eq!(turned["axis"], "vertical", "{turned}");
+    assert!((turned["rows"][0]["level"].as_f64().unwrap() - right).abs() < 0.05, "{turned}");
 }

@@ -176,6 +176,13 @@ right it measures up the sheet, unless the panel says otherwise.
 A set is one thing: drag it to move it, Delete to delete it, double-click it or its row in the
 browser to add to it, take from it or change it. Its values follow the model.
 
+All its places are in one view, on one sheet. A click in another view, or with another sheet
+showing, is refused and what you have picked stays. Isometric views, and views made from them, are
+not dimensioned. Press OK without clicking where it goes and it goes outside the view, on the side
+where the whole of it fits; if neither side has room you are told, and a click puts it where you
+want. Choosing the other direction in the panel moves it outside the view too, unless you have
+clicked where it goes.
+
 ## 3D printing
 
 **Environments > 3D Print Check** checks the part for a printer: a closed surface, walls
