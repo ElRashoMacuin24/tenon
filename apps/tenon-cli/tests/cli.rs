@@ -373,3 +373,16 @@ fn upgrade_does_not_call_what_is_no_document_current() {
     assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).contains("already current"), "{out:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Run with nothing it says how, as the README in the archive tells a person to try, and ends well.
+#[test]
+fn with_no_arguments_it_says_how_and_no_error() {
+    for args in [&[][..], &[std::ffi::OsStr::new("--help")][..]] {
+        let out = cli(args);
+        assert!(out.status.success(), "{:?}", out.status);
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("usage:") && text.contains("tenon-cli run"), "{text}");
+        assert!(out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    assert!(!cli(&[std::ffi::OsStr::new("nonsense")]).status.success(), "a command it does not know is still an error");
+}

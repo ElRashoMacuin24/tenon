@@ -95,6 +95,11 @@ fn main() -> ExitCode {
         return diff(Path::new(a), Path::new(b), json);
     }
     let result = match pos.as_slice() {
+        // (Run with nothing, it says how.)
+        [] => {
+            print!("{USAGE}");
+            return ExitCode::SUCCESS;
+        }
         ["version"] => Ok(tenon_cli::version(&OcctKernel::new())),
         ["upgrade", files @ ..] if !files.is_empty() => tenon_cli::upgrade(&files.iter().map(Path::new).collect::<Vec<_>>()),
         ["run", file] => match std::fs::read_to_string(file) {
