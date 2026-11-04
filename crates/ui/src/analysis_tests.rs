@@ -2112,6 +2112,15 @@ fn a_long_status_can_be_read_under_the_pointer() {
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
     assert!(d.ctx.read_response(hover).is_some(), "what does not fit comes up under the pointer");
+
+    // Of several lines, as the mesher and the solver say things, the bar shows the first, and all
+    // of them come up under the pointer however short they are.
+    wb.set_error("The study could not be solved. ccx failed (exit code: 201). It said:\n *ERROR in e_c3d: nonpositive jacobian\n determinant in element 17425");
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(d.texts().iter().any(|t| t == "The study could not be solved. ccx failed (exit code: 201). It said:"), "{:?}", d.texts());
+    assert!(!d.texts().iter().any(|t| t.contains("determinant in element")), "{:?}", d.texts());
+    assert!(d.ctx.read_response(hover).is_some(), "the rest comes up under the pointer");
 }
 
 #[test]

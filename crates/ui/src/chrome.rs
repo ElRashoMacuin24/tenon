@@ -796,12 +796,14 @@ impl Workbench {
         let right = right.join("      ");
         let width = ui.painter().layout_no_wrap(right.clone(), theme::small(), t.text_dim).size().x;
         ui.painter().text(pos2(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, right, theme::small(), t.text_dim);
-        // What is said, as far as there is room, and all of it to read under the pointer. (Long ones
-        // would run under the counts and off the window.)
+        // What is said, its first line as far as there is room, and all of it to read under the
+        // pointer. (Long ones would run under the counts and off the window, and more lines than
+        // the bar holds would show as pieces of the middle ones.)
         let room = Rect::from_min_max(r.min, pos2((r.right() - 18.0 - width).max(r.left()), r.max.y));
-        let said = ui.painter().layout_no_wrap(status.clone(), theme::small(), color).size().x;
-        ui.painter().with_clip_rect(room).text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, status.clone(), theme::small(), color);
-        if said + 8.0 > room.width() {
+        let first = status.lines().next().unwrap_or_default().to_owned();
+        let said = ui.painter().layout_no_wrap(first.clone(), theme::small(), color).size().x;
+        ui.painter().with_clip_rect(room).text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, first.clone(), theme::small(), color);
+        if said + 8.0 > room.width() || first.len() < status.trim_end().len() {
             ui.interact(room, egui::Id::new("tn_status_said"), Sense::hover()).on_hover_text(status);
         }
         if !self.is_sketching() {

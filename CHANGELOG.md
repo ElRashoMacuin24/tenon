@@ -116,6 +116,9 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- A message of several lines in the status bar, as every failure of the mesher or the solver is,
+  showed as clipped pieces of its middle lines, with nothing under the pointer. The bar shows the
+  first line, and the whole of it comes up under the pointer.
 - A spline that crosses its own profile made a solid of negative volume and exported it, with no
   word: it is now refused, by name. So are letters picked with a region they lie over, whose
   solids overlapped and whose volume was counted twice.
