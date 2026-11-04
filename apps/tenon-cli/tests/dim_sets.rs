@@ -399,6 +399,14 @@ fn a_set_at_another_scale_reads_model_millimetres_and_what_it_has_lost_is_said()
     let err = e.exec("drw.baseline", &json!({ "view": iso, "datum": edges, "targets": [more] })).unwrap_err();
     assert!(err.contains("isometric"), "{err}");
 
+    // Two sets measured from a hole, to be lost with it.
+    let datum_lost = run(&mut e, "drw.baseline", json!({ "view": view, "datum": hole1, "targets": [left, right], "at": [150, 40], "axis": "horizontal" }))
+        ["annotation"]
+        .clone();
+    let origin_lost = run(&mut e, "drw.ordinate", json!({ "view": view, "origin": hole1, "targets": [left, right], "at": [150, 20], "axis": "horizontal" }))
+        ["annotation"]
+        .clone();
+
     // A hole gone from the model: what can still be found is drawn, and the rest is said. Delete
     // the hole feature: of the first set, the hole places are lost, the right side is not.
     run(&mut e, "file.open", json!({ "path": "plate.tenon" }));
@@ -416,9 +424,26 @@ fn a_set_at_another_scale_reads_model_millimetres_and_what_it_has_lost_is_said()
     let id = set["id"].clone();
     run(&mut e, "drw.annotation.edit", json!({ "annotation": id, "remove": [1, 2] }));
     assert!(run(&mut e, "drw.info", json!({}))["annotations"][0]["problem"].is_null());
-    // With its datum gone it cannot be drawn, and says so. (A pick of the origin's hole.)
+    // With its datum or origin gone it cannot be drawn, and says so: no rows, and the rest of the
+    // sheet goes to paper as ever.
     let info = run(&mut e, "drw.info", json!({}));
     assert!(info["views"][0]["error"].is_null(), "{info}");
+    let of = |info: &Value, id: &Value| info["annotations"].as_array().unwrap().iter().find(|a| a["id"] == *id).unwrap().clone();
+    for (id, what) in [(&datum_lost, "the datum"), (&origin_lost, "the origin")] {
+        let a = of(&info, id);
+        let problem = a["problem"].as_str().unwrap_or_else(|| panic!("{a}"));
+        assert!(problem.contains(&format!("{what} of the set cannot be found")), "{problem}");
+        assert!(a["rows"].is_null(), "nothing is drawn: {a}");
+    }
+    run(&mut e, "drw.export.pdf", json!({ "path": "no-datum.pdf" }));
+    run(&mut e, "drw.export.svg", json!({ "path": "no-datum.svg" }));
+    run(&mut e, "drw.export.dxf", json!({ "path": "no-datum.dxf" }));
+    // Another datum puts it right: from the left side, the right is 100 away. (The left side, which
+    // was a place, is taken away: it would be where the datum is.)
+    let (left, right) = (pick(&mut e, &view, 0.0, 30.0), pick(&mut e, &view, 100.0, 30.0));
+    let r = run(&mut e, "drw.annotation.edit", json!({ "annotation": datum_lost, "datum": left, "remove": [1, 2], "add": [right] }));
+    assert_eq!(rows(&r)[0].0, "100", "{r}");
+    assert!(of(&run(&mut e, "drw.info", json!({})), &datum_lost)["problem"].is_null());
 }
 
 #[test]
