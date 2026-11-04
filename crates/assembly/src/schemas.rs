@@ -170,10 +170,16 @@ static SCHEMAS: &[C] = &[
             opt("reuse", List(&Id), "those a mirror places again in the mirrored position"),
         ],
     ),
-    C::new("asm.suppress_pattern", &[req("pattern", Id, "the pattern or mirror"), opt("suppressed", Bool, "true to suppress it (default), false to bring it back")]),
+    C::new(
+        "asm.suppress_pattern",
+        &[req("pattern", Id, "the pattern or mirror"), opt("suppressed", Bool, "true to suppress it (default), false to bring it back")],
+    ),
     C::new(
         "asm.delete_pattern",
-        &[req("pattern", Id, "the pattern or mirror"), opt("keep_elements", Bool, "the elements stay, as components of their own (default false: they go with it)")],
+        &[
+            req("pattern", Id, "the pattern or mirror"),
+            opt("keep_elements", Bool, "the elements stay, as components of their own (default false: they go with it)"),
+        ],
     ),
     C::new("asm.interference", &[opt("components", List(&Id), "the components to check against one another (default all)")]),
     C::new(

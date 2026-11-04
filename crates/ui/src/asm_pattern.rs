@@ -94,7 +94,8 @@ impl AsmPanel {
     /// What the view's preview depends on, for these tools.
     fn repeat_key(&self, revision: u64) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        format!("{:?}{:?}{:?}{:?}{:?}", self.tool, self.components, self.reuse, self.a.as_ref().map(|x| &x.0), self.b.as_ref().map(|x| &x.0)).hash(&mut h);
+        format!("{:?}{:?}{:?}{:?}{:?}", self.tool, self.components, self.reuse, self.a.as_ref().map(|x| &x.0), self.b.as_ref().map(|x| &x.0))
+            .hash(&mut h);
         (self.circular, self.reverse, self.reverse2, self.pattern.map(|p| p.0), revision).hash(&mut h);
         for n in [self.count, self.spacing, self.count2, self.spacing2, self.degrees, self.by[0], self.by[1], self.by[2]] {
             n.to_bits().hash(&mut h);
@@ -129,7 +130,11 @@ impl Workbench {
     /// Opens Pattern, Mirror or Copy on what is selected.
     pub(crate) fn open_repeat_panel(&mut self, tool: AsmTool) {
         let mut p = AsmPanel::new(tool);
-        p.components = self.asm.as_ref().map_or_else(Vec::new, |a| a.selected.iter().copied().filter(|c| a.session.assembly().component(*c).is_some()).collect());
+        p.degrees = 360.0;
+        p.components = self
+            .asm
+            .as_ref()
+            .map_or_else(Vec::new, |a| a.selected.iter().copied().filter(|c| a.session.assembly().component(*c).is_some()).collect());
         p.slot = match (p.components.is_empty(), tool) {
             (true, _) => SLOT_COMPONENTS,
             (false, AsmTool::Copy) => SLOT_NONE,
@@ -294,7 +299,8 @@ impl Workbench {
     fn copies_follow(&mut self, resp: &egui::Response, rect: Rect) {
         let Some(pointer) = resp.hover_pos().or_else(|| resp.interact_pointer_pos()) else { return };
         let cam = self.view.camera;
-        let (o, d) = cam.ray(f64::from(pointer.x - rect.left()), f64::from(pointer.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+        let (o, d) =
+            cam.ray(f64::from(pointer.x - rect.left()), f64::from(pointer.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
         let Some(a) = self.asm.as_ref() else { return };
         let Some(Panel::Asm(p)) = &self.panel else { return };
         let asm = a.session.assembly();
@@ -320,14 +326,20 @@ impl Workbench {
         }
     }
 
-    /// The controls of these panels.
-    pub(crate) fn repeat_panel_ui(&self, ui: &mut Ui, p: &mut AsmPanel, t: &Tokens) {
+    /// The controls of these panels. True when Enter was pressed in a value box: OK, as in the
+    /// other panels.
+    pub(crate) fn repeat_panel_ui(&self, ui: &mut Ui, p: &mut AsmPanel, t: &Tokens) -> bool {
+        let entered = std::cell::Cell::new(false);
         let names = |c: &ComponentId| self.asm.as_ref().map_or_else(String::new, |a| a.name(*c));
         let slot_button = |ui: &mut Ui, label: &str, key: &str, active: bool, text: &str| -> bool {
             let mut clicked = false;
             ui.horizontal(|ui| {
                 ui.label(label);
-                let b = egui::Button::new(RichText::new(text).color(if active { t.accent_text } else { t.text })).fill(if active { t.accent } else { t.field });
+                let b = egui::Button::new(RichText::new(text).color(if active { t.accent_text } else { t.text })).fill(if active {
+                    t.accent
+                } else {
+                    t.field
+                });
                 let r = ui.add(b.min_size(vec2(170.0, 22.0))).on_hover_text("Click, then pick in the view");
                 crate::drawing::remember(ui, key, r.rect);
                 clicked = r.clicked();
@@ -335,7 +347,11 @@ impl Workbench {
             clicked
         };
         section(ui, "Components", true, |ui| {
-            let text = if p.components.is_empty() { "click the components".to_string() } else { p.components.iter().map(names).collect::<Vec<_>>().join(", ") };
+            let text = if p.components.is_empty() {
+                "click the components".to_string()
+            } else {
+                p.components.iter().map(names).collect::<Vec<_>>().join(", ")
+            };
             if slot_button(ui, "", "tn_repeat_components", p.slot == SLOT_COMPONENTS, &text) {
                 p.slot = SLOT_COMPONENTS;
             }
@@ -347,7 +363,9 @@ impl Workbench {
         });
         let value = |ui: &mut Ui, label: &str, field: &str, value: &mut f64, unit: &str, range: std::ops::RangeInclusive<f64>| {
             ui.label(label);
-            eq_field(ui, egui::Id::new(field), value, None, unit, range, 90.0, t);
+            if eq_field(ui, egui::Id::new(field), value, None, unit, range, 90.0, t).entered {
+                entered.set(true);
+            }
             ui.end_row();
         };
         match p.tool {
@@ -421,24 +439,30 @@ impl Workbench {
                         p.slot = SLOT_FIRST;
                     }
                 });
-                section(ui, "Each one is", true, |ui| {
-                    egui::Grid::new("tn_mirror_how").num_columns(3).spacing([10.0, 4.0]).show(ui, |ui| {
-                        for c in p.components.clone() {
-                            ui.label(names(&c));
-                            let again = p.reuse.contains(&c);
-                            let a = ui.add(egui::Button::selectable(!again, "Mirrored")).on_hover_text("A mirrored occurrence, holding its part reflected: a row of its own in the parts list");
-                            let b = ui.add(egui::Button::selectable(again, "Placed again")).on_hover_text("For a part that is the same as its mirror image: the same part again in the mirrored position");
-                            crate::drawing::remember(ui, &format!("tn_mirror_reuse_{}", c.0), b.rect);
-                            if a.clicked() {
-                                p.reuse.retain(|x| *x != c);
+                if !p.components.is_empty() {
+                    section(ui, "Each one is", true, |ui| {
+                        egui::Grid::new("tn_mirror_how").num_columns(3).spacing([10.0, 4.0]).show(ui, |ui| {
+                            for c in p.components.clone() {
+                                ui.label(names(&c));
+                                let again = p.reuse.contains(&c);
+                                let a = ui
+                                    .add(egui::Button::selectable(!again, "Mirrored"))
+                                    .on_hover_text("A mirrored occurrence, holding its part reflected: a row of its own in the parts list");
+                                let b = ui
+                                    .add(egui::Button::selectable(again, "Placed again"))
+                                    .on_hover_text("For a part that is the same as its mirror image: the same part again in the mirrored position");
+                                crate::drawing::remember(ui, &format!("tn_mirror_reuse_{}", c.0), b.rect);
+                                if a.clicked() {
+                                    p.reuse.retain(|x| *x != c);
+                                }
+                                if b.clicked() && !again {
+                                    p.reuse.push(c);
+                                }
+                                ui.end_row();
                             }
-                            if b.clicked() && !again {
-                                p.reuse.push(c);
-                            }
-                            ui.end_row();
-                        }
+                        });
                     });
-                });
+                }
             }
             AsmTool::Copy => {
                 section(ui, "Where", true, |ui| {
@@ -458,7 +482,8 @@ impl Workbench {
                 section(ui, "Each copy is", true, |ui| {
                     let (a, b) = (
                         ui.add(egui::Button::selectable(!p.new_files, "The same part")).on_hover_text("Further occurrences of the same part files"),
-                        ui.add(egui::Button::selectable(p.new_files, "A new part file")).on_hover_text("A part file of its own for each one copied, saved beside the assembly"),
+                        ui.add(egui::Button::selectable(p.new_files, "A new part file"))
+                            .on_hover_text("A part file of its own for each one copied, saved beside the assembly"),
                     );
                     crate::drawing::remember(ui, "tn_copy_new_files", b.rect);
                     if a.clicked() {
@@ -480,6 +505,7 @@ impl Workbench {
             }
             _ => {}
         }
+        entered.get()
     }
 
     /// OK on one of these panels: makes or changes it. True when done.
@@ -515,7 +541,14 @@ impl Workbench {
             let n = r["components"].as_array().map_or(0, Vec::len);
             let m = r["relationships"].as_array().map_or(0, Vec::len);
             if let Some(a) = self.asm.as_mut() {
-                a.selected = r["components"].as_array().into_iter().flatten().filter_map(|v| v.as_u64()).filter_map(|v| u32::try_from(v).ok()).map(ComponentId).collect();
+                a.selected = r["components"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| v.as_u64())
+                    .filter_map(|v| u32::try_from(v).ok())
+                    .map(ComponentId)
+                    .collect();
             }
             return Ok(format!("Copied {n} component(s), with {m} relationship(s) among them. Constrain (C) them to the others, or drag them."));
         }

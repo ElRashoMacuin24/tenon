@@ -243,7 +243,8 @@ fn an_element_can_be_constrained_to_and_a_relationship_on_it_is_kept_while_it_is
     let cap = run(e, "asm.insert", json!({ "path": "cap.tenon", "at": [0, 50, 0] }))["component"].clone();
 
     // On the last element, flush and turned as it is: the cap's origin stands where the element's does.
-    let (a, b) = (run(e, "asm.geom", json!({ "component": elements[1], "origin": true })), run(e, "asm.geom", json!({ "component": cap, "origin": true })));
+    let (a, b) =
+        (run(e, "asm.geom", json!({ "component": elements[1], "origin": true })), run(e, "asm.geom", json!({ "component": cap, "origin": true })));
     run(e, "asm.joint", json!({ "type": "rigid", "a": a, "b": b, "flip": true }));
     same(origin(e, &cap), [40.0, 0.0, 5.0]);
     assert_eq!(run(e, "asm.dof", json!({}))["dof"], 6, "the block's six: the cap is held, by the element");
@@ -263,7 +264,8 @@ fn an_element_can_be_constrained_to_and_a_relationship_on_it_is_kept_while_it_is
 
     // Held to its own source it cannot settle: refused, in words, and nothing changes.
     let before = run(e, "asm.tree", json!({}));
-    let (a, b) = (run(e, "asm.geom", json!({ "component": elements[0], "origin": true })), run(e, "asm.geom", json!({ "component": block, "origin": true })));
+    let (a, b) =
+        (run(e, "asm.geom", json!({ "component": elements[0], "origin": true })), run(e, "asm.geom", json!({ "component": block, "origin": true })));
     let err = e.exec("asm.joint", &json!({ "type": "rigid", "a": a, "b": b, "flip": true })).unwrap_err();
     assert!(err.contains("Rigid:"), "{err}");
     assert_eq!(run(e, "asm.tree", json!({})), before);
@@ -330,8 +332,29 @@ fn a_circular_pattern_spreads_components_round_an_axis() {
     let mirror_wrong = e.exec("asm.mirror", &json!({ "components": [bolt], "plane": z })).unwrap_err();
     assert!(mirror_wrong.contains("flat"), "{mirror_wrong}");
 
-    // Hostile numbers are refused, and nothing changes.
+    // Hostile numbers are refused, and nothing changes; what means nothing for it too.
     let before = run(e, "asm.tree", json!({}));
+    for bad in [json!({ "spacing": 5 }), json!({ "plane": xy }), json!({ "direction": z })] {
+        let mut p = json!({ "pattern": pattern });
+        p.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+        let err = e.exec("asm.edit_pattern", &p).unwrap_err();
+        assert!(err.contains("means nothing"), "{err}");
+    }
+    let err = e
+        .exec("asm.pattern", &json!({ "components": [bolt], "type": "rectangular", "direction": z, "count": 2, "spacing": 5, "axis": z }))
+        .unwrap_err();
+    assert!(err.contains("means nothing"), "{err}");
+    let err = e.exec("asm.pattern", &json!({ "components": [bolt], "type": "rectangular", "direction": z, "count": 5000, "spacing": 5, "direction2": z, "count2": 5000, "spacing2": 5 })).unwrap_err();
+    assert!(err.contains("more than 5000 components"), "{err}");
+    let err =
+        e.exec("asm.pattern", &json!({ "components": [bolt], "type": "rectangular", "direction": z, "count": 5000, "spacing": 5 })).unwrap_err();
+    assert!(err.contains("more than 5000 components"), "with what is there already: {err}");
+    let err = e.exec("asm.pattern", &json!({ "components": [bolt], "type": "rectangular", "direction": z, "count": 3, "spacing": 0 })).unwrap_err();
+    assert!(err.contains("spacing must be positive"), "{err}");
+    let err = e
+        .exec("asm.pattern", &json!({ "components": [bolt], "type": "rectangular", "direction": z, "count": 3, "spacing": 5, "count2": 3 }))
+        .unwrap_err();
+    assert!(err.contains("direction2"), "{err}");
     for bad in [json!({ "count": 0 }), json!({ "count": 1 }), json!({ "count": 100_000 }), json!({ "angle": 0 }), json!({ "angle": 7 })] {
         let mut p = json!({ "pattern": pattern });
         p.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
@@ -393,7 +416,10 @@ fn a_mirrored_occurrence_holds_its_part_reflected_wherever_it_is_read() {
     // A row of its own in the parts list, as a mirrored part, of the same volume and mass.
     let bom = run(e, "asm.bom", json!({}));
     assert_eq!(bom["parts"], 2, "{bom}");
-    assert_eq!((&bom["rows"][1]["part"], &bom["rows"][1]["name"], &bom["rows"][1]["mirrored"]), (&json!("ell (mirrored)"), &json!("Ell, mirrored"), &json!(true)));
+    assert_eq!(
+        (&bom["rows"][1]["part"], &bom["rows"][1]["name"], &bom["rows"][1]["mirrored"]),
+        (&json!("ell (mirrored)"), &json!("Ell, mirrored"), &json!(true))
+    );
     assert_eq!((&bom["rows"][0]["quantity"], &bom["rows"][1]["quantity"], &bom["rows"][0]["mirrored"]), (&json!(1), &json!(1), &json!(false)));
     assert!((num(&bom["rows"][1]["volume"]) - 10000.0).abs() < 1e-6, "{bom}");
     run(e, "asm.export_bom", json!({ "path": "pair.csv" }));
@@ -525,6 +551,10 @@ fn a_mirror_follows_its_plane_its_source_and_its_part() {
     run(e, "asm.edit_pattern", json!({ "pattern": made["pattern"], "plane": plane }));
     same(origin(e, &element), [-25.0, 0.0, 0.0]);
 
+    // Told what means nothing for a mirror, it says so.
+    let err = e.exec("asm.edit_pattern", &json!({ "pattern": made["pattern"], "count": 3 })).unwrap_err();
+    assert!(err.contains("means nothing"), "{err}");
+
     // Suppressed, the image is out, and the mirrored row with it.
     run(e, "asm.delete_pattern", json!({ "pattern": twice["pattern"] }));
     run(e, "asm.suppress_pattern", json!({ "pattern": made["pattern"] }));
@@ -537,6 +567,18 @@ fn a_mirror_follows_its_plane_its_source_and_its_part() {
     let tree = run(e, "asm.tree", json!({}));
     assert_eq!((tree["components"].as_array().unwrap().len(), tree["patterns"].as_array().unwrap().len()), (1, 0), "{tree}");
     assert_eq!(run(e, "asm.bom", json!({}))["parts"], 1);
+    run(e, "asm.undo", json!({}));
+    // Made independent, it stays reflected, a mirrored part and free to move; its source can go.
+    run(e, "asm.delete_pattern", json!({ "pattern": made["pattern"], "keep_elements": true }));
+    let tree = run(e, "asm.tree", json!({}));
+    assert_eq!(
+        (&component(&tree, &element)["mirrored"], &component(&tree, &element)["element_of"], &component(&tree, &element)["dof"]),
+        (&json!(true), &Value::Null, &json!(6))
+    );
+    run(e, "asm.delete", json!({ "component": source }));
+    let bom = run(e, "asm.bom", json!({}));
+    assert_eq!(bom["rows"][1]["part"], "ell (mirrored)", "{bom}");
+    assert!((num(&bom["rows"][1]["volume"]) - 10000.0).abs() < 1e-6, "{bom}");
 }
 
 #[test]
@@ -764,7 +806,10 @@ fn drawings_and_parts_lists_of_an_assembly_with_patterns_and_mirrors_come_out_ri
     let list = info["annotations"].as_array().unwrap().iter().find(|a| a.get("rows").is_some()).unwrap().clone();
     let rows = list["rows"].as_array().unwrap();
     assert_eq!(rows.len(), 3, "{list}");
-    assert_eq!((&rows[1]["part_number"], &rows[1]["description"], &rows[1]["quantity"]), (&json!("ell (mirrored)"), &json!("Ell, mirrored"), &json!(1)));
+    assert_eq!(
+        (&rows[1]["part_number"], &rows[1]["description"], &rows[1]["quantity"]),
+        (&json!("ell (mirrored)"), &json!("Ell, mirrored"), &json!(1))
+    );
     assert_eq!((&rows[2]["part_number"], &rows[2]["quantity"]), (&json!("block"), &json!(3)));
     // Numbered as the assembly's own list is, a balloon for each row.
     let bom = run(e, "asm.bom", json!({}));
@@ -806,10 +851,19 @@ fn patterns_and_mirrors_are_saved_and_read_back_to_the_same_bytes() {
     box_part(e, "block", 10.0, 10.0, 10.0);
     let (source, element, mirror) = mirrored_ell(e);
     let block = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [0, 50, 0] }))["component"].clone();
-    let (x, y, plane) = (run(e, "asm.geom", json!({ "axis": "x" })), run(e, "asm.geom", json!({ "axis": "y" })), run(e, "asm.geom", json!({ "plane": "yz" })));
-    let two = run(e, "asm.pattern", json!({ "components": [block], "type": "rectangular", "direction": x, "count": 2, "spacing": 15.5, "reverse": true, "direction2": y, "count2": 2, "spacing2": 12.25, "reverse2": true }));
+    let (x, y, plane) =
+        (run(e, "asm.geom", json!({ "axis": "x" })), run(e, "asm.geom", json!({ "axis": "y" })), run(e, "asm.geom", json!({ "plane": "yz" })));
+    let two = run(
+        e,
+        "asm.pattern",
+        json!({ "components": [block], "type": "rectangular", "direction": x, "count": 2, "spacing": 15.5, "reverse": true, "direction2": y, "count2": 2, "spacing2": 12.25, "reverse2": true }),
+    );
     let z = run(e, "asm.geom", json!({ "axis": "z" }));
-    let round = run(e, "asm.pattern", json!({ "components": [two["components"][2]], "type": "circular", "axis": z, "count": 5, "angle": 1.25, "reverse": true }));
+    let round = run(
+        e,
+        "asm.pattern",
+        json!({ "components": [two["components"][2]], "type": "circular", "axis": z, "count": 5, "angle": 1.25, "reverse": true }),
+    );
     let again = run(e, "asm.mirror", json!({ "components": [block], "plane": plane, "reuse": [block] }));
     run(e, "asm.suppress_pattern", json!({ "pattern": again["pattern"] }));
     run(e, "asm.save", json!({ "path": "a.tenonasm" }));
@@ -865,8 +919,29 @@ fn patterns_and_mirrors_are_saved_and_read_back_to_the_same_bytes() {
     let diff = tenon_io::diff::diff_files(&dir.join("a.tenonasm"), &dir.join("c.tenonasm")).unwrap();
     assert!(diff.changes.iter().any(|c| c.section == "Patterns" && c.detail.contains("count")), "{:?}", diff.changes);
     assert!(diff.changes.iter().any(|c| c.section == "Components" && c.op == '+'), "{:?}", diff.changes);
-    let damaged = text.replace("next_pattern = 5", "next_pattern = 2");
-    std::fs::write(dir.join("bad.tenonasm"), damaged).unwrap();
-    let err = e.exec("asm.open", &json!({ "path": "bad.tenonasm" })).unwrap_err();
-    assert!(err.contains("bad or repeated id"), "{err}");
+    for (from, to, says) in [
+        ("next_pattern = 5", "next_pattern = 2", "bad or repeated id"),
+        ("count = 5
+", "count = 100000
+", "the count must be"),
+        ("spacing = 15.5", "spacing = -2.0", "spacing must be positive"),
+        ("sources = [", "sources = [999, ", "elements"),
+    ] {
+        assert!(text.contains(from), "{from}");
+        let damaged = text.replacen(from, to, 1);
+        std::fs::write(dir.join("bad.tenonasm"), damaged).unwrap();
+        let err = e.exec("asm.open", &json!({ "path": "bad.tenonasm" })).unwrap_err();
+        assert!(err.contains(says) || err.contains("missing"), "{from}: {err}");
+    }
+
+    // The mirror image is told apart in what is kept of a part's scene: what a document says for
+    // it, in its own words, is read back, and differs from the part's.
+    let (doc, _) = tenon_io::project::open(&dir.join("block.tenon")).unwrap();
+    let plain = tenon_io::project::to_bytes(&doc, &serde_json::Map::new()).unwrap();
+    let mut image = doc.clone();
+    image.set_reflected(true);
+    let bytes = tenon_io::project::to_bytes(&image, &serde_json::Map::new()).unwrap();
+    assert_ne!(plain, bytes);
+    assert!(tenon_io::project::from_bytes(&bytes).unwrap().0.reflected());
+    assert!(!tenon_io::project::from_bytes(&plain).unwrap().0.reflected());
 }

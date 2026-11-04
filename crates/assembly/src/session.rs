@@ -342,15 +342,19 @@ pub fn reused(asm: &Assembly, parts: &Parts, source: ComponentId, plane: &Target
         if same.contains(&a) {
             return Ok(Reused { component: source, about: a });
         }
-        return Err(format!("{} is not the same on both sides of its middle plane square to its {a:?} axis, so it cannot be placed again about it", c.name));
+        return Err(format!(
+            "{} is not the same on both sides of its middle plane square to its {a:?} axis, so it cannot be placed again about it",
+            c.name
+        ));
     }
-    let Prim::Plane { normal, .. } = world_prim(asm, parts, plane)? else { return Err("that is not flat: pick a flat face or a plane to mirror in".into()) };
+    let Prim::Plane { normal, .. } = world_prim(asm, parts, plane)? else {
+        return Err("that is not flat: pick a flat face or a plane to mirror in".into());
+    };
     let seen = c.placement.dir_to_local(normal);
     let square = |a: OriginAxis| axis_unit(a).dot(seen).abs();
-    same.into_iter()
-        .max_by(|a, b| square(*a).total_cmp(&square(*b)))
-        .map(|about| Reused { component: source, about })
-        .ok_or_else(|| format!("{} is not the same as its mirror image, so it cannot be placed again in the mirrored position: leave it to be mirrored", c.name))
+    same.into_iter().max_by(|a, b| square(*a).total_cmp(&square(*b))).map(|about| Reused { component: source, about }).ok_or_else(|| {
+        format!("{} is not the same as its mirror image, so it cannot be placed again in the mirrored position: leave it to be mirrored", c.name)
+    })
 }
 
 /// A mirror's rule: reflected in `plane`, those in `reuse` placed again in the mirrored position.
@@ -410,7 +414,12 @@ pub fn place_elements(asm: &mut Assembly, parts: &Parts) -> bool {
                 };
                 let Some(frame) = frame else { continue };
                 let Some(c) = asm.component_mut(*c) else { continue };
-                let moved = !c.placement.origin().near(frame.origin(), 1e-9) || !c.placement.x().near(frame.x(), 1e-12) || !c.placement.z().near(frame.z(), 1e-12);
+                // (Nearer than what a file keeps of a placement is where it is: what is read back
+                // is not moved, and so not changed.)
+                let near = 1e-8;
+                let moved = !c.placement.origin().near(frame.origin(), near)
+                    || !c.placement.x().near(frame.x(), near)
+                    || !c.placement.z().near(frame.z(), near);
                 if moved || c.part != source.part || c.row != source.row || c.mirrored != mirrored {
                     changed = true;
                     c.placement = frame;
@@ -540,6 +549,9 @@ pub fn copy_components(
     let mut map = BTreeMap::new();
     let mut made = Vec::with_capacity(ids.len());
     for c in ids {
+        if map.contains_key(c) {
+            continue;
+        }
         let s = asm.component(*c).cloned().ok_or_else(|| CmdError(format!("{c} does not exist")))?;
         let placement = s.placement.with_origin(s.placement.origin() + by).ok_or("the copy would be out of range")?;
         let id = asm.take_component_id();
@@ -1141,7 +1153,16 @@ pub fn insert(asm: &mut Assembly, parts: &Parts, key: &str, at: Option<Frame>, g
     });
     let id = asm.take_component_id();
     let name = asm.occurrence_name(&base);
-    asm.components.push(Component { id, name, part: key.to_owned(), placement, grounded: grounded.unwrap_or(first), row: None, visible: true, mirrored: false });
+    asm.components.push(Component {
+        id,
+        name,
+        part: key.to_owned(),
+        placement,
+        grounded: grounded.unwrap_or(first),
+        row: None,
+        visible: true,
+        mirrored: false,
+    });
     id
 }
 

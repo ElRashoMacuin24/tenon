@@ -903,7 +903,9 @@ impl Workbench {
         self.shown = None;
         self.shown_key = None;
         self.chrome.tab = 0;
-        self.set_status(format!("Editing {} in place. Return (on the ribbon) goes back to the assembly.", c.name));
+        // (The part as itself is the reflection of what is round it: that is not shown.)
+        let alone = if c.mirrored { " It is shown as its part file has it, reflected from where it stands, without the rest." } else { "" };
+        self.set_status(format!("Editing {} in place.{alone} Return (on the ribbon) goes back to the assembly.", c.name));
         Ok(())
     }
 

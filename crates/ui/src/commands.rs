@@ -712,7 +712,13 @@ pub const ASM_RIBBON: &[RibbonTab] = &[
                 title: "Pattern",
                 commands: &[
                     small("asm.pattern", "Pattern", "Repeat components in rows along one or two directions, or round an axis", Icon::PatternRect, 0),
-                    small("asm.mirror", "Mirror", "Reflect components in a plane or flat face: mirrored parts, or symmetric ones placed again", Icon::Mirror, 0),
+                    small(
+                        "asm.mirror",
+                        "Mirror",
+                        "Reflect components in a plane or flat face: mirrored parts, or symmetric ones placed again",
+                        Icon::Mirror,
+                        0,
+                    ),
                     small("asm.copy", "Copy", "Independent copies of components, of the same parts or in new part files", Icon::Copy, 0),
                 ],
             },

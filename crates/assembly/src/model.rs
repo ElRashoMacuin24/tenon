@@ -421,12 +421,16 @@ impl PatternKind {
                     if !count_ok(run.count) {
                         return Err(format!("the counts must be 1 to {MAX_COUNT}"));
                     }
-                    if run.count > 1 && !(run.spacing.is_finite() && run.spacing > 0.0 && run.spacing <= tol::MAX_SIZE) {
+                    if !run.spacing.is_finite() || run.spacing.abs() > tol::MAX_SIZE || (run.count > 1 && run.spacing <= 0.0) {
                         return Err("the spacing must be positive".into());
                     }
                 }
-                if first.count.saturating_mul(second.as_ref().map_or(1, |s| s.count)) < 2 {
+                let all = first.count.saturating_mul(second.as_ref().map_or(1, |s| s.count));
+                if all < 2 {
                     return Err("a pattern needs at least two occurrences".into());
+                }
+                if all as usize > MAX_COMPONENTS {
+                    return Err(format!("that would make more than {MAX_COMPONENTS} components"));
                 }
             }
             PatternKind::Circular { count, angle, .. } => {
@@ -896,7 +900,16 @@ mod tests {
     fn comp(asm: &mut Assembly, name: &str) -> ComponentId {
         let id = asm.take_component_id();
         let name = asm.occurrence_name(name);
-        asm.components.push(Component { id, name, part: "p.tenon".into(), placement: Frame::WORLD, grounded: false, row: None, visible: true, mirrored: false });
+        asm.components.push(Component {
+            id,
+            name,
+            part: "p.tenon".into(),
+            placement: Frame::WORLD,
+            grounded: false,
+            row: None,
+            visible: true,
+            mirrored: false,
+        });
         id
     }
 

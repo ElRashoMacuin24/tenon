@@ -1801,7 +1801,7 @@ impl Workbench {
                             });
                         });
                     }
-                    Panel::Asm(p) => self.asm_panel_ui(ui, p, t),
+                    Panel::Asm(p) => enter |= self.asm_panel_ui(ui, p, t),
                     _ => {}
                 }
             });

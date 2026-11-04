@@ -303,7 +303,11 @@ impl Workbench {
                                 action = Some(Action::SuppressPattern(p.id, !p.suppressed));
                                 ui.close();
                             }
-                            if ui.button("Make Elements Independent").on_hover_text("The record goes; its elements stay, as components of their own").clicked() {
+                            if ui
+                                .button("Make Elements Independent")
+                                .on_hover_text("The record goes; its elements stay, as components of their own")
+                                .clicked()
+                            {
                                 action = Some(Action::DeletePattern(p.id, true));
                                 ui.close();
                             }

@@ -55,6 +55,8 @@ pub use workbench::{Services, Workbench};
 #[cfg(test)]
 mod analysis_tests;
 #[cfg(test)]
+mod asm_pattern_tests;
+#[cfg(test)]
 mod asm_tests;
 #[cfg(test)]
 mod control_tests;

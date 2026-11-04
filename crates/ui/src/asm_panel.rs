@@ -452,11 +452,10 @@ impl Workbench {
         }
     }
 
-    /// The panel's controls.
-    pub(crate) fn asm_panel_ui(&self, ui: &mut Ui, p: &mut AsmPanel, t: &Tokens) {
+    /// The panel's controls. True when Enter was pressed in a value box that means OK.
+    pub(crate) fn asm_panel_ui(&self, ui: &mut Ui, p: &mut AsmPanel, t: &Tokens) -> bool {
         if p.is_repeat() {
-            self.repeat_panel_ui(ui, p, t);
-            return;
+            return self.repeat_panel_ui(ui, p, t);
         }
         let section = |ui: &mut Ui, title: &str, body: &mut dyn FnMut(&mut Ui)| {
             egui::CollapsingHeader::new(RichText::new(title).font(theme::body()).strong()).default_open(true).show(ui, |ui| body(ui));
@@ -633,6 +632,7 @@ impl Workbench {
                 });
             });
         }
+        false
     }
 
     /// OK on an assembly panel: makes (or changes) the relationship, or adds the exploded-view

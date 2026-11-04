@@ -510,6 +510,14 @@ fn run_param(p: &Value, suffix: &str, was: Option<&Run>) -> Result<Option<Run>, 
     Ok(Some(Run { along, reverse, count, spacing }))
 }
 
+/// Refuses parameters that mean nothing for `what`, rather than pass over them.
+fn not_for(p: &Value, what: &str, keys: &[&str]) -> Result<(), CmdError> {
+    match keys.iter().find(|k| arg(p, k).is_some_and(|v| !v.is_null())) {
+        Some(k) => Err(CmdError(format!("`{k}` means nothing for {what}"))),
+        None => Ok(()),
+    }
+}
+
 /// A rectangular or circular rule from its parameters, what is not given as it `was`.
 fn pattern_kind(p: &Value, was: Option<&PatternKind>) -> Result<PatternKind, CmdError> {
     let (first, second) = match was {
@@ -527,6 +535,7 @@ fn pattern_kind(p: &Value, was: Option<&PatternKind>) -> Result<PatternKind, Cmd
         None => axis.is_some(),
     };
     if circular {
+        not_for(p, "a circular pattern", &["direction", "spacing", "direction2", "count2", "spacing2", "reverse2"])?;
         let axis = match arg(p, "axis").filter(|v| !v.is_null()) {
             Some(_) => target(p, "axis")?,
             None => axis.cloned().ok_or("missing parameter `axis`")?,
@@ -536,6 +545,7 @@ fn pattern_kind(p: &Value, was: Option<&PatternKind>) -> Result<PatternKind, Cmd
         let reverse = opt_bool(p, "reverse")?.or(reverse).unwrap_or(false);
         return Ok(PatternKind::Circular { axis, reverse, count, angle });
     }
+    not_for(p, "a rectangular pattern", &["axis", "angle"])?;
     let first = run_param(p, "", first)?.ok_or("missing parameter `direction`")?;
     Ok(PatternKind::Rectangular { first, second: run_param(p, "2", second)? })
 }
@@ -593,6 +603,11 @@ fn asm_edit_pattern(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) 
     let sources = if arg(p, "components").is_some_and(|v| !v.is_null()) { ids_param(s, p, "components")? } else { was.sources.clone() };
     let kind = match &was.kind {
         PatternKind::Mirror { plane, reuse } => {
+            not_for(
+                p,
+                "a mirror",
+                &["type", "direction", "count", "spacing", "reverse", "direction2", "count2", "spacing2", "reverse2", "axis", "angle"],
+            )?;
             let plane = if arg(p, "plane").is_some_and(|v| !v.is_null()) { target(p, "plane")? } else { plane.clone() };
             let again = if arg(p, "reuse").is_some_and(|v| !v.is_null()) {
                 ids_param(s, p, "reuse")?
@@ -604,7 +619,10 @@ fn asm_edit_pattern(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) 
             }
             session::mirror_kind(s.assembly(), &s.parts, plane, &again).map_err(CmdError)?
         }
-        kind => pattern_kind(p, Some(kind))?,
+        kind => {
+            not_for(p, "a pattern", &["plane", "reuse"])?;
+            pattern_kind(p, Some(kind))?
+        }
     };
     s.edit(|asm, parts| {
         session::change_pattern(asm, parts, id, sources, kind)?;
