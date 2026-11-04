@@ -4755,9 +4755,9 @@ them, so taking it out would be a change with no test to want it.
 Mirror, Chamfer and Revolve, with its own figures in `from_0_1_0.rs`; `m11_solve.rs` has the moment.
 
 *Left, and said in the CHANGELOG or here.* What only asks which way a face looks hears the new answer:
-`model.find`'s `facing`, `model.faces`, Measure's angle. A flange on a sheet a Mirror feature made came
-to nothing in 0.1.0 with no word (the sheet code reads normals directly); it is now made, which changes
-that part, and for the better. A file made since with such a sketch opens in 0.1.0 turned over, and
+`model.find`'s `facing`, `model.faces`, Measure's angle. A flange on a sheet a Mirror feature made failed
+in 0.1.0, with its own error that it did not join the sheet (the sheet code reads normals directly); it is
+now made, which changes that part, and for the better. A file made since with such a sketch opens in 0.1.0 turned over, and
 nothing can be done about that from here. Two rare things go the other way: a reference made since to
 such a face, when an edit turns the face more than a quarter turn, is taken for an old one and stays
 as it was (edit a Mirror's plane under a sketch on what it made); and a reference repaired onto such a

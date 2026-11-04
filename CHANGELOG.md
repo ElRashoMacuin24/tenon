@@ -20,12 +20,12 @@ views and Baseline and Ordinate dimensions.
 
 - **Your files open, and what you made comes out as it did,** apart from what is listed here. One that
   uses nothing new is saved byte for byte, so it goes on opening in 0.1.0.
-- **A sweep round a sharp corner** used to stop at the first corner, saying nothing, and made a third of
-  the tube. It is now whole, mitred between two straight lines; at a curve, with a profile with holes,
-  or keeping its direction, it is refused in words. So a part with one changes.
-- **Refused now, where it opened:** a spline that crosses its own profile, which made a solid of negative
-  volume; a name, or what fills a title block, over 1000 bytes; an equation or comment over 64,000.
-- **A flange on a sheet a Mirror feature made** came to nothing, with no word. It is there now.
+- **A sweep round a sharp corner** used to stop at the first corner, saying nothing. It is now whole, mitred
+  between two straight lines; at a curve, with a profile with holes, or keeping its direction, it is refused in
+  words. So a part with one changes.
+- **Refused now, where it opened:** a spline that crosses its own profile, which encloses no solid; a name, or
+  what fills a title block, over 1000 bytes; an equation or comment over 64,000.
+- **A flange on a sheet a Mirror feature made** failed, in red, as not joining the sheet. It is made now.
 - **Parts list CSV:** its Material column says Generic for a part with none, where it was empty.
 - **STEP of an assembly, or of a part of several solids,** is now one assembly in the file, a product for each
   solid, where each was a product on its own: another program shows one assembly with its components. The solids
