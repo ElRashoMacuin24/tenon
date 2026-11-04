@@ -76,7 +76,8 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 - **Face Fillet** under Fillet: two sets of faces, and every edge between them is rounded,
   found again whenever the part is rebuilt. `model.fillet` takes `faces` in place of `edges`.
 - **Smooth (G2).** Constrain > Smooth: a spline and the line, arc or spline it ends on are
-  tangent there and bend as sharply on both sides. A spline drawn from an existing point now
+  tangent there and bend as sharply on both sides (one it does not end on is refused in words). A
+  spline drawn from an existing point now
   starts on that point (`sketch.spline` takes point ids among its `points`); the constraint
   type is `smooth`.
 - **Ellipse.** Under Circle: click the centre, the end of one axis, then a point on the

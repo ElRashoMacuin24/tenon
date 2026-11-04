@@ -1169,6 +1169,32 @@ fn smooth_is_set_by_clicking_a_spline_and_the_line_it_ends_on() {
 }
 
 #[test]
+fn smooth_says_so_when_a_spline_does_not_end_on_the_curve_clicked() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.line", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 20, "y2": 0 })).unwrap();
+    wb.exec("sketch.spline", json!({ "sketch": f.0, "points": [[0, 20], [8, 26], [16, 32], [26, 32]] })).unwrap();
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, p: Vec2| on_screen(wb, Vec3::new(p.x, p.y, 0.0));
+    let s = open(&wb);
+    let (lo, hi) = s.entities().find_map(|(id, e)| matches!(e.geometry, Geometry::Spline { .. }).then(|| s.spline(id).unwrap().domain())).unwrap();
+    let on_spline =
+        s.entities().find_map(|(id, e)| matches!(e.geometry, Geometry::Spline { .. }).then(|| s.spline(id).unwrap().eval((lo + hi) / 2.0))).unwrap();
+    d.click(&mut wb, pressable(&d, "ribbon sketch.smooth"));
+    for p in [on_spline, Vec2::new(8.0, 0.0)] {
+        let q = at(&wb, p);
+        move_to(&mut d, &mut wb, q);
+        d.click(&mut wb, q);
+    }
+    assert!(wb.status_error && wb.status().contains("do not meet end to end"), "{}", wb.status());
+    let (s, moved) = (open(&wb), s.clone());
+    assert!(!s.constraints().any(|(_, c)| matches!(c, Constraint::Smooth { .. })));
+    assert_eq!(s, moved, "and the sketch has not moved");
+}
+
+#[test]
 fn a_fillet_is_made_variable_or_between_two_sets_of_faces_by_clicks() {
     use tenon_model::{FeatureKind, RadiusAt};
     let fillet = |wb: &Workbench| {

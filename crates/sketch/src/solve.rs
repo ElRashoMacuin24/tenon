@@ -301,6 +301,8 @@ impl<'s> System<'s> {
             Smooth { a, b } => self.sketch.joined_ends(*a, *b),
             _ => None,
         };
+        // (A Smooth whose curves no longer meet holds nothing until they do again.)
+        let rows = if matches!(c, Smooth { .. }) && pair.is_none() { 0 } else { rows };
         Built { id, c, rows, sign, joint, pair }
     }
 
@@ -708,6 +710,14 @@ impl Sketch {
     }
 
     pub fn add_constraint_with(&mut self, solver: &dyn SketchSolver, c: Constraint) -> SketchResult<ConstraintId> {
+        if let Constraint::Smooth { a, b } = c
+            && self.check_kinds(&c).is_ok()
+            && self.joined_ends(a, b).is_none()
+        {
+            return Err(SketchError::Invalid(
+                "a spline is made smooth with the curve it ends on, and these two do not meet end to end: join them first".into(),
+            ));
+        }
         let mut trial = self.clone();
         let id = trial.push_constraint(c)?;
         match solver.solve(&mut trial, &SolveOptions::default()) {

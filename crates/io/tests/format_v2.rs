@@ -674,6 +674,23 @@ fn a_name_in_a_file_is_held_to_a_length() {
 }
 
 #[test]
+fn a_smooth_whose_join_was_taken_away_is_saved_and_opened() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let line = run(&mut s, "sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 10, "y2": 0 }));
+    let start = run(&mut s, "sketch.point", json!({ "sketch": sk, "x": 10, "y": 0 }))["point"].clone();
+    let spline = run(&mut s, "sketch.spline", json!({ "sketch": sk, "points": [start, [14, 3], [18, 6], [24, 6]] }))["spline"].clone();
+    let constrain = |s: &mut Session, c: Value| run(s, "sketch.constrain", json!({ "sketch": sk, "constraint": c }))["constraint"].clone();
+    let join = constrain(&mut s, json!({ "type": "coincident", "a": start, "b": line["end"] }));
+    constrain(&mut s, json!({ "type": "smooth", "a": spline, "b": line["line"] }));
+    run(&mut s, "sketch.remove_constraint", json!({ "sketch": sk, "constraint": join }));
+    // The sketch goes on working, and the file opens.
+    constrain(&mut s, json!({ "type": "horizontal", "line": line["line"] }));
+    let bytes = project::to_bytes(s.document(), &Map::new()).unwrap();
+    project::from_bytes(&bytes).unwrap();
+}
+
+#[test]
 fn a_parameter_in_a_file_is_held_to_a_length() {
     let mut s = Session::default();
     run(&mut s, "param.add", json!({ "name": "width", "equation": "10 mm", "comment": "as wide" }));

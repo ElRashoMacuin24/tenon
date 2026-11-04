@@ -1449,6 +1449,39 @@ fn smooth_joins_a_spline_to_a_line_or_an_arc_without_a_kink_or_a_jump_in_bending
 }
 
 #[test]
+fn a_smooth_whose_join_is_taken_away_waits_for_it() {
+    // A level line held at both ends, and a spline made smooth with it by a coincidence.
+    let mut s = Sketch::new();
+    let level = s.add_line(v(0.0, 0.0), v(10.0, 0.0)).unwrap();
+    let Some(Geometry::Line { start: l0, end: l1 }) = s.geometry(level).cloned() else { panic!() };
+    s.add_constraint(Constraint::Fix { point: l0 }).unwrap();
+    s.add_constraint(Constraint::Fix { point: l1 }).unwrap();
+    let curve = s.add_spline(&[v(10.0, 0.0).into(), v(14.0, 3.0).into(), v(18.0, 6.0).into(), v(24.0, 6.0).into()], 3).unwrap();
+    let Some(Geometry::Spline { poles, .. }) = s.geometry(curve).cloned() else { panic!() };
+    // Not yet joined: said in words.
+    let e = s.add_constraint(Constraint::Smooth { a: curve, b: level }).unwrap_err().to_string();
+    assert!(e.contains("do not meet end to end"), "{e}");
+    let join = s.add_constraint(Constraint::Coincident { a: poles[0], b: l1 }).unwrap();
+    let smooth = s.add_constraint(Constraint::Smooth { a: curve, b: level }).unwrap();
+
+    // The join taken away: nothing of the sketch is stuck, and a file holding it reads.
+    s.remove_constraint(join).unwrap();
+    s.validate().unwrap();
+    assert!(s.constraint(smooth).is_some());
+    let before = s.dof().unwrap().dof;
+    let other = s.add_line(v(0.0, 20.0), v(10.0, 21.0)).unwrap();
+    s.add_constraint(Constraint::Horizontal { line: other }).unwrap();
+    assert_eq!(s.dof().unwrap().dof, before + 4 - 1, "a line's four, less one for being level, and nothing for what waits");
+    s.drag(poles[3], v(26.0, 8.0)).unwrap();
+    assert!(s.point(poles[3]).unwrap().near(v(26.0, 8.0), 1e-3), "{:?}", s.point(poles[3]));
+
+    // Joined again, it holds again.
+    s.add_constraint(Constraint::Coincident { a: poles[0], b: l1 }).unwrap();
+    let (dir, bend) = spline_start(&s, curve);
+    assert!(dir.near(v(1.0, 0.0), 1e-5) && bend.abs() < 1e-4, "{dir:?} {bend}");
+}
+
+#[test]
 fn a_sketch_reaches_as_far_as_its_curves() {
     let mut s = Sketch::new();
     s.add_circle(Vec2::new(20.0, 0.0), 30.0).unwrap();

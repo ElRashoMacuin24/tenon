@@ -814,10 +814,11 @@ impl Sketch {
             Horizontal { line } | Vertical { line } => ln(*line),
             Parallel { a, b } | Perpendicular { a, b } | Collinear { a, b } => ln(*a) && ln(*b) && a != b,
             Tangent { a, b } => a != b && ((ln(*a) && rd(*b)) || (rd(*a) && ln(*b)) || (rd(*a) && rd(*b))),
+            // (Whether they meet is asked when one is made: the join can go later, and it waits.)
             Smooth { a, b } => {
                 let (sp, arc) = (|i| self.spline(i).is_some(), |i| matches!(self.geometry(i), Some(Geometry::Arc { .. })));
                 let joins = |i| ln(i) || arc(i) || sp(i);
-                a != b && (sp(*a) || sp(*b)) && joins(*a) && joins(*b) && self.joined_ends(*a, *b).is_some()
+                a != b && (sp(*a) || sp(*b)) && joins(*a) && joins(*b)
             }
             Concentric { a, b } => rd(*a) && rd(*b) && a != b,
             Equal { a, b } => a != b && ((ln(*a) && ln(*b)) || (rd(*a) && rd(*b))),

@@ -3565,6 +3565,10 @@ Auditors went through the program ahead of 0.2.0; what they found is fixed, each
   which bounds memory to about a gigabyte where 64 MB of text could take 8; only plain files. A path
   naming another machine is not followed unless the file is on that machine itself: Windows would
   connect there, offering the user's credentials.
+- **A Smooth waits for its join.** Whether a spline and a curve meet end to end is asked when the
+  constraint is made. That the file's check asked it as well meant that deleting the Coincident under
+  one stuck the sketch, every later solve refused, and the saved file no longer opened. Taken away,
+  the Smooth holds nothing until the curves meet again.
 - **The STEP reader runs in a process of its own for `tenon-cli info` and `convert`.** It dies on some
   damaged files by faults nothing catches, and the kernel's other uses of STEP only write it.
 - **Closing waits three seconds for the geometry thread,** then leaves it: an operation inside the
