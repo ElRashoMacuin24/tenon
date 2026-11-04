@@ -21,11 +21,15 @@ see [Building](#building) below.
 
 In parts, you can:
 
-- sketch on a plane, a face of the part or a work plane (lines, arcs, circles, rectangles,
-  polygons, splines), with typed values, inference, live solving and a degrees-of-freedom readout;
-- extrude (straight or tapered) and revolve to add, cut or intersect, with a live preview;
+- sketch on a plane, a face of the part or a work plane (lines, arcs, circles, ellipses,
+  rectangles, slots, polygons, splines, text), with typed values, inference, live solving and a degrees-of-freedom readout;
+- extrude (straight or tapered; a distance, through all, to a face or plane, to the next face,
+  between two faces) and revolve (either way, by two angles, to a face or plane, to the next face)
+  to add, cut or intersect, with a live preview;
 - sweep a profile along a path, loft through sections, wind coils;
-- fillet, chamfer and shell; drill simple, counterbored and countersunk holes; add ribs;
+- fillet (constant, variable or between two sets of faces), chamfer and shell; drill simple,
+  clearance and tapped holes, counterbored, spotfaced or countersunk, at a sketch's points or
+  where you click a face; add ribs;
 - thread shafts and holes (cosmetic, or cut into the part), draft faces, split and combine
   solids;
 - copy features in rectangular and circular patterns, and mirror them;
@@ -44,12 +48,17 @@ In parts, you can:
 - roll the part back with the End of Part marker, reorder and suppress features;
 - measure areas, lengths, distances and angles;
 - edit any feature later: faces and edges you referred to are found again after upstream edits;
+- check the part for 3D printing and export it as STL or 3MF;
+- work out a quick stress check of it, held and loaded as you say, with results in colour on the
+  part ([docs/stress.md](docs/stress.md));
+- work out where material is needed to carry those loads, with Optimize Shape, as a shape to model
+  over ([docs/topology.md](docs/topology.md));
 - save `.tenon` projects and export STEP and STL.
 
 In assemblies (`.tenonasm` files that use your part files), you can:
 
-- place components, ground them, and hold them together with mate, flush, angle and insert
-  constraints or rigid, rotational, slider, cylindrical, planar and ball joints;
+- place components, ground them, and hold them together with mate, flush, angle, insert, tangent
+  and symmetry constraints or rigid, rotational, slider, cylindrical, planar and ball joints;
 - drag components (their relationships hold) and see the degrees of freedom each has left;
 - check interference, list the parts with their materials and masses (and export the list as
   CSV), weigh the assembly, explode it;
@@ -80,6 +89,8 @@ is in [ROADMAP.md](ROADMAP.md).
 ![The M7 demo: the 3D Print Check window on a printed end cap](examples/m7-end-cap/print-check.png)
 
 ![The M8 demo: the flat pattern of a folded tray, with its bend lines](examples/m8-tray/flat-pattern.png)
+
+![A shape worked out by Optimize Shape, over the bracket it is for](docs/images/shape.png)
 
 ## Design
 
