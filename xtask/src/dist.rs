@@ -232,20 +232,33 @@ fn full_metadata() -> Result<serde_json::Value, String> {
     serde_json::from_slice(&out.stdout).map_err(|e| format!("cargo metadata: bad JSON: {e}"))
 }
 
-/// The release build, told where its libraries will be (Linux and macOS look where the
-/// program says; Windows looks beside it).
+/// The flags the release build is given beyond those of the environment, one to an element: what
+/// says where its libraries will be (Linux and macOS look where the program says; Windows looks
+/// beside it), and what keeps the paths of the machine it is built on out of the programs, whose
+/// fault messages name source files.
+fn release_flags(cargo_home: &Path, workspace: &Path) -> Vec<String> {
+    let mut flags = Vec::new();
+    match OS {
+        Os::Windows => {}
+        Os::Linux => flags.extend(["-C".to_owned(), "link-arg=-Wl,-rpath,$ORIGIN/../lib".to_owned()]),
+        Os::Mac => flags.extend(["-C".to_owned(), "link-arg=-Wl,-rpath,@executable_path/../Frameworks".to_owned()]),
+    }
+    flags.push(format!("--remap-path-prefix={}=/cargo", cargo_home.display()));
+    flags.push(format!("--remap-path-prefix={}=/tenon", workspace.display()));
+    flags
+}
+
+/// The release build. (By the encoded variable, as a path may have a space in it.)
 fn build() -> Result<(), String> {
     let mut c = cargo();
     c.args(["build", "--release", "-p", "tenon", "-p", "tenon-cli"]);
-    let rpath = match OS {
-        Os::Windows => None,
-        Os::Linux => Some("-C link-arg=-Wl,-rpath,$ORIGIN/../lib"),
-        Os::Mac => Some("-C link-arg=-Wl,-rpath,@executable_path/../Frameworks"),
-    };
-    if let Some(rpath) = rpath {
-        let flags = std::env::var("RUSTFLAGS").map(|f| format!("{f} {rpath}")).unwrap_or_else(|_| rpath.to_owned());
-        c.env("RUSTFLAGS", flags);
-    }
+    let cargo_home = std::env::var_os("CARGO_HOME").map(PathBuf::from).or_else(|| {
+        let home = std::env::var_os(if OS == Os::Windows { "USERPROFILE" } else { "HOME" })?;
+        Some(PathBuf::from(home).join(".cargo"))
+    });
+    let mut flags: Vec<String> = std::env::var("RUSTFLAGS").map(|f| f.split_whitespace().map(str::to_owned).collect()).unwrap_or_default();
+    flags.extend(release_flags(&cargo_home.unwrap_or_default(), &root()));
+    c.env_remove("RUSTFLAGS").env("CARGO_ENCODED_RUSTFLAGS", flags.join("\u{1f}"));
     run(c, "cargo build --release -p tenon -p tenon-cli")
 }
 
@@ -743,6 +756,13 @@ mod tests {
         };
         assert!(names.iter().any(|n| n.to_lowercase() == wanted.to_lowercase()), "{names:?}");
         assert!(imports(&root().join("Cargo.toml")).unwrap_err().contains("neither PE, ELF nor"));
+    }
+
+    #[test]
+    fn the_release_build_keeps_the_machines_paths_out_of_the_programs() {
+        let flags = release_flags(Path::new("/home/me/.cargo"), Path::new("/home/me/tenon"));
+        assert!(flags.contains(&"--remap-path-prefix=/home/me/.cargo=/cargo".to_owned()), "{flags:?}");
+        assert!(flags.contains(&"--remap-path-prefix=/home/me/tenon=/tenon".to_owned()), "{flags:?}");
     }
 
     #[test]

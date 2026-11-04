@@ -39,8 +39,9 @@ pub(crate) fn report(said: &str, at: &str, thread: &str, trace: &str, time: u64)
             "Thread: {thread}\n",
             "What:   {said}\n",
             "Where:  {at}\n\n",
-            "Please report it at {issues}, with this file. It says what failed and where in\n",
-            "Tenon's own code; read it before you send it.\n\n",
+            "Please report it at {issues}, with this file. It says what failed and where;\n",
+            "read it before you send it. (A release build carries no line numbers, so below\n",
+            "`<unknown>` is usual and the names may be near misses: What and Where are what count.)\n\n",
             "Backtrace:\n{trace}\n"
         ),
         version = env!("CARGO_PKG_VERSION"),
