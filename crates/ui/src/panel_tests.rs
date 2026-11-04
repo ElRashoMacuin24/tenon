@@ -546,3 +546,46 @@ fn extents_to_from_a_sketch_on_a_work_plane_picks_the_face_seen_through_it() {
     assert!(matches!(to, Some(tenon_model::PlaneRef::Face(_))), "picked {to:?}; {}", wb.status());
     d.tap(&mut wb, egui::Key::Escape);
 }
+
+fn has_button(d: &Driver, key: &str) -> bool {
+    d.ctx.data(|x| x.get_temp::<std::collections::BTreeMap<String, egui::Rect>>(egui::Id::new("tn_buttons"))).unwrap_or_default().contains_key(key)
+}
+
+#[test]
+fn a_ribbon_wider_than_the_window_is_gone_along_by_its_arrows() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(900.0, 560.0));
+    wb.exec("model.box", json!({ "width": 40, "depth": 20, "height": 10 })).unwrap();
+    d.settle(&mut wb);
+    wb.run_ui("analysis.begin").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(pressable(&d, "ribbon analysis.finish").x > 900.0, "it is off the window to start with");
+    assert!(has_button(&d, "tn_ribbon_on") && !has_button(&d, "tn_ribbon_back"));
+
+    // Along by the arrow, as far as it goes.
+    for _ in 0..5 {
+        if pressable(&d, "ribbon analysis.finish").x < 880.0 {
+            break;
+        }
+        d.click(&mut wb, pressable(&d, "tn_ribbon_on"));
+        d.frame(&mut wb, vec![]);
+        d.frame(&mut wb, vec![]);
+    }
+    assert!(pressable(&d, "ribbon analysis.finish").x < 880.0);
+    assert!(has_button(&d, "tn_ribbon_back"));
+
+    // There, a press on it does what it says, and no other button took the press on the arrow.
+    assert!(wb.in_analysis(), "{}", wb.status());
+    d.click(&mut wb, pressable(&d, "ribbon analysis.finish"));
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.in_analysis(), "{}", wb.status());
+
+    // In a window wide enough there are no arrows.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1900.0, 900.0));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(!has_button(&d, "tn_ribbon_on") && !has_button(&d, "tn_ribbon_back"));
+}

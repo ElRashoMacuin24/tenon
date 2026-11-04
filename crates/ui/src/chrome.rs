@@ -19,6 +19,8 @@ use crate::theme::{self, ThemeName, Tokens};
 pub(crate) const TITLE_H: f32 = 32.0;
 pub(crate) const TABS_H: f32 = 26.0;
 pub(crate) const RIBBON_H: f32 = 98.0;
+/// The arrows of a ribbon wider than the window.
+const RIBBON_ARROW: f32 = 18.0;
 pub(crate) const DOC_TABS_H: f32 = 26.0;
 pub(crate) const STATUS_H: f32 = 22.0;
 
@@ -65,6 +67,10 @@ pub(crate) struct Chrome {
     pub search_pick: usize,
     /// A split button's drop-down: the button's id and where to open the list.
     pub dropdown: Option<(&'static str, Pos2)>,
+    /// How far the ribbon is scrolled, and how wide its panels came to in the last frame: a
+    /// window narrower than a tab's ribbon goes along it by the arrows at its ends.
+    pub ribbon_scroll: f32,
+    pub ribbon_width: f32,
     /// "Save changes?" waiting for an answer.
     pub save_prompt: Option<SavePrompt>,
     /// Application Options: where Gmsh and CalculiX are, as typed (empty: on the search path).
@@ -121,6 +127,8 @@ impl Default for Chrome {
             search: String::new(),
             search_pick: 0,
             dropdown: None,
+            ribbon_scroll: 0.0,
+            ribbon_width: 0.0,
             save_prompt: None,
         }
     }
@@ -617,7 +625,9 @@ impl Workbench {
         let title_h = 17.0;
         let top = r.top() + 4.0;
         let content_h = r.height() - title_h - 8.0;
-        let mut x = r.left() + 6.0;
+        let reach = (self.chrome.ribbon_width - r.width()).max(0.0);
+        let scroll = self.chrome.ribbon_scroll.clamp(0.0, reach);
+        let mut x = r.left() + 6.0 - scroll;
         let mut clicked = None;
         let active_tool = self.active_tool_id();
         let panels: Vec<&commands::RibbonPanel> = tab.panels.iter().chain(if editing { return_panel } else { &[] }).collect();
@@ -687,6 +697,35 @@ impl Workbench {
             x += 6.0;
         }
         ui.painter().hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0, t.border));
+        self.chrome.ribbon_width = x + scroll - r.left();
+        // What does not fit is reached by an arrow at the end it lies beyond, over the buttons
+        // there; a step at a time, or by the wheel.
+        let reach = (self.chrome.ribbon_width - r.width()).max(0.0);
+        let step = (r.width() * 0.6).max(120.0);
+        let mut scrolled = scroll;
+        for (key, shown, rect, way) in [
+            ("tn_ribbon_back", scroll > 0.0, Rect::from_min_size(r.left_top(), vec2(RIBBON_ARROW, r.height() - 1.0)), -1.0),
+            ("tn_ribbon_on", scroll < reach, Rect::from_min_size(pos2(r.right() - RIBBON_ARROW, r.top()), vec2(RIBBON_ARROW, r.height() - 1.0)), 1.0),
+        ] {
+            if !shown {
+                continue;
+            }
+            let resp = ui.interact(rect, egui::Id::new(key), Sense::CLICK);
+            crate::drawing::remember(ui, key, rect);
+            ui.painter().rect_filled(rect, 0.0, if resp.hovered() { t.hover } else { t.ribbon });
+            let c = rect.center();
+            let tip = pos2(c.x + way * 4.0, c.y);
+            let back = |dy: f32| pos2(c.x - way * 4.0, c.y + dy);
+            ui.painter().add(egui::Shape::convex_polygon(vec![tip, back(-6.0), back(6.0)], t.text, Stroke::NONE));
+            if resp.on_hover_text("More of the ribbon: the window is narrower than it").clicked() {
+                scrolled += way * step;
+            }
+        }
+        if reach > 0.0 && ui.rect_contains_pointer(r) {
+            let (dx, dy) = ui.input(|i| (i.smooth_scroll_delta.x, i.smooth_scroll_delta.y));
+            scrolled -= if dx != 0.0 { dx } else { dy };
+        }
+        self.chrome.ribbon_scroll = scrolled.clamp(0.0, reach);
         match clicked {
             Some((id, Some(at))) => self.chrome.dropdown = Some((id, at)),
             Some((id, None)) => self.command(id),

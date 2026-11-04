@@ -116,6 +116,9 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- In a window narrower than a tab's ribbon, what did not fit could not be reached, with nothing to
+  show it was there (Finish Analysis under about 1130 wide, Go to Flat Pattern under about 1215).
+  The ribbon now has an arrow at the end that goes on, and scrolls with the wheel.
 - A message of several lines in the status bar, as every failure of the mesher or the solver is,
   showed as clipped pieces of its middle lines, with nothing under the pointer. The bar shows the
   first line, and the whole of it comes up under the pointer.
