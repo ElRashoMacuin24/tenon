@@ -115,6 +115,12 @@ pub enum Curve3 {
         mid: Vec3,
         end: Vec3,
     },
+    /// A cubic B-spline with these poles and its whole knot vector (as long as the poles and four
+    /// more, starting and ending with four alike): the spline of a 3D sketch, exactly (DEC-136).
+    BSpline {
+        poles: Vec<Vec3>,
+        knots: Vec<f64>,
+    },
     /// A helix on a cylinder of `radius`: `frame` has its origin on the axis, X towards the start
     /// point and Z along the axis; `turns` turns of `pitch`, left-handed when `left`. A helix is
     /// a whole path by itself.

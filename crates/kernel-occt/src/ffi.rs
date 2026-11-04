@@ -109,13 +109,17 @@ pub(crate) mod bridge {
         left: bool,
     }
 
-    /// A sweep path. `kind` 0: lines and arcs end to end (`curve_kinds` 0 a line through the next
-    /// two `points`, 1 an arc through the next three: start, a point on it, end); 1: `helix`.
+    /// A sweep path. `kind` 0: curves end to end (`curve_kinds` 0 a line through the next two
+    /// `points`, 1 an arc through the next three: start, a point on it, end; 2 a cubic B-spline
+    /// with the next of `spline_poles` as how many `points` are its poles, and that many and four
+    /// more of `knots` as its whole knot vector); 1: `helix`.
     #[derive(Debug, Default)]
     struct PathIn {
         kind: u8,
         curve_kinds: Vec<u8>,
         points: Vec<V3>,
+        spline_poles: Vec<u32>,
+        knots: Vec<f64>,
         helix: HelixIn,
     }
 
