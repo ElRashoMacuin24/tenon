@@ -7,7 +7,7 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 
 use tenon_geom::{Line, Vec2, norm_angle, tol};
 
-use crate::sketch::{SketchError, SketchResult};
+use crate::sketch::{SketchError, SketchResult, check_text};
 use crate::solve::{GaussNewton, SketchSolver, SolveOptions};
 use crate::{Constraint, EntityId, Geometry, Sketch};
 
@@ -125,6 +125,14 @@ impl Sketch {
             })
             .map(|(id, _)| id)
             .collect();
+        // (A text scaled is a text made that size, moved or copied.)
+        if motion.factor() != 1.0 {
+            for c in &carried {
+                if let Some(Geometry::Text { text, height, angle, .. }) = self.geometry(*c) {
+                    check_text(text, height * motion.factor(), *angle)?;
+                }
+            }
+        }
         let moved: BTreeSet<EntityId> = points.iter().copied().chain(carried.iter().copied()).collect();
         let within = |c: &Constraint| c.refs().iter().all(|r| moved.contains(r));
         let quarters = motion.quarter_turns();

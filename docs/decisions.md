@@ -3556,7 +3556,9 @@ Auditors went through the program ahead of 0.2.0; what they found is fixed, each
   (`ChangedOnDisk`) when they differ; the window asks Overwrite, Save As or Cancel, for a part saved
   with its assembly as well. A script gets the words. Save As has asked in its own dialog.
 - **What a file says is held to limits when read,** since a small file should not be able to hang or
-  end the program: a text to what `sketch.text` takes; a name to 1000 bytes (commands take 200 or
+  end the program: a text to the 2000 characters `sketch.text` takes, and numbers that are a size
+  and an angle (the range of heights is for making one, and Scale keeps to it, so anything saved
+  opens; a height past it fails the rebuild in words); a name to 1000 bytes (commands take 200 or
   256, so nothing 0.1.0 could write is refused); 4 million values in all, counted before parsing,
   which bounds memory to about a gigabyte where 64 MB of text could take 8; only plain files. A path
   naming another machine is not followed unless the file is on that machine itself: Windows would

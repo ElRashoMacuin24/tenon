@@ -626,7 +626,7 @@ fn what_an_older_build_would_misbuild_is_written_as_a_type_it_refuses() {
 }
 
 #[test]
-fn a_text_in_a_file_is_held_to_what_the_command_takes() {
+fn a_text_in_a_file_is_held_to_what_can_be_outlined() {
     let mut s = Session::default();
     let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
     run(&mut s, "sketch.text", json!({ "sketch": sk, "x": 1, "y": 2, "text": "HHHH", "height": 4 }));
@@ -636,7 +636,24 @@ fn a_text_in_a_file_is_held_to_what_the_command_takes() {
     let long = text.replace("text = \"HHHH\"", &format!("text = \"{}\"", "H".repeat(1_000_000)));
     assert!(damaged(&long).contains("a text has at most 2000 characters"), "{}", damaged(&long));
     let flat = text.replace("height = 4.0", "height = 0.0");
-    assert!(damaged(&flat).contains("a text's height must be from 0.01 to 10000 mm"), "{}", damaged(&flat));
+    assert!(damaged(&flat).contains("a text's height must be above 0 mm"), "{}", damaged(&flat));
+    // The range of heights is for making one: a height past it does no harm, and opens.
+    for height in ["0.005", "20000.0"] {
+        project::from_bytes(text.replace("height = 4.0", &format!("height = {height}")).as_bytes()).unwrap();
+    }
+}
+
+#[test]
+fn a_text_scaled_as_far_as_it_goes_is_saved_and_opened() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let t = run(&mut s, "sketch.text", json!({ "sketch": sk, "x": 0, "y": 0, "text": "AB", "height": 0.5 }))["text"].clone();
+    // Past the limit, it is refused when it is asked for, not when the file is next opened.
+    let e = s.exec("sketch.scale", &json!({ "sketch": sk, "entities": [t], "cx": 0, "cy": 0, "factor": 0.01 }), None).unwrap_err().to_string();
+    assert!(e.contains("from 0.01 to 10000 mm, not 0.005"), "{e}");
+    run(&mut s, "sketch.scale", json!({ "sketch": sk, "entities": [t], "cx": 0, "cy": 0, "factor": 0.02 }));
+    let bytes = project::to_bytes(s.document(), &Map::new()).unwrap();
+    project::from_bytes(&bytes).unwrap();
 }
 
 #[test]

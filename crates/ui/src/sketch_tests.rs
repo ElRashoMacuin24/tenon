@@ -497,6 +497,31 @@ fn geometry_is_moved_copied_turned_and_scaled_with_the_modify_tools() {
 }
 
 #[test]
+fn the_scale_tool_says_when_a_text_would_be_no_text() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    let t = EntityId(
+        wb.exec("sketch.text", json!({ "sketch": f.0, "x": 0, "y": 0, "text": "HH", "height": 10 })).unwrap()["text"].as_u64().unwrap() as u32
+    );
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+    let on_it = at(&wb, 8.0, 5.0);
+    move_to(&mut d, &mut wb, on_it);
+    d.click(&mut wb, on_it);
+    wb.run_ui("sketch.scale").unwrap();
+    let stays = at(&wb, 0.0, 0.0);
+    move_to(&mut d, &mut wb, stays);
+    d.click(&mut wb, stays);
+    text(&mut d, &mut wb, "0.0001");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status_error && wb.status().contains("from 0.01 to 10000 mm"), "{}", wb.status());
+    assert!(matches!(open(&wb).geometry(t), Some(Geometry::Text { height, .. }) if *height == 10.0));
+}
+
+#[test]
 fn curves_are_extended_and_split_by_a_click() {
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
     let mut d = Driver::new(vec2(1400.0, 860.0));

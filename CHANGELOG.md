@@ -65,7 +65,8 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 - **Text.** Sketch > Create > Text: click where it starts, type it in the Format Text box
   (several lines, the height of its capitals, an angle), OK. Its letters are profiles: a sketch
   of text alone extrudes or cuts at once, and in a feature's panel a click in a text's box adds
-  its letters. Double-click a text to change it; drag it by its box. One font, DejaVu Sans,
+  its letters. Double-click a text to change it; drag it by its box; Scale stops at what a text can
+  be, 0.01 to 10000 mm tall. One font, DejaVu Sans,
   built in so that a part is the same everywhere. New commands `sketch.text` and
   `sketch.edit_text`; `sketch.info` lists the texts. Files gain the entity `text` and the
   region key `{ text = id }` (an addition to format version 2).

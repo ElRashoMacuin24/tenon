@@ -1192,6 +1192,42 @@ fn a_tangent_arc_carries_on_from_the_end_of_a_line_or_an_arc() {
 }
 
 #[test]
+fn a_text_is_not_scaled_past_what_a_text_can_be() {
+    let mut s = Sketch::new();
+    let t = s.add_text(v(1.0, 2.0), "AB", 0.5, 0.0).unwrap();
+    let Some(Geometry::Text { at, .. }) = s.geometry(t).cloned() else { panic!() };
+    let as_it_was = s.clone();
+    let scale = |factor: f64| Motion::Scale { about: v(0.0, 0.0), factor };
+    // Too small and too large, moved or copied, and carried by its point as much as picked.
+    for (factor, said) in [(0.01, "not 0.005"), (100_000.0, "not 50000")] {
+        for (ids, copy) in [([t], false), ([t], true), ([at], false)] {
+            let e = s.transform(&ids, scale(factor), copy).unwrap_err().to_string();
+            assert!(e.contains("from 0.01 to 10000 mm") && e.contains(said), "{e}");
+        }
+    }
+    assert_eq!(s, as_it_was, "a tool that fails leaves the sketch as it was");
+    // Up to the limit it is done, and a file holds it.
+    s.transform(&[t], scale(0.02), false).unwrap();
+    assert!(matches!(s.geometry(t), Some(Geometry::Text { height, .. }) if close(*height, 0.01)));
+    s.validate().unwrap();
+    // A text past the limit that a file holds, which is read, is still moved and turned.
+    if let Some(Geometry::Text { height, .. }) = s.geometry_mut(t) {
+        *height = 0.005;
+    }
+    s.validate().unwrap();
+    s.transform(&[t], Motion::Shift(v(1.0, 1.0)), false).unwrap();
+    s.transform(&[t], Motion::Turn { about: v(0.0, 0.0), angle: 0.5 }, false).unwrap();
+    // But it has to be a size and an angle at all, and no more letters than can be outlined.
+    for height in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        let mut bad = s.clone();
+        if let Some(Geometry::Text { height: h, .. }) = bad.geometry_mut(t) {
+            *h = height;
+        }
+        assert!(bad.validate().unwrap_err().to_string().contains("a text's height must be above 0 mm"), "{height}");
+    }
+}
+
+#[test]
 fn text_moves_turns_grows_and_is_copied_with_its_point() {
     let mut s = Sketch::new();
     let t = s.add_text(v(1.0, 2.0), "AB", 5.0, 0.0).unwrap();

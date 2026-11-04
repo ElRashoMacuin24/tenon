@@ -62,17 +62,27 @@ pub struct ArcSlot {
     pub centers: [EntityId; 3],
 }
 
-/// Whether a text can be one: some words of at most [`crate::text::MAX_CHARS`] characters, a
-/// height in range and a finite angle.
-fn check_text(text: &str, height: f64, angle: f64) -> SketchResult<()> {
+/// Whether a text can be made, or be made so: some words, its height in range, and what any text
+/// must be ([`text_in_file`]).
+pub(crate) fn check_text(text: &str, height: f64, angle: f64) -> SketchResult<()> {
     if text.trim().is_empty() {
         return Err(invalid("a text needs some words"));
     }
+    if !(0.01..=10_000.0).contains(&height) {
+        return Err(invalid(format!("a text's height must be from 0.01 to 10000 mm, not {height}")));
+    }
+    text_in_file(text, height, angle)
+}
+
+/// What a text read from a file must be: at most [`crate::text::MAX_CHARS`] characters, since what
+/// it takes to outline one goes as the square of its letters, and numbers that are sizes and angles.
+/// The range of heights is for making one: a file that can be written can be read.
+fn text_in_file(text: &str, height: f64, angle: f64) -> SketchResult<()> {
     if text.chars().count() > crate::text::MAX_CHARS {
         return Err(invalid(format!("a text has at most {} characters", crate::text::MAX_CHARS)));
     }
-    if !(height.is_finite() && (0.01..=10_000.0).contains(&height)) {
-        return Err(invalid(format!("a text's height must be from 0.01 to 10000 mm, not {height}")));
+    if !(height.is_finite() && height > 0.0) {
+        return Err(invalid(format!("a text's height must be above 0 mm, not {height}")));
     }
     if !angle.is_finite() {
         return Err(invalid("a text's angle must be a number"));
@@ -1022,10 +1032,8 @@ impl Sketch {
             if id.0 > self.next_entity {
                 return Err(invalid(format!("{id} is beyond the id counter")));
             }
-            // (A text is what `sketch.text` would take, however it came: what it takes to outline
-            // a text goes as the square of its letters.)
             if let Geometry::Text { text, height, angle, .. } = &e.geometry {
-                check_text(text, *height, *angle).map_err(|why| invalid(format!("{id}: {why}")))?;
+                text_in_file(text, *height, *angle).map_err(|why| invalid(format!("{id}: {why}")))?;
             }
             match &e.geometry {
                 Geometry::Point { pos } if !valid_pos(*pos) => return Err(invalid(format!("{id} has an invalid position"))),
