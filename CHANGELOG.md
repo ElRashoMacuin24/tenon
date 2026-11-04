@@ -254,7 +254,8 @@ views and Baseline and Ordinate dimensions.
   changed and deleted, have a row in the browser, and go to PDF, SVG and DXF. New commands
   `drw.baseline` and `drw.ordinate`; `drw.annotation.edit` gains `remove`, `add`, `datum`, `axis`
   and `spacing`. Suggest Dimensions leaves out what a set already gives, and refuses a section or
-  projection of an isometric view as it does the view itself.
+  projection of an isometric view as it does the view itself. A set is refused on an auxiliary view of a
+  slanted edge, which is drawn turned on the sheet: an Aligned dimension gives the true size there.
 
 ### Getting it
 

@@ -355,7 +355,9 @@ DXF** from the File menu.
 datum or origin (an edge, a circle for its centre; near a line's end, that end), then what to
 measure. A second click on one takes it away. The set shows where it would go; click clear of
 the edges to put it there: above or below the view it measures across the sheet, to the left or
-right it measures up the sheet, unless the panel says otherwise.
+right it measures up the sheet, unless the panel says otherwise. An isometric view takes no set, nor
+does an auxiliary view of a slanted edge, which is drawn turned on the sheet: an Aligned dimension gives
+the true size there.
 
 - A baseline set has a dimension from the datum to each place, the shortest nearest the view
   and the rest evenly beyond it (Spacing in the panel; wider where text needs it).

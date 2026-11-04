@@ -1458,3 +1458,50 @@ fn a_break_out_can_be_moved_over_what_it_cut_away_and_a_mark_stays_on_a_hole_lef
     run(&mut e, "drw.break_out", json!({ "view": v, "modifier": c, "through": true }));
     assert_eq!(drawn(&e), 0, "the hole is gone");
 }
+
+/// A set measures straight across or up the sheet, and an auxiliary of a slanted edge is drawn turned
+/// on it: the figures were no size of the part, with no word. Refused, as an isometric view is. One
+/// square to an edge that runs across its parent is not turned, and takes a set.
+#[test]
+fn a_set_is_refused_on_a_view_turned_on_the_sheet() {
+    let mut e = Engine::new(kernel(), scratch("set-on-auxiliary"));
+    let (_, aux) = wedge_drawing(&mut e);
+    let (near_edge, far_edge) = (seen_in(&e, aux, Vec3::new(85.0, 45.0, 0.0)), seen_in(&e, aux, Vec3::new(85.0, 45.0, 25.0)));
+    let a = run(&mut e, "drw.pick", json!({ "view": aux, "view_at": [near_edge.x, near_edge.y] }));
+    let b = run(&mut e, "drw.pick", json!({ "view": aux, "view_at": [far_edge.x, far_edge.y] }));
+    // The true distance, by a dimension made for it.
+    let d = run(&mut e, "drw.dimension", json!({ "view": aux, "type": "aligned", "a": a, "b": b, "by": [20, 20] }));
+    near(num(&d["value"]), 25.0, "the aligned dimension");
+    for id in ["drw.baseline", "drw.ordinate"] {
+        let key = if id == "drw.baseline" { "datum" } else { "origin" };
+        let why = e.exec(id, &json!({ "view": aux, key: a, "targets": [b], "at": [20, 20] })).unwrap_err();
+        assert!(why.contains("turned on the sheet") && why.contains("Aligned"), "{id}: {why}");
+    }
+    // A view made from it, the same.
+    let at = run(&mut e, "drw.info", json!({}))["views"].as_array().unwrap().iter().find(|v| v["id"] == aux).unwrap()["center"].clone();
+    let near_at = [at[0].as_f64().unwrap() + 80.0, at[1].as_f64().unwrap()];
+    let beside = run(&mut e, "drw.view.projected", json!({ "parent": aux, "side": "right", "at": near_at }))["view"].as_u64().unwrap();
+    let there = seen_in(&e, beside, Vec3::new(70.0, 60.0, 0.0));
+    if let Ok(p) = e.exec("drw.pick", &json!({ "view": beside, "view_at": [there.x, there.y] })) {
+        let why = e.exec("drw.baseline", &json!({ "view": beside, "datum": p, "targets": [p], "at": [20, 20] })).unwrap_err();
+        assert!(why.contains("turned on the sheet"), "{why}");
+    }
+
+    // The block seen square to an edge that runs across the sheet: not turned.
+    let mut e = Engine::new(kernel(), scratch("set-on-square-auxiliary"));
+    block(&mut e);
+    run(&mut e, "drw.new", json!({ "name": "Block" }));
+    let top =
+        run(&mut e, "drw.view.base", json!({ "model": "block.tenon", "orientation": "top", "scale": 1, "at": [120, 110], "hidden": false }))["view"]
+            .as_u64()
+            .unwrap();
+    let edge = run(&mut e, "drw.pick", json!({ "view": top, "view_at": [30, 0] }));
+    let aux = run(&mut e, "drw.auxiliary", json!({ "parent": top, "edge": edge, "at": [120, 40] }))["view"].as_u64().unwrap();
+    let (left, right) = (seen_in(&e, aux, Vec3::new(0.0, 0.0, 10.0)), seen_in(&e, aux, Vec3::new(60.0, 0.0, 10.0)));
+    let a = run(&mut e, "drw.pick", json!({ "view": aux, "view_at": [left.x, left.y] }));
+    let b = run(&mut e, "drw.pick", json!({ "view": aux, "view_at": [right.x, right.y] }));
+    let set = run(&mut e, "drw.baseline", json!({ "view": aux, "datum": a, "targets": [b], "axis": "horizontal" }));
+    let info = run(&mut e, "drw.info", json!({}));
+    let made = info["annotations"].as_array().unwrap().iter().find(|x| x["id"] == set["annotation"]).unwrap();
+    near(num(&made["rows"][0]["value"]), 60.0, "the width of the block");
+}

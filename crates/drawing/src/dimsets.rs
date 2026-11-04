@@ -17,9 +17,9 @@ use tenon_geom::Vec2;
 
 use crate::annotate::{Resolved, format_number, pick_point, resolve_pick, to_sheet};
 use crate::graphics::{ARROW_LENGTH, Align, EXT_GAP, EXT_OVER, Graphics, Owner, Pen, TEXT};
-use crate::model::{AnnotKind, Annotation, Drawing, GeomPick, PickPoint, SetAxis, View, ViewId};
+use crate::model::{AnnotKind, Annotation, Drawing, GeomPick, PickPoint, SetAxis, View, ViewId, ViewKind};
 use crate::stroke::text_width;
-use crate::views::{Evaluation, ModelGeometry, ViewGeometry, project};
+use crate::views::{Evaluation, ModelGeometry, ViewGeometry, auxiliary_line, project};
 
 /// How far the text of a set stands clear of what is beside it (sheet mm).
 const CLEAR: f64 = 1.0;
@@ -362,6 +362,28 @@ pub fn layout(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetLayout,
 /// What is said of a set in a view that is isometric or made from one.
 pub const ISOMETRIC: &str = "an isometric view, or a view made from one, is not dimensioned: pick in a view that looks square on";
 
+/// What is said of a set in a view drawn turned on the sheet.
+pub const TURNED: &str = "an auxiliary view of a slanted edge is drawn turned on the sheet, and a set measures straight across or up the sheet, which is no size of the part there: use an Aligned dimension in this view";
+
+/// Whether a view is drawn turned on the sheet: an auxiliary of an edge that runs neither across nor
+/// up its parent, or a view made from one.
+pub fn turned_on_sheet(d: &Drawing, ev: &Evaluation, id: ViewId) -> bool {
+    let mut next = Some(id);
+    for _ in 0..d.views.len() {
+        let Some(v) = next.and_then(|n| d.view(n)) else { return false };
+        if let ViewKind::Auxiliary { parent, edge, a, b, .. } = &v.kind {
+            let found = ev.models.get(&v.model).zip(ev.view(*parent)).and_then(|(m, g)| auxiliary_line(m, &g.frame, edge, *a, *b).ok());
+            let (a, b) = found.unwrap_or((*a, *b));
+            let way = (b - a).normalized();
+            if way.x.abs() > 1e-6 && way.y.abs() > 1e-6 {
+                return true;
+            }
+        }
+        next = v.kind.parent();
+    }
+    false
+}
+
 /// A set that can be made: in a view that is not isometric or made from one, every place can be
 /// found, none is where the datum or origin is, and no two are in one place along what is measured.
 /// Returns how it lies.
@@ -378,6 +400,9 @@ pub fn check_placed(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetL
 fn checked(d: &Drawing, ev: &Evaluation, a: &Annotation, instead: Option<&str>) -> Result<SetLayout, String> {
     if a.kind.view().is_some_and(|v| d.is_isometric(v)) {
         return Err(ISOMETRIC.into());
+    }
+    if a.kind.view().is_some_and(|v| turned_on_sheet(d, ev, v)) {
+        return Err(TURNED.into());
     }
     let l = layout(d, ev, a)?;
     if let Some(p) = l.problem() {

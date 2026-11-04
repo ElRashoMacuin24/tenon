@@ -4707,7 +4707,11 @@ ribbon or in the strips at the foot of the window has a disabled colour, in eith
 assembly or a drawing. What is rightly out of use for a moment stays as it was: a choice in a panel
 that does not apply (a taper with To Next), and a row of a feature past End of Part.
 
-**What the audit after it found.** "Changes the window" was tested with what each command works on
+**What the audit after it found.** A Baseline or Ordinate set on an auxiliary view of a slanted edge
+measured along the paper while the view is drawn turned on it, and gave figures that were no size of the
+part: 24.39 for what is 31.23. Measuring along the view's own turned axes would have meant laying the set
+out turned as well, so it is refused in words, as an isometric view is (`dimsets::TURNED`, DEC-132's
+gap). "Changes the window" was tested with what each command works on
 given first, so it did not see two that did nothing and said nothing with nothing to work on (Finish
 Sketch with no sketch open; Clear Explode with no exploded view): they say so now, and
 `an_entry_with_nothing_to_do_says_so` holds it. Nor, running the command and not the pointer, did it
