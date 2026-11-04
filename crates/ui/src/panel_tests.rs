@@ -3,10 +3,11 @@
 
 use serde_json::{Value, json};
 use tenon_kernel_occt::OcctKernel;
-use tenon_model::{Feature, FeatureId};
+use tenon_model::{Feature, FeatureId, FeatureKind};
 
 use crate::Workbench;
-use crate::tests::{Driver, type_into};
+use crate::panels::{Fit, Panel};
+use crate::tests::{Driver, pressable, type_into};
 use crate::workbench::Mode;
 
 fn sketching(wb: &Workbench) -> FeatureId {
@@ -156,4 +157,114 @@ fn an_asymmetric_revolution_opens_again_and_takes_what_is_typed() {
     ok(&mut d, &mut wb);
     assert!((value_of(&wb, "/angle/two_sided/forward") - quarter).abs() < 1e-12);
     assert!((value_of(&wb, "/angle/two_sided/backward") - 30f64.to_radians()).abs() < 1e-12);
+}
+
+fn tapping(wb: &Workbench) -> Option<tenon_model::Tapping> {
+    match &last(wb).kind {
+        FeatureKind::Hole(h) => h.tapped.clone(),
+        k => panic!("not a hole: {k:?}"),
+    }
+}
+
+fn threads(wb: &Workbench) -> Vec<String> {
+    wb.scene().threads.iter().map(|t| t.mark.designation.clone()).collect()
+}
+
+fn screw(wb: &Workbench) -> Option<(usize, Fit)> {
+    match &wb.panel {
+        Some(Panel::Hole(p)) => p.screw,
+        _ => panic!("no hole panel: {}", wb.status()),
+    }
+}
+
+/// Opens a list by what it shows and chooses from it.
+fn choose(d: &mut Driver, wb: &mut Workbench, shown: &str, wanted: &str) {
+    let at = d.text_pos(shown).unwrap_or_else(|| panic!("no {shown}: {:?}", d.texts()));
+    d.click(wb, at);
+    d.frame(wb, vec![]);
+    let at = d.text_pos(wanted).unwrap_or_else(|| panic!("no {wanted} in the list: {:?}", d.texts()));
+    d.click(wb, at);
+    d.frame(wb, vec![]);
+    d.frame(wb, vec![]);
+}
+
+#[test]
+fn a_plain_hole_as_wide_as_a_tap_drill_stays_plain_until_tapped_is_chosen() {
+    let (mut wb, mut d, sk) = block_with_a_point();
+    wb.exec("model.hole", json!({ "sketch": sk.0, "diameter": 5, "depth": 8, "reverse": true })).unwrap();
+    d.settle(&mut wb);
+    ok_changes_nothing(&mut d, &mut wb);
+    assert_eq!(tapping(&wb), None);
+    assert!(threads(&wb).is_empty());
+
+    // It says Simple. Tapped is the M6's, whose tap drill it is: its size stays.
+    reopen(&mut d, &mut wb);
+    assert_eq!(screw(&wb), None);
+    choose(&mut d, &mut wb, "Simple", "Tapped");
+    ok(&mut d, &mut wb);
+    assert!(tapping(&wb).is_some());
+    assert_eq!(value_of(&wb, "/diameter"), 5.0);
+    assert_eq!(threads(&wb), ["M6x1"]);
+}
+
+#[test]
+fn a_tap_drill_with_its_own_thread_feature_does_not_gain_a_second() {
+    let (mut wb, mut d, sk) = block_with_a_point();
+    wb.exec("model.hole", json!({ "sketch": sk.0, "diameter": 6.8, "depth": 8, "reverse": true })).unwrap();
+    d.settle(&mut wb);
+    let hole = last(&wb).id;
+    let wall = wb.scene().bodies[0].faces.iter().find(|(_, f)| matches!(f.surface, tenon_kernel::SurfaceKind::Cylinder { .. })).unwrap().0.clone();
+    let face = wb.exec("model.face_ref", json!({ "origin": wall })).unwrap();
+    wb.exec("model.thread", json!({ "face": face })).unwrap();
+    d.settle(&mut wb);
+    assert_eq!(threads(&wb), ["M8x1.25"]);
+    let before = saved(&wb);
+    wb.edit_feature(hole).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    ok(&mut d, &mut wb);
+    assert_eq!(saved(&wb), before);
+    assert_eq!(threads(&wb), ["M8x1.25"]);
+}
+
+#[test]
+fn a_scripts_thread_is_kept_through_ok_and_a_new_depth_and_let_go_for_another_screw() {
+    let (mut wb, mut d, sk) = block_with_a_point();
+    let asked = json!({ "sketch": sk.0, "diameter": 6.8, "depth": 8, "reverse": true, "tapped": true, "pitch": 1, "designation": "M8x1 LH", "left": true });
+    wb.exec("model.hole", asked).unwrap();
+    d.settle(&mut wb);
+    ok_changes_nothing(&mut d, &mut wb);
+    assert_eq!(threads(&wb), ["M8x1 LH"]);
+
+    // It says what it is, and a depth changes the depth and no more.
+    reopen(&mut d, &mut wb);
+    assert!(d.text_pos("M8x1 LH").is_some(), "{:?}", d.texts());
+    d.click(&mut wb, pressable(&d, "tn_hole_thread_full"));
+    d.frame(&mut wb, vec![]);
+    type_into(&mut d, &mut wb, "tn_props_thread_depth", "5");
+    ok(&mut d, &mut wb);
+    let t = tapping(&wb).unwrap();
+    assert_eq!((t.pitch, t.designation.as_deref(), t.left), (Some(1.0), Some("M8x1 LH"), true));
+    assert_eq!(t.length, tenon_model::ThreadLength::Distance(5.0));
+
+    // Another screw is another thread: the one it is named for no longer fits.
+    reopen(&mut d, &mut wb);
+    choose(&mut d, &mut wb, "M8", "M10");
+    assert!(d.text_pos("M10x1.5").is_some(), "{:?}", d.texts());
+    ok(&mut d, &mut wb);
+    let t = tapping(&wb).unwrap();
+    assert_eq!((t.pitch, t.designation.as_deref(), t.left), (None, None, false));
+}
+
+#[test]
+fn a_thread_on_a_size_of_its_own_opens_as_tapped_and_keeps_both() {
+    let (mut wb, mut d, sk) = block_with_a_point();
+    let asked = json!({ "sketch": sk.0, "diameter": 7, "depth": 8, "reverse": true, "tapped": true, "pitch": 1, "designation": "M8x1" });
+    wb.exec("model.hole", asked).unwrap();
+    d.settle(&mut wb);
+    ok_changes_nothing(&mut d, &mut wb);
+    reopen(&mut d, &mut wb);
+    assert!(matches!(screw(&wb), Some((_, Fit::TapDrill))));
+    d.tap(&mut wb, egui::Key::Escape);
+    assert_eq!(threads(&wb), ["M8x1"]);
 }

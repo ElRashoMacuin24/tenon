@@ -1131,7 +1131,9 @@ impl Workbench {
                                         p.screw = Some((screw, Fit::Normal));
                                     }
                                     if ui.selectable_label(kind == "Tapped", "Tapped").clicked() {
-                                        p.screw = Some((screw, Fit::TapDrill));
+                                        // (A plain hole already a screw's tap drill is for that screw.)
+                                        let drilled = crate::panels::HolePanel::screw_of(p.diameter).filter(|(_, f)| *f == Fit::TapDrill).map(|(i, _)| i);
+                                        p.screw = Some((if p.screw.is_none() { drilled.unwrap_or(screw) } else { screw }, Fit::TapDrill));
                                     }
                                 });
                                 ui.end_row();
@@ -1147,9 +1149,8 @@ impl Workbench {
                                     ui.end_row();
                                     // Tapped: the thread, and how deep it goes (DEC-114).
                                     if fit == Fit::TapDrill {
-                                        let (nominal, pitch) = tenon_model::threads::iso_coarse(SCREW_HOLES[i].tap_drill, true);
                                         ui.label("Thread");
-                                        ui.label(tenon_model::threads::designation(nominal, pitch));
+                                        ui.label(p.thread_name(i));
                                         ui.end_row();
                                         ui.label("Full Depth");
                                         crate::drawing::check(ui, &mut p.thread_full, "", "tn_hole_thread_full");
@@ -1199,6 +1200,9 @@ impl Workbench {
                                 crate::drawing::remember(ui, "tn_hole_seat", seats.response.rect);
                                 ui.end_row();
                                 // (A screw, or its seat, chosen: the sizes follow; sizes typed after stay.)
+                                if p.screw != before.0 {
+                                    p.thread = None;
+                                }
                                 if (p.screw, p.seat) != before {
                                     p.size_for_screw();
                                 }

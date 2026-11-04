@@ -223,6 +223,9 @@ pub(crate) struct HolePanel {
     /// Tapped (a screw's tap drill, DEC-114): the thread the whole wall, or this deep.
     pub thread_full: bool,
     pub thread_depth: f64,
+    /// The thread the hole came with, for what the panel does not set (its pitch, name and hand,
+    /// which a script may have given): let go when another screw is chosen.
+    pub thread: Option<tenon_model::Tapping>,
 }
 
 impl HolePanel {
@@ -245,7 +248,7 @@ impl HolePanel {
     }
 
     /// The screw a hole's size is for, if it is one of the library's.
-    fn screw_of(diameter: f64) -> Option<(usize, Fit)> {
+    pub(crate) fn screw_of(diameter: f64) -> Option<(usize, Fit)> {
         tenon_model::library::SCREW_HOLES.iter().enumerate().find_map(|(i, h)| {
             [(h.close, Fit::Close), (h.normal, Fit::Normal), (h.tap_drill, Fit::TapDrill)]
                 .into_iter()
@@ -274,7 +277,7 @@ impl HolePanel {
             reverse: self.reverse,
             tapped: self.tapped().then(|| tenon_model::Tapping {
                 length: if self.thread_full { tenon_model::ThreadLength::Full } else { tenon_model::ThreadLength::Distance(self.thread_depth) },
-                ..Default::default()
+                ..self.thread.clone().unwrap_or_default()
             }),
         })
     }
@@ -282,6 +285,30 @@ impl HolePanel {
     /// Tapped: sized for a screw's tap drill.
     pub(crate) fn tapped(&self) -> bool {
         matches!(self.screw, Some((_, Fit::TapDrill)))
+    }
+
+    /// What the panel calls the thread of the screw at `i`.
+    pub(crate) fn thread_name(&self, i: usize) -> String {
+        let (nominal, coarse) = tenon_model::threads::iso_coarse(tenon_model::library::SCREW_HOLES[i].tap_drill, true);
+        let kept = self.thread.as_ref();
+        kept.and_then(|t| t.designation.clone()).unwrap_or_else(|| tenon_model::threads::designation(nominal, kept.and_then(|t| t.pitch).unwrap_or(coarse)))
+    }
+
+    /// The screw a hole is sized for, as the panel opens on it. Tapped goes by the thread being
+    /// there, not by the size: a plain hole may be as wide as a tap drill, and stays plain until
+    /// Tapped is chosen; a thread on a size of its own is the nearest screw's row, the size kept.
+    fn screw_opened(h: &Hole) -> Option<(usize, Fit)> {
+        let of_size = HolePanel::screw_of(h.diameter);
+        match (&h.tapped, of_size) {
+            (None, Some((_, Fit::TapDrill))) => None,
+            (None, _) => of_size,
+            (Some(_), Some((_, Fit::TapDrill))) => of_size,
+            (Some(_), _) => {
+                let off = |d: f64| (d - h.diameter).abs();
+                let nearest = tenon_model::library::SCREW_HOLES.iter().enumerate().min_by(|a, b| off(a.1.tap_drill).total_cmp(&off(b.1.tap_drill)));
+                nearest.map(|(i, _)| (i, Fit::TapDrill))
+            }
+        }
     }
 
     fn from_hole(editing: Option<FeatureId>, h: &Hole) -> HolePanel {
@@ -315,7 +342,7 @@ impl HolePanel {
             flat: h.tip_angle.is_none(),
             tip_degrees: h.tip_angle.unwrap_or(DRILL_POINT).to_degrees(),
             reverse: h.reverse,
-            screw: HolePanel::screw_of(h.diameter),
+            screw: HolePanel::screw_opened(h),
             face: None,
             face_points: Vec::new(),
             thread_full: !matches!(h.tapped.as_ref().map(|t| t.length), Some(tenon_model::ThreadLength::Distance(_))),
@@ -323,6 +350,7 @@ impl HolePanel {
                 Some(tenon_model::ThreadLength::Distance(d)) => d,
                 _ => h.diameter * 1.5,
             },
+            thread: h.tapped.clone(),
         }
     }
 

@@ -3087,7 +3087,10 @@ from the hole's mouth, so drawings, the Threads list and the thread checks treat
 The panel's choice is called Tapped: the screw's tap drill, its thread named (M8x1.25, ISO
 coarse), Full Depth ticked, or a Thread Depth taking equations. The part's solid is as an
 untapped hole's. The drawing note adds the thread ("Ø6.8 DEEP 12, M8x1.25 DEEP 8"). Opened
-again, a Tap Drill hole made before this is Tapped, and OK puts its thread on.
+again, a hole is Tapped if it has the thread, whatever its size, and keeps what the panel does not
+show (a script's pitch, name and hand) until another screw is chosen. A hole with no thread opens
+as it is, Simple even at a tap drill's size, as a Tap Drill hole made before this does: a plain 5 mm
+hole cannot be told from one, OK must change nothing, and choosing Tapped puts the thread on.
 
 `model.hole` takes `tapped`, `thread_length`, `pitch`, `designation` and `left`; files gain
 `tapped = {...}`, additive in version 2. **Not done:** taper tapped; a modelled thread from the
