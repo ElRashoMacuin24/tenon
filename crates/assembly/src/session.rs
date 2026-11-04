@@ -434,11 +434,11 @@ pub fn place_elements(asm: &mut Assembly, parts: &Parts) -> bool {
 }
 
 /// A new component standing for `source`, in the same part: `place_elements` puts it.
-fn new_element(asm: &mut Assembly, source: ComponentId, visible: bool) -> Result<ComponentId, CmdError> {
+fn new_element(asm: &mut Assembly, source: ComponentId) -> Result<ComponentId, CmdError> {
     let s = asm.component(source).cloned().ok_or_else(|| CmdError(format!("{source} does not exist")))?;
     let id = asm.take_component_id();
     let name = asm.occurrence_name(s.name.rsplit_once(':').map_or(s.name.as_str(), |(base, _)| base));
-    asm.components.push(Component { id, name, grounded: false, visible, ..s });
+    asm.components.push(Component { id, name, grounded: false, visible: true, ..s });
     Ok(id)
 }
 
@@ -475,7 +475,7 @@ fn rebuild_elements(asm: &mut Assembly, parts: &Parts, id: PatternId, sources: V
         for s in &sources {
             components.push(match old.remove(&(at, *s)) {
                 Some(c) => c,
-                None => new_element(asm, *s, !p.suppressed)?,
+                None => new_element(asm, *s)?,
             });
         }
         elements.push(Element { at, components });
@@ -512,17 +512,10 @@ pub fn change_pattern(asm: &mut Assembly, parts: &Parts, id: PatternId, sources:
     rebuild_elements(asm, parts, id, sources)
 }
 
-/// Takes a pattern's elements out of the assembly for now (hidden, not in the parts list), or
-/// brings them back.
+/// Takes a pattern's elements out of the assembly for now (not drawn, listed or checked), or brings
+/// them back. Whether each is hidden on its own stays as it was.
 pub fn suppress_pattern(asm: &mut Assembly, id: PatternId, on: bool) -> Result<(), CmdError> {
-    let p = asm.pattern_mut(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?;
-    p.suppressed = on;
-    let elements: Vec<ComponentId> = p.elements.iter().flat_map(|e| e.components.iter().copied()).collect();
-    for c in elements {
-        if let Some(c) = asm.component_mut(c) {
-            c.visible = !on;
-        }
-    }
+    asm.pattern_mut(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?.suppressed = on;
     Ok(())
 }
 

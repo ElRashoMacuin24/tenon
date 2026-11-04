@@ -404,9 +404,7 @@ pub struct ObjectInfo {
 
 /// The object of every visible component.
 pub fn object_infos(asm: &Assembly, parts: &Parts) -> std::collections::BTreeMap<tenon_assembly::ComponentId, ObjectInfo> {
-    asm.components
-        .iter()
-        .filter(|c| c.visible)
+    asm.shown()
         .filter_map(|c| {
             let key = c.key();
             let doc = parts.get(&key)?.session.document();

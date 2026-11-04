@@ -245,9 +245,8 @@ fn placed_info(info: &FaceInfo, x: &Rigid) -> FaceInfo {
 /// How many visible components have their geometry, and whether that is every one that can (a
 /// part that could not be read never will, and is not waited for).
 pub(crate) fn arrived(asm: &Assembly, parts: &asm_session::Parts) -> (usize, bool) {
-    let visible = || asm.components.iter().filter(|c| c.visible);
-    let have = visible().filter(|c| asm_session::scene_of(parts, c).is_some()).count();
-    let can = visible().filter(|c| parts.get(&c.key()).is_some_and(|p| p.missing.is_none())).count();
+    let have = asm.shown().filter(|c| asm_session::scene_of(parts, c).is_some()).count();
+    let can = asm.shown().filter(|c| parts.get(&c.key()).is_some_and(|p| p.missing.is_none())).count();
     (have, have >= can)
 }
 
@@ -584,7 +583,7 @@ impl Workbench {
         let asm = a.shown_assembly().clone();
         let mut h = std::collections::hash_map::DefaultHasher::new();
         let mut keys: Vec<(ComponentId, u64)> = Vec::new();
-        for c in asm.components.iter().filter(|c| c.visible) {
+        for c in asm.shown() {
             let mut ch = std::collections::hash_map::DefaultHasher::new();
             c.key().hash(&mut ch);
             let scene = a.session.parts.get(&c.key()).and_then(|p| p.scene.as_ref());
@@ -894,7 +893,7 @@ impl Workbench {
         let scene = part.scene.as_ref().map(|(_, s)| (**s).clone());
         // The rest, moved into the part's coordinates.
         let mut context = Vec::new();
-        for o in a.session.assembly().components.iter().filter(|o| o.visible && o.id != id && !c.mirrored) {
+        for o in a.session.assembly().shown().filter(|o| o.id != id && !c.mirrored) {
             let Some(s) = asm_session::scene_of(&a.session.parts, o) else { continue };
             let seen = frame_seen_from(&o.placement, &c.placement);
             let mut kh = std::collections::hash_map::DefaultHasher::new();
@@ -1505,9 +1504,7 @@ pub(crate) type SlotItem = (ComponentId, u64, Frame, Option<Aabb3>);
 fn slot_items(a: &AsmDoc) -> Vec<SlotItem> {
     a.session
         .assembly()
-        .components
-        .iter()
-        .filter(|c| c.visible)
+        .shown()
         .filter_map(|c| a.slots.get(&c.key()).map(|(slot, _)| (c.id, *slot, c.placement, asm_session::local_bbox(&a.session.parts, c))))
         .collect()
 }

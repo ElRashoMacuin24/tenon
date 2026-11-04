@@ -8496,7 +8496,7 @@
       "id": "asm.suppress_pattern",
       "label": "Suppress Pattern",
       "undoable": true,
-      "description": "pattern, suppressed (default true): its elements are out of the assembly (not drawn, listed or checked) until it is brought back",
+      "description": "pattern, suppressed (default true): its elements, and what a later pattern makes of them, are out of the assembly (not drawn, listed or checked) until it is brought back. One hidden on its own stays hidden",
       "params": {
         "type": "object",
         "properties": {

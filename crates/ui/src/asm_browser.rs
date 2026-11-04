@@ -134,6 +134,7 @@ impl Workbench {
         let problems = self.pattern_problems();
         let Some(a) = self.asm.as_ref() else { return };
         let asm = a.session.assembly();
+        let out = asm.suppressed_elements();
         let origin_open = self.chrome.origin_open;
         let dof = self.asm_dof().map(|(per, _)| per.iter().map(|d| d.count()).collect::<Vec<_>>()).unwrap_or_default();
         // The relationships that hold each component, found once: not for every component in turn.
@@ -334,7 +335,7 @@ impl Workbench {
                             Style::Error
                         } else if a.selected.contains(&c.id) {
                             Style::Selected
-                        } else if !c.visible {
+                        } else if !c.visible || out.contains(&c.id) {
                             Style::Dim
                         } else {
                             Style::Normal

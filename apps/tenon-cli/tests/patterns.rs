@@ -1326,3 +1326,63 @@ fn a_source_deleted_and_brought_back_by_undo_has_its_part_again() {
     assert!(!e.asm.parts.contains_key(&key));
     assert!(e.asm.parts.contains_key(&tenon_io::asm::part_key(&dir.join("other.tenon"))));
 }
+
+#[test]
+fn what_repeats_a_suppressed_patterns_elements_is_out_with_them_and_hidden_stays_hidden() {
+    let dir = scratch("suppress-chain");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    box_part(e, "block", 10.0, 10.0, 10.0);
+    run(e, "asm.new", json!({ "name": "Chain" }));
+    let block = run(e, "asm.insert", json!({ "path": "block.tenon", "grounded": false }))["component"].clone();
+    let (x, y) = (run(e, "asm.geom", json!({ "axis": "x" })), run(e, "asm.geom", json!({ "axis": "y" })));
+    // Pattern 1 makes one more of the source; pattern 2 makes two more of that one.
+    let one = run(e, "asm.pattern", json!({ "components": [block], "type": "rectangular", "direction": x, "count": 2, "spacing": 20 }));
+    let el = one["components"][0].clone();
+    let two = run(e, "asm.pattern", json!({ "components": [el], "type": "rectangular", "direction": y, "count": 3, "spacing": 20 }));
+    let more = ids(&two["components"]);
+    let tree_of = |e: &mut Engine, id: &Value| component(&run(e, "asm.tree", json!({})), id)["visible"].clone();
+    let weighed = |e: &mut Engine| num(&run(e, "asm.mass", json!({}))["volume"]);
+    assert!((weighed(e) - 4000.0).abs() < 1e-6);
+
+    // Pattern 1 out: its element is gone, and so what repeats it. Only the source is left of four.
+    run(e, "asm.suppress_pattern", json!({ "pattern": one["pattern"] }));
+    assert!((weighed(e) - 1000.0).abs() < 1e-6, "{}", weighed(e));
+    assert_eq!(run(e, "asm.bom", json!({}))["rows"][0]["quantity"], 1);
+    for c in std::iter::once(&el).chain(&more) {
+        assert_eq!(tree_of(e, c), false, "{c}");
+        let err = e.exec("asm.visible", &json!({ "component": c, "visible": true })).unwrap_err();
+        assert!(err.contains("suppressed"), "{err}");
+    }
+    assert_eq!(run(e, "asm.interference", json!({}))["count"], 0);
+    run(e, "asm.export_step", json!({ "path": "one.step" }));
+    assert_eq!(solids_of(&dir.join("one.step")).len(), 1);
+    // Brought back, all four.
+    run(e, "asm.suppress_pattern", json!({ "pattern": one["pattern"], "suppressed": false }));
+    assert!((weighed(e) - 4000.0).abs() < 1e-6);
+
+    // An element hidden on its own stays hidden through its pattern's coming and going.
+    run(e, "asm.visible", json!({ "component": more[0], "visible": false }));
+    assert!((weighed(e) - 3000.0).abs() < 1e-6);
+    run(e, "asm.suppress_pattern", json!({ "pattern": two["pattern"] }));
+    assert!((weighed(e) - 2000.0).abs() < 1e-6, "the source and pattern 1's element");
+    run(e, "asm.suppress_pattern", json!({ "pattern": two["pattern"], "suppressed": false }));
+    assert_eq!(tree_of(e, &more[0]), false);
+    assert_eq!(tree_of(e, &more[1]), true);
+    assert!((weighed(e) - 3000.0).abs() < 1e-6);
+    // A count raised while it is out makes elements that come back with the rest.
+    run(e, "asm.suppress_pattern", json!({ "pattern": two["pattern"] }));
+    let raised = run(e, "asm.edit_pattern", json!({ "pattern": two["pattern"], "count": 4 }));
+    assert_eq!(raised["elements"], 3);
+    assert!((weighed(e) - 2000.0).abs() < 1e-6);
+    run(e, "asm.suppress_pattern", json!({ "pattern": two["pattern"], "suppressed": false }));
+    assert!((weighed(e) - 4000.0).abs() < 1e-6, "one hidden of five");
+
+    // Made independent while out, its elements are components of their own, as they were asked to
+    // be seen or not.
+    run(e, "asm.suppress_pattern", json!({ "pattern": two["pattern"] }));
+    run(e, "asm.delete_pattern", json!({ "pattern": two["pattern"], "keep_elements": true }));
+    assert_eq!(tree_of(e, &more[0]), false);
+    assert_eq!(tree_of(e, &more[1]), true);
+    assert!((weighed(e) - 4000.0).abs() < 1e-6);
+}

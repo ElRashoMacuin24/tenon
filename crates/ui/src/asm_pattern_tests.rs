@@ -890,3 +890,42 @@ fn a_source_deleted_from_its_row_and_brought_back_by_undo_is_drawn_again() {
     let volume = wb.asm_exec("asm.mass", json!({})).unwrap()["volume"].as_f64().unwrap();
     assert!((volume - (200000.0 + 2.0 * 10000.0)).abs() < 1e-3, "{volume}");
 }
+
+#[test]
+fn a_part_of_a_suppressed_chain_of_patterns_is_out_of_the_view_and_hidden_stays_hidden() {
+    let dir = scratch("chain");
+    box_part(&dir.join("block.tenon"), "Block", 10.0, 10.0, 10.0);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    opened(&mut wb, &mut d, &[(&dir.join("block.tenon"), [0.0, 0.0, 0.0])]);
+    let axis = |a: &str| json!({ "geom": { "type": "axis", "axis": a } });
+    wb.asm_exec("asm.pattern", json!({ "components": [1], "type": "rectangular", "direction": axis("X"), "count": 2, "spacing": 20 })).unwrap();
+    wb.asm_exec("asm.pattern", json!({ "components": [2], "type": "rectangular", "direction": axis("Y"), "count": 3, "spacing": 20 })).unwrap();
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 4);
+
+    // The first from its row: all that comes of it goes, whichever pattern made it.
+    menu_on(&mut d, &mut wb, "Pattern:1 (2)");
+    d.click(&mut wb, d.text_pos("Suppress").expect("the menu"));
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 1, "{}", wb.status());
+    menu_on(&mut d, &mut wb, "Pattern:1 (2)");
+    d.click(&mut wb, d.text_pos("Unsuppress").expect("the menu"));
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 4);
+
+    // An element hidden from its own row, through its pattern's going and coming back.
+    menu_on(&mut d, &mut wb, "block:3");
+    d.click(&mut wb, d.text_pos("Hide").expect("the menu"));
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 3);
+    menu_on(&mut d, &mut wb, "Pattern:2 (3)");
+    d.click(&mut wb, d.text_pos("Suppress").expect("the menu"));
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 2);
+    menu_on(&mut d, &mut wb, "Pattern:2 (3)");
+    d.click(&mut wb, d.text_pos("Unsuppress").expect("the menu"));
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 3, "it stays hidden");
+    assert!(!wb.assembly().unwrap().assembly().component(ComponentId(3)).unwrap().visible);
+}

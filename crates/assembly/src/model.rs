@@ -643,9 +643,36 @@ impl Assembly {
     pub fn elements(&self) -> std::collections::BTreeSet<ComponentId> {
         self.patterns.iter().flat_map(|p| p.elements.iter()).flat_map(|e| e.components.iter().copied()).collect()
     }
-    /// The elements of suppressed patterns: components that are out of the assembly for now.
+    /// The components out of the assembly for now: the elements of suppressed patterns, and what
+    /// a later pattern makes of those (it can repeat only what is there).
     pub fn suppressed_elements(&self) -> std::collections::BTreeSet<ComponentId> {
-        self.patterns.iter().filter(|p| p.suppressed).flat_map(|p| p.elements.iter()).flat_map(|e| e.components.iter().copied()).collect()
+        let mut out = std::collections::BTreeSet::new();
+        for p in &self.patterns {
+            for (i, s) in p.sources.iter().enumerate() {
+                if p.suppressed || out.contains(s) {
+                    out.extend(p.elements.iter().filter_map(|e| e.components.get(i).copied()));
+                }
+            }
+        }
+        out
+    }
+    /// The components there to be seen and worked with: neither hidden nor out with a suppressed
+    /// pattern. `Component::visible` is what was asked of each alone, and stays through that.
+    pub fn shown(&self) -> impl Iterator<Item = &Component> {
+        let out = self.suppressed_elements();
+        self.components.iter().filter(move |c| c.visible && !out.contains(&c.id))
+    }
+    /// What a command would put out of reach, in words, before [`Assembly::validate`], whose words
+    /// are for a damaged file.
+    pub fn check_reach(&self) -> Result<(), String> {
+        match self.components.iter().find(|c| !finite(c.placement.origin())) {
+            Some(c) => Err(format!(
+                "that would put {} more than {} m from the origin: lower the spacing or the count, or move it less far",
+                c.name,
+                tol::MAX_SIZE / 1000.0
+            )),
+            None => Ok(()),
+        }
     }
 
     /// Removes a component with its relationships and exploded-view steps, and with what stands
@@ -678,16 +705,11 @@ impl Assembly {
                     }
                 }
             }
-            let (broken, whole): (Vec<Pattern>, Vec<Pattern>) = std::mem::take(&mut self.patterns)
-                .into_iter()
-                .partition(|p| p.kind.targets().iter().any(|t| t.component == Some(id)) || p.elements.iter().any(|e| e.components.contains(&id)));
-            self.patterns = whole;
-            self.patterns.retain(|p| !p.sources.is_empty());
-            for c in broken.iter().filter(|p| p.suppressed).flat_map(|p| p.elements.iter()).flat_map(|e| e.components.iter()) {
-                if let Some(c) = self.component_mut(*c) {
-                    c.visible = true;
-                }
-            }
+            self.patterns.retain(|p| {
+                !p.sources.is_empty()
+                    && !p.kind.targets().iter().any(|t| t.component == Some(id))
+                    && !p.elements.iter().any(|e| e.components.contains(&id))
+            });
         }
         existed
     }
@@ -697,13 +719,9 @@ impl Assembly {
     pub fn remove_pattern(&mut self, id: PatternId, keep: bool) -> bool {
         let Some(i) = self.patterns.iter().position(|p| p.id == id) else { return false };
         let p = self.patterns.remove(i);
-        for c in p.elements.iter().flat_map(|e| e.components.iter()) {
-            if !keep {
+        if !keep {
+            for c in p.elements.iter().flat_map(|e| e.components.iter()) {
                 self.remove_component(*c);
-            } else if let Some(c) = self.component_mut(*c)
-                && p.suppressed
-            {
-                c.visible = true;
             }
         }
         true

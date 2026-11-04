@@ -129,6 +129,7 @@ fn frame_json(f: &Frame) -> Value {
 fn asm_tree(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdResult {
     let asm = s.assembly();
     let (per, total) = dof(asm, &s.parts);
+    let out = asm.suppressed_elements();
     let failing = |id: RelationshipId| s.failing.iter().find(|(r, _)| *r == id).map(|(_, m)| m.clone());
     let element_of: std::collections::BTreeMap<ComponentId, PatternId> =
         asm.patterns.iter().flat_map(|p| p.elements.iter().flat_map(move |e| e.components.iter().map(move |c| (*c, p.id)))).collect();
@@ -138,7 +139,7 @@ fn asm_tree(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
         .zip(&per)
         .map(|(c, d)| {
             json!({
-                "id": c.id.0, "name": c.name, "part": c.part, "row": c.row, "grounded": c.grounded, "visible": c.visible,
+                "id": c.id.0, "name": c.name, "part": c.part, "row": c.row, "grounded": c.grounded, "visible": c.visible && !out.contains(&c.id),
                 "mirrored": c.mirrored, "element_of": element_of.get(&c.id).map(|p| p.0),
                 "placement": frame_json(&c.placement),
                 "missing": s.parts.get(&c.key()).and_then(|p| p.missing.clone()),
@@ -209,7 +210,7 @@ fn asm_mass(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
     // Each component at its own part's density (g/cm^3; a part without a material is at 1).
     let (mut volume, mut mass, mut moment) = (0.0, 0.0, Vec3::ZERO);
     let mut rows = Vec::new();
-    for c in asm.components.iter().filter(|c| c.visible) {
+    for c in asm.shown() {
         let scene = scene_of(&s.parts, c).ok_or_else(|| CmdError(format!("{}: the part's geometry is not available", c.name)))?;
         let doc = s.parts.get(&c.key()).map(|p| p.session.document());
         let density = doc.map_or(tenon_model::materials::DEFAULT_DENSITY, tenon_model::Document::density);
@@ -733,7 +734,7 @@ fn asm_visible(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cm
     let cid = component(p, "component")?;
     let on = opt_bool(p, "visible")?.unwrap_or(true);
     if s.assembly().suppressed_elements().contains(&cid) {
-        return Err(CmdError(format!("{cid} is an element of a suppressed pattern: bring the pattern back first")));
+        return Err(CmdError(format!("{cid} is out of the assembly with a suppressed pattern: bring the pattern back first")));
     }
     s.edit(|asm, _| {
         asm.component_mut(cid).ok_or_else(|| CmdError(format!("{cid} does not exist")))?.visible = on;
@@ -1093,7 +1094,7 @@ static COMMANDS: &[AsmCommand] = &[
     AsmCommand {
         id: "asm.suppress_pattern",
         label: "Suppress Pattern",
-        help: "pattern, suppressed (default true): its elements are out of the assembly (not drawn, listed or checked) until it is brought back",
+        help: "pattern, suppressed (default true): its elements, and what a later pattern makes of them, are out of the assembly (not drawn, listed or checked) until it is brought back. One hidden on its own stays hidden",
         mutates: true,
         kernel: false,
         run: asm_suppress_pattern,

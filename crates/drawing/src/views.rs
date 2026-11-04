@@ -183,7 +183,7 @@ fn build_model(k: &mut dyn Kernel, key: &str, src: &ModelSource) -> (ModelGeomet
             parts
                 .iter()
                 .map(|(pk, doc)| {
-                    let at = asm.components.iter().filter(|c| c.visible && c.key() == *pk).map(|c| (Some(c.id), c.placement)).collect();
+                    let at = asm.shown().filter(|c| c.key() == *pk).map(|c| (Some(c.id), c.placement)).collect();
                     (pk.clone(), doc.clone(), at)
                 })
                 .collect()

@@ -44,7 +44,7 @@ pub fn placed_parts(
     frames: Option<&std::collections::BTreeMap<ComponentId, Frame>>,
 ) -> Result<Vec<Placed>, String> {
     let mut out = Vec::new();
-    for c in asm.components.iter().filter(|c| c.visible) {
+    for c in asm.shown() {
         let bbox = local_bbox(parts, c);
         let part = parts.get_mut(&c.key()).ok_or_else(|| format!("{}: the part is not loaded", c.name))?;
         if let Some(why) = &part.missing {
