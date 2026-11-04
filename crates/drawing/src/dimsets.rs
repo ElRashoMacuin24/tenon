@@ -438,34 +438,55 @@ pub fn axis_for(d: &Drawing, ev: &Evaluation, view: ViewId, at: Option<Vec2>, fr
 /// How far outside a view, or outside what is already beside it, a set goes unless told (sheet mm).
 const OUTSIDE: f64 = 10.0;
 
+/// Puts a set at `at` on the sheet, `center` being its view's. Only how far across what it measures
+/// is kept: along that, each dimension stays with what it measures.
+pub fn put_at(kind: &mut AnnotKind, center: Vec2, at: Vec2) {
+    if let AnnotKind::Baseline { axis, offset, .. } | AnnotKind::Ordinate { axis, offset, .. } = kind {
+        *offset = axis.point(0.0, axis.across(at - center));
+    }
+}
+
 /// Where a set goes unless told: outside the view (above it or, measuring up the sheet, to its
-/// right), past the annotations already on that side. Where `room` of paper there would run off the
-/// sheet or into another view, the other side.
-pub fn default_at(d: &Drawing, ev: &Evaluation, view: ViewId, axis: SetAxis, room: f64) -> Result<Vec2, String> {
-    let v = d.view(view).ok_or("the view is gone")?;
-    let g = ev.view(view).ok_or("the view is not computed")?;
+/// right), past the annotations already on that side. Where the whole of it, laid out there, would
+/// run off the paper or into another view, the other side; where it would on both, there is no room
+/// and that is said.
+pub fn default_at(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<Vec2, String> {
+    let set = parts(&a.kind).ok_or("not a set of dimensions")?;
+    let axis = set.axis;
+    let v = d.view(set.view).ok_or("the view is gone")?;
+    let g = ev.view(set.view).ok_or("the view is not computed")?;
     let (lo, hi) = view_box(v, g).ok_or("the view shows nothing")?;
     let sheet = crate::annotate::build(d, v.sheet, ev).0;
     let others: Vec<(Vec2, Vec2)> = d
         .annotations
         .iter()
-        .filter(|a| a.kind.view() == Some(view))
-        .filter(|a| {
-            matches!(a.kind, AnnotKind::Dimension { .. } | AnnotKind::Baseline { .. } | AnnotKind::Ordinate { .. } | AnnotKind::Balloon { .. })
+        .filter(|o| o.id != a.id && o.kind.view() == Some(set.view))
+        .filter(|o| {
+            matches!(o.kind, AnnotKind::Dimension { .. } | AnnotKind::Baseline { .. } | AnnotKind::Ordinate { .. } | AnnotKind::Balloon { .. })
         })
-        .filter_map(|a| sheet.bounds_of(Owner::Annotation(a.id)))
+        .filter_map(|o| sheet.bounds_of(Owner::Annotation(o.id)))
         .collect();
-    let views: Vec<(Vec2, Vec2)> = d.views_on(v.sheet).filter(|o| o.id != view).filter_map(|o| sheet.bounds_of(Owner::View(o.id))).collect();
-    let (from, to) = (axis.along(lo), axis.along(hi));
-    let free = |near: f64, far: f64| {
-        let (a, b) = (near.min(far), near.max(far));
-        let inside = a >= crate::sheets::BORDER && b <= axis.across(Vec2::new(sheet.width, sheet.height)) - crate::sheets::BORDER;
-        inside && !views.iter().any(|(l, h)| axis.along(*l) < to && axis.along(*h) > from && axis.across(*l) < b && axis.across(*h) > a)
+    let views: Vec<(Vec2, Vec2)> = d.views_on(v.sheet).filter(|o| o.id != set.view).filter_map(|o| sheet.bounds_of(Owner::View(o.id))).collect();
+    let paper = axis.across(Vec2::new(sheet.width, sheet.height)) - crate::sheets::BORDER;
+    let fits = |at: Vec2| -> Result<bool, String> {
+        let mut probe = a.clone();
+        put_at(&mut probe.kind, v.center, at);
+        let mut drawn = Graphics::default();
+        layout(d, ev, &probe)?.draw(&mut drawn, Owner::Frame);
+        let Some((l, h)) = drawn.bounds_of(Owner::Frame) else { return Ok(true) };
+        let on_paper = axis.across(l) >= crate::sheets::BORDER && axis.across(h) <= paper;
+        Ok(on_paper && !views.iter().any(|(a, b)| a.x < h.x && b.x > l.x && a.y < h.y && b.y > l.y))
     };
+    let along = (axis.along(lo) + axis.along(hi)) / 2.0;
     let past_high = others.iter().map(|b| axis.across(b.1)).filter(|y| *y > axis.across(hi)).fold(axis.across(hi), f64::max) + OUTSIDE;
     let past_low = others.iter().map(|b| axis.across(b.0)).filter(|y| *y < axis.across(lo)).fold(axis.across(lo), f64::min) - OUTSIDE;
-    let level = if free(past_high, past_high + room) || !free(past_low, past_low - room) { past_high } else { past_low };
-    Ok(axis.point((from + to) / 2.0, level))
+    for level in [past_high, past_low] {
+        let at = axis.point(along, level);
+        if fits(at)? {
+            return Ok(at);
+        }
+    }
+    Err("there is no room for the set outside the view on this sheet: say where it goes (click there; in a script, `at`, or `by` for one already made), or give it less spacing or fewer places".into())
 }
 
 #[cfg(test)]

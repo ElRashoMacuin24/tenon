@@ -511,3 +511,149 @@ fn a_view_made_from_an_isometric_one_is_not_dimensioned_either() {
         assert_eq!(rows(&r)[0].0, "100", "{r}");
     }
 }
+
+/// Reads a set's lines, nearest the view first.
+fn levels(a: &Value) -> Vec<f64> {
+    a["rows"].as_array().unwrap_or_else(|| panic!("{a}")).iter().map(|r| r["level"].as_f64().unwrap()).collect()
+}
+
+/// A plate 100 x 60 x 10 with 4 mm holes through it at heights that take room to write: 12.125 at
+/// x = 20, 24.375 at 40, 37.625 at 60, 49.875 at 80. Saved as `plate.tenon`.
+fn plate_of_long_numbers(e: &mut Engine) {
+    run(e, "file.new", json!({ "name": "Plate" }));
+    let sk = run(e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    run(e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 100, "y2": 60 }));
+    let body = run(e, "model.extrude", json!({ "sketch": sk, "distance": 10 }))["feature"].clone();
+    let top = run(e, "model.face_ref", json!({ "origin": { "type": "cap", "feature": body, "end": "end" } }));
+    let holes = run(e, "sketch.create", json!({ "face": top }))["feature"].clone();
+    for (x, y) in [(20.0, 12.125), (40.0, 24.375), (60.0, 37.625), (80.0, 49.875)] {
+        run(e, "sketch.point", json!({ "sketch": holes, "x": x, "y": y }));
+    }
+    run(e, "model.hole", json!({ "sketch": holes, "diameter": 4, "through_all": true }));
+    run(e, "file.save", json!({ "path": "plate.tenon" }));
+}
+
+#[test]
+fn with_no_place_given_a_set_goes_where_the_whole_of_it_fits() {
+    let dir = scratch("room");
+    let mut e = Engine::new(Box::new(OcctKernel::new()), &dir);
+    plate_of_long_numbers(&mut e);
+    let width = |s: &str| tenon_drawing::stroke::text_width(s, 3.5);
+    // Up the sheet the columns stand further apart than the 8 asked: as far as the widest text and 2.
+    let step = ["12.125", "24.375", "37.625", "49.875"].map(width).into_iter().fold(0.0, f64::max) + 2.0;
+    assert!(step > 16.0, "{step}");
+    let places = |e: &mut Engine, view: &Value| {
+        [pick(e, view, 50.0, 0.0), pick(e, view, 22.0, 12.125), pick(e, view, 42.0, 24.375), pick(e, view, 62.0, 37.625), pick(e, view, 82.0, 49.875)]
+    };
+    let ask = |view: &Value, p: &[Value; 5]| {
+        json!({ "view": view, "datum": p[0], "targets": [p[1], p[2], p[3], p[4]], "axis": "vertical", "precision": 3 })
+    };
+
+    // Near the right of a sheet 431.8 wide, its paper ending 10 short of that. The view's right
+    // side is at 375, so on that side the lines would stand at 385, and on past 431.8. To the left
+    // (the view's left side at 325) they stand at 315 and on down, all on the paper.
+    run(&mut e, "drw.new", json!({ "name": "Sets", "size": "B" }));
+    let view = run(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "top", "scale": 0.5, "at": [350, 150] }))["view"].clone();
+    let p = places(&mut e, &view);
+    let r = run(&mut e, "drw.baseline", ask(&view, &p));
+    assert_eq!(r["step"], step);
+    assert!(385.0 + 3.0 * step > 431.8, "off the paper on that side: {step}");
+    let got = levels(&r);
+    for (k, level) in got.iter().enumerate() {
+        assert!((level - (315.0 - step * k as f64)).abs() < 1e-9, "{r}");
+    }
+    assert!(got[3] - step / 2.0 >= 10.0, "on the paper: {r}");
+
+    // Where a view stands in the way: this one's right side is at 200, so the lines would stand at
+    // 210 and on into the view that starts at 250. The left side is clear.
+    run(&mut e, "drw.new", json!({ "name": "Sets", "size": "C" }));
+    let view = run(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "top", "scale": 1, "at": [150, 130] }))["view"].clone();
+    run(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "top", "scale": 1, "at": [300, 130] }));
+    let p = places(&mut e, &view);
+    let r = run(&mut e, "drw.baseline", ask(&view, &p));
+    assert!(210.0 + 3.0 * step > 250.0, "into the other view on that side: {step}");
+    assert!((levels(&r)[0] - 90.0).abs() < 1e-9, "{r}");
+    // With room on the near side, that side: to the right, the values starting 1 past 210.
+    run(&mut e, "drw.undo", json!({}));
+    let hole = p[1].clone();
+    let r = run(&mut e, "drw.ordinate", json!({ "view": view, "origin": p[0], "targets": [hole], "axis": "vertical", "precision": 3 }));
+    rows_are(&r, &[("0", 211.0 + width("0") / 2.0, 100.0), ("12.125", 211.0 + width("12.125") / 2.0, 112.125)]);
+    run(&mut e, "drw.undo", json!({}));
+
+    // Across the sheet, 200 apart: three lines from y = 170 up, or from y = 90 down, are off a
+    // sheet this size either way. Refused, in words, and nothing is made. Told where, it goes there.
+    let left = pick(&mut e, &view, 0.0, 30.0);
+    let wide = json!({ "view": view, "datum": left, "targets": [p[1], p[2], p[3]], "axis": "horizontal", "spacing": 200 });
+    let count = annotation_count(&mut e);
+    let err = e.exec("drw.baseline", &wide).unwrap_err();
+    assert!(err.contains("no room") && err.contains("say where"), "{err}");
+    assert_eq!(annotation_count(&mut e), count);
+    let mut told = wide.clone();
+    told["at"] = json!([150, 170]);
+    assert_eq!(levels(&run(&mut e, "drw.baseline", told)), [170.0, 370.0, 570.0]);
+}
+
+#[test]
+fn a_set_turned_with_no_place_given_goes_outside_the_view() {
+    let dir = scratch("turned");
+    let mut e = Engine::new(Box::new(OcctKernel::new()), &dir);
+    plate(&mut e);
+    let view = top_view(&mut e, 1.0);
+    let (left, hole1, hole2) = (pick(&mut e, &view, 0.0, 30.0), pick(&mut e, &view, 34.0, 20.0), pick(&mut e, &view, 74.0, 40.0));
+
+    // Made above the view (x 100 to 200, y 100 to 160), its middle at (150, 130). What is along what
+    // it measures is not kept: only how far across, 50.
+    let r = run(&mut e, "drw.baseline", json!({ "view": view, "datum": left, "targets": [hole1, hole2], "at": [170, 180] }));
+    let set = r["annotation"].clone();
+    assert_eq!(levels(&r), [180.0, 188.0]);
+    let offset = |e: &mut Engine, n: usize| {
+        let i = run(e, "drw.info", json!({}));
+        let o = &i["annotations"][n]["offset"];
+        (o["x"].as_f64().unwrap(), o["y"].as_f64().unwrap())
+    };
+    assert_eq!(offset(&mut e, 0), (0.0, 50.0));
+
+    // Turned: up the sheet from y = 130, reading 10 each way, and to the right of the view, 10 clear
+    // of its side at 200, not through the plate at the old offset's x = 150.
+    let r = run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "axis": "vertical" }));
+    assert_eq!(levels(&r), [210.0, 218.0], "{r}");
+    assert_eq!(rows(&r).iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["10", "10"], "{r}");
+    assert_eq!(offset(&mut e, 0), (60.0, 0.0));
+    // One undo: where it was.
+    run(&mut e, "drw.undo", json!({}));
+    assert_eq!(levels(&run(&mut e, "drw.info", json!({}))["annotations"][0]), [180.0, 188.0]);
+    assert_eq!(offset(&mut e, 0), (0.0, 50.0));
+    run(&mut e, "drw.redo", json!({}));
+    // Turned back: above the view again, 10 clear of its top at 160.
+    let r = run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "axis": "horizontal" }));
+    assert_eq!(levels(&r), [170.0, 178.0], "{r}");
+    // Told how far, from where it stands: from the view's middle, 80 to the right.
+    let r = run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "axis": "vertical", "by": [80, 0] }));
+    assert_eq!(levels(&r), [230.0, 238.0], "{r}");
+    assert_eq!(offset(&mut e, 0), (80.0, 0.0));
+    // The direction it has already is no turn: it stays.
+    let r = run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "axis": "vertical", "spacing": 9 }));
+    assert_eq!(levels(&r), [230.0, 239.0], "{r}");
+
+    // An ordinate set the same. Below the view, then to the right: past the baseline set now there,
+    // its second line at 239 and "10" half its width past that, and 10 clear; each value 1 past its
+    // line, at its height: left's middle at y = 130, the holes 10 below and above.
+    let o = run(&mut e, "drw.ordinate", json!({ "view": view, "origin": left, "targets": [hole1, hole2], "at": [120, 80] }));
+    assert_eq!(offset(&mut e, 1), (0.0, -50.0));
+    let id = o["annotation"].clone();
+    let r = run(&mut e, "drw.annotation.edit", json!({ "annotation": id, "axis": "vertical" }));
+    let width = |s: &str| tenon_drawing::stroke::text_width(s, 3.5);
+    let level = 239.0 + width("10") / 2.0 + 10.0;
+    rows_are(
+        &r,
+        &[("-10", level + 1.0 + width("-10") / 2.0, 120.0), ("0", level + 1.0 + width("0") / 2.0, 130.0), ("10", level + 1.0 + width("10") / 2.0, 140.0)],
+    );
+    let (x, y) = offset(&mut e, 1);
+    assert!((x - (level - 150.0)).abs() < 1e-9 && y == 0.0, "{x} {y}");
+
+    // Across the sheet again with no room either side (200 apart): refused, changing nothing.
+    let before = run(&mut e, "drw.info", json!({}))["annotations"].clone();
+    let err = e.exec("drw.annotation.edit", &json!({ "annotation": set, "axis": "horizontal", "spacing": 200 })).unwrap_err();
+    assert!(err.contains("no room"), "{err}");
+    assert_eq!(run(&mut e, "drw.info", json!({}))["annotations"], before);
+}

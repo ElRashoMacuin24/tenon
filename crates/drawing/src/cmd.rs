@@ -697,9 +697,9 @@ fn spacing_param(p: &Value) -> Result<Option<f64>, CmdError> {
     Ok(spacing)
 }
 
-/// Makes a baseline set (`spacing` given) or an ordinate set, after checking it can be measured:
-/// `make` gets its direction and where it goes from the view's centre.
-fn add_set(s: &mut DrwSession, p: &Value, from: &GeomPick, spacing: Option<f64>, make: impl FnOnce(SetAxis, Vec2) -> AnnotKind) -> CmdResult {
+/// Makes a baseline set or an ordinate set, after checking it can be measured: `make` gets its
+/// direction.
+fn add_set(s: &mut DrwSession, p: &Value, from: &GeomPick, make: impl FnOnce(SetAxis) -> AnnotKind) -> CmdResult {
     let vid = view_id(p, "view")?;
     let v = view(s.drawing(), vid)?.clone();
     let targets = picks(p, "targets")?;
@@ -715,18 +715,18 @@ fn add_set(s: &mut DrwSession, p: &Value, from: &GeomPick, spacing: Option<f64>,
         Some(a) => a,
         None => dimsets::axis_for(s.drawing(), ev, vid, at, from, &targets).map_err(CmdError)?,
     };
-    let at = match at {
-        Some(a) => a,
-        None => {
-            let room = spacing.map_or(0.0, |x| x * (targets.len() as f64 - 1.0)) + SET_SPACING;
-            dimsets::default_at(s.drawing(), ev, vid, axis, room).map_err(CmdError)?
-        }
-    };
-    let kind = make(axis, at - v.center);
-    // Refuse what cannot be measured.
-    let probe = Annotation { id: AnnotId(u32::MAX), kind: kind.clone() };
-    let l = dimsets::check(s.drawing(), ev, &probe).map_err(CmdError)?;
-    let aid = add_annotation(s, kind)?;
+    let mut probe = Annotation { id: AnnotId(u32::MAX), kind: make(axis) };
+    if let Some(at) = at {
+        dimsets::put_at(&mut probe.kind, v.center, at);
+    }
+    // Refuse what cannot be measured, wherever it goes.
+    dimsets::check(s.drawing(), ev, &probe).map_err(CmdError)?;
+    if at.is_none() {
+        let place = dimsets::default_at(s.drawing(), ev, &probe).map_err(CmdError)?;
+        dimsets::put_at(&mut probe.kind, v.center, place);
+    }
+    let l = dimsets::layout(s.drawing(), ev, &probe).map_err(CmdError)?;
+    let aid = add_annotation(s, probe.kind)?;
     Ok(json!({ "annotation": aid.0, "axis": axis.id(), "rows": set_rows(&l), "step": l.step }))
 }
 
@@ -735,7 +735,7 @@ fn drw_baseline(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> C
     let (spacing, precision) = (spacing_param(p)?.unwrap_or(SET_SPACING), precision_param(p)?.unwrap_or(2));
     let targets = picks(p, "targets")?;
     let from = datum.clone();
-    add_set(s, p, &from, Some(spacing), |axis, offset| AnnotKind::Baseline { view, axis, datum, targets, offset, spacing, precision })
+    add_set(s, p, &from, |axis| AnnotKind::Baseline { view, axis, datum, targets, offset: Vec2::new(0.0, 0.0), spacing, precision })
 }
 
 fn drw_ordinate(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
@@ -743,7 +743,7 @@ fn drw_ordinate(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> C
     let precision = precision_param(p)?.unwrap_or(2);
     let targets = picks(p, "targets")?;
     let from = origin.clone();
-    add_set(s, p, &from, None, |axis, offset| AnnotKind::Ordinate { view, axis, origin, targets, offset, precision })
+    add_set(s, p, &from, |axis| AnnotKind::Ordinate { view, axis, origin, targets, offset: Vec2::new(0.0, 0.0), precision })
 }
 
 /// The set `kind` with what `p` changes of it: another datum or origin, places taken away (their
@@ -966,14 +966,24 @@ fn drw_note(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
 /// in a baseline or ordinate set.
 fn drw_annotation_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let aid = annot_id(p, "annotation")?;
-    let by = opt_vec2(p, "by")?.unwrap_or(Vec2::new(0.0, 0.0));
+    let moved = opt_vec2(p, "by")?;
+    let by = moved.unwrap_or(Vec2::new(0.0, 0.0));
     let text = arg(p, "text").map(|t| t.as_str().map(str::to_owned));
     let precision = precision_param(p)?;
     let current = s.drawing().annotation(aid).ok_or_else(|| CmdError(format!("{aid} does not exist")))?;
-    let set = set_changed(&current.kind, p)?;
-    // A changed set must still be measurable, before anything is touched.
-    if let Some(kind) = &set {
-        dimsets::check(s.drawing(), s.current()?, &Annotation { id: aid, kind: kind.clone() }).map_err(CmdError)?;
+    let mut set = set_changed(&current.kind, p)?;
+    // A changed set must still be measurable, before anything is touched. Turned with nothing said
+    // of where, what it had for a place means nothing now: it goes outside the view, as a new one.
+    if let Some(kind) = &mut set {
+        let probe = Annotation { id: aid, kind: kind.clone() };
+        let ev = s.current()?;
+        dimsets::check(s.drawing(), ev, &probe).map_err(CmdError)?;
+        let turned = dimsets::parts(&current.kind).zip(dimsets::parts(kind)).is_some_and(|(was, now)| was.axis != now.axis);
+        if turned && moved.is_none() {
+            let center = current.kind.view().and_then(|v| s.drawing().view(v)).ok_or("the view is gone")?.center;
+            let place = dimsets::default_at(s.drawing(), ev, &probe).map_err(CmdError)?;
+            dimsets::put_at(kind, center, place);
+        }
     }
     s.edit(|d| {
         let a = d.annotations.iter_mut().find(|a| a.id == aid).ok_or_else(|| CmdError(format!("{aid} does not exist")))?;
@@ -986,7 +996,7 @@ fn drw_annotation_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Valu
                     return Err("the values of a baseline or ordinate set have no text of their own".into());
                 }
                 // Only across: along, each dimension stays with what it measures.
-                *offset += axis.point(0.0, axis.across(by));
+                *offset = axis.point(0.0, axis.across(*offset + by));
                 if let Some(x) = precision {
                     *pr = x;
                 }

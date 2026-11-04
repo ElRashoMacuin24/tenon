@@ -33,6 +33,8 @@ pub(crate) struct SetPanel {
     pub precision: u8,
     /// Where it goes on the sheet, once that is said.
     pub at: Option<Vec2>,
+    /// A click has said so.
+    pub placed: bool,
 }
 
 impl SetPanel {
@@ -48,6 +50,7 @@ impl SetPanel {
             spacing: format!("{SET_SPACING}"),
             precision: 2,
             at: None,
+            placed: false,
         }
     }
 
@@ -64,6 +67,7 @@ impl SetPanel {
             spacing: set.spacing.map_or_else(|| format!("{SET_SPACING}"), |x| format!("{x}")),
             precision: set.precision,
             at: Some(center + set.offset),
+            placed: false,
         })
     }
 
@@ -104,6 +108,19 @@ impl SetPanel {
             AnnotKind::Baseline { view, axis, datum: from, targets, offset, spacing: self.spacing_value().unwrap_or(SET_SPACING), precision }
         };
         Some(Annotation { id: self.annotation.unwrap_or(AnnotId(u32::MAX)), kind })
+    }
+
+    /// Where a set being changed goes while no click has said: where it stands, in the direction it
+    /// has; in the other, outside the view, as it will go. None if there is no room there.
+    fn place_unsaid(&self, d: &Drawing, ev: &Evaluation) -> Option<Vec2> {
+        let id = self.annotation?;
+        let center = d.view(self.view?)?.center;
+        let old = SetPanel::of(id, &d.annotation(id)?.kind, center)?;
+        if old.axis == self.axis {
+            return old.at;
+        }
+        let a = SetPanel { at: None, ..self.clone() }.annotation_at(d, ev, Some(center))?;
+        dimsets::default_at(d, ev, &a).ok()
     }
 
     fn spacing_value(&self) -> Option<f64> {
@@ -203,6 +220,7 @@ impl Workbench {
         // Elsewhere, the set goes there.
         if panel.annotation.is_some() {
             panel.at = Some(at);
+            panel.placed = true;
             return self.keep_panel(panel);
         }
         if panel.from.is_none() || panel.targets.is_empty() {
@@ -289,7 +307,8 @@ impl Workbench {
                     let note = dr.annotation(id).ok_or("the set is gone")?;
                     let center = note.kind.view().and_then(|v| dr.view(v)).ok_or("the view is gone")?.center;
                     let old = SetPanel::of(id, &note.kind, center).ok_or("that is not a set of dimensions")?;
-                    let by = panel.at.zip(old.at).map(|(new, was)| new - was);
+                    // (Turned and not put anywhere, it goes where there is room for it as it is now.)
+                    let by = panel.at.zip(old.at).filter(|_| panel.placed || panel.axis == old.axis).map(|(new, was)| new - was);
                     (old, by)
                 };
                 let mut p = json!({ "annotation": id.0, "precision": panel.precision });
@@ -327,7 +346,7 @@ impl Workbench {
         let Some(d) = self.drw.as_ref() else { return };
         let Some(DrwTool::Set(panel)) = d.tool.clone() else { return };
         let mut dlg = *panel;
-        let asked = dlg.prompt();
+        let (asked, axis_was) = (dlg.prompt(), dlg.axis);
         // What each place measures now, for the list.
         let shown: Vec<String> = {
             let ev = d.session.evaluation().or(d.session.last_evaluation());
@@ -412,6 +431,17 @@ impl Workbench {
         {
             dlg.targets.remove(i);
         }
+        // Turned: shown where it will go.
+        let mut no_room = false;
+        if dlg.axis != axis_was
+            && dlg.annotation.is_some()
+            && !dlg.placed
+            && let Some(d) = self.drw.as_ref()
+            && let Some(ev) = d.shown_evaluation()
+        {
+            dlg.at = dlg.place_unsaid(d.session.drawing(), ev);
+            no_room = dlg.at.is_none();
+        }
         if let Some(d) = self.drw.as_mut()
             && let Some(DrwTool::Set(p)) = d.tool.as_mut()
         {
@@ -427,6 +457,8 @@ impl Workbench {
                 d.tool = None;
             }
             self.set_status("Ready");
+        } else if no_room {
+            self.set_status("There is no room outside the view on this sheet for that direction: click where the set goes.");
         } else if dlg.prompt() != asked {
             self.set_status(dlg.prompt());
         }

@@ -687,3 +687,63 @@ fn a_second_click_takes_a_place_away_though_the_model_has_changed() {
     assert!(panel(&wb).is_none(), "{}", wb.status());
     assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["90"]);
 }
+
+/// The first line of the set in the panel, as it is shown.
+fn shown_level(wb: &Workbench) -> Option<f64> {
+    let dr = wb.drawing()?;
+    let ev = dr.evaluation()?;
+    let a = panel(wb)?.annotation_at(dr.drawing(), ev, None)?;
+    tenon_drawing::dimsets::layout(dr.drawing(), ev, &a).ok()?.rows.first()?.level
+}
+
+#[test]
+fn turned_in_its_panel_a_set_shows_where_it_will_go_and_goes_there() {
+    let _quiet = crate::tests::timing_lock();
+    let (mut wb, mut d) = drawing_of_plate("turn", Orientation::Top, 1.0);
+    press(&mut d, &mut wb, "ribbon drw.baseline");
+    let (a, b, c, place) =
+        (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0), in_view(&mut wb, 109.0, 65.0), in_view(&mut wb, 60.0, 110.0));
+    d.click(&mut wb, a);
+    d.click(&mut wb, b);
+    d.click(&mut wb, c);
+    d.click(&mut wb, place);
+    settle(&mut d, &mut wb, 2);
+    let was = info(&mut wb)["annotations"][0].clone();
+    let above = sheet(&mut wb, 0.0, 110.0).y;
+    rows_are(&was, above, &[("15", 0.0), ("105", 8.0)]);
+    let row = browser_row(&d, "Baseline 1: 2 dimension(s)").center();
+    double_click(&mut d, &mut wb, row);
+    assert!((shown_level(&wb).unwrap() - above).abs() < 1e-3);
+
+    // Vertical: shown to the right of the view, 10 clear of its side at x = 120, at once.
+    let side = sheet(&mut wb, 120.0, 0.0).x + 10.0;
+    press(&mut d, &mut wb, "tn_set_axis_v");
+    assert!((shown_level(&wb).unwrap() - side).abs() < 1e-9, "{:?}", panel(&wb));
+    // Horizontal again before OK: where it was.
+    press(&mut d, &mut wb, "tn_set_axis_h");
+    assert!((shown_level(&wb).unwrap() - above).abs() < 1e-3);
+    // Vertical, and OK: there, reading 25 each way from the left side's middle at y = 40.
+    press(&mut d, &mut wb, "tn_set_axis_v");
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    let turned = info(&mut wb)["annotations"][0].clone();
+    assert_eq!(turned["axis"], "vertical");
+    rows_are(&turned, side, &[("25", 0.0), ("25", 8.0)]);
+    // One undo: as it was.
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    assert_eq!(info(&mut wb)["annotations"][0], was);
+    settle(&mut d, &mut wb, 2);
+
+    // Put somewhere by a click and then turned: it stays where it was clicked.
+    let row = browser_row(&d, "Baseline 1: 2 dimension(s)").center();
+    double_click(&mut d, &mut wb, row);
+    let far = sheet(&mut wb, 170.0, 40.0).x;
+    let at = in_view(&mut wb, 170.0, 40.0);
+    d.click(&mut wb, at);
+    press(&mut d, &mut wb, "tn_set_axis_v");
+    assert!((shown_level(&wb).unwrap() - far).abs() < 0.05, "{:?}", panel(&wb));
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    let clicked = info(&mut wb)["annotations"][0].clone();
+    assert!((clicked["rows"][0]["level"].as_f64().unwrap() - far).abs() < 0.05, "{clicked}");
+}
