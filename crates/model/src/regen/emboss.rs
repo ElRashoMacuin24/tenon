@@ -27,6 +27,10 @@ type Named = (ShapeHandle, Vec<Option<FaceOrigin>>);
 /// on: about a degree. A wall along the normal, or one that leans back, is not.
 const FACING: f64 = 0.02;
 
+/// How far over what it is seen from the space above the part starts: little enough to stay clear of
+/// a wall that stands near a sketch in a hole, and more than a sketch on a face has between them.
+const JUST_OVER: f64 = 0.01;
+
 /// How far a tool laid round a surface reaches past the layer it is cut to, at most, so that its top
 /// and foot are not a face on a face for the kernel to judge.
 const OVER: f64 = 0.05;
@@ -337,7 +341,7 @@ impl<'a> Ctx<'a> {
         // The solid it goes on: the last that it is seen on, as a feature goes on the last solid.
         let mut seen_on_some = false;
         for bi in (0..self.regen.bodies.len()).rev() {
-            let Some(floors) = self.floors_under(id, bi, &wide, sign, e.depth, raise)? else { continue };
+            let Some(floors) = self.floors_under(id, bi, e, profile, &wide)? else { continue };
             seen_on_some = true;
             let (forward, backward) = if e.reverse { (floors.below, floors.above) } else { (floors.above, floors.below) };
             let (thick, thick_names) = floors.solid;
@@ -382,31 +386,33 @@ impl<'a> Ctx<'a> {
     }
 
     /// The faces of body `bi` the box `wide` is seen on, looking along the sketch's normal, those
-    /// that look `sign` of the way along it, as far as they are seen, thickened by `depth` out of
-    /// the part (`raise`) or into it. None when it is seen on none of that body.
+    /// that look the way the feature does, as far as they are seen, thickened by its depth out of
+    /// the part or into it. None when it is seen on none of that body.
     ///
-    /// What is seen from the sketch plane looking the other way: the first faces met. A sketch
-    /// plane in the material (on a plane through a shaft, say) looks from where the material
-    /// ends over it. A sketch on a face looks at that face.
-    fn floors_under(&mut self, id: FeatureId, bi: usize, wide: &Profile, sign: f64, depth: f64, raise: bool) -> Result<Option<Floors>, Stop> {
+    /// What is seen from the sketch plane looking the other way: the first faces met. A profile in
+    /// the material (on a plane through a shaft, say) looks from where the material ends over it.
+    /// One on a face looks at that face, and one in open space, a hole's middle say, from there.
+    fn floors_under(&mut self, id: FeatureId, bi: usize, e: &Emboss, profile: &Profile, wide: &Profile) -> Result<Option<Floors>, Stop> {
         let body = self.body_shape(bi)?;
         let frame = wide.frame;
+        let sign = if e.reverse { -1.0 } else { 1.0 };
         let look = frame.z() * sign;
+        let (depth, raise) = (e.depth, e.style == EmbossStyle::Raise);
         let Some(bb) = self.k.bounding_box(body)? else { return Ok(None) };
         let along: Vec<f64> = corners(&bb).into_iter().map(|c| (c - frame.origin()).dot(look)).collect();
         let (low, high) = along.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| (a.min(*t), b.max(*t)));
         let mut temp: Vec<ShapeHandle> = Vec::new();
         let mut layers: Vec<Named> = Vec::new();
         let result = (|| -> Result<Option<(f64, f64)>, Stop> {
-            // Where the material goes on above the sketch plane, from the plane itself.
+            // Where the material over the profile goes on to, from the plane itself.
             let mut top = 0.0f64;
             if high > tenon_geom::tol::LINEAR {
-                let up = self.k.extrude(wide, &Extent::Distance(sign * (high + 1.0)), None)?.shape;
+                let up = self.k.extrude(profile, &Extent::Distance(sign * (high + 1.0)), None)?.shape;
                 temp.push(up);
                 match self.k.boolean(BoolOp::Intersect, up, &[body]) {
                     Ok(common) => {
                         temp.push(common.shape);
-                        let plane = self.k.make_face(wide)?.shape;
+                        let plane = self.k.make_face(profile)?.shape;
                         temp.push(plane);
                         for i in 0..self.k.topology(common.shape)?.solids {
                             let s = self.k.solid(common.shape, i)?;
@@ -426,12 +432,13 @@ impl<'a> Ctx<'a> {
             if low >= -tenon_geom::tol::LINEAR && top <= tenon_geom::tol::LINEAR {
                 return Ok(None);
             }
-            // The space from just above all that, down through the part.
+            // The space from just above all that, down through the part. (What is raised reaches
+            // higher, and is not cut by this.)
             let above = top + depth + 1.0;
             let below = (-low).max(0.0) + 1.0;
-            let start_frame = frame.with_origin(frame.origin() + look * above).ok_or("the sketch's plane is out of range")?;
+            let start_frame = frame.with_origin(frame.origin() + look * (top + JUST_OVER)).ok_or("the sketch's plane is out of range")?;
             let start = Profile { frame: start_frame, regions: wide.regions.clone() };
-            let shaft = self.k.extrude(&start, &Extent::Distance(-sign * (above + below)), None)?.shape;
+            let shaft = self.k.extrude(&start, &Extent::Distance(-sign * (top + JUST_OVER + below)), None)?.shape;
             temp.push(shaft);
             let free = match self.k.boolean(BoolOp::Cut, shaft, &[body]) {
                 Ok(op) => op,

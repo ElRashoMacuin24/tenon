@@ -98,6 +98,9 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::Emboss(_), KernelError::OperationFailed { op: "thicken", .. }) => {
             "The faces the profile is seen on could not be followed at that depth. The depth may be more than the surface's curve allows: try a smaller depth.".into()
         }
+        (FeatureKind::Emboss(_), KernelError::OperationFailed { op: "facing" | "prism_of_face", .. }) => {
+            "What the profile is seen on could not be worked out on these faces: a face could not be cut where it turns away from the sketch. Try a narrower profile, or a sketch that looks at the faces more squarely.".into()
+        }
         (FeatureKind::Emboss(_), KernelError::OperationFailed { op: "roll" | "roll_cone", .. }) => {
             "The profile could not be laid round the face. It may reach more than once round, or past the cone's apex, or have corners too small to follow: try a smaller profile, or check where the sketch is.".into()
         }

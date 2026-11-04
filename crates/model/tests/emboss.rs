@@ -975,6 +975,52 @@ fn what_lies_under_an_overhang_is_not_seen() {
 }
 
 #[test]
+fn what_it_is_seen_from_goes_by_the_profile_and_not_by_the_depth() {
+    // A plate 30 thick with a hole of radius 10 through it, the sketch in the hole's middle on a
+    // plane through its axis: whatever the depth, it is seen on the hole's wall, not on the plate's
+    // outside, which the box round the profile comes to as the depth grows.
+    let plate = |s: &mut Session, k: &mut OcctKernel| {
+        let sk0 = feature(&run(s, k, "sketch.create", json!({ "plane": "xy" })));
+        run(s, k, "sketch.rectangle", json!({ "sketch": sk0, "x1": 0, "y1": 0, "x2": 40, "y2": 40 }));
+        run(s, k, "model.extrude", json!({ "sketch": sk0, "distance": 30 }));
+        let h = feature(&run(s, k, "sketch.create", json!({ "plane": "xy" })));
+        run(s, k, "sketch.circle", json!({ "sketch": h, "cx": 20, "cy": 20, "r": 10 }));
+        run(s, k, "model.extrude", json!({ "sketch": h, "distance": 30, "operation": "cut" }));
+    };
+    let v0 = 40.0 * 40.0 * 30.0 - PI * 100.0 * 30.0;
+    for d in [2.0, 6.0, 9.0] {
+        for reverse in [false, true] {
+            let (mut s, mut k) = (Session::default(), OcctKernel::new());
+            plate(&mut s, &mut k);
+            let u = feature(&run(&mut s, &mut k, "work.ucs", json!({ "x": 20, "y": 20, "rx": FRAC_PI_2 })));
+            let sk = feature(&run(&mut s, &mut k, "sketch.create", json!({ "ucs_plane": { "ucs": u, "plane": "xy" } })));
+            run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": -2, "y1": 10, "x2": 2, "y2": 20 }));
+            run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": d, "reverse": reverse }));
+            let hand = v0 + 10.0 * (under_round(10.0, -2.0, 2.0) - under_round(10.0 - d, -2.0, 2.0));
+            near(volume(&mut s, &mut k), hand, 1e-2);
+            let t = run(&mut s, &mut k, "model.topology", json!({}));
+            near(t["bodies"][0]["bbox"]["min"][1].as_f64().unwrap(), 0.0, 1e-6);
+            near(t["bodies"][0]["bbox"]["max"][1].as_f64().unwrap(), 40.0, 1e-6);
+            // Recessed into the wall the same, whatever the depth.
+            let (mut s, mut k) = (Session::default(), OcctKernel::new());
+            plate(&mut s, &mut k);
+            let u = feature(&run(&mut s, &mut k, "work.ucs", json!({ "x": 20, "y": 20, "rx": FRAC_PI_2 })));
+            let sk = feature(&run(&mut s, &mut k, "sketch.create", json!({ "ucs_plane": { "ucs": u, "plane": "xy" } })));
+            run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": -2, "y1": 10, "x2": 2, "y2": 20 }));
+            run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": d, "reverse": reverse, "style": "recess" }));
+            let hand = v0 - 10.0 * (under_round(10.0 + d, -2.0, 2.0) - under_round(10.0, -2.0, 2.0));
+            near(volume(&mut s, &mut k), hand, 1e-2);
+        }
+    }
+    // A profile in the material, the plane through a shaft: from where the material ends over it.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    shaft(&mut s, &mut k, 10.0, 50.0);
+    let sk = rect_above(&mut s, &mut k, 0.0, [10.0, -3.0, 20.0, 3.0]);
+    run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 2 }));
+    near(volume(&mut s, &mut k), PI * 100.0 * 50.0 + 10.0 * (under_round(12.0, -3.0, 3.0) - under_round(10.0, -3.0, 3.0)), 1e-2);
+}
+
+#[test]
 fn from_the_plane_what_would_come_loose_or_shut_a_hollow_is_refused() {
     // The plane on the top face, flipped: added above the face, taken below it, the two touching
     // only round the profile's edge.
