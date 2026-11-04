@@ -26,9 +26,10 @@ Intel Macs and other systems: build Tenon from its source ([setup.md](setup.md))
 ## The window
 
 - **The ribbon** across the top holds the commands of what you are working on, in tabs:
-  3D Model, Sketch, Sheet Metal, Inspect, Tools, Manage, View, Environments for a part;
-  Assemble for an assembly; Place Views and Annotate for a drawing. Greyed buttons are
-  commands Tenon does not have yet; their tip says so.
+  3D Model, Sketch, Inspect, Tools, Manage, View, Environments for a part (Sheet Metal and Flat
+  Pattern on a sheet metal part, Stress Analysis while you are in it); Assemble for an assembly;
+  Place Views and Annotate for a drawing. Greyed buttons are commands Tenon does not have yet;
+  their tip says so. In a window narrower than the ribbon, an arrow at its end goes along it.
 - **Search commands** (top right) finds any command by name.
 - **The browser** on the left lists the part's features in order (or the assembly's
   components, or the drawing's sheets and views). Double-click a feature to change it;
@@ -78,8 +79,9 @@ next, by a flick of the mouse.
    use **Dimension** (D): click an edge, then where the dimension goes, and type its value.
 4. **Finish Sketch.**
 5. **Extrude** (E): the profile is chosen; type the distance and press Enter.
-6. Click the top face, **Start 2D Sketch**, draw a circle, **Finish Sketch**, then **Hole**
-   (H) or **Extrude** with Cut.
+6. A hole: press **Hole** (H) and click the top face where it goes, then OK. Or a cut of any
+   shape: click the top face, **Start 2D Sketch**, draw a circle, **Finish Sketch**, then
+   **Extrude** with Cut.
 7. **Fillet** (F): click edges, type the radius, Enter.
 8. **File > Save.** A part is one `.tenon` file, plain text.
 
@@ -94,7 +96,8 @@ a part from a screw, nut, washer, bearing or section in one of its sizes.
 
 Lines, arcs, circles, ellipses, rectangles, slots (straight or along an arc), polygons and splines; Trim, Extend, Split, Offset,
 Move, Copy, Rotate, Scale, Stretch, Mirror and patterns. Constraints are found as you draw
-(horizontal, perpendicular, tangent...) and can be added from the Constrain panel; the
+(horizontal, perpendicular, tangent...) and can be added from the Constrain panel, where
+**Smooth** joins a spline to the line, arc or spline it ends on with the same bend on both sides; the
 status bar says how many degrees of freedom are left, and curves that are fully
 constrained change colour. **Project Geometry** brings edges of the part into the
 sketch. A dimension can be typed as a formula of parameters.
@@ -103,7 +106,8 @@ sketch. A dimension can be typed as a formula of parameters.
 with the height of its capital letters and an angle; Enter starts a new line, OK places it.
 Double-click a text to change it, or drag it by its box. Its letters are profiles: extrude
 a sketch that holds only text to raise it, or cut it into a face to engrave it. When a sketch
-also has closed curves, click inside the text's box in the Extrude panel to add its letters.
+also has closed curves, click inside the text's box in the Extrude panel to add its letters
+(beside those curves, not over them: click the curves' region to take it away).
 Text uses one font, DejaVu Sans, built in so that a part looks the same on every computer.
 
 **Points** (Sketch > Create > Point) are centre points, drawn as a cross: a Hole goes at
@@ -122,7 +126,18 @@ To delete a feature, right-click it in the browser and choose **Delete**. When s
 made from, or features that use it, would be left, the Delete Features box lists them; they
 go with it unless you untick them.
 
-Extrude, Revolve, Sweep, Loft, Coil, Rib; Hole (simple, counterbored, countersunk), Thread,
+A revolution turns **Default**, **Flipped**, **Symmetric** or **Asymmetric** (two angles), or goes
+**To** a face or plane through the axis, or **To Next**.
+
+A **Hole** goes at the centre points of a sketch, or with no sketch of centres you click a flat
+face where each goes. Its type is Simple, Clearance (for a screw to pass) or **Tapped** (a screw's
+tap drill, with the thread on its wall, full depth or a depth; drawings note it). Its seat is a
+counterbore, a **spotface** or a countersink. It goes a depth, through all, or **To** a face or plane.
+
+**Work planes** go by an offset, an angle, the middle of two planes or **three points**. A
+sketch's or work feature's menu in the browser has **Visibility**, which shows or hides it.
+
+Extrude, Revolve, Sweep, Loft, Coil, Rib; Hole, Thread,
 Fillet, Chamfer, Shell, Draft, Split, Combine; rectangular and circular patterns, Mirror;
 work planes, axes and points; Box, Cylinder, Sphere and Torus. Every one opens its panel
 again when its row is double-clicked. A fillet can be Variable (a radius at each end of its
@@ -139,7 +154,7 @@ distances, angles, lengths and areas.
 **File > New Sheet Metal Part**, or **3D Model > Convert to Sheet Metal**. Set the
 thickness, bend radius, reliefs and K factor in **Sheet Metal Defaults**. Then Face,
 Flange, Contour Flange, Hem, Fold, Bend, Corner Seam, Cut (also across bends) and Corner
-Round/Chamfer. **Go to Flat Pattern** lays it flat; **File > Export Flat Pattern DXF**
+Round/Chamfer. **Create Flat Pattern** lays it flat (**Go to Flat Pattern** afterwards); **File > Export Flat Pattern DXF**
 writes it for a cutter.
 
 ## Assemblies
@@ -157,7 +172,7 @@ An assembly file refers to its parts by where they are relative to it: move them
 
 ## Drawings
 
-**File > New Drawing** (ANSI or ISO), or **New Drawing from Template**. **Base View** shows a
+**File > New Drawing** (ANSI or ISO), or **New Drawing from Template**. **Base** shows a
 part or an assembly; then projected, section, detail and isometric views. Dimensions follow
 the model; hole tables, parts lists, balloons and text are on Annotate. **Export PDF, SVG or
 DXF** from the File menu.
@@ -223,8 +238,11 @@ Protocol ([mcp.md](mcp.md)). Every command the ribbon runs is listed in
 
 ## What Tenon does not do yet
 
-Tenon 0.1 is a first release. Among what it does not do: sub-assemblies, motion studies and
-parts that adapt to one another; shaded drawing views, tolerances and ordinate dimensions;
-ellipses in sketches, a choice of fonts for sketch text; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
-stress studies of assemblies or of more than one material. [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROADMAP.md)
+Among what Tenon does not do yet: sub-assemblies, motion studies and parts that adapt to one
+another; shaded drawing views, tolerances and ordinate dimensions; a choice of fonts for sketch
+text, and letters outside Latin, Greek and Cyrillic (in the window such a name shows as boxes,
+and in sketch text it is cut as boxes, though the file opens and works); a taper on an ellipse, a
+spline or a letter's curves; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
+stress studies of assemblies or of more than one material. A window holds one document: File >
+Open replaces it, and a second window is the way to have two open. [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROADMAP.md)
 lists everything that works, with the test that shows it, and what is missing.

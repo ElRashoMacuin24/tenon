@@ -109,6 +109,9 @@ gives a part that rebuilds and is wrong, which is worse than one that fails.
 
 ### A stress study
 
+For a shape worked out from a study's loads see [topology.md](topology.md): `study.keep`,
+`study.shape`, `study.optimize`, and `shape_needs` in `study.check`.
+
 Where a part is held and what pushes on it is set up by the `study.*` commands (through
 `run_command`), on faces (and edges) found with `find_geometry`:
 

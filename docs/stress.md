@@ -55,7 +55,7 @@ When one is missing, the study says which, and everything else in Tenon works as
 2. Gmsh divides it into ten-node tetrahedra. Their size is the study's (Mesh Settings,
    `study.mesh_size`), or a twentieth of the part's size; round holes and fillets get
    smaller ones. It runs on one thread, so that the same part gives the same mesh, and the
-   same answer, every time. Where the solver refuses that mesh for an element turned inside out
+   same answer to about eleven figures, every time. Where the solver refuses that mesh for an element turned inside out
    (it happens most at the tip of a drilled hole), Gmsh divides it again and moves the mid-side
    nodes so that none is, and the study is solved on that; if it still cannot be, the study says
    what helps.
@@ -121,8 +121,8 @@ Fixed and Force take edges too: whichever is clicked first, a face or an edge, s
 is on, and Clear (the cross beside the count) lets you choose again. A direction, or the axis
 a load turns about, is clicked in the part (the selector, then a straight edge, a face or a
 work axis) or chosen from its list. For Body, a round face or an edge clicked as the axis
-also gives the point the axis goes through. Where a remote force acts is typed, in the
-part's coordinates.
+also gives the point the axis goes through. Where a remote force acts is picked in the part (the
+middle of a face or an edge), or typed in the part's coordinates.
 
 The status bar says what the study comes to. The browser's Results have a row for von Mises
 stress, displacement and safety factor: click one to see it in colour on the part, with a

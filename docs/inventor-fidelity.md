@@ -66,8 +66,7 @@ Tenon copies behaviour, never artwork: no icons, images, names or text of the pr
 6. For the part as a whole (the first table below): an appearance for one body or face; design table
    rows that suppress features or set the material; choosing the size while placing a part.
 7. Standard parts and printing (the second table below): a length asked for when a section is
-   placed; a fastener that takes its size from the hole it is dropped on; the printer's build
-   space drawn round the part.
+   placed; a fastener that takes its size from the hole it is dropped on.
 8. The Sketch tab's remaining buttons (the tables below): sketch patterns that stay tied to
    their original, automatic dimensions. (Text is done: DEC-102; Center Point DEC-117, Stretch
    DEC-119, the ellipse DEC-120.)
@@ -165,7 +164,7 @@ Construction, Centerline, Center Point (DEC-117) and Driven Dimension; Show Form
 
 | Inventor | Tenon | Proof / gap |
 |---|---|---|
-| The Physical tab of a part's properties: its material and density, then mass, area, volume and centre of gravity | done | Inspect > Properties (DEC-043): `a_part_is_given_a_material_a_density_and_a_colour_in_its_properties`. Gap: the window does not list moments of inertia (the `model.mass` command returns them), and a mass or volume cannot be overridden by hand |
+| The Physical tab of a part's properties: its material and density, then mass, area, volume and centre of gravity | done | Inspect > Properties (DEC-043): `a_part_is_given_a_material_a_density_and_a_colour_in_its_properties`. |
 | The values are recalculated on Update; out-of-date values read N/A | done differently | Tenon's values follow every change, so there is no Update button and nothing goes stale |
 | The material comes from a library and brings its density; a part with the default material has a density of 1 | done | a library of 22 materials; without one a part is at 1 g/cm³. Gap: no library of one's own kept between parts (a material typed in stays with its part); no properties beyond density and colour |
 | An appearance is shown in place of the material's own, and can be set for one body or one face | partial | one colour for the whole part (twelve swatches or a typed `#rrggbb`). Gap: bodies and faces cannot have their own; no textures or finishes |
@@ -189,7 +188,7 @@ Construction, Centerline, Center Point (DEC-117) and Driven Dimension; Show Form
 | AutoDrop: a bolt, nut, washer or bearing dragged to a hole or shaft takes its size from it and is constrained there | missing | the size is picked from the list and the part constrained by hand |
 | Structural shapes are placed at a length typed in | partial | a section's length is its parameter `L`: set in a part started from the library. A section placed straight into an assembly is at the length its file has. Gap: no length asked for on placing; two lengths need two part files |
 | Libraries hold many standards (ISO, DIN, ANSI, JIS) and can be added to and published | missing | ISO metric fasteners M3 to M20, seventeen bearings, five kinds of section. No way to add a family without writing code |
-| The 3D Print environment (Environments tab, parts only) shows the part in the printer's build space, Z up; the part is turned and moved in it, a printer is chosen, an oversized part is partitioned | partial | Environments > 3D Print Check (DEC-051): which way is up is one of six directions, the bed is three sizes typed in, and the part is said to fit or not. `the_print_check_window_reads_the_part_and_marks_what_it_finds`. Gap: the build space is not drawn; no list of printers; no free turning; no partitioning |
+| The 3D Print environment (Environments tab, parts only) shows the part in the printer's build space, Z up; the part is turned and moved in it, a printer is chosen, an oversized part is partitioned | partial | Environments > 3D Print Check (DEC-051): which way is up is one of six directions, the bed is three sizes typed in, and the part is said to fit or not. `the_print_check_window_reads_the_part_and_marks_what_it_finds`. Gap: no list of printers; no free turning; no partitioning |
 | (Inventor's environment does not check the part) | Tenon adds | whether the surface is closed, what overhangs past a limit and how thin the thinnest wall is, with the faces tinted in the model. A maker's first three questions, answered before the slicer is opened |
 | The part is sent on as STL; resolution is set in the export's options | done | File > Export STL and Export 3MF, for parts and assemblies (DEC-052): `files_for_the_slicer_come_from_the_file_menu_for_parts_and_assemblies`. Gap: no options dialog in the app (the tolerance is the usual one; the commands take `linear` and `angular`); nothing is sent to a printer or a slicer directly |
 
