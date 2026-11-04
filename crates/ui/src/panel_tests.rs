@@ -745,3 +745,23 @@ fn an_angle_comes_back_as_it_was_through_the_panels_degrees() {
     ok(&mut d, &mut wb);
     assert!((value_of(&wb, "/taper") - 2f64.to_radians()).abs() < 1e-12);
 }
+
+#[test]
+fn command_search_finds_what_a_button_reads_and_keeps_enter_to_itself() {
+    assert!(crate::commands::search("go to flat").iter().any(|c| c.id == "sheet.flat_view"));
+    let (mut wb, mut d, _) = block_and_a_circle_on_top();
+    d.tap(&mut wb, egui::Key::E);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    // Nothing found, with a panel open: Enter does not press the panel's OK.
+    let at = d.text_pos("Search commands...").unwrap_or_else(|| panic!("{:?}", d.texts()));
+    d.click(&mut wb, at);
+    d.frame(&mut wb, vec![egui::Event::Text("zzzz".into())]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.chrome.search, "zzzz");
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_some(), "the panel took it: {}", wb.status());
+    assert_eq!(wb.chrome.search, "", "the next search starts afresh");
+}
