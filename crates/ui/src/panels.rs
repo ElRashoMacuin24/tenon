@@ -983,11 +983,12 @@ impl Workbench {
             },
             // Once it is all picked it shows as it will be; until then the part as it is before
             // it, so that what is to be picked can be seen. Further bends are picked on that.
+            // (Edited, up to itself: an unfold further on would hide what a rip does, and a refold
+            // what an unfold does, and what is clicked is on the sheet as it then is.)
             Some(Panel::Rip(p)) => match p.kind() {
-                Some(kind) => with_feature(self.document(), p.editing, kind),
+                Some(kind) => with_feature(self.document(), p.editing, kind).map(|d| up_to(d, p.editing)),
                 None => rolled(p.editing),
             },
-            // (Edited, up to itself: a refold further on would hide what an unfold does.)
             Some(Panel::Unfold(p)) => match p.kind() {
                 Some(kind) => with_feature(self.document(), p.editing, kind).map(|d| up_to(d, p.editing)),
                 None => rolled(p.editing),

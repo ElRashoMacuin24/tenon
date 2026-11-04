@@ -1355,7 +1355,7 @@ impl Workbench {
         self.panel = Some(Panel::Rip(panel));
         self.start_equations();
         self.view.selection.clear();
-        self.set_status("Rip: click the point on a face of the sheet that the slit goes through, then OK. A closed shape can be laid flat once it is open. Point to Point and Whole Face are the other ways.");
+        self.set_status("Rip: click the point on a face of the sheet that the slit goes through, then OK. A closed shape can be laid flat once it is open; a rip that would part the sheet is refused. Point to Point and Whole Face are the other ways.");
         Ok(())
     }
 
@@ -1402,6 +1402,12 @@ impl Workbench {
             .collect()
     }
 
+    /// The last unfold with a flat strip on the part as it stands: its strips' faces are named after it.
+    fn unfold_still_flat(&self) -> Option<FeatureId> {
+        let on_the_part = |id: FeatureId| self.scene.bodies.iter().flat_map(|b| &b.faces).any(|(name, _)| name.is_some_and(|n| n.feature() == id));
+        self.document().features().iter().rev().filter(|f| matches!(f.kind, FeatureKind::Unfold(_))).map(|f| f.id).find(|id| on_the_part(*id))
+    }
+
     pub(crate) fn open_refold(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
         self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
         let panel = match editing {
@@ -1410,7 +1416,7 @@ impl Workbench {
                 _ => return Err("not a refold".into()),
             },
             None => {
-                let Some(unfold) = self.document().unfold_to_refold() else {
+                let Some(unfold) = self.unfold_still_flat().or_else(|| self.document().unfold_to_refold()) else {
                     return Err("The part has no unfold, so it has nothing to fold back: lay bends flat first with Unfold.".into());
                 };
                 RefoldPanel { editing: None, unfold, bends: Vec::new(), all: true }
@@ -1432,7 +1438,8 @@ impl Workbench {
         };
         let (x, y, w, h) = (f64::from(pos.x - rect.left()), f64::from(pos.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
         let (meshes, tree) = (self.scene.placed(), self.body_tree());
-        let takes_edge = matches!(&self.panel, Some(Panel::Rip(p)) if p.way == RipChoice::Point && p.face.is_some() && !p.points.is_empty());
+        // (A slit in a round face runs along its axis: an edge is nothing to it.)
+        let takes_edge = matches!(&self.panel, Some(Panel::Rip(p)) if p.way == RipChoice::Point && !p.points.is_empty() && p.face.as_ref().is_some_and(|f| f.fingerprint.surface == "plane"));
         if takes_edge
             && let Some(e) = pick_edge_in(tree.as_deref(), &meshes, &self.view.camera, w, h, x, y, 5.0)
             && matches!(self.scene.bodies.get(e.body).and_then(|b| b.curves.get(e.edge as usize)), Some(CurveKind::Line { .. }))
@@ -1448,19 +1455,20 @@ impl Workbench {
         }
         let (o, d) = self.view.camera.ray(x, y, w, h);
         let hit = pick_face_in(tree.as_deref(), &meshes, o, d);
+        let editing = self.panel.as_ref().and_then(Panel::editing);
         let side = hit.filter(|f| {
-            self.scene
-                .bodies
-                .get(f.body)
-                .and_then(|b| b.faces.get(f.face as usize))
-                .is_some_and(|(name, info)| name.is_some() && matches!(info.surface, SurfaceKind::Plane { .. } | SurfaceKind::Cylinder { .. }))
+            self.scene.bodies.get(f.body).and_then(|b| b.faces.get(f.face as usize)).is_some_and(|(name, info)| {
+                // A face of the sheet before this rip, not a side of the slit it shows.
+                name.is_some_and(|n| self.made_before(n.feature(), editing))
+                    && matches!(info.surface, SurfaceKind::Plane { .. } | SurfaceKind::Cylinder { .. })
+            })
         });
         self.view.hover = side.as_ref().map(|f| Pick::Face { body: f.body, face: f.face });
         if !resp.clicked() {
             return;
         }
         let Some(hit) = side else {
-            self.set_error("Rip: click a face of the sheet, flat or round.");
+            self.set_error("Rip: click a face of the sheet, flat or round, as it was before this rip.");
             return;
         };
         let Some(face) = self.face_ref_of(hit.body, hit.face) else { return };
@@ -1490,7 +1498,11 @@ impl Workbench {
                 }
             }
         }
+        let round = p.face.as_ref().is_some_and(|f| f.fingerprint.surface != "plane");
         let next = match (p.way, p.points.len()) {
+            (RipChoice::Point, _) if round => {
+                "Rip: the slit goes along the round face through that point. Click another point in its place, then OK."
+            }
             (RipChoice::Point, _) => {
                 "Rip: the slit goes through that point. Click a straight edge for it to run alongside, or another point in its place, then OK."
             }
@@ -2053,12 +2065,15 @@ impl Workbench {
                                     format!("{}, {}, {}", fmt_value(q.x), fmt_value(q.y), fmt_value(q.z))
                                 }));
                                 ui.end_row();
-                                ui.label("Alongside").on_hover_text("A straight edge the slit runs alongside. Without one: on a bend along its axis, on a flat face alongside the bend beside it, else across the face's short way");
-                                let picked = picked_row(ui, usize::from(p.along.is_some()), "click an edge, or as it comes");
-                                if picked {
-                                    p.along = None;
+                                // (On a round face a slit goes along its axis, whatever is clicked.)
+                                if p.face.as_ref().is_none_or(|f| f.fingerprint.surface == "plane") {
+                                    ui.label("Alongside").on_hover_text("A straight edge the slit runs alongside. Without one: alongside the bend beside the face, else across the face's short way");
+                                    let picked = picked_row(ui, usize::from(p.along.is_some()), "click an edge, or as it comes");
+                                    if picked {
+                                        p.along = None;
+                                    }
+                                    ui.end_row();
                                 }
-                                ui.end_row();
                             }
                             RipChoice::Between => {
                                 ui.label("Points").on_hover_text("Where the slit starts and ends. Clicked on an edge of the face, it goes through that edge");

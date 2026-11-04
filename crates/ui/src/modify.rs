@@ -279,6 +279,17 @@ impl Workbench {
         Some(FaceRef { origin: (*name)?, fingerprint: Fingerprint::of(info) })
     }
 
+    /// Whether feature `made` comes before the one a panel is setting up: `editing`, or one that is
+    /// not in the part yet (a preview's faces of it have no feature to find).
+    pub(crate) fn made_before(&self, made: FeatureId, editing: Option<FeatureId>) -> bool {
+        let doc = self.document();
+        match (doc.index_of(made), editing.and_then(|id| doc.index_of(id))) {
+            (Some(made), Some(editing)) => made < editing,
+            (Some(_), None) => true,
+            (None, _) => false,
+        }
+    }
+
     /// True if the pick can go into the open panel.
     fn referable(&self, p: Pick, wants: Wants) -> bool {
         let surface = |body: usize, face: u32| self.scene.bodies.get(body).and_then(|b| b.faces.get(face as usize)).map(|f| &f.1.surface);
@@ -303,9 +314,10 @@ impl Workbench {
             (Pick::Face { body, face }, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) => {
                 self.bodies_referable(body, face)
             }
-            // A flat face stays where it is, a round one is a bend to lay flat.
-            (Pick::Face { body, face }, Some(Panel::Unfold(_))) => {
-                self.face_ref_of(body, face).is_some()
+            // A flat face stays where it is, a round one is a bend to lay flat: of the sheet before
+            // this unfold, not the strip the preview shows it making.
+            (Pick::Face { body, face }, Some(Panel::Unfold(u))) => {
+                self.face_ref_of(body, face).is_some_and(|f| self.made_before(f.origin.feature(), u.editing))
                     && matches!(surface(body, face), Some(SurfaceKind::Plane { .. } | SurfaceKind::Cylinder { .. }))
             }
             // A face of a strip the unfold made.
@@ -811,8 +823,26 @@ impl Workbench {
             && let Some(p) = hover
         {
             self.pick_into_panel(p, true);
+        } else if resp.clicked() && matches!(self.panel, Some(Panel::Unfold(_))) {
+            self.say_why_not_for_unfold(resp, rect);
         }
         true
+    }
+
+    /// A click on a face an unfold cannot take: it says why.
+    fn say_why_not_for_unfold(&mut self, resp: &egui::Response, rect: Rect) {
+        let Some(p) = resp.interact_pointer_pos() else { return };
+        let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
+        let (o, d) = self.view.camera.ray(x, y, w, h);
+        let Some(hit) = pick_face_in(tree.as_deref(), &meshes, o, d) else { return };
+        let editing = self.panel.as_ref().and_then(Panel::editing);
+        let named = self.scene.bodies.get(hit.body).and_then(|b| b.faces.get(hit.face as usize)).and_then(|f| f.0);
+        if named.is_some_and(|n| self.made_before(n.feature(), editing)) {
+            self.set_error("Unfold: click a flat face of the sheet to stay where it is, or a round face of a bend to lay flat.");
+        } else {
+            self.set_error("Unfold: that face is what this unfold makes, so it cannot be what stays or a bend to lay flat. Click another face, or clear the bends to pick on the sheet as it was.");
+        }
     }
 
     /// Moves a box selection into the open panel. Returns false when no picking panel is open.
