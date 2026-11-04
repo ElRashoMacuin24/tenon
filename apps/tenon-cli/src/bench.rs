@@ -150,7 +150,7 @@ pub fn part(rows: &mut Vec<Row>, make: Make, model: &str, doc: &Document, budget
     Ok(())
 }
 
-/// A plate with twenty pairs of holes and a boss: 42 features, each hole a feature of its own.
+/// A plate with an elliptical window cut through it.
 pub fn elliptical_window(make: Make, work: &Path) -> Result<Document, String> {
     let mut e = Engine::new(make(), work);
     let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).map_err(|err| format!("{id}: {err}"));
@@ -163,6 +163,7 @@ pub fn elliptical_window(make: Make, work: &Path) -> Result<Document, String> {
     Ok(e.session.document().clone())
 }
 
+/// A plate with twenty pairs of holes and a boss: 42 features, each hole a feature of its own.
 pub fn many_holes(make: Make, work: &Path) -> Result<Document, String> {
     let mut e = Engine::new(make(), work);
     let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).map_err(|err| format!("{id}: {err}"));
