@@ -3601,9 +3601,9 @@ assembly file has no positions of its own to name.
 far as what it marks is: none when its edges are cropped away, cut away or in a band, unless what
 it marks is a hole that goes on below a cut (a shallow cut takes off the circle it was placed on),
 and clipped at a crop's edge and at a break's gap otherwise. `center_segments` does it, so
-`drw.info` says what the sheet shows. Tags of a hole table go by the same test. Dimensions do not:
-they are measured values and stay whole by choice, even to what is cropped away. A detail's circle
-is clipped by its crop. Break lines the model has left behind are not drawn, and
+`drw.info` says what the sheet shows. Tags of a hole table go by the same test. Dimensions and
+balloons do not: they say what the model is, and stay whole by choice, even on what is cropped away.
+A detail's circle is clipped by its crop. Break lines the model has left behind are not drawn, and
 `annotate::view_problem` says so: a crop or a break is changed without computing the view, so what
 it finds is worked out on asking, not kept on the view.
 
