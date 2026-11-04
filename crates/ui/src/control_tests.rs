@@ -625,6 +625,25 @@ fn a_connection_is_short_of_everything_until_it_gives_the_token() {
     assert!(answer.contains("request too long"), "{answer}");
 }
 
+/// The time to give the token is for that: one that has given it can be quiet as long as it likes.
+#[test]
+fn a_connection_that_has_given_the_token_may_be_quiet() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.listen(0, None).unwrap();
+    let mut known = Client::to(&wb);
+    let mut silent = Client::to(&wb);
+    known.ok(&mut wb, &mut d, "control.state", json!({}));
+    let wait = crate::control::FIRST_LINE_WAIT + Duration::from_millis(1500);
+    std::thread::sleep(wait);
+    known.ok(&mut wb, &mut d, "control.state", json!({}));
+    std::thread::sleep(wait);
+    known.ok(&mut wb, &mut d, "control.state", json!({}));
+    // The one that said nothing has been closed.
+    let mut left = String::new();
+    assert!(matches!(silent.reader.read_line(&mut left), Ok(0)), "{left}");
+}
+
 #[test]
 fn a_saved_assembly_says_where_it_is_over_the_port() {
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));

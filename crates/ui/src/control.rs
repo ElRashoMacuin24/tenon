@@ -49,8 +49,8 @@ use crate::workbench::{Geo, Workbench};
 pub const MAX_LINE: u64 = 16 * 1024 * 1024;
 /// The first line of a connection, before it has given the token.
 const MAX_FIRST_LINE: u64 = 64 * 1024;
-/// How long a connection has to give the token.
-const FIRST_LINE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long a connection has to give the token. (A test waits this out.)
+pub(crate) const FIRST_LINE_WAIT: std::time::Duration = std::time::Duration::from_secs(if cfg!(test) { 3 } else { 10 });
 /// How many connections are served at once.
 const MAX_CONNECTIONS: usize = 32;
 /// Largest image side `render.png` makes.
@@ -213,7 +213,6 @@ fn serve(stream: TcpStream, tx: &Sender<Incoming>, token: &str, waker: Option<&W
     // Until it has given the token a connection is short of everything: the first line to say so
     // in, and the time to say it. (Any process on the machine can connect.)
     let _ = stream.set_read_timeout(Some(FIRST_LINE_WAIT));
-    let holder = stream.try_clone();
     let mut reader = BufReader::new(stream);
     let mut line = Vec::new();
     let mut known = false;
@@ -244,9 +243,8 @@ fn serve(stream: TcpStream, tx: &Sender<Incoming>, token: &str, waker: Option<&W
                         (_, Some(run)) => {
                             if !known {
                                 known = true;
-                                if let Ok(s) = &holder {
-                                    let _ = s.set_read_timeout(None);
-                                }
+                                // (On the socket being read: on Windows a clone keeps its own.)
+                                let _ = reader.get_ref().set_read_timeout(None);
                             }
                             let (reply, answered) = channel();
                             let with = msg.get("with").cloned().unwrap_or(Value::Null);
