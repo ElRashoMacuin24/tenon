@@ -186,6 +186,7 @@ pub fn resolve(geom: &Geom, scene: Option<&Scene>) -> Result<Prim, String> {
                 Some(WorkGeom::Plane(f)) => Ok(Prim::Plane { point: f.origin(), normal: f.z() }),
                 Some(WorkGeom::Axis(a)) => Ok(Prim::Line { point: a.origin(), dir: a.dir() }),
                 Some(WorkGeom::Point(p)) => Ok(Prim::Point(p)),
+                Some(WorkGeom::Ucs(f)) => Ok(Prim::Point(f.origin())),
                 None => Err(format!("work feature {feature} is not in the part")),
             }
         }

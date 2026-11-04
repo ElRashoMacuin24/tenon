@@ -92,6 +92,21 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::Thread(_), _) => {
             "The thread could not be cut into the part. The pitch may be too coarse for the diameter, or the thread may run into other features: try a finer pitch or a shorter length, or leave the thread cosmetic.".into()
         }
+        (FeatureKind::Emboss(_), KernelError::OperationFailed { op: "draft", .. }) => {
+            "The emboss could not be tapered. The taper is probably too steep, or the profile has sides too small for it: try a smaller angle, or none.".into()
+        }
+        (FeatureKind::Emboss(_), KernelError::OperationFailed { op: "thicken", .. }) => {
+            "The faces the profile is seen on could not be followed at that depth. The depth may be more than the surface's curve allows: try a smaller depth.".into()
+        }
+        (FeatureKind::Emboss(_), KernelError::OperationFailed { op: "roll" | "roll_cone", .. }) => {
+            "The profile could not be laid round the face. It may reach more than once round, or past the cone's apex, or have corners too small to follow: try a smaller profile, or check where the sketch is.".into()
+        }
+        (FeatureKind::Emboss(_), _) => {
+            "The emboss could not be combined with the part. The profile may only touch the part, or run off its edge along a face: move the sketch a little.".into()
+        }
+        (FeatureKind::Derive(_), _) => {
+            "The other part's solid could not be brought into this one. It may only touch the part along a face or an edge: make it a new solid, or move what it meets.".into()
+        }
         (FeatureKind::SheetFace(_), _) => {
             "The face could not be made from this profile. Its outline may cross itself, or it may only touch the sheet along an edge: check the sketch.".into()
         }

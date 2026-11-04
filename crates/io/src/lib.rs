@@ -29,6 +29,7 @@ pub fn base64(data: &[u8]) -> String {
 pub mod asm;
 pub mod cmd;
 pub mod control;
+pub mod derive;
 pub mod diff;
 pub mod drw;
 pub mod flat;

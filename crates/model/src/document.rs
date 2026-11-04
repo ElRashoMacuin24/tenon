@@ -65,6 +65,8 @@ pub enum PlaneRef {
     Face(FaceRef),
     /// A work plane feature.
     Work(FeatureId),
+    /// One of the three planes of a user coordinate system (DEC-133).
+    Ucs { feature: FeatureId, plane: OriginPlane },
 }
 
 impl PlaneRef {
@@ -74,6 +76,7 @@ impl PlaneRef {
             PlaneRef::Origin(_) => None,
             PlaneRef::Face(f) => f.feature(),
             PlaneRef::Work(id) => Some(*id),
+            PlaneRef::Ucs { feature, .. } => Some(*feature),
         }
     }
 }
@@ -172,6 +175,8 @@ pub enum AxisRef {
     Origin(OriginAxis),
     /// A work axis feature.
     Work(FeatureId),
+    /// One of the three axes of a user coordinate system (DEC-133).
+    Ucs { feature: FeatureId, axis: OriginAxis },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -684,6 +689,131 @@ impl Thread {
     }
 }
 
+/// How an emboss meets the part (DEC-133).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbossStyle {
+    /// Raised from the faces the profile is seen on, by the depth.
+    #[default]
+    Raise,
+    /// Recessed into them, by the depth.
+    Recess,
+    /// From the sketch plane: material added on one side of it and taken away on the other, each
+    /// as far as the depth.
+    FromPlane,
+}
+
+/// A closed profile raised from or recessed into the part's faces, following them where they
+/// curve, or laid round a cylinder or a cone with its lengths kept (DEC-133).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Emboss {
+    pub sketch: FeatureId,
+    #[serde(default)]
+    pub regions: RegionSel,
+    #[serde(default)]
+    pub style: EmbossStyle,
+    /// How far from the faces, or from the sketch plane.
+    pub depth: f64,
+    /// The faces that look against the sketch's normal, not along it; from the plane, the sides
+    /// changed over.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reverse: bool,
+    /// Radians the sides lean, so that what is raised narrows going up and what is recessed
+    /// narrows going down (negative: the other way). Not with `wrap`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taper: Option<f64>,
+    /// Wrap to Face: the cylinder or cone the profile is laid round.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<FaceRef>,
+}
+
+impl Emboss {
+    pub fn check(&self) -> Result<(), String> {
+        if !tenon_geom::tol::is_valid_size(self.depth) {
+            return Err("the emboss depth must be more than 0".into());
+        }
+        let taper = self.taper.unwrap_or(0.0);
+        if !(taper.is_finite() && taper.abs() <= MAX_DRAFT_ANGLE) {
+            return Err("the taper must be at most 85 degrees either way".into());
+        }
+        if self.wrap.is_some() && self.style == EmbossStyle::FromPlane {
+            return Err("Wrap to Face raises or recesses the profile on the surface: it does not go with From Plane.".into());
+        }
+        if self.wrap.is_some() && taper != 0.0 {
+            return Err("A profile wrapped round a face has straight sides here: take the taper off, or leave Wrap to Face.".into());
+        }
+        Ok(())
+    }
+}
+
+/// The solid of another part file brought into this one (DEC-133). Nothing of the other file's
+/// contents is in this one: its solid is rebuilt from the file each time.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Derive {
+    /// The other part's file. In a file, its path relative to that file's folder with `/`
+    /// separators; in memory, its full path, as an assembly holds its parts' (DEC-024).
+    pub path: String,
+    /// Scaled by this about the part's origin.
+    #[serde(default = "unit_scale")]
+    pub scale: f64,
+    /// Then mirrored in this plane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<PlaneRef>,
+    /// Joined to the part, or a new solid.
+    #[serde(default)]
+    pub operation: Operation,
+}
+
+fn unit_scale() -> f64 {
+    1.0
+}
+
+impl Derive {
+    pub fn check(&self) -> Result<(), String> {
+        if self.path.trim().is_empty() || self.path.len() > 4096 || self.path.contains('\0') {
+            return Err("a derived part needs the path of a part file".into());
+        }
+        if !(self.scale.is_finite() && (1e-3..=1e3).contains(&self.scale)) {
+            return Err("the scale of a derived part must be from 0.001 to 1000".into());
+        }
+        if !matches!(self.operation, Operation::Join | Operation::NewBody) {
+            return Err("a derived part is joined to the part or made a new solid".into());
+        }
+        Ok(())
+    }
+
+    /// The file's name, for messages.
+    pub fn file_name(&self) -> String {
+        self.path.rsplit(['/', '\\']).next().unwrap_or(&self.path).to_owned()
+    }
+}
+
+/// What has been read of the part files a document's features derive from. It is given to the
+/// document from outside (this crate does not read files), travels with it to wherever it is
+/// rebuilt, and is never written to a file.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Links {
+    /// The document's own file, in full, when it has one.
+    pub home: Option<String>,
+    /// By the path as the feature holds it.
+    pub sources: std::collections::BTreeMap<String, Source>,
+}
+
+/// What became of reading a part file.
+#[derive(Clone, Debug)]
+pub struct Source {
+    /// The part, with what it derives from read too; or what is wrong, in words.
+    pub document: Result<std::sync::Arc<Document>, String>,
+    /// Changes when the file or anything it derives from does.
+    pub stamp: u64,
+}
+
+impl PartialEq for Source {
+    fn eq(&self, other: &Source) -> bool {
+        self.stamp == other.stamp
+    }
+}
+
 /// A direction for a pattern: an origin axis or a straight edge of the part.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -692,6 +822,8 @@ pub enum DirectionRef {
     Edge(EdgeRef),
     /// Along a work axis.
     Work(FeatureId),
+    /// Along one of the three axes of a user coordinate system (DEC-133).
+    Ucs { feature: FeatureId, axis: OriginAxis },
 }
 
 /// An axis to turn about: an origin axis, a straight or circular edge, a cylindrical or conical
@@ -703,6 +835,8 @@ pub enum AxisSel {
     Edge(EdgeRef),
     Face(FaceRef),
     Work(FeatureId),
+    /// One of the three axes of a user coordinate system (DEC-133).
+    Ucs { feature: FeatureId, axis: OriginAxis },
 }
 
 impl AxisSel {
@@ -712,7 +846,7 @@ impl AxisSel {
             AxisSel::Origin(_) => vec![],
             AxisSel::Edge(e) => e.features(),
             AxisSel::Face(f) => f.feature().into_iter().collect(),
-            AxisSel::Work(id) => vec![*id],
+            AxisSel::Work(id) | AxisSel::Ucs { feature: id, .. } => vec![*id],
         }
     }
 }
@@ -744,6 +878,11 @@ pub enum PointSel {
     Center(EdgeRef),
     /// A point of a sketch.
     SketchPoint { sketch: FeatureId, point: EntityId },
+    /// The origin of a user coordinate system (DEC-133).
+    Ucs(FeatureId),
+    /// A corner of the part: the end of `edge` nearer `near`, which is where it was picked
+    /// (DEC-133).
+    Vertex { edge: EdgeRef, near: Vec3 },
 }
 
 impl PointSel {
@@ -751,8 +890,8 @@ impl PointSel {
     pub fn features(&self) -> Vec<FeatureId> {
         match self {
             PointSel::Origin => Vec::new(),
-            PointSel::Work(id) => vec![*id],
-            PointSel::Center(e) => e.features(),
+            PointSel::Work(id) | PointSel::Ucs(id) => vec![*id],
+            PointSel::Center(e) | PointSel::Vertex { edge: e, .. } => e.features(),
             PointSel::SketchPoint { sketch, .. } => vec![*sketch],
         }
     }
@@ -776,6 +915,49 @@ pub enum WorkPoint {
     Center { edge: EdgeRef },
     /// Where an axis meets a plane.
     Intersection { axis: AxisSel, plane: PlaneRef },
+}
+
+/// A user coordinate system (DEC-133): an origin with X, Y and Z directions, whose three planes,
+/// three axes and origin serve wherever work planes, axes and points do.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "by", rename_all = "snake_case")]
+pub enum Ucs {
+    /// Moved along the axes of the part's origin or of another UCS (`base`), then turned `rx`
+    /// radians about its own X, `ry` about the Y that gives and `rz` about the Z that gives.
+    Offset {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<FeatureId>,
+        #[serde(default)]
+        x: f64,
+        #[serde(default)]
+        y: f64,
+        #[serde(default)]
+        z: f64,
+        #[serde(default)]
+        rx: f64,
+        #[serde(default)]
+        ry: f64,
+        #[serde(default)]
+        rz: f64,
+    },
+    /// Through three points: its origin, a point on its positive X, and a point on the positive
+    /// Y side of its XY plane.
+    ThreePoints { points: [PointSel; 3] },
+}
+
+impl Ucs {
+    /// Why its numbers cannot place one, if they cannot.
+    pub fn check(&self) -> Result<(), String> {
+        if let Ucs::Offset { x, y, z, rx, ry, rz, .. } = self {
+            if [x, y, z].iter().any(|v| !tenon_geom::tol::is_valid_coord(**v)) {
+                return Err("a UCS's offsets must be numbers within range".into());
+            }
+            if [rx, ry, rz].iter().any(|v| !(v.is_finite() && v.abs() <= 2.0 * std::f64::consts::TAU)) {
+                return Err("a UCS's turns must be numbers of at most two whole turns either way".into());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Copies of features in rows and columns.
@@ -895,6 +1077,8 @@ pub enum FeatureKind {
     WorkPlane(WorkPlane),
     WorkAxis(WorkAxis),
     WorkPoint(WorkPoint),
+    /// A user coordinate system.
+    Ucs(Ucs),
     Rib(Rib),
     Sweep(Sweep),
     Coil(Coil),
@@ -903,6 +1087,8 @@ pub enum FeatureKind {
     Split(Split),
     Combine(Combine),
     Thread(Thread),
+    Emboss(Emboss),
+    Derive(Derive),
     /// A flat piece of sheet metal (see `sheet.rs`).
     SheetFace(crate::sheet::Face),
     /// Walls bent up from edges of the sheet.
@@ -948,6 +1134,8 @@ impl FeatureKind {
                 | FeatureKind::Sweep(_)
                 | FeatureKind::Coil(_)
                 | FeatureKind::Loft(_)
+                | FeatureKind::Emboss(_)
+                | FeatureKind::Derive(_)
                 | FeatureKind::SheetFace(_)
                 | FeatureKind::PatternRect(_)
                 | FeatureKind::PatternCircular(_)
@@ -972,6 +1160,7 @@ impl FeatureKind {
             FeatureKind::WorkPlane(_) => "Work Plane",
             FeatureKind::WorkAxis(_) => "Work Axis",
             FeatureKind::WorkPoint(_) => "Work Point",
+            FeatureKind::Ucs(_) => "UCS",
             FeatureKind::Rib(_) => "Rib",
             FeatureKind::Sweep(_) => "Sweep",
             FeatureKind::Coil(_) => "Coil",
@@ -980,6 +1169,8 @@ impl FeatureKind {
             FeatureKind::Split(_) => "Split",
             FeatureKind::Combine(_) => "Combine",
             FeatureKind::Thread(_) => "Thread",
+            FeatureKind::Emboss(_) => "Emboss",
+            FeatureKind::Derive(_) => "Derive",
             FeatureKind::SheetFace(_) => "Face",
             FeatureKind::Flange(_) => "Flange",
             FeatureKind::Hem(_) => "Hem",
@@ -1007,6 +1198,7 @@ impl FeatureKind {
             FeatureKind::WorkPlane(_) => "Work Plane",
             FeatureKind::WorkAxis(_) => "Work Axis",
             FeatureKind::WorkPoint(_) => "Work Point",
+            FeatureKind::Ucs(_) => "UCS",
             FeatureKind::Rib(_) => "Rib",
             FeatureKind::Sweep(_) => "Sweep",
             FeatureKind::Coil(_) => "Coil",
@@ -1015,6 +1207,8 @@ impl FeatureKind {
             FeatureKind::Split(_) => "Split",
             FeatureKind::Combine(_) => "Combine",
             FeatureKind::Thread(_) => "Thread",
+            FeatureKind::Emboss(_) => "Emboss",
+            FeatureKind::Derive(_) => "Derive",
             FeatureKind::SheetFace(_) => "Face",
             FeatureKind::Flange(_) => "Flange",
             FeatureKind::Hem(_) => "Hem",
@@ -1039,7 +1233,7 @@ impl FeatureKind {
             },
             FeatureKind::Revolve(r) => {
                 let mut v = vec![r.sketch];
-                if let AxisRef::Work(a) = r.axis {
+                if let AxisRef::Work(a) | AxisRef::Ucs { feature: a, .. } = r.axis {
                     v.push(a);
                 }
                 if let RevolveAngle::To(plane) = &r.angle {
@@ -1065,7 +1259,7 @@ impl FeatureKind {
             FeatureKind::Rib(r) => vec![r.sketch],
             FeatureKind::Sweep(s) => vec![s.sketch, s.path.sketch],
             FeatureKind::Coil(c) => match c.axis {
-                AxisRef::Work(a) => vec![c.sketch, a],
+                AxisRef::Work(a) | AxisRef::Ucs { feature: a, .. } => vec![c.sketch, a],
                 _ => vec![c.sketch],
             },
             FeatureKind::Loft(l) => l.sections.clone(),
@@ -1073,6 +1267,8 @@ impl FeatureKind {
             FeatureKind::Split(s) => s.plane.feature().into_iter().chain(s.body.as_ref().and_then(FaceRef::feature)).collect(),
             FeatureKind::Combine(c) => std::iter::once(&c.base).chain(&c.tools).filter_map(FaceRef::feature).collect(),
             FeatureKind::Thread(t) => t.face.feature().into_iter().collect(),
+            FeatureKind::Emboss(e) => std::iter::once(e.sketch).chain(e.wrap.as_ref().and_then(FaceRef::feature)).collect(),
+            FeatureKind::Derive(d) => d.mirror.as_ref().and_then(PlaneRef::feature).into_iter().collect(),
             FeatureKind::SheetFace(f) => vec![f.sketch],
             FeatureKind::Flange(f) => f.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::Hem(h) => h.edges.iter().flat_map(EdgeRef::features).collect(),
@@ -1090,7 +1286,7 @@ impl FeatureKind {
                     match d {
                         DirectionRef::Origin(_) => {}
                         DirectionRef::Edge(e) => v.extend(e.features()),
-                        DirectionRef::Work(id) => v.push(*id),
+                        DirectionRef::Work(id) | DirectionRef::Ucs { feature: id, .. } => v.push(*id),
                     }
                 }
                 v
@@ -1118,6 +1314,10 @@ impl FeatureKind {
             FeatureKind::WorkPoint(w) => match w {
                 WorkPoint::Center { edge } => edge.features(),
                 WorkPoint::Intersection { axis, plane } => axis.features().into_iter().chain(plane.feature()).collect(),
+            },
+            FeatureKind::Ucs(u) => match u {
+                Ucs::Offset { base, .. } => base.iter().copied().collect(),
+                Ucs::ThreePoints { points } => points.iter().flat_map(PointSel::features).collect(),
             },
         };
         v.sort();
@@ -1187,6 +1387,9 @@ pub struct Document {
     /// Stress studies of the part: where it is held and what pushes on it (see `study.rs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) studies: Vec<crate::study::Study>,
+    /// What has been read of the part files its features derive from: never in a file.
+    #[serde(skip)]
+    links: std::sync::Arc<Links>,
 }
 
 impl Default for Document {
@@ -1204,6 +1407,7 @@ impl Default for Document {
             table: None,
             sheet: None,
             studies: Vec::new(),
+            links: Default::default(),
         }
     }
 }
@@ -1409,7 +1613,37 @@ impl Document {
             sheet: self.sheet.clone(),
             // (A part as it was part way up its history is looked at, not studied.)
             studies: Vec::new(),
+            links: self.links.clone(),
         }
+    }
+
+    /// What has been read of the part files its features derive from.
+    pub fn links(&self) -> &Links {
+        &self.links
+    }
+
+    /// Gives it what has been read of them.
+    pub fn set_links(&mut self, links: std::sync::Arc<Links>) {
+        self.links = links;
+    }
+
+    /// The paths its derived features hold, each changed as `f` says (to a full path as a file is
+    /// read, to one relative to the file as it is written).
+    pub fn map_derived(&mut self, f: impl Fn(&str) -> String) {
+        for feature in &mut self.features {
+            if let FeatureKind::Derive(d) = &mut feature.kind {
+                d.path = f(&d.path);
+            }
+        }
+    }
+
+    /// The part files its derived features name.
+    pub fn derived_paths(&self) -> Vec<String> {
+        let mut out: Vec<String> =
+            self.features.iter().filter_map(|f| if let FeatureKind::Derive(d) = &f.kind { Some(d.path.clone()) } else { None }).collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// Removes a feature that nothing depends on.
@@ -1628,6 +1862,9 @@ impl Document {
                 FeatureKind::Draft(d) => d.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Combine(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Thread(t) => t.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Emboss(e) if self.sketch(e.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, e.sketch)),
+                FeatureKind::Emboss(e) => e.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Derive(d) => d.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::SheetFace(s) if self.sketch(s.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, s.sketch)),
                 FeatureKind::SheetFace(s) => s.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Flange(fl) => fl.check().map_err(|e| format!("{}: {e}", f.name))?,
@@ -1647,6 +1884,7 @@ impl Document {
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Ucs(u) => u.check().map_err(|e| format!("{}: {e}", f.name))?,
                 _ => {}
             }
             self.check_copies(&f.kind).map_err(|e| format!("{}: {e}", f.name))?;

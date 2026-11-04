@@ -46,8 +46,17 @@ const CORNER_RELIEF: Param = opt("relief", Word(&["round", "square", "trim"]), "
 const RELIEF_SIZE: Param = opt("relief_size", Length, "the corner relief's size (default: the rule's CornerReliefSize)");
 const X: Param = req("x", Length, "sketch coordinate");
 const Y: Param = req("y", Length, "sketch coordinate");
-const NEUTRAL_PLANE: [Param; 3] =
-    [opt("plane", ORIGIN_PLANE, "an origin plane"), opt("face", Face, "a flat face"), opt("work_plane", Id, "a work plane's feature id")];
+const NEUTRAL_PLANE: [Param; 4] = [
+    opt("plane", ORIGIN_PLANE, "an origin plane"),
+    opt("face", Face, "a flat face"),
+    opt("work_plane", Id, "a work plane's feature id"),
+    UCS_PLANE,
+];
+/// A plane of a user coordinate system, where a command takes its plane by `plane`, `face` and
+/// `work_plane`.
+const UCS_PLANE: Param = opt("ucs_plane", Object, "a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}");
+/// Three points, as a work plane through them or a UCS takes them.
+const THREE_POINTS: Ty = List(&Either(&[Word(&["origin"]), Object]));
 
 /// A direction in words or numbers.
 const WAY: Ty =
@@ -61,6 +70,7 @@ const ITEM_NAME: Param = opt("name", Text, "its name (default Fixed1, Force1, Pr
 const ON_PLANE: Param = opt("plane", ORIGIN_PLANE, "the origin plane its sketch is on (default xy)");
 const ON_FACE: Param = opt("face", Face, "or a flat face to sketch on");
 const ON_WORK_PLANE: Param = opt("work_plane", Id, "or a work plane's feature id");
+const ON_UCS_PLANE: Param = opt("ucs_plane", Object, "or a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}");
 const AT_X: Param = opt("x", Length, "where it is in the sketch (default 0)");
 const AT_Y: Param = opt("y", Length, "where it is in the sketch (default 0)");
 
@@ -118,6 +128,7 @@ static SCHEMAS: &[C] = &[
             opt("plane", ORIGIN_PLANE, "an origin plane (default xy)"),
             opt("face", Face, "a flat face to sketch on"),
             opt("work_plane", Id, "a work plane's feature id"),
+            UCS_PLANE,
             opt("project_origin", Bool, "put a fixed point at the part origin, returned as `origin` (default true)"),
             opt("project_edges", Bool, "on a face: show the face's edges in the sketch as reference geometry (default false)"),
             opt("edges", EDGES, "with `geometry`: the edges to show as reference geometry, when there is no kernel to look them up"),
@@ -607,6 +618,7 @@ static SCHEMAS: &[C] = &[
             NEUTRAL_PLANE[0],
             NEUTRAL_PLANE[1],
             NEUTRAL_PLANE[2],
+            NEUTRAL_PLANE[3],
             req("angle", Angle, "from the plane's normal, which is the pull direction"),
             opt("reverse", Bool, "tilt the other way (default false)"),
             EQUATIONS,
@@ -620,6 +632,7 @@ static SCHEMAS: &[C] = &[
             NEUTRAL_PLANE[0],
             NEUTRAL_PLANE[1],
             NEUTRAL_PLANE[2],
+            NEUTRAL_PLANE[3],
             opt(
                 "keep",
                 Word(&["both", "front", "back"]),
@@ -651,6 +664,19 @@ static SCHEMAS: &[C] = &[
             opt("reverse", Bool, "start from the other end (default false)"),
             opt("left", Bool, "left-handed (default false)"),
             opt("modelled", Bool, "cut the groove into the part (default false: a cosmetic thread)"),
+            EQUATIONS,
+        ],
+    ),
+    C::new(
+        "model.emboss",
+        &[
+            SKETCH,
+            REGIONS,
+            opt("style", Word(&["raise", "recess", "from_plane"]), "raised from the faces (default), recessed into them, or from the sketch plane: added on one side and taken away on the other"),
+            req("depth", Length, "how far from the faces, or from the sketch plane"),
+            opt("reverse", Bool, "the faces that look against the sketch's normal; from the plane, the sides changed over (default false)"),
+            opt("taper", Angle, "how far its sides lean: what is raised narrows going up, what is recessed going down (default 0)"),
+            opt("wrap", Face, "Wrap to Face: a cylinder or cone to lay the profile round with its lengths kept"),
             EQUATIONS,
         ],
     ),
@@ -687,6 +713,7 @@ static SCHEMAS: &[C] = &[
             opt("plane", ORIGIN_PLANE, "an origin plane (default xy)"),
             opt("face", Face, "a flat face"),
             opt("work_plane", Id, "a work plane's feature id"),
+            UCS_PLANE,
             EQUATIONS,
         ],
     ),
@@ -702,8 +729,8 @@ static SCHEMAS: &[C] = &[
             opt("b", PLANE, "midplane: the other"),
             opt(
                 "points",
-                List(&Either(&[Word(&["origin"]), Object])),
-                "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference} or {\"sketch_point\": {\"sketch\": id, \"point\": id}}; from the first toward the second is its X",
+                THREE_POINTS,
+                "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference}, {\"sketch_point\": {\"sketch\": id, \"point\": id}}, {\"ucs\": id} (its origin) or {\"vertex\": {\"edge\": edge reference, \"near\": {\"x\", \"y\", \"z\"}}} (the end of the edge nearer that place); from the first toward the second is its X",
             ),
             EQUATIONS,
         ],
@@ -727,6 +754,21 @@ static SCHEMAS: &[C] = &[
             EQUATIONS,
         ],
         &[&[&["edge"], &["axis", "plane"]]],
+    ),
+    C::new(
+        "work.ucs",
+        &[
+            opt("by", Word(&["offset", "three_points"]), "how it is placed (default offset)"),
+            opt("base", Id, "offset: the UCS it is measured from (default: the part's origin)"),
+            opt("x", Length, "offset: along the base's X (default 0)"),
+            opt("y", Length, "offset: along the base's Y (default 0)"),
+            opt("z", Length, "offset: along the base's Z (default 0)"),
+            opt("rx", Angle, "offset: turned about its own X (default 0)"),
+            opt("ry", Angle, "offset: then about the Y that gives (default 0)"),
+            opt("rz", Angle, "offset: then about the Z that gives (default 0)"),
+            opt("points", THREE_POINTS, "three_points: its origin, a point on its +X, a point on the +Y side of its XY plane, each as work.plane takes one"),
+            EQUATIONS,
+        ],
     ),
     C::new("feature.add", &[req("kind", Object, "a feature's definition, as model.tree lists it and the file format has it"), EQUATIONS]),
     C::new("param.list", &[]),
@@ -779,9 +821,9 @@ static SCHEMAS: &[C] = &[
             req(
                 "a",
                 Object,
-                "what to measure: {\"face\": n} or {\"edge\": n} (numbered as model.faces and model.edges list them, with \"body\": b for a body other than 0), or a face or edge reference under the same key",
+                "what to measure: {\"face\": n} or {\"edge\": n} (numbered as model.faces and model.edges list them, with \"body\": b for a body other than 0), a face or edge reference under the same key, a work feature {\"work\": id}, or of a UCS {\"ucs\": id} (its origin), {\"ucs\": id, \"plane\": \"xy\"} or {\"ucs\": id, \"axis\": \"x\"}",
             ),
-            opt("b", Object, "a second face or edge: the distance and angle between the two"),
+            opt("b", Object, "a second of those: the distance and angle between the two"),
         ],
     ),
     C::new("model.broken", &[]),
@@ -1139,6 +1181,7 @@ static SCHEMAS: &[C] = &[
             ON_PLANE,
             ON_FACE,
             ON_WORK_PLANE,
+            ON_UCS_PLANE,
             AT_X,
             AT_Y,
             opt("centered", Bool, "x, y is the middle of the box (default false: a corner)"),
@@ -1155,6 +1198,7 @@ static SCHEMAS: &[C] = &[
             ON_PLANE,
             ON_FACE,
             ON_WORK_PLANE,
+            ON_UCS_PLANE,
             AT_X,
             AT_Y,
             req("diameter", Length, "its diameter"),
@@ -1163,13 +1207,14 @@ static SCHEMAS: &[C] = &[
             opt("reverse", Bool, "the other way from the sketch (default false)"),
         ],
     ),
-    C::new("model.sphere", &[ON_PLANE, ON_FACE, ON_WORK_PLANE, AT_X, AT_Y, req("diameter", Length, "its diameter"), OPERATION]),
+    C::new("model.sphere", &[ON_PLANE, ON_FACE, ON_WORK_PLANE, ON_UCS_PLANE, AT_X, AT_Y, req("diameter", Length, "its diameter"), OPERATION]),
     C::new(
         "model.torus",
         &[
             ON_PLANE,
             ON_FACE,
             ON_WORK_PLANE,
+            ON_UCS_PLANE,
             AT_X,
             AT_Y,
             req("diameter", Length, "across the ring, from the middle of its section to the middle opposite"),
