@@ -1039,6 +1039,16 @@ impl AsmSession {
         }
     }
 
+    /// Closes the part files nothing can name any more: no component uses them, and no step of
+    /// undo or redo brings back one that does (or undo would bring back components with nothing
+    /// behind them). One with unsaved changes stays until it is saved.
+    pub fn close_unused(&mut self) {
+        let shown = std::iter::once(&self.asm).chain(self.preview.as_deref());
+        let named: std::collections::BTreeSet<&str> =
+            shown.chain(&self.undo).chain(&self.redo).flat_map(|a| a.components.iter()).map(|c| c.part.as_str()).collect();
+        self.parts.retain(|k, p| named.contains(crate::model::key_file(k)) || p.session.is_dirty());
+    }
+
     /// Works out the parts that are a part file in one row of its design table (see
     /// [`sync_variants`]). Called after every change here; call it after changing a part's
     /// document directly. True when anything changed.

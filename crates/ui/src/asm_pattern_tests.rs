@@ -861,3 +861,32 @@ fn a_block_constrained_by_clicks_to_a_mirrored_occurrence_stands_on_it() {
     assert!((f.origin().z - 20.0).abs() < 1e-6 && near(f.z(), -Vec3::Z), "{f:?}");
     assert_eq!(wb.asm_exec("asm.interference", json!({})).unwrap()["count"], 0);
 }
+
+#[test]
+fn a_source_deleted_from_its_row_and_brought_back_by_undo_is_drawn_again() {
+    let dir = scratch("undo-source");
+    post_part(&dir.join("post.tenon"));
+    box_part(&dir.join("plate.tenon"), "Plate", 200.0, 100.0, 10.0);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    opened(&mut wb, &mut d, &[(&dir.join("plate.tenon"), [0.0, 0.0, 0.0]), (&dir.join("post.tenon"), [120.0, 40.0, 10.0])]);
+    wb.asm_exec("asm.mirror", json!({ "components": [2], "plane": { "geom": { "type": "plane", "plane": "YZ" } } })).unwrap();
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 3);
+
+    // Delete from the source's row: its image goes too, and the part with nothing left to use it.
+    menu_on(&mut d, &mut wb, "post:1");
+    d.click(&mut wb, d.text_pos("Delete").expect("the menu"));
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 1, "{}", wb.status());
+
+    // Undo: both are back, drawn, with a part behind them.
+    wb.run_ui("edit.undo").unwrap();
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 3, "{}", wb.status());
+    let a = wb.assembly().unwrap();
+    assert_eq!(a.assembly().components.len(), 3);
+    assert!(a.parts.values().all(|p| p.missing.is_none() && p.scene.is_some()));
+    let volume = wb.asm_exec("asm.mass", json!({})).unwrap()["volume"].as_f64().unwrap();
+    assert!((volume - (200000.0 + 2.0 * 10000.0)).abs() < 1e-3, "{volume}");
+}

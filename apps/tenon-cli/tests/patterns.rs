@@ -1276,3 +1276,53 @@ fn a_mirrored_occurrences_own_planes_and_axes_are_the_images_of_its_sources() {
         run(e, "asm.delete_pattern", json!({ "pattern": made["pattern"] }));
     }
 }
+
+#[test]
+fn a_source_deleted_and_brought_back_by_undo_has_its_part_again() {
+    let dir = scratch("undo-source");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    let (source, _, _) = mirrored_ell(e);
+    let file = dir.join("ell.tenon");
+    let key = tenon_io::asm::part_key(&file);
+    let weighed = |e: &mut Engine| num(&run(e, "asm.mass", json!({}))["volume"]);
+    assert!((weighed(e) - 20000.0).abs() < 1e-6);
+
+    // Deleted, the source takes its element with it; nothing is left of the part in the assembly.
+    run(e, "asm.delete", json!({ "component": source }));
+    assert!(run(e, "asm.tree", json!({}))["components"].as_array().unwrap().is_empty());
+    assert_eq!(num(&run(e, "asm.mass", json!({}))["volume"]), 0.0);
+
+    // Undo brings back components with a part behind them: weighed, exported, drawn from it.
+    run(e, "asm.undo", json!({}));
+    assert!((weighed(e) - 20000.0).abs() < 1e-6);
+    run(e, "asm.export_step", json!({ "path": "back.step" }));
+    assert_eq!(solids_of(&dir.join("back.step")).len(), 2);
+    let bom = run(e, "asm.bom", json!({}));
+    assert_eq!(bom["parts"], 2, "{bom}");
+
+    // Redo and undo again, as often as you like.
+    run(e, "asm.redo", json!({}));
+    run(e, "asm.undo", json!({}));
+    assert!((weighed(e) - 20000.0).abs() < 1e-6);
+
+    // The same goes for what deleting a pattern or lowering a count closes.
+    run(e, "asm.delete", json!({ "component": source }));
+    assert!(e.asm.parts.contains_key(&key), "undo can still name it");
+
+    // While undo keeps it, Place reads the file again: it may have changed since it was deleted.
+    let plain = std::fs::read(&file).unwrap();
+    box_part(e, "ell", 20.0, 20.0, 20.0);
+    let c = run(e, "asm.insert", json!({ "path": "ell.tenon" }))["component"].clone();
+    assert!((weighed(e) - 8000.0).abs() < 1e-6, "{}", weighed(e));
+    run(e, "asm.delete", json!({ "component": c }));
+    std::fs::write(&file, &plain).unwrap();
+
+    // A file opened afresh has no undo to keep it for.
+    box_part(e, "other", 5.0, 5.0, 5.0);
+    run(e, "asm.insert", json!({ "path": "other.tenon" }));
+    run(e, "asm.save", json!({ "path": "a.tenonasm" }));
+    run(e, "asm.open", json!({ "path": "a.tenonasm" }));
+    assert!(!e.asm.parts.contains_key(&key));
+    assert!(e.asm.parts.contains_key(&tenon_io::asm::part_key(&dir.join("other.tenon"))));
+}

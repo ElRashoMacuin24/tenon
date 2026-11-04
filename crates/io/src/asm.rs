@@ -192,11 +192,23 @@ fn asm_save(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
 fn asm_insert(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let path = path(p)?;
     let key = part_key(&path);
-    if !s.parts.contains_key(&key) {
+    // (One kept only for undo's sake is read again: the file may have changed since.)
+    let kept = s.parts.get(&key).is_some_and(|x| !x.session.is_dirty()) && !s.assembly().components.iter().any(|c| c.part == key);
+    if !s.parts.contains_key(&key) || kept {
         let (doc, _) = project::open(&path).map_err(|e| CmdError(format!("cannot open {}: {e}", path.display())))?;
-        let mut part = Part::new(tenon_model::Document::default());
-        part.session.replace_document(doc, None);
-        s.add_part(&key, part);
+        match s.parts.get_mut(&key) {
+            // (The entry stays, so whoever regenerates it sees its revision move on.)
+            Some(part) => {
+                part.session.replace_document(doc, None);
+                part.missing = None;
+                s.sync_variants();
+            }
+            None => {
+                let mut part = Part::new(tenon_model::Document::default());
+                part.session.replace_document(doc, None);
+                s.add_part(&key, part);
+            }
+        }
     }
     if let Some(k) = k.as_deref_mut() {
         s.refresh(k).map_err(CmdError)?;

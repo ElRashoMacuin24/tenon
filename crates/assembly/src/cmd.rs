@@ -459,14 +459,8 @@ fn asm_delete(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
     let cid = component(p, "component")?;
     not_an_element(s.assembly(), cid, "change the pattern's count, or delete the pattern")?;
     s.edit(|asm, _| if asm.remove_component(cid) { Ok(()) } else { Err(CmdError(format!("{cid} does not exist"))) })?;
-    close_unused(s);
+    s.close_unused();
     after(s, json!({ "deleted": cid.0 }))
-}
-
-/// Parts no component uses any more are closed.
-fn close_unused(s: &mut AsmSession) {
-    let used: std::collections::BTreeSet<String> = s.assembly().components.iter().flat_map(|c| [c.part.clone(), c.key()]).collect();
-    s.parts.retain(|k, p| used.contains(k) || p.session.is_dirty());
 }
 
 // ---- patterns and mirrors ---------------------------------------------------------------------
@@ -629,7 +623,7 @@ fn asm_edit_pattern(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) 
         solve_or_refuse(asm, parts, None)
     })?;
     s.failing.clear();
-    close_unused(s);
+    s.close_unused();
     pattern_result(s, id)
 }
 
@@ -644,7 +638,7 @@ fn asm_delete_pattern(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value
     let id = pattern_param(p, "pattern")?;
     let keep = opt_bool(p, "keep_elements")?.unwrap_or(false);
     s.edit(|asm, _| if asm.remove_pattern(id, keep) { Ok(()) } else { Err(CmdError(format!("{id} does not exist"))) })?;
-    close_unused(s);
+    s.close_unused();
     after(s, json!({ "deleted": id.0, "kept_elements": keep }))
 }
 
