@@ -196,7 +196,7 @@ views and Baseline and Ordinate dimensions.
 - **Contour Roll:** an open profile rolled round an axis as sheet, up to 359.9 degrees. Its flat
   pattern unrolls each line and arc at the neutral surface: exactly for one straight line (a ring,
   a cone, a flat ring), and row by row for anything else, with a warning that says how far out it
-  is. A flat ring takes punches, cuts and flanges like any flat face. Cut Across Bend and Cut Normal
+  is. A flat ring takes punches, cuts and flanges like any flat face; one rolled with other pieces, with a flange, has no flat pattern, and says so. Cut Across Bend and Cut Normal
   follow a cylinder, and refuse in words a profile that reaches a cone or a round part. New command
   `sheet.contour_roll`; feature type `contour_roll`.
 - **Lofted Flange:** a sheet between two open profiles, as one smooth die-formed surface laid flat

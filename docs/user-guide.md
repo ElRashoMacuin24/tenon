@@ -267,9 +267,11 @@ axis clicked in the view, and an angle of up to 359.9 degrees (a sheet has a sea
 straight line (a ring, a cone or a flat ring) unrolls exactly. A profile of several lines and
 arcs cannot, and the flat pattern says so in words, and by how much: each row round the axis is
 as long as it is on the neutral surface, so the area is right and the sheet stretches to make up
-the rest. A flat ring is flat faces like any other: stamp it, cut it or put a flange on it. Cut Across
-Bend and Cut Normal follow a cylinder; a profile that reaches a cone or the round part of a profile is
-refused, and an ordinary Cut goes straight through it.
+the rest. A flat ring is flat faces like any other: stamp it, cut it or put a flange on it. A flange on a
+ring rolled with other pieces (an L) is made, but such a sheet has no flat pattern, and says so. On a
+sheet with a flat side, Cut Across Bend and Cut Normal follow a cylinder; a profile that reaches a cone or
+the round part of a profile is refused, and an ordinary Cut goes straight through it. A plain rolled band
+has no flat side, and takes an ordinary Cut.
 
 **Lofted Flange** makes a sheet between two open profiles in two sketches (a round going to a
 square, say). Click the profiles in the view. **Die Formed** is one smooth surface, laid flat by

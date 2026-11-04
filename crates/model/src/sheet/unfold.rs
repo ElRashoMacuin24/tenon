@@ -1259,6 +1259,10 @@ pub fn unfold_with(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold, extras: &E
                     None => None,
                 }
             }
+            // (Laid out as they are, the pieces land on one another or apart: said as what it is.)
+            (true, None) if charts.values().any(|c| matches!(c, Chart::Turned { .. })) => {
+                return Err("This sheet has no flat pattern: a roll of several pieces is laid flat row by row round its axis, and a flange or a bend round another axis cannot be laid flat with it. A roll of one straight line, or a flat ring on its own, can take one.".into());
+            }
             _ => None,
         }
     };

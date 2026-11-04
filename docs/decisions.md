@@ -4667,7 +4667,9 @@ A review of all this found the following, and what was done about each is here w
 - **Lines in one straight run** are one line in a roll: as two cones the unrolling cannot cross the
   rim between them.
 
-*Left:* no closed ring (a seam of at least a tenth of a degree); one way of unrolling, at the
+*Left:* no closed ring (a seam of at least a tenth of a degree); no flat pattern of a roll of several
+pieces with a flange or bend round another axis (the rows are round one axis; refused in those words, by
+the audit before 0.2.0, where it said to shorten the flange, whatever its size); one way of unrolling, at the
 neutral surface, where a press shop may want another; a cut across bends or normal to the sheet that
 reaches a cone or a round part is refused, not wrapped; no flange on a seam edge beside a cylinder
 or a cone; a punch or a roll cannot be patterned or mirrored (the feature kinds that can are a list

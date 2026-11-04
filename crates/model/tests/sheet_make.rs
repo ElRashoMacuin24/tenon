@@ -349,6 +349,40 @@ fn sketch_at_height(s: &mut Session, k: &mut OcctKernel, z: f64) -> u64 {
     id(&run(s, k, "sketch.create", json!({ "work_plane": wp, "project_origin": false })), "feature")
 }
 
+/// An L rolled, and a flange on its flat ring: the flange is made, and no flat pattern can be had of
+/// the two. It said the pattern overlapped itself and to shorten a flange, at any size, or that the
+/// part was not one sheet.
+#[test]
+fn a_flange_on_a_ring_rolled_with_other_pieces_says_why_it_has_no_flat_pattern() {
+    for (height, offsets) in [(25.0, None), (25.0, Some([10.0, 10.0])), (8.0, Some([15.0, 15.0]))] {
+        let (mut s, mut k) = start();
+        let sk = lines_on(&mut s, &mut k, "xz", &[(50.0, 0.0), (50.0, 40.0), (90.0, 40.0)]);
+        run(&mut s, &mut k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": 270f64.to_radians() }));
+        assert!(flat(&mut s, &mut k)["length"].as_f64().unwrap() > 400.0, "alone, the roll lays flat");
+        // The straight edge of the seam, on the ring.
+        let edges = run(&mut s, &mut k, "model.find", json!({ "what": "edges", "kind": "line", "along": "x" }));
+        let edge =
+            edges["found"].as_array().unwrap().iter().find(|e| (e["mid"][2].as_f64().unwrap() - 40.0).abs() < 1e-6).unwrap()["reference"].clone();
+        let mut flange = json!({ "edges": [edge], "height": height });
+        if let Some(o) = offsets {
+            flange["offsets"] = json!(o);
+        }
+        let before = volume(&mut s, &mut k);
+        run(&mut s, &mut k, "sheet.flange", flange);
+        assert!(volume(&mut s, &mut k) > before, "the flange is made");
+        let why = refused(&mut s, &mut k, "sheet.flat", json!({}));
+        assert!(why.contains("no flat pattern") && why.contains("round another axis"), "{why}");
+        assert!(!why.contains("Shorten") && !why.contains("not one sheet"), "{why}");
+    }
+    // A flat ring alone takes a flange and lays flat.
+    let (mut s, mut k) = start();
+    flat_ring(&mut s, &mut k);
+    let edges = run(&mut s, &mut k, "model.find", json!({ "what": "edges", "kind": "line" }));
+    let seam = edges["found"].as_array().unwrap().iter().find(|e| (e["length"].as_f64().unwrap() - 30.0).abs() < 1e-6).unwrap()["reference"].clone();
+    run(&mut s, &mut k, "sheet.flange", json!({ "edges": [seam], "height": 10 }));
+    assert!(flat(&mut s, &mut k)["area"].as_f64().unwrap() > 2700.0);
+}
+
 /// A flat ring is flat faces like any other, both ways up: each looks out of the sheet, the other
 /// side one thickness behind it, and all that goes on a flat side goes on it.
 #[test]
