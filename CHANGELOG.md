@@ -116,6 +116,8 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- A run ended by a crash or from outside left its working folder in the system's temporary folder
+  for good. The first run of a later start now takes those away.
 - After Undo or Redo the status bar went on saying what had been undone, and in a new sketch the
   tool's instruction after the sketch had gone. "Nothing to undo" was still an error in an assembly
   and a drawing, as it no longer is in a part.

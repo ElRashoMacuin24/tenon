@@ -221,12 +221,50 @@ pub struct Scratch {
     keep: bool,
 }
 
+/// What a folder of a run is called, before what tells it from another of the same program.
+const SCRATCH_PREFIX: &str = "tenon-study-";
+
+/// The program a folder of a run was made by, from its name.
+fn scratch_owner(name: &str) -> Option<u32> {
+    name.strip_prefix(SCRATCH_PREFIX)?.split('-').next()?.parse().ok()
+}
+
+/// Whether a program of that number is running. (Asked of the system: that is all this needs, and
+/// it is asked once a folder has been found left behind. In doubt, it is taken to be.)
+fn program_runs(id: u32) -> bool {
+    if cfg!(windows) {
+        let filter = format!("PID eq {id}");
+        let asked = Command::new("tasklist").args(["/FI", &filter, "/FO", "CSV", "/NH"]).output();
+        asked.map_or(true, |out| String::from_utf8_lossy(&out.stdout).contains(&format!("\"{id}\"")))
+    } else {
+        Command::new("ps").args(["-p", &id.to_string()]).output().map_or(true, |out| out.status.success())
+    }
+}
+
+/// Takes away the folders of runs whose programs have gone: a crash, or the program being ended
+/// from outside, leaves them for good.
+fn clear_left_behind(base: &Path) {
+    let Ok(entries) = std::fs::read_dir(base) else { return };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        if let Some(owner) = name.to_str().and_then(scratch_owner)
+            && owner != std::process::id()
+            && !program_runs(owner)
+        {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 impl Scratch {
     pub fn new() -> Result<Scratch, String> {
+        // (At the first run of this program.)
+        static CLEARED: std::sync::Once = std::sync::Once::new();
+        CLEARED.call_once(|| clear_left_behind(&std::env::temp_dir()));
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
-        let dir = std::env::temp_dir().join(format!("tenon-study-{}-{n}-{stamp}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("{SCRATCH_PREFIX}{}-{n}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot make the folder {}: {e}", dir.display()))?;
         Ok(Scratch { dir, keep: false })
     }
@@ -274,6 +312,23 @@ mod tests {
         assert!(given.is_dir());
         drop(scratch);
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn what_a_program_that_has_gone_left_behind_is_taken_away() {
+        let base = std::env::temp_dir().join(format!("tenon-left-behind-{}", std::process::id()));
+        let (gone, here, other) = (base.join("tenon-study-4294967294-0-1"), base.join(format!("tenon-study-{}-0-1", std::process::id())), base.join("kept"));
+        for dir in [&gone, &here, &other] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(gone.join("part.step"), b"left").unwrap();
+        clear_left_behind(&base);
+        assert!(!gone.exists(), "no program has that number");
+        assert!(here.exists() && other.exists(), "a running program's stays, and what is no run's");
+        assert_eq!(scratch_owner("tenon-study-44980-1-786432500"), Some(44980));
+        assert_eq!(scratch_owner("tenon-study-x-1-2"), None);
+        assert!(program_runs(std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
