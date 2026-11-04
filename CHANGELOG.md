@@ -268,6 +268,9 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- Keys a tooltip shows did nothing: E, R, H, F and S in a 3D sketch, where they now finish it as in a 2D
+  sketch; L, C, A, D, X and O on the Sketch tab outside a sketch, where they now ask for a plane as their
+  buttons do.
 - The File menu closes on a press anywhere else, as a list under an arrow does; a second click on File or
   on an arrow closes it, and does not open it again.
 - A sketch tool asked for outside a sketch, then cancelled, came back in the next sketch started, even

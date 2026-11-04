@@ -911,6 +911,39 @@ fn a_menu_closes_on_a_press_elsewhere_and_on_what_opened_it() {
     assert!(wb.chrome.dropdown.is_some());
 }
 
+/// Keys a tooltip shows do what it says: those of the 3D Model tab in a 3D sketch (they finish it, as
+/// they do a 2D sketch), and those of the Sketch tab outside a sketch (they ask for a plane, as the
+/// buttons do).
+#[test]
+fn the_keys_a_tooltip_shows_work_where_it_shows_them() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    let sketch = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    wb.exec("sketch.rectangle", json!({ "sketch": sketch, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    d.settle(&mut wb);
+    // Outside a sketch.
+    for (key, tool) in [(egui::Key::L, "sketch.line"), (egui::Key::C, "sketch.circle"), (egui::Key::D, "sketch.dimension")] {
+        d.tap(&mut wb, key);
+        d.frame(&mut wb, vec![]);
+        assert!(wb.pick_plane && wb.pending_tool == Some(tool), "{key:?}: {}", wb.status());
+        d.tap(&mut wb, egui::Key::Escape);
+        d.frame(&mut wb, vec![]);
+        assert!(!wb.pick_plane);
+    }
+    // In a 3D sketch.
+    wb.run_ui("sketch.new_3d").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::E);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.is_sketching3d() && wb.panel.is_some(), "Extrude: {}", wb.status());
+    wb.panel = None;
+    wb.run_ui("sketch.new_3d").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::S);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.is_sketching3d() && wb.pick_plane, "Start 2D Sketch: {}", wb.status());
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

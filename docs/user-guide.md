@@ -62,9 +62,9 @@ next, by a flick of the mouse.
 | S | Start 2D Sketch |
 | E, R | Extrude, Revolve |
 | H, F | Hole, Fillet |
-| L, C, A | Line, Circle, Arc (in a sketch) |
-| D | Dimension (in a sketch, or a drawing) |
-| X, O | Trim, Offset (in a sketch) |
+| L, C, A | Line, Circle, Arc (outside a sketch, each first asks for a plane to start one on) |
+| D | Dimension (in a sketch, or a drawing; outside one, as L) |
+| X, O | Trim, Offset (in a sketch; outside one, as L) |
 | F8, F9 | Show, hide constraints (in a sketch) |
 | P, J, C | Place, Joint, Constrain (in an assembly) |
 | T, B | Text, Balloon (in a drawing) |

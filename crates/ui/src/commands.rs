@@ -1165,13 +1165,14 @@ pub fn search(query: &str, env: Env) -> Vec<&'static UiCommand> {
 }
 
 /// The command for a single-key shortcut. While sketching, sketch keys come first and the rest
-/// still work (E extrudes, finishing the sketch). In an assembly, the Assemble tab's keys; in a
-/// drawing, the Place Views and Annotate tabs'.
+/// still work (E extrudes, finishing the sketch); outside a sketch, the part's keys come first and
+/// the sketch's still work (L asks for a plane, as Line's button does). In an assembly, the Assemble
+/// tab's keys; in a drawing, the Place Views and Annotate tabs'.
 pub fn for_key(key: &str, env: Env) -> Option<&'static UiCommand> {
     let (ribbon, tabs): (&[RibbonTab], &[usize]) = match env {
         Env::Part { sketching: true } => (RIBBON, &[SKETCH_TAB, MODEL_TAB]),
-        Env::Part { sketching: false } => (RIBBON, &[MODEL_TAB]),
-        Env::Sketch3d => (RIBBON, &[SKETCH3D_TAB]),
+        Env::Part { sketching: false } => (RIBBON, &[MODEL_TAB, SKETCH_TAB]),
+        Env::Sketch3d => (RIBBON, &[SKETCH3D_TAB, MODEL_TAB]),
         Env::Assembly => (ASM_RIBBON, &[0]),
         Env::Drawing => (DRW_RIBBON, &[0, 1]),
     };
@@ -1274,7 +1275,9 @@ mod tests {
         assert!(search("zzzz", part).is_empty());
         assert_eq!(for_key("E", part).map(|c| c.id), Some("model.extrude"));
         assert_eq!(for_key("L", Env::Part { sketching: true }).map(|c| c.id), Some("sketch.line"));
-        assert!(for_key("L", part).is_none(), "sketch keys only while sketching");
+        assert_eq!(for_key("L", part).map(|c| c.id), Some("sketch.line"), "as its button does, it asks for a plane");
+        assert_eq!(for_key("E", Env::Sketch3d).map(|c| c.id), Some("model.extrude"), "as in a 2D sketch, it finishes the sketch");
+        assert_eq!(for_key("L", Env::Sketch3d).map(|c| c.id), Some("sketch3d.line"));
         assert_eq!(for_key("C", Env::Assembly).map(|c| c.id), Some("asm.constrain"));
         assert!(for_key("E", Env::Assembly).is_none(), "no part keys in an assembly");
         assert_eq!(for_key("D", Env::Drawing).map(|c| c.id), Some("drw.dimension"));
