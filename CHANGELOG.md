@@ -268,6 +268,9 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- The search box: Esc there also cancelled an open panel, and left the words typed to come back on the
+  next click. It now takes Esc for itself and clears them. A name that matches nothing says so, and what is
+  under an arrow says where.
 - The radial menu: labels of two lines spilled out of their rows, and its Repeat offered what could not be
   done there (Place in a part edited in place) or was not worth doing again (Properties).
 - Keys a tooltip shows did nothing: E, R, H, F and S in a 3D sketch, where they now finish it as in a 2D

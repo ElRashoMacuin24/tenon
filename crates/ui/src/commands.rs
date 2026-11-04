@@ -1098,11 +1098,9 @@ pub fn find(id: &str) -> Option<&'static UiCommand> {
 
 /// Where a command lives, e.g. "3D Model > Create" (for search results).
 pub fn location(id: &str) -> Option<String> {
-    RIBBON
-        .iter()
-        .chain(ASM_RIBBON)
-        .chain(DRW_RIBBON)
-        .find_map(|t| t.panels.iter().find(|p| p.commands.iter().any(|c| c.id == id)).map(|p| format!("{} > {}", t.name, p.title)))
+    RIBBON.iter().chain(ASM_RIBBON).chain(DRW_RIBBON).find_map(|t| {
+        t.panels.iter().find(|p| p.commands.iter().any(|c| c.id == id || c.more.contains(&id))).map(|p| format!("{} > {}", t.name, p.title))
+    })
 }
 
 /// Which ribbon is showing.
@@ -1287,5 +1285,9 @@ mod tests {
         assert_eq!(location("model.extrude").as_deref(), Some("3D Model > Create"));
         assert_eq!(location("drw.section").as_deref(), Some("Place Views > Create"));
         assert_eq!(location("drw.hole_table").as_deref(), Some("Annotate > Table"));
+        // What is under an arrow is where the arrow is.
+        assert_eq!(location("sketch.new_3d").as_deref(), Some("3D Model > Sketch"));
+        assert_eq!(location("model.cylinder").as_deref(), Some("3D Model > Primitives"));
+        assert_eq!(location("analysis.deform.actual").as_deref(), Some("Analysis > Display"));
     }
 }

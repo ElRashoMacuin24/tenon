@@ -974,6 +974,41 @@ fn the_radial_menu_reads_on_one_line_and_repeats_what_applies() {
     assert!(labels(&wb.radial_entries(at)).contains(&"Repeat Place".to_owned()));
 }
 
+/// Esc in the search box is the box's: a panel that is open stays, with what was set in it, and what
+/// was typed goes. A name that matches nothing says so.
+#[test]
+fn esc_in_the_search_box_is_for_the_box() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    let sketch = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    wb.exec("sketch.rectangle", json!({ "sketch": sketch, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    d.settle(&mut wb);
+    wb.run_ui("model.extrude").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_some());
+    let boxed = egui::pos2(1400.0 - 32.0 - 246.0 + 100.0, crate::chrome::TITLE_H / 2.0);
+    d.click(&mut wb, boxed);
+    d.frame(&mut wb, vec![egui::Event::Text("mirror".into())]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.chrome.search, "mirror");
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_some(), "the panel stays");
+    assert_eq!(wb.chrome.search, "", "what was typed goes");
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "the next Esc is the panel's");
+    // Nothing found.
+    d.click(&mut wb, boxed);
+    d.frame(&mut wb, vec![egui::Event::Text("zzzz".into())]);
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.status(), "No command is called \"zzzz\".");
+    assert_eq!(wb.chrome.search, "");
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

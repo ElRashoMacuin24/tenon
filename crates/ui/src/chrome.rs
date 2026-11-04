@@ -68,6 +68,8 @@ pub(crate) struct Chrome {
     pub applied_theme: Option<ThemeName>,
     pub search: String,
     pub search_pick: usize,
+    /// As the last frame ended, the search box had the keys.
+    pub search_had_keys: bool,
     /// A split button's drop-down: the button's id and where to open the list.
     pub dropdown: Option<(&'static str, Pos2)>,
     /// A list or the File menu that the press now going on closed: the same click on what opens it
@@ -134,6 +136,7 @@ impl Default for Chrome {
             applied_theme: None,
             search: String::new(),
             search_pick: 0,
+            search_had_keys: false,
             dropdown: None,
             closed_by_press: None,
             ribbon_scroll: 0.0,
@@ -552,6 +555,11 @@ impl Workbench {
     fn command_search(&mut self, ui: &mut Ui, rect: Rect, t: &Tokens) {
         let id = egui::Id::new("tn_search");
         let focused = ui.memory(|m| m.has_focus(id));
+        // Esc in the box is for the box, and not for a panel that is open: what was typed goes. (By
+        // now the box has lost the keys to it: asked of the last frame.)
+        if self.chrome.search_had_keys && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.chrome.search.clear();
+        }
         let results: Vec<&'static UiCommand> = commands::search(&self.chrome.search, self.command_env()).into_iter().take(12).collect();
         if focused && !results.is_empty() {
             let n = results.len();
@@ -586,6 +594,9 @@ impl Workbench {
         let mut run: Option<&'static str> = None;
         if enter {
             run = results.get(self.chrome.search_pick).map(|c| c.id);
+            if results.is_empty() && !self.chrome.search.trim().is_empty() {
+                self.set_status(format!("No command is called \"{}\".", self.chrome.search.trim()));
+            }
         }
         // Left with nothing found: what was typed goes, so that the next search starts afresh.
         if resp.lost_focus() && results.is_empty() {
@@ -628,13 +639,11 @@ impl Workbench {
                 },
             );
         }
+        self.chrome.search_had_keys = resp.has_focus();
         if let Some(id) = run {
             self.chrome.search.clear();
             ui.memory_mut(|m| m.surrender_focus(egui::Id::new("tn_search")));
             self.command(id);
-        }
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && focused {
-            self.chrome.search.clear();
         }
     }
 
