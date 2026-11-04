@@ -1,6 +1,6 @@
 //! Building a sheet: views (their lines, centrelines, section and detail markings, labels),
-//! annotations (dimensions, hole tables, balloons, parts lists, notes), the border and the title
-//! block. Dimensions and the rest are worked out from the model's current geometry each time,
+//! annotations (dimensions and sets of them, hole tables, balloons, parts lists, notes), the border
+//! and the title block. Dimensions and the rest are worked out from the model's current geometry each time,
 //! so they follow model changes.
 
 use std::collections::BTreeMap;
@@ -1007,14 +1007,32 @@ fn draw_annotation(gr: &mut Graphics, d: &Drawing, ev: &Evaluation, a: &Annotati
             }
             Ok(())
         }
+        AnnotKind::Baseline { .. } | AnnotKind::Ordinate { .. } => {
+            // What can be found is drawn, and what cannot is told.
+            let l = crate::dimsets::layout(d, ev, a)?;
+            l.draw(gr, o);
+            l.problem().map_or(Ok(()), Err)
+        }
     }
+}
+
+/// One annotation by itself, as it would be drawn on its sheet (for a preview of one not made yet).
+pub fn one(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Graphics {
+    let mut gr = Graphics::default();
+    if let Some(s) = a.kind.view().and_then(|v| d.view(v)).and_then(|v| d.sheet(v.sheet)) {
+        gr.sheet = Some(s.id);
+        gr.width = s.size.width;
+        gr.height = s.size.height;
+    }
+    let _ = draw_annotation(&mut gr, d, ev, a);
+    gr
 }
 
 /// How far centre marks and centre lines run past what they mark (sheet mm).
 pub const CENTER_OVER: f64 = 2.0;
 
 /// A point a pick stands for in a view: a circle's centre, a line's middle, or the point.
-fn pick_point(f: &Frame, r: &Resolved) -> Vec2 {
+pub(crate) fn pick_point(f: &Frame, r: &Resolved) -> Vec2 {
     match r {
         Resolved::Point(p) | Resolved::Circle { center: p, .. } => project(f, *p),
         Resolved::Line(s, e) => (project(f, *s) + project(f, *e)) * 0.5,

@@ -216,6 +216,27 @@ DXF** from the File menu.
   the status bar and the view's row say so. A centre mark or a hole's tag goes with what it marks.
   Each has a row under its view: double-click it to change it, right-click it to suppress or
   delete it. A panel closes when you start another tool or go to another sheet.
+**Baseline** and **Ordinate** (Annotate > Dimension) measure several places from one. Click the
+datum or origin (an edge, a circle for its centre; near a line's end, that end), then what to
+measure. A second click on one takes it away. The set shows where it would go; click clear of
+the edges to put it there: above or below the view it measures across the sheet, to the left or
+right it measures up the sheet, unless the panel says otherwise.
+
+- A baseline set has a dimension from the datum to each place, the shortest nearest the view
+  and the rest evenly beyond it (Spacing in the panel; wider where text needs it).
+- An ordinate set marks the origin 0 and each place with its position from it, on its own line
+  with no arrows, negative to the left of the origin or below it. Values that would touch are
+  moved apart and their lines jog to reach them.
+
+A set is one thing: drag it to move it, Delete to delete it, double-click it or its row in the
+browser to add to it, take from it or change it. Its values follow the model.
+
+All its places are in one view, on one sheet. A click in another view, or with another sheet
+showing, is refused and what you have picked stays. Isometric views, and views made from them, are
+not dimensioned. Press OK without clicking where it goes and it goes outside the view, on the side
+where the whole of it fits; if neither side has room you are told, and a click puts it where you
+want. Choosing the other direction in the panel moves it outside the view too, unless you have
+clicked where it goes.
 
 ## 3D printing
 
@@ -285,4 +306,8 @@ and in sketch text it is cut as boxes, though the file opens and works); a taper
 spline or a letter's curves; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
 stress studies of assemblies or of more than one material. A window holds one document: File >
 Open replaces it, and a second window is the way to have two open. [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROADMAP.md)
+Tenon 0.1 is a first release. Among what it does not do: sub-assemblies, motion studies and
+parts that adapt to one another; shaded drawing views and tolerances;
+ellipses in sketches, a choice of fonts for sketch text; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
+stress studies of assemblies or of more than one material. [ROADMAP.md](../ROADMAP.md)
 lists everything that works, with the test that shows it, and what is missing.

@@ -21,6 +21,7 @@ pub mod commands;
 pub mod control;
 pub mod crash;
 mod cube;
+mod dim_sets;
 mod dims;
 mod drawing;
 mod drw_views;
@@ -61,6 +62,8 @@ mod asm_pattern_tests;
 mod asm_tests;
 #[cfg(test)]
 mod control_tests;
+#[cfg(test)]
+mod dim_set_tests;
 #[cfg(test)]
 mod drw_tests;
 #[cfg(test)]

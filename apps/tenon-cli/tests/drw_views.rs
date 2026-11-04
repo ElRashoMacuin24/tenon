@@ -1250,6 +1250,10 @@ fn an_overlay_is_told_plainly_what_it_takes_from_its_parent() {
         let err = e.exec("drw.view.edit", &p).unwrap_err();
         assert!(err.contains("parent"), "{key}: {err}");
     }
+    // Nor does it take a set of dimensions: those are of what a view shows of its own.
+    let edge = run(&mut e, "drw.pick", json!({ "view": top, "view_at": [100, 30] }));
+    let err = e.exec("drw.baseline", &json!({ "view": ov, "datum": edge, "targets": [edge] })).unwrap_err();
+    assert!(err.contains("use the parent view"), "{err}");
     let i = view_info(&mut e, ov.as_u64().unwrap());
     assert_eq!(i["scale"], 1.0);
     // Nothing is written with it.

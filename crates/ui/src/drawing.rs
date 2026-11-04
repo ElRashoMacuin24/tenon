@@ -20,13 +20,14 @@ use tenon_drawing::{AnnotKind, DrwModel, DrwSession, Graphics, Orientation, Owne
 use tenon_geom::Vec2;
 
 use crate::drw_views::{ModPanel, ModPick, ModWhat, OverlayPanel, draw_panels, source_view};
+use crate::dim_sets::SetPanel;
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 use crate::viewport::{HOVER, Nav, SELECTED};
 use crate::workbench::{Geo, Mode, Workbench};
 
 /// How near the pointer something must be drawn to be under it (pixels).
-const PICK_PX: f64 = 6.0;
+pub(crate) const PICK_PX: f64 = 6.0;
 /// How often the model files are checked for changes made outside the drawing (seconds).
 const MODEL_CHECK_SECONDS: f64 = 1.0;
 /// Ink on the paper.
@@ -139,6 +140,9 @@ pub(crate) enum DrwTool {
     },
     /// A view of an assembly, for the Overlay panel.
     Overlay,
+    /// A baseline or ordinate set and its panel: a datum or origin, the places to measure, then
+    /// where it goes; or a set already made, being changed.
+    Set(Box<SetPanel>),
 }
 
 impl DrwTool {
@@ -160,6 +164,8 @@ impl DrwTool {
             DrwTool::Auxiliary { .. } => "drw.auxiliary",
             DrwTool::Modify { what, .. } => what.id(),
             DrwTool::Overlay => "drw.overlay",
+            DrwTool::Set(p) if p.ordinate => "drw.ordinate",
+            DrwTool::Set(_) => "drw.baseline",
         }
     }
 
@@ -209,6 +215,7 @@ impl DrwTool {
             DrwTool::Modify { pick: ModPick::Lines, first: None, .. } => "Click where the first break line goes, or type it in the panel.",
             DrwTool::Modify { pick: ModPick::Lines, .. } => "Click where the second break line goes.",
             DrwTool::Overlay => "Overlay: click a view of an assembly.",
+            DrwTool::Set(p) => p.prompt(),
         }
     }
 }
@@ -327,7 +334,7 @@ impl DrwDoc {
     }
 
     /// The computed views shown: current ones, or the last while new ones are computed.
-    fn shown_evaluation(&self) -> Option<&Evaluation> {
+    pub(crate) fn shown_evaluation(&self) -> Option<&Evaluation> {
         self.session.evaluation().or(self.session.last_evaluation())
     }
 
@@ -335,12 +342,14 @@ impl DrwDoc {
     /// click on an overlay means the view it is over.
     fn view_at(&self, g: &Graphics, at: Vec2) -> Option<ViewId> {
         let d = self.session.drawing();
-        d.views.iter().rev().filter(|v| v.sheet == self.sheet && !matches!(v.kind, ViewKind::Overlay { .. })).find_map(|v| {
-            let (lo, hi) = g.bounds_of(Owner::View(v.id))?;
-            let m = 3.0;
-            (at.x >= lo.x - m && at.x <= hi.x + m && at.y >= lo.y - m && at.y <= hi.y + m).then_some(v.id)
-        })
+        d.views.iter().rev().filter(|v| v.sheet == self.sheet && !matches!(v.kind, ViewKind::Overlay { .. })).map(|v| v.id).find(|v| over_view(g, *v, at))
     }
+}
+
+/// Whether a sheet point is over a view: inside its outline, with a margin.
+pub(crate) fn over_view(g: &Graphics, v: ViewId, at: Vec2) -> bool {
+    let m = 3.0;
+    g.bounds_of(Owner::View(v)).is_some_and(|(lo, hi)| at.x >= lo.x - m && at.x <= hi.x + m && at.y >= lo.y - m && at.y <= hi.y + m)
 }
 
 /// The side of a parent view a point is on, and where a view projected there lines up with it.
@@ -805,6 +814,7 @@ impl Workbench {
             "drw.centerline" | "drw.centerline.bisector" => {
                 self.start_tool(DrwTool::Centerline { bisector: id == "drw.centerline.bisector", view: None, a: None })
             }
+            "drw.baseline" | "drw.ordinate" => self.start_tool(DrwTool::Set(Box::new(SetPanel::new(id == "drw.ordinate")))),
             "drw.sheet.new" => {
                 let size = self.drw.as_ref().and_then(|d| d.session.drawing().sheet(d.sheet).map(|s| s.size.name.clone())).unwrap_or_default();
                 let r = self.drw_exec("drw.sheet.add", json!({ "size": size }))?;
@@ -1162,7 +1172,12 @@ impl Workbench {
             }
         };
         let shift_of = |o: Owner| moving.as_ref().filter(|(set, _)| set.contains(&o)).map_or(Vec2::new(0.0, 0.0), |(_, by)| *by);
-        for (o, pen, pts) in &g.strokes {
+        // A set being changed is shown as it would be, not as it was.
+        let changing = match &d.tool {
+            Some(DrwTool::Set(panel)) => panel.annotation.map(Owner::Annotation),
+            _ => None,
+        };
+        for (o, pen, pts) in g.strokes.iter().filter(|s| Some(s.0) != changing) {
             let (color, shift) = (color_of(*o), shift_of(*o));
             let width = ((pen.width() * cam.px) as f32).max(1.0);
             for run in dashed(pts, pen.dashes()) {
@@ -1172,11 +1187,11 @@ impl Workbench {
                 }
             }
         }
-        for (o, pts) in &g.fills {
+        for (o, pts) in g.fills.iter().filter(|f| Some(f.0) != changing) {
             let (color, shift) = (color_of(*o), shift_of(*o));
             p.add(Shape::convex_polygon(pts.iter().map(|q| cam.screen(rect, *q + shift)).collect(), color, Stroke::NONE));
         }
-        for (o, text) in &g.texts {
+        for (o, text) in g.texts.iter().filter(|t| Some(t.0) != changing) {
             let (color, shift) = (color_of(*o), shift_of(*o));
             let width = ((text.height * tenon_drawing::stroke::PEN * cam.px) as f32).max(1.0);
             for s in tenon_drawing::stroke::text_strokes(&text.text, text.left() + shift, text.height) {
@@ -1192,6 +1207,10 @@ impl Workbench {
             draw_tool(&p, rect, &cam, d, tool, at, ghost);
         }
         draw_panels(&p, rect, &cam, d, pointer, ghost);
+        // (With the pointer on its panel too: what is being changed stays in sight.)
+        if let Some(DrwTool::Set(panel)) = &tool {
+            crate::dim_sets::paint_tool(&p, rect, &cam, d, panel, pointer, GHOST);
+        }
         // Suggested dimensions still ticked, as they would be drawn.
         if let Some(sd) = &d.suggest_dialog {
             for (g, _) in sd.preview.iter().zip(&sd.items).filter(|(_, (_, on))| *on) {
@@ -1273,6 +1292,11 @@ impl Workbench {
                         self.set_error(e);
                     }
                 }
+                Some(Owner::Annotation(a)) if crate::dim_sets::is_set(d.session.drawing(), a) => {
+                    if let Err(e) = self.edit_set(a) {
+                        self.set_error(e);
+                    }
+                }
                 Some(Owner::Annotation(a)) => {
                     let note = d.session.drawing().annotations.iter().find(|x| x.id == a).and_then(|x| match &x.kind {
                         AnnotKind::Note { at, text, .. } => Some((*at, text.clone())),
@@ -1287,8 +1311,17 @@ impl Workbench {
         }
         // The context menu of what was right-clicked.
         let target = self.drw.as_ref().and_then(|d| d.selected);
+        let set = match (target, self.drw.as_ref()) {
+            (Some(Owner::Annotation(a)), Some(d)) if crate::dim_sets::is_set(d.session.drawing(), a) => Some(a),
+            _ => None,
+        };
         let mut chosen: Option<&'static str> = None;
+        let mut change_set = None;
         resp.context_menu(|ui| {
+            if set.is_some() && button(ui, "Change Set...", "tn_ctx_edit_set").clicked() {
+                change_set = set;
+                ui.close();
+            }
             if let Some(Owner::View(_)) = target {
                 if button(ui, "Edit View...", "tn_ctx_edit_view").clicked() {
                     chosen = Some("drw.edit_view");
@@ -1320,6 +1353,11 @@ impl Workbench {
         });
         if let Some(id) = chosen {
             self.command(id);
+        }
+        if let Some(a) = change_set
+            && let Err(e) = self.edit_set(a)
+        {
+            self.set_error(e);
         }
         if let Some(d) = self.drw.as_ref()
             && (d.tool.is_some() || d.drag.is_some())
@@ -1486,6 +1524,7 @@ impl Workbench {
                 self.drw_exec("drw.center_mark", json!({ "view": v.0, "a": pick }))?;
                 self.set_status("Centre mark placed. Click the next circle or arc, or Esc to end.");
             }
+            DrwTool::Set(panel) => return self.set_click(*panel, at, over, g),
             DrwTool::Centerline { bisector, view, a } => {
                 let v = need_view()?;
                 if view.is_some_and(|w| w != v) {
@@ -1496,22 +1535,8 @@ impl Workbench {
                 if bisector && pick["kind"] != "line" {
                     return Err(what.into());
                 }
-                // Near a line's end (within a quarter of its length): that end, not its middle.
-                if !bisector
-                    && pick["kind"] == "line"
-                    && let Some((s, e)) = line_ends(self, v, &pick)
-                {
-                    let near = s.dist(e) * 0.25;
-                    let end = if at.dist(s) < near {
-                        Some("start")
-                    } else if at.dist(e) < near {
-                        Some("end")
-                    } else {
-                        None
-                    };
-                    if let Some(end) = end {
-                        pick = self.drw_exec("drw.pick", json!({ "view": v.0, "at": v2(at), "point": end }))?;
-                    }
+                if !bisector {
+                    pick = self.near_a_line_end(v, at, pick)?;
                 }
                 let Some(first) = a else {
                     next(self, Some(DrwTool::Centerline { bisector, view: Some(v), a: Some(pick) }));
@@ -1566,6 +1591,27 @@ impl Workbench {
         Ok(())
     }
 
+    /// A pick clicked at `at`: near a line's end (within a quarter of its length), that end and not
+    /// its middle.
+    pub(crate) fn near_a_line_end(&mut self, v: ViewId, at: Vec2, pick: Value) -> Result<Value, String> {
+        if pick["kind"] == "line"
+            && let Some((s, e)) = line_ends(self, v, &pick)
+        {
+            let near = s.dist(e) * 0.25;
+            let end = if at.dist(s) < near {
+                Some("start")
+            } else if at.dist(e) < near {
+                Some("end")
+            } else {
+                None
+            };
+            if let Some(end) = end {
+                return self.drw_exec("drw.pick", json!({ "view": v.0, "at": v2(at), "point": end }));
+            }
+        }
+        Ok(pick)
+    }
+
     /// Fits the sheet in the window.
     pub(crate) fn fit_sheet(&mut self) {
         if let Some(d) = self.drw.as_mut() {
@@ -1573,7 +1619,7 @@ impl Workbench {
         }
     }
 
-    /// The Drawing View, Edit View and Text dialogs.
+    /// The Drawing View, Edit View, Text and Suggested Dimensions dialogs, and the panel of a set.
     pub(crate) fn drw_windows(&mut self, ui: &Ui) {
         let Some(d) = self.drw.as_mut() else { return };
         let mut action: Option<Result<(), String>> = None;
@@ -1786,6 +1832,7 @@ impl Workbench {
             self.set_error(e);
         }
         self.drw_view_windows(ui);
+        self.set_panel(&ctx);
     }
 
     /// Right-hand side of the status bar in a drawing.
@@ -1826,6 +1873,8 @@ impl Workbench {
         let mut pick_view: Option<(SheetId, ViewId)> = None;
         let mut pick_mod: Option<(SheetId, ViewId, u32)> = None;
         let mut suppress: Option<(ViewId, u32, bool, ModWhat)> = None;
+        let mut pick_set: Option<(SheetId, tenon_drawing::AnnotId)> = None;
+        let mut change_set = None;
         let mut menu: Option<&'static str> = None;
         egui::ScrollArea::vertical().id_salt("tn_drw_browser").auto_shrink([false, false]).show(ui, |ui| {
             browser_row(ui, t, 0, Icon::Drawing, &dr.name, false, false);
@@ -1904,6 +1953,31 @@ impl Workbench {
                             }
                         });
                     }
+                    // Its sets of dimensions, each one record.
+                    for a in dr.annotations.iter().filter(|a| a.kind.view() == Some(id)) {
+                        let Some((ordinate, label)) = crate::dim_sets::browser_label(a) else { continue };
+                        let icon = if ordinate { Icon::Ordinate } else { Icon::Baseline };
+                        let problem = crate::dim_sets::has_problem(&dr, d.shown_evaluation(), a);
+                        let resp = browser_row(ui, t, depth + 1, icon, &label, selected == Some(Owner::Annotation(a.id)), problem);
+                        if resp.clicked() {
+                            pick_set = Some((sh.id, a.id));
+                        }
+                        if resp.double_clicked() {
+                            pick_set = Some((sh.id, a.id));
+                            change_set = Some(a.id);
+                        }
+                        resp.context_menu(|ui| {
+                            pick_set = Some((sh.id, a.id));
+                            if button(ui, "Change Set...", "tn_set_row_edit").clicked() {
+                                change_set = Some(a.id);
+                                ui.close();
+                            }
+                            if button(ui, "Delete", "tn_set_row_delete").clicked() {
+                                menu = Some("drw.delete");
+                                ui.close();
+                            }
+                        });
+                    }
                     stack.extend(dr.views.iter().rev().filter(|c| c.kind.parent() == Some(id)).map(|c| (c.id, depth + 1)));
                 }
             }
@@ -1930,6 +2004,13 @@ impl Workbench {
                 }
                 d.selected = Some(Owner::Mod(v, m));
             }
+            if let Some((s, a)) = pick_set {
+                if s != d.sheet {
+                    d.sheet = s;
+                    d.fitted = false;
+                }
+                d.selected = Some(Owner::Annotation(a));
+            }
         }
         if let Some((v, m, on, what)) = suppress
             && let Err(e) = self.drw_exec(what.id(), json!({ "view": v.0, "modifier": m, "suppressed": on }))
@@ -1938,6 +2019,11 @@ impl Workbench {
         }
         if let Some(id) = menu {
             self.command(id);
+        }
+        if let Some(a) = change_set
+            && let Err(e) = self.edit_set(a)
+        {
+            self.set_error(e);
         }
     }
 }
@@ -1958,7 +2044,9 @@ fn moving_owners(s: &DrwSession, o: Owner) -> Vec<Owner> {
             | AnnotKind::Balloon { view, .. }
             | AnnotKind::CenterMark { view, .. }
             | AnnotKind::Centerline { view, .. }
-            | AnnotKind::CenterlineBisector { view, .. } => Some(*view),
+            | AnnotKind::CenterlineBisector { view, .. }
+            | AnnotKind::Baseline { view, .. }
+            | AnnotKind::Ordinate { view, .. } => Some(*view),
             _ => None,
         };
         if on.is_some_and(|x| views.contains(&x)) {
@@ -1971,9 +2059,15 @@ fn moving_owners(s: &DrwSession, o: Owner) -> Vec<Owner> {
 /// What a click that needs the views is told while they are being computed.
 const STILL_COMPUTING: &str = "the views are still being computed; try again in a moment";
 
-/// How far a dragged view moves: a view that stays lined up with its parent only slides in line
-/// with it (as `drw.view.edit` moves it).
+/// How far a dragged view or set moves: a view that stays lined up with its parent only slides in
+/// line with it (as `drw.view.edit` moves it), and a set of dimensions only across what it measures
+/// (as `drw.annotation.edit` moves it).
 fn in_line(s: &DrwSession, o: Owner, by: Vec2) -> Vec2 {
+    if let Owner::Annotation(a) = o
+        && let Some(set) = s.drawing().annotation(a).and_then(|x| tenon_drawing::dimsets::parts(&x.kind))
+    {
+        return set.axis.point(0.0, set.axis.across(by));
+    }
     let Owner::View(v) = o else { return by };
     s.drawing().view(v).map_or(by, |x| tenon_drawing::cmd::lined_up(&x.kind, by))
 }
@@ -2066,7 +2160,7 @@ fn browser_row(ui: &mut Ui, t: &Tokens, depth: u8, icon: Icon, label: &str, sele
 }
 
 /// Graphics in one colour (previews).
-fn paint_plain(p: &egui::Painter, rect: Rect, cam: &SheetCam, g: &Graphics, color: Color32) {
+pub(crate) fn paint_plain(p: &egui::Painter, rect: Rect, cam: &SheetCam, g: &Graphics, color: Color32) {
     for (_, pen, pts) in &g.strokes {
         let width = ((pen.width() * cam.px) as f32).max(1.0);
         for run in dashed(pts, pen.dashes()) {

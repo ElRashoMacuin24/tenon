@@ -29,7 +29,7 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   damaged", though it is not: text, ellipses or Smooth; an extrusion To, To Next or Between; a
   revolution To, To Next, by two angles or Flipped; a spotface or To hole; a variable or face fillet;
   a work plane through three points; a Tangent or Symmetry relationship; a mirrored occurrence in an
-  assembly; an auxiliary or overlay view. Other new things it opens, and on a save it loses them: a
+  assembly; an auxiliary or overlay view; a baseline or ordinate set. Other new things it opens, and on a save it loses them: a
   tapped hole's thread (the solid is the same), which points are sketch points, which sketches are
   shown, a study's Optimize Shape settings, an assembly's patterns (each element is then a free
   component where it stands, those of a suppressed pattern shown and counted), and a drawing view's
@@ -173,6 +173,16 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   so an edge that curves could pass for a straight one. The length is still the chord.
 - **An edge across a detail's circle** can be picked where it crosses, and not only when one of its
   ends is inside.
+- **Baseline and Ordinate** (Annotate > Dimension) measure several places from one, as one
+  record. Click a datum or origin in a view, then the edges or points to measure, then where the
+  set goes; a panel says what has been picked and the set shows where it would go. A baseline
+  set stacks a dimension to each place, evenly and never overlapping; an ordinate set gives each
+  place its position on its own line with no arrows, moving values apart where they would touch.
+  Values follow the model. Sets are saved in the drawing, can be added to, taken from, moved,
+  changed and deleted, have a row in the browser, and go to PDF, SVG and DXF. New commands
+  `drw.baseline` and `drw.ordinate`; `drw.annotation.edit` gains `remove`, `add`, `datum`, `axis`
+  and `spacing`. Suggest Dimensions leaves out what a set already gives, and refuses a section or
+  projection of an isometric view as it does the view itself.
 
 ### Getting it
 
