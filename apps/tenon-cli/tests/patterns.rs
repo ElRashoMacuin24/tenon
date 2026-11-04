@@ -1051,3 +1051,228 @@ fn patterns_and_mirrors_are_saved_and_read_back_to_the_same_bytes() {
     assert!(tenon_io::project::from_bytes(&bytes).unwrap().0.reflected());
     assert!(!tenon_io::project::from_bytes(&plain).unwrap().0.reflected());
 }
+
+/// The face of a component's part that is the `end` ("start" or "end") of feature `feature`, as a
+/// target.
+fn cap(e: &mut Engine, component: &Value, feature: u64, end: &str) -> Value {
+    run(e, "asm.geom", json!({ "component": component, "face": { "type": "cap", "feature": feature, "end": end } }))
+}
+
+/// A point of a component's part, where it stands.
+fn at_world(e: &mut Engine, id: &Value, p: [f64; 3]) -> [f64; 3] {
+    let tree = run(e, "asm.tree", json!({}));
+    let f = &component(&tree, id)["placement"];
+    let (o, x, y, z) = (vec3(&f["origin"]), vec3(&f["x"]), vec3(&f["y"]), vec3(&f["z"]));
+    [0, 1, 2].map(|i| o[i] + x[i] * p[0] + y[i] * p[1] + z[i] * p[2])
+}
+
+/// A block 10 x 10 x 10 and an L at x 50 to 90, mirrored in the assembly's YZ plane to x -90 to
+/// -50. The L is grounded; the blocks are free, set on it from above, one each side.
+fn grounded_ell_and_image(e: &mut Engine) -> (Value, Value) {
+    ell(e);
+    box_part(e, "block", 10.0, 10.0, 10.0);
+    run(e, "asm.new", json!({ "name": "Pair" }));
+    let source = run(e, "asm.insert", json!({ "path": "ell.tenon", "at": [50, 0, 0], "grounded": true }))["component"].clone();
+    let yz = run(e, "asm.geom", json!({ "plane": "yz" }));
+    let made = run(e, "asm.mirror", json!({ "components": [source], "plane": yz }));
+    (source, made["components"][0].clone())
+}
+
+#[test]
+fn what_is_held_to_a_mirrored_occurrence_stands_as_the_image_of_what_is_held_to_its_source() {
+    let dir = scratch("held-mirror");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    let (source, image) = grounded_ell_and_image(e);
+
+    // A mate: the block's underside on the foot's top (z 10, facing up either side of a mirror in
+    // YZ), so the block stands on it at z 10 to 20, not turned over and not sunk into the foot.
+    let mut blocks = Vec::new();
+    for (of, at) in [(&source, [80, 5, 40]), (&image, [-80, 5, 40])] {
+        let block = run(e, "asm.insert", json!({ "path": "block.tenon", "at": at, "grounded": false }))["component"].clone();
+        let (top, under) = (cap(e, of, 2, "end"), cap(e, &block, 2, "start"));
+        run(e, "asm.constrain", json!({ "type": "mate", "a": top, "b": under }));
+        same(at_world(e, &block, [0.0, 0.0, 0.0]), [f64::from(at[0]), 5.0, 10.0]);
+        same(at_world(e, &block, [0.0, 0.0, 10.0]), [f64::from(at[0]), 5.0, 20.0]);
+        blocks.push(block);
+    }
+    assert_eq!(run(e, "asm.interference", json!({}))["count"], 0);
+
+    // Auto explode reads the same normals: each goes up by the spacing, away from its foot.
+    run(e, "asm.explode.auto", json!({ "spacing": 30 }));
+    let positions = run(e, "asm.explode.positions", json!({}));
+    for b in &blocks {
+        let row = positions["components"].as_array().unwrap().iter().find(|c| c["id"] == *b).unwrap();
+        assert!((vec3(&row["origin"])[2] - 40.0).abs() < 1e-6, "{row}");
+    }
+    run(e, "asm.explode.clear", json!({}));
+
+    // A flush: tops level with the foot's top, so the block at z 0 to 10, beside the foot.
+    for (of, at) in [(&source, [80, 35, 40]), (&image, [-80, 35, 40])] {
+        let block = run(e, "asm.insert", json!({ "path": "block.tenon", "at": at, "grounded": false }))["component"].clone();
+        let (top, its_top) = (cap(e, of, 2, "end"), cap(e, &block, 2, "end"));
+        run(e, "asm.constrain", json!({ "type": "flush", "a": top, "b": its_top }));
+        same(at_world(e, &block, [0.0, 0.0, 0.0]), [f64::from(at[0]), 35.0, 0.0]);
+        same(at_world(e, &block, [0.0, 0.0, 10.0]), [f64::from(at[0]), 35.0, 10.0]);
+    }
+
+    // A rigid joint: the underside's middle on the middle of the foot's top. That is the 40 x 20
+    // top less the post's 10 x 10 at its corner: 700 mm^2, its middle at x (800 * 20 - 100 * 5) / 700
+    // and y (800 * 10 - 100 * 5) / 700 of the part. The block's middle is 5 above, and its top 10.
+    let (mx, my) = (15500.0 / 700.0, 7500.0 / 700.0);
+    for (of, at, x) in [(&source, [80, 65, 40], 50.0 + mx), (&image, [-80, 65, 40], -50.0 - mx)] {
+        let block = run(e, "asm.insert", json!({ "path": "block.tenon", "at": at, "grounded": false }))["component"].clone();
+        let (top, under) = (cap(e, of, 2, "end"), cap(e, &block, 2, "start"));
+        run(e, "asm.joint", json!({ "type": "rigid", "a": top, "b": under }));
+        same(at_world(e, &block, [5.0, 5.0, 5.0]), [x, my, 15.0]);
+        same(at_world(e, &block, [5.0, 5.0, 10.0]), [x, my, 20.0]);
+        run(e, "asm.delete", json!({ "component": block }));
+    }
+
+    // A pattern along a mirrored flat face: its normal is the way out of the material, so up by
+    // the spacing from each top alike.
+    let free = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [0, 200, 0], "grounded": false }))["component"].clone();
+    for of in [&source, &image] {
+        let top = cap(e, of, 2, "end");
+        let made = run(e, "asm.pattern", json!({ "components": [free], "type": "rectangular", "direction": top, "count": 2, "spacing": 10 }));
+        same(origin(e, &made["components"][0]), [0.0, 200.0, 10.0]);
+        run(e, "asm.delete_pattern", json!({ "pattern": made["pattern"] }));
+    }
+
+    // Mirrored in the assembly's XY plane, what faces up faces down: the foot's top, on the image
+    // of a source at z 5 to 15, is at z -15 facing down. The block mates to it from below, turned
+    // over, its underside at z -15 and its far side at z -25.
+    run(e, "asm.new", json!({ "name": "Below" }));
+    let source = run(e, "asm.insert", json!({ "path": "ell.tenon", "at": [50, 0, 5], "grounded": true }))["component"].clone();
+    let xy = run(e, "asm.geom", json!({ "plane": "xy" }));
+    let made = run(e, "asm.mirror", json!({ "components": [source], "plane": xy }));
+    let image = made["components"][0].clone();
+    let block = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [80, 5, -50], "grounded": false }))["component"].clone();
+    let (top, under) = (cap(e, &image, 2, "end"), cap(e, &block, 2, "start"));
+    run(e, "asm.constrain", json!({ "type": "mate", "a": top, "b": under }));
+    assert!((at_world(e, &block, [0.0, 0.0, 0.0])[2] + 15.0).abs() < 1e-6);
+    assert!((at_world(e, &block, [0.0, 0.0, 10.0])[2] + 25.0).abs() < 1e-6);
+    assert_eq!(run(e, "asm.interference", json!({}))["count"], 0);
+}
+
+#[test]
+fn a_part_is_inserted_on_a_mirrored_occurrence_as_on_its_source() {
+    let dir = scratch("insert-mirror");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    // A plate 40 x 40 x 5 with a hole of radius 4 through it, and a pin of that radius 20 long.
+    run(e, "file.new", json!({ "name": "plate" }));
+    let sk = run(e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    run(e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 40, "y2": 40 }));
+    run(e, "model.extrude", json!({ "sketch": sk, "distance": 5 }));
+    let sk = run(e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    run(e, "sketch.circle", json!({ "sketch": sk, "cx": 10, "cy": 20, "r": 4 }));
+    run(e, "model.extrude", json!({ "sketch": sk, "distance": 5, "operation": "cut" }));
+    run(e, "file.save", json!({ "path": "plate.tenon" }));
+    run(e, "file.new", json!({ "name": "pin" }));
+    let sk = run(e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    run(e, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 4 }));
+    run(e, "model.extrude", json!({ "sketch": sk, "distance": 20 }));
+    run(e, "file.save", json!({ "path": "pin.tenon" }));
+
+    run(e, "asm.new", json!({ "name": "Pinned" }));
+    let plate = run(e, "asm.insert", json!({ "path": "plate.tenon", "at": [50, 0, 0], "grounded": true }))["component"].clone();
+    let yz = run(e, "asm.geom", json!({ "plane": "yz" }));
+    let image = run(e, "asm.mirror", json!({ "components": [plate], "plane": yz }))["components"][0].clone();
+    // The rim on the plate's top, the far one from the part's XY plane: part z 5, or on the image
+    // -5. The pin's rim at its own z 0. The pin stands on the top, at z 5 to 25, in line with the
+    // hole, at x 60 on the source and -60 on the image. A rim whose axis went by a mirrored plane's
+    // inward normal would send it down through the plate.
+    for (of, at, x) in [(&plate, [100, 100, 30], 60.0), (&image, [-100, 100, 30], -60.0)] {
+        let rims: Vec<Value> = (0..40)
+            .filter_map(|i| e.exec("asm.geom", &json!({ "component": of, "edge": { "body": 0, "index": i } })).ok())
+            .filter(|t| t["kind"] == "circle")
+            .collect();
+        let rim = rims.iter().find(|t| num(&t["geom"]["edge"]["fingerprint"]["mid"]["z"]).abs() > 1.0).unwrap().clone();
+        let pin = run(e, "asm.insert", json!({ "path": "pin.tenon", "at": at, "grounded": false }))["component"].clone();
+        let foot = (0..8)
+            .filter_map(|i| e.exec("asm.geom", &json!({ "component": pin, "edge": { "body": 0, "index": i } })).ok())
+            .find(|t| t["kind"] == "circle" && num(&t["geom"]["edge"]["fingerprint"]["mid"]["z"]).abs() < 1.0)
+            .unwrap();
+        run(e, "asm.constrain", json!({ "type": "insert", "a": rim, "b": foot }));
+        same(at_world(e, &pin, [0.0, 0.0, 0.0]), [x, 20.0, 5.0]);
+        same(at_world(e, &pin, [0.0, 0.0, 20.0]), [x, 20.0, 25.0]);
+    }
+}
+
+#[test]
+fn a_mirrored_occurrences_own_planes_and_axes_are_the_images_of_its_sources() {
+    let dir = scratch("planes-mirror");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    ell(e);
+    box_part(e, "block", 10.0, 10.0, 10.0);
+    // The L, with a work plane at z 25 and a work axis along X through (0, 5, 3)
+    run(e, "file.open", json!({ "path": "ell.tenon" }));
+    let wp = run(e, "work.plane", json!({ "base": "xy", "distance": 25 }))["feature"].clone();
+    run(e, "file.save", json!({ "path": "ell.tenon" }));
+    run(e, "asm.new", json!({ "name": "Pair" }));
+    let source = run(e, "asm.insert", json!({ "path": "ell.tenon", "at": [50, 0, 0], "grounded": true }))["component"].clone();
+    let yz = run(e, "asm.geom", json!({ "plane": "yz" }));
+    let image = run(e, "asm.mirror", json!({ "components": [source], "plane": yz }))["components"][0].clone();
+
+    // A block's underside mated to each plane in turn. Mirrored in YZ, up stays up and X is the
+    // other way, so the block lies the same way up from the plane on the two, with its middle's x
+    // the other way.
+    let on = |e: &mut Engine, plane: Value, x: f64| -> [f64; 3] {
+        let block = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [x, 60, 60], "grounded": false }))["component"].clone();
+        let under = cap(e, &block, 2, "start");
+        run(e, "asm.constrain", json!({ "type": "mate", "a": plane, "b": under }));
+        let up = at_world(e, &block, [0.0, 0.0, 5.0]);
+        let was = at_world(e, &block, [0.0, 0.0, 0.0]);
+        run(e, "asm.delete", json!({ "component": block }));
+        [0, 1, 2].map(|i| up[i] - was[i])
+    };
+    for (plane, up) in [
+        (json!({ "work": wp }), [0.0, 0.0, 5.0]),
+        (json!({ "plane": "xy" }), [0.0, 0.0, 5.0]),
+        // (The XZ plane's normal, as a sketch on it looks, is toward -Y.)
+        (json!({ "plane": "xz" }), [0.0, -5.0, 0.0]),
+    ] {
+        for (of, x) in [(&source, 60.0), (&image, -70.0)] {
+            let mut p = plane.clone();
+            p["component"] = of.clone();
+            let t = run(e, "asm.geom", p);
+            same(on(e, t, x), up);
+        }
+    }
+    // The YZ plane faces +X on the source and, as the image of that, -X on the image.
+    for (of, x, way) in [(&source, 60.0, 5.0), (&image, -70.0, -5.0)] {
+        let t = run(e, "asm.geom", json!({ "component": of, "plane": "yz" }));
+        same(on(e, t, x), [way, 0.0, 0.0]);
+    }
+    // The height of each block on the work plane: it stands at z 25 to 35, on the image too.
+    for (of, x) in [(&source, 60.0), (&image, -70.0)] {
+        let t = run(e, "asm.geom", json!({ "component": of, "work": wp }));
+        let block = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [x, 60, 60], "grounded": false }))["component"].clone();
+        let under = cap(e, &block, 2, "start");
+        run(e, "asm.constrain", json!({ "type": "mate", "a": t, "b": under }));
+        assert!((at_world(e, &block, [0.0, 0.0, 0.0])[2] - 25.0).abs() < 1e-6);
+        assert!((at_world(e, &block, [0.0, 0.0, 10.0])[2] - 35.0).abs() < 1e-6);
+        run(e, "asm.delete", json!({ "component": block }));
+    }
+    // A joint on the part's origin, a point with no way of its own, takes the part's Z, and on the
+    // image the image of that: up on both, so the block is turned to face it the same way on both.
+    for (of, x) in [(&source, 60.0), (&image, -70.0)] {
+        let a = run(e, "asm.geom", json!({ "component": of, "origin": true }));
+        let block = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [x, 60, 60], "grounded": false }))["component"].clone();
+        let b = run(e, "asm.geom", json!({ "component": block, "origin": true }));
+        run(e, "asm.joint", json!({ "type": "rigid", "a": a, "b": b }));
+        let tree = run(e, "asm.tree", json!({}));
+        same(vec3(&component(&tree, &block)["placement"]["z"]), [0.0, 0.0, -1.0]);
+        run(e, "asm.delete", json!({ "component": block }));
+    }
+    // A pattern along each one's own Z axis goes up on both: the image of up, here, is up.
+    let free = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [0, 200, 0], "grounded": false }))["component"].clone();
+    for of in [&source, &image] {
+        let z = run(e, "asm.geom", json!({ "component": of, "axis": "z" }));
+        let made = run(e, "asm.pattern", json!({ "components": [free], "type": "rectangular", "direction": z, "count": 2, "spacing": 10 }));
+        same(origin(e, &made["components"][0]), [0.0, 200.0, 10.0]);
+        run(e, "asm.delete_pattern", json!({ "pattern": made["pattern"] }));
+    }
+}

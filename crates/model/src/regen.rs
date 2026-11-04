@@ -440,10 +440,16 @@ fn reflected_point(p: Vec3) -> Vec3 {
     Vec3::new(p.x, p.y, -p.z)
 }
 
-/// A frame in the part's mirror image: X and Y are reflected, Z made from them, so that it stays
-/// a right-handed frame on the same plane.
+/// A sketch's frame in the part's mirror image: X and Y are reflected, for what is drawn on it to
+/// come out as the image of itself, and Z made from them, so that it stays a right-handed frame.
 fn reflected_frame(f: &Frame) -> Frame {
     Frame::new(reflected_point(f.origin()), -reflected_point(f.z()), reflected_point(f.x())).unwrap_or(*f)
+}
+
+/// A work plane in the part's mirror image: its normal, which says which way a mate on it faces, is
+/// the image of its normal (so it is its Y that a right-handed frame has the wrong way round).
+fn reflected_plane(f: &Frame) -> Frame {
+    Frame::new(reflected_point(f.origin()), reflected_point(f.z()), reflected_point(f.x())).unwrap_or(*f)
 }
 
 /// The part's solids as their mirror image in the part's XY plane (DEC-130), each face keeping
@@ -467,7 +473,7 @@ fn reflect(regen: &mut Regen, k: &mut dyn Kernel) -> Result<(), KernelError> {
     }
     for g in regen.work.values_mut() {
         *g = match *g {
-            WorkGeom::Plane(f) => WorkGeom::Plane(reflected_frame(&f)),
+            WorkGeom::Plane(f) => WorkGeom::Plane(reflected_plane(&f)),
             WorkGeom::Axis(a) => WorkGeom::Axis(Axis::new(reflected_point(a.origin()), reflected_point(a.dir())).unwrap_or(a)),
             WorkGeom::Point(p) => WorkGeom::Point(reflected_point(p)),
         };

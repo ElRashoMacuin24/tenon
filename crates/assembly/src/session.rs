@@ -127,9 +127,9 @@ pub fn law_of(kind: &RelKind) -> Law {
         RelKind::Angle { angle, reference, .. } => Law::Angle { angle: *angle, reference: *reference },
         RelKind::Insert { offset, aligned, .. } => Law::Insert { offset: *offset, aligned: *aligned },
         RelKind::Tangent { offset, inside, .. } => Law::Tangent { offset: *offset, inside: *inside },
-        RelKind::Symmetry { .. } => {
-            Law::Symmetry { plane: End { body: None, prim: geometry::Prim::Plane { point: Vec3::ZERO, normal: Vec3::Z }, radius: 0.0 } }
-        }
+        RelKind::Symmetry { .. } => Law::Symmetry {
+            plane: End { body: None, prim: geometry::Prim::Plane { point: Vec3::ZERO, normal: Vec3::Z }, radius: 0.0, mirrored: false },
+        },
         RelKind::Joint { joint, flip, offset, angle, .. } => Law::Joint { joint: *joint, flip: *flip, offset: *offset, angle: *angle },
     }
 }
@@ -138,16 +138,16 @@ pub fn law_of(kind: &RelKind) -> Law {
 /// the assembly's own origin), and that component's index.
 pub fn resolve_target(asm: &Assembly, parts: &Parts, t: &Target) -> Result<End, String> {
     match t.component {
-        None => Ok(End { body: None, prim: geometry::resolve(&t.geom, None)?, radius: 0.0 }),
+        None => Ok(End { body: None, prim: geometry::resolve(&t.geom, None, false)?, radius: 0.0, mirrored: false }),
         Some(id) => {
             let i = asm.components.iter().position(|c| c.id == id).ok_or_else(|| format!("{id} does not exist"))?;
             let c = &asm.components[i];
             if let Some(why) = parts.get(&c.key()).and_then(|p| p.missing.as_ref()) {
                 return Err(format!("{} is missing: {why}", c.name));
             }
-            let prim = geometry::resolve(&t.geom, scene_of(parts, c)).map_err(|e| format!("{}: {e}", c.name))?;
+            let prim = geometry::resolve(&t.geom, scene_of(parts, c), c.mirrored).map_err(|e| format!("{}: {e}", c.name))?;
             let radius = geometry::radius(&t.geom, scene_of(parts, c));
-            Ok(End { body: Some(i), prim, radius })
+            Ok(End { body: Some(i), prim, radius, mirrored: c.mirrored })
         }
     }
 }

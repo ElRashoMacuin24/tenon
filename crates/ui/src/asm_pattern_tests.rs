@@ -821,3 +821,43 @@ fn a_mirrored_part_comes_from_the_worker_in_a_slot_of_its_own() {
     assert_eq!(wb.scene().bodies.len(), 4);
     assert!(!wb.status_error, "{}", wb.status());
 }
+
+/// Moves to a point of the model and clicks it.
+fn click_at(d: &mut Driver, wb: &mut Workbench, at: Vec3) {
+    let p = on_screen(wb, at);
+    d.frame(wb, vec![egui::Event::PointerMoved(p)]);
+    d.frame(wb, vec![]);
+    d.click(wb, p);
+    d.frame(wb, vec![]);
+}
+
+#[test]
+fn a_block_constrained_by_clicks_to_a_mirrored_occurrence_stands_on_it() {
+    let dir = scratch("on-mirrored");
+    post_part(&dir.join("post.tenon"));
+    box_part(&dir.join("block.tenon"), "Block", 10.0, 10.0, 10.0);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    opened(&mut wb, &mut d, &[(&dir.join("post.tenon"), [50.0, 0.0, 0.0]), (&dir.join("block.tenon"), [-20.0, 50.0, 40.0])]);
+    wb.asm_exec("asm.ground", json!({ "component": 1, "grounded": true })).unwrap();
+    wb.asm_exec("asm.mirror", json!({ "components": [1], "plane": { "geom": { "type": "plane", "plane": "YZ" } } })).unwrap();
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+
+    // Constrain: the mirrored foot's top, at z = 10 (its post is at x -60 to -50); then the block's
+    // top. A mate of two tops turns the block over: its top on the foot's, its body above it, so
+    // its part's origin at z = 20 and its Z down. Taken for facing the other way, the block would
+    // sink into the foot with its origin at z = 0.
+    d.click(&mut wb, pressable(&d, "ribbon asm.constrain"));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    click_at(&mut d, &mut wb, Vec3::new(-80.0, 10.0, 10.0));
+    click_at(&mut d, &mut wb, Vec3::new(-15.0, 55.0, 50.0));
+    d.settle(&mut wb);
+    press_ok(&mut d, &mut wb);
+    assert!(!wb.status_error, "{}", wb.status());
+    let f = placement(&wb, 2);
+    assert!((f.origin().z - 20.0).abs() < 1e-6 && near(f.z(), -Vec3::Z), "{f:?}");
+    assert_eq!(wb.asm_exec("asm.interference", json!({})).unwrap()["count"], 0);
+}

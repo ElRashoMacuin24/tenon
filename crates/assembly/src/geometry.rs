@@ -54,10 +54,11 @@ impl Prim {
             Prim::Point(_) => None,
         }
     }
-    /// The frame a joint takes from this geometry: its point, Z along its direction (world Z
-    /// for a point), X chosen from Z alone so the same geometry always gives the same frame.
-    pub fn joint_frame(&self) -> Frame {
-        let z = self.direction().unwrap_or(Vec3::Z);
+    /// The frame a joint takes from this geometry: its point, Z along its direction (for a point,
+    /// the part's Z, or on a component holding its mirror image the image of that), X chosen from
+    /// Z alone so the same geometry always gives the same frame.
+    pub fn joint_frame(&self, mirrored: bool) -> Frame {
+        let z = self.direction().unwrap_or(if mirrored { -Vec3::Z } else { Vec3::Z });
         Frame::from_normal(self.point(), z).unwrap_or(Frame::WORLD)
     }
     pub fn kind(&self) -> &'static str {
@@ -159,15 +160,19 @@ pub fn edge_prim(scene: &Scene, body: usize, edge: usize) -> Result<Prim, String
 }
 
 /// The geometry a [`Geom`] means in its part (`scene`; `None` for the assembly's own origin).
-pub fn resolve(geom: &Geom, scene: Option<&Scene>) -> Result<Prim, String> {
+/// `mirrored`: it is of a component holding its part's mirror image in the part's XY plane. What
+/// the scene says is already of the image; the part's origin planes and axes, which no scene has,
+/// are reflected here, so that each is the image of the source's.
+pub fn resolve(geom: &Geom, scene: Option<&Scene>, mirrored: bool) -> Result<Prim, String> {
+    let image = |v: Vec3| if mirrored { Vec3::new(v.x, v.y, -v.z) } else { v };
     match geom {
         Geom::Plane { plane } => {
             let f = plane.frame();
-            Ok(Prim::Plane { point: f.origin(), normal: f.z() })
+            Ok(Prim::Plane { point: f.origin(), normal: image(f.z()) })
         }
         Geom::Axis { axis } => {
             let a = axis.axis();
-            Ok(Prim::Line { point: a.origin(), dir: a.dir() })
+            Ok(Prim::Line { point: a.origin(), dir: image(a.dir()) })
         }
         Geom::Origin => Ok(Prim::Point(Vec3::ZERO)),
         Geom::Face { face } => {
