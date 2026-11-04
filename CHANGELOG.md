@@ -73,8 +73,8 @@ shows it in [ROADMAP.md](ROADMAP.md).
 ### Parts and assemblies
 
 - **Delete Features.** Deleting a feature from the browser now says what goes with it: the
-  sketches it is made from, and the features that use it, ticked as Inventor ticks them, in
-  one undo step. `feature.delete` takes `consumed` and `dependents`.
+  sketches it is made from, and the features that use it, each with a tick, in one undo step.
+  `feature.delete` takes `consumed` and `dependents`.
 - **Extrude To.** Extents > To takes an extrusion as far as a flat face, a work plane or an
   origin plane, on whichever side of the sketch it is; at an angle, the end is cut along the
   plane. `model.extrude` takes `to`; files gain `extent = { to = <plane> }`.
@@ -96,16 +96,14 @@ shows it in [ROADMAP.md](ROADMAP.md).
   inside. `asm.constrain` takes `type: "tangent"` and `inside`.
 - **Extrude To Next**: joined, as far as the part's next face, sloping or curved; cut, through
   the material it starts in. `model.extrude` takes `to_next`.
-- **Revolve** turns Default, Flipped, Symmetric or Asymmetric (two angles), as Inventor's
-  does. `model.revolve` takes `backward` and `reverse`.
-- **Place** works as Inventor's: after the first part (grounded at the origin), each instance
-  follows the pointer and a click puts it down, until Esc or a right-click.
-- **Visibility.** A sketch's or work feature's menu in the browser shows or hides it, as
-  Inventor's does; saved with the part. `feature.visibility`.
-- **Constrain** offers Mate, Angle and Insert, with Flush as Mate's second solution, as
-  Inventor has it; offsets and angles are typed.
-- [docs/inventor-fidelity.md](docs/inventor-fidelity.md) compares every environment with
-  Inventor's, command by command.
+- **Revolve** turns Default, Flipped, Symmetric or Asymmetric (two angles). `model.revolve` takes
+  `backward` and `reverse`.
+- **Place**: after the first part (grounded at the origin), each instance follows the pointer and
+  a click puts it down, until Esc or a right-click.
+- **Visibility.** A sketch's or work feature's menu in the browser shows or hides it; saved with
+  the part. `feature.visibility`.
+- **Constrain** offers Mate, Angle and Insert, with Flush as Mate's second solution; offsets and
+  angles are typed.
 
 ### Fixed
 
