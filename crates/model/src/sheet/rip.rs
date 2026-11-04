@@ -11,11 +11,11 @@ use tenon_geom::{Frame, Vec2, Vec3};
 use tenon_kernel::{CurveKind, Kernel, ShapeHandle, SurfaceKind};
 
 use super::RipWay;
-use super::flat::chain;
+use super::flatten::rim_of;
 use super::outline::{Piece, polygon};
 use super::region::{self, Shape};
-use super::unfold::{Chart, Read, Unfold, base_chart, bend_side, flatten, radial, read};
-use super::wrap::{Tool, has_other_side};
+use super::unfold::{Chart, Read, Unfold, base_chart, bend_side, radial, read};
+use super::wrap::{Tool, has_other_side, outline_of};
 
 /// What names a slit's two sides and its two ends.
 const SIDE_A: u64 = 1;
@@ -30,17 +30,6 @@ const ON_EDGE: f64 = 1e-6;
 fn slot(p: Vec2, q: Vec2, half: f64) -> Vec<Piece> {
     let side = (q - p).normalized().perp() * half;
     polygon(&[(p - side, SIDE_A), (q - side, END_A), (q + side, SIDE_B), (p + side, END_B)])
-}
-
-/// The outer boundary of flat face `f` as its chart lays it out.
-fn boundary(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, f: u32, chart: &Chart, opts: &Unfold) -> Result<Vec<Piece>, String> {
-    let mut curves = Vec::new();
-    for &e in solid.topo.face_edges.get(f as usize).map_or(&[][..], Vec::as_slice) {
-        let Some(info) = solid.edges.get(e as usize).filter(|i| !i.degenerate) else { continue };
-        curves.push(flatten(k, shape.edge(e), info, chart, opts.deflection)?);
-    }
-    let (outer, _) = chain(curves).map_err(|_| "This face has an outline that cannot be followed, so a rip cannot be laid on it.".to_owned())?;
-    Ok(region::of_flat(&outer, 0))
 }
 
 /// The tools that open `way` in face `face` of the sheet `shape`, with a slit `gap` wide.
@@ -104,12 +93,12 @@ fn flat(
     let SurfaceKind::Plane { normal, .. } = &info.surface else { return Err("the face of a rip is not flat".into()) };
     let chart = base_chart(info).ok_or("the face of a rip is not flat")?;
     let Chart::Plane { o3, u3, v3, .. } = &chart else { return Err("the face of a rip is not flat".into()) };
-    let outline = boundary(k, shape, solid, face, &chart, opts)?;
+    let outline = outline_of(k, shape, solid, face, &chart, opts)?;
     let loops = [outline.clone()];
     let is_on = |p: Vec2| region::inside(&loops, p) || region::distance_to(&loops, p) <= ON_EDGE;
     let off_face = |what: &str, p: Vec3| {
         format!(
-            "The {what} of the rip, ({}, {}, {}), is not on the face it is on: pick it again.",
+            "The {what} of the rip, ({}, {}, {}), is not on the face it was picked on: pick it again.",
             crate::explain::mm(p.x),
             crate::explain::mm(p.y),
             crate::explain::mm(p.z)
@@ -125,7 +114,7 @@ fn flat(
             let d = match along {
                 Some(d) => {
                     let seen = Vec2::new(d.dot(*u3), d.dot(*v3));
-                    if seen.len() < 1e-6 * d.len().max(1e-300) {
+                    if seen.len() < 1e-6 * d.len() {
                         return Err("The edge a rip runs alongside stands square to the face, so a slit cannot run that way: pick an edge in the plane of the face.".into());
                     }
                     seen.normalized()
@@ -134,9 +123,8 @@ fn flat(
             };
             let (lo, hi) = region::bounds(&loops);
             let far = lo.dist(hi) + 1.0;
-            let cut = region::common(&[slot(p - d * far, p + d * far, gap / 2.0)], &loops).map_err(|why| touches(&why))?;
+            let mut through = region::common(&[slot(p - d * far, p + d * far, gap / 2.0)], &loops).map_err(|why| touches(&why))?;
             // The stretch of it the point is on: the slit does not jump across a gap in the face.
-            let mut through: Vec<Shape> = cut.into_iter().collect();
             through.sort_by(|x, y| x.away(p).total_cmp(&y.away(p)));
             through.truncate(1);
             through
@@ -204,26 +192,7 @@ fn round(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, face: u32, way: &RipW
         radius: *radius,
     };
     let here = chart(r0);
-    let mut turn = (f64::INFINITY, f64::NEG_INFINITY);
-    let mut run = (f64::INFINITY, f64::NEG_INFINITY);
-    for &e in solid.topo.face_edges.get(face as usize).map_or(&[][..], Vec::as_slice) {
-        let Some(e_info) = solid.edges.get(e as usize).filter(|i| !i.degenerate) else { continue };
-        let straight = match &e_info.curve {
-            CurveKind::Line { .. } => true,
-            CurveKind::Circle { axis: about, .. } => about.dir().cross(a).len() < 1e-6,
-            _ => false,
-        };
-        let points = if straight {
-            vec![e_info.start, e_info.mid, e_info.end]
-        } else {
-            k.edge_points(shape.edge(e), opts.deflection).map_err(|e| e.to_string())?
-        };
-        for p in points {
-            let (angle, along) = here.round(p);
-            turn = (turn.0.min(angle), turn.1.max(angle));
-            run = (run.0.min(along), run.1.max(along));
-        }
-    }
+    let (mut turn, run) = rim_of(k, shape, solid, face, &here, axis, opts)?;
     if run.1 - run.0 <= 1e-9 || !run.0.is_finite() {
         return Err("This face of the sheet could not be read: it has no length along its axis.".into());
     }
@@ -237,7 +206,7 @@ fn round(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, face: u32, way: &RipW
         |p: Vec2| (whole || (turn.0 * rho - ON_EDGE..=turn.1 * rho + ON_EDGE).contains(&p.x)) && (run.0 - ON_EDGE..=run.1 + ON_EDGE).contains(&p.y);
     let off_face = |what: &str, p: Vec3| {
         format!(
-            "The {what} of the rip, ({}, {}, {}), is not on the face it is on: pick it again.",
+            "The {what} of the rip, ({}, {}, {}), is not on the face it was picked on: pick it again.",
             crate::explain::mm(p.x),
             crate::explain::mm(p.y),
             crate::explain::mm(p.z)

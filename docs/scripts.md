@@ -524,8 +524,9 @@ whole face out. `gap` is how wide a slit is in the flat, the rule's `GapSize` un
 ```
 
 `sheet.unfold` lays bends flat from the flat face that stays where it is: `bends` names each by a
-round face of it, and without them it is every bend. `sheet.refold` folds them back (the last unfold's
-unless told `unfold`; all that are flat unless told `bends`, each by a face of the strip it became).
+round face of it, and without them it is every bend. `sheet.refold` folds them back (the last unfold
+not yet folded back whole, unless told `unfold`; all that are flat unless told `bends`, each by a face
+of the strip it became).
 What is cut meanwhile goes round the bend. A hole of radius 6 across the bend of a bracket, cut
 while it is flat:
 

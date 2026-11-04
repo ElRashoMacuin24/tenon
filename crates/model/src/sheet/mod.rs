@@ -1090,6 +1090,20 @@ impl Document {
         Sizes::from_values(&self.parameter_values())
     }
 
+    /// The unfold a new refold is of: the last that no refold has folded back whole, else the last.
+    pub fn unfold_to_refold(&self) -> Option<FeatureId> {
+        let whole: Vec<FeatureId> = self
+            .features()
+            .iter()
+            .filter_map(|f| match &f.kind {
+                crate::FeatureKind::Refold(r) if r.bends.is_empty() => Some(r.unfold),
+                _ => None,
+            })
+            .collect();
+        let unfolds = || self.features().iter().rev().filter(|f| matches!(f.kind, crate::FeatureKind::Unfold(_))).map(|f| f.id);
+        unfolds().find(|u| !whole.contains(u)).or_else(|| unfolds().next())
+    }
+
     /// Whether `name` is a parameter the sheet metal rule needs: it cannot be renamed or deleted
     /// while the part is a sheet metal part.
     pub fn is_sheet_parameter(&self, name: &str) -> bool {

@@ -442,6 +442,7 @@ fn a_bend_laid_flat_with_another_beyond_it_carries_the_other_round_and_back() {
     let far_first = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": z_top.clone(), "bends": [second] })), "feature");
     let first = face_at(&mut s, &mut k, bracket_bend());
     let near_last = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": z_top, "bends": [first] })), "feature");
+    assert_eq!(s.document().unfold_to_refold().map(|f| u64::from(f.0)), Some(near_last));
     let flat_all = num(&pattern, "length") * 40.0 * T;
     assert!(near(volume(&mut s, &mut k), flat_all), "{} {flat_all}", volume(&mut s, &mut k));
     sound(&mut s, &mut k);
@@ -450,7 +451,11 @@ fn a_bend_laid_flat_with_another_beyond_it_carries_the_other_round_and_back() {
     let second_bend = folded_bend(FRAC_PI_2, 40.0) - 40.0 * T * ALLOWANCE;
     assert!(near(v, flat_all + second_bend), "{v} {}", flat_all + second_bend);
     sound(&mut s, &mut k);
-    run(&mut s, &mut k, "sheet.refold", json!({ "unfold": near_last }));
+    // (Told none, a refold is of the last unfold that has not been folded back whole.)
+    assert_eq!(s.document().unfold_to_refold().map(|f| u64::from(f.0)), Some(near_last));
+    let last = id(&run(&mut s, &mut k, "sheet.refold", json!({})), "feature");
+    let tenon_model::FeatureKind::Refold(r) = &s.document().feature(tenon_model::FeatureId(last as u32)).unwrap().kind else { panic!() };
+    assert_eq!(u64::from(r.unfold.0), near_last);
     assert!(near(volume(&mut s, &mut k), whole), "{} {whole}", volume(&mut s, &mut k));
     sound(&mut s, &mut k);
     let again = flat(&mut s, &mut k);
@@ -977,6 +982,34 @@ fn a_cut_seen_at_an_angle_across_a_bend_comes_through_as_the_curve_it_is() {
     let v = volume(&mut s, &mut k);
     assert!((v - cut).abs() < 2e-3 * cut, "{v} {cut}");
     sound(&mut s, &mut k);
+}
+
+#[test]
+fn every_bend_is_every_bend_of_the_piece_the_stationary_face_is_on() {
+    // A channel with the whole floor out of it: two walls in two pieces, each with its bend.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let (face, lines) = plate(&mut s, &mut k, 60.0, 40.0);
+    let edges = [rim(&mut s, &mut k, face, lines[1]), rim(&mut s, &mut k, face, lines[3])];
+    run(&mut s, &mut k, "sheet.flange", json!({ "edges": edges, "height": 20 }));
+    let whole = volume(&mut s, &mut k);
+    let sk = sketch_on_top(&mut s, &mut k);
+    let (a, b) = (in_sketch(&mut s, &mut k, sk, (20.0, -1.0)), in_sketch(&mut s, &mut k, sk, (40.0, 41.0)));
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": a.0, "y1": a.1, "x2": b.0, "y2": b.1 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 5, "reverse": true, "operation": "cut" }));
+    let cut = whole - 20.0 * 40.0 * T;
+    assert!(near(volume(&mut s, &mut k), cut), "{}", volume(&mut s, &mut k));
+    // From the right-hand piece: its bend, and only its.
+    let top = face_at(&mut s, &mut k, [45.0, 20.0, T]);
+    run(&mut s, &mut k, "sheet.unfold", json!({ "face": top.clone() }));
+    let gained = 40.0 * T * ALLOWANCE - folded_bend(FRAC_PI_2, 40.0);
+    assert!(near(volume(&mut s, &mut k), cut + gained), "{} {}", volume(&mut s, &mut k), cut + gained);
+    assert!(s.undo());
+    // The left-hand bend, named from there: it says why not.
+    let c = FRAC_PI_2 / 2.0;
+    let left = face_at(&mut s, &mut k, [5.0 - R * c.sin(), 20.0, T + R - R * c.cos()]);
+    run(&mut s, &mut k, "sheet.unfold", json!({ "face": top, "bends": [left] }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("not on the piece of sheet its stationary face is on"), "{e}");
 }
 
 #[test]

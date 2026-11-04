@@ -3462,16 +3462,13 @@ fn sheet_refold(s: &mut Session, p: &Value) -> CmdResult {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
     }
     let bends = if arg(p, "bends").is_some_and(|v| !v.is_null()) { parse(p, "bends")? } else { Vec::new() };
-    let unfold =
-        match opt_id(p, "unfold")? {
-            Some(id) => FeatureId(id),
-            // The last one in the history.
-            None => {
-                s.document().features().iter().rev().find(|f| matches!(f.kind, FeatureKind::Unfold(_))).map(|f| f.id).ok_or_else(|| {
-                    CmdError("The part has no unfold, so it has nothing to fold back: lay bends flat first with sheet.unfold.".into())
-                })?
-            }
-        };
+    let unfold = match opt_id(p, "unfold")? {
+        Some(id) => FeatureId(id),
+        None => s
+            .document()
+            .unfold_to_refold()
+            .ok_or_else(|| CmdError("The part has no unfold, so it has nothing to fold back: lay bends flat first with sheet.unfold.".into()))?,
+    };
     if !s.document().feature(unfold).is_some_and(|f| matches!(f.kind, FeatureKind::Unfold(_))) {
         return Err(CmdError(format!("{unfold} is not an unfold: a refold folds back the bends an unfold laid flat")));
     }
@@ -4522,7 +4519,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.refold",
         "Refold",
-        "unfold: the feature (default: the last unfold in the history). bends: [face references], a face of the flat strip of each bend to fold back (default: all of its bends still flat). Each strip is rolled up again as it now is, what was cut out of it going round the bend, and the sheet beyond turns back with it. Refused, in words, when what is in the strip is not sheet of one thickness cut straight through, when something is joined to the strip alone, when the sheet on its two sides is joined some other way, when a cut has left nothing of the strip to hold the two sides together, and when what comes round would run into the sheet",
+        "unfold: the feature (default: the last unfold no refold has folded back whole). bends: [face references], a face of the flat strip of each bend to fold back (default: all of its bends still flat). Each strip is rolled up again as it now is, what was cut out of it going round the bend, and the sheet beyond turns back with it. Refused, in words, when what is in the strip is not sheet of one thickness cut straight through, when something is joined to the strip alone, when the sheet on its two sides is joined some other way, when a cut has left nothing of the strip to hold the two sides together, and when what comes round would run into the sheet",
         true,
         sheet_refold
     ),

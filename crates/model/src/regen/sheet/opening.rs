@@ -24,6 +24,24 @@ enum Tried {
     Done,
     /// The stationary face's sheet reaches both ends of it: something else joins them.
     StillJoined,
+    /// The stationary face's sheet reaches neither: the bend is on another piece of the sheet.
+    Elsewhere,
+}
+
+/// The sheet with a bend laid flat or rolled up: the new solid, its names, and how what came round
+/// with the bend moved, with the names of its faces.
+struct Moved {
+    shape: ShapeHandle,
+    names: Vec<Option<FaceOrigin>>,
+    by: Rigid,
+    moved: Vec<Option<FaceOrigin>>,
+}
+
+/// What came of laying out the pieces a bend's going left.
+enum Laid {
+    Done(Moved),
+    StillJoined,
+    Elsewhere,
 }
 
 impl Ctx<'_> {
@@ -120,13 +138,18 @@ impl Ctx<'_> {
             );
         };
         if u.bends.is_empty() {
-            // All of them: until no bend is left.
-            let mut done = 0;
+            // All of them: until none is left of those on this piece of the sheet.
+            let (mut done, mut elsewhere) = (0, Vec::new());
             loop {
                 let shape = self.body_shape(bi)?;
-                let Some(&face) = flatten::inner_bends(&*self.k, shape, &opts)?.first() else { break };
-                self.flatten_bend(id, bi, face, stays, &opts)?;
-                done += 1;
+                let name = |bodies: &[crate::regen::Body], f: u32| bodies.get(bi).and_then(|b| b.names.get(f as usize).copied().flatten());
+                let left = flatten::inner_bends(&*self.k, shape, &opts)?;
+                let Some(&face) = left.iter().find(|f| !elsewhere.contains(&name(&self.regen.bodies, **f))) else { break };
+                if self.flatten_bend(id, bi, face, stays, &opts)? {
+                    done += 1;
+                } else {
+                    elsewhere.push(name(&self.regen.bodies, face));
+                }
             }
             if done == 0 {
                 return Err("The sheet has no bend to unfold: it is flat already.".into());
@@ -142,12 +165,18 @@ impl Ctx<'_> {
             if on != bi {
                 return Err("A bend picked for the unfold is on another solid than its stationary face.".into());
             }
-            self.flatten_bend(id, bi, face, stays, &opts)?;
+            if !self.flatten_bend(id, bi, face, stays, &opts)? {
+                return Err(
+                    "A bend picked for the unfold is not on the piece of sheet its stationary face is on: it would have nothing to turn from.".into(),
+                );
+            }
         }
         Ok(())
     }
 
-    fn flatten_bend(&mut self, id: FeatureId, bi: usize, face: u32, stays: Vec3, opts: &Unfold) -> Result<(), Stop> {
+    /// Lays the bend face `face` is a side of flat. False when it is on another piece of the sheet
+    /// than the stationary face.
+    fn flatten_bend(&mut self, id: FeatureId, bi: usize, face: u32, stays: Vec3, opts: &Unfold) -> Result<bool, Stop> {
         let body = self.body_shape(bi)?;
         let names = self.regen.bodies.get(bi).map(|b| b.names.clone()).unwrap_or_default();
         // The bend's key: from its name, and which of that name this is.
@@ -156,15 +185,17 @@ impl Ctx<'_> {
         let key = sub_key(named, u32::try_from(nth).unwrap_or(u32::MAX));
         let tag = sub_key(key, 64);
         let bend = flatten::read_bend(&*self.k, body, &names, face, false, tag, opts)?;
-        if let Tried::Done = self.try_flatten(id, bi, body, &names, &bend, stays, key, opts)? {
-            return Ok(());
+        match self.try_flatten(id, bi, body, &names, &bend, stays, key, opts)? {
+            Tried::Done => return Ok(true),
+            Tried::Elsewhere => return Ok(false),
+            Tried::StillJoined => {}
         }
         // A bend in pieces along one line (a slot through it, a hole): they go together.
         let whole = flatten::read_bend(&*self.k, body, &names, face, true, tag, opts)?;
         if whole.faces != bend.faces
             && let Tried::Done = self.try_flatten(id, bi, body, &names, &whole, stays, key, opts)?
         {
-            return Ok(());
+            return Ok(true);
         }
         Err("This bend is not all that joins the sheet on its two sides: the sheet closes round on itself (a tube, a box), so it cannot be laid flat. Open a seam in it first with Rip, or Corner Seam > Corner Rip at a corner.".into())
     }
@@ -214,23 +245,29 @@ impl Ctx<'_> {
         for s in temp {
             self.k.release(s);
         }
-        let Some((shape, names, moved_by, moved_names)) = outcome? else { return Ok(Tried::StillJoined) };
+        let done = match outcome? {
+            Laid::Done(done) => done,
+            Laid::StillJoined => return Ok(Tried::StillJoined),
+            Laid::Elsewhere => return Ok(Tried::Elsewhere),
+        };
         self.k.release(body);
-        if let Some(b) = self.regen.bodies.get_mut(bi) {
-            (b.shape, b.names) = (shape, names);
-        }
-        // What came round with it moved with it.
-        if let Some(by) = moved_by {
-            for f in &mut self.regen.flat_bends {
-                if moved_names.iter().flatten().any(|n| f.holds(n)) {
-                    f.moved(&by);
-                }
-            }
-        }
+        self.moved_with_it(bi, done);
         Ok(Tried::Done)
     }
 
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    /// The body as it now is, and the strips still flat where what they are on has gone.
+    fn moved_with_it(&mut self, bi: usize, done: Moved) {
+        if let Some(b) = self.regen.bodies.get_mut(bi) {
+            (b.shape, b.names) = (done.shape, done.names);
+        }
+        for f in &mut self.regen.flat_bends {
+            if done.moved.iter().flatten().any(|n| f.holds(n)) {
+                f.moved(&done.by);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn flatten_pieces(
         &mut self,
         id: FeatureId,
@@ -241,7 +278,7 @@ impl Ctx<'_> {
         were: u32,
         opts: &Unfold,
         temp: &mut Vec<ShapeHandle>,
-    ) -> Result<Option<(ShapeHandle, Vec<Option<FaceOrigin>>, Option<Rigid>, Vec<Option<FaceOrigin>>)>, Stop> {
+    ) -> Result<Laid, Stop> {
         let t = opts.thickness;
         let r = bend.inside;
         let allowance = bend.allowance();
@@ -276,14 +313,10 @@ impl Ctx<'_> {
         let at_start = self.sheet_at_any(lumps[stay].0, &past_start, t)?;
         let at_end = self.sheet_at_any(lumps[stay].0, &past_end, t)?;
         let near_start = match (at_start, at_end) {
-            (true, true) => return Ok(None),
+            (true, true) => return Ok(Laid::StillJoined),
             (true, false) => true,
             (false, true) => false,
-            (false, false) => {
-                return Err(
-                    "A bend picked for the unfold is not on the piece of sheet its stationary face is on: it would have nothing to turn from.".into(),
-                );
-            }
+            (false, false) => return Ok(Laid::Elsewhere),
         };
         let far_places = if near_start { &past_end } else { &past_start };
         let mut far: Vec<usize> = Vec::new();
@@ -330,7 +363,7 @@ impl Ctx<'_> {
             "laid flat",
             ["Laid flat, what comes round with this bend runs into the sheet", "Refold it, or unfold the bend it runs into as well."],
         )?;
-        let moved_by = (!far.is_empty()).then_some(by);
+        let beyond = !far.is_empty();
         self.regen.flat_bends.push(FlatBend {
             unfold: id,
             key,
@@ -348,10 +381,10 @@ impl Ctx<'_> {
             inside: r,
             rho: bend.rho,
             names: bend.names,
-            beyond: !far.is_empty(),
+            beyond,
             sources,
         });
-        Ok(Some((shape, whole_names, moved_by, moved_names)))
+        Ok(Laid::Done(Moved { shape, names: whole_names, by, moved: moved_names }))
     }
 
     /// A solid moved as `by` says. What is made on the way goes into `temp`.
@@ -499,21 +532,14 @@ impl Ctx<'_> {
         for s in temp {
             self.k.release(s);
         }
-        let (shape, whole_names, by, moved_names) = result?;
+        let done = result?;
         self.k.release(body);
-        if let Some(b) = self.regen.bodies.get_mut(bi) {
-            (b.shape, b.names) = (shape, whole_names);
-        }
         self.regen.flat_bends.remove(at);
-        for f in &mut self.regen.flat_bends {
-            if moved_names.iter().flatten().any(|n| f.holds(n)) {
-                f.moved(&by);
-            }
-        }
+        self.moved_with_it(bi, done);
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     fn fold_pieces(
         &mut self,
         id: FeatureId,
@@ -523,7 +549,7 @@ impl Ctx<'_> {
         were: u32,
         opts: &Unfold,
         temp: &mut Vec<ShapeHandle>,
-    ) -> Result<(ShapeHandle, Vec<Option<FaceOrigin>>, Rigid, Vec<Option<FaceOrigin>>), Stop> {
+    ) -> Result<Moved, Stop> {
         let t = opts.thickness;
         let r = bend.inside;
         let lumps = self.solids_of(cut.0, &cut.1)?;
@@ -634,6 +660,6 @@ impl Ctx<'_> {
                 "Something made while it was flat may be in the way: move it, or fold the bend back first.",
             ],
         )?;
-        Ok((shape, names, by, moved_names))
+        Ok(Moved { shape, names, by, moved: moved_names })
     }
 }

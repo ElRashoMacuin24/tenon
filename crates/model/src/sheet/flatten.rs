@@ -207,7 +207,7 @@ impl BendRead {
 }
 
 /// How far round a chart a round face reaches, and how far along.
-fn rim_of(
+pub(super) fn rim_of(
     k: &dyn Kernel,
     shape: ShapeHandle,
     solid: &Read,

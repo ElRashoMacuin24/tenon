@@ -71,7 +71,7 @@ fn drawn(profile: &[Region], cut: [&str; 2]) -> Result<Vec<Vec<Vec<Piece>>>, Str
 
 /// The outer boundary of flat face `f` as its chart lays it out. (A hole in the face is no
 /// sheet to cut, and the floor of a pocket is sheet under the profile like any other.)
-fn outline_of(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, f: u32, chart: &Chart, opts: &Unfold) -> Result<Vec<Piece>, String> {
+pub(super) fn outline_of(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, f: u32, chart: &Chart, opts: &Unfold) -> Result<Vec<Piece>, String> {
     let mut curves = Vec::new();
     for &e in solid.topo.face_edges.get(f as usize).map_or(&[][..], Vec::as_slice) {
         let Some(info) = solid.edges.get(e as usize).filter(|i| !i.degenerate) else { continue };

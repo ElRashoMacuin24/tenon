@@ -1410,7 +1410,7 @@ impl Workbench {
                 _ => return Err("not a refold".into()),
             },
             None => {
-                let Some((unfold, _)) = self.unfolds_before(None).pop() else {
+                let Some(unfold) = self.document().unfold_to_refold() else {
                     return Err("The part has no unfold, so it has nothing to fold back: lay bends flat first with Unfold.".into());
                 };
                 RefoldPanel { editing: None, unfold, bends: Vec::new(), all: true }
@@ -1490,6 +1490,15 @@ impl Workbench {
                 }
             }
         }
+        let next = match (p.way, p.points.len()) {
+            (RipChoice::Point, _) => {
+                "Rip: the slit goes through that point. Click a straight edge for it to run alongside, or another point in its place, then OK."
+            }
+            (RipChoice::Between, 1) => "Rip: click where the slit ends on the same face. A click at an edge of the face takes it through that edge.",
+            (RipChoice::Between, _) => "Rip: the slit runs between those two points. Another click takes the place of the second, then OK.",
+            (RipChoice::Face, _) => "Rip: that face goes, and the sheet behind it. Click another in its place, then OK.",
+        };
+        self.set_status(next);
     }
 
     /// Where a click at `point` on a face is taken to be: on an edge of the face it is within a
