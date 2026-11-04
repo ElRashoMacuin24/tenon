@@ -378,3 +378,171 @@ fn holes_are_placed_on_a_face_one_after_another() {
     assert_eq!((p.sketch, p.points.len()), (sk, 1));
     d.tap(&mut wb, egui::Key::Escape);
 }
+
+/// A rectangle on the XY plane extruded 10, and a circle in a sketch on its top, as a person has
+/// them when pressing E on the second.
+fn block_and_a_circle_on_top() -> (Workbench, Driver, FeatureId) {
+    let (mut wb, mut d, sk) = block_and_a_sketch_on_top();
+    wb.exec("sketch.circle", json!({ "sketch": sk.0, "cx": 20, "cy": 20, "r": 5 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    (wb, d, sk)
+}
+
+fn extrude_panel(wb: &mut Workbench) -> &mut crate::panels::ExtrudePanel {
+    match &mut wb.panel {
+        Some(Panel::Extrude(p)) => p,
+        _ => panic!("no extrude panel"),
+    }
+}
+
+fn presses_ok_and_is_refused(d: &mut Driver, wb: &mut Workbench, words: &str) {
+    let before = wb.document().features().len();
+    d.tap(wb, egui::Key::Enter);
+    d.frame(wb, vec![]);
+    d.settle(wb);
+    assert!(wb.panel.is_some(), "the panel closed: {}", wb.status());
+    assert!(wb.status_error && wb.status().contains(words), "{}", wb.status());
+    assert_eq!(wb.document().features().len(), before, "something was made");
+}
+
+#[test]
+fn ok_on_to_with_nothing_picked_asks_for_the_plane() {
+    use crate::panels::ExtentChoice;
+    // Extrude To.
+    let (mut wb, mut d, _) = block_and_a_circle_on_top();
+    d.tap(&mut wb, egui::Key::E);
+    d.frame(&mut wb, vec![]);
+    extrude_panel(&mut wb).extent = ExtentChoice::To;
+    d.frame(&mut wb, vec![]);
+    presses_ok_and_is_refused(&mut d, &mut wb, "Click the face or plane it goes to first");
+    // Between, with where it starts and not where it goes.
+    extrude_panel(&mut wb).extent = ExtentChoice::Between;
+    extrude_panel(&mut wb).from = Some(tenon_model::PlaneRef::Origin(tenon_model::OriginPlane::XY));
+    d.frame(&mut wb, vec![]);
+    presses_ok_and_is_refused(&mut d, &mut wb, "Click the faces or planes it goes from and to first");
+    d.tap(&mut wb, egui::Key::Escape);
+
+    // Hole To.
+    let (mut wb, mut d, sk) = block_with_a_point();
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::H);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Hole(p)) = &mut wb.panel else { panic!("no hole panel") };
+    assert_eq!(p.sketch, sk);
+    p.to_plane = true;
+    d.frame(&mut wb, vec![]);
+    presses_ok_and_is_refused(&mut d, &mut wb, "Click the face or plane it goes to first");
+    d.tap(&mut wb, egui::Key::Escape);
+
+    // Revolve To.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 10, "y1": 0, "x2": 20, "y2": 10 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.revolve", json!({ "sketch": f.0, "axis": "y", "angle": 1.0 })).unwrap();
+    d.settle(&mut wb);
+    wb.edit_feature(last(&wb).id).unwrap();
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Revolve(p)) = &mut wb.panel else { panic!("no revolve panel") };
+    (p.full, p.term) = (false, crate::panels::RevTerm::To);
+    d.frame(&mut wb, vec![]);
+    presses_ok_and_is_refused(&mut d, &mut wb, "Click the face or plane it goes to first");
+}
+
+#[test]
+fn ok_on_what_the_preview_says_cannot_be_built_says_so_again_and_stays() {
+    use crate::panels::ExtentChoice;
+    // A cut To Next from above the part: it cannot start.
+    let (mut wb, mut d, _) = block_and_a_sketch_on_top();
+    wb.exec("sketch.circle", json!({ "sketch": sketching(&wb).0, "cx": 20, "cy": 20, "r": 5 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::E);
+    d.frame(&mut wb, vec![]);
+    let p = extrude_panel(&mut wb);
+    p.choose_operation(tenon_model::Operation::Cut);
+    p.direction = crate::panels::Direction::Default;
+    p.extent = ExtentChoice::ToNext;
+    d.settle(&mut wb);
+    assert!(wb.status_error, "the preview says it cannot be built: {}", wb.status());
+    let said = wb.status().to_owned();
+    presses_ok_and_is_refused(&mut d, &mut wb, &said);
+    // Put right, OK makes it.
+    extrude_panel(&mut wb).extent = ExtentChoice::ThroughAll;
+    extrude_panel(&mut wb).direction = crate::panels::Direction::Flipped;
+    d.settle(&mut wb);
+    ok(&mut d, &mut wb);
+    assert!(wb.status().starts_with("Made Extrusion"), "{}", wb.status());
+}
+
+#[test]
+fn a_cut_on_a_face_goes_into_the_part() {
+    let (mut wb, mut d, _) = block_and_a_circle_on_top();
+    let block = volume(&wb);
+    d.tap(&mut wb, egui::Key::E);
+    d.frame(&mut wb, vec![]);
+    d.settle(&mut wb);
+    assert!(extrude_panel(&mut wb).part_behind);
+    assert_eq!(extrude_panel(&mut wb).direction, crate::panels::Direction::Default);
+
+    // Cut chosen: it starts Flipped, and the preview takes material away.
+    extrude_panel(&mut wb).choose_operation(tenon_model::Operation::Cut);
+    assert_eq!(extrude_panel(&mut wb).direction, crate::panels::Direction::Flipped);
+    d.settle(&mut wb);
+    assert!(block - volume(&wb) > 100.0, "the cut removes {}", block - volume(&wb));
+
+    // Join again: it comes back.
+    extrude_panel(&mut wb).choose_operation(tenon_model::Operation::Join);
+    assert_eq!(extrude_panel(&mut wb).direction, crate::panels::Direction::Default);
+    d.tap(&mut wb, egui::Key::Escape);
+
+    // A sketch through the middle of the part is left as it is.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "symmetric": 10 })).unwrap();
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let g = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": g.0, "cx": 20, "cy": 10, "r": 5 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::E);
+    d.frame(&mut wb, vec![]);
+    assert!(!extrude_panel(&mut wb).part_behind);
+    extrude_panel(&mut wb).choose_operation(tenon_model::Operation::Cut);
+    assert_eq!(extrude_panel(&mut wb).direction, crate::panels::Direction::Default);
+}
+
+#[test]
+fn extents_to_from_a_sketch_on_a_work_plane_picks_the_face_seen_through_it() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 60, "y2": 40 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 20 })).unwrap();
+    let plane = wb.exec("work.plane", json!({ "base": "xy", "distance": 50 })).unwrap()["feature"].as_u64().unwrap();
+    wb.create_sketch(json!({ "work_plane": plane })).unwrap();
+    let sk = sketching(&wb);
+    wb.exec("sketch.circle", json!({ "sketch": sk.0, "cx": 30, "cy": 20, "r": 5 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    wb.look_from(Vec3::new(0.3, -0.3, 1.0));
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::E);
+    d.frame(&mut wb, vec![]);
+    extrude_panel(&mut wb).extent = crate::panels::ExtentChoice::To;
+    d.settle(&mut wb);
+    click_on_part(&mut d, &mut wb, Vec3::new(5.0, 35.0, 20.0));
+    let to = extrude_panel(&mut wb).to.clone();
+    assert!(matches!(to, Some(tenon_model::PlaneRef::Face(_))), "picked {to:?}; {}", wb.status());
+    d.tap(&mut wb, egui::Key::Escape);
+}

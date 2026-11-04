@@ -116,6 +116,11 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- OK with To or Between chosen and nothing picked made a feature of another kind, and said so. It
+  now asks for the face or plane. OK on a panel whose preview has failed closed it and said "Made":
+  it now says why again, and the panel stays. A Cut on a sketch on a face went out of the part by
+  default and removed nothing: it now starts Flipped, as a hole does. With a sketch on a work
+  plane, Extents To could not pick a face seen through that plane.
 - A stress study of a part with a blind hole with a drilled tip often could not be solved: the
   solver refused the mesh, in its own words. Tenon now has the mesher try again where that
   happens, and says what helps if that fails too.

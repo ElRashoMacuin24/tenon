@@ -4,7 +4,7 @@
 
 use egui::{Pos2, Rect, Stroke, vec2};
 use tenon_kernel::SurfaceKind;
-use tenon_model::{AxisSel, DirectionRef, EdgeRef, FaceRef, FeatureId, Fingerprint, PlaneRef, Scene};
+use tenon_model::{AxisSel, DirectionRef, EdgeRef, FaceRef, FeatureId, FeatureKind, Fingerprint, PlaneRef, Scene};
 use tenon_render::pick::{pick_edge_in, pick_face_in};
 use tenon_sketch::EntityId;
 
@@ -226,11 +226,27 @@ impl Workbench {
         true
     }
 
+    /// The work plane the sketch of the open panel lies on, if it lies on one.
+    fn panel_sketch_plane(&self) -> Option<FeatureId> {
+        let sketch = match &self.panel {
+            Some(Panel::Extrude(p)) => p.sketch,
+            Some(Panel::Revolve(p)) => p.sketch,
+            Some(Panel::Hole(p)) => p.sketch,
+            _ => return None,
+        };
+        match &self.document().feature(sketch)?.kind {
+            FeatureKind::Sketch { plane: PlaneRef::Work(id), .. } => Some(*id),
+            _ => None,
+        }
+    }
+
     /// A work plane, or a flat face of the part, under the pointer while the open panel picks
     /// what it goes as far as: lit, and picked by a click. Returns whether there is one.
     fn pick_end_plane(&mut self, resp: &egui::Response, rect: Rect) -> bool {
+        // (The plane its own sketch lies on is no end for it: what is seen through that is.)
+        let own = self.panel_sketch_plane();
         if let Some(pos) = resp.hover_pos()
-            && let Some((id, _)) = self.work_at(pos, rect, true, false)
+            && let Some((id, _)) = self.work_at(pos, rect, true, false).filter(|(id, _)| Some(*id) != own)
         {
             self.view.hover = None;
             self.view.work_hover = Some(id);

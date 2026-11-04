@@ -53,6 +53,9 @@ pub(crate) struct ExtrudePanel {
     pub taper: f64,
     /// With To: the face or plane it goes as far as; with Between, the one it ends on.
     pub to: Option<PlaneRef>,
+    /// The part lies all behind the sketch, as the panel opened on it: a Cut then starts Flipped,
+    /// into it, as a hole does.
+    pub part_behind: bool,
     /// With Between: the face or plane it starts from, and whether a pick goes there next.
     pub from: Option<PlaneRef>,
     pub pick_from: bool,
@@ -280,6 +283,11 @@ impl HolePanel {
                 ..self.thread.clone().unwrap_or_default()
             }),
         })
+    }
+
+    /// What is still to be picked before OK (until then the depth stands in, for the preview).
+    pub(crate) fn plane_wanted(&self) -> Option<&'static str> {
+        (self.to_plane && self.to.is_none()).then_some(GOES_TO)
     }
 
     /// Tapped: sized for a screw's tap drill.
@@ -888,7 +896,33 @@ impl ExtrudePanel {
         let taper = (one_way && (self.taper != 0.0 || self.keep_taper)).then(|| self.taper.to_radians());
         FeatureKind::Extrude(Extrude { sketch: self.sketch, regions: self.regions.clone(), extent, reverse, operation: self.operation, taper })
     }
+
+    /// Chooses what it does with the part. A cut with the part all behind the sketch goes that
+    /// way (it would remove nothing the other way), and comes back when it is no longer a cut.
+    pub(crate) fn choose_operation(&mut self, operation: Operation) {
+        let was_cut = self.operation == Operation::Cut;
+        self.operation = operation;
+        if self.part_behind {
+            match (was_cut, operation == Operation::Cut, self.direction) {
+                (false, true, Direction::Default) => self.direction = Direction::Flipped,
+                (true, false, Direction::Flipped) => self.direction = Direction::Default,
+                _ => {}
+            }
+        }
+    }
+
+    /// What is still to be picked before OK (until then the distance stands in, for the preview).
+    pub(crate) fn plane_wanted(&self) -> Option<&'static str> {
+        match self.extent {
+            ExtentChoice::To if self.to.is_none() => Some(GOES_TO),
+            ExtentChoice::Between if self.from.is_none() || self.to.is_none() => Some("Click the faces or planes it goes from and to first."),
+            _ => None,
+        }
+    }
 }
+
+/// What OK says while what a feature goes as far as is not picked yet.
+const GOES_TO: &str = "Click the face or plane it goes to first.";
 
 impl RevolvePanel {
     pub(crate) fn kind(&self) -> FeatureKind {
@@ -912,6 +946,11 @@ impl RevolvePanel {
             AxisChoice::Work(w) => AxisRef::Work(w),
         };
         FeatureKind::Revolve(Revolve { sketch: self.sketch, regions: self.regions.clone(), axis, angle, operation: self.operation, reverse })
+    }
+
+    /// What is still to be picked before OK (until then the angle stands in, for the preview).
+    pub(crate) fn plane_wanted(&self) -> Option<&'static str> {
+        (!self.full && self.term == RevTerm::To && self.to.is_none()).then_some(GOES_TO)
     }
 }
 
@@ -1132,6 +1171,7 @@ impl Workbench {
                         to,
                         from,
                         pick_from: false,
+                        part_behind: false,
                     }
                 }
                 _ => return Err("not an extrusion".into()),
@@ -1153,6 +1193,7 @@ impl Workbench {
                     to: None,
                     from: None,
                     pick_from: true,
+                    part_behind: self.part_only_behind(sketch),
                 }
             }
         };
@@ -1160,6 +1201,15 @@ impl Workbench {
         self.start_equations();
         self.set_status("Extrude: set the distance and output, then OK.");
         Ok(())
+    }
+
+    /// Whether the part lies all behind a sketch's plane, as a face it was started on has it. (Not
+    /// with a preview in the view, which is part of what is measured.)
+    fn part_only_behind(&self, sketch: FeatureId) -> bool {
+        let (Some(frame), Some(b)) = (self.sketch_frame(sketch), self.scene.bbox()) else { return false };
+        let reach = |p: tenon_geom::Vec3| (p - frame.origin()).dot(frame.z());
+        let corners = [b.min.x, b.max.x].into_iter().flat_map(|x| [b.min.y, b.max.y].into_iter().flat_map(move |y| [b.min.z, b.max.z].map(|z| tenon_geom::Vec3::new(x, y, z))));
+        corners.map(reach).fold(f64::NEG_INFINITY, f64::max) <= tenon_geom::tol::LINEAR
     }
 
     pub(crate) fn open_revolve(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
@@ -1645,6 +1695,22 @@ impl Workbench {
         r.is_some()
     }
 
+    /// Why what the open panel is setting up cannot be built, when what is shown is that feature
+    /// as the panel now has it.
+    fn preview_failure(&self) -> Option<String> {
+        let doc = self.preview_document()?;
+        if self.waiting || self.shown.as_ref() != Some(&doc) {
+            return None;
+        }
+        let editing = self.panel.as_ref().and_then(Panel::editing);
+        self.scene.status.iter().find_map(|(f, st)| match st {
+            tenon_model::FeatureStatus::Error { message } if editing == Some(*f) || (editing.is_none() && self.document().feature(*f).is_none()) => {
+                Some(format!("{}: {message}", self.feature_name(*f)))
+            }
+            _ => None,
+        })
+    }
+
     pub(crate) fn panels(&mut self, ui: &mut Ui) {
         // A value a field refused this frame: said, and no OK is taken with the value from
         // before it.
@@ -1652,10 +1718,16 @@ impl Workbench {
         if let Some(said) = &refused {
             self.set_error(said.clone());
         }
+        // So too what the preview has just said cannot be built: it is said again, and the panel
+        // stays for it to be put right or cancelled.
+        let failing = if matches!(self.panel_request, Some(PanelRequest::Ok | PanelRequest::Apply)) { self.preview_failure() } else { None };
+        if let Some(said) = &failing {
+            self.set_error(said.clone());
+        }
         let Some(mut panel) = self.panel.take() else { return };
         // OK, Cancel or Apply from the properties panel, the mini-toolbar or the radial menu.
         let request = match self.panel_request.take() {
-            Some(PanelRequest::Ok | PanelRequest::Apply) if refused.is_some() => None,
+            Some(PanelRequest::Ok | PanelRequest::Apply) if refused.is_some() || failing.is_some() => None,
             request => request,
         };
         let mut keep = request != Some(PanelRequest::Cancel);
@@ -1667,7 +1739,9 @@ impl Workbench {
         let ptrs = panel.eq_pointers();
         match &mut panel {
             Panel::Extrude(p) => {
-                if commit {
+                if let (true, Some(wanted)) = (commit, p.plane_wanted()) {
+                    self.set_error(wanted);
+                } else if commit {
                     let (editing, kind) = (p.editing, p.kind());
                     keep = !self.commit_panel(&ptrs, editing, kind);
                     if !keep && again {
@@ -1733,7 +1807,9 @@ impl Workbench {
                 }
             }
             Panel::Revolve(p) => {
-                if commit {
+                if let (true, Some(wanted)) = (commit, p.plane_wanted()) {
+                    self.set_error(wanted);
+                } else if commit {
                     let (editing, kind) = (p.editing, p.kind());
                     keep = !self.commit_panel(&ptrs, editing, kind);
                     if !keep && again {
@@ -2003,7 +2079,9 @@ impl Workbench {
                 }
             }
             Panel::Hole(p) => {
-                if commit && p.on_face() && !p.face_points.is_empty() {
+                if let (true, Some(wanted)) = (commit, p.plane_wanted()) {
+                    self.set_error(wanted);
+                } else if commit && p.on_face() && !p.face_points.is_empty() {
                     // The sketch on the face, its points, and the hole: one step to undo.
                     keep = !self.commit_hole_on_face(&ptrs, p);
                     if !keep && again {

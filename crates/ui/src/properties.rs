@@ -725,7 +725,7 @@ impl Workbench {
                                 let items: Vec<(Glyph, &str, bool)> = OPS.iter().map(|o| (o.0, o.1, true)).collect();
                                 let sel = OPS.iter().position(|o| o.2 == p.operation).unwrap_or(0);
                                 if let Some(i) = glyph_row(ui, &items, sel, t) {
-                                    p.operation = OPS[i].2;
+                                    p.choose_operation(OPS[i].2);
                                 }
                                 ui.end_row();
                             });
