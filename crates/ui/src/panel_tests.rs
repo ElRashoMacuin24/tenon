@@ -667,3 +667,81 @@ fn the_hole_panel_says_where_holes_on_a_face_are() {
     assert!(d.text_pos("1 on the face").is_some(), "{}: {:?}", wb.status(), d.texts());
     d.tap(&mut wb, egui::Key::Escape);
 }
+
+/// The feature `id` opened and OK pressed: what comes of it, when the file changed or it was refused.
+fn after_ok_on(d: &mut Driver, wb: &mut Workbench, id: FeatureId) -> Option<String> {
+    let before = saved(wb);
+    if wb.edit_feature(id).is_err() || wb.panel.is_none() {
+        wb.panel = None;
+        return None;
+    }
+    d.frame(wb, vec![]);
+    d.frame(wb, vec![]);
+    d.tap(wb, egui::Key::Enter);
+    d.frame(wb, vec![]);
+    d.settle(wb);
+    if wb.panel.is_some() {
+        let said = wb.status().to_owned();
+        d.tap(wb, egui::Key::Escape);
+        d.frame(wb, vec![]);
+        wb.panel = None;
+        return Some(format!("refused: {said}"));
+    }
+    let after = saved(wb);
+    if after == before {
+        return None;
+    }
+    let lines = |s: &str| s.lines().map(str::to_owned).collect::<std::collections::BTreeSet<_>>();
+    let (a, b) = (lines(&before), lines(&after));
+    Some(format!("{:?} -> {:?}", a.difference(&b).collect::<Vec<_>>(), b.difference(&a).collect::<Vec<_>>()))
+}
+
+#[test]
+fn ok_with_nothing_touched_changes_nothing_in_any_example() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let mut files = Vec::new();
+    for dir in std::fs::read_dir(&root).unwrap().filter_map(Result::ok) {
+        for f in std::fs::read_dir(dir.path()).into_iter().flatten().filter_map(Result::ok) {
+            if f.path().extension().is_some_and(|e| e == "tenon") {
+                files.push(f.path());
+            }
+        }
+    }
+    assert!(files.len() > 5, "{files:?}");
+    let mut wrong = Vec::new();
+    for file in files {
+        let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+        let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+        wb.open(&file).unwrap();
+        d.settle(&mut wb);
+        let ids: Vec<FeatureId> =
+            wb.document().features().iter().filter(|f| !matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id).collect();
+        for id in ids {
+            let name = wb.document().feature(id).map(|f| f.name.clone()).unwrap_or_default();
+            if let Some(what) = after_ok_on(&mut d, &mut wb, id) {
+                wrong.push(format!("{} {name}: {what}", file.display()));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn an_angle_comes_back_as_it_was_through_the_panels_degrees() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.finish_sketch();
+    // (These two are off by a bit through degrees and back.)
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10, "taper": 0.05235987755982988 })).unwrap();
+    d.settle(&mut wb);
+    ok_changes_nothing(&mut d, &mut wb);
+    assert_eq!(value_of(&wb, "/taper"), 0.05235987755982988);
+    // What is changed takes.
+    reopen(&mut d, &mut wb);
+    type_into(&mut d, &mut wb, "tn_props_taper", "2");
+    ok(&mut d, &mut wb);
+    assert!((value_of(&wb, "/taper") - 2f64.to_radians()).abs() < 1e-12);
+}

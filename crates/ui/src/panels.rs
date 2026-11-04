@@ -841,15 +841,22 @@ impl Workbench {
 
     /// The equations to send with a feature: every value field of the panel, with its equation
     /// or (when editing, to drop an old equation) its plain value.
-    fn panel_equations(&self, ptrs: &[(&'static str, &'static str)], editing: bool, kind: &FeatureKind) -> serde_json::Map<String, Value> {
+    fn panel_equations(&self, ptrs: &[(&'static str, &'static str)], editing: Option<FeatureId>, kind: &FeatureKind) -> serde_json::Map<String, Value> {
         let json = serde_json::to_value(kind).unwrap_or(Value::Null);
+        // (A value with no equation is in the feature, and there is nothing to drop.)
+        let has_equation = |ptr: &str| {
+            editing.is_some_and(|feature| {
+                let path = tenon_model::ValuePath::Feature { feature, field: ptr.to_owned() };
+                self.document().name_of(&path).is_some_and(|name| self.document().parameters().model.iter().any(|m| m.name == name && m.equation.is_some()))
+            })
+        };
         let mut out = serde_json::Map::new();
         for (key, ptr) in ptrs {
             match self.panel_eqs.get(key) {
                 Some(e) => {
                     out.insert((*ptr).to_owned(), json!(e));
                 }
-                None if editing => {
+                None if has_equation(ptr) => {
                     if let Some(v) = json.pointer(ptr).and_then(Value::as_f64) {
                         // Angles are stored in radians; equations and plain values are in degrees.
                         let deg = tenon_model::params::field_unit(kind, ptr) == Some(tenon_model::ParamUnit::Deg);
@@ -860,6 +867,33 @@ impl Workbench {
             }
         }
         out
+    }
+}
+
+/// A number that has come back through a panel's degrees differs from what it was in its last bit,
+/// and would show in a file kept under version control: it is what it was, wherever it is that.
+fn as_it_was(new: &mut Value, was: &Value) {
+    match (new, was) {
+        (Value::Object(n), Value::Object(w)) => {
+            for (k, v) in n.iter_mut() {
+                if let Some(x) = w.get(k) {
+                    as_it_was(v, x);
+                }
+            }
+        }
+        (Value::Array(n), Value::Array(w)) => {
+            for (v, x) in n.iter_mut().zip(w) {
+                as_it_was(v, x);
+            }
+        }
+        (new @ Value::Number(_), was @ Value::Number(_)) => {
+            if let (Some(a), Some(b)) = (new.as_f64(), was.as_f64())
+                && (a - b).abs() <= 8.0 * f64::EPSILON * a.abs().max(b.abs())
+            {
+                *new = was.clone();
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1465,12 +1499,15 @@ impl Workbench {
 
     /// Commits a feature from a panel with the equations typed into its fields.
     fn commit_panel(&mut self, ptrs: &[(&'static str, &'static str)], editing: Option<FeatureId>, kind: FeatureKind) -> bool {
-        let eqs = self.panel_equations(ptrs, editing.is_some(), &kind);
+        let eqs = self.panel_equations(ptrs, editing, &kind);
         self.commit_feature_eq(editing, kind, eqs)
     }
 
     pub(crate) fn commit_feature_eq(&mut self, editing: Option<FeatureId>, kind: FeatureKind, equations: serde_json::Map<String, Value>) -> bool {
-        let kind_json = serde_json::to_value(&kind).unwrap_or(Value::Null);
+        let mut kind_json = serde_json::to_value(&kind).unwrap_or(Value::Null);
+        if let Some(was) = editing.and_then(|id| self.document().feature(id)).and_then(|f| serde_json::to_value(&f.kind).ok()) {
+            as_it_was(&mut kind_json, &was);
+        }
         let r = match editing {
             Some(id) if equations.is_empty() => self.exec_status("feature.update", json!({ "feature": id.0, "kind": kind_json })),
             Some(id) => self.exec_status("feature.update", json!({ "feature": id.0, "kind": kind_json, "equations": equations })),

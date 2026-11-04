@@ -1519,3 +1519,25 @@ fn lips_turned_in_from_the_tops_of_a_trays_walls_are_mitred_at_its_corners() {
     let flat = wb.exec("sheet.flat", json!({})).unwrap();
     assert!(flat["bends"].as_array().is_some_and(|b| b.len() == 8), "{flat}");
 }
+
+#[test]
+fn a_cut_given_no_distance_stays_through_when_ok_is_pressed() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("file.new_sheet_metal").unwrap();
+    plate(&mut wb, 60.0, 40.0);
+    d.settle(&mut wb);
+    let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].as_u64().unwrap();
+    wb.exec("sketch.circle", json!({ "sketch": sk, "cx": 30, "cy": 20, "r": 5 })).unwrap();
+    wb.exec("sheet.cut_normal", json!({ "sketch": sk })).unwrap();
+    d.settle(&mut wb);
+    let before = tenon_io::project::to_bytes(wb.document(), &serde_json::Map::new()).unwrap();
+    let cut = wb.document().features().last().unwrap().id;
+    wb.edit_feature(cut).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(String::from_utf8(tenon_io::project::to_bytes(wb.document(), &serde_json::Map::new()).unwrap()).unwrap(), String::from_utf8(before).unwrap());
+}

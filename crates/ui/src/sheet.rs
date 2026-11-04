@@ -55,14 +55,18 @@ pub(crate) struct CutPanel {
     /// Cut Normal (a cut across bends is one as well, whatever this says).
     pub normal: bool,
     pub distance: f64,
+    /// A cut given no distance goes through however thick the sheet is: the thickness it shows
+    /// for that, as long as it is left as it is.
+    pub through: Option<f64>,
 }
 
 impl CutPanel {
     pub(crate) fn kind(&self) -> FeatureKind {
+        let distance = Some(self.distance).filter(|d| Some(*d) != self.through);
         if self.across {
-            FeatureKind::CutAcrossBend(sheet::CutAcrossBend { sketch: self.sketch, regions: self.regions.clone(), distance: Some(self.distance) })
+            FeatureKind::CutAcrossBend(sheet::CutAcrossBend { sketch: self.sketch, regions: self.regions.clone(), distance })
         } else if self.normal {
-            FeatureKind::CutNormal(sheet::CutNormal { sketch: self.sketch, regions: self.regions.clone(), distance: Some(self.distance) })
+            FeatureKind::CutNormal(sheet::CutNormal { sketch: self.sketch, regions: self.regions.clone(), distance })
         } else {
             FeatureKind::Extrude(Extrude {
                 sketch: self.sketch,
@@ -978,6 +982,7 @@ impl Workbench {
                     across: true,
                     normal: true,
                     distance: c.distance.unwrap_or(sizes.thickness),
+                    through: c.distance.is_none().then_some(sizes.thickness),
                 },
                 FeatureKind::CutNormal(c) => CutPanel {
                     editing,
@@ -986,6 +991,7 @@ impl Workbench {
                     across: false,
                     normal: true,
                     distance: c.distance.unwrap_or(sizes.thickness),
+                    through: c.distance.is_none().then_some(sizes.thickness),
                 },
                 _ => return Err("not a cut of the sheet".into()),
             },
@@ -996,6 +1002,7 @@ impl Workbench {
                 across: false,
                 normal: false,
                 distance: sizes.thickness,
+                through: None,
             },
         };
         let fresh = panel.editing.is_none();
