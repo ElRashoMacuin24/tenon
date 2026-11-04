@@ -39,6 +39,18 @@ fn invalid(msg: impl Into<String>) -> SketchError {
     SketchError::Invalid(msg.into())
 }
 
+/// A length or a coordinate as words say it: to three places, and no more than it needs.
+fn num(v: f64) -> String {
+    let text = format!("{v:.3}");
+    let text = if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.') } else { text.as_str() };
+    if text == "-0" { "0".to_owned() } else { text.to_owned() }
+}
+
+/// A place as words say it.
+fn place(p: Vec3) -> String {
+    format!("({}, {}, {})", num(p.x), num(p.y), num(p.z))
+}
+
 /// A finite coordinate within the modelling range.
 fn valid_pos(p: Vec3) -> bool {
     tol::is_valid_coord(p.x) && tol::is_valid_coord(p.y) && tol::is_valid_coord(p.z)
@@ -287,25 +299,6 @@ impl Constraint3 {
             Distance { .. } => "distance",
             Coordinate { .. } => "coordinate",
             Radius { .. } => "radius",
-        }
-    }
-
-    /// In words, for what is said when it cannot be had.
-    pub fn describe(&self) -> String {
-        use Constraint3::*;
-        match self {
-            Coincident { a, b } => format!("{a} and {b} coincident"),
-            Fix { point } => format!("{point} fixed"),
-            Along { line, axis } => format!("{line} parallel to {}", axis.name()),
-            Parallel { a, b } => format!("{a} parallel to {b}"),
-            Perpendicular { a, b } => format!("{a} perpendicular to {b}"),
-            Equal { a, b } => format!("{a} equal to {b}"),
-            Tangent { a, b } => format!("{a} tangent to {b}"),
-            Corner { point, arc } => format!("{point} the corner of bend {arc}"),
-            Length { line, value } => format!("{line} {value} mm long"),
-            Distance { a, b, value } => format!("{a} and {b} {value} mm apart"),
-            Coordinate { point, axis, value } => format!("{} of {point} at {value}", axis.name()),
-            Radius { arc, value } => format!("{arc} of radius {value} mm"),
         }
     }
 }
@@ -674,15 +667,80 @@ impl Sketch3d {
                 Some(if at == start { s.start_tangent() } else { s.end_tangent() })
             }
             Geometry3::Edge { curve, .. } => {
-                let n = curve.along.len();
-                let (p, q) = if at == start {
-                    (*curve.along.first()?, *curve.along.get(1)?)
-                } else {
-                    (*curve.along.get(n.checked_sub(2)?)?, *curve.along.last()?)
-                };
-                Some(dir_n(p, q))
+                let (first, last) = edge_directions(self.point(start)?, self.point(end)?, curve)?;
+                Some(if at == start { first } else { last })
             }
         }
+    }
+
+    /// What an entity is, as words call it.
+    fn kind_words(&self, id: EntityId) -> &'static str {
+        match self.geometry(id) {
+            Some(Geometry3::Arc { .. }) => "bend",
+            Some(g) => g.kind_name(),
+            None => "curve",
+        }
+    }
+
+    /// In words the window bears out: the one thing `this` names (what was just clicked or asked
+    /// about) as this line or this point, anything else by its kind and where it is.
+    fn entity_words(&self, id: EntityId, this: &[EntityId]) -> String {
+        let kind = self.kind_words(id);
+        if this == [id] {
+            return format!("this {kind}");
+        }
+        let at = |p: EntityId| self.point(p).map_or_else(|| "?".to_owned(), place);
+        match self.geometry(id) {
+            Some(Geometry3::Point { pos }) => format!("the point at {}", place(*pos)),
+            Some(Geometry3::Arc { center, .. }) => format!("the bend about {}", at(*center)),
+            Some(g) => match g.ends() {
+                Some((s, e)) if s != e => format!("the {kind} from {} to {}", at(s), at(e)),
+                Some((s, _)) => format!("the {kind} through {}", at(s)),
+                None => format!("the {kind}"),
+            },
+            None => "a curve that is gone".to_owned(),
+        }
+    }
+
+    /// A constraint in words, for what is said of it.
+    pub fn constraint_words(&self, c: &Constraint3, this: &[EntityId]) -> String {
+        use Constraint3::*;
+        let e = |id: &EntityId| self.entity_words(*id, this);
+        // The two things `this` names, together: "these two lines".
+        let both = |a: &EntityId, b: &EntityId| {
+            (this.contains(a) && this.contains(b)).then(|| {
+                let (x, y) = (self.kind_words(*a), self.kind_words(*b));
+                if x == y { format!("these two {x}s") } else { format!("this {x} and this {y}") }
+            })
+        };
+        let pair =
+            |a: &EntityId, b: &EntityId, what: &str| both(a, b).map_or_else(|| format!("{} {what} to {}", e(a), e(b)), |t| format!("{t} {what}"));
+        match c {
+            Coincident { a, b } => format!("{} coincident", both(a, b).unwrap_or_else(|| format!("{} and {}", e(a), e(b)))),
+            Fix { point } => format!("{} fixed", e(point)),
+            Along { line, axis } => format!("{} parallel to {}", e(line), axis.name()),
+            Parallel { a, b } => pair(a, b, "parallel"),
+            Perpendicular { a, b } => pair(a, b, "perpendicular"),
+            Equal { a, b } => pair(a, b, "equal"),
+            Tangent { a, b } => pair(a, b, "tangent"),
+            Corner { point, arc } => format!("{} the corner of {}", e(point), e(arc)),
+            Length { line, value } => format!("{} {} mm long", e(line), num(*value)),
+            Distance { a, b, value } => format!("{} {} mm apart", both(a, b).unwrap_or_else(|| format!("{} and {}", e(a), e(b))), num(*value)),
+            Coordinate { point, axis, value } => format!("{} of {} at {}", axis.name(), e(point), num(*value)),
+            Radius { arc, value } => format!("{} of radius {} mm", e(arc), num(*value)),
+        }
+    }
+
+    /// Why a point stays where it is whatever is asked of it, in words: it follows the part, or
+    /// it is fixed. None when constraints alone hold it, or nothing does.
+    pub fn held_why(&self, point: EntityId) -> Option<&'static str> {
+        if self.is_reference(point) {
+            return Some("That point follows the part: change the part to move it, or break its link first.");
+        }
+        self.constraints
+            .values()
+            .any(|c| matches!(c, Constraint3::Fix { point: p } if *p == point))
+            .then_some("That point is fixed: delete its Fix first to move it.")
     }
 
     /// Where two curves join, end to end: an end of `a` and an end of `b` that are one point or
@@ -865,19 +923,10 @@ impl Sketch3d {
         self.entities.remove(&old);
     }
 
-    /// Rounds the corner at point `corner`, where two lines meet, by an arc of `radius` tangent to
-    /// both: the lines end where the arc begins, and the corner stays as a construction point
-    /// held where the tangents meet, so what held it goes on holding it. A dimension of the
-    /// length of either line becomes the distance from its far end to the corner.
-    pub fn add_bend(&mut self, corner: EntityId, radius: f64) -> SketchResult<Bend3> {
-        if !tol::is_valid_size(radius) {
-            return Err(invalid(format!("a bend's radius must be more than 0, not {radius}")));
-        }
-        if !self.is_point(corner) {
-            return Err(invalid(format!("{corner} is not a point: click the corner where two lines meet")));
-        }
+    /// The sketch with the points held to `corner` become that point, as a bend makes them: a bend
+    /// rounds the corner where lines end, or where points held to one another end them.
+    fn with_corner_joined(&self, corner: EntityId) -> Sketch3d {
         let mut s = self.clone();
-        // Lines that end at it, or at a point held to it: those points become the one point.
         let held: Vec<EntityId> = s
             .constraints
             .values()
@@ -890,17 +939,63 @@ impl Sketch3d {
         for h in held {
             s.merge_points(corner, h);
         }
-        let curves = s.curves_at(corner);
+        s
+    }
+
+    /// The two lines a bend at `corner` rounds the corner of, or why there can be none, in words.
+    /// (With what is held to the corner joined to it: [`Sketch3d::with_corner_joined`].)
+    fn corner_lines(&self, corner: EntityId) -> Result<(EntityId, EntityId), String> {
+        if !self.is_point(corner) {
+            return Err("That is no point: click the corner where two lines meet.".into());
+        }
+        if self.constraints.values().any(|c| matches!(c, Constraint3::Corner { point, .. } if *point == corner)) {
+            return Err("That point is the corner of a bend already: change the bend's radius, or delete the bend.".into());
+        }
+        let curves = self.curves_at(corner);
         let [a, b] = curves.as_slice() else {
-            return Err(invalid(format!("A bend rounds a corner between two lines, and {} curves meet at {corner}.", curves.len())));
+            return Err(match curves.len() {
+                0 => "No curve ends at that point: a bend rounds the corner where two lines meet.".to_owned(),
+                1 => "Only one curve ends at that point: a bend rounds the corner where two lines meet.".to_owned(),
+                n => format!("{n} curves end at that point: a bend rounds the corner where just two lines meet."),
+            });
         };
-        let (a, b) = (*a, *b);
-        if !s.is_line(a) || !s.is_line(b) {
-            return Err(invalid("A bend rounds a corner between two lines: one of the curves there is not a line."));
+        if !self.is_line(*a) || !self.is_line(*b) {
+            return Err("A bend rounds the corner where two lines meet: one of the curves at that point is not a line.".into());
         }
-        if s.is_reference(a) || s.is_reference(b) || s.is_reference(corner) {
-            return Err(invalid("A bend cannot change an edge of the part: draw lines of the sketch's own to round the corner of."));
+        if self.is_reference(*a) || self.is_reference(*b) || self.is_reference(corner) {
+            return Err("A bend cannot change an edge of the part: draw lines of the sketch's own to round the corner of.".into());
         }
+        let dir = |line: EntityId| {
+            let (p, q) = self.geometry(line).and_then(Geometry3::ends)?;
+            Some(if p == corner { dir_n(self.point(p)?, self.point(q)?) } else { dir_n(self.point(q)?, self.point(p)?) })
+        };
+        let (Some(da), Some(db)) = (dir(*a), dir(*b)) else {
+            return Err("internal: a line without points".into());
+        };
+        let inside = da.cross(db).len().atan2(da.dot(db));
+        if !(1e-6..=std::f64::consts::PI - 1e-6).contains(&inside) {
+            return Err("The two lines there lie along one line: there is no corner to round.".into());
+        }
+        Ok((*a, *b))
+    }
+
+    /// Why a bend cannot go at point `corner`, whatever its radius, in words: what the Bend tool
+    /// says of a click, before it asks for a radius.
+    pub fn bend_refused(&self, corner: EntityId) -> Option<String> {
+        self.with_corner_joined(corner).corner_lines(corner).err()
+    }
+
+    /// Rounds the corner at point `corner`, where two lines meet, by an arc of `radius` tangent to
+    /// both: the lines end where the arc begins, and the corner stays as a construction point
+    /// held where the tangents meet, so what held it goes on holding it. A dimension of the
+    /// length of either line becomes the distance from its far end to the corner.
+    pub fn add_bend(&mut self, corner: EntityId, radius: f64) -> SketchResult<Bend3> {
+        if !tol::is_valid_size(radius) {
+            return Err(invalid(format!("a bend's radius must be more than 0, not {radius}")));
+        }
+        // Lines that end at it, or at a point held to it: those points become the one point.
+        let mut s = self.with_corner_joined(corner);
+        let (a, b) = s.corner_lines(corner).map_err(invalid)?;
         let far = |sk: &Sketch3d, line: EntityId| -> Option<EntityId> {
             let (p, q) = sk.geometry(line)?.ends()?;
             Some(if p == corner { q } else { p })
@@ -915,16 +1010,10 @@ impl Sketch3d {
         let (la, lb) = (pc.dist(pa), pc.dist(pb));
         // The angle between the lines at the corner.
         let inside = da.cross(db).len().atan2(da.dot(db));
-        if inside < 1e-6 || inside > std::f64::consts::PI - 1e-6 {
-            return Err(invalid("The two lines lie along one line: there is no corner to round."));
-        }
         let back = radius / (inside / 2.0).tan();
         let room = la.min(lb);
         if back >= room - tol::MIN_SIZE {
-            let most = room * (inside / 2.0).tan();
-            return Err(invalid(format!(
-                "A bend of radius {radius} mm needs {back:.3} mm of each line and the shorter is {room:.3} mm long: the largest radius that fits is just under {most:.3} mm."
-            )));
+            return Err(invalid(too_tight(radius, back, room, room * (inside / 2.0).tan())));
         }
         let center = pc + (da + db).normalized() * (radius / (inside / 2.0).sin());
         let (ps, pe) = (pc + da * back, pc + db * back);
@@ -1023,31 +1112,76 @@ impl Sketch3d {
     /// it conflicts with the others or adds nothing to them: over-constraining is not let happen.
     pub fn add_constraint(&mut self, c: Constraint3) -> SketchResult<ConstraintId> {
         let mut trial = self.clone();
-        let said = c.describe();
+        // What it is about is "this": all else by its kind and where it is.
+        let this = c.refs();
+        let said = self.constraint_words(&c, &this);
         let id = trial.push_constraint(c)?;
-        let others = |sk: &Sketch3d, ids: &[ConstraintId]| -> String {
-            let named: Vec<String> = ids.iter().filter(|i| **i != id).filter_map(|i| sk.constraint(*i)).map(Constraint3::describe).collect();
-            if named.is_empty() { String::new() } else { format!(" It conflicts with: {}.", named.join("; ")) }
-        };
         match trial.solve() {
             Ok(()) => {}
             Err(SketchError::Conflict(ids)) => {
+                let (named, valued) = trial.what_holds(id, &ids, &this);
+                let what = if valued { "Delete one of them, or change its value" } else { "Delete one of them" };
                 return Err(invalid(format!(
-                    "This would over-constrain the sketch: {said} cannot be had with what already holds it.{} Delete one of them, or change its value.",
-                    others(&trial, &ids)
+                    "This would over-constrain the sketch: {said} cannot be had with what already holds it. It conflicts with: {}. {what}.",
+                    named.join("; ")
                 )));
             }
             Err(e) => return Err(e),
         }
         if let Err(SketchError::Redundant(ids)) = trial.check_redundant(id) {
-            let named: Vec<String> = ids.iter().filter_map(|i| trial.constraint(*i)).map(Constraint3::describe).collect();
-            let held = if named.is_empty() { "what is there".to_owned() } else { named.join("; ") };
+            let (named, _) = trial.what_holds(id, &ids, &this);
             return Err(invalid(format!(
-                "This would over-constrain the sketch: {said} is already so, by {held}. Delete one of them first if it is to be held this way."
+                "This would over-constrain the sketch: {said} is already so, by {}. Delete one of them first if it is to be held this way.",
+                named.join("; ")
             )));
         }
         *self = trial;
         Ok(id)
+    }
+
+    /// The points a constraint's equations take in.
+    fn touched(&self, c: &Constraint3) -> Vec<EntityId> {
+        let mut out = Vec::new();
+        for r in c.refs() {
+            match self.geometry(r) {
+                Some(Geometry3::Point { .. }) => out.push(r),
+                Some(g) => out.extend(g.points()),
+                None => {}
+            }
+        }
+        out
+    }
+
+    /// What stands in the way of constraint `id`, in words: what a solve named (`ids`), else the
+    /// constraints on the same points; and what holds those points though no equation says so, a
+    /// Fix, or that they follow the part. And whether any of it has a value to change.
+    fn what_holds(&self, id: ConstraintId, ids: &[ConstraintId], this: &[EntityId]) -> (Vec<String>, bool) {
+        let mine = self.constraint(id).map_or_else(Vec::new, |c| self.touched(c));
+        let mut those: Vec<ConstraintId> = ids.iter().copied().filter(|i| *i != id && self.constraint(*i).is_some()).collect();
+        if those.is_empty() {
+            let shares = |c: &Constraint3| self.touched(c).iter().any(|p| mine.contains(p));
+            those =
+                self.constraints.iter().filter(|(i, c)| **i != id && !matches!(c, Constraint3::Fix { .. }) && shares(c)).map(|(i, _)| *i).collect();
+        }
+        let valued = those.iter().filter_map(|i| self.constraint(*i)).any(Constraint3::is_dimensional);
+        let mut named: Vec<String> = those.iter().filter_map(|i| self.constraint(*i)).map(|c| self.constraint_words(c, this)).collect();
+        let mut on = mine;
+        on.sort_unstable();
+        on.dedup();
+        for p in on {
+            let fixed = self.constraints.iter().find(|(i, c)| **i != id && matches!(c, Constraint3::Fix { point } if *point == p));
+            if let Some((i, c)) = fixed {
+                if !those.contains(i) {
+                    named.push(self.constraint_words(c, this));
+                }
+            } else if self.is_reference(p) {
+                named.push(format!("{}, which follows the part", self.entity_words(p, this)));
+            }
+        }
+        if named.is_empty() {
+            named.push("what is there".to_owned());
+        }
+        (named, valued)
     }
 
     pub fn remove_constraint(&mut self, id: ConstraintId) -> SketchResult<Constraint3> {
@@ -1083,11 +1217,15 @@ impl Sketch3d {
             .collect();
         let pinned = !held.is_empty() && {
             let mut still = trial.clone();
-            let fine = still.solve_pinned(&held).is_ok();
-            if fine {
-                trial = still;
+            match still.solve_pinned(&held) {
+                Ok(()) => {
+                    trial = still;
+                    true
+                }
+                // (It has no room where it is. Letting the rest move only moves the trouble.)
+                Err(e @ SketchError::Invalid(_)) => return Err(invalid(format!("The sketch cannot take that value: {}", words_of(&still, &e)))),
+                Err(_) => false,
             }
-            fine
         };
         if !pinned {
             trial.solve().map_err(|e| invalid(format!("The sketch cannot take that value: {}", words_of(&trial, &e))))?;
@@ -1186,8 +1324,52 @@ impl Sketch3d {
             let on: Vec<ConstraintId> = next.constraints_on(gone);
             return Err(SketchError::Conflict(on));
         }
+        // (And as content to have a line run back through itself, for its rows say only which
+        // line it lies along.)
+        if let Some(why) = next.turned_back() {
+            return Err(invalid(why));
+        }
         *self = next;
         Ok(())
+    }
+
+    /// What has come to run back on itself, in words: a bend that needs more of a line than the
+    /// line has, or a curve tangent to another that runs against it where they meet.
+    fn turned_back(&self) -> Option<String> {
+        for c in self.constraints.values() {
+            let Constraint3::Corner { point, arc } = c else { continue };
+            let (Some(a), Some(corner)) = (self.arc(*arc), self.point(*point)) else { continue };
+            let room = self.bend_holds(*arc).iter().filter(|p| *p != point).filter_map(|p| self.point(*p)).map(|p| p.dist(corner)).reduce(f64::min);
+            let half = a.sweep / 2.0;
+            let back = a.radius * half.tan();
+            if let Some(room) = room
+                && back >= room - tol::MIN_SIZE
+            {
+                return Some(too_tight(a.radius, back, room, room / half.tan()));
+            }
+        }
+        for c in self.constraints.values() {
+            let Constraint3::Tangent { a, b } = c else { continue };
+            let Some((at_a, at_b)) = self.joined_ends(*a, *b) else { continue };
+            // Each curve's direction as it comes to where they meet: two that run on from one
+            // another come to it from opposite sides. (A curve closed on itself has no one way.)
+            let coming = |id: EntityId, at: EntityId| -> Option<Vec3> {
+                let (s, e) = self.geometry(id)?.ends()?;
+                if s == e {
+                    return None;
+                }
+                let d = self.direction_at(id, at)?;
+                Some(if at == e { d } else { -d })
+            };
+            if let (Some(u), Some(v)) = (coming(*a, at_a), coming(*b, at_b))
+                && u.dot(v) > 0.0
+            {
+                return Some(
+                    "Those two curves would turn back on one another where they meet: move one so that it runs on from the other.".to_owned(),
+                );
+            }
+        }
+        None
     }
 
     /// A curve with nothing left of it.
@@ -1250,8 +1432,8 @@ impl Sketch3d {
         let (j_all, _, _) = sys.jacobian(&sys.x0);
         let (r_old, r_all) = (lm::rank(&j_old, rows_old, free.len()), lm::rank(&j_all, rows_all, free.len()));
         if r_all < r_old + nb.rows {
-            let mine = sys.touched(&nb.c);
-            let related = sys.built.iter().filter(|b| b.id != new && sys.touched(&b.c).iter().any(|r| mine.contains(r))).map(|b| b.id).collect();
+            let mine = self.touched(&nb.c);
+            let related = sys.built.iter().filter(|b| b.id != new && self.touched(&b.c).iter().any(|r| mine.contains(r))).map(|b| b.id).collect();
             return Err(SketchError::Redundant(related));
         }
         Ok(())
@@ -1261,12 +1443,14 @@ impl Sketch3d {
 
     /// Deletes entities. Deleting a point deletes the curves that use it; points left unused by
     /// any curve after deleting a curve go too, and constraints on anything that goes. A bend
-    /// deleted gives its corner back: its two lines meet at the corner again. Returns what went.
+    /// deleted gives its corner back: its two lines meet at the corner again; so does deleting its
+    /// centre or its corner, which are there for it alone. Returns what went.
     pub fn delete(&mut self, ids: &[EntityId]) -> BTreeSet<EntityId> {
         let mut gone: BTreeSet<EntityId> = BTreeSet::new();
         let mut rest = Vec::new();
         for id in ids {
-            match self.unbend(*id) {
+            let bend = self.bend_of_point(*id).unwrap_or(*id);
+            match self.unbend(bend) {
                 Some(went) => gone.extend(went),
                 None => rest.push(*id),
             }
@@ -1282,6 +1466,16 @@ impl Sketch3d {
                 now.insert(p);
             }
         }
+        // A bend that goes with what it was on leaves nothing of its corner.
+        let corners: Vec<EntityId> = self
+            .constraints
+            .values()
+            .filter_map(|c| match c {
+                Constraint3::Corner { point, arc } if now.contains(arc) => Some(*point),
+                _ => None,
+            })
+            .collect();
+        now.extend(corners);
         for id in &now {
             self.entities.remove(id);
         }
@@ -1289,6 +1483,27 @@ impl Sketch3d {
         self.drop_invalid();
         gone.extend(now);
         gone
+    }
+
+    /// The bend whose centre or corner point `p` is.
+    fn bend_of_point(&self, p: EntityId) -> Option<EntityId> {
+        self.constraints.values().find_map(|c| {
+            let Constraint3::Corner { point, arc } = c else { return None };
+            let centre = matches!(self.geometry(*arc), Some(Geometry3::Arc { center, .. }) if *center == p);
+            (*point == p || centre).then_some(*arc)
+        })
+    }
+
+    /// The lines a bend is tangent to.
+    pub fn bend_lines(&self, arc: EntityId) -> Vec<EntityId> {
+        self.constraints
+            .values()
+            .filter_map(|c| match c {
+                Constraint3::Tangent { a, b } if *b == arc && self.is_line(*a) => Some(*a),
+                Constraint3::Tangent { a, b } if *a == arc && self.is_line(*b) => Some(*b),
+                _ => None,
+            })
+            .collect()
     }
 
     /// If `arc` is a bend: takes it away and joins its two lines at the corner again. Returns
@@ -1323,30 +1538,87 @@ impl Sketch3d {
 
     // ---- a path -----------------------------------------------------------------------------
 
-    /// The curves in the order they join, each with whether it runs from its start to its end,
-    /// from a free end (an open path) or anywhere (a closed one).
-    pub fn chain(&self, curves: &[EntityId]) -> Result<Vec<(EntityId, bool)>, String> {
-        // Each point stands for all those held coincident with it.
+    /// Which point stands for which where curves join: all those held coincident are one, and so
+    /// are reference points at one place (a corner of the part, brought in by each of its edges,
+    /// which cannot be held together for neither of them can move).
+    fn joints(&self) -> HashMap<EntityId, EntityId> {
         let mut stands: HashMap<EntityId, EntityId> = HashMap::new();
-        fn root(stands: &HashMap<EntityId, EntityId>, mut p: EntityId) -> EntityId {
-            while let Some(q) = stands.get(&p) {
-                p = *q;
+        let mut join = |a: EntityId, b: EntityId| {
+            let (ra, rb) = (root(&stands, a), root(&stands, b));
+            if ra != rb {
+                stands.insert(ra, rb);
             }
-            p
-        }
+        };
         for c in self.constraints.values() {
             if let Constraint3::Coincident { a, b } = c {
-                let (ra, rb) = (root(&stands, *a), root(&stands, *b));
-                if ra != rb {
-                    stands.insert(ra, rb);
+                join(*a, *b);
+            }
+        }
+        let mut brought: Vec<(EntityId, Vec3)> = self
+            .entities
+            .iter()
+            .filter(|(_, e)| e.reference)
+            .filter_map(|(id, e)| match e.geometry {
+                Geometry3::Point { pos } => Some((*id, pos)),
+                _ => None,
+            })
+            .collect();
+        // (Along X, so that each is looked at against those that can be at its place.)
+        brought.sort_by(|a, b| a.1.x.total_cmp(&b.1.x));
+        for (i, (p, at)) in brought.iter().enumerate() {
+            for (q, other) in brought[i + 1..].iter().take_while(|(_, o)| o.x - at.x <= tol::LINEAR) {
+                if at.dist(*other) <= tol::LINEAR {
+                    join(*p, *q);
                 }
             }
         }
+        stands
+    }
+
+    /// The run of curves of `pool` that `curve` belongs to: `curve`, and those joined to it end to
+    /// end either way, as far as the run goes, closes or forks. (A curve closed on itself, such as
+    /// the rim of a disc, is a run alone: a path round it and on would cross itself where it does.)
+    pub fn run_through(&self, curve: EntityId, pool: &[EntityId]) -> Vec<EntityId> {
+        let stands = self.joints();
+        let ends_of = |id: EntityId| self.geometry(id).and_then(Geometry3::ends).map(|(s, e)| (root(&stands, s), root(&stands, e)));
+        let Some((first, last)) = ends_of(curve) else { return Vec::new() };
+        if first == last {
+            return vec![curve];
+        }
+        let mut meeting: HashMap<EntityId, Vec<EntityId>> = HashMap::new();
+        for c in pool {
+            if let Some((a, b)) = ends_of(*c)
+                && a != b
+            {
+                meeting.entry(a).or_default().push(*c);
+                meeting.entry(b).or_default().push(*c);
+            }
+        }
+        let mut taken: BTreeSet<EntityId> = std::iter::once(curve).collect();
+        let mut run = vec![curve];
+        for mut at in [last, first] {
+            loop {
+                let next: Vec<EntityId> =
+                    meeting.get(&at).map_or_else(Vec::new, |here| here.iter().copied().filter(|c| !taken.contains(c)).collect());
+                let ([c], Some((a, b))) = (next.as_slice(), next.first().and_then(|c| ends_of(*c))) else { break };
+                taken.insert(*c);
+                run.push(*c);
+                at = if a == at { b } else { a };
+            }
+        }
+        run
+    }
+
+    /// The curves in the order they join, each with whether it runs from its start to its end,
+    /// from a free end (an open path) or anywhere (a closed one).
+    pub fn chain(&self, curves: &[EntityId]) -> Result<Vec<(EntityId, bool)>, String> {
+        // Each point stands for all those at one joint.
+        let stands = self.joints();
         let mut segs = Vec::new();
         for id in curves {
             match self.geometry(*id).and_then(Geometry3::ends) {
                 Some((s, e)) => segs.push((*id, root(&stands, s), root(&stands, e))),
-                None => return Err(format!("the path's {id} is no curve of the sketch")),
+                None => return Err("a curve of the path has gone from the sketch: open the Sweep and choose its path again".into()),
             }
         }
         if segs.is_empty() {
@@ -1360,7 +1632,7 @@ impl Sketch3d {
         let mut chain = Vec::with_capacity(segs.len());
         while !left.is_empty() {
             let Some(i) = left.iter().position(|s| s.1 == at || s.2 == at) else {
-                return Err("the curves of the path do not join end to end: make them meet, or choose fewer".into());
+                return Err("the curves of the path do not join end to end: make them meet, or open the Sweep and choose its path again".into());
             };
             let (id, a, b) = left.remove(i);
             let forward = a == at;
@@ -1398,10 +1670,7 @@ impl Sketch3d {
                     Some(mid) => vec![Curve3::Arc { start: s, mid, end: e }],
                     // Any other curve: a spline through the points along it.
                     None => {
-                        // (A mesh can have a point twice.)
-                        let mut pts = curve.along.clone();
-                        pts.dedup_by(|a, b| a.dist(*b) <= tol::MIN_SIZE);
-                        let (poles, knots) = Through::new(&pts)?.b_spline();
+                        let (poles, knots) = edge_spline(s, e, curve)?.b_spline();
                         vec![Curve3::BSpline { poles, knots }]
                     }
                 }
@@ -1414,24 +1683,14 @@ impl Sketch3d {
     pub fn path(&self, curves: &[EntityId], near: Vec3) -> Result<Path3, String> {
         let mut out: Vec<Curve3> = Vec::new();
         for (id, forward) in self.chain(curves)? {
-            let pieces = self.pieces(id).ok_or_else(|| format!("{id} cannot be part of a path: it has collapsed"))?;
+            let pieces = self.pieces(id).ok_or("a curve of the path has collapsed to nothing: open its 3D sketch and give it some length")?;
             if forward {
                 out.extend(pieces);
             } else {
                 out.extend(pieces.into_iter().rev().map(reversed));
             }
         }
-        let start_of = |c: &Curve3| match c {
-            Curve3::Line { start, .. } | Curve3::Arc { start, .. } => Some(*start),
-            Curve3::BSpline { poles, .. } => poles.first().copied(),
-            Curve3::Helix { .. } => None,
-        };
-        let end_of = |c: &Curve3| match c {
-            Curve3::Line { end, .. } | Curve3::Arc { end, .. } => Some(*end),
-            Curve3::BSpline { poles, .. } => poles.last().copied(),
-            Curve3::Helix { .. } => None,
-        };
-        let (Some(head), Some(tail)) = (out.first().and_then(start_of), out.last().and_then(end_of)) else {
+        let (Some((head, _)), Some((_, tail))) = (out.first().and_then(Curve3::ends), out.last().and_then(Curve3::ends)) else {
             return Err("the path is empty".into());
         };
         if tail.dist(near) < head.dist(near) {
@@ -1487,6 +1746,59 @@ fn check_edge(curve: &EdgeCurve) -> SketchResult<()> {
     Ok(())
 }
 
+/// What a point stands for at a joint (`Sketch3d::joints`).
+fn root(stands: &HashMap<EntityId, EntityId>, mut p: EntityId) -> EntityId {
+    while let Some(q) = stands.get(&p) {
+        p = *q;
+    }
+    p
+}
+
+/// What is said of a bend with no room: `back` of each line needed, `room` there.
+fn too_tight(radius: f64, back: f64, room: f64, most: f64) -> String {
+    format!(
+        "A bend of radius {} mm needs {back:.3} mm of each line and the shorter is {room:.3} mm long: the largest radius that fits is just under {most:.3} mm.",
+        num(radius)
+    )
+}
+
+/// The spline a curved edge that is neither straight nor round is, through its mesh's points and
+/// from the edge's own ends. (Those points are of single precision, and a mesh can have one twice.)
+fn edge_spline(start: Vec3, end: Vec3, curve: &EdgeCurve) -> Option<Through> {
+    let mut pts = curve.along.clone();
+    // (A mesh may run the other way from the edge.)
+    if pts.first().is_some_and(|p| p.dist(end) < p.dist(start)) {
+        pts.reverse();
+    }
+    let with_ends = |pts: &mut Vec<Vec3>| {
+        *pts.first_mut()? = start;
+        *pts.last_mut()? = end;
+        Some(())
+    };
+    with_ends(&mut pts)?;
+    pts.dedup_by(|a, b| a.dist(*b) <= tol::MIN_SIZE);
+    with_ends(&mut pts)?;
+    Through::new(&pts)
+}
+
+/// The unit directions an edge brought in starts and ends in, from its start towards its end: a
+/// circle's tangents, from the three points that say it, or those of the spline a path has for it.
+fn edge_directions(start: Vec3, end: Vec3, curve: &EdgeCurve) -> Option<(Vec3, Vec3)> {
+    match curve.mid {
+        // A whole circle: the point a quarter along, the first half, and it comes back as it left.
+        Some(mid) if start.dist(end) <= tol::MIN_SIZE => {
+            let quarter = *curve.along.get(curve.along.len().saturating_sub(1) / 4)?;
+            let (d, _) = Curve3::Arc { start, mid: quarter, end: mid }.directions()?;
+            Some((d, d))
+        }
+        Some(mid) => Curve3::Arc { start, mid, end }.directions(),
+        None => {
+            let s = edge_spline(start, end, curve)?;
+            Some((s.start_tangent(), s.end_tangent()))
+        }
+    }
+}
+
 /// A path curve run the other way.
 fn reversed(c: Curve3) -> Curve3 {
     match c {
@@ -1506,7 +1818,7 @@ fn reversed(c: Curve3) -> Curve3 {
 fn words_of(sk: &Sketch3d, e: &SketchError) -> String {
     match e {
         SketchError::Conflict(ids) | SketchError::Redundant(ids) => {
-            let named: Vec<String> = ids.iter().filter_map(|i| sk.constraint(*i)).map(Constraint3::describe).collect();
+            let named: Vec<String> = ids.iter().filter_map(|i| sk.constraint(*i)).map(|c| sk.constraint_words(c, &[])).collect();
             if named.is_empty() { "the constraints cannot all be met".to_owned() } else { format!("these cannot all be met: {}", named.join("; ")) }
         }
         e => e.to_string(),
@@ -1534,6 +1846,11 @@ struct System3<'s> {
     arcs: Vec<(EntityId, EntityId, EntityId)>,
     built: Vec<Built>,
     locked: Vec<bool>,
+    /// The directions that edges brought in and held tangent start and end in: no unknowns, for
+    /// the part has them where they are.
+    edge_dirs: HashMap<EntityId, (Vec3, Vec3)>,
+    /// The ends of bends, and the corner each rounds: how far a line goes, to an Equal.
+    to_corner: HashMap<EntityId, EntityId>,
 }
 
 /// How far `v` is from lying along `u`, as two numbers (`away` is not along `u`).
@@ -1557,7 +1874,37 @@ fn axis_away_from(u: Vec3) -> Vec3 {
 
 impl<'s> System3<'s> {
     fn new(sketch: &'s Sketch3d) -> SketchResult<Self> {
-        let mut sys = System3 { sketch, point_at: HashMap::new(), x0: Vec::new(), arcs: Vec::new(), built: Vec::new(), locked: Vec::new() };
+        let mut sys = System3 {
+            sketch,
+            point_at: HashMap::new(),
+            x0: Vec::new(),
+            arcs: Vec::new(),
+            built: Vec::new(),
+            locked: Vec::new(),
+            edge_dirs: HashMap::new(),
+            to_corner: HashMap::new(),
+        };
+        for c in sketch.constraints.values() {
+            match c {
+                Constraint3::Tangent { a, b } => {
+                    for id in [a, b] {
+                        if let Some(Geometry3::Edge { start, end, curve }) = sketch.geometry(*id)
+                            && let (Some(s), Some(e)) = (sketch.point(*start), sketch.point(*end))
+                            && let Some(d) = edge_directions(s, e, curve)
+                        {
+                            sys.edge_dirs.insert(*id, d);
+                        }
+                    }
+                }
+                Constraint3::Corner { point, arc } => {
+                    if let Some(Geometry3::Arc { start, end, .. }) = sketch.geometry(*arc) {
+                        sys.to_corner.insert(*start, *point);
+                        sys.to_corner.insert(*end, *point);
+                    }
+                }
+                _ => {}
+            }
+        }
         for (id, e) in sketch.entities() {
             match &e.geometry {
                 Geometry3::Point { pos } => {
@@ -1606,6 +1953,8 @@ impl<'s> System3<'s> {
             arcs: self.arcs.clone(),
             built: self.built.clone(),
             locked: self.locked.clone(),
+            edge_dirs: self.edge_dirs.clone(),
+            to_corner: self.to_corner.clone(),
         }
     }
 
@@ -1617,6 +1966,17 @@ impl<'s> System3<'s> {
     fn line(&self, x: &[f64], id: EntityId) -> Option<(Vec3, Vec3)> {
         match self.sketch.geometry(id)? {
             Geometry3::Line { start, end } => Some((self.pt(x, *start)?, self.pt(x, *end)?)),
+            _ => None,
+        }
+    }
+
+    /// A line as long as it was drawn: up to the corner, where a bend has rounded its end.
+    fn line_to_corners(&self, x: &[f64], id: EntityId) -> Option<(Vec3, Vec3)> {
+        match self.sketch.geometry(id)? {
+            Geometry3::Line { start, end } => {
+                let far = |p: &EntityId| self.pt(x, *self.to_corner.get(p).unwrap_or(p));
+                Some((far(start)?, far(end)?))
+            }
             _ => None,
         }
     }
@@ -1638,31 +1998,13 @@ impl<'s> System3<'s> {
                 let s = Through::new(&pts)?;
                 Some(if points.first() == Some(&at) { s.start_tangent() } else { s.end_tangent() })
             }
-            Geometry3::Edge { start, curve, .. } => {
+            Geometry3::Edge { start, .. } => {
                 // (Where the part has it: it is no unknown.)
-                let from_start = *start == at;
-                match (curve.along.first(), curve.along.get(1), curve.along.last(), curve.along.len().checked_sub(2).and_then(|i| curve.along.get(i)))
-                {
-                    (Some(a), Some(b), _, _) if from_start => Some(dir_n(*a, *b)),
-                    (_, _, Some(a), Some(b)) => Some(dir_n(*b, *a)),
-                    _ => None,
-                }
+                let (first, last) = *self.edge_dirs.get(&id)?;
+                Some(if *start == at { first } else { last })
             }
             Geometry3::Point { .. } => None,
         }
-    }
-
-    /// Points whose unknowns a constraint's equations take in.
-    fn touched(&self, c: &Constraint3) -> Vec<EntityId> {
-        let mut out = Vec::new();
-        for r in c.refs() {
-            match self.sketch.geometry(r) {
-                Some(Geometry3::Point { .. }) => out.push(r),
-                Some(g) => out.extend(g.points()),
-                None => {}
-            }
-        }
-        out
     }
 
     fn build(&self, id: ConstraintId, c: Constraint3) -> Built {
@@ -1732,7 +2074,7 @@ impl<'s> System3<'s> {
                 let ((a1, b1), (a2, b2)) = (ln(*a)?, ln(*b)?);
                 out.push(dir_n(a1, b1).dot(dir_n(a2, b2)));
             }
-            Equal { a, b } => match (ln(*a), ln(*b)) {
+            Equal { a, b } => match (self.line_to_corners(x, *a), self.line_to_corners(x, *b)) {
                 (Some((a1, b1)), Some((a2, b2))) => out.push(a1.dist(b1) - a2.dist(b2)),
                 _ => out.push(radius(*a)? - radius(*b)?),
             },
@@ -1953,9 +2295,218 @@ mod tests {
         assert!(e.contains("the largest radius that fits is just under 50.000 mm"), "{e}");
         // Not at an end of two lines.
         let e = s.add_bend(p[0], 5.0).unwrap_err().to_string();
-        assert!(e.contains("1 curves meet"), "{e}");
+        assert!(e.contains("Only one curve ends at that point"), "{e}");
+        // A bend's kept corner is no place for another.
+        let b = s.add_bend(p[1], 5.0).unwrap();
+        let e = s.add_bend(b.corner, 5.0).unwrap_err().to_string();
+        assert!(e.contains("is the corner of a bend already"), "{e}");
     }
 
+    #[test]
+    fn a_bend_set_beyond_what_fits_is_refused_with_the_largest_that_does() {
+        // Lines 50 long and a bend of 10: hand, the radius can go to just under 50 and no further.
+        let (mut s, l, p) = staircase();
+        s.add_constraint(Constraint3::Fix { point: p[0] }).unwrap();
+        s.add_constraint(Constraint3::Along { line: l[0], axis: Axis3::Z }).unwrap();
+        s.add_constraint(Constraint3::Along { line: l[1], axis: Axis3::X }).unwrap();
+        let held = s.add_constraint(Constraint3::Length { line: l[0], value: 50.0 }).unwrap();
+        let b = s.add_bend(p[1], 10.0).unwrap();
+        let before = s.clone();
+        let e = s.set_dimension(b.radius, 70.0).unwrap_err().to_string();
+        assert!(e.contains("the largest radius that fits is just under 50.000 mm"), "{e}");
+        assert_eq!(s, before, "and nothing moved");
+        // Up to it, the corner stays and the line stops as far short of it as the radius says.
+        s.set_dimension(b.radius, 49.0).unwrap();
+        assert!(s.point(b.corner).unwrap().dist(v(0.0, 0.0, 50.0)) < 1e-7);
+        assert!(s.line(l[0]).unwrap().1.dist(v(0.0, 0.0, 1.0)) < 1e-7, "{:?}", s.line(l[0]));
+        s.set_dimension(b.radius, 10.0).unwrap();
+        // A length held to the corner, cut under what the bend needs: as long as the radius allows.
+        let e = s.set_dimension(held, 5.0).unwrap_err().to_string();
+        assert!(e.contains("the largest radius that fits is just under 5.000 mm"), "{e}");
+        s.set_dimension(held, 12.0).unwrap();
+        assert!(s.line(l[0]).unwrap().1.dist(v(0.0, 0.0, 2.0)) < 1e-6, "2 mm of it left: {:?}", s.line(l[0]));
+        // Dragged past the corner: the same.
+        let (mut s, _, p) = staircase();
+        s.add_bend(p[1], 10.0).unwrap();
+        let before = s.clone();
+        let e = s.drag(p[0], v(0.0, 0.0, 45.0)).unwrap_err().to_string();
+        assert!(e.contains("the largest radius that fits"), "{e}");
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn two_bends_on_one_line_share_it() {
+        // A line 50 long between two bends: each takes its radius of it, 50 in all and no more.
+        let (mut s, _, p) = staircase();
+        let a = s.add_bend(p[1], 20.0).unwrap();
+        let b = s.add_bend(p[2], 20.0).unwrap();
+        s.set_dimension(a.radius, 25.0).unwrap();
+        let e = s.set_dimension(b.radius, 30.0).unwrap_err().to_string();
+        assert!(e.contains("the largest radius that fits is just under"), "{e}");
+    }
+
+    #[test]
+    fn a_tangent_that_would_fold_the_path_is_refused() {
+        // A line and a spline that start from one point and go off the same way: to be tangent the
+        // two would lie one on the other.
+        let mut s = Sketch3d::new();
+        let a = s.add_point(v(0.0, 0.0, 0.0)).unwrap();
+        let line = s.add_line(a, v(0.0, 0.0, 30.0)).unwrap();
+        let spline = s.add_spline(&[PointRef3::Existing(a), PointRef3::New(v(1.0, 0.0, 20.0)), PointRef3::New(v(2.0, 1.0, 40.0))]).unwrap();
+        let before = s.clone();
+        let e = s.add_constraint(Constraint3::Tangent { a: line, b: spline }).unwrap_err().to_string();
+        assert!(e.contains("would turn back on one another"), "{e}");
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn deleting_a_bends_centre_or_corner_is_deleting_the_bend() {
+        for of in ["centre", "corner"] {
+            let (mut s, l, p) = staircase();
+            let b = s.add_bend(p[1], 10.0).unwrap();
+            let id = if of == "centre" { b.center } else { b.corner };
+            s.delete(&[id]);
+            assert!(s.entity(b.arc).is_none(), "{of}");
+            // Three lines, four points, and they join: 150 long again.
+            assert_eq!(s.entities().filter(|(_, e)| e.geometry.is_point()).count(), 4, "{of}: {s:?}");
+            assert_eq!(s.chain(&l).unwrap().len(), 3, "{of}");
+            assert!((l.iter().map(|c| s.length(*c).unwrap()).sum::<f64>() - 150.0).abs() < 1e-9, "{of}");
+            s.validate().unwrap();
+        }
+        // A line and its bend taken by the point they share: no corner is left over.
+        let (mut s, l, p) = staircase();
+        let b = s.add_bend(p[1], 10.0).unwrap();
+        s.delete(&[b.start]);
+        assert!(s.entity(b.arc).is_none() && s.entity(l[0]).is_none());
+        assert!(s.entity(b.corner).is_none(), "{s:?}");
+        s.validate().unwrap();
+    }
+
+    #[test]
+    fn an_equal_on_a_bent_line_goes_on_measuring_to_the_corner() {
+        // As typed: the first two lines equal, its start fixed. A bend at the far end of the second
+        // trims only that one: the corners stay where they were typed, and the path is 20 less
+        // what the arc gives back.
+        let (mut s, l, p) = staircase();
+        s.add_constraint(Constraint3::Equal { a: l[0], b: l[1] }).unwrap();
+        s.add_constraint(Constraint3::Fix { point: p[0] }).unwrap();
+        let b = s.add_bend(p[2], 10.0).unwrap();
+        assert!(s.point(p[1]).unwrap().dist(v(0.0, 0.0, 50.0)) < 1e-7, "{:?}", s.point(p[1]));
+        assert!(s.point(b.corner).unwrap().dist(v(50.0, 0.0, 50.0)) < 1e-7, "{:?}", s.point(b.corner));
+        let curves = [l[0], l[1], l[2], b.arc];
+        let length: f64 = curves.iter().map(|c| s.length(*c).unwrap()).sum();
+        assert!((length - (150.0 - 20.0 + 5.0 * PI)).abs() < 1e-7, "{length}");
+        // And it holds: the first line made longer takes the second, to its corner, with it.
+        let len = s.add_constraint(Constraint3::Length { line: l[0], value: 60.0 }).unwrap();
+        s.set_dimension(len, 70.0).unwrap();
+        assert!((s.point(p[1]).unwrap().dist(s.point(b.corner).unwrap()) - 70.0).abs() < 1e-7);
+    }
+
+    #[test]
+    fn what_cannot_be_had_is_said_of_this_line_and_that_point_and_what_holds_them() {
+        let (mut s, l, p) = staircase();
+        s.add_constraint(Constraint3::Along { line: l[0], axis: Axis3::Z }).unwrap();
+        let e = s.add_constraint(Constraint3::Along { line: l[0], axis: Axis3::X }).unwrap_err().to_string();
+        assert!(e.contains("this line parallel to X cannot be had"), "{e}");
+        assert!(e.contains("It conflicts with: this line parallel to Z."), "{e}");
+        assert!(!e.contains("e1") && !e.contains("e2") && !e.contains("e5"), "no ids: {e}");
+        assert!(!e.contains("change its value"), "it has none: {e}");
+        // Both ends fixed: a length says what is in the way, though no equation holds them.
+        let (mut s, l, p2) = staircase();
+        s.add_constraint(Constraint3::Fix { point: p2[0] }).unwrap();
+        s.add_constraint(Constraint3::Fix { point: p2[1] }).unwrap();
+        let e = s.add_constraint(Constraint3::Length { line: l[0], value: 20.0 }).unwrap_err().to_string();
+        assert!(e.contains("this line 20 mm long cannot be had"), "{e}");
+        assert!(e.contains("the point at (0, 0, 0) fixed") && e.contains("the point at (0, 0, 50) fixed"), "{e}");
+        // A long number is not said at length, and what is so already says by what.
+        let (mut s, l, _) = staircase();
+        let long = 50.0 + 1.0 / 3.0;
+        s.add_constraint(Constraint3::Length { line: l[0], value: long }).unwrap();
+        let e = s.add_constraint(Constraint3::Length { line: l[0], value: long }).unwrap_err().to_string();
+        assert!(e.contains("this line 50.333 mm long is already so, by this line 50.333 mm long"), "{e}");
+        // Another line's constraint is that line's, by where it is.
+        let (mut s, l, _) = staircase();
+        s.add_constraint(Constraint3::Along { line: l[0], axis: Axis3::Z }).unwrap();
+        s.add_constraint(Constraint3::Along { line: l[1], axis: Axis3::X }).unwrap();
+        let e = s.add_constraint(Constraint3::Parallel { a: l[0], b: l[1] }).unwrap_err().to_string();
+        assert!(e.contains("these two lines parallel cannot be had"), "{e}");
+        assert!(e.contains("the line from (0, 0, 0) to (0, 0, 50) parallel to Z"), "{e}");
+        assert!(e.contains("the line from (0, 0, 50) to (50, 0, 50) parallel to X"), "{e}");
+        let _ = p;
+    }
+
+    #[test]
+    fn the_tangent_of_a_round_edge_is_the_circles_not_a_chord_of_it() {
+        // A whole circle of radius 30 drawn in 64 pieces: a chord leans 2.81 degrees off.
+        let mut s = Sketch3d::new();
+        let along: Vec<Vec3> = (0..=64)
+            .map(|i| {
+                let t = std::f64::consts::TAU * f64::from(i) / 64.0;
+                v(30.0 * t.cos(), 30.0 * t.sin(), 10.0)
+            })
+            .collect();
+        let curve = EdgeCurve { mid: Some(v(-30.0, 0.0, 10.0)), along, length: 60.0 * PI };
+        let rim = s.add_edge(v(30.0, 0.0, 10.0), v(30.0, 0.0, 10.0), curve).unwrap();
+        let (p, _) = s.geometry(rim).unwrap().ends().unwrap();
+        assert!(s.direction_at(rim, p).unwrap().dist(Vec3::Y) < 1e-12, "{:?}", s.direction_at(rim, p));
+        // A line held tangent there lies along Y exactly.
+        let line = s.add_line(p, v(29.0, 40.0, 10.0)).unwrap();
+        s.add_constraint(Constraint3::Tangent { a: line, b: rim }).unwrap();
+        let (a, b) = s.line(line).unwrap();
+        assert!((b - a).normalized().cross(Vec3::Y).len() < 1e-9, "{a:?} {b:?}");
+        // A quarter of a circle: at its end the tangent is along -X.
+        let mut q = Sketch3d::new();
+        let s2 = std::f64::consts::FRAC_1_SQRT_2;
+        let curve = EdgeCurve {
+            mid: Some(v(30.0 * s2, 30.0 * s2, 0.0)),
+            along: vec![v(30.0, 0.0, 0.0), v(30.0 * s2, 30.0 * s2, 0.0), v(0.0, 30.0, 0.0)],
+            length: 15.0 * PI,
+        };
+        let arc = q.add_edge(v(30.0, 0.0, 0.0), v(0.0, 30.0, 0.0), curve).unwrap();
+        let (a, b) = q.geometry(arc).unwrap().ends().unwrap();
+        assert!(q.direction_at(arc, a).unwrap().dist(Vec3::Y) < 1e-12);
+        assert!(q.direction_at(arc, b).unwrap().dist(-Vec3::X) < 1e-12);
+    }
+
+    #[test]
+    fn an_edge_as_a_spline_starts_and_ends_exactly_where_the_edge_does() {
+        // A mesh's points are of single precision.
+        let (s0, e0) = (v(1.1, 2.3, 0.7), v(9.7, 4.9, 3.3));
+        let fuzz = |p: Vec3| v(f64::from(p.x as f32), f64::from(p.y as f32), f64::from(p.z as f32));
+        let along = vec![fuzz(s0), fuzz(s0), fuzz(v(4.0, 6.0, 1.0)), fuzz(v(7.0, 6.0, 2.0)), fuzz(e0)];
+        assert!(fuzz(s0).dist(s0) > 1e-8, "the case is a real one");
+        let mut s = Sketch3d::new();
+        let edge = s.add_edge(s0, e0, EdgeCurve { mid: None, along, length: 12.0 }).unwrap();
+        let path = s.path(&[edge], s0).unwrap();
+        let (a, b) = path.curves[0].ends().unwrap();
+        assert_eq!((a, b), (s0, e0));
+        // And a line off its end joins it, as drawn.
+        let (_, end) = s.geometry(edge).unwrap().ends().unwrap();
+        let line = s.add_line(end, v(20.0, 4.9, 3.3)).unwrap();
+        assert_eq!(s.path(&[edge, line], s0).unwrap().curves.len(), 2);
+    }
+
+    #[test]
+    fn a_run_goes_as_far_as_its_curves_join_and_stops_at_a_fork() {
+        let (mut s, l, p) = staircase();
+        assert_eq!(s.run_through(l[1], &l).len(), 3);
+        // Apart from it: a run of its own.
+        let apart = s.add_line(v(90.0, 0.0, 0.0), v(95.0, 0.0, 0.0)).unwrap();
+        let all = [l[0], l[1], l[2], apart];
+        assert_eq!(s.run_through(apart, &all), [apart]);
+        assert_eq!(s.run_through(l[0], &all).len(), 3);
+        // A second line off the middle of the run: a fork, where the run stops.
+        let fork = s.add_line(p[2], v(50.0, -40.0, 50.0)).unwrap();
+        let all = [l[0], l[1], l[2], fork];
+        let run = s.run_through(l[0], &all);
+        assert_eq!(run.len(), 2, "{run:?}");
+        // Two edges of the part that meet at a corner are a run, though no point is shared.
+        let mut q = Sketch3d::new();
+        let a = q.add_edge_line(v(0.0, 0.0, 0.0), v(10.0, 0.0, 0.0)).unwrap();
+        let b = q.add_edge_line(v(10.0, 0.0, 0.0), v(10.0, 10.0, 0.0)).unwrap();
+        assert_eq!(q.run_through(a, &[a, b]).len(), 2);
+        assert_eq!(q.chain(&[b, a]).unwrap().len(), 2);
+    }
     #[test]
     fn a_bend_deleted_gives_its_corner_back_and_a_length_held_stays_to_the_corner() {
         let (mut s, l, p) = staircase();

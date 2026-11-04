@@ -122,10 +122,11 @@ enum Wants {
 pub(crate) enum Target {
     /// A point of the sketch.
     Existing(EntityId),
-    /// A vertex of the part.
+    /// A vertex of the part: which end of the edge, and which way it lies from the other.
     Vertex {
         edge: EdgeRef,
         end: u8,
+        towards: Option<Vec3>,
     },
     Work(FeatureId),
     Origin,
@@ -147,7 +148,13 @@ impl Click3 {
         let at = json!([self.at.x, self.at.y, self.at.z]);
         match &self.target {
             Target::Existing(id) => json!(id.0),
-            Target::Vertex { edge, end } => json!({ "vertex": edge, "end": end, "at": at }),
+            Target::Vertex { edge, end, towards } => {
+                let mut spec = json!({ "vertex": edge, "end": end, "at": at });
+                if let Some(t) = towards {
+                    spec["towards"] = json!([t.x, t.y, t.z]);
+                }
+                spec
+            }
             Target::Work(id) => json!({ "work": id.0, "at": at }),
             Target::Origin => json!("origin"),
             Target::Free => at,
@@ -177,6 +184,8 @@ pub(crate) struct Sketch3dMode {
     /// The sketch as it was when opened. Until Finish the part is regenerated with this, so
     /// drawing never waits for the features that use the sketch.
     pub base: Option<Sketch3d>,
+    /// The features that use it, as they were when opened: an edit can change what they name.
+    users: Vec<(FeatureId, FeatureKind)>,
     dof: Option<(u64, Option<usize>, BTreeSet<EntityId>)>,
     /// Constraint symbols and dimension values as last drawn, and where.
     badges: Vec<(ConstraintId, Rect)>,
@@ -184,7 +193,7 @@ pub(crate) struct Sketch3dMode {
 }
 
 impl Sketch3dMode {
-    fn new(feature: FeatureId, base: Option<Sketch3d>) -> Self {
+    fn new(feature: FeatureId, base: Option<Sketch3d>, users: Vec<(FeatureId, FeatureKind)>) -> Self {
         Sketch3dMode {
             feature,
             tool: Tool3::Select,
@@ -198,14 +207,37 @@ impl Sketch3dMode {
             xyz: [0.0; 3],
             radius: 5.0,
             base,
+            users,
             dof: None,
             badges: Vec::new(),
             dims: Vec::new(),
         }
     }
-}
 
-impl Sketch3dMode {
+    /// `doc` with the sketch, what ties it to the part and what uses it as they were when it was
+    /// opened: what the part is regenerated from until Finish.
+    pub(crate) fn as_opened(&self, doc: &mut tenon_model::Document) {
+        let Some(base) = &self.base else { return };
+        if let Some(sk) = doc.sketch3d_mut(self.feature) {
+            *sk = base.clone();
+        }
+        // (What was brought in since is no part of the sketch as it was: nothing is lost of it.)
+        if let Some(FeatureKind::Sketch3d { links, .. }) = doc.feature_mut(self.feature).map(|f| &mut f.kind) {
+            links.retain(|l| base.is_reference(l.entity));
+        }
+        for (id, kind) in &self.users {
+            if let Some(f) = doc.feature_mut(*id) {
+                f.kind = kind.clone();
+            }
+        }
+    }
+
+    /// Where the value of a dimension was last drawn (tests).
+    #[cfg(test)]
+    pub(crate) fn dim_of(&self, c: ConstraintId) -> Option<Pos2> {
+        self.dims.iter().find(|b| b.0 == c).map(|b| b.1.center())
+    }
+
     /// Where the symbol of a constraint was last drawn (tests).
     #[cfg(test)]
     pub(crate) fn badges_of(&self, c: ConstraintId) -> Option<Pos2> {
@@ -281,7 +313,8 @@ impl Workbench {
         };
         self.panel = None;
         let drawn = !base.is_empty();
-        self.mode = Mode::Sketch3d(Box::new(Sketch3dMode::new(feature, Some(base))));
+        let users = self.document().features().iter().filter(|f| f.kind.depends_on().contains(&feature)).map(|f| (f.id, f.kind.clone())).collect();
+        self.mode = Mode::Sketch3d(Box::new(Sketch3dMode::new(feature, Some(base), users)));
         self.chrome.tab = crate::commands::SKETCH3D_TAB;
         // (It is on no plane: the view stays as it was, and takes in what is drawn.)
         if drawn {
@@ -373,9 +406,20 @@ impl Workbench {
         }
     }
 
+    /// What the status bar says of a tool once what it was asked for is done: its hint.
+    pub(crate) fn sketch3d_hint(&mut self) {
+        if let Mode::Sketch3d(s) = &self.mode {
+            let hint = s.tool.hint();
+            self.set_status(hint);
+        }
+    }
+
     pub(crate) fn sketch3d_dof_text(&mut self) -> Option<String> {
         let rev = self.session.revision();
         let Mode::Sketch3d(s) = &mut self.mode else { return None };
+        if self.session.document().sketch3d(s.feature).is_some_and(Sketch3d::is_empty) {
+            return Some("Nothing drawn yet".into());
+        }
         if s.dof.as_ref().is_none_or(|(r, _, _)| *r != rev) {
             let d = self.session.document().sketch3d(s.feature).map(Sketch3d::dof);
             s.dof = Some(match d {
@@ -516,12 +560,12 @@ impl Workbench {
     }
 
     /// The vertex of the part under a screen point, not behind a face: an end of an edge that can
-    /// be named, and where it is.
-    pub(crate) fn vertex_at(&self, p: Pos2, rect: Rect) -> Option<(EdgeRef, u8, Vec3)> {
+    /// be named, which way it lies from the edge's other end, and where it is.
+    pub(crate) fn vertex_at(&self, p: Pos2, rect: Rect) -> Option<(EdgeRef, u8, Option<Vec3>, Vec3)> {
         let (o, d) =
             self.view.camera.ray(f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
         let in_front = self.point_under(p, rect).map(|q| (q - o).dot(d));
-        let mut best: Option<(f32, usize, usize, u8, Vec3)> = None;
+        let mut best: Option<(f32, usize, usize, u8, Option<Vec3>, Vec3)> = None;
         for (b, body) in self.scene.bodies.iter().enumerate() {
             for (e, ends) in body.ends.iter().enumerate() {
                 for (i, at) in ends.iter().enumerate() {
@@ -536,13 +580,14 @@ impl Workbench {
                         continue;
                     }
                     if body.edge_ref(u32::try_from(e).ok()?).is_some() {
-                        best = Some((dist, b, e, u8::from(i != 0), *at));
+                        let towards = Some((*at - ends[1 - i]).normalized()).filter(|t| t.len() > 0.5);
+                        best = Some((dist, b, e, u8::from(i != 0), towards, *at));
                     }
                 }
             }
         }
-        let (_, b, e, end, at) = best?;
-        Some((self.scene.bodies.get(b)?.edge_ref(u32::try_from(e).ok()?)?, end, at))
+        let (_, b, e, end, towards, at) = best?;
+        Some((self.scene.bodies.get(b)?.edge_ref(u32::try_from(e).ok()?)?, end, towards, at))
     }
 
     /// The nearest place on an axis through `from` to the pointer, within a few pixels on the
@@ -577,8 +622,8 @@ impl Workbench {
         {
             return Some(Click3 { at, target: Target::Existing(id), axis: None });
         }
-        if let Some((edge, end, at)) = self.vertex_at(p, rect) {
-            return Some(Click3 { at, target: Target::Vertex { edge, end }, axis: None });
+        if let Some((edge, end, towards, at)) = self.vertex_at(p, rect) {
+            return Some(Click3 { at, target: Target::Vertex { edge, end, towards }, axis: None });
         }
         if let Some(id) = self.work_point_at(p, rect)
             && let Some((_, tenon_model::WorkGeom::Point(at))) = self.scene.work.iter().find(|(w, _)| *w == id)
@@ -814,11 +859,18 @@ impl Workbench {
                         ui.label(*name).on_hover_text("Where the next point goes, in the part's own axes");
                         add |= crate::properties::eq_field(ui, egui::Id::new(*key), &mut xyz[i], None, "mm", -1.0e6..=1.0e6, 64.0, t).entered;
                     }
-                    if crate::drawing::button(ui, "Add", "tn_s3_add").on_hover_text("Puts a point at these coordinates").clicked() {
+                    // (A button clicked gives the keys back: to the sketch's shortcuts, and Enter.)
+                    let press = crate::drawing::button(ui, "Add", "tn_s3_add").on_hover_text("Puts a point at these coordinates");
+                    if press.clicked() {
+                        press.surrender_focus();
                         add = true;
                     }
-                    if spline && enough && crate::drawing::button(ui, "Make Spline", "tn_s3_make").clicked() {
-                        make = true;
+                    if spline && enough {
+                        let press = crate::drawing::button(ui, "Make Spline", "tn_s3_make");
+                        if press.clicked() {
+                            press.surrender_focus();
+                            make = true;
+                        }
                     }
                 });
             });
@@ -869,7 +921,8 @@ impl Workbench {
         if !typing && esc {
             self.sketch3d_escape();
         }
-        if !typing && enter {
+        // (An Enter the box took put a point there: the next is for the spline.)
+        if !typing && enter && typed.is_none() {
             self.finish_spline3(feature);
         }
         if !typing && delete {
@@ -900,18 +953,18 @@ impl Workbench {
             let Mode::Sketch3d(sm) = &self.mode else { return };
             pointer.and_then(|p| sm.dims.iter().find(|b| b.1.contains(p))).map(|b| b.0)
         };
+        // A dimension's value, in the Select tool, is selected as a symbol is.
+        let on_held = on_badge.or(on_dim.filter(|_| tool == Tool3::Select));
         // Clicks.
         let primary = resp.clicked_by(egui::PointerButton::Primary);
         if resp.double_clicked()
             && let Some(cid) = on_dim
         {
-            // A dimension's value, double-clicked: to change it. (The first click of it did nothing.)
+            // A dimension's value, double-clicked: to change it.
             let value = doc_sketch.constraint(cid).and_then(Constraint3::value).unwrap_or(0.0);
             self.panel =
                 Some(Panel::Value(ValuePanel::new("Edit Dimension", "Value", value, ValueFor::EditDimension3 { sketch: feature, constraint: cid })));
-        } else if primary && on_dim.is_some() && tool == Tool3::Select {
-            self.set_status("Double-click a dimension to change it.");
-        } else if primary && let (Some(cid), Mode::Sketch3d(sm)) = (on_badge, &mut self.mode) {
+        } else if primary && let (Some(cid), Mode::Sketch3d(sm)) = (on_held, &mut self.mode) {
             let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
             match (sm.constraints.iter().position(|c| *c == cid), add) {
                 (Some(i), true) => {
@@ -923,8 +976,9 @@ impl Workbench {
                     sm.selection.clear();
                 }
             }
-            let name = doc_sketch.constraint(cid).map_or_else(|| "constraint".to_owned(), Constraint3::describe);
-            self.set_status(format!("Selected: {name}. Delete removes it."));
+            let name = doc_sketch.constraint(cid).map_or_else(|| "constraint".to_owned(), |c| doc_sketch.constraint_words(c, &c.refs()));
+            let change = if on_dim == Some(cid) { "Double-click to change it; Delete" } else { "Delete" };
+            self.set_status(format!("Selected: {name}. {change} removes it."));
         } else if primary {
             match tool {
                 Tool3::Select => self.select3(&doc_sketch, hover, ui.input(|i| i.modifiers.command || i.modifiers.shift)),
@@ -935,8 +989,9 @@ impl Workbench {
                 }
                 Tool3::Bend => {
                     let corner = hover.filter(|h| doc_sketch.is_point(*h));
-                    match corner {
-                        Some(point) => {
+                    match corner.map(|point| (point, doc_sketch.bend_refused(point))) {
+                        Some((_, Some(why))) => self.set_error(why),
+                        Some((point, None)) => {
                             let radius = match &self.mode {
                                 Mode::Sketch3d(sm) => sm.radius,
                                 _ => 5.0,
@@ -957,9 +1012,13 @@ impl Workbench {
                 && self.left_drag_tool(ui) == crate::viewport::Nav::Select
                 && let Some(origin) = ui.input(|i| i.pointer.press_origin())
                 && let Some((_, held)) = self.own_point_at(&doc_sketch, origin, rect)
-                && let (Some(at), Mode::Sketch3d(sm)) = (doc_sketch.point(held), &mut self.mode)
             {
-                sm.drag = Some((held, doc_sketch.clone(), at));
+                // What stays where it is whatever the pointer does says why.
+                if let Some(why) = doc_sketch.held_why(held) {
+                    self.set_status(why);
+                } else if let (Some(at), Mode::Sketch3d(sm)) = (doc_sketch.point(held), &mut self.mode) {
+                    sm.drag = Some((held, doc_sketch.clone(), at));
+                }
             }
             let target = {
                 let Mode::Sketch3d(sm) = &self.mode else { return };
@@ -989,7 +1048,11 @@ impl Workbench {
                 && let Some((p, _, _)) = sm.drag.take()
                 && let Some(at) = target
             {
-                let _ = self.exec_status("sketch3d.move", json!({ "sketch": feature.0, "point": p.0, "at": [at.x, at.y, at.z] }));
+                let moved = self.exec_status("sketch3d.move", json!({ "sketch": feature.0, "point": p.0, "at": [at.x, at.y, at.z] }));
+                // (Nothing wrong, and nothing done: its constraints leave it no way to go.)
+                if moved.is_some() && self.document().sketch3d(feature).and_then(|s| s.point(p)) == doc_sketch.point(p) {
+                    self.set_status("What holds that point leaves it nowhere to go: delete a constraint on it first to move it.");
+                }
             }
         }
         let preview = match &self.mode {
@@ -1099,6 +1162,7 @@ impl Workbench {
         let (picked, hot) = (t.sketch_picked, t.sketch_hot);
         let (reference, orphan) = (t.sketch_ref, t.sketch_lost);
         let (own, done) = (colour(t), colour_done(t));
+        let chosen = sm.constraints.clone();
         let lost: BTreeSet<EntityId> = self.scene.lost.get(&feature).map(|l| l.iter().map(|(e, _)| *e).collect()).unwrap_or_default();
         let lit: BTreeSet<EntityId> = sm.constraints.iter().filter_map(|c| shown.constraint(*c)).flat_map(Constraint3::refs).collect();
         let color_of = |id: EntityId| {
@@ -1186,9 +1250,10 @@ impl Workbench {
             let size = p.layout_no_wrap(text.clone(), theme::small(), t.text).size();
             let r = Rect::from_min_size(at, size + vec2(8.0, 4.0));
             let over = pointer.is_some_and(|m| r.contains(m));
+            let on = chosen.contains(&cid);
             p.line_segment([q, r.left_top()], Stroke::new(1.0, t.dim_line));
-            p.rect_filled(r, 2.0, t.panel.gamma_multiply(0.85));
-            p.text(r.center(), Align2::CENTER_CENTER, text, theme::small(), if over { hot } else { done });
+            p.rect_filled(r, 2.0, if on { picked.gamma_multiply(0.35) } else { t.panel.gamma_multiply(0.85) });
+            p.text(r.center(), Align2::CENTER_CENTER, text, theme::small(), if over || on { hot } else { done });
             dims.push((cid, r));
         }
         // What a click would do.

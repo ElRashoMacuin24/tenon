@@ -852,9 +852,9 @@ impl<'a> Ctx<'a> {
             PointSel::Sketch3dPoint { sketch, point } => {
                 Ok(self.sketch3d_now(*sketch)?.point(*point).ok_or_else(|| format!("the point is no longer in {}", label(self.doc, *sketch)))?)
             }
-            PointSel::Vertex { edge, end } => {
+            PointSel::Vertex { edge, end, towards } => {
                 let info = self.edge_geometry(edge)?;
-                Ok(if *end == 0 { info.start } else { info.end })
+                Ok(PointSel::end_of_edge(info.start, info.end, *end, *towards).0)
             }
         }
     }
@@ -1787,6 +1787,15 @@ impl<'a> Ctx<'a> {
             }
             if profile.regions.len() > 1 || profile.regions.iter().any(|r| !r.holes.is_empty()) {
                 return Err("A sweep round a sharp corner of the path takes one closed outline with no holes: round the corner with an arc or a bend, or sweep the outlines one at a time.".into());
+            }
+            match path.corner_at_curve() {
+                Some(true) => {
+                    return Err("The path closes on itself with a sharp corner at a curve, and a sweep goes round a sharp corner only between two straight lines: leave a gap where it closes, or close it with lines and bends.".into());
+                }
+                Some(false) => {
+                    return Err("A sharp corner of the path is at a curve, and a sweep goes round a sharp corner only between two straight lines: make the two tangent there (Tangent), or put a line and a bend between them.".into());
+                }
+                None => {}
             }
         }
         let orientation = if s.fixed { SweepOrientation::Fixed } else { SweepOrientation::Frenet };

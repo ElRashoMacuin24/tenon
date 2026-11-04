@@ -134,6 +134,15 @@ pub enum Curve3 {
 }
 
 impl Curve3 {
+    /// Where it starts and ends. (Of a helix, which is a whole path by itself: not said.)
+    pub fn ends(&self) -> Option<(Vec3, Vec3)> {
+        match self {
+            Curve3::Line { start, end } | Curve3::Arc { start, end, .. } => Some((*start, *end)),
+            Curve3::BSpline { poles, .. } => Some((*poles.first()?, *poles.last()?)),
+            Curve3::Helix { .. } => None,
+        }
+    }
+
     /// The unit directions it starts and ends in.
     pub fn directions(&self) -> Option<(Vec3, Vec3)> {
         let unit = |a: Vec3, b: Vec3| Some((b - a).normalized()).filter(|d| d.len() > 0.5);
@@ -167,12 +176,37 @@ pub struct Path3 {
 }
 
 impl Path3 {
-    /// Whether it turns sharply where one curve meets the next.
-    pub fn has_corner(&self) -> bool {
-        self.curves.windows(2).any(|w| match (w[0].directions(), w[1].directions()) {
-            (Some((_, out)), Some((into, _))) => out.cross(into).len() > 1e-6 || out.dot(into) < 0.0,
+    /// Where one curve meets the next, and where the last meets the first if the path closes:
+    /// each pair, with whether it is the one where the path closes.
+    fn meetings(&self) -> impl Iterator<Item = (&Curve3, &Curve3, bool)> {
+        let closes = match (self.curves.first().and_then(Curve3::ends), self.curves.last().and_then(Curve3::ends)) {
+            (Some((head, _)), Some((_, tail))) => head.dist(tail) <= tenon_geom::tol::LINEAR,
             _ => false,
-        })
+        };
+        let inside = self.curves.windows(2).map(|w| (&w[0], &w[1], false));
+        let round = self.curves.last().zip(self.curves.first()).filter(|_| closes).map(|(a, b)| (a, b, true));
+        inside.chain(round)
+    }
+
+    /// Whether it turns sharply where one curve meets the next, or where it closes on itself.
+    pub fn has_corner(&self) -> bool {
+        self.meetings().any(|(a, b, _)| sharp(a, b))
+    }
+
+    /// A sharp corner beside a curve, where the mitre of a sweep cannot be trusted (between two
+    /// straight lines it can): true when it is where the path closes on itself, false elsewhere,
+    /// None when there is none.
+    pub fn corner_at_curve(&self) -> Option<bool> {
+        let curved = |c: &Curve3| !matches!(c, Curve3::Line { .. });
+        self.meetings().find(|(a, b, _)| sharp(a, b) && (curved(a) || curved(b))).map(|(_, _, closes)| closes)
+    }
+}
+
+/// Whether a path turns sharply going from one curve into the next.
+fn sharp(a: &Curve3, b: &Curve3) -> bool {
+    match (a.directions(), b.directions()) {
+        (Some((_, out)), Some((into, _))) => out.cross(into).len() > 1e-6 || out.dot(into) < 0.0,
+        _ => false,
     }
 }
 

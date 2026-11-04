@@ -711,17 +711,20 @@ impl Workbench {
                 return true;
             }
         }
-        // A sweep's path: a curve of a 3D sketch clicked is the whole of that sketch (DEC-136).
+        // A sweep's path: a curve of a 3D sketch clicked is the run of curves it belongs to, an
+        // edge brought in among them (DEC-136).
         if matches!(self.panel, Some(Panel::Sweep(_)))
             && let Some(pos) = resp.hover_pos()
-            && let Some((sketch, _)) = self.sketch3d_curve_at(pos, rect)
+            && let Some((sketch, curve)) = self.sketch3d_curve_at(pos, rect)
         {
             self.view.hover = None;
             if resp.clicked()
-                && let Some(path) = crate::sweeps::path_curves(self.document(), sketch)
-                && let Some(Panel::Sweep(p)) = &mut self.panel
+                && let Some(sk) = self.document().sketch3d(sketch)
             {
-                p.path = Some(path);
+                let curves = tenon_model::sketch3d::path_through(sk, curve);
+                if let Some(Panel::Sweep(p)) = &mut self.panel {
+                    p.path = Some(tenon_model::SketchCurves { sketch, curves });
+                }
             }
             return true;
         }
@@ -778,12 +781,12 @@ impl Workbench {
                 }
                 return true;
             }
-            if let Some((edge, end, _)) = self.vertex_at(pos, rect) {
+            if let Some((edge, end, towards, _)) = self.vertex_at(pos, rect) {
                 self.view.hover = None;
                 if resp.clicked()
                     && let Some(Panel::Work(w)) = &mut self.panel
                 {
-                    w.put_point(tenon_model::PointSel::Vertex { edge, end });
+                    w.put_point(tenon_model::PointSel::Vertex { edge, end, towards });
                 }
                 return true;
             }

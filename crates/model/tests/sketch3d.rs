@@ -410,6 +410,450 @@ fn hostile_input_is_refused_with_nothing_changed() {
     }
 }
 
+/// A tube of radius 5 along the staircase, a sweep already there: hand, pi 25 L.
+fn close_to(v: f64, length: f64) {
+    let want = PI * 25.0 * length;
+    assert!((v - want).abs() < 1e-6 * want, "{v} and {want}");
+}
+
+#[test]
+fn a_bend_made_or_deleted_under_a_sweep_keeps_the_sweep_and_its_volume_follows() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    let (path, l, p) = staircase(&mut s, &mut k);
+    let circle = profile(&mut s, &mut k, 10.0);
+    run(&mut s, &mut k, "model.sweep", json!({ "sketch": circle, "path_sketch": path }));
+    close_to(volume(&mut s, &mut k), 150.0);
+    // Rounded under it: the path gives up 2R and gets back a quarter of a circle.
+    let bend = run(&mut s, &mut k, "sketch3d.bend", json!({ "sketch": path, "point": p[1], "radius": 10 }));
+    let rounded = 150.0 - 20.0 + FRAC_PI_2 * 10.0;
+    close_to(volume(&mut s, &mut k), rounded);
+    // Undone and done again, as one edit.
+    assert!(s.undo());
+    close_to(volume(&mut s, &mut k), 150.0);
+    assert!(s.redo());
+    close_to(volume(&mut s, &mut k), rounded);
+    // A larger radius goes on being swept: 2R - pi R / 2 less for each.
+    run(&mut s, &mut k, "sketch3d.set_dimension", json!({ "sketch": path, "constraint": bend["radius"], "value": 20 }));
+    close_to(volume(&mut s, &mut k), 150.0 - 40.0 + FRAC_PI_2 * 20.0);
+    // Deleted: the corner is back, and the path is its three lines.
+    run(&mut s, &mut k, "sketch3d.delete", json!({ "sketch": path, "entities": [bend["arc"]] }));
+    close_to(volume(&mut s, &mut k), 150.0);
+    // By its centre or its corner: the same.
+    for of in ["center", "corner"] {
+        let bend = run(&mut s, &mut k, "sketch3d.bend", json!({ "sketch": path, "point": p[1], "radius": 10 }));
+        close_to(volume(&mut s, &mut k), rounded);
+        run(&mut s, &mut k, "sketch3d.delete", json!({ "sketch": path, "entities": [bend[of]] }));
+        close_to(volume(&mut s, &mut k), 150.0);
+    }
+    // A line drawn on from the end of the path: the tube goes on along it, 50 more.
+    let on = run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": p[3], "end": [50, 50, 100] }));
+    close_to(volume(&mut s, &mut k), 200.0);
+    // A line away from it, or off its middle: the sweep stays where it was.
+    run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": [90, 90, 90], "end": [90, 90, 120] }));
+    run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": p[1], "end": [-30, 0, 50] }));
+    close_to(volume(&mut s, &mut k), 200.0);
+    // A curve of the path taken from the middle: said, and it says what to do.
+    run(&mut s, &mut k, "sketch3d.delete", json!({ "sketch": path, "entities": [l[1]] }));
+    let r = s.regen(&mut k);
+    let why = r.first_error().map(|e| e.1.to_owned()).unwrap_or_default();
+    assert!(why.contains("do not join") && why.contains("choose its path again"), "{why}");
+    let _ = on;
+}
+
+#[test]
+fn a_path_chosen_as_part_of_a_sketch_stays_that_part() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    let (path, l, p) = staircase(&mut s, &mut k);
+    let circle = profile(&mut s, &mut k, 10.0);
+    run(&mut s, &mut k, "model.sweep", json!({ "sketch": circle, "path_sketch": path, "path": [l[0], l[1]] }));
+    close_to(volume(&mut s, &mut k), 100.0);
+    // A line on from the far end of the whole sketch: no part of this path.
+    run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": p[3], "end": [50, 50, 100] }));
+    close_to(volume(&mut s, &mut k), 100.0);
+    // A bend between a line of the path and one that is not: it is cut short, and that is all.
+    run(&mut s, &mut k, "sketch3d.bend", json!({ "sketch": path, "point": p[2], "radius": 10 }));
+    close_to(volume(&mut s, &mut k), 90.0);
+    // All of it gone: said, and nothing to save that cannot be read.
+    run(&mut s, &mut k, "sketch3d.delete", json!({ "sketch": path, "entities": [l[0], l[1]] }));
+    let r = s.regen(&mut k);
+    let why = r.first_error().map(|e| e.1.to_owned()).unwrap_or_default();
+    assert!(why.contains("has gone from the sketch") && why.contains("choose its path again"), "{why}");
+    s.document().validate().unwrap();
+}
+
+#[test]
+fn a_radius_or_a_length_that_cannot_fit_is_refused_with_nothing_changed() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    // Three lines 50 long along their axes, from a fixed start.
+    let (path, l, p) = staircase(&mut s, &mut k);
+    run(&mut s, &mut k, "sketch3d.constrain", json!({ "sketch": path, "constraint": { "type": "fix", "point": p[0] } }));
+    for (line, axis) in [(l[0], "z"), (l[1], "x"), (l[2], "y")] {
+        run(&mut s, &mut k, "sketch3d.constrain", json!({ "sketch": path, "constraint": { "type": "along", "line": line, "axis": axis } }));
+    }
+    let long = run(&mut s, &mut k, "sketch3d.constrain", json!({ "sketch": path, "constraint": { "type": "length", "line": l[0], "value": 50 } }));
+    let bend = run(&mut s, &mut k, "sketch3d.bend", json!({ "sketch": path, "point": p[1], "radius": 10 }));
+    let before = s.document().clone();
+    let e = s
+        .exec("sketch3d.set_dimension", &json!({ "sketch": path, "constraint": bend["radius"], "value": 70 }), Some(&mut k))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("the largest radius that fits is just under 50.000 mm"), "{e}");
+    assert_eq!(s.document(), &before);
+    let e = s
+        .exec("sketch3d.set_dimension", &json!({ "sketch": path, "constraint": long["constraint"], "value": 5 }), Some(&mut k))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("the largest radius that fits is just under 5.000 mm"), "{e}");
+    assert_eq!(s.document(), &before);
+    // And what would come by an equation.
+    run(&mut s, &mut k, "param.add", json!({ "name": "r", "equation": "10 mm" }));
+    run(&mut s, &mut k, "sketch3d.set_dimension", json!({ "sketch": path, "constraint": bend["radius"], "equation": "r" }));
+    let e = s.exec("param.set", &json!({ "name": "r", "equation": "70 mm" }), Some(&mut k)).unwrap_err().to_string();
+    assert!(e.contains("the largest radius that fits"), "{e}");
+    // What fits fits: at 40, the line stops 10 from where it starts.
+    run(&mut s, &mut k, "param.set", json!({ "name": "r", "equation": "40 mm" }));
+    let sk = s.document().sketch3d(FeatureId(path as u32)).unwrap();
+    let (a, b) = sk.line(tenon_sketch::EntityId(l[0] as u32)).unwrap();
+    assert!(a.dist(Vec3::ZERO) < 1e-7 && b.dist(Vec3::new(0.0, 0.0, 10.0)) < 1e-7, "{a:?} {b:?}");
+}
+
+#[test]
+fn a_part_that_changes_so_that_a_bend_no_longer_fits_says_so() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    // A line from a corner of the block, up 20, with its far end fixed, and on along X: bent.
+    let (extrude, _) = block(&mut s, &mut k);
+    let on_top = |a: Vec3, b: Vec3| a.z == 10.0 && b.z == 10.0 && a.y == 0.0 && b.y == 0.0;
+    let (edge, _) = top_edge(&mut s, &mut k, on_top);
+    let path = run(&mut s, &mut k, "sketch.new_3d", json!({}))["feature"].as_u64().unwrap();
+    let up = run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": { "vertex": edge, "end": 0 }, "end": [40, 0, 30] }));
+    let on = run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": up["end"], "end": [90, 0, 30] }));
+    for q in [&up["end"], &on["end"]] {
+        run(&mut s, &mut k, "sketch3d.constrain", json!({ "sketch": path, "constraint": { "type": "fix", "point": q } }));
+    }
+    let bend = run(&mut s, &mut k, "sketch3d.bend", json!({ "sketch": path, "point": up["end"], "radius": 10 }));
+    assert_eq!(s.regen(&mut k).first_error(), None);
+    let _ = bend;
+    // The block 25 tall: the corner is 5 from the line's start, and the bend needs 10 of it.
+    s.edit(|d| {
+        let FeatureKind::Extrude(e) = &mut d.feature_mut(FeatureId(extrude as u32)).unwrap().kind else { panic!() };
+        e.extent = tenon_model::ExtrudeExtent::Distance(25.0);
+        Ok(())
+    })
+    .unwrap();
+    let r = s.regen(&mut k);
+    let why = r.first_error().map(|e| e.1.to_owned()).unwrap_or_default();
+    assert!(why.contains("cannot follow") && why.contains("largest radius that fits"), "{why}");
+}
+
+#[test]
+fn a_plane_square_to_a_round_edge_is_square_to_the_circle_and_the_ring_is_whole() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    // A disc of radius 30 and height 10. Its rim's seam is at (30, 0, 10), where the circle's
+    // tangent is along Y: a chord of what is drawn leans 2.81 degrees off that.
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 30 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 10 }));
+    let round = |a: Vec3, b: Vec3| a.z == 10.0 && a.dist(b) < 1e-9;
+    let (edge, (seam, _)) = top_edge(&mut s, &mut k, round);
+    assert!(seam.dist(Vec3::new(30.0, 0.0, 10.0)) < 1e-9, "{seam:?}");
+    let path = run(&mut s, &mut k, "sketch.new_3d", json!({}))["feature"].as_u64().unwrap();
+    let rim = run(&mut s, &mut k, "sketch3d.include", json!({ "sketch": path, "edge": edge }));
+    let plane = run(&mut s, &mut k, "work.plane", json!({ "by": "square_to_curve", "sketch": path, "curve": rim["entity"], "end": rim["start"] }));
+    let r = s.regen(&mut k);
+    let Some(WorkGeom::Plane(f)) = r.work.get(&FeatureId(plane["feature"].as_u64().unwrap() as u32)).copied() else { panic!() };
+    assert!(f.z().cross(Vec3::Y).len() < 1e-12, "{:?}", f.z());
+    // A ring of radius 2 from there: pi 4 by 2 pi 30, to a part in a million, and no short.
+    let section = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": plane["feature"] }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": section, "cx": 0, "cy": 0, "r": 2 }));
+    let before = volume(&mut s, &mut k);
+    run(&mut s, &mut k, "model.sweep", json!({ "sketch": section, "path_sketch": path, "operation": "new_body" }));
+    let v = volume(&mut s, &mut k) - before;
+    let want = PI * 4.0 * 2.0 * PI * 30.0;
+    assert!((v - want).abs() < 1e-6 * want, "{v} and {want}");
+    // A line of the sketch's own does not make the rim part of what a sweep takes (it is closed)...
+    let line = run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": rim["start"], "end": [29, 40, 10] }));
+    let said = run(&mut s, &mut k, "sketch3d.length", json!({ "sketch": path }));
+    assert_eq!(said["curves"].as_array().unwrap().len(), 1, "{said}");
+    // ...and held tangent to it, it lies along the circle's tangent: its end at x = 30, not 28.035.
+    run(&mut s, &mut k, "sketch3d.constrain", json!({ "sketch": path, "constraint": { "type": "tangent", "a": line["line"], "b": rim["entity"] } }));
+    let at = s.document().sketch3d(FeatureId(path as u32)).unwrap().point(tenon_sketch::EntityId(line["end"].as_u64().unwrap() as u32)).unwrap();
+    assert!((at.x - 30.0).abs() < 1e-8, "{at:?}");
+}
+
+#[test]
+fn a_vertex_stays_the_same_corner_whichever_way_the_kernel_names_its_edge() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    let (extrude, base) = block(&mut s, &mut k);
+    let on_top = |a: Vec3, b: Vec3| a.z == 10.0 && b.z == 10.0 && a.y == 0.0 && b.y == 0.0;
+    let (edge, (start, end)) = top_edge(&mut s, &mut k, on_top);
+    assert_eq!((start.x, end.x), (40.0, 0.0), "as the kernel has it now");
+    let path = run(&mut s, &mut k, "sketch.new_3d", json!({}))["feature"].as_u64().unwrap();
+    let p0 = run(&mut s, &mut k, "sketch3d.point", json!({ "sketch": path, "at": { "vertex": edge, "end": 0 } }))["point"].as_u64().unwrap();
+    let p1 = run(&mut s, &mut k, "sketch3d.point", json!({ "sketch": path, "at": { "vertex": edge, "end": 1 } }))["point"].as_u64().unwrap();
+    let brought = run(&mut s, &mut k, "sketch3d.include", json!({ "sketch": path, "edge": edge }));
+    let vertex = |end: u64| json!({ "vertex": { "edge": edge, "end": end } });
+    let wp = run(&mut s, &mut k, "work.point_at", json!({ "point": vertex(0) }))["feature"].as_u64().unwrap();
+    let plane =
+        run(&mut s, &mut k, "work.plane", json!({ "by": "three_points", "points": [vertex(0), vertex(1), "origin"] }))["feature"].as_u64().unwrap();
+    let at = |s: &mut Session, k: &mut OcctKernel, p: u64| {
+        assert_eq!(s.regen(k).first_error(), None);
+        s.document().sketch3d(FeatureId(path as u32)).unwrap().point(tenon_sketch::EntityId(p as u32)).unwrap()
+    };
+    let (e0, e1) = (brought["start"].as_u64().unwrap(), brought["end"].as_u64().unwrap());
+    let work = |s: &mut Session, k: &mut OcctKernel| match s.regen(k).work.get(&FeatureId(wp as u32)) {
+        Some(WorkGeom::Point(q)) => *q,
+        other => panic!("{other:?}"),
+    };
+    // The block made the other way from its sketch: by hand, the same corners 20 lower.
+    s.edit(|d| {
+        let FeatureKind::Extrude(e) = &mut d.feature_mut(FeatureId(extrude as u32)).unwrap().kind else { panic!() };
+        e.reverse = true;
+        Ok(())
+    })
+    .unwrap();
+    for (p, x) in [(p0, 40.0), (p1, 0.0), (e0, 40.0), (e1, 0.0)] {
+        let q = at(&mut s, &mut k, p);
+        assert!(q.dist(Vec3::new(x, 0.0, -10.0)) < 1e-9, "{p}: {q:?}");
+    }
+    assert!(work(&mut s, &mut k).dist(Vec3::new(40.0, 0.0, -10.0)) < 1e-9);
+    // The plane through the two corners and the origin: it starts at the first, heading for the second.
+    let r = s.regen(&mut k);
+    let Some(WorkGeom::Plane(f)) = r.work.get(&FeatureId(plane as u32)).copied() else { panic!() };
+    assert!(f.origin().dist(Vec3::new(40.0, 0.0, -10.0)) < 1e-9 && f.x().dist(-Vec3::X) < 1e-9, "{f:?}");
+    s.undo();
+    // Ten times as wide: the end at 40 is nearer the other, and is the far one still.
+    let info = run(&mut s, &mut k, "sketch.info", json!({ "sketch": base }));
+    let far = info["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["type"] == "point" && e["pos"]["x"] == 40.0 && e["pos"]["y"] == 0.0)
+        .map(|e| e["id"].clone())
+        .unwrap();
+    run(&mut s, &mut k, "sketch.drag", json!({ "sketch": base, "point": far, "x": 400, "y": 0 }));
+    for (p, x) in [(p0, 400.0), (p1, 0.0), (e0, 400.0), (e1, 0.0)] {
+        let q = at(&mut s, &mut k, p);
+        assert!(q.dist(Vec3::new(x, 0.0, 10.0)) < 1e-6, "{p}: {q:?}");
+    }
+}
+
+#[test]
+fn a_plane_square_to_a_line_goes_with_the_line_when_its_corner_is_rounded() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    let (path, l, p) = staircase(&mut s, &mut k);
+    let plane = run(&mut s, &mut k, "work.plane", json!({ "by": "square_to_curve", "sketch": path, "curve": l[0], "end": p[1] }))["feature"]
+        .as_u64()
+        .unwrap();
+    let origin = |s: &mut Session, k: &mut OcctKernel| {
+        let r = s.regen(k);
+        assert_eq!(r.first_error(), None);
+        let Some(WorkGeom::Plane(f)) = r.work.get(&FeatureId(plane as u32)).copied() else { panic!() };
+        assert!(f.z().cross(Vec3::Z).len() < 1e-9, "{f:?}");
+        f.origin()
+    };
+    assert!(origin(&mut s, &mut k).dist(Vec3::new(0.0, 0.0, 50.0)) < 1e-9);
+    let bend = run(&mut s, &mut k, "sketch3d.bend", json!({ "sketch": path, "point": p[1], "radius": 10 }));
+    assert!(origin(&mut s, &mut k).dist(Vec3::new(0.0, 0.0, 40.0)) < 1e-9, "where the line stops now");
+    run(&mut s, &mut k, "sketch3d.delete", json!({ "sketch": path, "entities": [bend["arc"]] }));
+    assert!(origin(&mut s, &mut k).dist(Vec3::new(0.0, 0.0, 50.0)) < 1e-9, "and back at the corner");
+}
+
+#[test]
+fn what_a_sweep_can_go_round_it_goes_round_and_what_it_cannot_it_says() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    // A square loop 100 on a side, bent at three corners, sharp at the one it closes at.
+    let path = run(&mut s, &mut k, "sketch.new_3d", json!({}))["feature"].as_u64().unwrap();
+    let a = run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": [0, 0, 0], "end": [0, 100, 0] }));
+    let b = run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": a["end"], "end": [100, 100, 0] }));
+    let c = run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": b["end"], "end": [100, 0, 0] }));
+    run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": c["end"], "end": a["start"] }));
+    for q in [&a["end"], &b["end"], &c["end"]] {
+        run(&mut s, &mut k, "sketch3d.bend", json!({ "sketch": path, "point": q, "radius": 10 }));
+    }
+    let plane = run(&mut s, &mut k, "work.plane", json!({ "by": "offset", "base": "xz", "distance": -50 }))["feature"].as_u64().unwrap();
+    let section = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": plane }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": section, "cx": 0, "cy": 0, "r": 5 }));
+    run(&mut s, &mut k, "model.sweep", json!({ "sketch": section, "path_sketch": path }));
+    close_to(volume(&mut s, &mut k), 400.0 - 3.0 * 20.0 + 3.0 * FRAC_PI_2 * 10.0);
+
+    // A sharp corner at a spline: said, and said what to do.
+    let refused = |s: &mut Session, k: &mut OcctKernel, sketch: &str| {
+        let r = s.regen(k);
+        let why = r.first_error().map(|e| e.1.to_owned()).unwrap_or_default();
+        assert!(why.contains(sketch), "{why}");
+    };
+    let mut s = Session::default();
+    let line = run_fresh_path(&mut s, &mut k);
+    let path = line.0;
+    run(&mut s, &mut k, "sketch3d.spline", json!({ "sketch": path, "points": [line.1["end"], [100, 0, 100], [200, 20, 100]] }));
+    let circle = profile(&mut s, &mut k, 2.0);
+    run(&mut s, &mut k, "model.sweep", json!({ "sketch": circle, "path_sketch": path }));
+    refused(&mut s, &mut k, "goes round a sharp corner only between two straight lines: make the two tangent");
+    // A spline closed on itself has a corner where it closes.
+    let mut s = Session::default();
+    let path = run(&mut s, &mut k, "sketch.new_3d", json!({}))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch3d.spline", json!({ "sketch": path, "points": [[30, 0, 0], [0, 30, 0], [-30, 0, 0], [0, -30, 0], [30, 0, 0]] }));
+    let section = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": section, "cx": 30, "cy": 0, "r": 2 }));
+    run(&mut s, &mut k, "model.sweep", json!({ "sketch": section, "path_sketch": path }));
+    refused(&mut s, &mut k, "closes on itself with a sharp corner at a curve");
+    // A sharp corner further along than a spline, between lines: as long as it all is.
+    let mut s = Session::default();
+    let (path, l) = run_fresh_path(&mut s, &mut k);
+    run(&mut s, &mut k, "sketch3d.constrain", json!({ "sketch": path, "constraint": { "type": "fix", "point": l["start"] } }));
+    run(&mut s, &mut k, "sketch3d.constrain", json!({ "sketch": path, "constraint": { "type": "along", "line": l["line"], "axis": "z" } }));
+    let sp = run(&mut s, &mut k, "sketch3d.spline", json!({ "sketch": path, "points": [l["end"], [10, 0, 200], [100, 20, 250], [200, 40, 250]] }));
+    run(&mut s, &mut k, "sketch3d.constrain", json!({ "sketch": path, "constraint": { "type": "tangent", "a": l["line"], "b": sp["spline"] } }));
+    let first = run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": l["start"], "end": [0, 80, 0] }));
+    let section = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": section, "cx": 0, "cy": 0, "r": 1 }));
+    let curves = json!([first["line"], l["line"], sp["spline"]]);
+    run(&mut s, &mut k, "model.sweep", json!({ "sketch": section, "path_sketch": path, "path": curves }));
+    let length = run(&mut s, &mut k, "sketch3d.length", json!({ "sketch": path, "curves": curves }))["length"].as_f64().unwrap();
+    let v = volume(&mut s, &mut k);
+    assert!((v - PI * length).abs() < 1e-3 * PI * length, "{v} and {}", PI * length);
+}
+
+/// A new 3D sketch with one line up Z, 100 long.
+fn run_fresh_path(s: &mut Session, k: &mut OcctKernel) -> (u64, Value) {
+    let path = run(s, k, "sketch.new_3d", json!({}))["feature"].as_u64().unwrap();
+    let line = run(s, k, "sketch3d.line", json!({ "sketch": path, "start": [0, 0, 0], "end": [0, 0, 100] }));
+    (path, line)
+}
+
+#[test]
+fn a_curved_edge_is_a_path_alone_or_held_tangent_to_a_line_and_said_to_be_neither_otherwise() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    // Half of an ellipse's rim: neither straight nor round, so a spline through its mesh.
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.ellipse", json!({ "sketch": sk, "cx": 0, "cy": 0, "x": 30, "y": 0, "minor": 20 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 12 }));
+    run(&mut s, &mut k, "model.split", json!({ "plane": "xz", "keep": "front" }));
+    let found = run(&mut s, &mut k, "model.find", json!({ "what": "edges", "kind": "other", "most": "top" }));
+    let path = run(&mut s, &mut k, "sketch.new_3d", json!({}))["feature"].as_u64().unwrap();
+    let inc = run(&mut s, &mut k, "sketch3d.include", json!({ "sketch": path, "edge": found["found"][0]["reference"] }));
+    let edge = run(&mut s, &mut k, "sketch3d.length", json!({ "sketch": path, "curves": [inc["entity"]] }))["length"].as_f64().unwrap();
+    assert!((edge - 79.327).abs() < 0.01, "half of 158.65: {edge}");
+    let plane =
+        run(&mut s, &mut k, "work.plane", json!({ "by": "square_to_curve", "sketch": path, "curve": inc["entity"], "end": inc["start"] }))["feature"]
+            .as_u64()
+            .unwrap();
+    let section = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": plane }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": section, "cx": 0, "cy": 0, "r": 1 }));
+    let before = volume(&mut s, &mut k);
+    // Alone, by default, there being nothing else: pi L, to a part in ten thousand.
+    let sweep =
+        run(&mut s, &mut k, "model.sweep", json!({ "sketch": section, "path_sketch": path, "operation": "new_body" }))["feature"].as_u64().unwrap();
+    let v = volume(&mut s, &mut k) - before;
+    assert!((v - PI * edge).abs() < 1e-4 * PI * edge, "{v} and {}", PI * edge);
+    // With a line off its end, sharp: refused, in words.
+    let line = run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": inc["end"], "end": [-20, 35, 12] }));
+    let both = json!([inc["entity"], line["line"]]);
+    let mut kind = serde_json::to_value(&s.document().feature(FeatureId(sweep as u32)).unwrap().kind).unwrap();
+    kind["path"]["curves"] = both.clone();
+    run(&mut s, &mut k, "feature.update", json!({ "feature": sweep, "kind": kind }));
+    let why = s.regen(&mut k).first_error().map(|e| e.1.to_owned()).unwrap_or_default();
+    assert!(why.contains("make the two tangent"), "{why}");
+    // Held tangent to it (it comes to that end going +Y, by the mesh's own tangent): pi (L + l).
+    run(&mut s, &mut k, "sketch3d.constrain", json!({ "sketch": path, "constraint": { "type": "tangent", "a": line["line"], "b": inc["entity"] } }));
+    let all = run(&mut s, &mut k, "sketch3d.length", json!({ "sketch": path, "curves": both }))["length"].as_f64().unwrap();
+    let v = volume(&mut s, &mut k) - before;
+    assert!((v - PI * all).abs() < 1e-3 * PI * all, "{v} and {}", PI * all);
+}
+
+#[test]
+fn edges_brought_in_are_a_path_by_themselves_and_with_what_joins_them() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    block(&mut s, &mut k);
+    let along_x = |a: Vec3, b: Vec3| a.z == 10.0 && b.z == 10.0 && a.y == 0.0 && b.y == 0.0;
+    let along_y = |a: Vec3, b: Vec3| a.z == 10.0 && b.z == 10.0 && a.x == 0.0 && b.x == 0.0;
+    let (ex, _) = top_edge(&mut s, &mut k, along_x);
+    let (ey, _) = top_edge(&mut s, &mut k, along_y);
+    let path = run(&mut s, &mut k, "sketch.new_3d", json!({}))["feature"].as_u64().unwrap();
+    let a = run(&mut s, &mut k, "sketch3d.include", json!({ "sketch": path, "edge": ex }));
+    let b = run(&mut s, &mut k, "sketch3d.include", json!({ "sketch": path, "edge": ey }));
+    // The two meet at a corner of the block: 40 and 20.
+    let said = run(&mut s, &mut k, "sketch3d.length", json!({ "sketch": path }));
+    assert!((said["length"].as_f64().unwrap() - 60.0).abs() < 1e-9, "{said}");
+    // A line of its own on from one of them joins the three: 30 more.
+    let sk = s.document().sketch3d(FeatureId(path as u32)).unwrap();
+    let end_of_b = if sk.point(tenon_sketch::EntityId(b["start"].as_u64().unwrap() as u32)).unwrap().y > 10.0 { &b["start"] } else { &b["end"] };
+    run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": end_of_b, "end": [0, 20, 40] }));
+    let said = run(&mut s, &mut k, "sketch3d.length", json!({ "sketch": path }));
+    assert!((said["length"].as_f64().unwrap() - 90.0).abs() < 1e-9, "{said}");
+    // A tube along all of it, from a plane square to its far end: pi by 90, mitred round the two corners.
+    let start_of_a = if sk_x(&s, path, &a["start"]) > 10.0 { &a["start"] } else { &a["end"] };
+    let plane =
+        run(&mut s, &mut k, "work.plane", json!({ "by": "square_to_curve", "sketch": path, "curve": a["entity"], "end": start_of_a }))["feature"]
+            .as_u64()
+            .unwrap();
+    let section = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": plane }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": section, "cx": 0, "cy": 0, "r": 1 }));
+    let before = volume(&mut s, &mut k);
+    run(&mut s, &mut k, "model.sweep", json!({ "sketch": section, "path_sketch": path, "operation": "new_body" }));
+    let v = volume(&mut s, &mut k) - before;
+    assert!((v - PI * 90.0).abs() < 1e-6 * PI * 90.0, "{v}");
+    // Marked as construction it is not taken: what is left of the run does not reach it.
+    run(&mut s, &mut k, "sketch3d.construction", json!({ "sketch": path, "entity": b["entity"] }));
+    let said = run(&mut s, &mut k, "sketch3d.length", json!({ "sketch": path }));
+    assert!((said["length"].as_f64().unwrap() - 30.0).abs() < 1e-9, "{said}");
+}
+
+/// The X of a point of a 3D sketch.
+fn sk_x(s: &Session, sketch: u64, point: &Value) -> f64 {
+    s.document().sketch3d(FeatureId(sketch as u32)).unwrap().point(tenon_sketch::EntityId(point.as_u64().unwrap() as u32)).unwrap().x
+}
+
+#[test]
+fn a_3d_sketch_is_no_profile_and_says_so_before_there_is_a_file_that_cannot_be_read() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    let (path, _, _) = staircase(&mut s, &mut k);
+    let plane = run(&mut s, &mut k, "work.plane", json!({ "by": "offset", "base": "xy", "distance": 5 }))["feature"].as_u64().unwrap();
+    let (extrude, _) = block(&mut s, &mut k);
+    let before = s.document().clone();
+    for (id, params, says) in [
+        ("model.extrude", json!({ "sketch": path, "distance": 5 }), "is a 3D sketch"),
+        ("model.extrude", json!({ "sketch": plane, "distance": 5 }), "is not a sketch"),
+        ("model.sweep", json!({ "sketch": path, "path_sketch": path }), "is a 3D sketch"),
+        ("model.sweep", json!({ "sketch": plane, "path_sketch": path, "path": [1] }), "is not a sketch"),
+        ("model.revolve", json!({ "sketch": path, "axis": "z" }), "is a 3D sketch"),
+        ("model.coil", json!({ "sketch": path, "axis": "z", "pitch": 10, "turns": 2 }), "is a 3D sketch"),
+    ] {
+        let e = s.exec(id, &params, Some(&mut k)).unwrap_err().to_string();
+        assert!(e.contains(says), "{id} {params}: {e}");
+        assert_eq!(s.document(), &before);
+    }
+    // Asked for by its whole definition too.
+    let mut kind = serde_json::to_value(&s.document().feature(FeatureId(extrude as u32)).unwrap().kind).unwrap();
+    kind["sketch"] = json!(path);
+    let e = s.exec("feature.add", &json!({ "kind": kind }), Some(&mut k)).unwrap_err().to_string();
+    assert!(e.contains("is a 3D sketch"), "{e}");
+}
+
+#[test]
+fn a_point_that_cannot_move_says_why() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    let (path, _, p) = staircase(&mut s, &mut k);
+    run(&mut s, &mut k, "sketch3d.constrain", json!({ "sketch": path, "constraint": { "type": "fix", "point": p[0] } }));
+    let e = s.exec("sketch3d.move", &json!({ "sketch": path, "point": p[0], "at": [1, 2, 3] }), Some(&mut k)).unwrap_err().to_string();
+    assert!(e.contains("is fixed"), "{e}");
+    let on = run(&mut s, &mut k, "sketch3d.point", json!({ "sketch": path, "at": "origin" }))["point"].clone();
+    let e = s.exec("sketch3d.move", &json!({ "sketch": path, "point": on, "at": [1, 2, 3] }), Some(&mut k)).unwrap_err().to_string();
+    assert!(e.contains("follows the part"), "{e}");
+}
+
 #[test]
 fn it_regenerates_with_nothing_but_the_document() {
     let mut s = Session::default();

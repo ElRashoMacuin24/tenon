@@ -64,6 +64,7 @@ fn a_part_with_a_3d_sketch_reads_back_to_the_same_bytes() {
     assert!(text.contains("type = \"sketch3d\""), "{text}");
     assert!(text.contains("next_entity = "), "{text}");
     assert!(text.contains("links = ["), "{text}");
+    assert!(text.contains("towards = "), "which way the vertex lay along its edge: {text}");
     assert!(!text.contains("40.123456789012"), "computed positions are rounded: {text}");
     let (back, extra) = project::from_bytes(&bytes).unwrap();
     assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes, "the same bytes");

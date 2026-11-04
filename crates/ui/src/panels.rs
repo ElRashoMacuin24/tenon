@@ -2121,6 +2121,11 @@ impl Workbench {
                         }
                     };
                     keep = done.is_none();
+                    // (What a value refused before said is over.)
+                    if done.is_some() && self.status_error {
+                        self.set_status("Ready");
+                        self.sketch3d_hint();
+                    }
                 }
             }
             Panel::SketchPattern(p) => {

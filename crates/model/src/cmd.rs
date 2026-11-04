@@ -12,9 +12,9 @@ use tenon_sketch::{Axis3, Constraint, Constraint3, ConstraintId, EntityId, Geome
 
 use crate::document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Extrude, ExtrudeExtent, FeatureKind,
-    Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RadiusAt, RectPattern, RegionSel,
-    Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, WorkAxis, WorkPlane,
-    WorkPoint, hole_centres, open_lines,
+    Fillet, Hole, HoleExtent, HoleType, Loft, MAX_SWEEP_CURVES, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RadiusAt,
+    RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength,
+    WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
@@ -1358,12 +1358,18 @@ fn check_work_refs(s: &Session, kind: &FeatureKind) -> Result<(), CmdError> {
     }
 }
 
-fn work_plane(s: &mut Session, p: &Value) -> CmdResult {
+fn work_plane(s: &mut Session, mut k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let def = match arg(p, "by").and_then(Value::as_str).unwrap_or("offset") {
         "offset" => WorkPlane::Offset { base: plane_value(p, "base")?, distance: num(p, "distance")? },
         "angle" => WorkPlane::Angle { base: plane_value(p, "base")?, axis: axis_param(p, "axis")?, angle: num(p, "angle")? },
         "midplane" => WorkPlane::Midplane { a: plane_value(p, "a")?, b: plane_value(p, "b")? },
-        "three_points" => WorkPlane::ThreePoints { points: parse(p, "points")? },
+        "three_points" => {
+            let mut points: [PointSel; 3] = parse(p, "points")?;
+            for q in &mut points {
+                vertex_towards(s, k.as_deref_mut(), q)?;
+            }
+            WorkPlane::ThreePoints { points }
+        }
         "square_to_curve" => {
             WorkPlane::SquareToCurve { sketch: sketch_id(p)?, curve: EntityId(id_u32(p, "curve")?), end: EntityId(id_u32(p, "end")?) }
         }
@@ -1397,8 +1403,10 @@ fn work_point(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 /// A work point at a point of a 3D sketch or a sketch, or a vertex (DEC-136).
-fn work_point_at(s: &mut Session, p: &Value) -> CmdResult {
-    let kind = FeatureKind::WorkPoint(WorkPoint::At { point: parse(p, "point")? });
+fn work_point_at(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let mut point: PointSel = parse(p, "point")?;
+    vertex_towards(s, k, &mut point)?;
+    let kind = FeatureKind::WorkPoint(WorkPoint::At { point });
     check_work_refs(s, &kind)?;
     add_feature(s, kind, p)
 }
@@ -2176,7 +2184,11 @@ fn point3_value<'k>(s: &mut Session, k: Option<&mut (dyn Kernel + 'k)>, v: &Valu
         Some(o) if o.contains_key("vertex") => {
             let edge = serde_json::from_value(o.get("vertex").cloned().unwrap_or(Value::Null)).map_err(|e| CmdError(format!("`vertex`: {e}")))?;
             let end = o.get("end").and_then(Value::as_u64).unwrap_or(0);
-            PointSel::Vertex { edge, end: u8::from(end != 0) }
+            let towards = match o.get("towards") {
+                Some(t) => Some(vec3_value(t).ok_or("`towards` is [x, y, z], each in range")?),
+                None => None,
+            };
+            PointSel::Vertex { edge, end: u8::from(end != 0), towards }
         }
         Some(o) => {
             let mut bare = o.clone();
@@ -2185,11 +2197,32 @@ fn point3_value<'k>(s: &mut Session, k: Option<&mut (dyn Kernel + 'k)>, v: &Valu
         }
         None => serde_json::from_value(v.clone()).map_err(|e| CmdError(format!("that is no point: {e}")))?,
     };
-    let at = match at {
-        Some(a) => a,
-        None => point_sel_at(s, k, &sel)?,
+    let mut sel = sel;
+    let at = match (at, k) {
+        (Some(a), k) => {
+            vertex_towards(s, k, &mut sel)?;
+            a
+        }
+        (None, Some(k)) => {
+            vertex_towards(s, Some(&mut *k), &mut sel)?;
+            point_sel_at(s, Some(k), &sel)?
+        }
+        (None, None) => point_sel_at(s, None, &sel)?,
     };
     Ok(Point3::Linked(sel, at))
+}
+
+/// A vertex that does not say which way it lies from its edge's other end says it now, if the
+/// kernel is to hand: so it stays that corner when the kernel names the edge's ends the other way.
+fn vertex_towards<'k>(s: &mut Session, k: Option<&mut (dyn Kernel + 'k)>, sel: &mut PointSel) -> Result<(), CmdError> {
+    let PointSel::Vertex { edge, end, towards } = sel else { return Ok(()) };
+    let Some(k) = k.filter(|_| towards.is_none()) else { return Ok(()) };
+    let r = s.regen(k).clone();
+    let (b, e) = r.resolve_edge(edge, k).map_err(CmdError)?;
+    let shape = r.bodies.get(b).ok_or("no such body")?.shape;
+    let info = k.edge_info(shape.edge(e)).map_err(|e| CmdError(e.to_string()))?;
+    *towards = Some(PointSel::end_of_edge(info.start, info.end, *end, None).1.normalized()).filter(|t| t.len() > 0.5);
+    Ok(())
 }
 
 /// Where `sel` is in the part as it is now.
@@ -2212,9 +2245,9 @@ fn point_sel_at<'k>(s: &mut Session, k: Option<&mut (dyn Kernel + 'k)>, sel: &Po
             Some(WorkGeom::Point(q)) => Ok(*q),
             _ => Err(format!("{id} is no work point of the part as it is").into()),
         },
-        PointSel::Vertex { edge, end } => {
+        PointSel::Vertex { edge, end, towards } => {
             let info = edge_at(edge, k)?;
-            Ok(if *end == 0 { info.start } else { info.end })
+            Ok(PointSel::end_of_edge(info.start, info.end, *end, *towards).0)
         }
         PointSel::Center(edge) => match edge_at(edge, k)?.curve {
             tenon_kernel::CurveKind::Circle { axis, .. } => Ok(axis.origin()),
@@ -2316,9 +2349,24 @@ fn sketch3d_line(s: &mut Session, mut k: Option<&mut dyn Kernel>, p: &Value) -> 
             sk.add_constraint(Constraint3::Along { line, axis })?;
         }
         let (start, end) = sk.geometry(line).and_then(Geometry3::ends).ok_or("internal: a line without ends")?;
+        paths_take_up(d, id, line);
         Ok((line, start, end))
     })?;
     Ok(json!({ "line": line.0, "start": start.0, "end": end.0 }))
+}
+
+/// A curve drawn on from the end of a path: a sweep that runs along all the sketch has goes on
+/// doing so (DEC-136). One along part of it stays on that part, and a curve that goes off from the
+/// middle, or does not meet it, changes nothing.
+fn paths_take_up(doc: &mut Document, id: FeatureId, new: EntityId) {
+    let Some(sk) = doc.sketch3d(id).cloned() else { return };
+    let all = crate::sketch3d::path_curves(&sk);
+    for curves in doc.sweep_paths_mut(id) {
+        let with: Vec<EntityId> = curves.iter().copied().chain([new]).collect();
+        if with.len() == all.len() && with.len() <= MAX_SWEEP_CURVES && with.iter().all(|c| all.contains(c)) && sk.chain(&with).is_ok() {
+            curves.push(new);
+        }
+    }
 }
 
 fn sketch3d_spline(s: &mut Session, mut k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
@@ -2334,7 +2382,9 @@ fn sketch3d_spline(s: &mut Session, mut k: Option<&mut dyn Kernel>, p: &Value) -
         let refs = points.iter().map(|q| point3_ref(d, id, q)).collect::<Result<Vec<_>, _>>()?;
         let sk = sketch3d_of(d, id)?;
         let spline = sk.add_spline(&refs)?;
-        Ok((spline, sk.geometry(spline).map(Geometry3::points).unwrap_or_default()))
+        let on = sk.geometry(spline).map(Geometry3::points).unwrap_or_default();
+        paths_take_up(d, id, spline);
+        Ok((spline, on))
     })?;
     Ok(json!({ "spline": spline.0, "points": ids.iter().map(|e| e.0).collect::<Vec<_>>() }))
 }
@@ -2352,7 +2402,24 @@ fn sketch3d_bend(s: &mut Session, p: &Value) -> CmdResult {
             }
             _ => return Err("give the corner as `point`, or its two lines as `lines`".into()),
         };
-        Ok(sk.add_bend(corner, radius)?)
+        let b = sk.add_bend(corner, radius)?;
+        let lines = sk.bend_lines(b.arc);
+        // What runs along both its lines runs round it, and what was square to one of them at the
+        // corner is square to it where that line now ends.
+        for curves in d.sweep_paths_mut(id) {
+            if lines.iter().all(|l| curves.contains(l)) && curves.len() < MAX_SWEEP_CURVES {
+                curves.push(b.arc);
+            }
+        }
+        let now = sketch3d_of(d, id)?.clone();
+        for (curve, end) in d.square_planes_mut(id) {
+            match now.geometry(curve).and_then(Geometry3::ends) {
+                Some((s, e)) if *end == b.corner && (s == b.start || e == b.start) => *end = b.start,
+                Some((s, e)) if *end == b.corner && (s == b.end || e == b.end) => *end = b.end,
+                _ => {}
+            }
+        }
+        Ok(b)
     })?;
     Ok(json!({ "arc": b.arc.0, "center": b.center.0, "start": b.start.0, "end": b.end.0, "corner": b.corner.0, "radius": b.radius.0 }))
 }
@@ -2426,6 +2493,9 @@ fn sketch3d_move(s: &mut Session, p: &Value) -> CmdResult {
         if !sk.is_point(point) {
             return Err(CmdError(format!("{point} is not a point of {id}")));
         }
+        if let Some(why) = sk.held_why(point) {
+            return Err(why.into());
+        }
         sk.drag(point, to).map_err(|e| CmdError(format!("The point cannot go there: {}", sk.words(&e))))
     })?;
     Ok(json!({}))
@@ -2439,7 +2509,26 @@ fn sketch3d_delete(s: &mut Session, p: &Value) -> CmdResult {
         for c in &constraints {
             sk.remove_constraint(ConstraintId(c.0))?;
         }
-        Ok(sk.delete(&entities))
+        let was = sk.clone();
+        let gone = sk.delete(&entities);
+        // A sweep goes on along what is left of its path. (All of it gone, it says so when it is
+        // rebuilt: a path with nothing in it is no path to save.)
+        for curves in d.sweep_paths_mut(id) {
+            if curves.iter().any(|c| !gone.contains(c)) {
+                curves.retain(|c| !gone.contains(c));
+            }
+        }
+        // A plane square to a line where a bend was ends at the corner now, as the line does.
+        let now = sketch3d_of(d, id)?.clone();
+        for (curve, end) in d.square_planes_mut(id) {
+            if gone.contains(end)
+                && let (Some(at), Some((a, b))) = (was.point(*end), now.geometry(curve).and_then(Geometry3::ends))
+                && let (Some(pa), Some(pb)) = (now.point(a), now.point(b))
+            {
+                *end = if pa.dist(at) <= pb.dist(at) { a } else { b };
+            }
+        }
+        Ok(gone)
     })?;
     Ok(json!({ "deleted": gone.iter().map(|e| e.0).collect::<Vec<_>>() }))
 }
@@ -2462,9 +2551,7 @@ fn sketch3d_break_link(s: &mut Session, p: &Value) -> CmdResult {
             }
             match sk.geometry(*e) {
                 Some(Geometry3::Edge { .. }) => {
-                    return Err(CmdError(format!(
-                        "{e} is a curved edge of the part: a sketch has no such curve of its own, so it can only be deleted"
-                    )));
+                    return Err("That is a curved edge of the part: a sketch has no such curve of its own, so it can only be deleted.".into());
                 }
                 Some(g) => {
                     for q in g.points().into_iter().chain([*e]) {
@@ -4606,7 +4693,7 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "sketch3d.point",
         label: "3D Point",
-        help: "sketch; at: [x, y, z], or what of the part it stands for and follows: \"origin\", {\"work\": id} or {\"vertex\": edge reference, \"end\": 0 or 1}. Returns the point",
+        help: "sketch; at: [x, y, z], or what of the part it stands for and follows: \"origin\", {\"work\": id} or {\"vertex\": edge reference, \"end\": 0 or 1, \"towards\": [x, y, z], the way from the edge's other end to this one, found for you when the kernel is to hand}. Returns the point",
         mutates: true,
         run: Run::Opt(sketch3d_point),
     },
@@ -4672,7 +4759,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sketch3d.length",
         "3D Sketch Length",
-        "sketch; curves (default: its own curves that are not construction). Returns the length in all, and each",
+        "sketch; curves (default: what a sweep runs along by default, as model.sweep says). Returns the length in all, and each",
         false,
         sketch3d_length
     ),
@@ -4728,7 +4815,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.sweep",
         "Sweep",
-        "sketch (the profile); regions; path_sketch (a sketch or a 3D sketch); path: [curve ids], joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not); the sweep starts at the end nearer the profile; fixed (keep the profile's orientation; default: turn it with the path); operation",
+        "sketch (the profile); regions; path_sketch (a sketch or a 3D sketch); path: [curve ids], joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not, with the edges brought in that join them, or with none of its own the edges brought in that join the first); the sweep starts at the end nearer the profile; fixed (keep the profile's orientation; default: turn it with the path); operation",
         true,
         model_sweep
     ),
@@ -4784,7 +4871,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.pattern.circular",
         "Circular Pattern",
-        "features: [feature ids]; axis: \"x\" | \"y\" | \"z\", an edge reference (straight or circular edge) or a face reference (cylinder or cone); count; angle (rad, default a full turn: copies spread evenly); reverse",
+        "features: [feature ids]; axis: \"x\" | \"y\" | \"z\", an edge reference (straight or circular edge), a face reference (cylinder or cone), {\"work\": id} or a line of a 3D sketch as {\"sketch3d\": id, \"line\": id}; count; angle (rad, default a full turn: copies spread evenly); reverse",
         true,
         model_pattern_circular
     ),
@@ -4795,28 +4882,28 @@ static COMMANDS: &[CommandSpec] = &[
         true,
         model_mirror
     ),
-    doc_cmd!(
-        "work.plane",
-        "Work Plane",
-        "by: offset (base: plane, distance) | angle (base: plane, axis: in the base plane, angle: rad) | midplane (a, b: parallel planes); a plane is \"xy\" | \"yz\" | \"xz\", a face reference or {\"work\": plane id}",
-        true,
-        work_plane
-    ),
+    CommandSpec {
+        id: "work.plane",
+        label: "Work Plane",
+        help: "by: offset (base: plane, distance) | angle (base: plane, axis: in the base plane, angle: rad) | midplane (a, b: parallel planes) | three_points (points: three points; see work.point_at for what a point is, and also {\"work\": id} or {\"center\": edge reference}) | square_to_curve (sketch: a 3D sketch, curve, end: the end of the curve it goes through, square to the curve there); a plane is \"xy\" | \"yz\" | \"xz\", a face reference or {\"work\": plane id}",
+        mutates: true,
+        run: Run::Opt(work_plane),
+    },
     doc_cmd!(
         "work.axis",
         "Work Axis",
-        "axis: \"x\" | \"y\" | \"z\", an edge reference, a cylindrical face reference or {\"work\": id}; or a, b: two planes it lies on",
+        "axis: \"x\" | \"y\" | \"z\", an edge reference, a cylindrical face reference, {\"work\": id} or a line of a 3D sketch as {\"sketch3d\": id, \"line\": id}; or a, b: two planes it lies on",
         true,
         work_axis
     ),
     doc_cmd!("work.point", "Work Point", "edge: a circular edge reference (its centre); or axis and plane (where they meet)", true, work_point),
-    doc_cmd!(
-        "work.point_at",
-        "Work Point at a Point",
-        "point: {\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}",
-        true,
-        work_point_at
-    ),
+    CommandSpec {
+        id: "work.point_at",
+        label: "Work Point at a Point",
+        help: "point: {\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1, \"towards\": the way from the edge's other end to this one, as {\"x\": .., \"y\": .., \"z\": ..}, found for you when the kernel is to hand}}",
+        mutates: true,
+        run: Run::Opt(work_point_at),
+    },
     doc_cmd!(
         "feature.add",
         "Add Feature",

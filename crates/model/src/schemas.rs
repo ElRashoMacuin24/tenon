@@ -20,7 +20,8 @@ const SIZE: Ty = Either(&[Length, Text]);
 /// A value or the equation that gives it.
 const EQUATION: Ty = Either(&[Text, Number]);
 /// A point of a 3D sketch: a point's id, `[x, y, z]`, or what of the part it stands for: "origin",
-/// `{"work": id}`, `{"vertex": edge reference, "end": 0 or 1}`, with `"at"` where there is no kernel.
+/// `{"work": id}`, `{"vertex": edge reference, "end": 0 or 1, "towards": [x, y, z]}`, with `"at"`
+/// where there is no kernel.
 const POINT3: Ty = Either(&[Id, Vector(3), Word(&["origin"]), Object]);
 /// One of the three directions of space.
 const AXIS3: Ty = Word(&["x", "y", "z"]);
@@ -498,7 +499,7 @@ static SCHEMAS: &[C] = &[
     ),
     C::new("sketch3d.break_link", &[SKETCH, req("entities", IDS, "reference points and lines")]),
     C::new("sketch3d.info", &[SKETCH]),
-    C::new("sketch3d.length", &[SKETCH, opt("curves", IDS, "which curves (default: its own that are not construction)")]),
+    C::new("sketch3d.length", &[SKETCH, opt("curves", IDS, "which curves (default: what a sweep runs along by default)")]),
     C::new(
         "model.extrude",
         &[
@@ -620,7 +621,7 @@ static SCHEMAS: &[C] = &[
             opt(
                 "path",
                 IDS,
-                "the path's curves, joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not construction)",
+                "the path's curves, joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not construction, with the edges brought in that join them, or with none of its own the edges brought in that join the first)",
             ),
             opt("fixed", Bool, "keep the profile's orientation (default false: it turns with the path)"),
             OPERATION,
@@ -726,7 +727,11 @@ static SCHEMAS: &[C] = &[
         "model.pattern.circular",
         &[
             req("features", IDS, "the features to copy"),
-            req("axis", AXIS, "an origin axis, a straight or circular edge, a cylinder or cone, or a work axis as {\"work\": id}"),
+            req(
+                "axis",
+                AXIS,
+                "an origin axis, a straight or circular edge, a cylinder or cone, a work axis as {\"work\": id}, or a line of a 3D sketch as {\"sketch3d\": id, \"line\": id}",
+            ),
             req("count", Int, "how many, the original counted"),
             opt("angle", Angle, "over how much of a turn the copies spread evenly (default: all of it)"),
             opt("reverse", Bool, "the other way round (default false)"),
@@ -756,7 +761,7 @@ static SCHEMAS: &[C] = &[
             opt(
                 "points",
                 List(&Either(&[Word(&["origin"]), Object])),
-                "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference}, {\"sketch_point\": {\"sketch\": id, \"point\": id}}, {\"sketch3d_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}; from the first toward the second is its X",
+                "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference}, {\"sketch_point\": {\"sketch\": id, \"point\": id}}, {\"sketch3d_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1, \"towards\": {\"x\": .., \"y\": .., \"z\": ..}}}; from the first toward the second is its X",
             ),
             opt("sketch", Id, "square_to_curve: the 3D sketch"),
             opt("curve", Id, "square_to_curve: its curve"),
@@ -794,7 +799,7 @@ static SCHEMAS: &[C] = &[
             req(
                 "point",
                 Either(&[Word(&["origin"]), Object]),
-                "{\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}",
+                "{\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1, \"towards\": {\"x\": .., \"y\": .., \"z\": ..}}}",
             ),
             EQUATIONS,
         ],

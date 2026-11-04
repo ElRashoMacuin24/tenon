@@ -894,10 +894,8 @@ impl Workbench {
             {
                 *sk = base.clone();
             }
-            if let Mode::Sketch3d(s) = &self.mode
-                && let (Some(base), Some(sk)) = (&s.base, d.sketch3d_mut(s.feature))
-            {
-                *sk = base.clone();
+            if let Mode::Sketch3d(s) = &self.mode {
+                s.as_opened(&mut d);
             }
             Some(d)
         } else {

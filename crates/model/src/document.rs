@@ -483,10 +483,13 @@ pub struct Sweep {
     pub operation: Operation,
 }
 
+/// Most curves a sweep's path names.
+pub const MAX_SWEEP_CURVES: usize = 1000;
+
 impl Sweep {
     pub fn check(&self) -> Result<(), String> {
-        if self.path.curves.is_empty() || self.path.curves.len() > 1000 {
-            return Err("the sweep path needs 1 to 1000 lines and arcs".into());
+        if self.path.curves.is_empty() || self.path.curves.len() > MAX_SWEEP_CURVES {
+            return Err(format!("the sweep path needs 1 to {MAX_SWEEP_CURVES} lines and arcs"));
         }
         Ok(())
     }
@@ -756,9 +759,16 @@ pub enum PointSel {
     SketchPoint { sketch: FeatureId, point: EntityId },
     /// A point of a 3D sketch (DEC-136).
     Sketch3dPoint { sketch: FeatureId, point: EntityId },
-    /// A vertex of the part: an end of an edge, 0 where the edge starts and 1 where it ends
-    /// (DEC-136).
-    Vertex { edge: EdgeRef, end: u8 },
+    /// A vertex of the part: an end of an edge, 0 where the edge starts and 1 where it ends, as
+    /// the kernel had it when it was chosen (DEC-136). The kernel may later name the ends the
+    /// other way round, so `towards` says which is meant: the way from the edge's other end to
+    /// this one, as it was then.
+    Vertex {
+        edge: EdgeRef,
+        end: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        towards: Option<Vec3>,
+    },
 }
 
 impl PointSel {
@@ -771,6 +781,17 @@ impl PointSel {
             PointSel::SketchPoint { sketch, .. } | PointSel::Sketch3dPoint { sketch, .. } => vec![*sketch],
             PointSel::Vertex { edge, .. } => edge.features(),
         }
+    }
+
+    /// Which end of an edge from `start` to `stop` a vertex is, and which way that lies from the
+    /// other: where `towards` says, if it says, else by `end`.
+    pub fn end_of_edge(start: Vec3, stop: Vec3, end: u8, towards: Option<Vec3>) -> (Vec3, Vec3) {
+        let (this, other) = if end == 0 { (start, stop) } else { (stop, start) };
+        let (this, other) = match towards {
+            Some(t) if (this - other).dot(t) < 0.0 => (other, this),
+            _ => (this, other),
+        };
+        (this, this - other)
     }
 }
 
@@ -1402,6 +1423,55 @@ impl Document {
         self.sketch(id).is_some() || self.sketch3d(id).is_some()
     }
 
+    /// The curves that the sweeps running along sketch `id` name.
+    pub fn sweep_paths_mut(&mut self, id: FeatureId) -> impl Iterator<Item = &mut Vec<EntityId>> {
+        self.features.iter_mut().filter_map(move |f| match &mut f.kind {
+            FeatureKind::Sweep(s) if s.path.sketch == id => Some(&mut s.path.curves),
+            _ => None,
+        })
+    }
+
+    /// The curve and the end of it that each work plane square to a curve of 3D sketch `id` names.
+    pub fn square_planes_mut(&mut self, id: FeatureId) -> impl Iterator<Item = (EntityId, &mut EntityId)> {
+        self.features.iter_mut().filter_map(move |f| match &mut f.kind {
+            FeatureKind::WorkPlane(WorkPlane::SquareToCurve { sketch, curve, end }) if *sketch == id => Some((*curve, end)),
+            _ => None,
+        })
+    }
+
+    /// Refused, in words, when a feature would take its profile from what is no sketch: as the
+    /// file is held to it when read ([`Document::validate`]), so said before it is saved.
+    fn check_profile_sketches(&self, kind: &FeatureKind) -> Result<(), String> {
+        let (profiles, path): (Vec<FeatureId>, Option<FeatureId>) = match kind {
+            FeatureKind::Extrude(e) => (vec![e.sketch], None),
+            FeatureKind::Revolve(r) => (vec![r.sketch], None),
+            FeatureKind::Hole(h) => (vec![h.sketch], None),
+            FeatureKind::Rib(r) => (vec![r.sketch], None),
+            FeatureKind::Sweep(s) => (vec![s.sketch], Some(s.path.sketch)),
+            FeatureKind::Coil(c) => (vec![c.sketch], None),
+            FeatureKind::Loft(l) => (l.sections.clone(), None),
+            FeatureKind::SheetFace(s) => (vec![s.sketch], None),
+            FeatureKind::ContourFlange(c) => (vec![c.sketch], None),
+            FeatureKind::CutAcrossBend(c) => (vec![c.sketch], None),
+            FeatureKind::CutNormal(c) => (vec![c.sketch], None),
+            FeatureKind::Fold(f) => (vec![f.sketch], None),
+            _ => (Vec::new(), None),
+        };
+        let name = |id: FeatureId| self.feature(id).map_or_else(|| id.to_string(), |f| f.name.clone());
+        for id in profiles {
+            if self.sketch3d(id).is_some() {
+                return Err(format!("{} is a 3D sketch, which is on no plane: draw this in a sketch on a plane.", name(id)));
+            }
+            if self.sketch(id).is_none() {
+                return Err(format!("{} is not a sketch: give the sketch that has this in it.", name(id)));
+            }
+        }
+        if let Some(id) = path.filter(|id| !self.has_curves(*id)) {
+            return Err(format!("{} is not a sketch: a path is drawn in a sketch or a 3D sketch.", name(id)));
+        }
+        Ok(())
+    }
+
     /// The edges of the part shown in sketch `id` as reference geometry.
     pub fn projections(&self, id: FeatureId) -> &[crate::project::Projection] {
         match self.feature(id).map(|f| &f.kind) {
@@ -1437,6 +1507,7 @@ impl Document {
                 return Err(format!("{dep} does not exist"));
             }
         }
+        self.check_profile_sketches(&kind)?;
         self.next_feature = self.next_feature.checked_add(1).ok_or("feature ids exhausted")?;
         let id = FeatureId(self.next_feature);
         let base = kind.default_name();

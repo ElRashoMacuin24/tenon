@@ -770,3 +770,416 @@ fn undo_in_the_middle_of_a_chain_of_lines_starts_the_chain_again() {
     let (a, b) = s.line(line).unwrap();
     assert!(a.dist(Vec3::new(0.0, 10.0, 0.0)) < 1e-9 && b.dist(Vec3::new(0.0, 10.0, 25.0)) < 1e-9, "{a:?} {b:?}");
 }
+
+/// Three lines 50 long along Z, X and Y, from a fixed start, each held to its length.
+fn stair(wb: &mut Workbench, d: &mut Driver) -> (FeatureId, [EntityId; 3], [EntityId; 4]) {
+    wb.run_ui("sketch.new_3d").unwrap();
+    let f = sketch_open(wb);
+    let id = |v: &serde_json::Value| EntityId(v.as_u64().unwrap() as u32);
+    let a = wb.exec("sketch3d.line", json!({ "sketch": f.0, "start": [0, 0, 0], "end": [0, 0, 50], "along": "z" })).unwrap();
+    let b = wb.exec("sketch3d.line", json!({ "sketch": f.0, "start": a["end"], "end": [50, 0, 50], "along": "x" })).unwrap();
+    let c = wb.exec("sketch3d.line", json!({ "sketch": f.0, "start": b["end"], "end": [50, 50, 50], "along": "y" })).unwrap();
+    wb.exec("sketch3d.constrain", json!({ "sketch": f.0, "constraint": { "type": "fix", "point": a["start"] } })).unwrap();
+    for l in [&a, &b, &c] {
+        wb.exec("sketch3d.constrain", json!({ "sketch": f.0, "constraint": { "type": "length", "line": l["line"], "value": 50 } })).unwrap();
+    }
+    wb.view.camera.fit(&tenon_geom::Aabb3::from_points(sk(wb).extent()).unwrap());
+    settle(d, wb);
+    (f, [id(&a["line"]), id(&b["line"]), id(&c["line"])], [id(&a["start"]), id(&a["end"]), id(&b["end"]), id(&c["end"])])
+}
+
+/// A circle of radius `r` at (`cx`, `cy`) on a plane, in a sketch of its own: a profile.
+fn circle_on(wb: &mut Workbench, d: &mut Driver, plane: &str, cx: f64, cy: f64, r: f64) -> FeatureId {
+    wb.create_sketch(json!({ "plane": plane })).unwrap();
+    let Mode::Sketch(c) = &wb.mode else { panic!() };
+    let f = c.feature;
+    wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": cx, "cy": cy, "r": r })).unwrap();
+    wb.finish_sketch();
+    d.frame(wb, vec![]);
+    f
+}
+
+fn volume_of(wb: &Workbench) -> f64 {
+    wb.scene().bodies.iter().map(|b| b.volume).sum()
+}
+
+/// OK in the open panel, and the frames it takes to show.
+fn ok_panel(d: &mut Driver, wb: &mut Workbench) {
+    wb.panel_request = Some(crate::panels::PanelRequest::Ok);
+    d.frame(wb, vec![]);
+    d.frame(wb, vec![]);
+    d.frame(wb, vec![]);
+}
+
+#[test]
+fn a_radius_too_large_for_its_lines_is_refused_in_the_box_and_the_red_goes_when_one_fits() {
+    let (mut wb, mut d) = app();
+    let (_, l, _) = stair(&mut wb, &mut d);
+    // By the Bend tool: 80 will not go, and the box stays; 10 does, and nothing red is left.
+    wb.run_ui("sketch3d.bend").unwrap();
+    d.frame(&mut wb, vec![]);
+    let q = on_screen(&wb, Vec3::new(0.0, 0.0, 50.0));
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    value_box(&mut d, &mut wb, 80.0);
+    assert!(wb.status_error && wb.status().contains("the largest radius that fits is just under 50.000 mm"), "{}", wb.status());
+    assert!(matches!(wb.panel, Some(Panel::Value(_))), "the box stays");
+    value_box(&mut d, &mut wb, 10.0);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!(!wb.status_error, "what was said of 80 is over: {}", wb.status());
+    d.tap(&mut wb, egui::Key::Escape);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    // Double-clicked to change: 70 is refused the same way, and the line stays as it was.
+    let before = sk(&wb);
+    let label = d.text_pos("R10").unwrap_or_else(|| panic!("no radius: {:?}", d.texts()));
+    double_click(&mut d, &mut wb, label);
+    d.frame(&mut wb, vec![]);
+    value_box(&mut d, &mut wb, 70.0);
+    assert!(wb.status_error && wb.status().contains("the largest radius that fits is just under 50.000 mm"), "{}", wb.status());
+    assert_eq!(sk(&wb), before, "no line running back through its end");
+    value_box(&mut d, &mut wb, 20.0);
+    assert!(wb.panel.is_none() && !wb.status_error, "{}", wb.status());
+    let (a, b) = sk(&wb).line(l[0]).unwrap();
+    assert!(a.dist(Vec3::ZERO) < 1e-7 && b.dist(Vec3::new(0.0, 0.0, 30.0)) < 1e-7, "{a:?} {b:?}");
+}
+
+#[test]
+fn a_bend_by_the_window_under_a_sweep_keeps_the_sweep_and_the_view_shows_it_again_at_finish() {
+    let (mut wb, mut d) = app();
+    let (f, _, _) = stair(&mut wb, &mut d);
+    wb.run_ui("sketch3d.finish").unwrap();
+    circle_on(&mut wb, &mut d, "xy", 0.0, 0.0, 5.0);
+    wb.run_ui("model.sweep").unwrap();
+    ok_panel(&mut d, &mut wb);
+    let sharp = PI * 25.0 * 150.0;
+    assert!((volume_of(&wb) - sharp).abs() < 1e-6 * sharp, "{}: {}", volume_of(&wb), wb.status());
+    // Opened again by its row, and rounded.
+    let row = d.text_pos("3D Sketch1").unwrap_or_else(|| panic!("no row: {:?}", d.texts()));
+    d.click(&mut wb, row);
+    d.click(&mut wb, row);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(sketch_open(&wb), f, "{}", wb.status());
+    settle(&mut d, &mut wb);
+    wb.run_ui("sketch3d.bend").unwrap();
+    d.frame(&mut wb, vec![]);
+    let q = on_screen(&wb, Vec3::new(0.0, 0.0, 50.0));
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    value_box(&mut d, &mut wb, 10.0);
+    assert!(!wb.status_error, "{}", wb.status());
+    settle(&mut d, &mut wb);
+    // While it is open the part is as it was when opened, nothing red about it.
+    assert!((volume_of(&wb) - sharp).abs() < 1e-6 * sharp, "{}", volume_of(&wb));
+    assert!(!wb.scene().bodies.is_empty());
+    wb.run_ui("sketch3d.finish").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let bent = PI * 25.0 * (150.0 - 20.0 + FRAC_PI_2 * 10.0);
+    assert!((volume_of(&wb) - bent).abs() < 1e-6 * bent, "{} and {bent}: {}", volume_of(&wb), wb.status());
+}
+
+#[test]
+fn a_spline_typed_is_made_by_enter_after_its_points_went_in_by_enter_or_by_add() {
+    let (mut wb, mut d) = app();
+    wb.run_ui("sketch.new_3d").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("sketch3d.spline").unwrap();
+    d.frame(&mut wb, vec![]);
+    // Enter in the Z box puts a point there, and does no more.
+    for (n, p) in [[0.0, 0.0, 0.0], [10.0, 5.0, 0.0], [20.0, 0.0, 5.0], [30.0, 5.0, 5.0]].into_iter().enumerate() {
+        for (field, v) in [("tn_s3_x", p[0]), ("tn_s3_y", p[1])] {
+            type_into(&mut d, &mut wb, field, &v.to_string());
+            d.tap(&mut wb, egui::Key::Tab);
+        }
+        type_into(&mut d, &mut wb, "tn_s3_z", &p[2].to_string());
+        d.tap(&mut wb, egui::Key::Enter);
+        d.frame(&mut wb, vec![]);
+        let Mode::Sketch3d(sm) = &wb.mode else { panic!() };
+        assert_eq!(sm.clicks.len(), n + 1, "{}", wb.status());
+        assert!(!wb.status_error && sk(&wb).is_empty(), "{}", wb.status());
+    }
+    // Enter again, the box not having the keys: the spline, through the four.
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    let s = sk(&wb);
+    let id =
+        s.entities().find(|(_, e)| matches!(e.geometry, Geometry3::Spline { .. })).map(|(id, _)| id).unwrap_or_else(|| panic!("{}", wb.status()));
+    assert_eq!(s.geometry(id).unwrap().points().len(), 4);
+    // Three more by Add, then Enter: no fourth by Add again, and a spline through three.
+    let Mode::Sketch3d(sm) = &wb.mode else { panic!() };
+    assert!(sm.clicks.is_empty());
+    for p in [[0.0, 20.0, 0.0], [10.0, 25.0, 0.0], [20.0, 20.0, 5.0]] {
+        add_xyz(&mut d, &mut wb, p[0], p[1], p[2]);
+    }
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    let s = sk(&wb);
+    let splines: Vec<EntityId> = s.entities().filter(|(_, e)| matches!(e.geometry, Geometry3::Spline { .. })).map(|(id, _)| id).collect();
+    assert_eq!(splines.len(), 2, "{}", wb.status());
+    assert_eq!(s.geometry(splines[1]).unwrap().points().len(), 3, "{}", wb.status());
+    assert!(!wb.status_error, "{}", wb.status());
+}
+
+#[test]
+fn after_add_the_keys_are_the_sketchs_undo_and_the_tools() {
+    let (mut wb, mut d) = app();
+    wb.run_ui("sketch.new_3d").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("sketch3d.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    let lines = |wb: &Workbench| {
+        let s = sk(wb);
+        s.entities().filter(|(id, _)| s.is_line(*id)).count()
+    };
+    for p in [[0.0, 0.0, 0.0], [30.0, 0.0, 0.0], [30.0, 30.0, 0.0]] {
+        add_xyz(&mut d, &mut wb, p[0], p[1], p[2]);
+    }
+    assert_eq!(lines(&wb), 2, "{}", wb.status());
+    assert!(!d.ctx.egui_wants_keyboard_input(), "the button gave the keys back");
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(lines(&wb), 1, "Ctrl+Z, straight after Add");
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(lines(&wb), 0);
+    // A tool by its key.
+    add_xyz(&mut d, &mut wb, 0.0, 10.0, 0.0);
+    d.tap(&mut wb, egui::Key::D);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.active_tool_id(), Some("sketch3d.dimension"), "{}", wb.status());
+}
+
+#[test]
+fn a_dimensions_value_is_selected_by_a_click_and_deleted_as_a_symbol_is() {
+    let (mut wb, mut d) = app();
+    let (_, l, _) = stair(&mut wb, &mut d);
+    let held = |wb: &Workbench, line: EntityId| {
+        sk(wb).constraints().find(|(_, c)| matches!(c, Constraint3::Length { line: x, .. } if *x == line)).map(|(c, _)| c)
+    };
+    let cid = held(&wb, l[0]).unwrap();
+    d.frame(&mut wb, vec![]);
+    let Mode::Sketch3d(sm) = &wb.mode else { panic!() };
+    let on = sm.dim_of(cid).unwrap();
+    d.click(&mut wb, on);
+    d.frame(&mut wb, vec![]);
+    let Mode::Sketch3d(sm) = &wb.mode else { panic!() };
+    assert_eq!(sm.constraints, [cid], "{}", wb.status());
+    assert!(wb.status().contains("this line 50 mm long") && wb.status().contains("Delete removes it"), "{}", wb.status());
+    // A second length: said what is in the way, by what it can be told by.
+    wb.run_ui("sketch3d.dimension").unwrap();
+    d.frame(&mut wb, vec![]);
+    let q = on_screen(&wb, Vec3::new(0.0, 0.0, 25.0));
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    value_box(&mut d, &mut wb, 30.0);
+    assert!(wb.status_error, "{}", wb.status());
+    assert!(wb.status().contains("this line 30 mm long cannot be had") && wb.status().contains("this line 50 mm long"), "{}", wb.status());
+    assert!(!wb.status().contains(&format!("{}", l[0])), "no ids: {}", wb.status());
+    wb.panel = None;
+    d.tap(&mut wb, egui::Key::Escape);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    // Selected, Delete takes it: the line is free to be 30.
+    let Mode::Sketch3d(sm) = &wb.mode else { panic!() };
+    let on = sm.dim_of(cid).unwrap();
+    d.click(&mut wb, on);
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Delete);
+    d.frame(&mut wb, vec![]);
+    assert!(held(&wb, l[0]).is_none(), "{}", wb.status());
+    wb.run_ui("edit.undo").unwrap();
+    assert!(held(&wb, l[0]).is_some());
+}
+
+#[test]
+fn an_edge_brought_in_is_a_path_from_the_ribbon_and_is_not_lost_while_it_comes_in() {
+    let (mut wb, mut d) = app();
+    // A disc: its rim alone, by a click, with nothing else in the sketch.
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let Mode::Sketch(c) = &wb.mode else { panic!() };
+    let f = c.feature;
+    wb.exec("sketch.circle", json!({ "sketch": f.0, "cx": 0, "cy": 0, "r": 30 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    settle(&mut d, &mut wb);
+    wb.run_ui("view.home").unwrap();
+    settle(&mut d, &mut wb);
+    let disc = volume_of(&wb);
+    wb.run_ui("sketch.new_3d").unwrap();
+    d.frame(&mut wb, vec![]);
+    let path = sketch_open(&wb);
+    wb.run_ui("sketch3d.include").unwrap();
+    d.frame(&mut wb, vec![]);
+    let q = on_screen(&wb, Vec3::new(0.0, -30.0, 10.0));
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    let rim = sk(&wb)
+        .entities()
+        .find(|(_, e)| matches!(e.geometry, Geometry3::Edge { .. }))
+        .map(|(id, _)| id)
+        .unwrap_or_else(|| panic!("nothing came in: {}", wb.status()));
+    // Not lost: it is in the colour of what follows the part from the first.
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.scene().lost.contains_key(&path), "{:?}", wb.scene().lost);
+    wb.run_ui("sketch3d.finish").unwrap();
+    d.frame(&mut wb, vec![]);
+    // A circle across the rim where it starts: on the XZ plane, at (30, 10).
+    circle_on(&mut wb, &mut d, "xz", 30.0, 10.0, 2.0);
+    wb.run_ui("model.sweep").unwrap();
+    let Some(Panel::Sweep(p)) = wb.panel.clone() else { panic!("no sweep panel: {}", wb.status()) };
+    assert_eq!(p.path.as_ref().unwrap().curves, [rim], "{:?}", p.path);
+    let Some(Panel::Sweep(p)) = &mut wb.panel else { panic!() };
+    p.operation = tenon_model::Operation::NewBody;
+    ok_panel(&mut d, &mut wb);
+    let want = PI * 4.0 * 2.0 * PI * 30.0;
+    assert!((volume_of(&wb) - disc - want).abs() < 1e-3 * want, "{} and {want}: {}", volume_of(&wb) - disc, wb.status());
+}
+
+#[test]
+fn a_line_on_from_an_edge_brought_in_joins_it_for_a_path_and_a_click_chooses_a_run() {
+    let (mut wb, mut d) = app();
+    block(&mut wb, &mut d);
+    wb.run_ui("sketch.new_3d").unwrap();
+    d.frame(&mut wb, vec![]);
+    let path = sketch_open(&wb);
+    // The top edge along X at y = 0, brought in by a click.
+    wb.run_ui("sketch3d.include").unwrap();
+    d.frame(&mut wb, vec![]);
+    let q = on_screen(&wb, Vec3::new(20.0, 0.0, 10.0));
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    let s = sk(&wb);
+    let edge = s.entities().find(|(id, _)| s.is_line(*id)).map(|(id, _)| id).unwrap_or_else(|| panic!("nothing came in: {}", wb.status()));
+    let (a, b) = s.line(edge).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.scene().lost.contains_key(&path), "{:?}", wb.scene().lost);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.tap(&mut wb, egui::Key::Escape);
+    // A line on from its end at the far corner: a click on that point, and one above it.
+    let corner = if a.x > b.x { a } else { b };
+    wb.run_ui("sketch3d.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    let q = on_screen(&wb, corner);
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    let up = on_screen(&wb, corner + Vec3::new(0.0, 0.0, 15.0));
+    d.click(&mut wb, up);
+    d.frame(&mut wb, vec![]);
+    // And one apart, of its own.
+    d.tap(&mut wb, egui::Key::Escape);
+    add_xyz(&mut d, &mut wb, 80.0, 80.0, 0.0);
+    add_xyz(&mut d, &mut wb, 80.0, 80.0, 30.0);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.tap(&mut wb, egui::Key::Escape);
+    let s = sk(&wb);
+    let lines: Vec<EntityId> = s.entities().filter(|(id, e)| s.is_line(*id) && !e.reference).map(|(id, _)| id).collect();
+    assert_eq!(lines.len(), 2, "{}", wb.status());
+    wb.run_ui("sketch3d.finish").unwrap();
+    d.frame(&mut wb, vec![]);
+    circle_on(&mut wb, &mut d, "xy", 80.0, 80.0, 1.0);
+    wb.view.camera.fit(&tenon_geom::Aabb3::from_points([Vec3::new(-10.0, -10.0, 0.0), Vec3::new(90.0, 90.0, 40.0)]).unwrap());
+    settle(&mut d, &mut wb);
+    // The two of its own do not join: the default is both, a click on one takes its run.
+    wb.run_ui("model.sweep").unwrap();
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Sweep(p)) = &wb.panel else { panic!("{}", wb.status()) };
+    assert_eq!(p.path.as_ref().unwrap().sketch, path);
+    assert_eq!(p.path.as_ref().unwrap().curves.len(), 2, "{:?}", p.path);
+    let q = on_screen(&wb, corner + Vec3::new(0.0, 0.0, 7.0));
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Sweep(p)) = &wb.panel else { panic!("{}", wb.status()) };
+    let curves = &p.path.as_ref().unwrap().curves;
+    assert_eq!(curves.len(), 2, "the line, and the edge it goes on from: {curves:?}");
+    assert!(curves.contains(&edge) && curves.contains(&lines[0]), "{curves:?} {edge:?} {lines:?}");
+    // On the other: that alone.
+    let q = on_screen(&wb, Vec3::new(80.0, 80.0, 15.0));
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Sweep(p)) = &wb.panel else { panic!("{}", wb.status()) };
+    assert_eq!(p.path.as_ref().unwrap().curves, [lines[1]]);
+}
+
+#[test]
+fn what_a_bend_tool_click_cannot_round_it_says_before_asking_a_radius() {
+    let (mut wb, mut d) = app();
+    stair(&mut wb, &mut d);
+    wb.run_ui("sketch3d.bend").unwrap();
+    d.frame(&mut wb, vec![]);
+    let q = on_screen(&wb, Vec3::ZERO);
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "no box");
+    assert!(wb.status_error && wb.status().contains("Only one curve ends at that point"), "{}", wb.status());
+    // A bend, and a click on the corner it kept.
+    let corner = on_screen(&wb, Vec3::new(0.0, 0.0, 50.0));
+    d.click(&mut wb, corner);
+    d.frame(&mut wb, vec![]);
+    value_box(&mut d, &mut wb, 10.0);
+    d.click(&mut wb, corner);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "no box");
+    assert!(wb.status_error && wb.status().contains("is the corner of a bend already"), "{}", wb.status());
+}
+
+#[test]
+fn a_bends_centre_clicked_and_deleted_gives_its_corner_back() {
+    let (mut wb, mut d) = app();
+    let (f, l, p) = stair(&mut wb, &mut d);
+    let b = wb.exec("sketch3d.bend", json!({ "sketch": f.0, "point": p[1].0, "radius": 10 })).unwrap();
+    let centre = sk(&wb).point(EntityId(b["center"].as_u64().unwrap() as u32)).unwrap();
+    d.frame(&mut wb, vec![]);
+    let q = on_screen(&wb, centre);
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Delete);
+    d.frame(&mut wb, vec![]);
+    let s = sk(&wb);
+    assert_eq!(s.entities().filter(|(id, _)| s.is_arc(*id)).count(), 0, "{}", wb.status());
+    assert_eq!(s.entities().filter(|(_, e)| e.geometry.is_point()).count(), 4, "{s:?}");
+    let length: f64 = l.iter().map(|c| s.length(*c).unwrap()).sum();
+    assert!((length - 150.0).abs() < 1e-7, "{length}");
+    assert_eq!(s.chain(&l).unwrap().len(), 3);
+}
+
+#[test]
+fn the_status_bar_says_nothing_of_constraints_until_there_is_something_and_why_a_point_stays() {
+    let (mut wb, mut d) = app();
+    block(&mut wb, &mut d);
+    wb.run_ui("sketch.new_3d").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let f = sketch_open(&wb);
+    assert!(d.texts().iter().any(|t| t.contains("Nothing drawn yet")), "{:?}", d.texts());
+    assert!(!d.texts().iter().any(|t| t.contains("Fully Constrained")));
+    // A line from a corner of the part, by clicks; the point on the corner, dragged, stays and says.
+    wb.run_ui("sketch3d.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    let corner = Vec3::new(40.0, 20.0, 10.0);
+    let q = on_screen(&wb, corner);
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    let up = on_screen(&wb, corner + Vec3::new(0.0, 0.0, 15.0));
+    d.click(&mut wb, up);
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert!(!d.texts().iter().any(|t| t.contains("Nothing drawn yet")), "{:?}", d.texts());
+    // It is that corner whichever way the kernel comes to name its edge: it said which way it lay.
+    let sel = wb.document().links3(f).iter().find_map(|l| match &l.to {
+        tenon_model::sketch3d::LinkTo::Point(tenon_model::PointSel::Vertex { towards, .. }) => Some(*towards),
+        _ => None,
+    });
+    assert!(matches!(sel, Some(Some(t)) if (t.len() - 1.0).abs() < 1e-9), "{sel:?}");
+    let before = sk(&wb);
+    let q = on_screen(&wb, corner);
+    d.drag(&mut wb, q, q + vec2(50.0, 30.0), egui::PointerButton::Primary);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(sk(&wb), before);
+    assert!(wb.status().contains("follows the part"), "{}", wb.status());
+}

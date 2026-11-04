@@ -92,9 +92,13 @@ pub fn edge_found(info: &EdgeInfo, along: impl FnOnce() -> Result<Vec<Vec3>, Str
             Ok(Found3::Curve { start: info.start, end: info.end, curve })
         }
         _ => {
-            let along = along()?;
+            let mut along = along()?;
             if along.len() < 2 {
                 return Err("the edge has no points to show it by".into());
+            }
+            // (A mesh may run the other way from the edge.)
+            if along.first().is_some_and(|p| p.dist(info.end) < p.dist(info.start)) {
+                along.reverse();
             }
             Ok(Found3::Curve { start: info.start, end: info.end, curve: EdgeCurve { mid: None, along, length: info.length } })
         }
@@ -123,16 +127,20 @@ pub fn place(sketch: &mut Sketch3d, entity: EntityId, at: &Found3) -> Result<boo
         Ok(false)
     }
     // Which end is which is kept from time to time: the kernel may name them the other way round.
-    let swap = |sketch: &Sketch3d, a: EntityId, start: Vec3, end: Vec3| sketch.point(a).is_some_and(|was| was.dist(end) < was.dist(start));
+    // (The way the edge runs says, wherever the part has moved it to and however much longer.)
+    let swap = |sketch: &Sketch3d, a: EntityId, b: EntityId, start: Vec3, end: Vec3| match (sketch.point(a), sketch.point(b)) {
+        (Some(from), Some(to)) => (to - from).dot(end - start) < 0.0,
+        _ => false,
+    };
     match (sketch.geometry(entity).cloned(), at) {
         (Some(Geometry3::Point { .. }), Found3::Point { at }) => put(sketch, entity, *at),
         (Some(Geometry3::Line { start, end }), Found3::Line { start: s, end: e }) => {
-            let (s, e) = if swap(sketch, start, *s, *e) { (*e, *s) } else { (*s, *e) };
+            let (s, e) = if swap(sketch, start, end, *s, *e) { (*e, *s) } else { (*s, *e) };
             let moved = put(sketch, start, s)?;
             Ok(put(sketch, end, e)? || moved)
         }
         (Some(Geometry3::Edge { start, end, curve: old }), Found3::Curve { start: s, end: e, curve }) => {
-            let (s, e, curve) = if start != end && swap(sketch, start, *s, *e) {
+            let (s, e, curve) = if start != end && swap(sketch, start, end, *s, *e) {
                 let mut turned = curve.clone();
                 turned.along.reverse();
                 (*e, *s, turned)
@@ -183,9 +191,33 @@ pub fn follow(sketch: &mut Sketch3d, resolved: &Sketch3d) -> Result<bool, String
     Ok(moved)
 }
 
-/// The lines, arcs and splines of a sketch a sweep runs along by default: its own, not construction.
+/// The curves of a sketch that can be a path without being asked for: all that are not
+/// construction, its own first and then the edges brought in.
+fn usable(sketch: &Sketch3d) -> (Vec<EntityId>, Vec<EntityId>) {
+    let curves = || sketch.entities().filter(|(_, e)| !e.construction && e.geometry.is_curve());
+    (curves().filter(|(_, e)| !e.reference).map(|(id, _)| id).collect(), curves().filter(|(_, e)| e.reference).map(|(id, _)| id).collect())
+}
+
+/// What a sweep runs along when no one says otherwise: the sketch's own lines, arcs and splines
+/// that are not construction, with the edges brought in that join them; with none of its own, the
+/// edges brought in that join the first of them.
 pub fn path_curves(sketch: &Sketch3d) -> Vec<EntityId> {
-    sketch.entities().filter(|(_, e)| !e.construction && !e.reference && e.geometry.is_curve()).map(|(id, _)| id).collect()
+    let (own, brought) = usable(sketch);
+    if brought.is_empty() {
+        return own;
+    }
+    let Some(first) = own.first().or(brought.first()).copied() else { return Vec::new() };
+    let run = sketch.run_through(first, &[own.as_slice(), brought.as_slice()].concat());
+    // (Curves of its own that do not join stay in: said to be so when it is swept.)
+    if own.iter().all(|c| run.contains(c)) { run } else { own }
+}
+
+/// The run of curves that `curve` belongs to, as a click on it in the Sweep panel chooses a path:
+/// of those that are not construction, and it.
+pub fn path_through(sketch: &Sketch3d, curve: EntityId) -> Vec<EntityId> {
+    let (own, brought) = usable(sketch);
+    let pool = [own.as_slice(), brought.as_slice(), &[curve]].concat();
+    sketch.run_through(curve, &pool)
 }
 
 #[cfg(test)]
