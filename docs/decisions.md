@@ -4117,9 +4117,9 @@ The references are new variants of what work features already go through (`Plane
 plane }`, `AxisSel::Ucs`, `AxisRef::Ucs`, `DirectionRef::Ucs`, `PointSel::Ucs`), not a work plane and
 two more features for each UCS: three planes, three axes and a point would fill the browser. In the
 browser a UCS opens as the Origin folder does, and in the view each part of the triad is picked.
-Point picks gain corners (`PointSel::Vertex`: an edge and which end, kept as where it was picked,
-judged from the edge's own middle, so that it is the same corner after the edge has moved), for three
-points on a plain box; a three-point work plane takes them too.
+Point picks gain corners (`PointSel::Vertex`: an edge and which end, kept as the way it lay from the
+edge's own middle where it was picked, so that it is the same corner after the edge has moved, in the
+form DEC-136 gives it), for three points on a plain box; a three-point work plane takes them too.
 
 Measure took faces and edges only. Since a UCS "can be used wherever", `Entity::Work` measures to work
 planes, axes and points and a UCS's parts: plain geometry between themselves, and to a face or
@@ -4280,7 +4280,9 @@ from the edge's other end when it was chosen (`towards`), which holds through mo
 reference line and a curved edge choose the same way, by the way they ran. A part turned by more than a quarter
 turn about puts the point on the other end. The window has the two ends and says it; a command works it out if
 it has the kernel, and without either the kernel's order stands. A name from the faces at the vertex would be
-better still, but the window has no topology to hand, as it has no kernel.
+better still, but the window has no topology to hand, as it has no kernel. A corner clicked along its edge for a
+UCS or a plane through three points (DEC-133) is the same record, its `towards` the way from the edge's middle to
+the end nearer the click: two forms of one thing would each have been read by half of what takes a point.
 
 **An edge brought in, as a path and as a direction.** A direction at its end was the first chord of what is
 drawn, 2.81 degrees off for a whole circle in 64 pieces, so a plane square to it and a line tangent to it were
@@ -4673,3 +4675,32 @@ older than these); facets by angle or by distance as well as by chord; conical b
 point; a die-formed sheet with anything joined to it has no flat pattern, and one that twists has a
 stretch its note's figures do not cover; a user's own punch shapes; a hood-type louver.
 docs/inventor-fidelity.md has these against what that program does.
+
+## DEC-139 Nothing on the menu is greyed (2026-11-04)
+
+The owner: "Make sure all the features on the menu are available not grayed out". Twenty commands
+were greyed, each with a milestone saying when it would come. Each is built (DEC-130 to DEC-133,
+DEC-136 to DEC-138), so what greyed them has gone, and with it the words it gave: the field
+`milestone`, the constant `LATER` and `available`, `arrives` and `not_yet`, and every place that read
+them. A command not there has no entry to grey: nothing can be greyed by that route again.
+
+**What holds it.** `every_command_on_the_menu_does_something` runs every entry of every ribbon, what
+is under its arrow too, on a real geometry thread, with each opened anew in the document it is for: a
+part, a sketch, a 3D sketch, a sheet metal part, its flat pattern, a study, an assembly and a drawing,
+with their file dialogs answered. None may answer that it is unknown or not available, and the window
+must show something it did not show before, the words of what it wants first being that. What was
+compared is all that a frame draws. A command with nothing to do in a document just opened (Clear
+Explode, Zoom All on a sheet in view) is given it first. So a command is held to what it does, and
+not to a table saying it is done. It found one that said a part had none of what it had: Hole, Corner
+Round and Corner Chamfer on the Sheet Metal tab refused a sheet made with Face as "no solid", since
+the list of what makes a solid stopped at Extrude and its like. There is one such list now.
+
+**The document strip's two icons.** A Home icon and a menu icon were painted in the disabled colour in
+the strip above the status bar, and did nothing. The release audit took them away "until there are
+tabs" (ahead of this). Asked to make them real if they could be, there is nothing for them to be: there
+is no start page, no list of recent files, and one document to a window (DEC-125), so a menu of open
+documents would list one, and what is left would say again what the File menu and Home View say. They
+stay gone. `nothing_in_the_ribbon_or_the_strips_is_painted_as_if_out_of_use` holds it: no shape on the
+ribbon or in the strips at the foot of the window has a disabled colour, in either theme, in a part, an
+assembly or a drawing. What is rightly out of use for a moment stays as it was: a choice in a panel
+that does not apply (a taper with To Next), and a row of a feature past End of Part.

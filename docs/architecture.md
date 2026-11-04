@@ -96,7 +96,7 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
   `batch.run`, and the commands that make a sketch and a feature together (`model.box`), are
   built on that (DEC-085).
 - **Front ends.** The ribbon (`ui::commands`) maps buttons to registry commands or interactive
-  tools; commands whose milestone has not arrived say so. Scripts (`tenon-cli run`,
+  tools. Scripts (`tenon-cli run`,
   [scripts.md](scripts.md)) and the MCP server ([mcp.md](mcp.md)) call the registry directly. The
   headless host adds `render.png` and `batch.run`. The MCP server drives a `Host`: the
   headless engine with a document of its own, or a running app through its control port

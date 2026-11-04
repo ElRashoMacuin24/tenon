@@ -23,21 +23,27 @@ In parts, you can:
 
 - sketch on a plane, a face of the part or a work plane (lines, arcs, circles, ellipses,
   rectangles, slots, polygons, splines, text), with typed values, inference, live solving and a degrees-of-freedom readout;
+- draw 3D sketches on no plane (lines, splines and bends through vertices, work points or typed
+  coordinates, with model edges that follow the part), and sweep along them;
 - extrude (straight or tapered; a distance, through all, to a face or plane, to the next face,
   between two faces) and revolve (either way, by two angles, to a face or plane, to the next face)
   to add, cut or intersect, with a live preview;
 - sweep a profile along a path, loft through sections, wind coils;
 - fillet (constant, variable or between two sets of faces), chamfer and shell; drill simple,
   clearance and tapped holes, counterbored, spotfaced or countersunk, at a sketch's points or
-  where you click a face; add ribs;
+  where you click a face; add ribs; emboss a profile on the faces it is seen on, or wrap it round a
+  cylinder or cone;
+- bring the solid of another part file in with Derive, scaled or mirrored, following that file;
 - thread shafts and holes (cosmetic, or cut into the part), draft faces, split and combine
   solids;
 - copy features in rectangular and circular patterns, and mirror them;
-- place work planes, axes and points;
+- place work planes, axes and points, and user coordinate systems whose planes and axes serve as
+  those do;
 - make sheet metal parts: faces, flanges bent up from their edges and brought to a seam where
   they meet (corner seams between flanges made apart too; lips turned in over a tray are
   mitred at its corners), bends that join faces made apart,
   folds along a line drawn across a face, hems, sheet along an open profile or along an edge,
+  sheet rolled round an axis, sheet lofted between two profiles, punches from a library of shapes,
   bend and corner reliefs, cuts that go round the bends as drawn on the flat sheet and cuts
   square to the sheet from a sketch at any angle; open the square corners of a shelled box
   and bend its sharp edges, so that it too lays flat; rip a seam in a tube or a closed box
@@ -62,15 +68,18 @@ In assemblies (`.tenonasm` files that use your part files), you can:
 - place components, ground them, and hold them together with mate, flush, angle, insert, tangent
   and symmetry constraints or rigid, rotational, slider, cylindrical, planar and ball joints;
 - drag components (their relationships hold) and see the degrees of freedom each has left;
+- pattern components in rows or round an axis, mirror them in a plane, and copy them;
 - check interference, list the parts with their materials and masses (and export the list as
   CSV), weigh the assembly, explode it;
 - double-click a component to edit its part in place, with the rest of the assembly in view.
 
 In drawings (`.tenondrw` files that show your parts and assemblies), you can:
 
-- place base, projected, isometric, section and detail views on ANSI or ISO sheets, with hidden
-  lines removed and centrelines drawn;
-- dimension by clicking edges; the dimensions follow the model when it changes;
+- place base, projected, isometric, section, detail and auxiliary views on ANSI or ISO sheets, with
+  hidden lines removed and centrelines drawn; crop them, break them and break out what is inside;
+  draw an assembly's other positions over a view;
+- dimension by clicking edges, one at a time or in baseline and ordinate sets; the dimensions follow
+  the model when it changes;
 - add hole tables, parts lists from the bill of materials, balloons and text;
 - open a view's model from the drawing, change it, and come back to an updated drawing;
 - use your own title block templates;

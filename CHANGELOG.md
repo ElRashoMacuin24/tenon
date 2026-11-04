@@ -11,6 +11,11 @@ Simulate does). Sketches gain text, ellipses, arc slots, Stretch and Smooth (G2)
 To, To Next and Between, Revolve To and To Next, spotface and tapped holes, holes placed by clicking
 a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and placing by the pointer.
 
+**Everything on the ribbon works now,** with nothing greyed: 3D sketches; Emboss, Derive and user
+coordinate systems; Contour Roll, Lofted Flange, Punch Tool, Rip, Unfold and Refold in sheet metal;
+Pattern, Mirror and Copy of components; and in drawings Auxiliary, Overlay, Crop, Break and Break Out
+views and Baseline and Ordinate dimensions.
+
 ### Coming from 0.1.0
 
 - **Your files open as they were,** and one that uses nothing new is saved byte for byte, so it goes
@@ -30,11 +35,12 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   revolution To, To Next, by two angles or Flipped; a spotface or To hole; a variable or face fillet;
   a work plane through three points; a Tangent or Symmetry relationship; a mirrored occurrence in an
   assembly; an auxiliary or overlay view; a baseline or ordinate set; an emboss, a derived part or a
-  UCS; a 3D sketch or what is made from one; a rip, an unfold, a refold, a contour roll, a lofted flange or a punch. Other new things it opens, and on a save it loses them: a
-  tapped hole's thread (the solid is the same), which points are sketch points, which sketches are
-  shown, a study's Optimize Shape settings, an assembly's patterns (each element is then a free
-  component where it stands, those of a suppressed pattern shown and counted), and a drawing view's
-  crops, breaks and break outs (the view is drawn whole).
+  UCS; a 3D sketch or what is made from one; a rip, an unfold, a refold, a contour roll, a lofted
+  flange or a punch. Other new things it opens, and on a save it loses them: a tapped hole's thread
+  (the solid is the same), which points are sketch points, which sketches are shown, a study's
+  Optimize Shape settings, an assembly's patterns (each element is then a free component where it
+  stands, those of a suppressed pattern shown and counted), and a drawing view's crops, breaks and
+  break outs (the view is drawn whole).
 
 ### Stress checks
 
@@ -131,7 +137,7 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   patterns, Revolve, Measure. Corners of the part can now be clicked for three-point work planes
   too, and Measure measures to work features and says where one of them is. New command `work.ucs`;
   `ucs_plane` on the commands that name a plane by `plane`, `face` and `work_plane`.
-- **Pattern**, **Mirror** and **Copy** of components, greyed on the Assemble tab until now. Pattern
+- **Pattern**, **Mirror** and **Copy** of components. Pattern
   repeats chosen components in rows along one or two directions (a picked edge, flat face or axis, a
   count and a spacing) or round an axis (a count and an angle). It is one record, a row in the
   browser with its elements under it; a count or spacing changed moves, adds or takes away elements;
@@ -202,7 +208,7 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   `sheet.export_svg` leaves them out). New command `sheet.punch`; feature type `punch`.
 - The flat pattern says what it is not exact about (`notes` of `sheet.flat`), and bends close
   together are named where their names do not lie on one another.
-- **Rip, Unfold and Refold** are on the Sheet Metal tab, no longer greyed. Rip opens a seam in a
+- **Rip, Unfold and Refold.** Rip opens a seam in a
   face, flat or round, so that a closed shape can be laid flat: a slit through a point, a slit
   between two points, or the whole face out. A tube that was ripped lays flat from its round side.
   Unfold lays chosen bends flat from a face that stays where it is, so that cuts can go across
@@ -214,7 +220,7 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 
 ### Drawings
 
-- **Auxiliary, Crop, Break, Break Out and Overlay** are no longer greyed. Auxiliary is a
+- **Auxiliary, Crop, Break, Break Out and Overlay.** Auxiliary is a
   view square to a straight edge of its parent, which turns with the edge. Crop draws only
   what lies inside a rectangle or a circle on a view. Break takes a band out of a base
   or projected view, one or more of them, up the sheet or across, with break lines drawn;
@@ -255,6 +261,8 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 
 ### Fixed
 
+- On the Sheet Metal tab, Hole, Corner Round and Corner Chamfer said a sheet made with Face had no
+  solid, and would not open, unless it also had an extrusion.
 - A sweep round a sharp corner used to stop at the first corner of its path, saying nothing, and made a
   third of the tube it should. It is now mitred between two straight lines, for any path, where it closes on
   itself too. A sharp corner at a curve (a spline, an arc, a spline closed on itself), a profile with holes, or

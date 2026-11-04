@@ -28,8 +28,7 @@ Intel Macs and other systems: build Tenon from its source ([setup.md](https://gi
 - **The ribbon** across the top holds the commands of what you are working on, in tabs:
   3D Model, Sketch, Inspect, Tools, Manage, View, Environments for a part (Sheet Metal and Flat
   Pattern on a sheet metal part, Stress Analysis while you are in it); Assemble for an assembly;
-  Place Views and Annotate for a drawing. Greyed buttons are commands Tenon does not have yet;
-  their tip says so. In a window narrower than the ribbon, an arrow at its end goes along it.
+  Place Views and Annotate for a drawing. In a window narrower than the ribbon, an arrow at its end goes along it.
 - **Search commands** (top right) finds any command by name.
 - **The browser** on the left lists the part's features in order (or the assembly's
   components, or the drawing's sheets and views). Double-click a feature to change it;
