@@ -43,7 +43,8 @@ Tenon looks, in this order:
 1. where the environment variables `TENON_GMSH` and `TENON_CCX` say (the full path of each
    program);
 2. where Application Options says, if the program is there;
-3. in a checkout's `.pixi/envs/fea`;
+3. in the `.pixi/envs/fea` of the checkout the running program was built in (not of the folder it
+   is run from);
 4. on the search path.
 
 When one is missing, the study says which, and everything else in Tenon works as before.

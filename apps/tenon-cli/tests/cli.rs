@@ -293,3 +293,39 @@ fn a_folder_to_keep_the_programs_files_in_is_under_out_as_a_file_is() {
     assert!(kept.is_absolute() && kept.ends_with("kept_shape"), "{last}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_study_does_not_run_what_lies_in_the_working_folder() {
+    // A downloaded folder with programs where a checkout keeps them.
+    let dir = std::env::temp_dir().join(format!("tenon-cli-planted-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for programs in [".pixi/envs/fea/Library/bin", ".pixi/envs/fea/bin"] {
+        let at = dir.join(programs);
+        std::fs::create_dir_all(&at).unwrap();
+        for name in ["gmsh", "gmsh.exe", "ccx", "ccx.exe"] {
+            std::fs::write(at.join(name), b"not a program, and it could not be started").unwrap();
+        }
+    }
+    let script = dir.join("study.json");
+    let steps = r#"[
+        { "run": "model.box", "with": { "width": 20, "depth": 10, "height": 10 } },
+        { "run": "document.material", "with": { "name": "Aluminium 6061" } },
+        { "run": "model.find", "with": { "what": "faces", "facing": "left" }, "as": "l" },
+        { "run": "model.find", "with": { "what": "faces", "facing": "right" }, "as": "r" },
+        { "run": "study.new", "with": {} },
+        { "run": "study.fix", "with": { "faces": ["$l.found.0.reference"] } },
+        { "run": "study.force", "with": { "faces": ["$r.found.0.reference"], "newtons": 10, "direction": "down" } },
+        { "run": "study.solve", "with": {} }
+    ]"#;
+    std::fs::write(&script, steps).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_tenon-cli"))
+        .args(["run", "study.json"])
+        .current_dir(&dir)
+        .env_remove("TENON_GMSH")
+        .env_remove("TENON_CCX")
+        .output()
+        .unwrap();
+    let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!said.contains("cannot start"), "{said}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

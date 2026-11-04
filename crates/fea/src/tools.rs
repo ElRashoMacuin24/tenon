@@ -37,7 +37,8 @@ fn programs_of(environment: &Path) -> PathBuf {
 }
 
 /// The environment a checkout of Tenon keeps the programs in (`pixi install -e fea`), looked
-/// for from `start` upward.
+/// for from `start` upward. `start` is where the running program is, and never the working
+/// folder: what lies there is whatever was downloaded or unpacked, and would be run.
 fn checkout_environment(start: &Path) -> Option<PathBuf> {
     start.ancestors().take(8).map(|dir| dir.join(".pixi").join("envs").join("fea")).find(|env| env.is_dir())
 }
@@ -76,12 +77,11 @@ fn find_one(var: &str, name: &str, chosen: Option<&Path>) -> Option<PathBuf> {
         return Some(chosen.to_path_buf());
     }
     let file = exe(name);
-    // A checkout's own environment: from the working folder, and from the running program.
-    let starts = [std::env::current_dir().ok(), std::env::current_exe().ok()];
-    for start in starts.into_iter().flatten() {
-        if let Some(found) = checkout_environment(&start).map(|env| programs_of(&env).join(&file)).filter(|p| p.is_file()) {
-            return Some(found);
-        }
+    // A checkout's own environment, if the running program was built in one.
+    if let Some(found) =
+        std::env::current_exe().ok().and_then(|me| checkout_environment(&me)).map(|env| programs_of(&env).join(&file)).filter(|p| p.is_file())
+    {
+        return Some(found);
     }
     // The search path.
     std::env::var_os("PATH").and_then(|path| std::env::split_paths(&path).map(|dir| dir.join(&file)).find(|p| p.is_file()))
