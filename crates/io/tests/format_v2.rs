@@ -34,6 +34,10 @@ fn fixtures() -> Vec<(PathBuf, PathBuf)> {
             let f = f.unwrap().path();
             let file = f.file_name().unwrap().to_owned();
             let now = if name == "templates" { root().join("assets/templates").join(file) } else { root().join("examples").join(&name).join(file) };
+            // (An example its script has moved on from, with what the old file does not have, has
+            // what its old file upgrades to kept here.)
+            let kept = v1.join("../upgraded").join(&name).join(f.file_name().unwrap());
+            let now = if kept.exists() { kept } else { now };
             out.push((f, now));
         }
     }

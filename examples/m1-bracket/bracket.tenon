@@ -5,9 +5,17 @@ name = "Bracket"
 next_feature = 6
 
 [parameters]
-next = 0
+next = 7
 user = []
-model = []
+model = [
+  { name = "d0", target = { kind = "dimension", sketch = 1, constraint = 9 } },
+  { name = "d1", target = { kind = "dimension", sketch = 1, constraint = 10 } },
+  { name = "d2", target = { kind = "dimension", sketch = 1, constraint = 11 } },
+  { name = "d3", target = { kind = "dimension", sketch = 1, constraint = 12 } },
+  { name = "d4", target = { kind = "feature", feature = 2, field = "/extent/distance" } },
+  { name = "d5", target = { kind = "dimension", sketch = 3, constraint = 2 } },
+  { name = "d6", target = { kind = "dimension", sketch = 5, constraint = 2 } },
+]
 
 [[feature]]
 id = 1
