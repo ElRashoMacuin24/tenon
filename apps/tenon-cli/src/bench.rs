@@ -448,6 +448,8 @@ const PARTS: [(&str, &str, PartBudget); 8] = [
 /// is written on the way.
 pub fn run(make: Make, examples: &Path, work: &Path) -> Result<Vec<Row>, String> {
     std::fs::create_dir_all(work).map_err(|e| format!("cannot create {}: {e}", work.display()))?;
+    // (What is written goes through commands that take a path against a folder of their own.)
+    let work = &std::path::absolute(work).map_err(|e| format!("cannot find {}: {e}", work.display()))?;
     let mut rows = Vec::new();
     let open = |dir: &str, file: &str| -> Result<Document, String> {
         let path = examples.join(dir).join(file);

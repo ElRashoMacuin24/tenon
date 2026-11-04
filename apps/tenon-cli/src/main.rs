@@ -132,7 +132,7 @@ fn main() -> ExitCode {
         ["bench"] => return bench(json, check, out.as_deref()),
         ["bench", "profile"] => {
             let scratch = std::env::temp_dir().join(format!("tenon-bench-{}", std::process::id()));
-            let done = tenon_cli::bench::profile(&kernel, &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples"), &scratch);
+            let done = tenon_cli::bench::profile(&kernel, &examples_folder(), &scratch);
             let _ = std::fs::remove_dir_all(&scratch);
             done
         }
@@ -153,10 +153,17 @@ fn main() -> ExitCode {
     }
 }
 
+/// The example models: in a release package, near this program (beside it on Windows, a folder up
+/// on Linux, three up from inside Tenon.app on macOS); else in the sources it was built from.
+fn examples_folder() -> PathBuf {
+    let near = std::env::current_exe().ok().and_then(|exe| exe.ancestors().skip(1).take(5).map(|d| d.join("examples")).find(|d| d.join("m1-bracket").is_dir()));
+    near.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples"))
+}
+
 /// `tenon-cli bench`: the measurements, and with `--check` exit code 1 when one is over its
 /// budget.
 fn bench(json: bool, check: bool, work: Option<&Path>) -> ExitCode {
-    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let examples = examples_folder();
     let scratch = std::env::temp_dir().join(format!("tenon-bench-{}", std::process::id()));
     let work = work.map_or(scratch.clone(), Path::to_path_buf);
     let rows = tenon_cli::bench::run(&kernel, &examples, &work);
