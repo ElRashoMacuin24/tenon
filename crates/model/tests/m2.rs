@@ -799,6 +799,54 @@ fn the_volume_of_an_elliptical_wall_is_right_cut_square_and_at_a_slant() {
 }
 
 #[test]
+fn a_spline_that_crosses_its_profile_is_refused_and_a_fair_one_is_not() {
+    let make = |through: Value| {
+        let (mut s, mut k) = (Session::default(), OcctKernel::new());
+        let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+        let l = run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 20, "x2": 0, "y2": 0 }));
+        let mut points = vec![l["end"].clone()];
+        points.extend(through.as_array().unwrap().iter().cloned());
+        points.push(l["start"].clone());
+        let spline = run(&mut s, &mut k, "sketch.spline", json!({ "sketch": sk, "points": points }))["spline"].as_u64();
+        run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 5 }));
+        let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+        let mass = run(&mut s, &mut k, "model.mass", json!({}));
+        (r, spline, mass)
+    };
+    // A figure of eight: it used to make a solid of negative volume, with no word.
+    let (r, spline, _) = make(json!([[30, 30], [60, -30], [60, 30], [30, -30]]));
+    let said = r["error"]["message"].as_str().unwrap_or_else(|| panic!("{r}"));
+    assert!(said.contains("crosses the profile"), "{said}");
+    if let Some(id) = spline {
+        assert!(said.contains(&format!("Spline {id}")), "{said}");
+    }
+    // A loop that does not cross stays what it was.
+    let (r, _, mass) = make(json!([[30, -10], [60, 10], [30, 30]]));
+    assert!(r["error"].is_null(), "{r}");
+    assert!(mass["bodies"][0]["volume"].as_f64().unwrap() > 1000.0, "{mass}");
+}
+
+#[test]
+fn letters_over_the_region_picked_with_them_are_refused() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 80, "y2": 40 }));
+    let t = run(&mut s, &mut k, "sketch.text", json!({ "sketch": sk, "x": 10, "y": 10, "text": "TENON", "height": 10 }))["text"].as_u64().unwrap();
+    let curves = run(&mut s, &mut k, "sketch.info", json!({ "sketch": sk }))["regions"][0]["key"].clone();
+    let both = json!({ "sketch": sk, "distance": 5, "regions": [{ "text": t }, curves] });
+    let ex = run(&mut s, &mut k, "model.extrude", both)["feature"].as_u64().unwrap();
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert_eq!(r["error"]["feature"], ex, "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().contains("lie over a region picked with them"), "{r}");
+
+    // The letters beside the region, and each alone, are as they were.
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 5, "regions": [{ "text": t }] }));
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert!(r["error"].is_null(), "{r}");
+}
+
+#[test]
 fn a_cut_to_next_from_outside_the_part_says_what_the_rule_is() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     block(&mut s, &mut k, 40.0, 20.0, 10.0);

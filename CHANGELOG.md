@@ -116,6 +116,9 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- A spline that crosses its own profile made a solid of negative volume and exported it, with no
+  word: it is now refused, by name. So are letters picked with a region they lie over, whose
+  solids overlapped and whose volume was counted twice.
 - A part with an elliptical wall took about two seconds longer to rebuild, at every change above
   it and every preview. It is now as quick as a round one.
 - OK with To or Between chosen and nothing picked made a feature of another kind, and said so. It

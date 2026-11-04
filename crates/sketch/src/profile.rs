@@ -886,6 +886,38 @@ pub fn default_regions<'r>(sketch: &Sketch, all: &'r [SketchRegion]) -> Vec<&'r 
     all.iter().filter(|r| chosen.iter().any(|o| o.contains(r.inside))).collect()
 }
 
+/// A spline on a boundary of `region` that crosses that boundary, itself included. (Lines, arcs,
+/// circles and ellipses are cut where they cross, so that no region's boundary has them crossing;
+/// a spline is not.) Such a boundary encloses no one region, and what is swept from it is no solid.
+pub fn crossing_spline(sketch: &Sketch, region: &SketchRegion) -> Option<EntityId> {
+    let is_spline = |c: EntityId| matches!(sketch.geometry(c), Some(Geometry::Spline { .. }));
+    std::iter::once(&region.outer).chain(region.holes.iter()).find_map(|pieces| {
+        if !pieces.iter().any(|p| is_spline(p.curve)) {
+            return None;
+        }
+        // The boundary as segments, each with the curve it is of.
+        let mut segments: Vec<(Vec2, Vec2, EntityId)> = Vec::new();
+        for p in pieces {
+            let poly = piece_poly(sketch, p);
+            segments.extend(poly.windows(2).filter(|w| !w[0].near(w[1], MERGE_TOL)).map(|w| (w[0], w[1], p.curve)));
+        }
+        let side = |a: Vec2, b: Vec2, c: Vec2| (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+        let cross = |s: &(Vec2, Vec2, EntityId), t: &(Vec2, Vec2, EntityId)| {
+            side(s.0, s.1, t.0) * side(s.0, s.1, t.1) < 0.0 && side(t.0, t.1, s.0) * side(t.0, t.1, s.1) < 0.0
+        };
+        let n = segments.len();
+        (0..n).find_map(|i| {
+            // (A segment and the next one share a point, and the boundary is closed.)
+            (i + 2..n).filter(|j| !(i == 0 && *j == n - 1)).find_map(|j| {
+                if !cross(&segments[i], &segments[j]) {
+                    return None;
+                }
+                [segments[i].2, segments[j].2].into_iter().find(|c| is_spline(*c))
+            })
+        })
+    })
+}
+
 /// The regions of `all` (every region of `sketch`) that `key` names: none when the sketch no
 /// longer has such a region.
 pub fn find<'r>(sketch: &Sketch, all: &'r [SketchRegion], key: &RegionKey) -> Vec<&'r SketchRegion> {

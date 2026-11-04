@@ -487,11 +487,19 @@ pub(crate) fn profile_of(sketch: &Sketch, frame: Frame, sel: &RegionSel) -> Resu
         RegionSel::Keys(keys) if keys.iter().all(|k| matches!(k, RegionKey::Text { .. })) => Vec::new(),
         _ => select(sketch, &all, sel)?,
     };
+    if let Some(spline) = curves.iter().find_map(|r| tenon_sketch::crossing_spline(sketch, r)) {
+        return Err(format!("Spline {} crosses the profile it is part of, and such a boundary encloses no solid. Move its points so that it does not.", spline.0));
+    }
     let mut out = if curves.is_empty() { Profile { frame, regions: Vec::new() } } else { profile(sketch, frame, &curves) };
     for t in texts {
         let letters = text_regions(sketch, t);
         if letters.is_empty() {
             return Err("a selected text no longer exists in the sketch, or has nothing to show".into());
+        }
+        // (Two solids in one place: a volume counted twice, and a file that says so.)
+        let over = |l: &Region| l.outer.curves.iter().flat_map(|c| curve_points(&c.curve)).any(|p| curves.iter().any(|r| r.contains(p)));
+        if letters.iter().any(over) {
+            return Err("The letters of a text lie over a region picked with them, and one profile cannot lie over another. Pick the letters or the region, not both: a click takes one away.".into());
         }
         out.regions.extend(letters);
     }
