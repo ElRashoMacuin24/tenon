@@ -1,0 +1,32 @@
+# Tenon assembly file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon-assembly"
+version = 2
+name = "A"
+next_component = 3
+next_relationship = 2
+explode = []
+
+[[component]]
+id = 1
+name = "P:1"
+part = "P.tenon"
+placement = { origin = { x = 0.0, y = 0.0, z = 0.0 }, x = { x = 1.0, y = 0.0, z = 0.0 }, y = { x = 0.0, y = 1.0, z = 0.0 }, z = { x = 0.0, y = 0.0, z = 1.0 } }
+grounded = true
+visible = true
+
+[[component]]
+id = 2
+name = "Q:1"
+part = "Q.tenon"
+placement = { origin = { x = -30.0, y = 10.0, z = 0.0 }, x = { x = 0.0, y = 0.0, z = 1.0 }, y = { x = 0.0, y = 1.0, z = 0.0 }, z = { x = -1.0, y = 0.0, z = 0.0 } }
+grounded = false
+visible = true
+
+[[relationship]]
+id = 1
+name = "Mate:1"
+suppressed = false
+type = "mate"
+a = { component = 1, geom = { type = "face", face = { origin = { type = "from", feature = 3, source = -1516579696841817552, ordinal = 1 }, fingerprint = { surface = "plane", direction = { x = 1.0, y = 0.0, z = 0.0 }, centroid = { x = -40.0, y = 15.0, z = 5.0 }, area = 300.0 } } } }
+b = { component = 2, geom = { type = "face", face = { origin = { type = "cap", feature = 2, end = "end" }, fingerprint = { surface = "plane", direction = { x = 0.0, y = 0.0, z = 1.0 }, centroid = { x = 5.0, y = 5.0, z = 10.0 }, area = 100.0 } } } }
+offset = 0.0

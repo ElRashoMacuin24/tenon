@@ -275,6 +275,21 @@ impl FaceRef {
     pub fn feature(&self) -> Option<FeatureId> {
         Some(self.origin.feature())
     }
+
+    /// The face as this reference means it, of `info`, which is what the kernel says of it now. A
+    /// flat face on a left-handed plane (made by a Mirror feature, a chamfer, a part-turn Revolve)
+    /// was said to look into the material until 0.2.0, and now looks out of it as every other does.
+    /// A reference made before holds the way it looked then, and what hangs on it (a sketch's
+    /// frame, a work plane's side, a mate) was built on that way and stays so: only a reference made
+    /// since, or to a face on an ordinary plane, follows the normal.
+    pub fn surface_meant(&self, info: &FaceInfo) -> SurfaceKind {
+        match &info.surface {
+            SurfaceKind::Plane { origin, normal } if info.left_handed && self.fingerprint.direction.dot(*normal) < 0.0 => {
+                SurfaceKind::Plane { origin: *origin, normal: -*normal }
+            }
+            surface => surface.clone(),
+        }
+    }
 }
 
 /// Face names of a sweep result, from its history.

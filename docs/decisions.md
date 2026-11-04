@@ -4644,7 +4644,7 @@ A review of all this found the following, and what was done about each is here w
   side not care which way the normal looks, which left seven other places that read it (a flange's
   way, a fold's side, a corner seam's face, each cut's depth). The normal itself could not change:
   `frame_on_face` goes by it and the sketch of an old file on such a face of an ordinary Revolve
-  would turn over. So the sheet metal features that revolve ask the kernel for right-handed surfaces
+  would turn over. (DEC-130 then changed it, and that did happen: DEC-140 mends it.) So the sheet metal features that revolve ask the kernel for right-handed surfaces
   (`Kernel::direct_faces`), the same faces in the same order, which the shim checks.
 - **A cut that reaches a rolled part.** Cut Across Bend and Cut Normal took what was on the flat and
   dropped the rest without a word, against what this decision first said. They are now refused when
@@ -4704,3 +4704,42 @@ stay gone. `nothing_in_the_ribbon_or_the_strips_is_painted_as_if_out_of_use` hol
 ribbon or in the strips at the foot of the window has a disabled colour, in either theme, in a part, an
 assembly or a drawing. What is rightly out of use for a moment stays as it was: a choice in a panel
 that does not apply (a taper with To Next), and a row of a feature past End of Part.
+
+## DEC-140 What 0.1.0 made on a left-handed face stays as it was made (2026-11-04)
+
+The audit before 0.2.0 found the first line of the release notes false. DEC-130 gave a flat face on a
+left-handed plane a normal out of the material, as every other face has. It said so of a part's Mirror
+feature; but OCCT's chamfer and a part-turn revolve leave such planes too (on a box with all its edges
+chamfered, 11 of the 12 new faces). In a file from 0.1.0, a sketch on one turned over with no word:
+holes and cuts on it took nothing away and bosses floated clear of the part, still one solid. An offset
+work plane went to the other side of its face. A mate moved its component at the next Update. A moment
+with no axis reversed, and a study that failed came to hold, with no stress in it. Nothing in the file
+marked any of this, and references kept resolving, since `Fingerprint::distance` takes the absolute
+value of the turn.
+
+**The normal stays as it is now.** It is what mates and mirrored occurrences need, and a new sketch
+ought to face out. But the file already says which way the face looked: a reference holds
+`fingerprint.direction` as it was when it was made. So `FaceRef::surface_meant` turns the plane back
+when the face is on a left-handed plane and that direction opposes the normal. `plane_frame` goes by
+it, and through it sketches, work planes, splits, drafts, Extrude To and mirror planes by a face; so does
+`geometry::resolve` for what an assembly holds to, the `Surface` of a study's loaded face in
+`stress::setup_of`, and the mark drawn for a moment. `FaceInfo::left_handed` comes from the shim, the
+one place that knows.
+
+**Why only left-handed planes.** The auditors proposed the test on any face. A sketch on the end of an
+extrusion follows the end when the extrusion is flipped, and always has: its reference's direction
+then opposes the normal too, and the test would have held the sketch where the face no longer looks.
+`a_sketch_on_an_ordinary_face_still_turns_with_the_face` holds that.
+
+**Files.** Nothing is written and no format changes: an old file saves to the same bytes.
+`apps/tenon-cli/tests/fixtures/v0.1.0` holds files 0.1.0's own `tenon-cli` wrote, on faces made by
+Mirror, Chamfer and Revolve, with its own figures in `from_0_1_0.rs`; `m11_solve.rs` has the moment.
+
+*Left, and said in the CHANGELOG or here.* What only asks which way a face looks hears the new answer:
+`model.find`'s `facing`, `model.faces`, Measure's angle. A flange on a sheet a Mirror feature made came
+to nothing in 0.1.0 with no word (the sheet code reads normals directly); it is now made, which changes
+that part, and for the better. A file made since with such a sketch opens in 0.1.0 turned over, and
+nothing can be done about that from here. Two rare things go the other way: a reference made since to
+such a face, when an edit turns the face more than a quarter turn, is taken for an old one and stays
+as it was (edit a Mirror's plane under a sketch on what it made); and a reference repaired onto such a
+face takes the new way.

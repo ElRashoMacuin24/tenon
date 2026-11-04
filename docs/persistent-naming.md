@@ -76,6 +76,10 @@ message naming the reference ("the referenced edge no longer exists (the edge be
 face of Extrusion1 from sketch curve e6 and ...)"); the features after it are not computed, the
 part is shown as it stood before the failing feature, and the document is unchanged.
 
+The fingerprint's direction also keeps old work as it was made: a reference to a flat face on a
+left-handed plane, made when such a face was reported looking into the material, means the face
+looking that way (`FaceRef::surface_meant`, DEC-140).
+
 Not built: neighbour origins and the "clear margin" check; `Split` ordinals (fingerprints pick
 instead); vertex references; logging of history gaps (a test checks that there are none for the
 M2 features instead).

@@ -1,0 +1,79 @@
+# Tenon part file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon"
+version = 2
+name = "Part1"
+next_feature = 4
+
+[parameters]
+next = 2
+user = []
+model = [
+  { name = "d0", target = { kind = "feature", feature = 2, field = "/angle/angle" } },
+  { name = "d1", target = { kind = "feature", feature = 4, field = "/extent/distance" } },
+]
+
+[[feature]]
+id = 1
+name = "Sketch1"
+suppressed = false
+type = "sketch"
+plane = { origin = "XZ" }
+next_entity = 9
+next_constraint = 5
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 5.0, y = 0.0 }, construction = false },
+  { id = 3, type = "point", pos = { x = 15.0, y = 0.0 }, construction = false },
+  { id = 4, type = "point", pos = { x = 15.0, y = 10.0 }, construction = false },
+  { id = 5, type = "point", pos = { x = 5.0, y = 10.0 }, construction = false },
+  { id = 6, type = "line", start = 2, end = 3, construction = false },
+  { id = 7, type = "line", start = 3, end = 4, construction = false },
+  { id = 8, type = "line", start = 4, end = 5, construction = false },
+  { id = 9, type = "line", start = 5, end = 2, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+  { id = 2, type = "horizontal", line = 6 },
+  { id = 3, type = "vertical", line = 7 },
+  { id = 4, type = "horizontal", line = 8 },
+  { id = 5, type = "vertical", line = 9 },
+]
+
+[[feature]]
+id = 2
+name = "Revolution1"
+suppressed = false
+type = "revolve"
+sketch = 1
+regions = "default"
+axis = { origin = "Z" }
+angle = { angle = 1.5 }
+operation = "join"
+
+[[feature]]
+id = 3
+name = "Sketch2"
+suppressed = false
+type = "sketch"
+plane = { face = { origin = { type = "side", feature = 2, curve = 6 }, fingerprint = { surface = "plane", direction = { x = 0.0, y = 0.0, z = 1.0 }, centroid = { x = 7.204130459, y = 6.711342432, z = 0.0 }, area = 150.0 } } }
+next_entity = 3
+next_constraint = 1
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 7.0, y = 7.0 }, construction = false },
+  { id = 3, type = "circle", center = 2, radius = 1.5, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+]
+
+[[feature]]
+id = 4
+name = "Extrusion1"
+suppressed = false
+type = "extrude"
+sketch = 3
+regions = "default"
+extent = { distance = 5.0 }
+reverse = false
+operation = "cut"

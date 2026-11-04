@@ -119,14 +119,14 @@ pub(crate) fn setup_of(s: &mut Session, k: &mut dyn Kernel, id: StudyId) -> Resu
 
     // What each face of the solid is, and where the study's supports and loads are on it.
     let count = u32::try_from(body.names.len()).map_err(|_| "the solid has too many faces")?;
+    let of_surface = |surface: &SurfaceKind| match surface {
+        SurfaceKind::Plane { normal, .. } => Surface::Plane { normal: *normal },
+        SurfaceKind::Cylinder { axis, .. } => Surface::Cylinder { origin: axis.origin(), dir: axis.dir() },
+        _ => Surface::Other,
+    };
     let mut surfaces = Vec::with_capacity(count as usize);
     for face in 0..count {
-        let info = k.face_info(body.shape.face(face)).map_err(|e| e.to_string())?;
-        surfaces.push(match info.surface {
-            SurfaceKind::Plane { normal, .. } => Surface::Plane { normal },
-            SurfaceKind::Cylinder { axis, .. } => Surface::Cylinder { origin: axis.origin(), dir: axis.dir() },
-            _ => Surface::Other,
-        });
+        surfaces.push(of_surface(&k.face_info(body.shape.face(face)).map_err(|e| e.to_string())?.surface));
     }
     let on_part = |faces: &[tenon_model::FaceRef], name: &str| -> Result<Vec<u32>, String> {
         faces.iter().map(|f| r.resolve(f, k).map(|(_, face)| face).map_err(|e| format!("{name}: {e}"))).collect()
@@ -140,6 +140,14 @@ pub(crate) fn setup_of(s: &mut Session, k: &mut dyn Kernel, id: StudyId) -> Resu
     }
     let mut pushed = Vec::new();
     for l in st.loads.iter().filter(|l| !l.suppressed) {
+        // (A moment with no axis turns about the way its faces look, as its references mean it.)
+        for f in &l.faces {
+            let (_, face) = r.resolve(f, k).map_err(|e| format!("{}: {e}", l.name))?;
+            let info = k.face_info(body.shape.face(face)).map_err(|e| e.to_string())?;
+            if let Some(slot) = surfaces.get_mut(face as usize) {
+                *slot = of_surface(&f.surface_meant(&info));
+            }
+        }
         pushed.push(Pushed { name: l.name.clone(), kind: l.kind, faces: on_part(&l.faces, &l.name)?, edges: edges_on_part(&l.edges, &l.name)? });
     }
     let material = Material::of(strength.youngs_modulus, strength.poisson, d.density());

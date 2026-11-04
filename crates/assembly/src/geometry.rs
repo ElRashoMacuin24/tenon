@@ -178,7 +178,14 @@ pub fn resolve(geom: &Geom, scene: Option<&Scene>, mirrored: bool) -> Result<Pri
         Geom::Face { face } => {
             let scene = scene.ok_or("the part's geometry is not available")?;
             let (b, f) = find_face(scene, face)?;
-            face_prim(scene, b, f)
+            match face_prim(scene, b, f)? {
+                // (Which way the face looks, as the reference means it: see `surface_meant`.)
+                Prim::Plane { point, .. } => match scene.bodies.get(b).and_then(|x| x.faces.get(f)).map(|x| face.surface_meant(&x.1)) {
+                    Some(SurfaceKind::Plane { normal, .. }) => Ok(Prim::Plane { point, normal }),
+                    _ => Err("no such face".into()),
+                },
+                prim => Ok(prim),
+            }
         }
         Geom::Edge { edge } => {
             let scene = scene.ok_or("the part's geometry is not available")?;

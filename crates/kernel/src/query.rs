@@ -78,6 +78,12 @@ pub struct FaceInfo {
     /// sphere or torus that means the material is outside it: the wall of a hole, not of a shaft.
     /// (A plane's `normal` has the orientation applied already.)
     pub reversed: bool,
+    /// A flat face on a left-handed plane, as a mirror, a chamfer and the flat sides of a part-turn
+    /// revolve leave. Its `normal` looks out of the material as any other's does; before 0.2.0 it
+    /// was reported looking in, and references made then hold that ([`tenon_model`]'s
+    /// `FaceRef::surface_meant`).
+    #[serde(default)]
+    pub left_handed: bool,
 }
 
 /// Geometry type of an edge's underlying curve.

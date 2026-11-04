@@ -152,6 +152,7 @@ pub(crate) mod bridge {
         radius2: f64,
         angle: f64,
         reversed: bool,
+        left_handed: bool,
     }
 
     #[derive(Debug, Default)]

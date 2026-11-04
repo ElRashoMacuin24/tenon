@@ -466,3 +466,19 @@ fn a_force_along_an_edge_and_a_bar_held_by_its_edges() {
     // A force square to an edge has no meaning, and says so before anything is started.
     assert!(p.refused("study.set", json!({ "item": 2, "direction": "normal" })).contains("needs a direction"));
 }
+
+/// Two moments on a face a Mirror feature made, in a file 0.1.0 wrote: one about the face's own axis,
+/// one about X. As 0.1.0 had them they add up, and the part fails. (With the face's axis read as it
+/// is now and not as the reference means it, they cancelled, and the part "held" with no stress in it.)
+#[test]
+fn a_moment_made_in_0_1_0_with_no_axis_turns_the_way_it_did() {
+    if !programs("a_moment_made_in_0_1_0_with_no_axis_turns_the_way_it_did") {
+        return;
+    }
+    let mut part = Part::new();
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/tenon-cli/tests/fixtures/v0.1.0/moment.tenon");
+    part.run("file.open", json!({ "path": file.to_string_lossy() }));
+    let solved = part.run("study.solve", json!({ "study": 1 }));
+    assert!(solved["max_von_mises"]["megapascals"].as_f64().unwrap() > 100.0, "{solved}");
+    assert_eq!(solved["holds"], false, "{solved}");
+}

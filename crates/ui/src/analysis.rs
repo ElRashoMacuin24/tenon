@@ -1138,8 +1138,8 @@ impl Workbench {
     /// A face's own axis: the way a flat face looks, the axis of a round one.
     fn face_axis(&self, r: &FaceRef) -> Option<Vec3> {
         let (body, face) = find_face(&self.scene, r)?;
-        match &self.scene.bodies.get(body)?.faces.get(face as usize)?.1.surface {
-            SurfaceKind::Plane { normal, .. } => Some(*normal),
+        match r.surface_meant(&self.scene.bodies.get(body)?.faces.get(face as usize)?.1) {
+            SurfaceKind::Plane { normal, .. } => Some(normal),
             SurfaceKind::Cylinder { axis, .. } => Some(axis.dir()),
             _ => None,
         }

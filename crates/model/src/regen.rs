@@ -1504,7 +1504,7 @@ impl<'a> Ctx<'a> {
                 let shape = self.regen.bodies.get(b).ok_or("no such body")?.shape;
                 let info = self.k.face_info(shape.face(face))?;
                 // The sketch origin is the part origin projected onto the face's plane.
-                match (&info.surface, frame_on_face(&info.surface)) {
+                match (&info.surface, frame_on_face(&fref.surface_meant(&info))) {
                     (_, Some(frame)) => Ok(frame),
                     (SurfaceKind::Plane { .. }, None) => Err("the face has no valid normal".into()),
                     _ => Err(format!("{name} is not planar").into()),

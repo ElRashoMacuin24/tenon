@@ -2767,7 +2767,8 @@ void face_info(const Shape& s, std::uint32_t index, FaceOut& out) {
     case GeomAbs_Plane: {
       const gp_Pln pl = surf.Plane();
       // A left-handed plane (a mirrored face has one) has its own normal against its axis.
-      out.reversed = out.reversed != !pl.Direct();
+      out.left_handed = !pl.Direct();
+      out.reversed = out.reversed != out.left_handed;
       gp_Dir n = pl.Axis().Direction();
       if (out.reversed) {
         n.Reverse();

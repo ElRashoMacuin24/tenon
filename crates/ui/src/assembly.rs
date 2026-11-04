@@ -239,7 +239,7 @@ fn placed_info(info: &FaceInfo, x: &Rigid) -> FaceInfo {
         }
         other => other.clone(),
     };
-    FaceInfo { surface, area: info.area, centroid: x.point(info.centroid), reversed: info.reversed }
+    FaceInfo { surface, area: info.area, centroid: x.point(info.centroid), reversed: info.reversed, left_handed: info.left_handed }
 }
 
 /// What the status line says of a pattern whose rule cannot be worked out, and what to do.

@@ -1,0 +1,63 @@
+# Tenon part file, format version 2. The format: docs/file-format.md in the Tenon sources.
+format = "tenon"
+version = 2
+name = "Part1"
+next_feature = 3
+
+[parameters]
+next = 3
+user = []
+model = [
+  { name = "d0", target = { kind = "dimension", sketch = 1, constraint = 6 } },
+  { name = "d1", target = { kind = "dimension", sketch = 1, constraint = 7 } },
+  { name = "d2", target = { kind = "feature", feature = 2, field = "/extent/distance" } },
+]
+
+[[feature]]
+id = 1
+name = "Sketch1"
+suppressed = false
+type = "sketch"
+plane = { origin = "XY" }
+next_entity = 9
+next_constraint = 8
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0 }, construction = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0 }, construction = false },
+  { id = 3, type = "point", pos = { x = 40.0, y = 0.0 }, construction = false },
+  { id = 4, type = "point", pos = { x = 40.0, y = 30.0 }, construction = false },
+  { id = 5, type = "point", pos = { x = 0.0, y = 30.0 }, construction = false },
+  { id = 6, type = "line", start = 2, end = 3, construction = false },
+  { id = 7, type = "line", start = 3, end = 4, construction = false },
+  { id = 8, type = "line", start = 4, end = 5, construction = false },
+  { id = 9, type = "line", start = 5, end = 2, construction = false },
+]
+constraints = [
+  { id = 1, type = "fix", point = 1 },
+  { id = 2, type = "horizontal", line = 6 },
+  { id = 3, type = "vertical", line = 7 },
+  { id = 4, type = "horizontal", line = 8 },
+  { id = 5, type = "vertical", line = 9 },
+  { id = 6, type = "length", line = 6, value = 40.0 },
+  { id = 7, type = "length", line = 7, value = 30.0 },
+  { id = 8, type = "coincident", a = 1, b = 2 },
+]
+
+[[feature]]
+id = 2
+name = "Extrusion1"
+suppressed = false
+type = "extrude"
+sketch = 1
+regions = "default"
+extent = { distance = 10.0 }
+reverse = false
+operation = "join"
+
+[[feature]]
+id = 3
+name = "Mirror1"
+suppressed = false
+type = "mirror"
+features = [2]
+plane = { origin = "YZ" }

@@ -1639,7 +1639,7 @@ fn sketch_create(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
             let (b, fi) = r.resolve(f, k).map_err(CmdError)?;
             let shape = r.bodies.get(b).ok_or("no such body")?.shape;
             let info = k.face_info(shape.face(fi)).map_err(|e| CmdError(e.to_string()))?;
-            let frame = crate::regen::frame_on_face(&info.surface).ok_or("a sketch needs a flat face")?;
+            let frame = crate::regen::frame_on_face(&f.surface_meant(&info)).ok_or("a sketch needs a flat face")?;
             edges_round(&r, k, f)?.into_iter().map(|e| (e.clone(), edge_on_plane(&r, k, &e, &frame))).collect()
         }
         (PlaneRef::Face(_), None, None) if project => {

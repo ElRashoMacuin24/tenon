@@ -728,7 +728,7 @@ fn rows_of(solid: &Read, charts: &BTreeMap<u32, Chart>, base: u32, axis: &Axis, 
     let outward = match faces.get(base as usize).map(|i| &i.surface) {
         Some(SurfaceKind::Plane { normal, .. }) => normal.normalized(),
         Some(surface) => {
-            let out = normal_at(&FaceInfo { surface: surface.clone(), area: 0.0, centroid: q, reversed: false }, q).unwrap_or(r0);
+            let out = normal_at(&FaceInfo { surface: surface.clone(), area: 0.0, centroid: q, reversed: false, left_handed: false }, q).unwrap_or(r0);
             if inner { -out } else { out }
         }
         None => r0,

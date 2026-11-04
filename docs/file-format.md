@@ -510,8 +510,13 @@ edges = [
     sub-shape's 64-bit key. TOML integers are signed, so a key above 2^63 − 1 is written as
     the same 64 bits read as signed: it shows as negative.
 - **An edge** is the two faces it lies between.
-- **The `fingerprint`** only breaks ties between pieces of a split face or edge. It is a computed
-  value, so it is rounded and `tenon-cli diff` ignores it.
+- **The `fingerprint`** breaks ties between pieces of a split face or edge. It is a computed
+  value, so it is rounded and `tenon-cli diff` ignores it. One more thing hangs on it: a flat face
+  on a left-handed plane (made by a Mirror feature, a chamfer or a part-turn Revolve) was reported
+  looking into the material until 0.2.0, and is now reported looking out. A reference to one whose
+  `direction` opposes the way the face looks now was made before, and what hangs on it (the frame of a
+  sketch, the side of a work plane, a mate, a moment with no axis) goes by that `direction`, as
+  it did when it was made (DEC-140).
 
 ### Stress studies (`[[study]]`)
 
@@ -1042,7 +1047,10 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   a save, a tapped hole's thread (`tapped`; the drawing's note and the Threads list lose it at
   once), which points are sketch points (`sketch_point`), which sketches are shown (`visible`),
   a study's `[study.optimize]`, an assembly's `[[pattern]]`s (each element a free component where it
-  stands) and a drawing view's `mods` (the view whole).
+  stands) and a drawing view's `mods` (the view whole). And it opens with no word and gets wrong a
+  sketch, a work plane or a mate made since on a flat face from a Mirror feature, a chamfer or a
+  part-turn Revolve: there is nothing new in such a file for it to refuse, and it reads the face as
+  looking into the material, so what is on it lands turned over.
   Version 2 has gained the M6 feature types
   this way (`sweep`, `coil`, `loft`, `draft`, `split`, `combine`, `thread`), the optional
   `taper` of an extrusion, the optional `at` and `driven` of a sketch dimension, region keys by

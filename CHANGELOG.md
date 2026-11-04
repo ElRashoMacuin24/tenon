@@ -26,10 +26,14 @@ views and Baseline and Ordinate dimensions.
 - **Hole:** Tap Drill is now Tapped, which puts the thread on the wall. A hole from 0.1.0 opens as it
   is: Simple, whatever its size, until you choose Tapped; its own Thread feature stays.
 - **Constrain:** Flush is now Mate's second solution.
-- **Mirror feature:** a flat face a Mirror feature made now has its normal out of the material, as
-  every other face has, so a sketch on it faces outward and an extrude from it goes outward. A file
-  from before with such a sketch changes: what is drawn on it lands reflected in the plane, and an
-  extrude that was reversed to get round this now goes into the part.
+- **Flat faces made by a Mirror feature, a chamfer or a part-turn Revolve** now have their normal out of
+  the material, as every other face has: a sketch made on one from now on faces outward, an extrude from
+  it goes outward, and a mate or a work plane made on one is on the side it should be. What 0.1.0 made
+  on such a face stays as it was made, for the file says which way the face looked: sketches, work
+  planes, splits, mates and moments alike. What only asks which way a face looks hears the new answer:
+  `facing` of `model.find` and `model.faces` in a script, and Measure's angle.
+- **A flange on a sheet a Mirror feature made** came to nothing in 0.1.0, with no word. It is there now,
+  so such a part gains it on opening.
 - **Going back to 0.1.0.** It refuses a file that uses what is new, in the words "the project is
   damaged", though it is not: text, ellipses or Smooth; an extrusion To, To Next or Between; a
   revolution To, To Next, by two angles or Flipped; a spotface or To hole; a variable or face fillet;
@@ -40,7 +44,9 @@ views and Baseline and Ordinate dimensions.
   (the solid is the same), which points are sketch points, which sketches are shown, a study's
   Optimize Shape settings, an assembly's patterns (each element is then a free component where it
   stands, those of a suppressed pattern shown and counted), and a drawing view's crops, breaks and
-  break outs (the view is drawn whole).
+  break outs (the view is drawn whole). And one it opens with no word and gets wrong: a sketch, work
+  plane or mate made here on a flat face from a Mirror feature, a chamfer or a part-turn Revolve lands
+  turned over there, since it still reads such a face as looking into the part.
 
 ### Stress checks
 

@@ -816,7 +816,7 @@ impl Kernel for OcctKernel {
             9 => SurfaceKind::Offset,
             _ => SurfaceKind::Other,
         };
-        Ok(FaceInfo { surface, area: o.area, centroid: vec3(&o.centroid), reversed: o.reversed })
+        Ok(FaceInfo { surface, area: o.area, centroid: vec3(&o.centroid), reversed: o.reversed, left_handed: o.left_handed })
     }
 
     fn edge_info(&self, edge: EdgeId) -> KResult<EdgeInfo> {
