@@ -232,6 +232,9 @@ impl Workbench {
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
         let Some(Panel::Asm(p)) = &self.panel else { return };
         let slot = p.slot;
+        // (An edge can serve anything here but a mirror, which takes the flat face under the
+        // pointer however near an edge that is.)
+        let edges = slot != SLOT_COMPONENTS && p.tool != AsmTool::Mirror;
         if slot == SLOT_WHERE {
             self.view.hover = None;
             self.copies_follow(resp, rect);
@@ -248,7 +251,7 @@ impl Workbench {
         let (meshes, tree) = (self.scene.placed(), self.body_tree());
         let hover = resp.hover_pos().and_then(|q| {
             let (x, y) = (f64::from(q.x - rect.left()), f64::from(q.y - rect.top()));
-            if slot != SLOT_COMPONENTS
+            if edges
                 && let Some(e) = pick_edge_in(tree.as_deref(), &meshes, &self.view.camera, w, h, x, y, 5.0)
                 && is_there(self, e.body)
             {

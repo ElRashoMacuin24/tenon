@@ -939,6 +939,43 @@ fn a_second_direction_along_the_first_and_a_pattern_too_long_are_said_in_the_pan
 }
 
 #[test]
+fn a_mirror_takes_the_flat_face_under_the_pointer_however_near_an_edge() {
+    let dir = scratch("near-edge");
+    post_part(&dir.join("post.tenon"));
+    box_part(&dir.join("plate.tenon"), "Plate", 200.0, 100.0, 10.0);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    opened(&mut wb, &mut d, &[(&dir.join("plate.tenon"), [0.0, 0.0, 0.0]), (&dir.join("post.tenon"), [120.0, 40.0, 10.0])]);
+    wb.asm.as_mut().unwrap().selected = vec![ComponentId(2)];
+    d.click(&mut wb, pressable(&d, "ribbon asm.mirror"));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+
+    // Three pixels in from the plate's edge, on its top.
+    let (edge, inside) = (on_screen(&wb, Vec3::new(100.0, 0.0, 10.0)), on_screen(&wb, Vec3::new(100.0, 40.0, 10.0)));
+    let near_edge = edge + (inside - edge).normalized() * 3.0;
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(near_edge)]);
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(wb.view.hover, Some(crate::viewport::Pick::Face { .. })), "{:?}", wb.view.hover);
+    d.click(&mut wb, near_edge);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Asm(p)) = &wb.panel else { panic!() };
+    assert!(!wb.status_error, "{}", wb.status());
+    assert!(p.a.as_ref().is_some_and(|(_, s)| s.starts_with("plate:1")), "{:?}", p.a);
+
+    // The pattern still takes the edge there: an edge can serve it.
+    d.tap(&mut wb, egui::Key::Escape);
+    d.settle(&mut wb);
+    wb.asm.as_mut().unwrap().selected = vec![ComponentId(2)];
+    d.click(&mut wb, pressable(&d, "ribbon asm.pattern"));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(near_edge)]);
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(wb.view.hover, Some(crate::viewport::Pick::Edge { .. })), "{:?}", wb.view.hover);
+}
+
+#[test]
 fn a_part_of_a_suppressed_chain_of_patterns_is_out_of_the_view_and_hidden_stays_hidden() {
     let dir = scratch("chain");
     box_part(&dir.join("block.tenon"), "Block", 10.0, 10.0, 10.0);
