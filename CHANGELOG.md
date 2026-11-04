@@ -267,6 +267,9 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- Start 2D Sketch (S) inside a sketch asked for a plane and said Esc cancels, but neither Esc nor a click
+  did anything; it waited on past Finish Sketch, and the next click on the part started a sketch nobody
+  asked for. It now finishes the sketch first, and then asks.
 - In a 2D sketch, Measure, Fillet, Chamfer, Shell, Draft, Thread, Split, the work features, the patterns,
   the primitives and the sheet metal commands that pick edges opened their panels and said to click,
   and no click reached them. Measuring while sketching and Fillet's key F were the likeliest ways in.

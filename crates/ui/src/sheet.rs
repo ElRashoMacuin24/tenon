@@ -866,6 +866,11 @@ impl Workbench {
         if !tabs.contains(&self.chrome.tab) {
             self.chrome.tab = tabs.first().copied().unwrap_or(MODEL_TAB);
         }
+        // A plane asked for is asked for of the part in view: only there can it be picked, or the
+        // asking be cancelled, and it must not wait to take a later click.
+        if self.pick_plane && (self.is_sketching() || self.is_sketching3d() || self.flat_shown() || self.in_analysis()) {
+            self.pick_plane = false;
+        }
     }
 
     /// The label of a ribbon button that changes with the part: Create Flat Pattern goes to the

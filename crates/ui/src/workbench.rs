@@ -1307,6 +1307,10 @@ impl Workbench {
     }
 
     fn new_sketch(&mut self) -> Result<(), String> {
+        // (A sketch being drawn is finished first: its clicks are its own, as a plane is asked for.)
+        if self.is_sketching() {
+            self.finish_sketch();
+        }
         if let Some(face_ref) = self.selected_face_ref() {
             // (The face is used up by the sketch on it: it is not still selected for the next
             // command.)

@@ -541,6 +541,56 @@ fn a_feature_opened_from_the_browser_leaves_a_sketch() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Start 2D Sketch in a sketch said "Select a plane (Esc cancels)", and neither Esc nor a click did
+/// anything: it waited on through Finish Sketch, and took the next click on the part for a new sketch.
+#[test]
+fn start_2d_sketch_in_a_sketch_finishes_it_and_then_asks_for_a_plane() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("s-in-sketch");
+    let part = dir.join("boss.tenon");
+    part_with_a_boss(&part);
+    let mut wb = window(&dir);
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.open(&part).unwrap();
+    idle(&mut d, &mut wb);
+    wb.edit_sketch_named("Sketch3").unwrap();
+    idle(&mut d, &mut wb);
+    let count = wb.document().features().len();
+    let middle = wb.view.rect.center();
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(middle)]);
+    d.tap(&mut wb, egui::Key::S);
+    idle(&mut d, &mut wb);
+    assert!(!wb.is_sketching() && wb.pick_plane, "{}", wb.status());
+    assert!(wb.status().contains("Select a plane"), "{}", wb.status());
+    // Esc cancels, as it says, and the next click on the part is only a click.
+    d.tap(&mut wb, egui::Key::Escape);
+    idle(&mut d, &mut wb);
+    assert!(!wb.pick_plane);
+    wb.look_from(Vec3::new(1.0, -2.0, 1.5));
+    idle(&mut d, &mut wb);
+    let top = crate::tests::on_screen(&wb, Vec3::new(8.0, 10.0, 10.0));
+    d.click(&mut wb, top);
+    idle(&mut d, &mut wb);
+    assert!(!wb.is_sketching() && wb.document().features().len() == count, "{}", wb.status());
+    // Asked again, a click on the part is the plane.
+    wb.view.selection.clear();
+    d.tap(&mut wb, egui::Key::S);
+    idle(&mut d, &mut wb);
+    d.click(&mut wb, top);
+    idle(&mut d, &mut wb);
+    assert!(wb.is_sketching() && wb.document().features().len() == count + 1, "{}", wb.status());
+    // A plane being asked for goes with what it was asked of.
+    wb.finish_sketch();
+    idle(&mut d, &mut wb);
+    wb.view.selection.clear();
+    wb.run_ui("sketch.new").unwrap();
+    assert!(wb.pick_plane);
+    wb.edit_sketch_named("Sketch3").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.pick_plane, "a sketch opened from the browser takes it away");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);
