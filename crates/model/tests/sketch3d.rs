@@ -697,6 +697,13 @@ fn what_a_sweep_can_go_round_it_goes_round_and_what_it_cannot_it_says() {
     let circle = profile(&mut s, &mut k, 2.0);
     run(&mut s, &mut k, "model.sweep", json!({ "sketch": circle, "path_sketch": path }));
     refused(&mut s, &mut k, "goes round a sharp corner only between two straight lines: make the two tangent");
+    // Straight back the way it came.
+    let mut s = Session::default();
+    let (path, l) = run_fresh_path(&mut s, &mut k);
+    run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": l["end"], "end": [0, 0, 40] }));
+    let circle = profile(&mut s, &mut k, 2.0);
+    run(&mut s, &mut k, "model.sweep", json!({ "sketch": circle, "path_sketch": path }));
+    refused(&mut s, &mut k, "goes straight back the way it came");
     // A spline closed on itself has a corner where it closes.
     let mut s = Session::default();
     let path = run(&mut s, &mut k, "sketch.new_3d", json!({}))["feature"].as_u64().unwrap();

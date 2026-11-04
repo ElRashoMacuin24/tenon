@@ -3610,7 +3610,9 @@ at anything not straight, before the kernel, saying to make the two tangent or p
 The check also looks where a path closes, which it had not, so a loop sharp only where it closes goes by the
 mitre too (hand 30404.64: `what_a_sweep_can_go_round_it_goes_round_and_what_it_cannot_it_says`). A spline's
 ends are natural, so one closed on itself always has a corner where it closes, and is refused with that said. A
-2D path is held to the same: it never did go round such a corner, stopping at it without a word.
+path that goes straight back the way it came has no mitre at all, and says so too, where the kernel only said a
+vector had no length. A 2D path is held to the same: it never did go round such a corner, stopping at it without
+a word.
 
 **A bend must fit, whatever is asked of it.** The rows of a tangent say which line a direction lies along, not
 which way it runs, so a radius of 70 on lines of 50 solved, with the line running back through its far end,

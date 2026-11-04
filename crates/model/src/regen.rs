@@ -1782,6 +1782,12 @@ impl<'a> Ctx<'a> {
         }
         // Round a sharp corner the sweep is mitred (DEC-136), which has its limits.
         if path.has_corner() {
+            if path.turns_straight_back() {
+                return Err(
+                    "The path goes straight back the way it came, and a sweep cannot go round that: move the end of a line, or choose fewer curves."
+                        .into(),
+                );
+            }
             if s.fixed {
                 return Err("A profile that keeps its direction cannot go round a sharp corner of the path: let it follow the path (Orientation), or round the corner.".into());
             }

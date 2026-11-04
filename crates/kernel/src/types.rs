@@ -200,6 +200,15 @@ impl Path3 {
         let curved = |c: &Curve3| !matches!(c, Curve3::Line { .. });
         self.meetings().find(|(a, b, _)| sharp(a, b) && (curved(a) || curved(b))).map(|(_, _, closes)| closes)
     }
+
+    /// Whether it goes straight back the way it came, where one curve meets the next: no mitre
+    /// is to be had there.
+    pub fn turns_straight_back(&self) -> bool {
+        self.meetings().any(|(a, b, _)| match (a.directions(), b.directions()) {
+            (Some((_, out)), Some((into, _))) => out.cross(into).len() <= 1e-6 && out.dot(into) < 0.0,
+            _ => false,
+        })
+    }
 }
 
 /// Whether a path turns sharply going from one curve into the next.
@@ -368,6 +377,10 @@ mod tests {
         let triangle = Path3 { curves: vec![line(a, b), line(b, c), line(c, a)] };
         assert!(triangle.has_corner());
         assert_eq!(triangle.corner_at_curve(), None);
+        assert!(!triangle.turns_straight_back());
+        // There and straight back.
+        let back = Path3 { curves: vec![line(a, b), line(b, v(1.0, 0.0, 0.0))] };
+        assert!(back.has_corner() && back.turns_straight_back());
         // A spline that closes on itself has no meeting but that one.
         let poles = vec![v(1.0, 0.0, 0.0), v(1.0, 1.0, 0.0), v(-1.0, 1.0, 0.0), v(1.0, 0.0, 0.0)];
         let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
