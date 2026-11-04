@@ -409,3 +409,26 @@ fn far_meshes_are_made_where_they_pay() {
     assert_eq!(scene.bodies[0].mesh, shown);
     assert_eq!(tenon_model::scene(&regen, &mut k, &MeshTol::default()).unwrap().bodies[0].mesh, shown);
 }
+
+#[test]
+fn closing_does_not_wait_for_ever_for_an_operation_the_kernel_cannot_stop() {
+    // (A thread that is held up where nothing can reach it, as one inside the kernel is.)
+    let w = Worker::spawn(
+        || {
+            std::thread::sleep(std::time::Duration::from_secs(120));
+            Box::new(OcctKernel::new()) as Box<dyn Kernel>
+        },
+        MeshTol::default(),
+        None,
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    drop(w);
+    assert!(started.elapsed().as_secs_f64() < 20.0, "closing took {:?}", started.elapsed());
+
+    // One with nothing to do goes at once, and is waited for.
+    let w = Worker::spawn(|| Box::new(OcctKernel::new()) as Box<dyn Kernel>, MeshTol::default(), None).unwrap();
+    let started = std::time::Instant::now();
+    drop(w);
+    assert!(started.elapsed().as_secs_f64() < 2.5, "closing took {:?}", started.elapsed());
+}

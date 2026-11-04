@@ -116,6 +116,8 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- The close button did nothing while the geometry thread was inside one long operation of the
+  kernel: the window hung and memory went on growing. It now closes within a few seconds.
 - What a file says is now held to limits, as the commands' words are: a text to its 2000 characters
   (a small file could hang the rebuild), a name to 1000 bytes (a very long one crashed the window),
   and a part or model on another machine is not gone to because a file names it (Windows would

@@ -242,8 +242,8 @@ impl crate::Workbench {
     }
 
     /// Tenon is closing properly: what is being worked out stops, so that the window closes at
-    /// once and does not wait for the geometry thread, and the copies of unsaved work go (the
-    /// user saved it or chose not to).
+    /// once, or within the few seconds it waits for an operation that the kernel cannot stop
+    /// (`Worker`), and the copies of unsaved work go (the user saved it or chose not to).
     pub fn shutdown(&mut self) {
         self.stop_runs();
         if let Some(r) = self.recovery.take() {

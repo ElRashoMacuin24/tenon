@@ -436,12 +436,23 @@ impl Worker {
     }
 }
 
+/// How long closing waits for the geometry thread. An operation already inside the kernel cannot
+/// be stopped, and may go on for ever on a part that asks too much of it: the window must still
+/// close. The thread is then left, and ends with the program.
+const LET_GO_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
+
 impl Drop for Worker {
     fn drop(&mut self) {
         self.cancel.cancel();
         let _ = self.tx.send(Request::Shutdown);
         if let Some(h) = self.handle.take() {
-            let _ = h.join();
+            let started = std::time::Instant::now();
+            while !h.is_finished() && started.elapsed() < LET_GO_AFTER {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            if h.is_finished() {
+                let _ = h.join();
+            }
         }
     }
 }
