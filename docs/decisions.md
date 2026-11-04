@@ -3618,6 +3618,7 @@ click is refused as the Centerline tool refuses one, the picks kept. So is a cli
 edges while Change asks for a new datum, and a click on a line the view draws with no edge behind it
 (the far side of a hole seen from the side: its near side happens to have a seam edge): it was
 meant to be measured and cannot be, which is a true gap of picks being edges.
+
 The browser lists a view's sets (only sets: the sheet shows the rest), because a set has places to
 add to as a feature has inputs, and double-clicking the row opens the panel as it does a feature's.
 
