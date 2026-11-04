@@ -46,6 +46,8 @@ pub struct FlatBend {
     pub names: [Option<FaceOrigin>; 2],
     /// There was sheet beyond it when it was laid flat.
     pub beyond: bool,
+    /// How many solids the body was in when it was laid flat.
+    pub solids: u32,
     /// What the faces of the strip are called, each with `unfold`.
     pub sources: Vec<u64>,
 }
@@ -206,6 +208,20 @@ impl BendRead {
     }
 }
 
+/// Why a bend with a cut through it at an angle is not laid flat.
+const SLANTED_WALLS: &str = "A cut in this bend does not go square through the sheet (a plain straight cut through a bend meets its inside and its outside in different places), so laid flat and folded back it would not be the same. Make the cut with Cut Normal or Cut Across Bend, or make it after the refold.";
+
+/// Whether two sides of a bend, laid out by one chart, have the same outline: no point of the one
+/// is further from the other than the points that stand for a curve can be.
+fn same_outlines(a: &[Outline], b: &[Outline], opts: &Unfold) -> bool {
+    let loops = |of: &[Outline]| -> Vec<Vec<Piece>> { of.iter().flat_map(|o| std::iter::once(&o.outer).chain(&o.holes).cloned()).collect() };
+    let (a, b) = (loops(a), loops(b));
+    let furthest = |from: &[Vec<Piece>], to: &[Vec<Piece>]| {
+        from.iter().flatten().flat_map(|p| [p.a, p.mid(), p.b]).map(|q| region::distance_to(to, q)).fold(0.0, f64::max)
+    };
+    furthest(&a, &b).max(furthest(&b, &a)) <= 4.0 * opts.deflection
+}
+
 /// How far round a chart a round face reaches, and how far along.
 pub(super) fn rim_of(
     k: &dyn Kernel,
@@ -264,6 +280,7 @@ pub(crate) fn read_bend(
         axis: *axis,
         r0: c0,
         mid: 0.0,
+        slant: 0.0,
         rho,
         o2: Vec2::ZERO,
         ea: Vec2::Y,
@@ -322,6 +339,7 @@ pub(crate) fn read_bend(
         axis: *axis,
         r0: start,
         mid: sweep / 2.0,
+        slant: 0.0,
         rho,
         o2: Vec2::ZERO,
         ea: Vec2::Y,
@@ -332,6 +350,32 @@ pub(crate) fn read_bend(
     let mut outlines = Vec::with_capacity(side.len());
     for (n, f) in side.iter().enumerate() {
         outlines.push(outline_of_face(k, shape, &solid, *f, &chart, sub_key(tag, u32::try_from(n).unwrap_or(u32::MAX)), opts)?);
+    }
+    // Laid flat, its walls are square to the sheet: what is cut out of its other side must be the
+    // same, or laying it flat and folding it back changes the part.
+    if on_inside {
+        let other = Chart::Bend {
+            q: axis.origin() + start * (inside + t),
+            axis: *axis,
+            r0: start,
+            mid: sweep / 2.0,
+            slant: 0.0,
+            rho,
+            o2: Vec2::ZERO,
+            ea: Vec2::Y,
+            eg: Vec2::X,
+            inner: false,
+            radius: inside + t,
+        };
+        let far_side: Vec<Outline> = taken
+            .iter()
+            .filter(|g| !g.1)
+            .map(|g| outline_of_face(k, shape, &solid, g.0, &other, tag, opts))
+            .collect::<Result<_, String>>()
+            .map_err(|_| SLANTED_WALLS.to_owned())?;
+        if !far_side.is_empty() && !same_outlines(&outlines, &far_side, opts) {
+            return Err(SLANTED_WALLS.into());
+        }
     }
     // The stretches of the axis, as one where they overlap.
     let mut spans: Vec<(f64, f64)> = taken.iter().map(|g| g.3).collect();
@@ -376,6 +420,9 @@ pub(crate) fn point_on_side(k: &dyn Kernel, shape: ShapeHandle, face: u32, opts:
     Ok(longest.map(|i| i.mid))
 }
 
+/// Why what is in a flat strip cannot be rolled up.
+pub(crate) const NOT_SHEET: &str = "A bend cannot be folded back while what is in its flat strip is not sheet of one thickness cut straight through: a cut that does not go right through, a slanted or a chamfered edge, or anything raised on the strip, cannot go round a bend. Make the cut go through, or do that work where the sheet stays flat.";
+
 /// What is left of a flat strip, given as the solid `strip`: each piece's outline in the strip's
 /// coordinates (x across it, y along it), tagged from `tag`. Whatever is not sheet of one
 /// thickness, cut straight through, cannot be rolled up, and is said to be so.
@@ -383,7 +430,7 @@ pub(crate) fn strip_outlines(k: &dyn Kernel, strip: ShapeHandle, bend: &FlatBend
     let t = opts.thickness;
     let solid = read(k, strip)?;
     let chart = Chart::Plane { o3: bend.origin, u3: bend.across, v3: bend.along, o2: Vec2::ZERO, u2: Vec2::X, v2: Vec2::Y };
-    let not_sheet = "A bend cannot be folded back while what is in its flat strip is not sheet of one thickness cut straight through: a cut that does not go right through, a slanted or a chamfered edge, or anything raised on the strip, cannot go round a bend. Make the cut go through, or do that work where the sheet stays flat.";
+    let not_sheet = NOT_SHEET;
     let slack = 1e-6 * (1.0 + t);
     let mut outlines = Vec::new();
     let mut area = 0.0;

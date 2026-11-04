@@ -3457,16 +3457,16 @@ fn sheet_unfold(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::Unfold(unfold), p)
 }
 
-fn sheet_refold(s: &mut Session, p: &Value) -> CmdResult {
+fn sheet_refold(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     if s.document().sheet_metal().is_none() {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
     }
     let bends = if arg(p, "bends").is_some_and(|v| !v.is_null()) { parse(p, "bends")? } else { Vec::new() };
     let unfold = match opt_id(p, "unfold")? {
         Some(id) => FeatureId(id),
-        None => s
-            .document()
-            .unfold_to_refold()
+        None => k
+            .and_then(|k| s.regen(k).unfold_still_flat())
+            .or_else(|| s.document().unfold_to_refold())
             .ok_or_else(|| CmdError("The part has no unfold, so it has nothing to fold back: lay bends flat first with sheet.unfold.".into()))?,
     };
     if !s.document().feature(unfold).is_some_and(|f| matches!(f.kind, FeatureKind::Unfold(_))) {
@@ -4505,24 +4505,24 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.rip",
         "Rip",
-        "face: a face reference: a flat side of the sheet, or one side of a bend or a tube. A seam is opened in it, so that a shape that closes on itself can be laid flat. way: \"point\" (default: a slit right across the face through at: [x, y, z]; on a bend or a tube along its axis, on a flat face alongside the bend beside it, else across its short way, or alongside the straight edge along: an edge reference) | \"between\" (a slit from from: [x, y, z] to to: [x, y, z], both on the face; a point on the edge of the face takes the slit through that edge) | \"face\" (the whole face is taken out, and the sheet behind it). gap: how wide a slit is, as the flat pattern has it (default GapSize; a whole face has none)",
+        "face: a face reference: a flat side of the sheet, or one side of a bend or a tube. A seam is opened in it, so that a shape that closes on itself can be laid flat. way: \"point\" (default: a slit right across the face through at: [x, y, z]; on a bend or a tube along its axis, on a flat face alongside the bend beside it, else across its short way, or alongside the straight edge along: an edge reference, on a flat face only) | \"between\" (a slit from from: [x, y, z] to to: [x, y, z], both on the face; a point on the edge of the face takes the slit through that edge) | \"face\" (the whole face is taken out, and the sheet behind it). gap: how wide a slit is, as the flat pattern has it (default GapSize; a whole face has none). A point is on the face when it is within the face's outline and within 10 thicknesses square to it. A rip that would leave the sheet in more pieces than it was is refused: it opens a seam, and a cut takes a piece off",
         true,
         sheet_rip
     ),
     doc_cmd!(
         "sheet.unfold",
         "Unfold",
-        "face: a face reference, the flat side of the sheet that stays where it is. bends: [face references], a round face of each bend to lay flat (default: every bend). Each becomes a flat strip as wide as its allowance, in the plane of the sheet on the side towards the face, and the sheet beyond it comes round with it. The part after this is that partly flat sheet, for cuts and other work to follow on it; sheet.refold folds it back. A bend that is not all that joins the sheet on its two sides (a tube, a box) cannot be laid flat until it is ripped",
+        "face: a face reference, the flat side of the sheet that stays where it is. bends: [face references], a round face of each bend to lay flat (default: every bend). Each becomes a flat strip as wide as its allowance, in the plane of the sheet on the side towards the face, and the sheet beyond it comes round with it. The part after this is that partly flat sheet, for cuts and other work to follow on it; sheet.refold folds it back. A bend that is not all that joins the sheet on its two sides (a tube, a box) cannot be laid flat until it is ripped, and one with a cut through it that is not square to the sheet (a plain straight cut, not Cut Normal or Cut Across Bend) is refused",
         true,
         sheet_unfold
     ),
-    doc_cmd!(
-        "sheet.refold",
-        "Refold",
-        "unfold: the feature (default: the last unfold no refold has folded back whole). bends: [face references], a face of the flat strip of each bend to fold back (default: all of its bends still flat). Each strip is rolled up again as it now is, what was cut out of it going round the bend, and the sheet beyond turns back with it. Refused, in words, when what is in the strip is not sheet of one thickness cut straight through, when something is joined to the strip alone, when the sheet on its two sides is joined some other way, when a cut has left nothing of the strip to hold the two sides together, and when what comes round would run into the sheet",
-        true,
-        sheet_refold
-    ),
+    CommandSpec {
+        id: "sheet.refold",
+        label: "Refold",
+        help: "unfold: the feature (default: the last unfold with a bend still flat). bends: [face references], a face of the flat strip of each bend to fold back (default: all of its bends still flat). Each strip is rolled up again as it now is, what was cut out of it going round the bend, and the sheet beyond turns back with it. Refused, in words, when what is in the strip is not sheet of one thickness cut straight through, when something is joined to the strip alone, when the sheet on its two sides is joined some other way, when a cut has left nothing of the strip to hold the two sides together, when a piece cut off beyond the strip would be left lying, and when what comes round would run into the sheet",
+        mutates: true,
+        run: Run::Opt(sheet_refold),
+    },
     doc_cmd!(
         "sheet.a_side",
         "Define A-Side",

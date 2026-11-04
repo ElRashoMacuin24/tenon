@@ -6,7 +6,7 @@
 //! surface is long: angle x (inside radius + K x thickness).
 
 use std::collections::{BTreeMap, VecDeque};
-use std::f64::consts::TAU;
+use std::f64::consts::{PI, TAU};
 
 use tenon_geom::{Axis, Vec2, Vec3};
 use tenon_kernel::{CurveKind, EdgeId, EdgeInfo, FaceInfo, Kernel, KernelError, ShapeHandle, SurfaceKind, Topology};
@@ -45,6 +45,9 @@ pub(super) enum Chart {
         r0: Vec3,
         /// The angle of the middle of the face: angles are taken within half a turn of it.
         mid: f64,
+        /// How far that middle turns for each mm along the axis: a slit that runs round a tube at
+        /// a slant has no one angle that is opposite it from end to end.
+        slant: f64,
         rho: f64,
         o2: Vec2,
         ea: Vec2,
@@ -68,11 +71,12 @@ impl Chart {
     pub(super) fn round(&self, p: Vec3) -> (f64, f64) {
         match self {
             Chart::Plane { .. } => (0.0, 0.0),
-            Chart::Bend { q, axis, r0, mid, .. } => {
+            Chart::Bend { q, axis, r0, mid, slant, .. } => {
                 let a = axis.dir();
                 let rp = radial(axis, p).unwrap_or(*r0);
                 let raw = r0.cross(rp).dot(a).atan2(r0.dot(rp));
-                (raw + TAU * ((mid - raw) / TAU).round(), (p - *q).dot(a))
+                let along = (p - *q).dot(a);
+                (raw + TAU * ((mid + slant * along - raw) / TAU).round(), along)
             }
         }
     }
@@ -177,14 +181,85 @@ pub(super) fn base_chart(face: &FaceInfo) -> Option<Chart> {
     Some(Chart::Plane { o3: face.centroid, u3, v3, o2: Vec2::ZERO, u2: Vec2::X, v2: Vec2::Y })
 }
 
+/// A gap in a round face less wide than this is none (radians).
+const ROUND_GAP: f64 = 1e-9;
+
+/// What stretches of angle leave of the way round, each given by its two ends in either order: the
+/// middle of the widest gap, and how wide it is. Nothing when they go all the way round.
+fn widest_gap(stretches: &[(f64, f64)]) -> Option<(f64, f64)> {
+    let mut covered: Vec<(f64, f64)> = Vec::with_capacity(stretches.len() + 1);
+    for &(a, b) in stretches {
+        let (lo, long) = (a.min(b), (a - b).abs());
+        if long >= TAU {
+            return None;
+        }
+        let from = lo.rem_euclid(TAU);
+        covered.push((from, from + long));
+        // (What runs past a turn comes round to the start again.)
+        covered.push((from - TAU, from + long - TAU));
+    }
+    covered.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let &(first, _) = covered.first()?;
+    let (mut reach, mut best) = (first, None::<(f64, f64)>);
+    for (lo, hi) in &covered {
+        if *lo > reach && best.is_none_or(|b| *lo - reach > b.1) {
+            best = Some(((reach + *lo) / 2.0, *lo - reach));
+        }
+        reach = reach.max(*hi);
+    }
+    // From the furthest reached round to where the first starts, a turn on.
+    if first + TAU > reach && best.is_none_or(|b| first + TAU - reach > b.1) {
+        best = Some(((reach + first + TAU) / 2.0, first + TAU - reach));
+    }
+    best.filter(|b| b.1 > ROUND_GAP)
+}
+
+/// Which way round the axis a round face is opposite the opening in it, seen from `r0` at `q`: the
+/// angle the chart's middle is to have and how far it turns for each mm along. Angles are then
+/// taken within half a turn of that, so that its rim is in one piece in the flat wherever the
+/// sheet is opened and whatever is cut out of it. A face that covers every angle somewhere along
+/// its length may yet be opened at a slant, along one of its edges. None for one that closes.
+fn opposite_opening(solid: &Read, f: u32, axis: &Axis, q: Vec3, r0: Vec3) -> Option<(f64, f64)> {
+    let a = axis.dir();
+    let angle = |p: Vec3| radial(axis, p).map(|rp| r0.cross(rp).dot(a).atan2(r0.dot(rp)));
+    let onward = |from: f64, to: f64| from + (to - from + PI).rem_euclid(TAU) - PI;
+    // Each edge of its rim: where it starts, is half way and ends, at (angle, along).
+    let mut rim: Vec<(bool, [(f64, f64); 3])> = Vec::new();
+    for &e in solid.topo.face_edges.get(f as usize).map_or(&[][..], Vec::as_slice) {
+        let Some(info) = solid.edges.get(e as usize).filter(|i| !i.degenerate) else { continue };
+        let (start, mid) = (angle(info.start)?, onward(angle(info.start)?, angle(info.mid)?));
+        let end = onward(mid, angle(info.end)?);
+        let along = |p: Vec3| (p - q).dot(a);
+        let round = matches!(&info.curve, CurveKind::Circle { axis: about, .. } if about.dir().cross(a).len() < SMOOTH);
+        rim.push((round, [(start, along(info.start)), (mid, along(info.mid)), (end, along(info.end))]));
+    }
+    // (Within half a turn of where the chart starts, which is at angle 0, so that it stays at 0.)
+    let round_from_start = |angle: f64| (angle + PI).rem_euclid(TAU) - PI;
+    let gap_at = |slant: f64| {
+        let flat = |at: (f64, f64)| at.0 - slant * at.1;
+        let stretches: Vec<(f64, f64)> = rim.iter().flat_map(|(_, r)| [(flat(r[0]), flat(r[1])), (flat(r[1]), flat(r[2]))]).collect();
+        widest_gap(&stretches)
+    };
+    if let Some((middle, _)) = gap_at(0.0) {
+        return Some((round_from_start(middle + PI), 0.0));
+    }
+    rim.iter()
+        .filter(|(round, r)| !round && (r[2].1 - r[0].1).abs() > 1e-9)
+        .map(|(_, r)| (r[2].0 - r[0].0) / (r[2].1 - r[0].1))
+        .find_map(|slant| gap_at(slant).map(|(middle, _)| (round_from_start(middle + PI), slant)))
+}
+
 /// The chart of a round side of the sheet the pattern is laid out from, as a tube that was ripped
-/// open has no flat one: seen from outside, its axis up the page, from the middle of the face.
-fn round_chart(face: &FaceInfo, inner: bool, opts: &Unfold) -> Option<Chart> {
+/// open has no flat one: seen from outside, its axis up the page, opposite the opening in it.
+fn round_chart(solid: &Read, f: u32, inner: bool, opts: &Unfold) -> Option<Chart> {
+    let face = solid.faces.get(f as usize)?;
     let SurfaceKind::Cylinder { axis, radius } = &face.surface else { return None };
     let r0 = radial(axis, face.centroid)?;
     let rho = if inner { radius + opts.k_factor * opts.thickness } else { radius - (1.0 - opts.k_factor) * opts.thickness };
     let eg = if inner { -Vec2::X } else { Vec2::X };
-    Some(Chart::Bend { q: axis.origin() + r0 * *radius, axis: *axis, r0, mid: 0.0, rho, o2: Vec2::ZERO, ea: Vec2::Y, eg, inner, radius: *radius })
+    let q = axis.origin() + r0 * *radius;
+    let (mid, slant) = opposite_opening(solid, f, axis, q, r0).unwrap_or((0.0, 0.0));
+    Some(Chart::Bend { q, axis: *axis, r0, mid, slant, rho, o2: Vec2::ZERO, ea: Vec2::Y, eg, inner, radius: *radius })
 }
 
 /// The face a pattern is laid out from when it is not told: the largest flat face, unless that
@@ -203,9 +278,10 @@ fn side_to_lay_out_from(solid: &Read, t: f64) -> Option<u32> {
 }
 
 /// The chart of a face tangent to `parent` at `q`.
-fn child_chart(parent: &Chart, q: Vec3, face: &FaceInfo, inner: Option<bool>, opts: &Unfold) -> Result<Chart, String> {
+fn child_chart(parent: &Chart, q: Vec3, solid: &Read, f: u32, inner: Option<bool>, opts: &Unfold) -> Result<Chart, String> {
     let (b3, b2) = parent.tangent(q);
     let o2 = parent.map(q);
+    let face = solid.faces.get(f as usize).ok_or("no such face")?;
     match (&face.surface, inner) {
         (SurfaceKind::Cylinder { axis, radius }, Some(inner)) => {
             let a = axis.dir();
@@ -217,9 +293,9 @@ fn child_chart(parent: &Chart, q: Vec3, face: &FaceInfo, inner: Option<bool>, op
             }
             let rc =
                 radial(axis, face.centroid).ok_or("A bend that goes all the way round (a tube) has no edge to lay it flat from: it needs a seam.")?;
-            let mid = r0.cross(rc).dot(a).atan2(r0.dot(rc));
+            let (mid, slant) = opposite_opening(solid, f, axis, q, r0).unwrap_or((r0.cross(rc).dot(a).atan2(r0.dot(rc)), 0.0));
             let rho = if inner { radius + opts.k_factor * opts.thickness } else { radius - (1.0 - opts.k_factor) * opts.thickness };
-            Ok(Chart::Bend { q, axis: *axis, r0, mid, rho, o2, ea, eg, inner, radius: *radius })
+            Ok(Chart::Bend { q, axis: *axis, r0, mid, slant, rho, o2, ea, eg, inner, radius: *radius })
         }
         _ => Ok(Chart::Plane { o3: q, u3: b3[0], v3: b3[1], o2, u2: b2[0], v2: b2[1] }),
     }
@@ -310,7 +386,7 @@ pub(super) fn follow(solid: &Read, base: u32, first: Chart, opts: &Unfold) -> Re
                         None => continue,
                     },
                 };
-                charts.insert(g, child_chart(&chart, info.start, next, inner, opts)?);
+                charts.insert(g, child_chart(&chart, info.start, solid, g, inner, opts)?);
                 queue.push_back(g);
             }
         }
@@ -352,7 +428,7 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
         );
     }
     let first = base_chart(base_info)
-        .or_else(|| round_chart(base_info, bend_side(base as usize, &solid.faces, t)?, opts))
+        .or_else(|| round_chart(&solid, base, bend_side(base as usize, &solid.faces, t)?, opts))
         .ok_or("The pattern is laid out from a flat face or a side of a bend: the face chosen is neither.")?;
     let charts = follow(&solid, base, first, opts)?;
     let Read { topo, faces, edges } = solid;
@@ -489,7 +565,8 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
         bends.push(Bend {
             lines,
             extents: extents.remove(f).unwrap_or_default(),
-            angle: hi - lo,
+            // (A slit at a slant has the sheet reach further round than a turn from end to end.)
+            angle: (hi - lo).min(TAU),
             radius: if *inner { *radius } else { radius - t },
             up: *inner,
             allowance: (hi - lo) * rho,
@@ -514,7 +591,7 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
             let by = across * (at - from).dot(across);
             first.lines = base.iter().map(|l| [l[0] + by, l[1] + by]).collect();
         }
-        first.angle += other.angle;
+        first.angle = (first.angle + other.angle).min(TAU);
         first.allowance += other.allowance;
         first.extents.extend(other.extents);
     }

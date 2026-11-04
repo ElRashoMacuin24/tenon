@@ -16,8 +16,6 @@ use crate::sheet::{Refold, Rip, RipWay, UnfoldBends, rip, unfold_opts};
 
 /// How far past a bend, or a strip, sheet is looked for (mm).
 const JUST_PAST: f64 = 0.01;
-/// How many places along a bend's end sheet is looked for there: a hole may be at some of them.
-const PLACES: usize = 17;
 
 /// What came of trying to lay a bend flat.
 enum Tried {
@@ -53,9 +51,23 @@ impl Ctx<'_> {
         Ok(near?)
     }
 
-    fn sheet_at_any(&mut self, s: ShapeHandle, places: &[Vec3], t: f64) -> Result<bool, Stop> {
-        for p in places {
-            if self.sheet_at(s, *p, t)? {
+    /// A thin box in the middle of the sheet, just past an edge of it: from `at` (on that edge, in
+    /// the middle of the sheet), `away` from the edge and from `run.0` to `run.1` along it. It goes
+    /// into `temp`.
+    fn band(&mut self, at: Vec3, away: Vec3, along: Vec3, run: (f64, f64), t: f64, temp: &mut Vec<ShapeHandle>) -> Result<ShapeHandle, Stop> {
+        let past = JUST_PAST.min(t);
+        let up = away.cross(along);
+        let frame = Frame::new(at + along * run.0 + away * (past / 2.0) - up * (t / 4.0), up, away).ok_or("an edge of the sheet has no direction")?;
+        let band = self.k.make_box(&frame, Vec3::new(past / 2.0, run.1 - run.0, t / 2.0))?.shape;
+        temp.push(band);
+        Ok(band)
+    }
+
+    /// Whether the solid `s` reaches any of `bands`: sheet goes on past that edge, if only by a
+    /// neck, wherever along it that is.
+    fn reaches(&mut self, s: ShapeHandle, bands: &[ShapeHandle]) -> Result<bool, Stop> {
+        for b in bands {
+            if self.k.min_distance(SubShape::Shape(s), SubShape::Shape(*b))?.value < 1e-6 {
                 return Ok(true);
             }
         }
@@ -114,15 +126,33 @@ impl Ctx<'_> {
             _ => None,
         };
         let tools = rip::tools(&*self.k, body, face, &r.way, along, r.gap.unwrap_or(sizes.gap), &opts)?;
-        self.sheet_tools(id, bi, body, &tools, false).map_err(|stop| match stop {
-            Stop::Failed(m) => Stop::Failed(m.replacen("The cut could not be cut", "The rip could not be cut", 1)),
-            other => other,
-        })?;
-        let left = self.body_shape(bi)?;
-        if self.k.topology(left)?.solids == 0 {
-            return Err("Taking that out leaves nothing of the part: open a seam with a slit, or pick a smaller face.".into());
+        // A rip that is refused leaves the part as it was.
+        let (were, names) = (self.k.topology(body)?.solids, self.regen.bodies.get(bi).map(|b| b.names.clone()).unwrap_or_default());
+        let kept = self.k.duplicate(body)?;
+        if let Err(stop) = self.sheet_tools(id, bi, body, &tools, false) {
+            self.k.release(kept);
+            return Err(match stop {
+                Stop::Failed(m) => Stop::Failed(m.replacen("The cut could not be cut", "The rip could not be cut", 1)),
+                other => other,
+            });
         }
-        Ok(())
+        let left = self.body_shape(bi)?;
+        let refused = match self.k.topology(left).map(|topo| topo.solids) {
+            Ok(0) => Some("Taking that out leaves nothing of the part: open a seam with a slit, or pick a smaller face."),
+            Ok(now) if now > were => Some(
+                "A rip opens a seam and leaves the sheet in one piece, and this one would cut it in two, which could not be laid flat together. Click a straight edge for a slit to run alongside, stop it short of an edge with Point to Point, or use Cut if a piece is to come off.",
+            ),
+            _ => None,
+        };
+        let Some(why) = refused else {
+            self.k.release(kept);
+            return Ok(());
+        };
+        self.k.release(left);
+        if let Some(b) = self.regen.bodies.get_mut(bi) {
+            (b.shape, b.names) = (kept, names);
+        }
+        Err(why.into())
     }
 
     /// Chosen bends laid flat, one after the other, from a stationary face.
@@ -284,21 +314,14 @@ impl Ctx<'_> {
         let allowance = bend.allowance();
         let lumps = self.solids_of(cut.0, &cut.1)?;
         temp.extend(lumps.iter().map(|l| l.0));
-        // Just past each end of the bend, at the middle of the sheet, along the stretches it takes.
-        let places_past = |e: Vec3, away: Vec3| -> Vec<Vec3> {
-            let mut out = Vec::new();
-            for (lo, hi) in &bend.runs {
-                for i in 0..PLACES {
-                    let s = lo + (hi - lo) * (i as f64 + 0.5) / PLACES as f64;
-                    out.push(bend.center + e * (r + t / 2.0) + bend.dir * s + away * JUST_PAST.min(t));
-                }
-            }
-            out
-        };
+        // Just past each end of the bend, along the stretches it takes.
         let (e0, e1) = (bend.start, bend.finish());
+        let mut past = |ctx: &mut Self, e: Vec3, away: Vec3| -> Result<Vec<ShapeHandle>, Stop> {
+            bend.runs.iter().map(|run| ctx.band(bend.center + e * (r + t / 2.0), away, bend.dir, *run, t, temp)).collect()
+        };
         // Round the bend from its start is along `dir x e`: past its start is back along that.
-        let past_start = places_past(e0, -bend.dir.cross(e0));
-        let past_end = places_past(e1, bend.dir.cross(e1));
+        let past_start = past(self, e0, -bend.dir.cross(e0))?;
+        let past_end = past(self, e1, bend.dir.cross(e1))?;
         // The piece the stationary face is on, and which end of the bend it comes up to.
         let mut stay: Option<usize> = None;
         for (i, l) in lumps.iter().enumerate() {
@@ -310,8 +333,8 @@ impl Ctx<'_> {
         let Some(stay) = stay else {
             return Err("The stationary face could not be found on the sheet once the bend was out of it: pick another.".into());
         };
-        let at_start = self.sheet_at_any(lumps[stay].0, &past_start, t)?;
-        let at_end = self.sheet_at_any(lumps[stay].0, &past_end, t)?;
+        let at_start = self.reaches(lumps[stay].0, &past_start)?;
+        let at_end = self.reaches(lumps[stay].0, &past_end)?;
         let near_start = match (at_start, at_end) {
             (true, true) => return Ok(Laid::StillJoined),
             (true, false) => true,
@@ -321,7 +344,7 @@ impl Ctx<'_> {
         let far_places = if near_start { &past_end } else { &past_start };
         let mut far: Vec<usize> = Vec::new();
         for (i, l) in lumps.iter().enumerate() {
-            if i != stay && self.sheet_at_any(l.0, far_places, t)? {
+            if i != stay && self.reaches(l.0, far_places)? {
                 far.push(i);
             }
         }
@@ -336,13 +359,21 @@ impl Ctx<'_> {
         let (inner_tag, outer_tag) = (sub_key(key, Part::BendInner as u32), sub_key(key, Part::BendOuter as u32));
         let mut strips: Vec<Named> = Vec::with_capacity(bend.outlines.len());
         let mut sources = vec![inner_tag, outer_tag];
+        // Each hole is pushed through on its own, the way a hole is rolled when folding back: the
+        // outline of one that came as points runs whichever way round the solid gave it.
+        let margin = r.min(t) / 2.0;
+        let through = Frame::new(strip_frame.origin() - near_e * margin, near_e, on).ok_or("a bend has no direction")?;
         for o in &bend.outlines {
             let o = from_near(o);
             sources.extend(o.tags());
-            let holes = o.holes.iter().map(|h| o.as_loop(h)).collect();
-            let profile = Profile { frame: strip_frame, regions: vec![Region { outer: o.as_loop(&o.outer), holes }] };
-            let made = self.sheet_prism(id, &profile, t, Some([inner_tag, outer_tag]))?;
+            let profile = Profile { frame: strip_frame, regions: vec![Region { outer: o.as_loop(&o.outer), holes: vec![] }] };
+            let mut made = self.sheet_prism(id, &profile, t, Some([inner_tag, outer_tag]))?;
             temp.push(made.0);
+            for h in &o.holes {
+                let tool = Profile { frame: through, regions: vec![Region { outer: o.as_loop(h), holes: vec![] }] };
+                let cutter = self.sheet_prism(id, &tool, t + 2.0 * margin, Some([inner_tag, outer_tag]))?;
+                made = self.with_hole(&made, cutter, temp)?;
+            }
             strips.push(made);
         }
         // The far side, brought round.
@@ -382,9 +413,20 @@ impl Ctx<'_> {
             rho: bend.rho,
             names: bend.names,
             beyond,
+            solids: were,
             sources,
         });
         Ok(Laid::Done(Moved { shape, names: whole_names, by, moved: moved_names }))
+    }
+
+    /// `made` with `cutter` taken out of it. What is made on the way goes into `temp`.
+    fn with_hole(&mut self, made: &Named, cutter: Named, temp: &mut Vec<ShapeHandle>) -> Result<Named, Stop> {
+        temp.push(cutter.0);
+        let inputs: [&[Option<FaceOrigin>]; 2] = [&made.1, &cutter.1];
+        let op = self.k.boolean(BoolOp::Cut, made.0, &[cutter.0])?;
+        temp.push(op.shape);
+        let faces = self.k.topology(op.shape)?.faces;
+        Ok((op.shape, names_of_boolean(&op.history, &inputs, faces)))
     }
 
     /// A solid moved as `by` says. What is made on the way goes into `temp`.
@@ -423,6 +465,12 @@ impl Ctx<'_> {
             if topo.solids > were {
                 return Err(format!(
                     "The sheet does not hold together {what}: what is beyond the bend would no longer be joined to the rest, because nothing of the bend is left between them. Leave some of the bend whole."
+                )
+                .into());
+            }
+            if !self.k.is_valid(op.shape)? {
+                return Err(format!(
+                    "The sheet {what} does not make a sound solid: something in it cannot be carried across the bend. Suppress the last cut made in or near this bend, or change its size a little."
                 )
                 .into());
             }
@@ -475,6 +523,19 @@ impl Ctx<'_> {
         Ok(())
     }
 
+    /// Whether anything of the solid `s` is in the box of that `size` from `height` up `frame`'s Z.
+    fn body_within(&mut self, s: ShapeHandle, frame: &Frame, height: f64, size: Vec3) -> Result<bool, Stop> {
+        let corner = Frame::new(frame.origin() + frame.z() * height, frame.z(), frame.x()).ok_or("a flat strip has no direction")?;
+        let probe = self.k.make_box(&corner, size)?.shape;
+        let inside = self.k.boolean(BoolOp::Intersect, s, &[probe]);
+        self.k.release(probe);
+        // (The kernel has no common solid to give when there is none.)
+        let Ok(op) = inside else { return Ok(false) };
+        let solids = self.k.topology(op.shape).map(|topo| topo.solids);
+        self.k.release(op.shape);
+        Ok(solids? > 0)
+    }
+
     /// Folds one flat strip back: what lies in it is taken out, leaving the sheet in pieces; it is
     /// rolled up, holes and all; and the sheet beyond turns back with it.
     fn fold_back(&mut self, id: FeatureId, unfold: FeatureId, key: u64, opts: &Unfold) -> Result<(), Stop> {
@@ -492,6 +553,14 @@ impl Ctx<'_> {
         let cut_tag = sub_key(tag, Part::Cut as u32);
         let at_xy = |x: f64, y: f64| (Vec2::new(x, y), cut_tag);
         let (lo, hi) = bend.run;
+        // Nothing on either face of the strip, raised over it from what lies beside it or not.
+        let frame = Frame::new(bend.origin + bend.along * lo, bend.up, bend.across).ok_or("a flat strip has no direction")?;
+        let skin = JUST_PAST.min(t);
+        for height in [-skin, t] {
+            if self.body_within(body, &frame, height, Vec3::new(bend.allowance, hi - lo, skin))? {
+                return Err(flatten::NOT_SHEET.into());
+            }
+        }
         let shape = outline::polygon(&[at_xy(0.0, lo), at_xy(bend.allowance, lo), at_xy(bend.allowance, hi), at_xy(0.0, hi)]);
         let frame = Frame::new(bend.origin, bend.up, bend.across).ok_or("a flat strip has no direction")?;
         let profile = Profile { frame, regions: vec![Region { outer: outline::to_loop(&shape), holes: vec![] }] };
@@ -555,19 +624,12 @@ impl Ctx<'_> {
         let lumps = self.solids_of(cut.0, &cut.1)?;
         temp.extend(lumps.iter().map(|l| l.0));
         // Which side of the strip each piece is on.
-        let places = |x: f64| -> Vec<Vec3> {
-            (0..PLACES)
-                .map(|i| {
-                    let y = bend.run.0 + (bend.run.1 - bend.run.0) * (i as f64 + 0.5) / PLACES as f64;
-                    bend.origin + bend.across * x + bend.along * y + bend.up * (t / 2.0)
-                })
-                .collect()
-        };
-        let past = JUST_PAST.min(t);
-        let (near_places, far_places) = (places(-past), places(bend.allowance + past));
+        let middle = bend.origin + bend.up * (t / 2.0);
+        let near_band = [self.band(middle, -bend.across, bend.along, bend.run, t, temp)?];
+        let far_band = [self.band(middle + bend.across * bend.allowance, bend.across, bend.along, bend.run, t, temp)?];
         let (mut near, mut far, mut others): (Vec<usize>, Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new(), Vec::new());
         for (i, l) in lumps.iter().enumerate() {
-            let (n, f) = (self.sheet_at_any(l.0, &near_places, t)?, self.sheet_at_any(l.0, &far_places, t)?);
+            let (n, f) = (self.reaches(l.0, &near_band)?, self.reaches(l.0, &far_band)?);
             match (n, f) {
                 (true, true) => {
                     return Err(
@@ -598,6 +660,19 @@ impl Ctx<'_> {
                     .into(),
             );
         }
+        // A piece cut off since the bend was laid flat, beyond the strip: nothing turns it, and it
+        // would be left lying where it is as the rest folds back.
+        if were > bend.solids {
+            for i in &others {
+                let at = self.k.mass_properties(lumps[*i].0, 1.0)?.center_of_mass;
+                if (at - bend.origin).dot(bend.across) > bend.allowance / 2.0 {
+                    return Err(
+                        "The sheet does not hold together round this bend: a cut has parted a piece from the sheet beyond its flat strip, so that piece would be left lying where it is. Delete that cut, or make it after the refold."
+                            .into(),
+                    );
+                }
+            }
+        }
         // Rolled up about the axis it turned about, from the side that stays.
         let center = bend.center();
         let turn_frame = Frame::new(center, bend.along, bend.up).ok_or("a flat strip has no direction")?;
@@ -612,12 +687,7 @@ impl Ctx<'_> {
             for h in &o.holes {
                 let tool = Profile { frame: turn_frame, regions: vec![Region { outer: o.as_rolled_loop(h), holes: vec![] }] };
                 let cutter = self.sheet_roll(id, &tool, bend.rho, r - margin, r + t + margin, [inner_tag, outer_tag])?;
-                temp.push(cutter.0);
-                let inputs: [&[Option<FaceOrigin>]; 2] = [&made.1, &cutter.1];
-                let op = self.k.boolean(BoolOp::Cut, made.0, &[cutter.0])?;
-                temp.push(op.shape);
-                let faces = self.k.topology(op.shape)?.faces;
-                made = (op.shape, names_of_boolean(&op.history, &inputs, faces));
+                made = self.with_hole(&made, cutter, temp)?;
             }
             // Its round faces are called what they were before it was laid flat.
             for n in &mut made.1 {

@@ -176,6 +176,10 @@ impl Regen {
     pub fn status_of(&self, id: FeatureId) -> Option<&FeatureStatus> {
         self.status.iter().find(|(f, _)| *f == id).map(|(_, s)| s)
     }
+    /// The last unfold with a bend still laid flat.
+    pub fn unfold_still_flat(&self) -> Option<FeatureId> {
+        self.flat_bends.last().map(|b| b.unfold)
+    }
     /// The first failing feature and its message.
     pub fn first_error(&self) -> Option<(FeatureId, &str)> {
         self.status.iter().find_map(|(f, s)| match s {

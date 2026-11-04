@@ -25,6 +25,19 @@ const END_B: u64 = 4;
 
 /// A point this close to the edge of a face is on it (mm).
 const ON_EDGE: f64 = 1e-6;
+/// How many thicknesses square to a face a point of a rip may be and still be on it: what was picked
+/// on a face stays where it was when a change of the rule moves the face.
+const OFF_THE_FACE: f64 = 10.0;
+
+/// Why a point of a rip cannot be used.
+fn off_face(what: &str, p: Vec3) -> String {
+    format!(
+        "The {what} of the rip, ({}, {}, {}), is not on the face it was picked on: pick it again.",
+        crate::explain::mm(p.x),
+        crate::explain::mm(p.y),
+        crate::explain::mm(p.z)
+    )
+}
 
 /// The slot `half` either side of the line from `p` to `q`, its sides and ends tagged.
 fn slot(p: Vec2, q: Vec2, half: f64) -> Vec<Piece> {
@@ -42,7 +55,12 @@ pub fn tools(k: &dyn Kernel, shape: ShapeHandle, face: u32, way: &RipWay, along:
     }
     match &info.surface {
         SurfaceKind::Plane { .. } if has_other_side(&solid, face as usize, opts.thickness) => flat(k, shape, &solid, face, way, along, gap, opts),
-        SurfaceKind::Cylinder { .. } if bend_side(face as usize, &solid.faces, opts.thickness).is_some() => round(k, shape, &solid, face, way, gap, opts),
+        SurfaceKind::Cylinder { .. } if bend_side(face as usize, &solid.faces, opts.thickness).is_some() => {
+            if along.is_some() {
+                return Err("A slit in a round face runs along its axis, so it runs alongside no edge: take the edge out of the rip.".into());
+            }
+            round(k, shape, &solid, face, way, gap, opts)
+        }
         _ => Err(
             "A rip goes in a side of the sheet, flat or round, and the face picked is neither: it is the rim of the sheet, or not one thickness from another side. Pick the face you would see looking at the sheet."
                 .into(),
@@ -96,19 +114,12 @@ fn flat(
     let outline = outline_of(k, shape, solid, face, &chart, opts)?;
     let loops = [outline.clone()];
     let is_on = |p: Vec2| region::inside(&loops, p) || region::distance_to(&loops, p) <= ON_EDGE;
-    let off_face = |what: &str, p: Vec3| {
-        format!(
-            "The {what} of the rip, ({}, {}, {}), is not on the face it was picked on: pick it again.",
-            crate::explain::mm(p.x),
-            crate::explain::mm(p.y),
-            crate::explain::mm(p.z)
-        )
-    };
+    let in_reach = |at: Vec3| (at - *o3).dot(normal.normalized()).abs() <= OFF_THE_FACE * opts.thickness;
     let shapes: Vec<Shape> = match way {
         RipWay::Face => vec![Shape { outer: outline, holes: Vec::new() }],
         RipWay::Point { at, .. } => {
             let p = chart.map(*at);
-            if !is_on(p) {
+            if !is_on(p) || !in_reach(*at) {
                 return Err(off_face("point", *at));
             }
             let d = match along {
@@ -132,7 +143,7 @@ fn flat(
         RipWay::Between { from, to } => {
             let (p, q) = (chart.map(*from), chart.map(*to));
             for (what, at, seen) in [("first point", *from, p), ("second point", *to, q)] {
-                if !is_on(seen) {
+                if !is_on(seen) || !in_reach(at) {
                     return Err(off_face(what, at));
                 }
             }
@@ -170,9 +181,27 @@ fn round(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, face: u32, way: &RipW
     let a = axis.dir();
     // How far round and along the face reaches, from the middle of it; all the way round, a tube
     // has no middle, and is measured from the first point of the rip.
+    let in_reach = |what: &str, at: Vec3| -> Result<(), String> {
+        let Some(out) = radial(axis, at) else {
+            return Err(format!(
+                "The {what} of the rip is on the axis of the round face it was picked on, not on the face, so it has no place round it: pick it again."
+            ));
+        };
+        if ((at - axis.origin()).dot(out) - radius).abs() > OFF_THE_FACE * t {
+            return Err(off_face(what, at));
+        }
+        Ok(())
+    };
     let picked = match way {
-        RipWay::Point { at, .. } => radial(axis, *at),
-        RipWay::Between { from, .. } => radial(axis, *from),
+        RipWay::Point { at, .. } => {
+            in_reach("point", *at)?;
+            radial(axis, *at)
+        }
+        RipWay::Between { from, to } => {
+            in_reach("first point", *from)?;
+            in_reach("second point", *to)?;
+            radial(axis, *from)
+        }
         RipWay::Face => None,
     };
     let middle = radial(axis, info.centroid);
@@ -184,6 +213,7 @@ fn round(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, face: u32, way: &RipW
         axis: *axis,
         r0,
         mid: 0.0,
+        slant: 0.0,
         rho,
         o2: Vec2::ZERO,
         ea: Vec2::Y,
@@ -204,22 +234,37 @@ fn round(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, face: u32, way: &RipW
     let margin = inside.min(t) / 2.0;
     let on_face =
         |p: Vec2| (whole || (turn.0 * rho - ON_EDGE..=turn.1 * rho + ON_EDGE).contains(&p.x)) && (run.0 - ON_EDGE..=run.1 + ON_EDGE).contains(&p.y);
-    let off_face = |what: &str, p: Vec3| {
-        format!(
-            "The {what} of the rip, ({}, {}, {}), is not on the face it was picked on: pick it again.",
-            crate::explain::mm(p.x),
-            crate::explain::mm(p.y),
-            crate::explain::mm(p.z)
-        )
-    };
+    // A tool runs past the ends of the face, but stops short of the next piece of the bend on the
+    // same axis, at the middle of the slot between them.
+    let (mut below, mut above) = (margin, margin);
+    for (i, g) in solid.faces.iter().enumerate() {
+        let SurfaceKind::Cylinder { axis: b, .. } = &g.surface else { continue };
+        let apart = b.origin() - axis.origin();
+        let Ok(other) = u32::try_from(i) else { continue };
+        if other == face
+            || a.cross(b.dir()).len() > 1e-6
+            || (apart - a * apart.dot(a)).len() > 1e-6 * (1.0 + inside + t)
+            || bend_side(i, &solid.faces, t).is_none()
+        {
+            continue;
+        }
+        let (_, there) = rim_of(k, shape, solid, other, &here, axis, opts)?;
+        if there.0 >= run.1 - 1e-9 {
+            above = above.min(((there.0 - run.1) / 2.0).max(0.0));
+        }
+        if there.1 <= run.0 + 1e-9 {
+            below = below.min(((run.0 - there.1) / 2.0).max(0.0));
+        }
+    }
+    let (from_y, to_y) = (run.0 - below, run.1 + above);
     let frame = Frame::new(axis.origin(), a, r0).ok_or("the bend of a rip has no direction")?;
-    // The slit, in the flat of the face: past the ends of the bend along it (nothing else is
-    // there), and no further round than the bend goes.
+    // The slit, in the flat of the face: past its ends along the bend, and no further round than
+    // the bend goes.
     let tool = |outline: Vec<Piece>| Tool::Bend { face, frame, rho, inner: inside - margin, outer: inside + t + margin, outline };
     match way {
         RipWay::Face => {
             let c = |x: f64, y: f64| (Vec2::new(x * rho, y), SIDE_A);
-            Ok(vec![tool(polygon(&[c(turn.0, run.0 - margin), c(turn.1, run.0 - margin), c(turn.1, run.1 + margin), c(turn.0, run.1 + margin)]))])
+            Ok(vec![tool(polygon(&[c(turn.0, from_y), c(turn.1, from_y), c(turn.1, to_y), c(turn.0, to_y)]))])
         }
         RipWay::Point { at, .. } => {
             let p = here.map(*at);
@@ -232,12 +277,7 @@ fn round(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, face: u32, way: &RipW
                 return Err("A slit there takes nothing of the bend: move the point a little.".into());
             }
             let c = |x: f64, y: f64, tag: u64| (Vec2::new(x, y), tag);
-            Ok(vec![tool(polygon(&[
-                c(from, run.0 - margin, END_B),
-                c(to, run.0 - margin, SIDE_B),
-                c(to, run.1 + margin, END_A),
-                c(from, run.1 + margin, SIDE_A),
-            ]))])
+            Ok(vec![tool(polygon(&[c(from, from_y, END_B), c(to, from_y, SIDE_B), c(to, to_y, END_A), c(from, to_y, SIDE_A)]))])
         }
         RipWay::Between { from, to } => {
             let (p, q) = (here.map(*from), here.map(*to));
@@ -257,12 +297,7 @@ fn round(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, face: u32, way: &RipW
             };
             let past = |at: Vec2| if on_rim(at) { gap + t } else { 0.0 };
             let c = |x: f64, y: f64| (Vec2::new(x, y), SIDE_A);
-            let bound = [polygon(&[
-                c(turn.0 * rho, run.0 - margin),
-                c(turn.1 * rho, run.0 - margin),
-                c(turn.1 * rho, run.1 + margin),
-                c(turn.0 * rho, run.1 + margin),
-            ])];
+            let bound = [polygon(&[c(turn.0 * rho, from_y), c(turn.1 * rho, from_y), c(turn.1 * rho, to_y), c(turn.0 * rho, to_y)])];
             let slit = [slot(p - d * past(p), q + d * past(q), gap / 2.0)];
             let shapes = region::common(&slit, &bound).map_err(|why| touches(&why))?;
             if shapes.is_empty() {
