@@ -672,6 +672,8 @@ impl Workbench {
         self.chrome.sheet.flat_view = false;
         // (A face picked for Define A-Side would change the part, which the environment does not.)
         self.chrome.sheet.pick_a_side = false;
+        // (Nor would a plane for a new sketch, which it refuses.)
+        self.pick_plane = false;
         self.view.selection.clear();
         self.panel = None;
         let study = self.document().studies().first().map(|s| s.id);
