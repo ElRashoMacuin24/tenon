@@ -745,3 +745,25 @@ fn centre_marks_and_centrelines_by_clicking() {
         assert!(s[0].dist(t[0] + by) < 1e-6 && s[1].dist(t[1] + by) < 1e-6, "{i}");
     }
 }
+
+#[test]
+fn a_projected_view_is_not_stacked_on_one_already_there() {
+    let dir = m4("stacked");
+    let mut wb = Workbench::headless(Box::new(tenon_kernel_occt::OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.open(&dir.join("plate.tenondrw")).unwrap();
+    settle_frames(&mut d, &mut wb, 40);
+    let views = |wb: &mut Workbench| info(wb)["views"].as_array().unwrap().len();
+    let before = views(&mut wb);
+    wb.run_ui("drw.projected").unwrap();
+    settle_frames(&mut d, &mut wb, 2);
+    let first = center(&info(&mut wb), 0);
+    // The parent, and then a click on the parent itself: refused, in words.
+    click_sheet(&mut d, &mut wb, first);
+    settle_frames(&mut d, &mut wb, 2);
+    click_sheet(&mut d, &mut wb, first);
+    settle_frames(&mut d, &mut wb, 2);
+    assert!(wb.status_error && wb.status().contains("is already there"), "{}", wb.status());
+    assert_eq!(views(&mut wb), before);
+    d.tap(&mut wb, egui::Key::Escape);
+}
