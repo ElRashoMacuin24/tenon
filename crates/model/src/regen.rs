@@ -416,8 +416,73 @@ pub fn regenerate_with(doc: &Document, k: &mut dyn Kernel, mut cache: Option<&mu
         c.last = hashes;
         c.resumed_at = begin;
     }
+    // (After the last feature, and never in a checkpoint: the features are built as the part
+    // file says, and what they came to is reflected.)
+    if doc.reflected()
+        && !regen.cancelled
+        && let Err(e) = reflect(&mut regen, cx.k)
+    {
+        match e {
+            KernelError::Cancelled => regen.cancelled = true,
+            e => {
+                if let Some((_, status)) = regen.status.last_mut() {
+                    *status = FeatureStatus::Error { message: format!("the part cannot be mirrored: {e}") };
+                }
+            }
+        }
+    }
     regen.millis = t0.elapsed().as_secs_f64() * 1000.0;
     regen
+}
+
+/// A point in the part's mirror image: reflected in its XY plane.
+fn reflected_point(p: Vec3) -> Vec3 {
+    Vec3::new(p.x, p.y, -p.z)
+}
+
+/// A frame in the part's mirror image: X and Y are reflected, Z made from them, so that it stays
+/// a right-handed frame on the same plane.
+fn reflected_frame(f: &Frame) -> Frame {
+    Frame::new(reflected_point(f.origin()), -reflected_point(f.z()), reflected_point(f.x())).unwrap_or(*f)
+}
+
+/// The part's solids as their mirror image in the part's XY plane (DEC-130), each face keeping
+/// its name, and what is said of them reflected with them: work geometry, sketch planes, threads
+/// (whose hand changes). The kernel's mirror turns the solids inside out in the same stroke, so
+/// their meshes, normals, volumes and everything that reads them are those of a true solid.
+fn reflect(regen: &mut Regen, k: &mut dyn Kernel) -> Result<(), KernelError> {
+    let mirror = Transform::Mirror { plane: Frame::WORLD };
+    for b in &mut regen.bodies {
+        let op = k.transform(b.shape, &mirror)?;
+        let faces = match k.topology(op.shape) {
+            Ok(topo) => topo.faces,
+            Err(e) => {
+                k.release(op.shape);
+                return Err(e);
+            }
+        };
+        b.names = names_of_boolean(&op.history, &[&b.names], faces);
+        k.release(b.shape);
+        b.shape = op.shape;
+    }
+    for g in regen.work.values_mut() {
+        *g = match *g {
+            WorkGeom::Plane(f) => WorkGeom::Plane(reflected_frame(&f)),
+            WorkGeom::Axis(a) => WorkGeom::Axis(Axis::new(reflected_point(a.origin()), reflected_point(a.dir())).unwrap_or(a)),
+            WorkGeom::Point(p) => WorkGeom::Point(reflected_point(p)),
+        };
+    }
+    for f in regen.sketch_frames.values_mut() {
+        *f = reflected_frame(f);
+    }
+    for m in &mut regen.threads {
+        m.start = reflected_point(m.start);
+        m.direction = reflected_point(m.direction);
+        m.left = !m.left;
+        m.face.fingerprint.centroid = reflected_point(m.face.fingerprint.centroid);
+        m.face.fingerprint.direction = reflected_point(m.face.fingerprint.direction);
+    }
+    Ok(())
 }
 
 /// A sketch as a regeneration uses it: the document's own, or a copy with its projected
