@@ -1,10 +1,11 @@
 //! Regenerating Emboss and Derive (DEC-133).
 //!
 //! An emboss on the part's faces is the layer between those faces and the same faces a depth
-//! along their normals, as far as the profile is seen on them along the sketch's normal: what
-//! looks that way first is what it goes on. Laid round a cylinder or a cone instead (Wrap to Face),
-//! it is the outline rolled round the surface with its lengths kept. From the sketch plane, it is
-//! the prism on the one side of the plane taken out of the part and the prism on the other added.
+//! along their normals, as far as the profile is seen on them along the sketch's normal: only what
+//! looks that way goes (a round face is cut where it turns away), and of that only what nothing
+//! else lies over. Laid round a cylinder or a cone instead (Wrap to Face), it is the outline rolled
+//! round the surface with its lengths kept, cut to the layer on the face. From the sketch plane, it
+//! is the prism on the one side of the plane taken out of the part and the prism on the other added.
 //!
 //! A derived part is the solids of another part file, rebuilt here, scaled and mirrored.
 
@@ -26,9 +27,9 @@ type Named = (ShapeHandle, Vec<Option<FaceOrigin>>);
 /// on: about a degree. A wall along the normal, or one that leans back, is not.
 const FACING: f64 = 0.02;
 
-/// How far a tool laid round a surface reaches past the surface on the other side from where it
-/// goes, at most, so that it is not a face on a face for the kernel to judge.
-const SUNK: f64 = 0.05;
+/// How far a tool laid round a surface reaches past the layer it is cut to, at most, so that its top
+/// and foot are not a face on a face for the kernel to judge.
+const OVER: f64 = 0.05;
 
 /// The faces an emboss goes on, thickened: the solid of them, and how far it may reach from the
 /// sketch plane.
@@ -167,6 +168,59 @@ impl<'a> Ctx<'a> {
         (t != 0.0).then(|| (if t > 0.0 { narrows } else { -narrows }, t.abs()))
     }
 
+    /// Runs `work` on body `bi` and holds what it comes to against what it was: an emboss does not
+    /// leave a piece loose or a hollow shut in, and one raised or recessed changes something. What
+    /// is refused leaves the body as it was.
+    fn emboss_held(&mut self, bi: usize, style: EmbossStyle, work: impl FnOnce(&mut Self) -> Result<(), Stop>) -> Result<(), Stop> {
+        let body = self.body_shape(bi)?;
+        let was = self.k.duplicate(body)?;
+        let names = self.regen.bodies.get(bi).map(|b| b.names.clone()).unwrap_or_default();
+        let done = (|| -> Result<(), Stop> {
+            let topo = self.k.topology(was)?;
+            let volume = self.k.mass_properties(was, 1.0)?.volume;
+            work(self)?;
+            let now = self.body_shape(bi)?;
+            let after = self.k.topology(now)?;
+            if after.solids > topo.solids {
+                return Err(match style {
+                    EmbossStyle::FromPlane => "What is added comes loose from the part: from this side of the sketch plane it stands on the rim of what is taken away. Flip the direction, or move the sketch.",
+                    _ => "This cuts a piece of the part loose: use a smaller depth, or move the profile.",
+                }
+                .into());
+            }
+            if after.shells > topo.shells {
+                return Err(match style {
+                    EmbossStyle::FromPlane => "This shuts a hollow inside the part, under what is added: flip the direction, or move the sketch.",
+                    _ => "This shuts a hollow inside the part: use a smaller depth, or move the profile.",
+                }
+                .into());
+            }
+            // (From the plane, what goes and what comes may weigh the same.)
+            if style != EmbossStyle::FromPlane && (self.k.mass_properties(now, 1.0)?.volume - volume).abs() <= tenon_geom::tol::MIN_SIZE {
+                return Err(
+                    "Nothing is added or taken away: what the profile is seen on does not change. Move the sketch, or flip the direction.".into()
+                );
+            }
+            Ok(())
+        })();
+        match done {
+            Ok(()) => {
+                self.k.release(was);
+                Ok(())
+            }
+            Err(err) => {
+                if let Some(b) = self.regen.bodies.get_mut(bi) {
+                    let now = std::mem::replace(&mut b.shape, was);
+                    b.names = names;
+                    self.k.release(now);
+                } else {
+                    self.k.release(was);
+                }
+                Err(err)
+            }
+        }
+    }
+
     /// From the sketch plane: on the way the feature looks the prism is taken out of the part, on
     /// the other it is added, each as far as the depth. So where the plane lies off the part the
     /// shape stands up to it, and where it lies in the part the shape goes down to it.
@@ -215,26 +269,28 @@ impl<'a> Ctx<'a> {
                 return Err(err);
             }
         }
-        if let Err(err) = self.combine_at(id, vec![added], Operation::Join, Some(bi)) {
-            self.k.release(cut.0);
-            return Err(err);
-        }
-        // What the prism on the far side has to take away: it may miss the part altogether.
-        let (joined, common) = match self.taken_by(cut.0, bi) {
-            Ok(found) => found,
-            Err(err) => {
-                self.k.release(cut.0);
+        self.emboss_held(bi, e.style, |c| {
+            if let Err(err) = c.combine_at(id, vec![added], Operation::Join, Some(bi)) {
+                c.k.release(cut.0);
                 return Err(err);
             }
-        };
-        if common > tenon_geom::tol::MIN_SIZE {
-            return self.combine_at(id, vec![cut], Operation::Cut, Some(bi));
-        }
-        self.k.release(cut.0);
-        if (joined - before).abs() <= tenon_geom::tol::MIN_SIZE {
-            return Err("Nothing is added or taken away: the sketch plane lies on the part's surface here. Move the sketch off the face, or raise or recess the profile from it instead.".into());
-        }
-        Ok(())
+            // What the prism on the far side has to take away: it may miss the part altogether.
+            let (joined, common) = match c.taken_by(cut.0, bi) {
+                Ok(found) => found,
+                Err(err) => {
+                    c.k.release(cut.0);
+                    return Err(err);
+                }
+            };
+            if common > tenon_geom::tol::MIN_SIZE {
+                return c.combine_at(id, vec![cut], Operation::Cut, Some(bi));
+            }
+            c.k.release(cut.0);
+            if (joined - before).abs() <= tenon_geom::tol::MIN_SIZE {
+                return Err("Nothing is added or taken away: the sketch plane lies on the part's surface here. Move the sketch off the face, or raise or recess the profile from it instead.".into());
+            }
+            Ok(())
+        })
     }
 
     /// The volume of body `bi`, and of what `tool` has in common with it.
@@ -276,52 +332,58 @@ impl<'a> Ctx<'a> {
         ];
         let curves = (0..4).map(|i| TaggedCurve2 { tag: i as u64 + 1, curve: Curve2::Line { start: quad[i], end: quad[(i + 1) % 4] } }).collect();
         let wide = Profile { frame, regions: vec![Region { outer: Loop { curves }, holes: Vec::new() }] };
-        // The solid it goes on: the last that it is seen on, as a feature goes on the last solid.
-        let mut found = None;
-        for bi in (0..self.regen.bodies.len()).rev() {
-            if let Some(floors) = self.floors_under(id, bi, &wide, sign, e.depth, raise)? {
-                found = Some((bi, floors));
-                break;
-            }
-        }
-        let Some((bi, floors)) = found else {
-            return Err("The profile is seen on no face of the part from this side of the sketch: flip the direction, or move the sketch.".into());
-        };
-        let (forward, backward) = if e.reverse { (floors.below, floors.above) } else { (floors.above, floors.below) };
         // Raised, it narrows going up; recessed, going down, as a mould would have it.
         let narrows = if raise { look } else { -look };
-        let (thick, thick_names) = floors.solid;
-        let prism = self.emboss_prism(id, profile, &Extent::TwoSided { forward, backward }, Self::lean(e, narrows));
-        let (prism, prism_names) = match prism {
-            Ok(p) => p,
-            Err(err) => {
-                self.k.release(thick);
-                return Err(err);
-            }
-        };
-        let cut = self.k.boolean(BoolOp::Intersect, thick, &[prism]);
-        self.k.release(thick);
-        self.k.release(prism);
-        let op = match cut {
-            Ok(op) => op,
-            Err(err) if err.to_string().contains("empty shape") => {
-                return Err("The profile does not fall on the faces it is seen on: move the sketch.".into());
-            }
-            Err(err) => return Err(err.into()),
-        };
-        let names = match self.k.topology(op.shape) {
-            Ok(t) => names_of_boolean(&op.history, &[&thick_names, &prism_names], t.faces),
-            Err(err) => {
+        // The solid it goes on: the last that it is seen on, as a feature goes on the last solid.
+        let mut seen_on_some = false;
+        for bi in (0..self.regen.bodies.len()).rev() {
+            let Some(floors) = self.floors_under(id, bi, &wide, sign, e.depth, raise)? else { continue };
+            seen_on_some = true;
+            let (forward, backward) = if e.reverse { (floors.below, floors.above) } else { (floors.above, floors.below) };
+            let (thick, thick_names) = floors.solid;
+            let prism = self.emboss_prism(id, profile, &Extent::TwoSided { forward, backward }, Self::lean(e, narrows));
+            let (prism, prism_names) = match prism {
+                Ok(p) => p,
+                Err(err) => {
+                    self.k.release(thick);
+                    return Err(err);
+                }
+            };
+            let cut = self.k.boolean(BoolOp::Intersect, thick, &[prism]);
+            self.k.release(thick);
+            self.k.release(prism);
+            let op = match cut {
+                Ok(op) => op,
+                Err(err) if err.to_string().contains("empty shape") => continue,
+                Err(err) => return Err(err.into()),
+            };
+            let topo = match self.k.topology(op.shape) {
+                Ok(t) => t,
+                Err(err) => {
+                    self.k.release(op.shape);
+                    return Err(err.into());
+                }
+            };
+            if topo.solids == 0 {
                 self.k.release(op.shape);
-                return Err(err.into());
+                continue;
             }
-        };
-        self.combine_at(id, vec![(op.shape, names)], if raise { Operation::Join } else { Operation::Cut }, Some(bi))
+            let names = names_of_boolean(&op.history, &[&thick_names, &prism_names], topo.faces);
+            return self.emboss_held(bi, e.style, |c| {
+                c.combine_at(id, vec![(op.shape, names)], if raise { Operation::Join } else { Operation::Cut }, Some(bi))
+            });
+        }
+        Err(if seen_on_some {
+            "The profile does not fall on the faces it is seen on: move the sketch."
+        } else {
+            "The profile is seen on no face of the part from this side of the sketch: flip the direction, or move the sketch."
+        }
+        .into())
     }
 
     /// The faces of body `bi` the box `wide` is seen on, looking along the sketch's normal, those
-    /// that look `sign` of the way along it, thickened by `depth` out of the part (`raise`) or
-    /// into it. None when it is seen on none of that body.
+    /// that look `sign` of the way along it, as far as they are seen, thickened by `depth` out of
+    /// the part (`raise`) or into it. None when it is seen on none of that body.
     ///
     /// What is seen from the sketch plane looking the other way: the first faces met. A sketch
     /// plane in the material (on a plane through a shaft, say) looks from where the material
@@ -386,6 +448,10 @@ impl<'a> Ctx<'a> {
                 .collect();
             let cap = self.k.make_face(&start)?.shape;
             temp.push(cap);
+            // What bounds the space above the part and looks the way the feature looks. A round
+            // face is taken as far as it turns away: its far side bounds that space too, past the
+            // part's edge. (Of the space, a face looks into the part.)
+            let mut pieces: Vec<ShapeHandle> = Vec::new();
             for i in 0..self.k.topology(free.shape)?.solids {
                 let s = self.k.solid(free.shape, i)?;
                 temp.push(s.shape);
@@ -400,11 +466,20 @@ impl<'a> Ctx<'a> {
                     .flat_map(|m| m.result.iter().filter(|r| r.kind == TopoKind::Face).map(|r| r.index))
                     .collect();
                 for f in faces {
-                    // (Of the space above the part, a face looks into the part.)
-                    if self.k.face_normal(s.shape.face(f))?.dot(look) > -FACING {
-                        continue;
+                    for piece in self.k.facing(s.shape.face(f), -look)? {
+                        temp.push(piece);
+                        if self.k.face_normal(piece.face(0))?.dot(look) < -FACING {
+                            pieces.push(piece);
+                        }
                     }
-                    let t = self.k.thicken(s.shape.face(f), if raise { -depth } else { depth })?;
+                }
+            }
+            for rest in self.seen_of(&pieces, frame, look, above + below + 1.0, &mut temp)? {
+                let topo = self.k.topology(rest)?;
+                for f in 0..topo.faces {
+                    // Which way a face looks is the face's own: a piece left by a cut says so.
+                    let into = self.k.face_normal(rest.face(f))?.dot(look) < 0.0;
+                    let t = self.k.thicken(rest.face(f), if raise == into { -depth } else { depth })?;
                     let named = self.k.topology(t.shape).map(|topo| names_of_sweep(&t.history, id, topo.faces));
                     match named {
                         Ok(names) => layers.push((
@@ -434,6 +509,64 @@ impl<'a> Ctx<'a> {
         };
         let solid = self.joined(layers)?;
         Ok(Some(Floors { solid, above: reach.0, below: reach.1 }))
+    }
+
+    /// What of `pieces` (a face each, none of which turns away from `look`) is seen looking along
+    /// `look` the other way: each less what lies under another of them, in the shadow that one
+    /// casts. A shape for each that has any left. New shapes go in `temp`.
+    fn seen_of(
+        &mut self,
+        pieces: &[ShapeHandle],
+        frame: Frame,
+        look: Vec3,
+        reach: f64,
+        temp: &mut Vec<ShapeHandle>,
+    ) -> Result<Vec<ShapeHandle>, Stop> {
+        // Each one's extent across the sketch's plane and along its normal, to skip what cannot
+        // lie over what.
+        let mut extents = Vec::with_capacity(pieces.len());
+        for p in pieces {
+            let Some(b) = self.k.bounding_box(*p)? else { continue };
+            let range =
+                |way: Vec3| corners(&b).into_iter().map(|c| c.dot(way)).fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), t| (l.min(t), h.max(t)));
+            extents.push((*p, range(frame.x()), range(frame.y()), range(look)));
+        }
+        let meets = |a: (f64, f64), b: (f64, f64)| a.0.max(b.0) < a.1.min(b.1) - tenon_geom::tol::LINEAR * 10.0;
+        let mut shadows: Vec<Option<ShapeHandle>> = vec![None; extents.len()];
+        let mut out = Vec::new();
+        for (i, here) in extents.iter().enumerate() {
+            let mut over = Vec::new();
+            for (j, other) in extents.iter().enumerate() {
+                if i == j || !meets(here.1, other.1) || !meets(here.2, other.2) || other.3.1 <= here.3.0 {
+                    continue;
+                }
+                let shadow = match shadows.get(j).copied().flatten() {
+                    Some(s) => s,
+                    None => {
+                        let s = self.k.prism_of_face(other.0.face(0), look * -reach)?;
+                        temp.push(s);
+                        if let Some(slot) = shadows.get_mut(j) {
+                            *slot = Some(s);
+                        }
+                        s
+                    }
+                };
+                over.push(shadow);
+            }
+            if over.is_empty() {
+                out.push(here.0);
+                continue;
+            }
+            match self.k.boolean(BoolOp::Cut, here.0, &over) {
+                Ok(rest) => {
+                    temp.push(rest.shape);
+                    out.push(rest.shape);
+                }
+                Err(err) if err.to_string().contains("empty shape") => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+        Ok(out)
     }
 
     /// Solids as one, with the names of their faces. They are let go.
@@ -467,15 +600,13 @@ impl<'a> Ctx<'a> {
         let (bi, fi) = self.regen.resolve(face, &*self.k).map_err(|m| self.describe_ref(face, &m))?;
         let info = self.k.face_info(self.body_shape(bi)?.face(fi))?;
         let raise = e.style == EmbossStyle::Raise;
-        let sunk = SUNK.min(e.depth * 0.2);
         // Which way the layer goes from the surface, as distances along its outward normal: a
         // hole's wall has its material outside it.
         let (inner, outer) = match (raise, info.reversed) {
-            (true, false) => (-sunk, e.depth),
-            (false, false) => (-e.depth, sunk),
-            (true, true) => (-e.depth, sunk),
-            (false, true) => (-sunk, e.depth),
+            (true, false) | (false, true) => (0.0, e.depth),
+            (false, false) | (true, true) => (-e.depth, 0.0),
         };
+        let over = OVER.min(e.depth * 0.2);
         let frame = profile.frame;
         let n = frame.z();
         // The direction along the surface's axis, and out from it toward the sketch.
@@ -505,7 +636,9 @@ impl<'a> Ctx<'a> {
                 let across = up.cross(out);
                 let laid = Laid { from: sketch_at(axis.origin()), x: sketch_way(across), y: sketch_way(up).normalized() };
                 let f = Frame::new(axis.origin(), up, out).ok_or("the cylinder's axis has no direction")?;
-                (f, Round::Cylinder { rho: radius, inner: radius + inner, outer: radius + outer }, laid)
+                // (Its reach past the layer stops short of the axis.)
+                let past = over.min(0.5 * (radius + inner));
+                (f, Round::Cylinder { rho: radius, inner: radius + inner - past, outer: radius + outer + over }, laid)
             }
             SurfaceKind::Cone { axis, half_angle, ref_radius } => {
                 // (Its half angle is negative when it widens against its axis' direction.)
@@ -527,7 +660,7 @@ impl<'a> Ctx<'a> {
                 }
                 let laid = Laid { from: sketch_at(apex) - y * (from_apex - middle), x: sketch_way(across), y };
                 let f = Frame::new(apex, up, out).ok_or("the cone's axis has no direction")?;
-                (f, Round::Cone { half_angle: alpha, inner, outer }, laid)
+                (f, Round::Cone { half_angle: alpha, inner: inner - over, outer: outer + over }, laid)
             }
             _ => return Err("Wrap to Face lays the profile round a cylinder or a cone: pick one of those.".into()),
         };
@@ -579,7 +712,67 @@ impl<'a> Ctx<'a> {
             }
             return Err(err);
         }
-        self.combine_at(id, tools, if raise { Operation::Join } else { Operation::Cut }, Some(bi))
+        let on_face = self.emboss_on_the_face(id, tools, bi, fi, if raise { e.depth } else { -e.depth })?;
+        if on_face.is_empty() {
+            return Err("The profile lies off the face it is laid round: move the sketch along the face, or pick the face it lies on.".into());
+        }
+        self.emboss_held(bi, e.style, |c| c.combine_at(id, on_face, if raise { Operation::Join } else { Operation::Cut }, Some(bi)))
+    }
+
+    /// What of `tools` lies on face `fi` of body `bi`, in the layer `distance` along its normal, as
+    /// a profile raised from a face stops at the face's edge. They are let go. None of them left
+    /// when they all lie off the face.
+    fn emboss_on_the_face(&mut self, id: FeatureId, tools: Vec<Named>, bi: usize, fi: u32, distance: f64) -> Result<Vec<Named>, Stop> {
+        let layer = self.body_shape(bi).and_then(|b| self.k.thicken(b.face(fi), distance).map_err(Stop::from));
+        let layer = match layer {
+            Ok(l) => l,
+            Err(err) => {
+                for (s, _) in tools {
+                    self.k.release(s);
+                }
+                return Err(err);
+            }
+        };
+        let mut left: Vec<Named> = Vec::new();
+        let mut done = Ok(());
+        let layer_names: Vec<Option<FaceOrigin>> = match self.k.topology(layer.shape) {
+            Ok(t) => names_of_sweep(&layer.history, id, t.faces)
+                .into_iter()
+                .map(|n| n.filter(|o| matches!(o, FaceOrigin::Cap { end: CapEnd::End, .. })))
+                .collect(),
+            Err(err) => {
+                done = Err(Stop::from(err));
+                Vec::new()
+            }
+        };
+        for (tool, names) in tools {
+            if done.is_ok() {
+                match self.k.boolean(BoolOp::Intersect, tool, &[layer.shape]) {
+                    Ok(op) => match self.k.topology(op.shape) {
+                        Ok(t) if t.solids > 0 => {
+                            let named = names_of_boolean(&op.history, &[&names, &layer_names], t.faces);
+                            left.push((op.shape, named));
+                        }
+                        Ok(_) => self.k.release(op.shape),
+                        Err(err) => {
+                            self.k.release(op.shape);
+                            done = Err(err.into());
+                        }
+                    },
+                    Err(err) if err.to_string().contains("empty shape") => {}
+                    Err(err) => done = Err(err.into()),
+                }
+            }
+            self.k.release(tool);
+        }
+        self.k.release(layer.shape);
+        if let Err(err) = done {
+            for (s, _) in left {
+                self.k.release(s);
+            }
+            return Err(err);
+        }
+        Ok(left)
     }
 
     /// One outline rolled round the surface. Its caps and sides have their names.
