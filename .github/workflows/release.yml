@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         # Linux is built on the older runner, so that the archive runs on older systems too.
-        os: [ubuntu-22.04, macos-14, windows-2022]
+        os: [ubuntu-22.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -44,8 +44,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # What is built on a new macOS still runs on the oldest one the README names.
       - name: Package and try it
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
         run: pixi run cargo xtask dist
+
+      - name: The programs ask for macOS 11
+        if: runner.os == 'macOS'
+        run: |
+          for p in target/dist/*/Tenon.app/Contents/MacOS/*; do
+            build="$(vtool -show-build "$p")"
+            echo "$build"
+            echo "$build" | grep -q 'minos 11.0' || { echo "$p does not say macOS 11"; exit 1; }
+          done
 
       - uses: actions/upload-artifact@v4
         with:

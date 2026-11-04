@@ -97,5 +97,5 @@ Set `OCCT_ROOT` to the install prefix of an OCCT 8.0.x build (the directory cont
 `include/opencascade` and `lib`) and make its shared libraries findable at run time. The build
 script checks the major version and fails with a clear message otherwise.
 
-**Platforms:** Windows is verified locally; Windows, Linux (ubuntu-24.04) and macOS (macos-14,
+**Platforms:** Windows is verified locally; Windows, Linux (ubuntu-24.04) and macOS (macos-15,
 Apple silicon) are verified by GitHub Actions (`.github/workflows/ci.yml`) on every push.

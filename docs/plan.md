@@ -186,7 +186,7 @@ I'd use it as a reference for build-script tricks only, copying no code.
 - **This PC (D3):**
 
   `winget install` for `Rustlang.Rustup`, `Git.Git`, `prefix-dev.pixi` and `Microsoft.VisualStudio.2022.BuildTools`; the Build Tools also need the VCTools workload. That's about 10 GB and shows one UAC prompt. I won't run it without your OK.
-- **CI:** GitHub Actions on ubuntu-24.04, macos-14 and windows-2022.
+- **CI:** GitHub Actions on ubuntu-24.04, macos-15 and windows-2022.
   - Steps: fmt, clippy `-D warnings`, tests, `xtask layers`, `xtask unsafe-audit`, `xtask assets`.
   - wasm check: `cargo check --target wasm32-unknown-unknown` for `geom kernel sketch model assembly drawing`. A full wasm app is not feasible while the kernel is OCCT; revisit at M6.
   - Performance budgets (regeneration and tessellation times) are tracked from M1.
