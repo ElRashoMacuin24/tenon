@@ -1876,6 +1876,10 @@ impl Workbench {
             }
             Panel::SheetCut(p) => {
                 if commit {
+                    // (An equation typed for the distance is a distance, whatever it comes to.)
+                    if self.panel_eqs.contains_key("distance") {
+                        p.through = None;
+                    }
                     let (editing, kind) = (p.editing, p.kind());
                     keep = !self.commit_panel(&ptrs, editing, kind);
                     if !keep && again {

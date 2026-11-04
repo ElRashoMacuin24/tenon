@@ -1521,6 +1521,33 @@ fn lips_turned_in_from_the_tops_of_a_trays_walls_are_mitred_at_its_corners() {
 }
 
 #[test]
+fn a_cut_given_no_distance_takes_an_equation_that_comes_to_the_thickness() {
+    for typed in ["Thickness", "1 mm + 0"] {
+        let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+        let mut d = Driver::new(vec2(1400.0, 860.0));
+        wb.run_ui("file.new_sheet_metal").unwrap();
+        plate(&mut wb, 60.0, 40.0);
+        d.settle(&mut wb);
+        let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].as_u64().unwrap();
+        wb.exec("sketch.circle", json!({ "sketch": sk, "cx": 30, "cy": 20, "r": 5 })).unwrap();
+        wb.exec("sheet.cut_normal", json!({ "sketch": sk })).unwrap();
+        d.settle(&mut wb);
+        let cut = wb.document().features().last().unwrap().id;
+        wb.edit_feature(cut).unwrap();
+        type_into(&mut d, &mut wb, "tn_props_cut_distance", typed);
+        d.tap(&mut wb, egui::Key::Enter);
+        d.settle(&mut wb);
+        assert!(wb.panel.is_none() && !wb.status_error, "{typed}: {}", wb.status());
+        assert_eq!(wb.status(), "Changed Cut1.", "{typed}");
+        let FeatureKind::CutNormal(c) = &wb.document().feature(cut).unwrap().kind else { panic!() };
+        assert_eq!(c.distance, Some(1.0), "{typed}");
+        let eqs = wb.exec("param.list", json!({})).unwrap();
+        let kept = eqs["model"].as_array().unwrap().iter().find(|m| m["target"]["field"] == "/distance").expect("its parameter");
+        assert_eq!(kept["equation"], typed, "{eqs}");
+    }
+}
+
+#[test]
 fn a_cut_given_no_distance_stays_through_when_ok_is_pressed() {
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
     let mut d = Driver::new(vec2(1400.0, 860.0));
