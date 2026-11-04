@@ -369,7 +369,9 @@ fn a_flange_on_a_ring_rolled_with_other_pieces_says_why_it_has_no_flat_pattern()
         }
         let before = volume(&mut s, &mut k);
         run(&mut s, &mut k, "sheet.flange", flange);
-        assert!(volume(&mut s, &mut k) > before, "the flange is made");
+        let after = volume(&mut s, &mut k);
+        // (A short one with reliefs beside it can come to less than was there.)
+        assert!((after - before).abs() > 1.0, "the flange is made: {before} to {after}");
         let why = refused(&mut s, &mut k, "sheet.flat", json!({}));
         assert!(why.contains("no flat pattern") && why.contains("round another axis"), "{why}");
         assert!(!why.contains("Shorten") && !why.contains("not one sheet"), "{why}");
