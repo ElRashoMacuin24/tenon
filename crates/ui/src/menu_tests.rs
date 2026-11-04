@@ -396,6 +396,151 @@ fn a_list_is_as_wide_as_its_longest_row() {
     assert!(long.width() < 300.0, "{long:?}");
 }
 
+/// A block 40 x 20 x 10 with a round boss on its top, and a sketch on nothing yet with a circle in it.
+fn part_with_a_boss(path: &Path) {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let sketch = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    wb.exec("sketch.rectangle", json!({ "sketch": sketch, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    wb.exec("model.extrude", json!({ "sketch": sketch, "distance": 10 })).unwrap();
+    let boss = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    wb.exec("sketch.circle", json!({ "sketch": boss, "cx": 30, "cy": 10, "r": 4 })).unwrap();
+    wb.exec("model.extrude", json!({ "sketch": boss, "distance": 20 })).unwrap();
+    let open = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    wb.exec("sketch.circle", json!({ "sketch": open, "cx": 10, "cy": 10, "r": 3 })).unwrap();
+    wb.save(path).unwrap();
+}
+
+/// Presses \`id\`: its button on the tab shown, or its row under the arrow it is under.
+fn press_it(d: &mut Driver, wb: &mut Workbench, id: &str, width: f32) {
+    d.frame(wb, vec![]);
+    if let Some(on) = drawn_at(d, &format!("ribbon {id}")) {
+        d.click(wb, egui::pos2(on.center().x, on.top() + 8.0));
+        return;
+    }
+    let above = wb.ribbon_def()[wb.chrome.tab].panels.iter().flat_map(|p| p.commands.iter()).find(|c| c.more.contains(&id));
+    let above = above.unwrap_or_else(|| panic!("{id} is not on this tab")).id;
+    open_list(d, wb, above, width);
+    let row = drawn_at(d, &format!("list {id}")).unwrap();
+    d.click(wb, row.center());
+}
+
+/// Fillet and the rest in a 2D sketch said "click edges", and no click reached them: they leave the
+/// sketch first, as they do a 3D sketch, and a click on the part then does what they say.
+#[test]
+fn what_picks_on_the_part_leaves_a_sketch_and_takes_clicks() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("in-sketch");
+    let part = dir.join("boss.tenon");
+    part_with_a_boss(&part);
+    part_with_a_boss(&dir.join("other.tenon"));
+    let mut wb = window(&dir);
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    let ids = [
+        "model.fillet",
+        "model.face_fillet",
+        "model.chamfer",
+        "model.shell",
+        "model.draft",
+        "model.thread",
+        "model.split",
+        "model.box",
+        "model.cylinder",
+        "model.sphere",
+        "model.torus",
+        "model.pattern.rect",
+        "model.pattern.circular",
+        "model.mirror",
+        "work.plane",
+        "work.axis",
+        "work.point",
+        "work.ucs",
+        "inspect.measure",
+    ];
+    for id in ids {
+        wb.chrome = crate::chrome::Chrome::default();
+        wb.open(&part).unwrap();
+        idle(&mut d, &mut wb);
+        wb.edit_sketch_named("Sketch3").unwrap();
+        idle(&mut d, &mut wb);
+        wb.chrome.tab = if id == "inspect.measure" { 2 } else { 0 };
+        press_it(&mut d, &mut wb, id, 1400.0);
+        idle(&mut d, &mut wb);
+        assert!(!wb.is_sketching(), "{id}: the sketch is left");
+        assert!(wb.panel.is_some(), "{id}: its panel is open, and said: {}", wb.status());
+        assert!(!wb.status().starts_with("Finished"), "{id} says what it wants: {}", wb.status());
+        assert_eq!(wb.chrome.tab, if id == "inspect.measure" { 2 } else { 0 }, "{id}: the tab stays");
+        // (A UCS is typed until Three Points is chosen.)
+        if id == "work.ucs" {
+            continue;
+        }
+        wb.look_from(Vec3::new(1.0, -2.0, 1.5));
+        idle(&mut d, &mut wb);
+        // What they take between them: a straight edge, a flat face, the round of the boss, and a
+        // round edge of it. (Each takes something among them.)
+        let before = format!("{:?}", wb.panel);
+        let mut took = false;
+        for at in [Vec3::new(10.0, 0.0, 10.0), Vec3::new(8.0, 10.0, 10.0), Vec3::new(30.0, 6.0, 20.0), Vec3::new(30.0, 6.0, 15.0)] {
+            let p = crate::tests::on_screen(&wb, at);
+            d.click(&mut wb, p);
+            idle(&mut d, &mut wb);
+            took |= format!("{:?}", wb.panel) != before;
+        }
+        assert!(took, "{id}: a click on the part changed nothing, and it said: {}", wb.status());
+    }
+    // And on a sheet metal part, by the Sheet Metal tab.
+    let sheet = dir.join("sheet.tenon");
+    sheet_file(&sheet);
+    for id in ["sheet.flange", "sheet.hem", "sheet.corner_round", "sheet.corner_chamfer", "sheet.rip", "sheet.unfold"] {
+        wb.chrome = crate::chrome::Chrome::default();
+        wb.open(&sheet).unwrap();
+        idle(&mut d, &mut wb);
+        wb.edit_sketch_named("Sketch1").unwrap();
+        idle(&mut d, &mut wb);
+        wb.chrome.tab = SHEET_TAB;
+        press_it(&mut d, &mut wb, id, 1400.0);
+        idle(&mut d, &mut wb);
+        assert!(!wb.is_sketching() && wb.panel.is_some(), "{id}: {}", wb.status());
+        wb.look_from(Vec3::new(1.0, -2.0, 1.5));
+        idle(&mut d, &mut wb);
+        let before = format!("{:?}", wb.panel);
+        let mut took = false;
+        for at in [Vec3::new(20.0, 0.0, 2.0), Vec3::new(0.0, 0.0, 1.0), Vec3::new(20.0, 15.0, 2.0)] {
+            let p = crate::tests::on_screen(&wb, at);
+            d.click(&mut wb, p);
+            idle(&mut d, &mut wb);
+            took |= format!("{:?}", wb.panel) != before;
+        }
+        assert!(took, "{id}: a click on the part changed nothing, and it said: {}", wb.status());
+    }
+    // Refused, it stays in the sketch.
+    wb.run_unprompted("file.new").unwrap();
+    let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    idle(&mut d, &mut wb);
+    wb.edit_sketch_named(wb.document().feature(tenon_model::FeatureId(sk.as_u64().unwrap() as u32)).unwrap().name.clone().as_str()).unwrap();
+    assert!(wb.run_unprompted("model.fillet").is_err(), "there is nothing to fillet");
+    assert!(wb.is_sketching(), "a command refused leaves things as they were");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The same from the browser: a feature's row double-clicked in a sketch.
+#[test]
+fn a_feature_opened_from_the_browser_leaves_a_sketch() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("in-sketch-browser");
+    let part = dir.join("boss.tenon");
+    part_with_a_boss(&part);
+    let mut wb = window(&dir);
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.open(&part).unwrap();
+    idle(&mut d, &mut wb);
+    wb.edit_sketch_named("Sketch3").unwrap();
+    idle(&mut d, &mut wb);
+    let extrusion = wb.document().features().iter().find(|f| f.name == "Extrusion2").unwrap().id;
+    wb.edit_feature(extrusion).unwrap();
+    assert!(!wb.is_sketching() && wb.panel.is_some());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

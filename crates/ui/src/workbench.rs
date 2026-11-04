@@ -65,6 +65,43 @@ const REPLACE_DOCUMENT: &[&str] = &[
     "app.exit",
 ];
 
+/// Commands whose panels take clicks on the part, and which so have to leave a 2D sketch: a sketch's
+/// clicks are its own. (Extrude and the others that make something of the sketch being drawn leave
+/// it themselves, knowing which it was.)
+const PICK_ON_THE_PART: &[&str] = &[
+    "inspect.measure",
+    "model.box",
+    "model.cylinder",
+    "model.sphere",
+    "model.torus",
+    "model.derive",
+    "model.fillet",
+    "model.face_fillet",
+    "model.chamfer",
+    "model.shell",
+    "model.draft",
+    "model.thread",
+    "model.combine",
+    "model.split",
+    "model.pattern.rect",
+    "model.pattern.circular",
+    "model.mirror",
+    "work.plane",
+    "work.axis",
+    "work.point",
+    "work.ucs",
+    "sheet.flange",
+    "sheet.hem",
+    "sheet.bend",
+    "sheet.corner_round",
+    "sheet.corner_chamfer",
+    "sheet.corner_seam",
+    "sheet.rip",
+    "sheet.unfold",
+    "sheet.refold",
+    "sheet.a_side",
+];
+
 /// The part workbench.
 pub struct Workbench {
     pub(crate) chrome: Chrome,
@@ -421,8 +458,29 @@ impl Workbench {
         Ok(path)
     }
 
-    /// Runs a command without asking to save first.
+    /// Runs a command without asking to save first. One whose panel takes clicks on the part leaves
+    /// a 2D sketch as it opens; one that is refused leaves things as they were.
     pub(crate) fn run_unprompted(&mut self, id: &str) -> Result<(), String> {
+        let leave = self.is_sketching() && PICK_ON_THE_PART.contains(&id);
+        self.run_here(id)?;
+        if leave {
+            self.leave_sketch_for_panel();
+        }
+        Ok(())
+    }
+
+    /// Out of a 2D sketch, for a panel that has just opened: what the panel asks for is what stays
+    /// said, and the tab stays unless it is the sketch's own.
+    fn leave_sketch_for_panel(&mut self) {
+        let (said, error, tab) = (self.status.clone(), self.status_error, self.chrome.tab);
+        self.finish_sketch();
+        (self.status, self.status_error) = (said, error);
+        if tab != commands::SKETCH_TAB {
+            self.chrome.tab = tab;
+        }
+    }
+
+    fn run_here(&mut self, id: &str) -> Result<(), String> {
         // Modelling from inside a 3D sketch leaves it first, as from inside a 2D sketch.
         if self.is_sketching3d()
             && id != "sketch.new_3d"
@@ -1173,6 +1231,15 @@ impl Workbench {
 
     /// Opens a feature for editing: a sketch in sketch mode, others in their panel.
     pub(crate) fn edit_feature(&mut self, id: FeatureId) -> Result<(), String> {
+        self.open_feature(id)?;
+        // (A panel opened over a sketch has the same clicks to take as one opened from the ribbon.)
+        if self.is_sketching() && self.panel.is_some() {
+            self.leave_sketch_for_panel();
+        }
+        Ok(())
+    }
+
+    fn open_feature(&mut self, id: FeatureId) -> Result<(), String> {
         match self.document().feature(id).map(|f| &f.kind) {
             Some(FeatureKind::Sketch { .. }) => self.enter_sketch(id),
             Some(FeatureKind::Sketch3d { .. }) => self.enter_sketch3d(id),

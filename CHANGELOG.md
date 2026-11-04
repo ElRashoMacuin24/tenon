@@ -267,6 +267,10 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- In a 2D sketch, Measure, Fillet, Chamfer, Shell, Draft, Thread, Split, the work features, the patterns,
+  the primitives and the sheet metal commands that pick edges opened their panels and said to click,
+  and no click reached them. Measuring while sketching and Fillet's key F were the likeliest ways in.
+  They now leave the sketch first, as they do a 3D sketch.
 - A list under a button's arrow that the window's edge pushed to the left took no click on its words:
   the press closed it and nothing ran, though the rows lit up under the pointer. At the default window
   this was all of Analysis > Displacement Display; narrower, Auto Balloon and Face Fillet. Every list

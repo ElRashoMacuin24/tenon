@@ -80,8 +80,8 @@ pub struct FaceInfo {
     pub reversed: bool,
     /// A flat face on a left-handed plane, as a mirror, a chamfer and the flat sides of a part-turn
     /// revolve leave. Its `normal` looks out of the material as any other's does; before 0.2.0 it
-    /// was reported looking in, and references made then hold that ([`tenon_model`]'s
-    /// `FaceRef::surface_meant`).
+    /// was reported looking in, and references made then hold that (`FaceRef::surface_meant` in
+    /// tenon-model).
     #[serde(default)]
     pub left_handed: bool,
 }
