@@ -444,7 +444,11 @@ fn pivot_view(wb: &mut Workbench, d: &mut Driver, dir: &Path) {
     let b = insert(wb, "base.tenon", json!([0, 0, 0]));
     let a = insert(wb, "arm.tenon", json!([15, 15, 10]));
     let edge = |wb: &mut Workbench, c: &Value, f: &Value, end: &str, curve: &Value| {
-        wb.asm_exec("asm.geom", json!({ "component": c, "edge": [{ "type": "cap", "feature": f, "end": end }, { "type": "side", "feature": f, "curve": curve }] })).unwrap()
+        wb.asm_exec(
+            "asm.geom",
+            json!({ "component": c, "edge": [{ "type": "cap", "feature": f, "end": end }, { "type": "side", "feature": f, "curve": curve }] }),
+        )
+        .unwrap()
     };
     let (ga, gb) = (edge(wb, &b, &base, "end", &hole), edge(wb, &a, &arm, "start", &arm_hole));
     wb.asm_exec("asm.joint", json!({ "type": "revolute", "a": ga, "b": gb })).unwrap();
@@ -498,7 +502,10 @@ fn an_overlay_is_typed_in_its_panel_with_what_it_comes_to_on_the_sheet() {
     assert!(problem.is_some_and(|p| p.contains("not a number")));
     let r = d.ctx.read_response(egui::Id::new("tn_overlay_offset_0")).unwrap().rect;
     d.click(&mut wb, r.center());
-    d.frame(&mut wb, vec![egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }]);
+    d.frame(
+        &mut wb,
+        vec![egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }],
+    );
     d.tap(&mut wb, egui::Key::Backspace);
     settle(&mut d, &mut wb, 2);
     press(&mut d, &mut wb, "tn_overlay_ok");

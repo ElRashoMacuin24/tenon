@@ -661,7 +661,9 @@ fn validate_mods(v: &View) -> Result<(), String> {
                     && (0.0..=1000.0).contains(gap)
                     && !clash
             }
-            ModKind::BreakOut { boundary, depth } => boundary.is_valid() && depth.is_none_or(|d| d.is_finite() && d > tol::LINEAR && d < tol::MAX_SIZE),
+            ModKind::BreakOut { boundary, depth } => {
+                boundary.is_valid() && depth.is_none_or(|d| d.is_finite() && d > tol::LINEAR && d < tol::MAX_SIZE)
+            }
         };
         if !ok {
             return Err(format!("{} has a {} with a value out of range", v.name, m.kind.label()));
@@ -844,7 +846,10 @@ impl Drawing {
                     if !views.contains(parent) || values.len() > MAX_VALUES || !values.iter().all(JointValue::is_valid) {
                         return Err(format!("{} has a bad position", v.name));
                     }
-                    if self.view(*parent).is_none_or(|p| !matches!(p.kind, ViewKind::Base { .. } | ViewKind::Projected { .. } | ViewKind::Auxiliary { .. })) {
+                    if self
+                        .view(*parent)
+                        .is_none_or(|p| !matches!(p.kind, ViewKind::Base { .. } | ViewKind::Projected { .. } | ViewKind::Auxiliary { .. }))
+                    {
                         return Err(format!("{} is an overlay of a view that cannot have one", v.name));
                     }
                 }

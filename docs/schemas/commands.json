@@ -8913,10 +8913,345 @@
       }
     },
     {
+      "id": "drw.auxiliary",
+      "label": "Auxiliary View",
+      "undoable": true,
+      "description": "parent; edge: a pick of a straight edge of the parent (drw.pick); a new view seen square to that edge, following it as the model changes. at: a sheet point, which also says the side it goes on (it slides there square to the edge from its parent); flip: from the other side of the edge; scale",
+      "params": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the view it is made from"
+          },
+          "edge": {
+            "type": "object",
+            "description": "a pick of a straight edge of the parent, from drw.pick: the view looks square to it"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "where it goes on the sheet, [x, y] in mm from the sheet's lower left"
+          },
+          "flip": {
+            "type": "boolean",
+            "description": "see it from the other side of the edge (default: by the side `at` is on)"
+          },
+          "scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "a number or \"1:2\" (default: its parent's, or what fits the sheet)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "parent",
+          "edge"
+        ]
+      }
+    },
+    {
+      "id": "drw.overlay",
+      "label": "Overlay View",
+      "undoable": true,
+      "description": "parent (a base, projected or auxiliary view of an assembly), or view (an overlay, to change it); values: [{ relationship, offset (mm), angle (rad) }]: the assembly solved with these, drawn in phantom lines over the parent. See drw.overlay.values",
+      "params": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the base, projected or auxiliary view of an assembly it goes over"
+          },
+          "view": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "or an overlay, to give it other values"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "the position: { relationship (its id), offset (mm), angle (radians) }, see drw.overlay.values"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "values"
+        ]
+      }
+    },
+    {
+      "id": "drw.overlay.values",
+      "label": "Overlay Values",
+      "undoable": false,
+      "description": "view (of an assembly): each relationship a position can set, with its offset (mm) and angle (rad) as they are now",
+      "params": {
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the view's id, as drw.info lists it"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "view"
+        ]
+      }
+    },
+    {
+      "id": "drw.crop",
+      "label": "Crop",
+      "undoable": true,
+      "description": "view; rect: [[x, y], [x, y]] (opposite corners, view coordinates, model mm; see drw.to_view) or center, radius; outline: draw the boundary (default true); suppressed. Only what lies inside is drawn; dimensions keep their true values. A view has one crop: this changes it if it has one",
+      "params": {
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the view's id, as drw.info lists it"
+          },
+          "rect": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                {
+                  "type": "object"
+                }
+              ]
+            },
+            "description": "the boundary as a rectangle: two opposite corners (view coordinates, model mm; see drw.to_view)"
+          },
+          "center": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "or as a circle: its middle"
+          },
+          "radius": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "and its radius (model mm)"
+          },
+          "modifier": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the crop's number, as drw.info lists it (a view has one crop)"
+          },
+          "outline": {
+            "type": "boolean",
+            "description": "draw the boundary (default true)"
+          },
+          "suppressed": {
+            "type": "boolean",
+            "description": "keep it, not at work"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "view"
+        ]
+      }
+    },
+    {
+      "id": "drw.break",
+      "label": "Break",
+      "undoable": true,
+      "description": "view (base or projected); lines: horizontal | vertical; from, to: where the two lines go along the other axis (view coordinates, model mm); gap: what is left between the two sides (mm of paper, default 6); modifier: change that one instead of adding one; suppressed. Dimensions across it keep the true length",
+      "params": {
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the view's id, as drw.info lists it"
+          },
+          "lines": {
+            "type": "string",
+            "enum": [
+              "horizontal",
+              "vertical"
+            ],
+            "description": "which way the two lines run on the sheet (needed for a new break)"
+          },
+          "from": {
+            "type": "number",
+            "description": "where one line goes, along the axis across it (view coordinates, model mm; needed for a new break)"
+          },
+          "to": {
+            "type": "number",
+            "description": "where the other goes (needed for a new break)"
+          },
+          "gap": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "what is left between the two sides (mm of paper, default 6)"
+          },
+          "modifier": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "change this one instead of adding one: its number, as drw.info lists it"
+          },
+          "suppressed": {
+            "type": "boolean",
+            "description": "keep it, not at work"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "view"
+        ]
+      }
+    },
+    {
+      "id": "drw.break_out",
+      "label": "Break Out",
+      "undoable": true,
+      "description": "view (base, projected or auxiliary); rect: [[x, y], [x, y]] or center, radius (view coordinates, model mm); depth: how far down from what is nearest the eye (model mm), or through: true; modifier: change that one instead of adding one; suppressed. Inside it the model is cut away; what is then seen is drawn, the floor of the cut hatched",
+      "params": {
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the view's id, as drw.info lists it"
+          },
+          "rect": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                {
+                  "type": "object"
+                }
+              ]
+            },
+            "description": "the boundary as a rectangle: two opposite corners (view coordinates, model mm; see drw.to_view)"
+          },
+          "center": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "or as a circle: its middle"
+          },
+          "radius": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "and its radius (model mm)"
+          },
+          "depth": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "how far down from what is nearest the eye (model mm)"
+          },
+          "through": {
+            "type": "boolean",
+            "description": "or through the whole model"
+          },
+          "modifier": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "change this one instead of adding one: its number, as drw.info lists it"
+          },
+          "suppressed": {
+            "type": "boolean",
+            "description": "keep it, not at work"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "view"
+        ]
+      }
+    },
+    {
+      "id": "drw.modifier.delete",
+      "label": "Delete Modifier",
+      "undoable": true,
+      "description": "view; modifier: the number of a crop, break or break out, as drw.info lists it",
+      "params": {
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the view's id, as drw.info lists it"
+          },
+          "modifier": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the number of a crop, break or break out, as drw.info lists it"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "view",
+          "modifier"
+        ]
+      }
+    },
+    {
       "id": "drw.view.edit",
       "label": "Edit View",
       "undoable": true,
-      "description": "view; at: [x, y] or by: [dx, dy] (the views projected from it move along; a view projected beside, above or below its parent only slides in line with it); scale; hidden, tangent, centerlines, label: true or false",
+      "description": "view; at: [x, y] or by: [dx, dy] (the views projected from it move along; a view projected beside, above or below its parent only slides in line with it, an auxiliary view square to its edge); scale; hidden, tangent, centerlines, label: true or false; flip, edge: another side or another edge (a pick) for an auxiliary view",
       "params": {
         "type": "object",
         "properties": {
@@ -8983,6 +9318,14 @@
           "label": {
             "type": "boolean",
             "description": "show the view's label"
+          },
+          "flip": {
+            "type": "boolean",
+            "description": "an auxiliary view: from which side of its edge"
+          },
+          "edge": {
+            "type": "object",
+            "description": "an auxiliary view: another straight edge to look square to"
           }
         },
         "additionalProperties": false,

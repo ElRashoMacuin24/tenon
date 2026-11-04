@@ -161,6 +161,21 @@ part or an assembly; then projected, section, detail and isometric views. Dimens
 the model; hole tables, parts lists, balloons and text are on Annotate. **Export PDF, SVG or
 DXF** from the File menu.
 
+- **Auxiliary** (Place Views > Create): click a view, a straight edge of it, then where the new
+  view goes. It looks square to that edge, from the side it is placed on, stays lined up with its
+  parent and turns with the edge when the model changes. Double-click its row for its side
+  or another edge.
+- **Overlay** (Place Views > Create): click a view of an assembly and type a position: the values of
+  the joints and offsets that change, blank being as the assembly has it. What moves shows on the
+  sheet as you type, and what cannot be reached is said in the panel. OK draws the assembly in that
+  position over the view in phantom lines.
+- **Crop, Break, Break Out** (Place Views > Modify): click a view, then click what the panel asks for
+  on it, or type it, and OK. Crop draws only what lies inside a rectangle or a circle. Break takes out
+  the band between two lines, up the sheet or across, and leaves a gap; dimensions keep their true
+  values. Break Out cuts a rectangle or a circle of the view away down to a depth from what is nearest
+  you, or through the part, and hatches the floor of the cut. Each has a row under its view:
+  double-click it to change it, right-click it to suppress or delete it.
+
 ## 3D printing
 
 **Environments > 3D Print Check** checks the part for a printer: a closed surface, walls

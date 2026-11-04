@@ -563,7 +563,11 @@ pub fn auxiliary_flip(third_angle: bool, a: Vec2, b: Vec2, mid: Vec2, at: Vec2) 
 /// How far from its parent an auxiliary view goes when not told: clear of it by [`VIEW_GAP`].
 fn auxiliary_distance(s: &DrwSession, parent: &View, f: &tenon_geom::Frame, scale: f64, toward: Vec2) -> f64 {
     let along = |half: Vec2| half.x * toward.x.abs() + half.y * toward.y.abs();
-    let own = s.last_evaluation().and_then(|e| e.models.get(&parent.model)).and_then(|m| seen_size(m, f)).map_or(Vec2::new(30.0, 30.0), |z| z * (0.5 * scale));
+    let own = s
+        .last_evaluation()
+        .and_then(|e| e.models.get(&parent.model))
+        .and_then(|m| seen_size(m, f))
+        .map_or(Vec2::new(30.0, 30.0), |z| z * (0.5 * scale));
     along(half_size(s, parent)) + along(own) + VIEW_GAP
 }
 
@@ -621,7 +625,8 @@ fn values_param(p: &Value) -> Result<Vec<JointValue>, CmdError> {
     let list = field(p, "values")?.as_array().ok_or("`values` must be a list of { relationship, offset, angle }")?;
     let mut out: Vec<JointValue> = Vec::with_capacity(list.len());
     for x in list {
-        let v: JointValue = serde_json::from_value(x.clone()).map_err(|e| CmdError(format!("`values` holds {x}, which is not {{ relationship, offset, angle }}: {e}")))?;
+        let v: JointValue = serde_json::from_value(x.clone())
+            .map_err(|e| CmdError(format!("`values` holds {x}, which is not {{ relationship, offset, angle }}: {e}")))?;
         if !v.is_valid() {
             return Err(CmdError(format!("{} needs an offset or an angle, in range", v.relationship)));
         }
@@ -745,7 +750,13 @@ fn modifier_param(p: &Value) -> Result<Option<u32>, CmdError> {
 
 /// Puts a modifier on a view, or changes the one numbered `which`, as one undo step. `make` is
 /// given what it was.
-fn put_modifier(s: &mut DrwSession, vid: ViewId, which: Option<u32>, suppressed: Option<bool>, make: impl FnOnce(Option<&ModKind>) -> Result<ModKind, CmdError>) -> CmdResult {
+fn put_modifier(
+    s: &mut DrwSession,
+    vid: ViewId,
+    which: Option<u32>,
+    suppressed: Option<bool>,
+    make: impl FnOnce(Option<&ModKind>) -> Result<ModKind, CmdError>,
+) -> CmdResult {
     let v = view(s.drawing(), vid)?;
     let old = match which {
         Some(w) => Some(v.mods.iter().find(|m| m.id == w).ok_or_else(|| CmdError(format!("{} has no modifier {w}", v.name)))?),
@@ -931,8 +942,7 @@ fn drw_view_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
         };
         let shift = lined_up(&v.kind, target - old);
         // Projected views move with their parent (they stay lined up with it).
-        let family: Vec<ViewId> =
-            d.family(vid).into_iter().filter(|f| *f == vid || d.view(*f).is_some_and(|v| v.kind.follows_parent())).collect();
+        let family: Vec<ViewId> = d.family(vid).into_iter().filter(|f| *f == vid || d.view(*f).is_some_and(|v| v.kind.follows_parent())).collect();
         for f in family {
             if let Some(v) = d.view_mut(f) {
                 v.center += shift;

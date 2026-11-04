@@ -144,9 +144,10 @@ fn an_auxiliary_view_looks_square_to_an_edge_and_follows_it() {
     run(&mut e, "file.save", json!({ "path": "wedge.tenon" }));
 
     run(&mut e, "drw.new", json!({ "name": "Wedge" }));
-    let top = run(&mut e, "drw.view.base", json!({ "model": "wedge.tenon", "orientation": "top", "scale": 1, "at": [120, 110], "hidden": false }))["view"]
-        .as_u64()
-        .unwrap();
+    let top =
+        run(&mut e, "drw.view.base", json!({ "model": "wedge.tenon", "orientation": "top", "scale": 1, "at": [120, 110], "hidden": false }))["view"]
+            .as_u64()
+            .unwrap();
 
     // The inclined edge, picked in the view: its middle is at (85, 45).
     let edge = run(&mut e, "drw.pick", json!({ "view": top, "view_at": [85, 45] }));
@@ -236,6 +237,10 @@ fn an_auxiliary_view_looks_square_to_an_edge_and_follows_it() {
     near(num(&i["direction"][0]), 0.6, "x of the direction as the edge has turned");
     near(num(&i["direction"][1]), 0.8, "y of the direction as the edge has turned");
     assert!(i["error"].is_null(), "{i}");
+    // Moved, it lines up with its parent again, square to the edge as it is now.
+    run(&mut e, "drw.view.edit", json!({ "view": aux, "by": [1, 1] }));
+    let (c, pc) = (pt(&view_info(&mut e, aux)["center"]), pt(&view_info(&mut e, top)["center"]));
+    near((c - pc).dot(Vec2::new(0.8, -0.6)), 0.0, "lined up with its parent, along the edge as it is now");
 
     // Refused, in words: a circle, a view that is not there.
     assert!(e.exec("drw.auxiliary", &json!({ "parent": 9, "edge": edge })).unwrap_err().contains("does not exist"));
@@ -435,9 +440,10 @@ fn a_break_out_cuts_to_a_depth_and_hatches_what_it_leaves() {
     let mut e = Engine::new(kernel(), &dir);
     block(&mut e);
     run(&mut e, "drw.new", json!({ "name": "Block" }));
-    let v = run(&mut e, "drw.view.base", json!({ "model": "block.tenon", "orientation": "top", "scale": 1, "at": [150, 150], "hidden": true }))["view"]
-        .as_u64()
-        .unwrap();
+    let v =
+        run(&mut e, "drw.view.base", json!({ "model": "block.tenon", "orientation": "top", "scale": 1, "at": [150, 150], "hidden": true }))["view"]
+            .as_u64()
+            .unwrap();
     // From above the hole is hidden: a dashed circle.
     let g = sheet(&e);
     assert_eq!((circles(&g, Pen::Hidden, 5.0), circles(&g, Pen::Visible, 5.0)), (1, 0));
@@ -461,7 +467,12 @@ fn a_break_out_cuts_to_a_depth_and_hatches_what_it_leaves() {
     let (lo, hi) = extent(&strokes(&g, v, Pen::Hatch));
     assert!(lo.x >= 130.0 - 1e-6 && hi.x <= 170.0 + 1e-6 && lo.y >= 135.0 - 1e-6 && hi.y <= 165.0 + 1e-6, "{lo:?} {hi:?}");
     // The cut's rim drawn: the lines of the 40 x 30 at the top and the floor, one over the other.
-    let rim: f64 = strokes(&g, v, Pen::Visible).iter().flat_map(|r| r.windows(2).map(|w| (w[0], w[1]))).filter(|(a, b)| (a.y - 135.0).abs() < 1e-6 && (b.y - 135.0).abs() < 1e-6).map(|(a, b)| a.dist(b)).sum();
+    let rim: f64 = strokes(&g, v, Pen::Visible)
+        .iter()
+        .flat_map(|r| r.windows(2).map(|w| (w[0], w[1])))
+        .filter(|(a, b)| (a.y - 135.0).abs() < 1e-6 && (b.y - 135.0).abs() < 1e-6)
+        .map(|(a, b)| a.dist(b))
+        .sum();
     assert!(rim >= 40.0 - 1e-6, "{rim}");
 
     // Only 5 down: the floor at 15, above the hole: the floor whole, the hole still hidden.
@@ -483,6 +494,12 @@ fn a_break_out_cuts_to_a_depth_and_hatches_what_it_leaves() {
     assert_eq!(hatch_length(&g, v), 0.0);
     assert_eq!(circles(&g, Pen::Visible, 12.0), 1);
     assert_eq!(circles(&g, Pen::Hidden, 5.0), 0, "the hole is gone with what it was in");
+    // A depth deeper than the block goes through it, no farther.
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": 1, "depth": 1e6 }));
+    let g = sheet(&e);
+    assert_eq!(hatch_length(&g, v), 0.0);
+    assert!(view_info(&mut e, v)["error"].is_null());
+    run(&mut e, "drw.undo", json!({}));
     // Through a boundary bigger than the block: nothing left, and no failure.
     run(&mut e, "drw.break_out", json!({ "view": v, "modifier": 1, "rect": [[-10, -10], [70, 50]], "center": null, "radius": null }));
     let i = view_info(&mut e, v);
@@ -550,8 +567,16 @@ fn pivot(e: &mut Engine) -> (u64, u64) {
     run(e, "asm.insert", json!({ "path": "base.tenon" }));
     let a = run(e, "asm.insert", json!({ "path": "arm.tenon", "at": [15, 15, 10] }))["component"].clone();
     let c = run(e, "asm.insert", json!({ "path": "cube.tenon", "at": [60, 30, 10] }))["component"].clone();
-    let base_top = run(e, "asm.geom", json!({ "component": 1, "edge": [{ "type": "cap", "feature": base, "end": "end" }, { "type": "side", "feature": base, "curve": hole }] }));
-    let arm_under = run(e, "asm.geom", json!({ "component": a, "edge": [{ "type": "cap", "feature": arm, "end": "start" }, { "type": "side", "feature": arm, "curve": arm_hole }] }));
+    let base_top = run(
+        e,
+        "asm.geom",
+        json!({ "component": 1, "edge": [{ "type": "cap", "feature": base, "end": "end" }, { "type": "side", "feature": base, "curve": hole }] }),
+    );
+    let arm_under = run(
+        e,
+        "asm.geom",
+        json!({ "component": a, "edge": [{ "type": "cap", "feature": arm, "end": "start" }, { "type": "side", "feature": arm, "curve": arm_hole }] }),
+    );
     let joint = run(e, "asm.joint", json!({ "type": "revolute", "a": base_top, "b": arm_under }))["relationship"].as_u64().unwrap();
     let top = run(e, "asm.geom", json!({ "component": 1, "face": { "type": "cap", "feature": base, "end": "end" } }));
     let under = run(e, "asm.geom", json!({ "component": c, "face": { "type": "cap", "feature": cube, "end": "start" } }));
@@ -566,7 +591,8 @@ fn an_overlay_draws_the_assembly_in_another_position_in_phantom_lines() {
     let mut e = Engine::new(kernel(), &dir);
     let (joint, mate) = pivot(&mut e);
     run(&mut e, "drw.new", json!({ "name": "Pivot" }));
-    let top = run(&mut e, "drw.view.base", json!({ "model": "pivot.tenonasm", "orientation": "top", "scale": 1, "at": [150, 150], "hidden": false }))["view"]
+    let top = run(&mut e, "drw.view.base", json!({ "model": "pivot.tenonasm", "orientation": "top", "scale": 1, "at": [150, 150], "hidden": false }))
+        ["view"]
         .as_u64()
         .unwrap();
 
@@ -668,13 +694,18 @@ fn everything(e: &mut Engine) {
     plate(e);
     let (joint, _) = pivot(e);
     run(e, "drw.new", json!({ "name": "All" }));
-    let top = run(e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "top", "scale": 1, "at": [100, 200], "hidden": true }))["view"].as_u64().unwrap();
+    let top = run(e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "top", "scale": 1, "at": [100, 200], "hidden": true }))["view"]
+        .as_u64()
+        .unwrap();
     run(e, "drw.crop", json!({ "view": top, "rect": [[-5, -5], [125, 85]] }));
     run(e, "drw.break", json!({ "view": top, "lines": "vertical", "from": 45, "to": 75, "gap": 6 }));
     run(e, "drw.break_out", json!({ "view": top, "center": [90, 60], "radius": 12, "depth": 5 }));
     let edge = run(e, "drw.pick", json!({ "view": top, "view_at": [20, 80] }));
     run(e, "drw.auxiliary", json!({ "parent": top, "edge": edge, "at": [100, 110] }));
-    let asm = run(e, "drw.view.base", json!({ "model": "pivot.tenonasm", "orientation": "top", "scale": 1, "at": [300, 150], "hidden": false }))["view"].as_u64().unwrap();
+    let asm =
+        run(e, "drw.view.base", json!({ "model": "pivot.tenonasm", "orientation": "top", "scale": 1, "at": [300, 150], "hidden": false }))["view"]
+            .as_u64()
+            .unwrap();
     let a0 = num(&run(e, "drw.overlay.values", json!({ "view": asm }))["values"][0]["angle"]);
     run(e, "drw.overlay", json!({ "parent": asm, "values": [{ "relationship": joint, "angle": a0 + 1.0 }] }));
 }
@@ -689,7 +720,15 @@ fn all_of_them_come_through_save_and_open_to_the_same_bytes_and_go_to_pdf_and_dx
     run(&mut e, "drw.save", json!({ "path": "all.tenondrw" }));
     let bytes = std::fs::read(dir.join("all.tenondrw")).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();
-    for word in ["type = \"auxiliary\"", "type = \"overlay\"", "mods = [", "type = \"crop\"", "type = \"break\"", "type = \"break_out\"", "shape = \"circle\""] {
+    for word in [
+        "type = \"auxiliary\"",
+        "type = \"overlay\"",
+        "mods = [",
+        "type = \"crop\"",
+        "type = \"break\"",
+        "type = \"break_out\"",
+        "shape = \"circle\"",
+    ] {
         assert!(text.contains(word), "{word} not in {text}");
     }
     // Read back: the same drawing, the same sheet, the same bytes.
@@ -721,7 +760,6 @@ fn all_of_them_come_through_save_and_open_to_the_same_bytes_and_go_to_pdf_and_dx
     assert!(svg.contains("VIEW A"), "the auxiliary view's label");
     // A picture of the sheet.
     assert!(e.render_sheet_png(None, 800).unwrap().starts_with(&[0x89, b'P', b'N', b'G']));
-
 }
 
 #[test]

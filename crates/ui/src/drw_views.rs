@@ -373,7 +373,9 @@ impl Workbench {
         let asm = m.assembly.as_ref().ok_or("an overlay shows an assembly in another position: click a view of an assembly")?;
         let readings = tenon_assembly::position::readings(asm, &m.parts());
         if readings.is_empty() {
-            return Err("nothing holds this assembly's components: a position sets the values of its joints and constraints, and it has none to set".into());
+            return Err(
+                "nothing holds this assembly's components: a position sets the values of its joints and constraints, and it has none to set".into()
+            );
         }
         let was: Vec<tenon_assembly::position::JointValue> = match overlay.and_then(|o| dr.view(o)).map(|v| &v.kind) {
             Some(ViewKind::Overlay { values, .. }) => values.clone(),

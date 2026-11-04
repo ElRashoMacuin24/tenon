@@ -117,6 +117,10 @@ taken away), without a check.
     constraint type `smooth` (DEC-121); `end_radius`, `radii` and `faces` of `model.fillet`, whose
     `edges` may be left out for `faces` (DEC-122); `study.keep`, `study.shape` and `study.optimize`,
     and `depth` of `study.set` (DEC-123). 235 commands.
+  - Since, without a new version (only more is taken): `drw.auxiliary`, `drw.overlay`,
+    `drw.overlay.values`, `drw.crop`, `drw.break`, `drw.break_out` and `drw.modifier.delete`, and
+    `flip` and `edge` of `drw.view.edit` (DEC-131). In what comes back, a view in `drw.info` has
+    `modifiers`, and its `size` is what is drawn of it when it has any.
   - `study.shape`'s `symmetry` still has the plane's type, so a face passes the schema and is
     refused by the command, in words: a schema that took less would break a program written
     against it, and its description says what is refused. `null` for `min_member`, `element_size`

@@ -320,7 +320,7 @@ on inventor and make ours feel 1-1"). The rows marked closed then were done in t
 
 | Inventor | Tenon | Proof / gap |
 |---|---|---|
-| Base, Projected, Section, Detail, Auxiliary, Break Out, Break, Crop, Overlay views | partial | base, projected, isometric, section and detail (M4). Gap: Auxiliary, Break Out, Break, Crop, Overlay; sections with offset lines; detail boundaries other than a circle |
+| Base, Projected, Section, Detail, Auxiliary, Break Out, Break, Crop, Overlay views | partial | base, projected, isometric, section and detail (M4); Auxiliary, Crop, Break, Break Out and Overlay (DEC-131), the rows in ROADMAP.md under "Everything on the menu". Gap: sections with offset lines; detail boundaries other than a circle; crops and break outs by a sketch (Inventor sketches on a view; a drawing here has no sketches); a break out's depth to a point, sketch or hole; a break on a view passing to the views made from it, and a choice of break style; overlays from positional representations kept in the assembly, and their labels |
 | Dimensions picked from views, Retrieve Model Annotations, baseline and ordinate dimensions | partial | associative dimensions of every common kind and suggestions (M4). Gap: retrieving the sketch's own dimensions, baseline and ordinate sets, tolerances |
 | Centre marks and centre lines, automatic and by hand; hole tables; balloons and parts lists; title blocks and borders; revision tables | partial | all but revision tables (M4) |
 | Export to PDF, DWG and DXF | partial | PDF, SVG, DXF R12. Gap: DWG (a proprietary format) |

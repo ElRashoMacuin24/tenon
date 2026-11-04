@@ -5,6 +5,23 @@ shows it in [ROADMAP.md](ROADMAP.md).
 
 ## Unreleased
 
+### Drawings
+
+- **Auxiliary, Crop, Break, Break Out and Overlay** are no longer greyed. Auxiliary is a view square to
+  a straight edge of its parent, which turns with the edge. Crop draws only what lies inside a rectangle
+  or a circle on a view. Break takes a band out of a base or projected view, one or more of them, up the
+  sheet or across, with break lines drawn; dimensions across it keep the true length. Break Out cuts a
+  rectangle or circle of a view down to a depth, or through, draws what is then seen, and hatches the
+  floor. Overlay draws an assembly's view again in another position, in phantom lines, from values of
+  its joints and offsets typed in a panel and solved by the assembly solver; what they come to shows on
+  the sheet as they are typed. All of them follow the model, have a row in the browser whose double-click
+  reopens them, come through undo, save and open, and go to PDF, SVG and DXF (a `PHANTOM` layer and line
+  type). New commands `drw.auxiliary`, `drw.overlay`, `drw.overlay.values`, `drw.crop`, `drw.break`,
+  `drw.break_out`, `drw.modifier.delete`; `flip` and `edge` of `drw.view.edit`. In the file, the view kinds
+  `auxiliary` and `overlay` and a view's `mods`; docs/file-format.md says what an older build does with them.
+- **An edge across a detail's circle** can be picked where it crosses, and not only when one of its
+  ends is inside.
+
 ### Stress checks
 
 - **Optimize Shape** (topology optimization): in Stress Analysis, the Optimize panel works out

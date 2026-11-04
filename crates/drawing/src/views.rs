@@ -674,7 +674,8 @@ fn faces_on(k: &mut dyn Kernel, s: ShapeHandle, f: &Frame, point: Vec3, look: Ve
 fn z_range(f: &Frame, model: &ModelGeometry) -> Option<(f64, f64)> {
     let b = model.bbox?;
     let (l, h) = (b.min, b.max);
-    let zs = (0..8).map(|i| Vec3::new(if i & 1 == 0 { l.x } else { h.x }, if i & 2 == 0 { l.y } else { h.y }, if i & 4 == 0 { l.z } else { h.z }).dot(f.z()));
+    let zs = (0..8)
+        .map(|i| Vec3::new(if i & 1 == 0 { l.x } else { h.x }, if i & 2 == 0 { l.y } else { h.y }, if i & 4 == 0 { l.z } else { h.z }).dot(f.z()));
     Some(zs.fold((f64::MAX, f64::MIN), |(lo, hi), z| (lo.min(z), hi.max(z))))
 }
 
@@ -707,12 +708,20 @@ fn prism(k: &mut dyn Kernel, f: &Frame, boundary: &Boundary, from: f64, height: 
 
 /// `solids` with each break-out cut from them (new shapes, for the caller to release). What is cut
 /// away whole is gone; a cut that fails leaves the solid as it was and says so on the view.
-fn cut_out(k: &mut dyn Kernel, solids: &[ShapeHandle], f: &Frame, model: &ModelGeometry, outs: &[(Boundary, Option<f64>)], g: &mut ViewGeometry) -> Vec<ShapeHandle> {
+fn cut_out(
+    k: &mut dyn Kernel,
+    solids: &[ShapeHandle],
+    f: &Frame,
+    model: &ModelGeometry,
+    outs: &[(Boundary, Option<f64>)],
+    g: &mut ViewGeometry,
+) -> Vec<ShapeHandle> {
     let mut shapes: Vec<ShapeHandle> = solids.iter().filter_map(|s| k.duplicate(*s).ok()).collect();
     let Some((far, near)) = z_range(f, model) else { return shapes };
     let over = (near - far).abs() + 10.0;
     for (boundary, floor) in outs {
-        let from = floor.unwrap_or(far - 1.0);
+        // (A depth past the far side of the model goes through it, no farther.)
+        let from = floor.map_or(far - 1.0, |z| z.max(far - 1.0));
         let Some(tool) = prism(k, f, boundary, from, near + over - from) else {
             g.error = Some("the break out's boundary could not be made into a cut".into());
             continue;

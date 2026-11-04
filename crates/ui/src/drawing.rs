@@ -918,6 +918,8 @@ impl Workbench {
         self.drw_exec(if undo { "drw.undo" } else { "drw.redo" }, json!({}))?;
         if let Some(d) = self.drw.as_mut() {
             d.tool = None;
+            d.mod_panel = None;
+            d.overlay_panel = None;
         }
         Ok(())
     }
@@ -1502,9 +1504,12 @@ impl Workbench {
                     "Centreline placed. Click the next place, or Esc to end."
                 });
             }
-            DrwTool::Auxiliary { parent: None, changing, .. } => next(self, Some(DrwTool::Auxiliary { parent: Some(need_view()?), edge: None, changing })),
+            DrwTool::Auxiliary { parent: None, changing, .. } => {
+                next(self, Some(DrwTool::Auxiliary { parent: Some(need_view()?), edge: None, changing }))
+            }
             DrwTool::Auxiliary { parent: Some(p), edge: None, changing } => {
-                let pick = self.drw_exec("drw.pick", json!({ "view": p.0, "at": v2(at) })).map_err(|_| "click a straight edge of the view".to_string())?;
+                let pick =
+                    self.drw_exec("drw.pick", json!({ "view": p.0, "at": v2(at) })).map_err(|_| "click a straight edge of the view".to_string())?;
                 if pick["kind"] != "line" {
                     return Err("click a straight edge: a circle or an arc has no direction to look square to".into());
                 }
@@ -1948,7 +1953,9 @@ fn line_in_view(d: &DrwDoc, v: ViewId, pick: &Value) -> Option<(Vec2, Vec2)> {
     let m = ev.models.get(&view.model)?;
     let gp: tenon_drawing::GeomPick = serde_json::from_value(pick.clone()).ok()?;
     match tenon_drawing::annotate::resolve_pick(m, &gp).ok()? {
-        tenon_drawing::annotate::Resolved::Line(a, b) => Some((tenon_drawing::views::project(&geo.frame, a), tenon_drawing::views::project(&geo.frame, b))),
+        tenon_drawing::annotate::Resolved::Line(a, b) => {
+            Some((tenon_drawing::views::project(&geo.frame, a), tenon_drawing::views::project(&geo.frame, b)))
+        }
         _ => None,
     }
 }

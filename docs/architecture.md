@@ -16,7 +16,7 @@ rules are enforced by `cargo xtask layers` (table in `xtask/src/layers.rs`) and
 | L3 | `model` | feature tree, regeneration (incremental), face and edge naming, parameters and equations, measuring, command registry and undo, regeneration worker; the standard parts library; sheet metal (the rule, faces, flanges, hems, contour flanges, corner seams and rips, bends between faces made apart and on sharp edges, folds, cuts wrapped round the bends or seen on the sheet from their sketch, and the flat pattern unfolded from the solid: `sheet`) | M8 |
 | L4 | `assembly` | assemblies: components, constraints and joints, the rigid-body solver, degrees of freedom, parts list, interference, exploded view, `asm.*` commands | M3 |
 | L4 | `fea` | stress checks: the mesh of elements read from the mesher's file, its surfaces told to be faces of the part, a study's supports and loads put on nodes, the solver's input written and its results read, the two programs found and started | M11 |
-| L5 | `drawing` | drawings: sheets, views through hidden-line removal (projected, section, detail, isometric), associative dimensions, centrelines, hole tables, balloons, parts lists, title blocks, PDF/SVG/DXF, `drw.*` commands | M4 |
+| L5 | `drawing` | drawings: sheets, views through hidden-line removal (projected, section, detail, isometric, auxiliary, overlay; crops, breaks and break outs on them), associative dimensions, centrelines, hole tables, balloons, parts lists, title blocks, PDF/SVG/DXF, `drw.*` commands | M4 |
 | L6 | `io` | `.tenon` part, `.tenonasm` assembly and `.tenondrw` drawing files, file and export commands, STL and 3MF, the mesh checks behind the 3D print check; flat patterns as DXF and SVG; STEP via the kernel; a stress study worked out (`study.solve`) | M11 |
 | L7 | `render` | camera, picking, software rasteriser, wgpu viewport renderer, drawing sheets to images (no UI toolkit) | M4 |
 | L8 | `ui` | egui workbench: ribbon, browser, sketcher, feature panels, properties panel, viewport, dialogs; the assembly environment and editing parts in place; the drawing environment; the Sheet Metal tab and the flat pattern view | M8 |
@@ -152,9 +152,13 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
   view's frame with hidden-line removal (`Kernel::project_edges`, OCCT's `HLRBRep_Algo`).
   Projected views take their frame from their parent (third-angle for ANSI, first-angle for ISO,
   DEC-027). A section cuts the model with a half-space box first and hatches the cut faces; a
-  detail clips its parent's curves to a circle. The result (`Evaluation`) is keyed by everything
-  the views depend on (`DrwSession::eval_key`): moving a view or adding a dimension does not
-  recompute anything.
+  detail clips its parent's curves to a circle. An auxiliary view takes its frame as a section does
+  from a straight edge of its parent, found in the model each time; an overlay projects the assembly
+  as the solver places it for the position it keeps (`tenon_assembly::position`); a break out cuts
+  and hatches as a section does. The result (`Evaluation`) is keyed by everything the views depend
+  on (`DrwSession::eval_key`): moving a view or adding a dimension does not recompute anything, nor
+  does a crop or a break, which change what is drawn of a view's curves and where (`modify`,
+  `annotate::to_sheet`), not the curves (DEC-131).
 - **Sheets.** `annotate::build` turns a sheet into `Graphics`: polylines with a pen (visible,
   hidden, thin, centre, cutting, border, hatch), filled arrowheads and text, in millimetres of
   paper. Dimensions keep persistent edge references and are measured again every time, which is
