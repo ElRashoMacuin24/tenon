@@ -4773,3 +4773,31 @@ digits, and a number or a string is taken back. A file still has it as a number,
 to the same bytes. *Not done:* the other way the audit offered, falling back on the fingerprint when a
 name is not found. A reference that no longer matches is reported, and never guessed
 (docs/persistent-naming.md).
+
+## DEC-142 The menu by the pointer and the keyboard (2026-11-04)
+
+An audit by real pointer and keyboard, after DEC-139 had run every entry by its command. What was settled:
+
+- **A list's rows are judged where they are drawn.** egui moves an Area to fit the window, and its response
+  answers from where it was asked to open: so a press on the words of a list pushed left counted as outside
+  it. The rows' own rectangle is asked now, and a list is as wide as its longest row, not 600.
+- **A sketch's clicks are its own.** What has a panel that picks on the part leaves a 2D sketch, once it is
+  known to go ahead: a command refused leaves things as they were, in a 2D or a 3D sketch alike. The list
+  is `PICK_ON_THE_PART`; Extrude and the others that make something of the sketch being drawn leave it
+  themselves, knowing which it was. Measure leaves it too: letting a sketch's clicks serve Measure would
+  have been another way for a click to mean two things.
+- **Where the part is not on the screen, what is on the part is refused in words**, as Stress Analysis does:
+  `on_the_folded_part`. A feature opened from the browser goes to the folded part, since that was asked for
+  by name, and there is nothing else it could mean.
+- **Esc.** A study being worked out comes first, as its words say: `esc_goes_to_what_has_a_use_for_it_and_otherwise_to_the_run`
+  keeps that, and those windows stay while a run goes on. With none going, Esc closes the window on top, and
+  then the navigation bar's tool and Free Rotate. A menu or a prompt has it for itself, as a field does.
+- **Keys** reach the tabs whose tooltips show them: the 3D Model tab's from a 3D sketch, the Sketch tab's from
+  a part, where they ask for a plane as the buttons do.
+- **Search ranks by what works here within how well a name matches**, not above it: "Hole" in a drawing is
+  the hole table, and "hol" still finds Hole Table first by its name.
+- **A set of dimensions on a view turned on the sheet is refused** (DEC-132's gap, and the audit's first choice
+  of the two): measuring along the view's own axes means laying the whole set out turned.
+- **A part that does not build fails what needs its solid** (`asm.mass`, interference, exports), as a part's own
+  export does: a figure without the part reads as if all were well. A parts list goes on listing it, with
+  `failing`.

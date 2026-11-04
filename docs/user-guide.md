@@ -237,7 +237,7 @@ distances, angles, lengths and areas, and to work features.
 thickness, bend radius, reliefs and K factor in **Sheet Metal Defaults**. Then Face,
 Flange, Contour Flange, Hem, Fold, Bend, Corner Seam, Cut (also across bends) and Corner
 Round/Chamfer. **Create Flat Pattern** lays it flat (**Go to Flat Pattern** afterwards); **File > Export Flat Pattern DXF**
-writes it for a cutter.
+writes it for a cutter. While the flat pattern is shown, what works on the part says to Go to Folded Part first.
 
 A shape that closes on itself (a tube, a box section) cannot be laid flat until it is open.
 **Rip** opens a seam in a face: click a point of it for a slit right across it; in **Way**,
