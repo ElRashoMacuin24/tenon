@@ -156,7 +156,10 @@ pub fn run_dist(args: &[&str]) -> Result<(), String> {
         "Third-party software in this folder\n",
         "===================================\n\n",
         "Tenon itself is MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE, NOTICE). It is built\n",
-        "with the software below. Each licence text is in the folder named beside it.\n\n",
+        "with the software below. Each licence text is in the folder named beside it, or, where a\n",
+        "crate publishes none, its licence is given by name (the text is LICENSE-MIT or\n",
+        "LICENSE-APACHE beside this folder). The Rust standard library, built into both programs,\n",
+        "is MIT OR Apache-2.0.\n\n",
     ));
     summary += &conda_licences(&prefix, &bundled, &licences)?;
     summary += &crate_licences(&meta, &licences)?;

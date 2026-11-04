@@ -68,10 +68,17 @@ Their licences ask for the following to be said.
   your own build of a compatible version, as you may OCCT's: put it in place of the one beside the
   program. No relinking of Tenon is needed.
 
+DejaVu Sans
+-----------
+The letters of sketch text are drawn from DejaVu Sans 2.37, built into the program unmodified:
+Bitstream Vera and Arev font licences, DejaVu's changes in the public domain
+(assets/fonts/DejaVu-LICENSE.txt, and licenses/fonts/DejaVu-LICENSE.txt in a release package).
+
 Other third-party material
 --------------------------
-Rust dependencies are listed in Cargo.lock with their own licences. Bundled assets (if any) are
-listed with author, source and licence in ATTRIBUTION.md.
+Rust dependencies are listed in licenses/THIRD-PARTY.txt in a release package, and in Cargo.lock in
+the sources, with their own licences. The Rust standard library, built into both programs, is MIT
+OR Apache-2.0. Bundled assets are listed with author, source and licence in ATTRIBUTION.md.
 
 Trademarks
 ----------
