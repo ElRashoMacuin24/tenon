@@ -13,6 +13,7 @@ use tenon_kernel::{
 use tenon_sketch::{EntityId, RegionKey, Sketch, SketchRegion, default_regions, profile, regions, text_regions};
 
 mod sheet;
+pub(crate) use sheet::make::lofted_skin;
 
 use crate::FeatureId;
 use crate::document::{
@@ -292,6 +293,9 @@ fn prefix_hashes(doc: &Document, copied: &std::collections::BTreeSet<FeatureId>)
                 | FeatureKind::Bend(_)
                 | FeatureKind::SharpBend(_)
                 | FeatureKind::Fold(_)
+                | FeatureKind::ContourRoll(_)
+                | FeatureKind::LoftedFlange(_)
+                | FeatureKind::Punch(_)
         ) {
             rule.hash(&mut h);
         }
@@ -655,6 +659,9 @@ impl<'a> Ctx<'a> {
             FeatureKind::Bend(b) => self.bend_between(f.id, b),
             FeatureKind::SharpBend(b) => self.sharp_bend(f.id, b),
             FeatureKind::Fold(fo) => self.fold(f.id, fo),
+            FeatureKind::ContourRoll(c) => self.contour_roll(f.id, c),
+            FeatureKind::LoftedFlange(l) => self.lofted_flange(f.id, l),
+            FeatureKind::Punch(p) => self.punch(f.id, p),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };

@@ -2143,7 +2143,7 @@ impl Workbench {
     }
 
     fn write_flat(&mut self, path: &Path, svg: bool) {
-        let marks = Marks { bends: self.chrome.sheet.show_bends, extents: self.chrome.sheet.show_extents };
+        let marks = Marks { bends: self.chrome.sheet.show_bends, extents: self.chrome.sheet.show_extents, punches: true };
         let written = match self.flat_now() {
             Some(Ok(f)) => {
                 let data = if svg { tenon_io::flat::svg(f, marks) } else { tenon_io::flat::dxf(f, marks).0 };

@@ -125,6 +125,15 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::ContourFlange(_), _) => {
             "The contour flange could not be made from this profile. It may cross itself, or a bend may be too tight for the sheet: check the sketch, or try a smaller bend radius.".into()
         }
+        (FeatureKind::ContourRoll(_), _) => {
+            "The contour roll could not be made from this profile. It may touch its axis or cross itself: check the sketch and the axis, or try a smaller angle.".into()
+        }
+        (FeatureKind::LoftedFlange(_), _) => {
+            "The lofted flange could not be made between these profiles. They may cross one another, or the sheet may be too thick for how tightly it curves: move the profiles apart or make the sheet thinner; as press-brake facets, try a larger chord tolerance or a smaller bend radius.".into()
+        }
+        (FeatureKind::Punch(_), _) => {
+            "The punch could not be stamped into the sheet. It may run into another stamp or a hole: move it, or make it smaller.".into()
+        }
         (FeatureKind::PatternRect(_) | FeatureKind::PatternCircular(_) | FeatureKind::Mirror(_), _) => {
             "The copies could not be joined to the part. A copy may touch the part only along an edge or at a point: change the spacing, count or plane.".into()
         }

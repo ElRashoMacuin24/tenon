@@ -159,6 +159,76 @@ pub fn seat(k: &dyn Kernel, shape: ShapeHandle, sketch: &Frame, profile: &[Regio
     Ok(best.map(|(f, share, _)| (f, share)))
 }
 
+/// A flat side of the sheet as a stamp sees it, in the coordinates of the sketch on it.
+#[derive(Clone, Debug)]
+pub struct Stamped {
+    pub face: u32,
+    /// The way the face looks, out of the sheet.
+    pub normal: Vec3,
+    /// Its outline and its holes, as points.
+    pub outer: Vec<Vec2>,
+    pub holes: Vec<Vec<Vec2>>,
+    /// Its edges as points, and for each whether a bend of the sheet is beyond it.
+    pub edges: Vec<(Vec<Vec2>, bool)>,
+}
+
+impl Stamped {
+    /// Why the shape given by points `reach` (in the sketch's coordinates) is not all on the face,
+    /// when it is not: a place it goes off the face, and whether that is onto a bend.
+    pub fn off_at(&self, reach: &[Vec2]) -> Option<(Vec2, bool)> {
+        let off = reach.iter().find(|p| !super::flat::within(&self.outer, **p) || self.holes.iter().any(|h| super::flat::within(h, **p)))?;
+        let nearest = self
+            .edges
+            .iter()
+            .map(|(points, bend)| {
+                let d = points.windows(2).map(|w| distance_to(*off, w[0], w[1])).fold(f64::INFINITY, f64::min);
+                (d, *bend)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        Some((*off, nearest.is_some_and(|n| n.1)))
+    }
+}
+
+fn distance_to(p: Vec2, a: Vec2, b: Vec2) -> f64 {
+    let d = b - a;
+    let f = if d.dot(d) > 1e-18 { ((p - a).dot(d) / d.dot(d)).clamp(0.0, 1.0) } else { 0.0 };
+    p.dist(a + d * f)
+}
+
+/// The side of the sheet `shape` in the plane of `sketch` that point `at` of that plane is on:
+/// what a punch at that point is stamped into. None when it is on none of them.
+pub fn side_at(k: &dyn Kernel, shape: ShapeHandle, sketch: &Frame, at: Vec2, opts: &Unfold) -> Result<Option<Stamped>, String> {
+    let solid = read(k, shape)?;
+    let chart = in_sketch(sketch);
+    for (i, face) in solid.faces.iter().enumerate() {
+        if !side_in(&solid, i, sketch, opts.thickness) {
+            continue;
+        }
+        let Ok(f) = u32::try_from(i) else { continue };
+        let SurfaceKind::Plane { normal, .. } = &face.surface else { continue };
+        let mut curves = Vec::new();
+        let mut edges = Vec::new();
+        for &e in solid.topo.face_edges.get(i).map_or(&[][..], Vec::as_slice) {
+            let Some(info) = solid.edges.get(e as usize).filter(|i| !i.degenerate) else { continue };
+            let curve = flatten(k, shape.edge(e), info, &chart, opts.deflection)?;
+            let beyond = solid.topo.edge_faces.get(e as usize).into_iter().flatten().find(|g| **g != f);
+            let bend = beyond.is_some_and(|g| {
+                matches!(solid.faces.get(*g as usize).map(|x| &x.surface), Some(SurfaceKind::Cylinder { .. }))
+                    && super::unfold::bend_side(*g as usize, &solid.faces, opts.thickness).is_some()
+            });
+            edges.push((curve.points(0.1), bend));
+            curves.push(curve);
+        }
+        let Ok((outer, inner)) = chain(curves) else { continue };
+        let rim = outer.polygon(0.05);
+        if !super::flat::within(&rim, at) {
+            continue;
+        }
+        return Ok(Some(Stamped { face: f, normal: normal.normalized(), outer: rim, holes: inner.iter().map(|h| h.polygon(0.05)).collect(), edges }));
+    }
+    Ok(None)
+}
+
 /// Where edge `e` of `shape` lies in the plane of `sketch` when the sheet is laid flat from its
 /// face `base` (the side the sketch lies on): what Project Flat Pattern shows of it. An edge
 /// that is not on that side of the sheet, or would be neither a line nor an arc, is an error.
@@ -311,6 +381,9 @@ fn tools(
                     tools.push(Tool::Bend { face: f, frame, rho: *rho, inner: lo, outer: hi, outline: region::moved(&s.outer, rolled, mirrored) });
                 }
             }
+            // (A profile is not wrapped round the rolled or die-formed parts of a sheet: a cut
+            // across them is a cut of the ordinary kind.)
+            Chart::Turned { .. } | Chart::Skin { .. } => {}
         }
     }
     if tools.is_empty() {

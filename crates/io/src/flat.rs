@@ -12,6 +12,8 @@
 //! | `BEND_UP` | centre lines of bends towards the viewer | 3 (green) |
 //! | `BEND_DOWN` | centre lines of bends away from the viewer | 1 (red) |
 //! | `BEND_EXTENT` | where each bend begins and ends | 8 (grey) |
+//! | `PUNCH` | a formed punch's centre mark and the line it bends at | 5 (blue) |
+//! | `PUNCH_ID` | every punch's name, as text beside it | 6 (magenta) |
 
 use std::f64::consts::TAU;
 
@@ -28,10 +30,23 @@ pub const INTERIOR: &str = "INTERIOR";
 pub const BEND_UP: &str = "BEND_UP";
 pub const BEND_DOWN: &str = "BEND_DOWN";
 pub const BEND_EXTENT: &str = "BEND_EXTENT";
+pub const PUNCH: &str = "PUNCH";
+pub const PUNCH_ID: &str = "PUNCH_ID";
 
 /// The layers of a flat pattern's DXF: name, colour, line type.
-pub const LAYERS: [(&str, i64, &str); 5] =
-    [(OUTER, 7, "CONTINUOUS"), (INTERIOR, 4, "CONTINUOUS"), (BEND_UP, 3, "CENTER"), (BEND_DOWN, 1, "CENTER"), (BEND_EXTENT, 8, "CONTINUOUS")];
+pub const LAYERS: [(&str, i64, &str); 7] = [
+    (OUTER, 7, "CONTINUOUS"),
+    (INTERIOR, 4, "CONTINUOUS"),
+    (BEND_UP, 3, "CENTER"),
+    (BEND_DOWN, 1, "CENTER"),
+    (BEND_EXTENT, 8, "CONTINUOUS"),
+    (PUNCH, 5, "CONTINUOUS"),
+    (PUNCH_ID, 6, "CONTINUOUS"),
+];
+
+/// How long each arm of a formed punch's centre mark is, and how high its name is written (mm).
+const MARK_ARM: f64 = 2.5;
+const NAME_HEIGHT: f64 = 2.5;
 
 /// What goes into the file besides what is cut.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,11 +55,13 @@ pub struct Marks {
     pub bends: bool,
     /// Where every bend begins and ends.
     pub extents: bool,
+    /// Every punch's name, and a formed punch's centre mark and bend line.
+    pub punches: bool,
 }
 
 impl Default for Marks {
     fn default() -> Self {
-        Marks { bends: true, extents: true }
+        Marks { bends: true, extents: true, punches: true }
     }
 }
 
@@ -137,6 +154,25 @@ pub fn dxf(flat: &FlatPattern, marks: Marks) -> (String, Counts) {
             b.extents.iter().for_each(|l| seg(l, BEND_EXTENT));
         }
     }
+    if marks.punches {
+        for m in &flat.marks {
+            if m.formed {
+                let mut seg = |a: Vec2, b: Vec2| curve_tags(&mut t, &FlatCurve::Line { start: a, end: b }, PUNCH, &mut marked);
+                seg(m.center - Vec2::new(MARK_ARM, 0.0), m.center + Vec2::new(MARK_ARM, 0.0));
+                seg(m.center - Vec2::new(0.0, MARK_ARM), m.center + Vec2::new(0.0, MARK_ARM));
+                m.lines.iter().for_each(|l| seg(l[0], l[1]));
+            }
+            t.extend([
+                s(0, "TEXT"),
+                s(8, PUNCH_ID),
+                f(10, m.center.x + MARK_ARM),
+                f(20, m.center.y + MARK_ARM),
+                f(30, 0.0),
+                f(40, NAME_HEIGHT),
+                s(1, &m.name),
+            ]);
+        }
+    }
     t.extend([s(0, "ENDSEC"), s(0, "EOF")]);
     (tenon_dxf::write_ascii(&t), n)
 }
@@ -195,13 +231,32 @@ pub fn svg(flat: &FlatPattern, marks: Marks) -> String {
             b.lines.iter().for_each(|l| line(l, &format!("stroke=\"{color}\" stroke-width=\"0.2\" stroke-dasharray=\"4 1 1 1\"")));
         }
     }
+    if marks.punches {
+        let style = "stroke=\"#2a5bd7\" stroke-width=\"0.2\"";
+        for m in &flat.marks {
+            if m.formed {
+                let (across, up) = (Vec2::new(MARK_ARM, 0.0), Vec2::new(0.0, MARK_ARM));
+                line(&[m.center - across, m.center + across], style);
+                line(&[m.center - up, m.center + up], style);
+                m.lines.iter().for_each(|l| line(l, style));
+            }
+        }
+        for m in &flat.marks {
+            let name = m.name.replace('&', "&amp;").replace('<', "&lt;");
+            out.push_str(&format!(
+                "  <text x=\"{:.4}\" y=\"{:.4}\" font-size=\"{NAME_HEIGHT}\" font-family=\"sans-serif\" fill=\"#8a2bbd\">{name}</text>\n",
+                m.center.x + MARK_ARM,
+                h - (m.center.y + MARK_ARM)
+            ));
+        }
+    }
     out.push_str("</svg>\n");
     out
 }
 
 fn marks(p: &Value) -> Marks {
     let flag = |key: &str| arg(p, key).and_then(Value::as_bool).unwrap_or(true);
-    Marks { bends: flag("bends"), extents: flag("extents") }
+    Marks { bends: flag("bends"), extents: flag("extents"), punches: flag("punches") }
 }
 
 fn written(path: &std::path::Path, data: &str, flat: &FlatPattern) -> CmdResult {
@@ -215,6 +270,7 @@ fn written(path: &std::path::Path, data: &str, flat: &FlatPattern) -> CmdResult 
         "cut_length": flat.cut_length,
         "holes": flat.inner.len(),
         "bends": flat.bends.len(),
+        "punches": flat.marks.len(),
     }))
 }
 
@@ -283,6 +339,8 @@ mod tests {
             width: 40.0,
             area,
             cut_length: 0.0,
+            notes: Vec::new(),
+            marks: Vec::new(),
         }
     }
 
@@ -347,8 +405,45 @@ mod tests {
             assert!(named("LTYPE").contains(&r.iter().find(|t| t.code == 6).map(Tag::str).unwrap()));
         }
         // Without the marks only what is cut is written.
-        let (bare, _) = dxf(&flat, Marks { bends: false, extents: false });
+        let (bare, _) = dxf(&flat, Marks { bends: false, extents: false, punches: false });
         assert!(read_back(&bare).1.iter().all(|(_, layer)| layer == OUTER || layer == INTERIOR));
+    }
+
+    #[test]
+    fn a_punch_is_in_the_dxf_and_the_svg_by_its_name_and_a_formed_one_by_its_mark_and_bend_line() {
+        use tenon_model::sheet::PunchMark;
+        let mut flat = pattern();
+        flat.marks = vec![
+            PunchMark { name: "Round 8".into(), center: Vec2::new(52.0, 30.0), formed: false, lines: vec![] },
+            PunchMark {
+                name: "Louver 30 x 15 x 5".into(),
+                center: Vec2::new(30.0, 20.0),
+                formed: true,
+                lines: vec![[Vec2::new(15.0, 12.0), Vec2::new(45.0, 12.0)]],
+            },
+        ];
+        let (text, n) = dxf(&flat, Marks::default());
+        assert_eq!(n, Counts { lines: 6, arcs: 2, circles: 1, polylines: 0 }, "what is cut is as it was");
+        let (_, on) = read_back(&text);
+        let count = |kind: &str, layer: &str| on.iter().filter(|(k, l)| k == kind && l == layer).count();
+        // Two arms of the mark and the hinge, for the formed one; a name for each.
+        assert_eq!((count("LINE", PUNCH), count("TEXT", PUNCH_ID)), (3, 2));
+        assert!(text.contains("Round 8") && text.contains("Louver 30 x 15 x 5"));
+        // Every layer used is defined.
+        let tags = tenon_dxf::parse(text.as_bytes()).unwrap();
+        let tables = tenon_dxf::records(&tenon_dxf::sections(&tags)[1].tags);
+        let named: Vec<String> =
+            tables.iter().filter(|(k, _)| k == "LAYER").filter_map(|(_, r)| r.iter().find(|t| t.code == 2).map(Tag::str)).collect();
+        assert!(on.iter().all(|(_, layer)| named.contains(layer)), "{on:?}");
+        // Without them, nothing of them.
+        let marks = Marks { punches: false, ..Marks::default() };
+        let (_, on) = read_back(&dxf(&flat, marks).0);
+        assert!(on.iter().all(|(_, layer)| layer != PUNCH && layer != PUNCH_ID), "{on:?}");
+        // In the picture: its name, and three more lines.
+        let picture = svg(&flat, Marks::default());
+        assert!(picture.contains(">Louver 30 x 15 x 5</text>") && picture.contains(">Round 8</text>"), "{picture}");
+        assert_eq!(picture.matches("<line").count(), 6 + 3);
+        assert_eq!(svg(&flat, marks).matches("<text").count(), 0);
     }
 
     #[test]
@@ -366,6 +461,6 @@ mod tests {
         assert_eq!((text.matches("<path").count(), text.matches("fill-rule=\"evenodd\"").count(), text.matches("<line").count()), (1, 1, 6));
         assert_eq!((text.matches("#1a8a3a").count(), text.matches("#c0392b").count()), (1, 1), "one bend up, one down");
         assert_eq!(text.matches('Z').count(), 3, "the outline, the slot and the hole are each closed");
-        assert!(svg(&flat, Marks { bends: false, extents: false }).matches("<line").count() == 0);
+        assert!(svg(&flat, Marks { bends: false, extents: false, punches: false }).matches("<line").count() == 0);
     }
 }

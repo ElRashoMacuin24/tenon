@@ -925,6 +925,12 @@ pub enum FeatureKind {
     SharpBend(crate::sheet::SharpBend),
     /// A face of the sheet folded along a line drawn across it.
     Fold(crate::sheet::Fold),
+    /// A strip of sheet rolled round an axis.
+    ContourRoll(crate::sheet::ContourRoll),
+    /// A sheet between two open profiles.
+    LoftedFlange(crate::sheet::LoftedFlange),
+    /// Shapes from the punch library stamped into a face of the sheet.
+    Punch(crate::sheet::Punch),
 }
 
 impl FeatureKind {
@@ -989,6 +995,9 @@ impl FeatureKind {
             FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => "Cut",
             FeatureKind::Bend(_) | FeatureKind::SharpBend(_) => "Bend",
             FeatureKind::Fold(_) => "Fold",
+            FeatureKind::ContourRoll(_) => "Contour Roll",
+            FeatureKind::LoftedFlange(_) => "Lofted Flange",
+            FeatureKind::Punch(_) => "Punch",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -1024,6 +1033,9 @@ impl FeatureKind {
             FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => "Cut",
             FeatureKind::Bend(_) | FeatureKind::SharpBend(_) => "Bend",
             FeatureKind::Fold(_) => "Fold",
+            FeatureKind::ContourRoll(_) => "Contour Roll",
+            FeatureKind::LoftedFlange(_) => "Lofted Flange",
+            FeatureKind::Punch(_) => "Punch",
         }
     }
     /// Features this one depends on.
@@ -1084,6 +1096,12 @@ impl FeatureKind {
             FeatureKind::Bend(b) => b.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::SharpBend(b) => b.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::Fold(f) => vec![f.sketch],
+            FeatureKind::ContourRoll(c) => match c.axis {
+                AxisRef::Work(a) => vec![c.sketch, a],
+                _ => vec![c.sketch],
+            },
+            FeatureKind::LoftedFlange(l) => l.sketches.to_vec(),
+            FeatureKind::Punch(p) => vec![p.sketch],
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -1644,6 +1662,14 @@ impl Document {
                 FeatureKind::SharpBend(b) => b.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Fold(fo) if self.sketch(fo.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, fo.sketch)),
                 FeatureKind::Fold(fo) => fo.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::ContourRoll(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
+                FeatureKind::ContourRoll(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::LoftedFlange(l) if l.sketches.iter().any(|s| self.sketch(*s).is_none()) => {
+                    return Err(format!("{}: both profiles of a lofted flange must be sketches", f.name));
+                }
+                FeatureKind::LoftedFlange(l) => l.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Punch(p) if self.sketch(p.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, p.sketch)),
+                FeatureKind::Punch(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

@@ -147,6 +147,24 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => &[("/distance", Mm)],
         FeatureKind::Bend(_) | FeatureKind::SharpBend(_) => &[("/radius", Mm)],
         FeatureKind::Fold(_) => &[("/angle", Deg), ("/radius", Mm)],
+        FeatureKind::ContourRoll(_) => &[("/angle", Deg), ("/radius", Mm)],
+        FeatureKind::LoftedFlange(_) => &[("/forming/press_brake/chord", Mm), ("/radius", Mm)],
+        FeatureKind::Punch(_) => &[
+            ("/shape/round/diameter", Mm),
+            ("/shape/square/side", Mm),
+            ("/shape/rectangle/length", Mm),
+            ("/shape/rectangle/width", Mm),
+            ("/shape/obround/length", Mm),
+            ("/shape/obround/width", Mm),
+            ("/shape/d_shape/diameter", Mm),
+            ("/shape/d_shape/across", Mm),
+            ("/shape/dimple/diameter", Mm),
+            ("/shape/dimple/depth", Mm),
+            ("/shape/louver/length", Mm),
+            ("/shape/louver/width", Mm),
+            ("/shape/louver/height", Mm),
+            ("/rotation", Deg),
+        ],
         FeatureKind::Sketch { .. }
         | FeatureKind::Mirror(_)
         | FeatureKind::WorkAxis(_)

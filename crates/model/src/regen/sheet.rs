@@ -7,6 +7,8 @@ use tenon_kernel::{
 use tenon_sketch::Sketch;
 
 use super::{Ctx, Stop, label, profile_of};
+
+pub(crate) mod make;
 use crate::FeatureId;
 use crate::naming::{FaceOrigin, edge_key, names_of_boolean, names_of_sweep, pair_key, resolve_edge, sub_key};
 use crate::sheet::flange::{self, Notch, Part, Site};
@@ -1804,7 +1806,7 @@ impl Ctx<'_> {
         let t = sizes.thickness;
         let (held, frame) = self.sketch_and_frame(c.sketch)?;
         let sketch: &Sketch = &held;
-        let (drawn, mut ids) = contour_path(sketch)?;
+        let (drawn, mut ids) = contour_path(sketch, &[])?;
         let (bi, body, found) = self.sheet_edges(&c.edges, "contour flange")?;
         let topo = self.k.topology(body)?;
         let mut sites: Vec<(Site, u64)> = Vec::with_capacity(found.len());
@@ -1938,7 +1940,7 @@ impl Ctx<'_> {
         let t = sizes.thickness;
         let (held, frame) = self.sketch_and_frame(c.sketch)?;
         let sketch: &Sketch = &held;
-        let (drawn, ids) = contour_path(sketch)?;
+        let (drawn, ids) = contour_path(sketch, &[])?;
         let (lo, hi) = c.reach(t);
         let path = strip::rounded(&drawn, c.radius.unwrap_or(sizes.bend_radius), lo, hi)?;
         // A face is named after the curve of the sketch it follows (a bend made at a corner:
@@ -1968,13 +1970,13 @@ impl Ctx<'_> {
 /// The open profile a sketch holds: its lines and arcs (not construction or reference geometry)
 /// in order from one end to the other, with the sketch entity each is. The profile runs so that
 /// its first turn is to the left: the left of it is then the inside of its first corner.
-fn contour_path(sketch: &Sketch) -> Result<(Vec<strip::Run>, Vec<tenon_sketch::EntityId>), String> {
+fn contour_path(sketch: &Sketch, skip: &[tenon_sketch::EntityId]) -> Result<(Vec<strip::Run>, Vec<tenon_sketch::EntityId>), String> {
     use tenon_sketch::{EntityId, Geometry};
     // Each curve by where it starts and ends: curves join where their ends are at one place
     // (one point of the sketch, or two that coincide).
     let mut left: Vec<(EntityId, Vec2, Vec2)> = Vec::new();
     for (id, e) in sketch.entities() {
-        if e.construction || e.reference {
+        if e.construction || e.reference || skip.contains(&id) {
             continue;
         }
         match &e.geometry {
