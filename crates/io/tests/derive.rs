@@ -403,7 +403,8 @@ fn a_file_does_not_send_derive_to_another_machine_and_a_folder_is_no_part() {
     let mine = dir.join("mine.tenon");
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     let said = exec(&mut s, "model.derive", &json!({ "path": "//no-such-machine/parts/p.tenon" }), Some(&mut k)).unwrap_err().to_string();
-    assert!(said.contains("another machine (no-such-machine)"), "{said}");
+    // (Elsewhere than Windows that is a path like any other, and looking there reaches no machine.)
+    assert!(if cfg!(windows) { said.contains("another machine (no-such-machine)") } else { said.contains("is missing") }, "{said}");
     let said = exec(&mut s, "model.derive", &json!({ "path": path(&dir) }), Some(&mut k)).unwrap_err().to_string();
     assert!(said.contains("is not a file"), "{said}");
 
@@ -415,7 +416,7 @@ fn a_file_does_not_send_derive_to_another_machine_and_a_folder_is_no_part() {
     std::fs::write(&mine, text.replace("path = \"other.tenon\"", "path = \"//no-such-machine/parts/p.tenon\"")).unwrap();
     run(&mut s, &mut k, "file.open", json!({ "path": path(&mine) }));
     let why = fails(&mut s, &mut k);
-    assert!(why.contains("another machine (no-such-machine)"), "{why}");
+    assert!(if cfg!(windows) { why.contains("another machine (no-such-machine)") } else { why.contains("is missing") }, "{why}");
     let _ = std::fs::remove_dir_all(dir);
 }
 
