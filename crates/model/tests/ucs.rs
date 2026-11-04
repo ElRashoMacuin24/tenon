@@ -246,6 +246,17 @@ fn work_features_are_built_on_a_ucs_and_it_is_measured_to() {
     // Its origin alone says where it is.
     let m = run(&mut s, &mut k, "model.measure", json!({ "a": { "ucs": u } }));
     assert!(near(got(&m, "X").unwrap(), 50.0) && near(got(&m, "Z").unwrap(), 30.0), "{m}");
+    // An axis or a plane alone, having no size: a point of it, and the way it goes.
+    let m = run(&mut s, &mut k, "model.measure", json!({ "a": { "ucs": u, "axis": "z" } }));
+    assert!(near(got(&m, "X").unwrap(), 50.0) && near(got(&m, "Along Z").unwrap(), 1.0), "{m}");
+    let m = run(&mut s, &mut k, "model.measure", json!({ "a": { "ucs": u, "plane": "xy" } }));
+    assert!(near(got(&m, "Z").unwrap(), 30.0) && near(got(&m, "Normal Z").unwrap(), 1.0), "{m}");
+    // So does a work plane or axis, and with a second pick the figures are the ones they were.
+    let wp = feature(&run(&mut s, &mut k, "work.plane", json!({ "base": "yz", "distance": 7 })));
+    let m = run(&mut s, &mut k, "model.measure", json!({ "a": { "work": wp } }));
+    assert!(near(got(&m, "X").unwrap(), 7.0) && near(got(&m, "Normal X").unwrap().abs(), 1.0), "{m}");
+    let m = run(&mut s, &mut k, "model.measure", json!({ "a": { "work": wp }, "b": { "ucs": u } }));
+    assert!(near(got(&m, "Distance").unwrap(), 43.0) && got(&m, "Normal X").is_none(), "{m}");
 }
 
 #[test]
