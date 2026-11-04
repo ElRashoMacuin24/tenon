@@ -3558,7 +3558,7 @@ the pieces on the far side turn back about the bend's axis and come along by its
 bend's outline, flat, a prism one thickness thick, joins them. Whatever carries on beyond the
 far side comes round with it: further bends stay folded. The outline is read off the bend's face
 through the flat pattern's own chart and chain, so what the flat pattern says of a part and what
-Unfold makes of it are the same: `a_tray_with_relieved_corners_is_laid_flat_whole_and_folded_back`.
+Unfold makes of it are the same, where it makes anything (below, for a cut not square to a bend): `a_tray_with_relieved_corners_is_laid_flat_whole_and_folded_back`.
 Rebuilding the part from the flat pattern's outline was the other way, and would have left no face
 with its name.
 
@@ -3568,8 +3568,10 @@ is told a bend by; the plate and the wall keep their names, and so do not become
 them; and the edges show where the bend lay. Sketches and cuts go across them as if they were not
 there: a flat pattern, a cut across bends and an ordinary cut all follow coplanar faces.
 
-Which side stays is found by looking: a point of the stationary face, and points just past each end
-of the bend at the middle of the sheet, 17 along each stretch since a hole may be at some of them.
+Which side stays is found by looking: a point of the stationary face, and a thin box just past each
+end of the bend in the middle of the sheet, as long as each stretch it takes up, so that a neck
+anywhere along it counts. (It was 17 points along each stretch at first, and a neck between two of
+them made a part that can be laid flat say it had no bend, or that nothing of it was left.)
 A name would not do: the two faces a Fold makes of one have one name. A bend the sheet reaches at both
 ends on the stationary side is not all that joins them. Then the other pieces along the same axis are
 taken with it (a slot through a bend, a hole right across it), and if that does not part them either,
@@ -3592,8 +3594,8 @@ What cannot be folded back is refused, in words, and each has a test
 (`what_cannot_be_folded_back_is_said_in_words`): nothing left of the strip; a cut right across it or
 along it, which leaves nothing to carry what is beyond (it could be turned to where it would have
 gone, a piece on its own: that would be a move, and hide that the part has come in two); what is in
-the strip not sheet of one thickness cut straight through; something
-joined to the strip alone, as a flange on its edge or a boss on it; the sheet on its two sides joined
+the strip not sheet of one thickness cut straight through, or anything over or under it; something
+joined to the strip alone, as a flange on its edge; the sheet on its two sides joined
 some other way; what comes round running into the sheet. The test of "cut straight through" looks at
 the strip's faces: a floor between the two sides of the sheet, a slanted flat side, or a round one
 not square to the sheet. It was at first the strip's volume against its outline's area, to a millionth,
@@ -3611,10 +3613,85 @@ once anything is to be done, and further bends are picked on that; a bend alread
 with Clear. While either is edited the view stops just after it, since a refold further on would hide
 what an unfold does.
 
+**A hole in a strip goes through on its own.** A strip's holes were first holes of its one prism.
+The kernel's profiles take a hole drawn counter-clockwise, and the flat pattern's chain gives them
+clockwise: a round one comes back as a circle and so was right, and one that came as points (Cut
+Normal, a plain cut) made a strip with no top or bottom and a volume that was more than the sheet's,
+with the kernel calling it invalid and nothing saying so. Turning the loops round was the other way;
+cutting each out of a whole strip is what folding back does already, and it does not care which way
+round anything runs. Everything laid flat or folded back is now checked sound, and is refused in
+words if it is not, so a shape nobody thought of cannot pass as this one did.
+
+**What is not square to the sheet is not laid flat.** A strip's walls are square to it. A plain
+straight cut through a bend meets its inside and its outside in different places, and a pocket is on
+one of them, so laid flat and folded back such a bend would change, with the hole bigger than it was.
+The bend's two sides are laid out by one chart and must have one outline, to within what the points
+standing for a curve can be off (4 x the flat pattern's deflection, 0.02 mm); if not, Unfold refuses
+and names Cut Normal and Cut Across Bend. Carrying leaning walls across was the other way: the strip
+would then be no prism, and nothing could roll it up. Refold has always refused the same thing made
+while flat, so the two now agree.
+
+**Where a tube's chart wraps.** A chart takes angles within half a turn of its middle. That middle was
+the direction of the face's centroid, which a hole or a slit at a slant moves: then the wrap fell on
+the sheet and not in the opening, and a tube that lay flat with its slit at -Y was refused with its
+slit at +X, in words that were not so ("comes apart", "overlaps itself"). The middle is now opposite
+the widest gap the face's rim leaves round the axis. A face may have none and still be open: a slit
+at a slant covers every angle somewhere along the tube. Then the middle goes along the axis as a
+path through the opening, found band by band (`opening_along`). One slant, from an edge of the slit,
+was tried first and did it for one rip; two rips that meet have a corner in the seam, and came out
+right at 80 degrees and false at 350, where the kernel's own seam is. A path does both.
+
+A slit is measured from its first point for the same reason. It was measured from the centroid too,
+so a slit in a tube with a hole, near half a turn from the hole, went the long way round and took 66 mm
+of sheet in place of 26. A tube with no opening takes the short way between the points; a face with
+one, the way that stays on it.
+
+**A rip that would part the sheet is refused.** A slit on a flat face runs alongside the bend beside
+it, which on an open bracket takes the end of the plate off, and it said "Made Rip1". Flat Pattern
+then said to combine the two solids. A word at the feature with the part cut in two was the other
+choice. A rip is for opening a seam; two solids have no flat pattern; and a piece is taken off with
+Cut, which says that is what it does. So it fails in words, while it is being set up as well, with
+the part left as it was (a copy of the body is kept for that). Two rips, or a rip that stops short,
+are not refused: only more solids than before are.
+
+**How far a point may be off its face.** A point is a place in the part, so a change of thickness or
+bend radius may leave it off the face it was picked on, and it was projected onto the face for that
+reason with no limit at all: a point 500 mm off the plate made a slit. Now within 10 thicknesses
+square to the face, and in its outline as ever. A point on a tube's axis has no place round it and
+says so. An edge given for a slit in a round face did nothing and was written to the file; it is
+refused now, and the panel does not take one.
+
+**A piece cut off beyond a strip is refused.** A cut right across what will be the wall leaves two
+pieces there, and only the one that reaches the strip comes round. The other was left lying in the
+plane of the plate, with no word. Moving it as if joined would hide that the part has come in two, as
+above. A piece cut off on the near side stays where it is, which is where it would be anyway. The
+count of solids when the bend was laid flat (`FlatBend::solids`) keeps a body made of two solids from
+the start from being refused for that.
+
+**Nothing on a strip.** The strip's zone is one thickness deep, so a block on the plate running out
+over the outside of the bend was outside it, and stayed flat past the plate's end. A thin layer
+over and under the strip's footprint now finds it, in the words already there.
+
+**The order of refolds.** Each refold holds still what its own unfold held still. Two unfolds from
+different faces, folded back last first, come back where they were. Oldest first they come to the same
+shape, moved as a whole: the lip held still by the second unfold has been moved by then. Making any
+order come back in place needs each strip to know what every later unfold held still; for three
+unfolds it is not one fixed face. It stays as it is and is said in the user guide and the roadmap.
+
+**The unfold a refold takes** is now the last with a bend still flat, read off the regeneration
+(`Regen::unfold_still_flat`) for a command and off the strips on the part in the app. The document alone
+could not say so: a refold that names every strip looks like one that names some.
+
+**In a panel, what the feature makes is nothing to pick.** Unfold's preview shows the strip, and a
+click on it took the strip for the stationary face, of a feature that does not exist yet. A rip
+edited with an unfold after it showed the flat sheet with the point in folded coordinates, and took
+faces of the later unfold. Rip now stops the view just after itself as Unfold and Refold do, and
+neither takes a face of itself or anything later, and a click on one says why.
+
 **Clean room.** The words on the panels (Single Point, Point to Point, Whole Face, Stationary Face,
 All Bends) say what each does.
 
 **Left out.** A round stationary face, so a ripped tube has its flat pattern and no Unfold. A refold
 that keeps a face of its own in place of its unfold's stationary one, or takes the bends of two
-unfolds at once. Sketches carried across a bend as it is laid flat or folded back (a sketch stays
+unfolds at once, or brings them back in place in any order. Sketches carried across a bend as it is laid flat or folded back (a sketch stays
 where it was drawn). The flat pattern of a partly flat sheet does not mark where a strip's bend was.

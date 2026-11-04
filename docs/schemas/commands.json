@@ -5140,7 +5140,7 @@
       "id": "sheet.rip",
       "label": "Rip",
       "undoable": true,
-      "description": "face: a face reference: a flat side of the sheet, or one side of a bend or a tube. A seam is opened in it, so that a shape that closes on itself can be laid flat. way: \"point\" (default: a slit right across the face through at: [x, y, z]; on a bend or a tube along its axis, on a flat face alongside the bend beside it, else across its short way, or alongside the straight edge along: an edge reference) | \"between\" (a slit from from: [x, y, z] to to: [x, y, z], both on the face; a point on the edge of the face takes the slit through that edge) | \"face\" (the whole face is taken out, and the sheet behind it). gap: how wide a slit is, as the flat pattern has it (default GapSize; a whole face has none)",
+      "description": "face: a face reference: a flat side of the sheet, or one side of a bend or a tube. A seam is opened in it, so that a shape that closes on itself can be laid flat. way: \"point\" (default: a slit right across the face through at: [x, y, z]; on a bend or a tube along its axis, on a flat face alongside the bend beside it, else across its short way, or alongside the straight edge along: an edge reference, on a flat face only) | \"between\" (a slit from from: [x, y, z] to to: [x, y, z], both on the face; a point on the edge of the face takes the slit through that edge) | \"face\" (the whole face is taken out, and the sheet behind it). gap: how wide a slit is, as the flat pattern has it (default GapSize; a whole face has none). A point is on the face when it is within the face's outline and within 10 thicknesses square to it. A rip that would leave the sheet in more pieces than it was is refused: it opens a seam, and a cut takes a piece off",
       "params": {
         "type": "object",
         "properties": {
@@ -5208,7 +5208,7 @@
       "id": "sheet.unfold",
       "label": "Unfold",
       "undoable": true,
-      "description": "face: a face reference, the flat side of the sheet that stays where it is. bends: [face references], a round face of each bend to lay flat (default: every bend). Each becomes a flat strip as wide as its allowance, in the plane of the sheet on the side towards the face, and the sheet beyond it comes round with it. The part after this is that partly flat sheet, for cuts and other work to follow on it; sheet.refold folds it back. A bend that is not all that joins the sheet on its two sides (a tube, a box) cannot be laid flat until it is ripped",
+      "description": "face: a face reference, the flat side of the sheet that stays where it is. bends: [face references], a round face of each bend to lay flat (default: every bend). Each becomes a flat strip as wide as its allowance, in the plane of the sheet on the side towards the face, and the sheet beyond it comes round with it. The part after this is that partly flat sheet, for cuts and other work to follow on it; sheet.refold folds it back. A bend that is not all that joins the sheet on its two sides (a tube, a box) cannot be laid flat until it is ripped, and one with a cut through it that is not square to the sheet (a plain straight cut, not Cut Normal or Cut Across Bend) is refused",
       "params": {
         "type": "object",
         "properties": {
@@ -5238,14 +5238,14 @@
       "id": "sheet.refold",
       "label": "Refold",
       "undoable": true,
-      "description": "unfold: the feature (default: the last unfold no refold has folded back whole). bends: [face references], a face of the flat strip of each bend to fold back (default: all of its bends still flat). Each strip is rolled up again as it now is, what was cut out of it going round the bend, and the sheet beyond turns back with it. Refused, in words, when what is in the strip is not sheet of one thickness cut straight through, when something is joined to the strip alone, when the sheet on its two sides is joined some other way, when a cut has left nothing of the strip to hold the two sides together, and when what comes round would run into the sheet",
+      "description": "unfold: the feature (default: the last unfold with a bend still flat). bends: [face references], a face of the flat strip of each bend to fold back (default: all of its bends still flat). Each strip is rolled up again as it now is, what was cut out of it going round the bend, and the sheet beyond turns back with it. Refused, in words, when what is in the strip is not sheet of one thickness cut straight through, when something is joined to the strip alone, when the sheet on its two sides is joined some other way, when a cut has left nothing of the strip to hold the two sides together, when a piece cut off beyond the strip would be left lying, and when what comes round would run into the sheet",
       "params": {
         "type": "object",
         "properties": {
           "unfold": {
             "type": "integer",
             "minimum": 0,
-            "description": "the unfold whose bends these are (default: the last that no refold has folded back whole)"
+            "description": "the unfold whose bends these are (default: the last with a bend still flat)"
           },
           "bends": {
             "type": "array",

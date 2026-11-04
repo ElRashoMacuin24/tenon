@@ -1005,6 +1005,14 @@ fn every_bend_is_every_bend_of_the_piece_the_stationary_face_is_on() {
     let gained = 40.0 * T * ALLOWANCE - folded_bend(FRAC_PI_2, 40.0);
     assert!(near(volume(&mut s, &mut k), cut + gained), "{} {}", volume(&mut s, &mut k), cut + gained);
     assert!(s.undo());
+    // A piece with no bend of its own, cut off the middle of the floor: every bend is elsewhere.
+    let cut_off = cut_out(&mut s, &mut k, (45.0, -1.0), (50.0, 41.0));
+    let middle = face_at(&mut s, &mut k, [42.5, 20.0, T]);
+    let unfold = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": middle })), "feature");
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("has no bend to unfold") && e.contains("another piece"), "{e}");
+    run(&mut s, &mut k, "feature.delete", json!({ "feature": unfold }));
+    run(&mut s, &mut k, "feature.delete", json!({ "feature": cut_off }));
     // The left-hand bend, named from there: it says why not.
     let c = FRAC_PI_2 / 2.0;
     let left = face_at(&mut s, &mut k, [5.0 - R * c.sin(), 20.0, T + R - R * c.cos()]);

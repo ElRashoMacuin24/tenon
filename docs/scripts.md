@@ -509,7 +509,7 @@ time. `radius` is the bends' own inside radius in place of the rule's.
 `at` for a slit right across the face through that point (on a bend or a tube along its axis, on a
 flat face alongside the bend beside it, else across its short way, or alongside the edge `along`),
 `way: "between"` with `from` and `to` for a slit between two points, `way: "face"` to take the
-whole face out. `gap` is how wide a slit is in the flat, the rule's `GapSize` unless given. A tube
+whole face out. A rip that would leave the sheet in more pieces than it was is refused. `gap` is how wide a slit is in the flat, the rule's `GapSize` unless given. A tube
 10 inside radius and 2 thick, 50 long, whose neutral surface is at 10.88:
 
 ```json
@@ -525,7 +525,7 @@ whole face out. `gap` is how wide a slit is in the flat, the rule's `GapSize` un
 
 `sheet.unfold` lays bends flat from the flat face that stays where it is: `bends` names each by a
 round face of it, and without them it is every bend. `sheet.refold` folds them back (the last unfold
-not yet folded back whole, unless told `unfold`; all that are flat unless told `bends`, each by a face
+with a bend still flat, unless told `unfold`; all that are flat unless told `bends`, each by a face
 of the strip it became).
 What is cut meanwhile goes round the bend. A hole of radius 6 across the bend of a bracket, cut
 while it is flat:

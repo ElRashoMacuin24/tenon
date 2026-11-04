@@ -1090,7 +1090,8 @@ impl Document {
         Sizes::from_values(&self.parameter_values())
     }
 
-    /// The unfold a new refold is of: the last that no refold has folded back whole, else the last.
+    /// The unfold a new refold is of, as far as the document alone can say (the regeneration knows
+    /// better, `Regen::unfold_still_flat`): the last that no refold has folded back whole, else the last.
     pub fn unfold_to_refold(&self) -> Option<FeatureId> {
         let whole: Vec<FeatureId> = self
             .features()

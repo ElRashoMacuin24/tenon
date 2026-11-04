@@ -13,7 +13,9 @@ shows it in [ROADMAP.md](ROADMAP.md).
   Unfold lays chosen bends flat from a face that stays where it is, so that cuts can go across
   them; Refold folds them back, with what was cut going round the bend, and says in words what
   cannot be folded back. New commands `sheet.rip`, `sheet.unfold`, `sheet.refold`, new feature types
-  `rip`, `unfold`, `refold` in the part file.
+  `rip`, `unfold`, `refold` in the part file. A rip that would part the sheet is refused, as is an
+  unfold of a bend with a cut through it that is not square to the sheet: Cut Normal and Cut Across
+  Bend are, and a plain straight cut is not.
 
 ### Stress checks
 

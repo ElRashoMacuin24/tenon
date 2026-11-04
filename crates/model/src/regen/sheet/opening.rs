@@ -182,7 +182,11 @@ impl Ctx<'_> {
                 }
             }
             if done == 0 {
-                return Err("The sheet has no bend to unfold: it is flat already.".into());
+                return Err(if elsewhere.is_empty() {
+                    "The sheet has no bend to unfold: it is flat already.".into()
+                } else {
+                    "The piece of sheet the stationary face is on has no bend to unfold: the part's bends are on another piece. Pick a face of that piece.".into()
+                });
             }
             return Ok(());
         }

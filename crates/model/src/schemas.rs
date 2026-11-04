@@ -948,7 +948,7 @@ static SCHEMAS: &[C] = &[
     C::new(
         "sheet.refold",
         &[
-            opt("unfold", Id, "the unfold whose bends these are (default: the last that no refold has folded back whole)"),
+            opt("unfold", Id, "the unfold whose bends these are (default: the last with a bend still flat)"),
             opt("bends", List(&Face), "a face of the flat strip of each bend to fold back (default: all still flat)"),
             EQUATIONS,
         ],
