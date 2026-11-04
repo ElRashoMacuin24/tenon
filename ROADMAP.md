@@ -124,7 +124,7 @@ M5 reliability and project format was confirmed by the owner on 2026-10-09.
 
 | Feature | Status | Proof / gap |
 |---|---|---|
-| Layered workspace, layering check | done | `cargo xtask layers`; rules tested in `xtask/src/layers.rs` (14 tests) |
+| Layered workspace, layering check | done | `cargo xtask layers`; rules tested in `xtask/src/layers.rs` |
 | `unsafe` confined to the FFI crate | done | `cargo xtask unsafe-audit`; lexer tested in `xtask/src/unsafe_audit.rs` |
 | Asset attribution check | done | `cargo xtask assets` (`xtask/src/assets.rs`) |
 | wasm check of backend-neutral crates (L0-L6) | done | `cargo xtask wasm` |
@@ -218,7 +218,7 @@ a command script).
 
 Complete 2026-10-08. Solver tests: `crates/assembly/src/solve.rs` and `math.rs`. Files:
 `crates/io/tests/asm.rs`. Commands and demo: `apps/tenon-cli/tests/m3.rs`. UI (real pointer
-and key input): `crates/ui/src/asm_tests.rs` (5). Worker slots: `worker_regenerates_off_thread_and_reports_the_latest`.
+and key input): `crates/ui/src/asm_tests.rs`. Worker slots: `worker_regenerates_off_thread_and_reports_the_latest`.
 
 | Feature | Status | Proof / gap |
 |---|---|---|
@@ -247,7 +247,7 @@ model changes, all with tests); the rows below are rated against it, and all are
 2026-10-09 (centre marks and centrelines placed by hand joined drawing format v1 by the owner's
 choice, DEC-029).
 Hidden-line removal: `crates/kernel-occt/tests/m4.rs`. Drawing crate: `crates/drawing/src`.
-Sheet raster: `lines_dashes_and_text_land_on_white_paper`. Files: `crates/io/tests/drw.rs` (5).
+Sheet raster: `lines_dashes_and_text_land_on_white_paper`. Files: `crates/io/tests/drw.rs`.
 Commands and demo: `apps/tenon-cli/tests/m4.rs` (6). UI (real pointer and key input):
 `crates/ui/src/drw_tests.rs` (10).
 
@@ -559,6 +559,7 @@ What auditors of the program found ahead of 0.2.0, fixed, each with the test tha
 | Files: saving over what another window saved asks; limits on what a file says; another machine is not gone to | done | `saving_over_what_another_window_saved_asks_first`, `a_text_in_a_file_is_held_to_what_the_command_takes`, `a_name_in_a_file_is_held_to_a_length`, `a_part_on_another_machine_is_not_gone_to_because_a_file_says_so`, `a_file_listing_more_values_than_a_document_can_use_is_refused_before_it_is_read` |
 | A STEP file the reader dies on, and closing during an operation the kernel cannot stop | done | `a_step_file_the_reader_dies_on_is_said_to_be_unreadable`, `closing_does_not_wait_for_ever_for_an_operation_the_kernel_cannot_stop` |
 | The archive: fonts' licences, what the libraries' licences ask to have said, the user's docs, no build machine's paths | done | `a_crates_licences_are_found_further_down_as_well`, `a_font_licence_named_and_not_found_stops_the_package`, `the_release_build_keeps_the_machines_paths_out_of_the_programs`; NOTICE. Gap: a solver left running by a parent that was killed (needs a job object, so unsafe code outside the kernel crate) |
+| Letters outside Latin, Greek and Cyrillic | missing | The window's fonts and DejaVu Sans do not have them: a name under a Japanese folder shows as boxes in the status bar, and in sketch text they are cut as boxes (said on OK: `what_the_font_does_not_have_is_named_once`). The file opens and works |
 | A ribbon wider than the window | done | `a_ribbon_wider_than_the_window_is_gone_along_by_its_arrows` |
 
 ## Experimental: native kernel

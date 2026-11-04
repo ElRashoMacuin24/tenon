@@ -444,7 +444,10 @@ impl Workbench {
             let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
             ui.label(egui::RichText::new(format!("{name} has changed on disk")).font(theme::body()).strong());
             ui.add_space(4.0);
-            ui.label(egui::RichText::new("Another window or program has saved it since it was opened here. Overwriting replaces what it saved.").font(theme::small()));
+            ui.label(
+                egui::RichText::new("Another window or program has saved it since it was opened here. Overwriting replaces what it saved.")
+                    .font(theme::small()),
+            );
             ui.add_space(12.0);
             let size = vec2(88.0, 24.0);
             ui.horizontal(|ui| {

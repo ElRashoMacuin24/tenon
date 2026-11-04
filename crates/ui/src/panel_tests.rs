@@ -88,7 +88,8 @@ fn value_of(wb: &Workbench, pointer: &str) -> f64 {
 #[test]
 fn a_spotface_hole_opens_again_and_takes_what_is_typed() {
     let (mut wb, mut d, sk) = block_with_a_point();
-    let asked = json!({ "sketch": sk.0, "diameter": 6, "depth": 5, "reverse": true, "type": "spotface", "spotface_diameter": 12, "spotface_depth": 1 });
+    let asked =
+        json!({ "sketch": sk.0, "diameter": 6, "depth": 5, "reverse": true, "type": "spotface", "spotface_diameter": 12, "spotface_depth": 1 });
     wb.exec("model.hole", asked).unwrap();
     d.settle(&mut wb);
     ok_changes_nothing(&mut d, &mut wb);
@@ -214,7 +215,7 @@ fn a_tap_drill_with_its_own_thread_feature_does_not_gain_a_second() {
     wb.exec("model.hole", json!({ "sketch": sk.0, "diameter": 6.8, "depth": 8, "reverse": true })).unwrap();
     d.settle(&mut wb);
     let hole = last(&wb).id;
-    let wall = wb.scene().bodies[0].faces.iter().find(|(_, f)| matches!(f.surface, tenon_kernel::SurfaceKind::Cylinder { .. })).unwrap().0.clone();
+    let wall = wb.scene().bodies[0].faces.iter().find(|(_, f)| matches!(f.surface, tenon_kernel::SurfaceKind::Cylinder { .. })).unwrap().0;
     let face = wb.exec("model.face_ref", json!({ "origin": wall })).unwrap();
     wb.exec("model.thread", json!({ "face": face })).unwrap();
     d.settle(&mut wb);
@@ -231,7 +232,8 @@ fn a_tap_drill_with_its_own_thread_feature_does_not_gain_a_second() {
 #[test]
 fn a_scripts_thread_is_kept_through_ok_and_a_new_depth_and_let_go_for_another_screw() {
     let (mut wb, mut d, sk) = block_with_a_point();
-    let asked = json!({ "sketch": sk.0, "diameter": 6.8, "depth": 8, "reverse": true, "tapped": true, "pitch": 1, "designation": "M8x1 LH", "left": true });
+    let asked =
+        json!({ "sketch": sk.0, "diameter": 6.8, "depth": 8, "reverse": true, "tapped": true, "pitch": 1, "designation": "M8x1 LH", "left": true });
     wb.exec("model.hole", asked).unwrap();
     d.settle(&mut wb);
     ok_changes_nothing(&mut d, &mut wb);
@@ -714,8 +716,7 @@ fn ok_with_nothing_touched_changes_nothing_in_any_example() {
         let mut d = Driver::new(egui::vec2(1400.0, 860.0));
         wb.open(&file).unwrap();
         d.settle(&mut wb);
-        let ids: Vec<FeatureId> =
-            wb.document().features().iter().filter(|f| !matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id).collect();
+        let ids: Vec<FeatureId> = wb.document().features().iter().filter(|f| !matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id).collect();
         for id in ids {
             let name = wb.document().feature(id).map(|f| f.name.clone()).unwrap_or_default();
             if let Some(what) = after_ok_on(&mut d, &mut wb, id) {

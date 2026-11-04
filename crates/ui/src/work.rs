@@ -149,7 +149,9 @@ impl WorkPanel {
     /// What to do next, in the status bar: for the method chosen.
     pub(crate) fn instruction(&self) -> &'static str {
         match (self.method, self.title()) {
-            (WorkMethod::ThreePoints, _) => "Work Plane: click three points (work points, sketch points, the centre of a circle, the origin), then OK.",
+            (WorkMethod::ThreePoints, _) => {
+                "Work Plane: click three points (work points, sketch points, the centre of a circle, the origin), then OK."
+            }
             (_, "Work Plane") => "Work Plane: click a face or plane (origin planes are in the browser), set the offset, then OK.",
             (_, "Work Axis") => "Work Axis: click an edge, a cylinder or an axis, then OK.",
             _ => "Work Point: click a circular edge, then OK.",

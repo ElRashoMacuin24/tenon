@@ -466,7 +466,9 @@ impl From<KernelError> for Stop {
 
 /// Whether a profile has a side that is neither straight nor round.
 fn has_free_curves(profile: &Profile) -> bool {
-    let free = |l: &tenon_kernel::Loop| l.curves.iter().any(|c| matches!(c.curve, Curve2::BSpline { .. } | Curve2::Ellipse { .. } | Curve2::EllipseArc { .. }));
+    let free = |l: &tenon_kernel::Loop| {
+        l.curves.iter().any(|c| matches!(c.curve, Curve2::BSpline { .. } | Curve2::Ellipse { .. } | Curve2::EllipseArc { .. }))
+    };
     profile.regions.iter().any(|r| free(&r.outer) || r.holes.iter().any(free))
 }
 
@@ -488,7 +490,10 @@ pub(crate) fn profile_of(sketch: &Sketch, frame: Frame, sel: &RegionSel) -> Resu
         _ => select(sketch, &all, sel)?,
     };
     if let Some(spline) = curves.iter().find_map(|r| tenon_sketch::crossing_spline(sketch, r)) {
-        return Err(format!("Spline {} crosses the profile it is part of, and such a boundary encloses no solid. Move its points so that it does not.", spline.0));
+        return Err(format!(
+            "Spline {} crosses the profile it is part of, and such a boundary encloses no solid. Move its points so that it does not.",
+            spline.0
+        ));
     }
     let mut out = if curves.is_empty() { Profile { frame, regions: Vec::new() } } else { profile(sketch, frame, &curves) };
     for t in texts {

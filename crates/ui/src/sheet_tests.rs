@@ -1539,5 +1539,8 @@ fn a_cut_given_no_distance_stays_through_when_ok_is_pressed() {
     d.tap(&mut wb, egui::Key::Enter);
     d.settle(&mut wb);
     assert!(wb.panel.is_none(), "{}", wb.status());
-    assert_eq!(String::from_utf8(tenon_io::project::to_bytes(wb.document(), &serde_json::Map::new()).unwrap()).unwrap(), String::from_utf8(before).unwrap());
+    assert_eq!(
+        String::from_utf8(tenon_io::project::to_bytes(wb.document(), &serde_json::Map::new()).unwrap()).unwrap(),
+        String::from_utf8(before).unwrap()
+    );
 }

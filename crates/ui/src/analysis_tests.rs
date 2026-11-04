@@ -2115,7 +2115,9 @@ fn a_long_status_can_be_read_under_the_pointer() {
 
     // Of several lines, as the mesher and the solver say things, the bar shows the first, and all
     // of them come up under the pointer however short they are.
-    wb.set_error("The study could not be solved. ccx failed (exit code: 201). It said:\n *ERROR in e_c3d: nonpositive jacobian\n determinant in element 17425");
+    wb.set_error(
+        "The study could not be solved. ccx failed (exit code: 201). It said:\n *ERROR in e_c3d: nonpositive jacobian\n determinant in element 17425",
+    );
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
     assert!(d.texts().iter().any(|t| t == "The study could not be solved. ccx failed (exit code: 201). It said:"), "{:?}", d.texts());
@@ -2698,7 +2700,8 @@ fn a_panel_of_the_environment_does_not_go_on_asking_when_it_has_closed() {
     assert_eq!(wb.status(), "Ready");
 
     // Held and loaded, coming back in says what is left to do.
-    let find = |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let find =
+        |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
     let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
     wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
     wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
@@ -2714,7 +2717,8 @@ fn kept_faces_leave_a_stress_result_as_it_is() {
         return;
     }
     let (mut wb, mut d) = bar();
-    let find = |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let find =
+        |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
     let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
     wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
     wb.run_ui("analysis.begin").unwrap();

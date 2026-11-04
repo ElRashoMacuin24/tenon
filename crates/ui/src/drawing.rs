@@ -1268,7 +1268,10 @@ impl Workbench {
                 let (side, place) = projected_place(center, at);
                 // (A view on top of another shows nothing new, whatever the ghost showed.)
                 if let Some(under) = d.view_at(g, place).and_then(|v| d.session.drawing().view(v)) {
-                    return Err(format!("{} is already there. Click beside the view for the view from that side, or off at a corner for a slanted one.", under.name));
+                    return Err(format!(
+                        "{} is already there. Click beside the view for the view from that side, or off at a corner for a slanted one.",
+                        under.name
+                    ));
                 }
                 let r = self.drw_exec("drw.view.projected", json!({ "parent": p.0, "side": side.id(), "at": v2(place) }))?;
                 self.set_status(format!("{} placed. Click for another, or Esc to end.", r["name"].as_str().unwrap_or("View")));

@@ -317,7 +317,8 @@ mod tests {
     #[test]
     fn what_a_program_that_has_gone_left_behind_is_taken_away() {
         let base = std::env::temp_dir().join(format!("tenon-left-behind-{}", std::process::id()));
-        let (gone, here, other) = (base.join("tenon-study-4294967294-0-1"), base.join(format!("tenon-study-{}-0-1", std::process::id())), base.join("kept"));
+        let (gone, here, other) =
+            (base.join("tenon-study-4294967294-0-1"), base.join(format!("tenon-study-{}-0-1", std::process::id())), base.join("kept"));
         for dir in [&gone, &here, &other] {
             std::fs::create_dir_all(dir).unwrap();
         }

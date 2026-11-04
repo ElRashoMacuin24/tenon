@@ -328,7 +328,9 @@ impl Sketch {
     /// How far the sketch reaches, for framing it: [`Sketch::extent`], and points along its curves.
     /// (A circle's or an ellipse's own points are its centre, far from where it reaches.)
     pub fn reach(&self) -> Vec<Vec2> {
-        let size = |e: &crate::entity::Entity| e.geometry.points().first().and_then(|p| self.point(*p)).map_or(1.0, |at| at.x.abs().max(at.y.abs()).max(1.0));
+        let size = |e: &crate::entity::Entity| {
+            e.geometry.points().first().and_then(|p| self.point(*p)).map_or(1.0, |at| at.x.abs().max(at.y.abs()).max(1.0))
+        };
         let curves = self.entities().filter(|(_, e)| e.geometry.is_curve()).flat_map(|(id, e)| self.tessellate(id, size(e) * 0.01));
         self.extent().into_iter().chain(curves).collect()
     }
@@ -991,7 +993,8 @@ impl Sketch {
                 Some(Geometry::Spline { poles, .. }) => Some((*c, poles.len())),
                 _ => None,
             });
-            let smooth_already = |c: EntityId| self.constraints.values().any(|k| matches!(k, crate::constraint::Constraint::Smooth { a, b } if *a == c || *b == c));
+            let smooth_already =
+                |c: EntityId| self.constraints.values().any(|k| matches!(k, crate::constraint::Constraint::Smooth { a, b } if *a == c || *b == c));
             if let Some((c, poles)) = spline
                 && poles < 6
                 && smooth_already(c)

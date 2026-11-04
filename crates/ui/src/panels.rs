@@ -228,7 +228,7 @@ pub(crate) struct HolePanel {
     pub thread_depth: f64,
     /// The thread the hole came with, for what the panel does not set (its pitch, name and hand,
     /// which a script may have given): let go when another screw is chosen.
-    pub thread: Option<tenon_model::Tapping>,
+    pub thread: Option<Box<tenon_model::Tapping>>,
 }
 
 impl HolePanel {
@@ -280,7 +280,7 @@ impl HolePanel {
             reverse: self.reverse,
             tapped: self.tapped().then(|| tenon_model::Tapping {
                 length: if self.thread_full { tenon_model::ThreadLength::Full } else { tenon_model::ThreadLength::Distance(self.thread_depth) },
-                ..self.thread.clone().unwrap_or_default()
+                ..self.thread.as_deref().cloned().unwrap_or_default()
             }),
         })
     }
@@ -298,8 +298,9 @@ impl HolePanel {
     /// What the panel calls the thread of the screw at `i`.
     pub(crate) fn thread_name(&self, i: usize) -> String {
         let (nominal, coarse) = tenon_model::threads::iso_coarse(tenon_model::library::SCREW_HOLES[i].tap_drill, true);
-        let kept = self.thread.as_ref();
-        kept.and_then(|t| t.designation.clone()).unwrap_or_else(|| tenon_model::threads::designation(nominal, kept.and_then(|t| t.pitch).unwrap_or(coarse)))
+        let kept = self.thread.as_deref();
+        kept.and_then(|t| t.designation.clone())
+            .unwrap_or_else(|| tenon_model::threads::designation(nominal, kept.and_then(|t| t.pitch).unwrap_or(coarse)))
     }
 
     /// The screw a hole is sized for, as the panel opens on it. Tapped goes by the thread being
@@ -358,7 +359,7 @@ impl HolePanel {
                 Some(tenon_model::ThreadLength::Distance(d)) => d,
                 _ => h.diameter * 1.5,
             },
-            thread: h.tapped.clone(),
+            thread: h.tapped.clone().map(Box::new),
         }
     }
 
@@ -841,13 +842,20 @@ impl Workbench {
 
     /// The equations to send with a feature: every value field of the panel, with its equation
     /// or (when editing, to drop an old equation) its plain value.
-    fn panel_equations(&self, ptrs: &[(&'static str, &'static str)], editing: Option<FeatureId>, kind: &FeatureKind) -> serde_json::Map<String, Value> {
+    fn panel_equations(
+        &self,
+        ptrs: &[(&'static str, &'static str)],
+        editing: Option<FeatureId>,
+        kind: &FeatureKind,
+    ) -> serde_json::Map<String, Value> {
         let json = serde_json::to_value(kind).unwrap_or(Value::Null);
         // (A value with no equation is in the feature, and there is nothing to drop.)
         let has_equation = |ptr: &str| {
             editing.is_some_and(|feature| {
                 let path = tenon_model::ValuePath::Feature { feature, field: ptr.to_owned() };
-                self.document().name_of(&path).is_some_and(|name| self.document().parameters().model.iter().any(|m| m.name == name && m.equation.is_some()))
+                self.document()
+                    .name_of(&path)
+                    .is_some_and(|name| self.document().parameters().model.iter().any(|m| m.name == name && m.equation.is_some()))
             })
         };
         let mut out = serde_json::Map::new();
@@ -1242,7 +1250,9 @@ impl Workbench {
     fn part_only_behind(&self, sketch: FeatureId) -> bool {
         let (Some(frame), Some(b)) = (self.sketch_frame(sketch), self.scene.bbox()) else { return false };
         let reach = |p: tenon_geom::Vec3| (p - frame.origin()).dot(frame.z());
-        let corners = [b.min.x, b.max.x].into_iter().flat_map(|x| [b.min.y, b.max.y].into_iter().flat_map(move |y| [b.min.z, b.max.z].map(|z| tenon_geom::Vec3::new(x, y, z))));
+        let corners = [b.min.x, b.max.x]
+            .into_iter()
+            .flat_map(|x| [b.min.y, b.max.y].into_iter().flat_map(move |y| [b.min.z, b.max.z].map(|z| tenon_geom::Vec3::new(x, y, z))));
         corners.map(reach).fold(f64::NEG_INFINITY, f64::max) <= tenon_geom::tol::LINEAR
     }
 

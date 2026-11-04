@@ -467,7 +467,13 @@ pub fn run(make: Make, examples: &Path, work: &Path) -> Result<Vec<Row>, String>
         PartBudget { rebuild: 1100.0, mesh: 480.0, edit_last: 100.0, edit_middle: 700.0 },
     )?;
     let window = elliptical_window(make, work)?;
-    part(&mut rows, make, "a plate with an elliptical window", &window, PartBudget { rebuild: 100.0, mesh: 100.0, edit_last: 100.0, edit_middle: 100.0 })?;
+    part(
+        &mut rows,
+        make,
+        "a plate with an elliptical window",
+        &window,
+        PartBudget { rebuild: 100.0, mesh: 100.0, edit_last: 100.0, edit_middle: 100.0 },
+    )?;
     let lipped = lipped_tray(make, work)?;
     part(
         &mut rows,

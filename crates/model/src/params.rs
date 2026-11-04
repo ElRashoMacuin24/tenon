@@ -89,7 +89,9 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
             ("/extent/two_sided/backward", Mm),
             ("/taper", Deg),
         ],
-        FeatureKind::Revolve(_) => &[("/angle/angle", Deg), ("/angle/symmetric", Deg), ("/angle/two_sided/forward", Deg), ("/angle/two_sided/backward", Deg)],
+        FeatureKind::Revolve(_) => {
+            &[("/angle/angle", Deg), ("/angle/symmetric", Deg), ("/angle/two_sided/forward", Deg), ("/angle/two_sided/backward", Deg)]
+        }
         FeatureKind::Fillet(_) => &[("/radius", Mm), ("/radii/0/radius", Mm)],
         FeatureKind::Chamfer(_) => &[
             ("/size/equal", Mm),

@@ -877,7 +877,8 @@ impl Workbench {
                 m.insert("text".into(), json!(tb.text));
                 m.insert("height".into(), json!(tb.height));
                 m.insert("angle".into(), json!(angle));
-                self.exec_status("sketch.text", Value::Object(m)).map(|_| "Placed the text. Click to place another; Esc ends. Double-click a text to change it.")
+                self.exec_status("sketch.text", Value::Object(m))
+                    .map(|_| "Placed the text. Click to place another; Esc ends. Double-click a text to change it.")
             }
         };
         let Some(done) = done else { return };

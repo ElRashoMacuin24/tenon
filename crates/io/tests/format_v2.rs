@@ -1350,7 +1350,7 @@ fn a_file_of_many_records_is_refused_in_good_time_with_its_line() {
     assert!(started.elapsed().as_secs_f64() < 30.0, "{:?}", started.elapsed());
     // Where each record starts is still right.
     let bad = enclosure_text().replacen("type = \"fillet\"", "type = \"no such thing\"", 1);
-    let line = bad.lines().position(|l| l == "[[feature]]" ).unwrap();
+    let line = bad.lines().position(|l| l == "[[feature]]").unwrap();
     assert!(line > 0);
     assert!(damaged(&bad).starts_with("line "), "{}", damaged(&bad));
 }
