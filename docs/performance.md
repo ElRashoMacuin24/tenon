@@ -246,6 +246,11 @@ These are the kernel's own costs, measured above, that Tenon can only avoid aski
   a second. Stamps clear of one another now go out in one boolean: 830 ms for 400 round holes and
   1.5 s for 100 louvers, of which 1 s in the three booleans. (Tools that lie against one another still
   go singly, DEC-067.)
+- **A large assembly.** Written to STEP one root at a time, each took as long as those before it (146
+  components 2 s, 902 components 79 s and 20 MB). It now goes as one assembly, a product for each
+  component: 900 components in 2 s. A drawing's hidden lines are worked out over the whole model at
+  once, by the kernel, and that still grows with the square of the components: a base view of 146
+  takes 340 ms and of 902 about 11 s, on the geometry thread with the window live.
 - **The volume of faces on free surfaces**: a helical thread (81 ms in 5 sums), rolled faces
   with a mitre or a profile cut across them (196 ms in 68 for the tray with lips). On a
   wall pushed out of a free curve the kernel's quick sum settles some parts in a hundred

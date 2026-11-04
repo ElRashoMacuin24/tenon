@@ -268,6 +268,8 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- STEP export of a large assembly took as long as the square of its components, 79 s for 902. It takes 2 s
+  now: more than one solid goes as one assembly, with a product for each as before.
 - A drawing follows what its part derives from, as it follows the part's own file. A balloon on a
   component that has gone says so in `drw.info`.
 - Words that read wrong: Auto Explode of nothing said "Exploded in 0 steps" and went into the exploded

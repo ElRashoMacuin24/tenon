@@ -235,3 +235,36 @@ fn undo_takes_back_an_edit_of_a_part_from_the_assembly() {
     assert!(e.exec("batch.run", &steps).is_err());
     assert!((volume(&mut e) - 1000.0).abs() < 1e-6, "the batch left nothing");
 }
+
+/// An assembly in STEP: what comes back of it is what went in, one product for each component, and
+/// a part of one solid is what it was.
+#[test]
+fn an_assembly_in_step_comes_back_where_it_stood() {
+    let dir = scratch("step-assembly");
+    let mut e = Engine::new(Box::new(OcctKernel::new()), &dir);
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    run(&mut e, "model.box", json!({ "width": 10, "depth": 20, "height": 30 }));
+    run(&mut e, "file.save", json!({ "path": "b.tenon" }));
+    run(&mut e, "export.step", json!({ "path": "one.step" }));
+    run(&mut e, "asm.new", json!({ "name": "E" }));
+    run(&mut e, "asm.insert", json!({ "path": "b.tenon", "grounded": true }));
+    run(&mut e, "asm.insert", json!({ "path": "b.tenon", "at": [100, 0, 0] }));
+    run(&mut e, "asm.insert", json!({ "path": "b.tenon", "at": [0, 200, 50] }));
+    run(&mut e, "asm.export_step", json!({ "path": "three.step" }));
+    let three = std::fs::read(dir.join("three.step")).unwrap();
+    let text = String::from_utf8_lossy(&three);
+    assert_eq!(text.matches("MANIFOLD_SOLID_BREP").count(), 3);
+    let mut k = OcctKernel::new();
+    let shapes = k.import_step(&three).unwrap();
+    let (mut volume, mut top) = (0.0, f64::MIN);
+    let (mut right, mut far) = (f64::MIN, f64::MIN);
+    for s in shapes {
+        volume += k.mass_properties(s, 1.0).unwrap().volume;
+        let b = k.bounding_box(s).unwrap().unwrap();
+        (right, far, top) = (right.max(b.max.x), far.max(b.max.y), top.max(b.max.z));
+    }
+    assert!((volume - 3.0 * 6000.0).abs() < 1e-3, "{volume}");
+    assert!((right - 110.0).abs() < 1e-3 && (far - 220.0).abs() < 1e-3 && (top - 80.0).abs() < 1e-3, "{right} {far} {top}");
+    let one = k.import_step(&std::fs::read(dir.join("one.step")).unwrap()).unwrap();
+    assert_eq!(one.len(), 1);
+}

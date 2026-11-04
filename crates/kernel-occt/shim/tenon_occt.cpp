@@ -115,6 +115,7 @@
 #include <GCPnts_TangentialDeflection.hxx>
 #include <GProp_GProps.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <Interface_Static.hxx>
 #include <Message.hxx>
 #include <Message_Messenger.hxx>
 #include <NCollection_IndexedDataMap.hxx>
@@ -3266,8 +3267,25 @@ void hlr(const ShapeList& shapes, const Frame3& view, double deflection, bool hi
 rust::Vec<std::uint8_t> export_step(const ShapeList& shapes) {
   return guarded("export_step", [&] {
     STEPControl_Writer writer;
-    for (const TopoDS_Shape& s : shapes.items) {
-      if (writer.Transfer(s, STEPControl_AsIs) != IFSelect_RetDone) {
+    if (shapes.items.size() == 1) {
+      if (writer.Transfer(shapes.items.front(), STEPControl_AsIs) != IFSelect_RetDone) {
+        throw std::runtime_error("could not translate a shape to STEP");
+      }
+    } else {
+      // As one assembly: each is a product of its own, as each was as a root, and the writer takes
+      // them at once. One root at a time it goes through all it has for each, and 900 components
+      // take a minute where this takes two seconds.
+      TopoDS_Compound all;
+      BRep_Builder builder;
+      builder.MakeCompound(all);
+      for (const TopoDS_Shape& s : shapes.items) {
+        builder.Add(all, s);
+      }
+      const int was = Interface_Static::IVal("write.step.assembly");
+      Interface_Static::SetIVal("write.step.assembly", 1);
+      const IFSelect_ReturnStatus done = writer.Transfer(all, STEPControl_AsIs);
+      Interface_Static::SetIVal("write.step.assembly", was);
+      if (done != IFSelect_RetDone) {
         throw std::runtime_error("could not translate a shape to STEP");
       }
     }
