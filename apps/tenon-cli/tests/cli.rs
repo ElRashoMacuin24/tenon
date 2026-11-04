@@ -329,3 +329,31 @@ fn a_study_does_not_run_what_lies_in_the_working_folder() {
     assert!(!said.contains("cannot start"), "{said}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_step_file_the_reader_dies_on_is_said_to_be_unreadable() {
+    let dir = scratch("step-damaged");
+    let bracket = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m0-bracket/bracket.step")).unwrap();
+    // One reference changed; and a line nested deeper than any stack.
+    let changed = dir.join("changed.step");
+    std::fs::write(&changed, bracket.replacen("#427", "#527", 1)).unwrap();
+    let nested = dir.join("nested.step");
+    let head = bracket.split("DATA;").next().unwrap();
+    std::fs::write(&nested, format!("{head}DATA;\n#1=A{}{};\nENDSEC;\nEND-ISO-10303-21;\n", "(".repeat(100_000), ")".repeat(100_000))).unwrap();
+    let stl = dir.join("out.stl");
+    for file in [&changed, &nested] {
+        for args in [vec!["info".as_ref(), file.as_os_str()], vec!["convert".as_ref(), file.as_os_str(), stl.as_os_str()]] {
+            let out = cli(&args);
+            let said = String::from_utf8_lossy(&out.stderr);
+            // Read, or told in words: never ended by the fault with nothing said.
+            assert!(matches!(out.status.code(), Some(0 | 1)), "{:?}: {} {said}", file.file_name(), out.status);
+            if out.status.code() == Some(1) {
+                assert!(said.starts_with("error: "), "{said}");
+            }
+        }
+    }
+    // A good one still is what it was, in the words it always was.
+    let good = cli(&["info".as_ref(), std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m0-bracket/bracket.step").as_os_str()]);
+    assert!(good.status.success() && String::from_utf8_lossy(&good.stdout).contains("volume"), "{good:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

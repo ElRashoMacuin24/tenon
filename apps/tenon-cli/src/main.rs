@@ -87,6 +87,9 @@ fn main() -> ExitCode {
         }
     }
     let pos: Vec<&str> = pos.iter().map(String::as_str).collect();
+    if matches!(pos.as_slice(), ["info", _] | ["convert", _, _]) && std::env::var_os(STEP_READER).is_none() {
+        return read_step_apart();
+    }
     let demo_dir = || out.clone().unwrap_or_else(|| PathBuf::from("out"));
     if let ["diff", a, b] = pos.as_slice() {
         return diff(Path::new(a), Path::new(b), json);
@@ -150,6 +153,31 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => fail(&e),
+    }
+}
+
+/// Set in the process that reads a STEP file for `tenon-cli info` and `convert`.
+const STEP_READER: &str = "TENON_STEP_READER";
+
+/// `info` and `convert`, run by a process of their own. The kernel's STEP reader dies on some
+/// damaged files, by a fault no catching stops (a stack worn through by nesting, a bad reference):
+/// a program started for it can die without taking its words with it.
+fn read_step_apart() -> ExitCode {
+    let run = std::env::current_exe().and_then(|me| {
+        std::process::Command::new(me).args(std::env::args_os().skip(1)).env(STEP_READER, "1").stdin(std::process::Stdio::null()).output()
+    });
+    let out = match run {
+        Ok(out) => out,
+        Err(e) => return fail(&format!("cannot start the STEP reader: {e}")),
+    };
+    // (Ended of its own accord, with something it can say; any other way it died on the file.)
+    match out.status.code() {
+        Some(code @ (0 | 1)) => {
+            print!("{}", String::from_utf8_lossy(&out.stdout));
+            eprint!("{}", String::from_utf8_lossy(&out.stderr));
+            if code == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+        }
+        _ => fail(&format!("this STEP file could not be read: the reader stopped on it ({}), and it is probably damaged", out.status)),
     }
 }
 
