@@ -805,31 +805,40 @@ impl Workbench {
             return;
         };
         let mut chosen = None;
-        let area = egui::Area::new(egui::Id::new("tn_dropdown")).order(egui::Order::Foreground).fixed_pos(at).show(ui.ctx(), |ui| {
-            Frame::menu(ui.style()).fill(t.panel).show(ui, |ui| {
-                ui.set_min_width(170.0);
-                for m in cmd.more {
-                    let Some(c) = commands::find(m) else { continue };
-                    let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(170.0), 26.0), Sense::CLICK);
-                    if resp.hovered() {
-                        ui.painter().rect_filled(row, 3.0, t.hover);
+        // As wide as its longest row, so that it covers no more than it must and rarely has to move
+        // for the window's edge.
+        let rows: Vec<&UiCommand> = cmd.more.iter().filter_map(|m| commands::find(m)).collect();
+        let width = rows.iter().map(|c| text_width(ui, &c.name(), theme::body()) + 40.0).fold(130.0, f32::max);
+        let shown = egui::Area::new(egui::Id::new("tn_dropdown")).order(egui::Order::Foreground).fixed_pos(at).show(ui.ctx(), |ui| {
+            Frame::menu(ui.style())
+                .fill(t.panel)
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    for c in &rows {
+                        let (row, resp) = ui.allocate_exact_size(vec2(width, 26.0), Sense::CLICK);
+                        crate::drawing::remember(ui, &format!("list {}", c.id), row);
+                        if resp.hovered() {
+                            ui.painter().rect_filled(row, 3.0, t.hover);
+                        }
+                        icons::paint_colored(
+                            ui.painter(),
+                            Rect::from_min_size(row.left_top() + vec2(4.0, 4.0), vec2(18.0, 18.0)),
+                            c.icon,
+                            t.icon,
+                            t,
+                            true,
+                        );
+                        ui.painter().text(row.left_center() + vec2(28.0, 0.0), Align2::LEFT_CENTER, c.name(), theme::body(), t.text);
+                        if resp.on_hover_text(tooltip(c)).clicked() {
+                            chosen = Some(c.id);
+                        }
                     }
-                    icons::paint_colored(
-                        ui.painter(),
-                        Rect::from_min_size(row.left_top() + vec2(4.0, 4.0), vec2(18.0, 18.0)),
-                        c.icon,
-                        t.icon,
-                        t,
-                        true,
-                    );
-                    ui.painter().text(row.left_center() + vec2(28.0, 0.0), Align2::LEFT_CENTER, c.name(), theme::body(), t.text);
-                    if resp.on_hover_text(tooltip(c)).clicked() {
-                        chosen = Some(c.id);
-                    }
-                }
-            });
+                })
+                .response
+                .rect
         });
-        let outside = ui.input(|i| i.pointer.any_pressed()) && !area.response.contains_pointer();
+        // (Where the list is drawn: where it was asked to open, less what the window's edge moved it.)
+        let outside = ui.input(|i| i.pointer.any_pressed() && !i.pointer.interact_pos().is_some_and(|p| shown.inner.contains(p)));
         if let Some(id) = chosen {
             self.chrome.dropdown = None;
             self.command(id);

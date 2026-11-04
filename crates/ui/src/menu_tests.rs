@@ -266,6 +266,136 @@ fn every_command_on_the_menu_does_something() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Where the last frame drew something to press (see `drawing::remember`).
+fn drawn_at(d: &Driver, key: &str) -> Option<egui::Rect> {
+    d.ctx.data(|x| x.get_temp::<std::collections::BTreeMap<String, egui::Rect>>(egui::Id::new("tn_buttons"))).unwrap_or_default().get(key).copied()
+}
+
+/// Opens the list of button `id` by the pointer, going along the ribbon by its arrows as far as
+/// the button lies beyond the window.
+fn open_list(d: &mut Driver, wb: &mut Workbench, id: &str, width: f32) {
+    d.frame(wb, vec![]);
+    for _ in 0..40 {
+        let on = drawn_at(d, &format!("ribbon {id}")).expect("the button is on this tab");
+        if on.right() < width - 24.0 && (on.left() > 24.0 || wb.chrome.ribbon_scroll <= 0.0) {
+            break;
+        }
+        let way = if on.right() >= width - 24.0 { "tn_ribbon_on" } else { "tn_ribbon_back" };
+        let at = crate::tests::pressable(d, way);
+        d.click(wb, at);
+        d.frame(wb, vec![]);
+    }
+    let on = drawn_at(d, &format!("ribbon {id}")).expect("the button is on this tab");
+    let (x, y) = match crate::commands::find(id).expect("a command").size {
+        crate::commands::Size::Large => (on.center().x, on.bottom() - 6.0),
+        _ => (on.right() - 5.0, on.center().y),
+    };
+    d.click(wb, egui::pos2(x, y));
+    // (A list new on the screen is measured in its first frame and drawn in its second.)
+    d.frame(wb, vec![]);
+    d.frame(wb, vec![]);
+    assert!(wb.chrome.dropdown.is_some(), "{id}: the arrow opens the list");
+}
+
+/// The menu at any width: a list that the window's edge pushes to the left takes a click on its
+/// rows as one that stays under its button does. (The rows lit up under the pointer, and a press on
+/// their words closed the list with nothing run.)
+#[test]
+fn every_row_of_every_list_takes_a_click_at_any_width() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("lists");
+    let (part, sheet, assembly, drawing) = (dir.join("part.tenon"), dir.join("sheet.tenon"), dir.join("pair.tenonasm"), dir.join("plan.tenondrw"));
+    part_file(&part);
+    part_file(&dir.join("other.tenon"));
+    sheet_file(&sheet);
+    assembly_file(&assembly, &part);
+    drawing_file(&drawing, &part);
+    type Enter = fn(&mut Workbench);
+    let places: [(&PathBuf, Enter, &[RibbonTab], Vec<usize>); 6] = [
+        (&part, |_| {}, RIBBON, vec![0, SKETCH_TAB, 5]),
+        (&part, |wb| wb.edit_sketch_named("Sketch2").unwrap(), RIBBON, vec![SKETCH_TAB]),
+        (&sheet, |_| {}, RIBBON, vec![SHEET_TAB]),
+        (&part, |wb| wb.run_ui("analysis.begin").unwrap(), RIBBON, vec![ANALYSIS_TAB]),
+        (&assembly, |_| {}, ASM_RIBBON, vec![4]),
+        (&drawing, |_| {}, DRW_RIBBON, vec![1]),
+    ];
+    let mut tried = std::collections::BTreeSet::new();
+    let mut wrong = Vec::new();
+    for width in [900.0, 1440.0] {
+        let mut wb = window(&dir);
+        let mut d = Driver::new(vec2(width, 900.0));
+        for (file, enter, ribbon, tabs) in &places {
+            for tab in tabs {
+                for c in ribbon[*tab].panels.iter().flat_map(|p| p.commands.iter()).filter(|c| !c.more.is_empty()) {
+                    for row in c.more {
+                        // On the row's words, and at its far end.
+                        for along in [36.0, -6.0] {
+                            wb.chrome = crate::chrome::Chrome::default();
+                            wb.open(file).unwrap();
+                            idle(&mut d, &mut wb);
+                            enter(&mut wb);
+                            idle(&mut d, &mut wb);
+                            wb.chrome.tab = *tab;
+                            open_list(&mut d, &mut wb, c.id, width);
+                            let on = drawn_at(&d, &format!("list {row}")).unwrap_or_else(|| panic!("{row} is not in the list of {}", c.id));
+                            let x = if along > 0.0 { on.left() + along } else { on.right() + along };
+                            wb.ran.clear();
+                            d.click(&mut wb, egui::pos2(x, on.center().y));
+                            tried.insert(*row);
+                            if wb.ran != [*row] {
+                                wrong.push(format!("at {width} wide, {} > {row} at x={x}: ran {:?}", c.id, wb.ran));
+                            }
+                            assert!(wb.chrome.dropdown.is_none(), "{row}: a choice closes the list");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "a click on these rows ran nothing, or something else:\n{}", wrong.join("\n"));
+    assert!(tried.contains("analysis.deform.actual") && tried.contains("drw.balloon.auto") && tried.contains("model.face_fillet"), "{tried:?}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A list at the window's edge is drawn further left than it was asked to open, and that is where
+/// it takes a click, and where a press is not outside it.
+#[test]
+fn a_list_the_window_pushes_left_takes_a_click_on_its_words() {
+    let mut wb = Workbench::without_kernel();
+    let mut d = Driver::new(vec2(520.0, 900.0));
+    open_list(&mut d, &mut wb, "model.fillet", 520.0);
+    let button = drawn_at(&d, "ribbon model.fillet").unwrap();
+    let on = drawn_at(&d, "list model.face_fillet").unwrap();
+    assert!(on.left() < button.left(), "the list has moved: {on:?} from under {button:?}");
+    let at = egui::pos2(on.left() + 36.0, on.center().y);
+    assert!(at.x < button.left(), "this is left of where it was asked to open");
+    d.click(&mut wb, at);
+    assert_eq!(wb.ran, ["model.face_fillet"]);
+    // Pressed beside it, it closes and nothing runs.
+    open_list(&mut d, &mut wb, "model.fillet", 520.0);
+    wb.ran.clear();
+    let on = drawn_at(&d, "list model.face_fillet").unwrap();
+    d.click(&mut wb, egui::pos2(on.left() - 20.0, on.bottom() + 40.0));
+    assert!(wb.chrome.dropdown.is_none() && wb.ran.is_empty());
+}
+
+/// A list of one is as wide as what is on it, and leaves the browser beside it alone.
+#[test]
+fn a_list_is_as_wide_as_its_longest_row() {
+    let mut wb = Workbench::without_kernel();
+    let mut d = Driver::new(vec2(1440.0, 900.0));
+    open_list(&mut d, &mut wb, "sketch.new", 1440.0);
+    let one = drawn_at(&d, "list sketch.new_3d").unwrap();
+    assert!(one.width() < 200.0, "one short row: {} wide", one.width());
+    wb.chrome.dropdown = None;
+    wb.chrome.tab = SKETCH_TAB;
+    open_list(&mut d, &mut wb, "sketch.rectangle", 1440.0);
+    let long = drawn_at(&d, "list sketch.rectangle_center").unwrap();
+    let words = d.text_rect("Rectangle Two Point Center").unwrap();
+    assert!(words.right() <= long.right(), "the longest row holds its words: {words:?} in {long:?}");
+    assert!(long.width() < 300.0, "{long:?}");
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

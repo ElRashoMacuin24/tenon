@@ -156,6 +156,9 @@ pub struct Workbench {
     pub(crate) autosave_seconds: f64,
     /// A lost reference being repaired from the viewport (DEC-034).
     pub(crate) repair: Option<crate::repair_ui::RepairMode>,
+    /// What the window has been asked to run (tests: what a click on an entry came to).
+    #[cfg(test)]
+    pub(crate) ran: Vec<String>,
 }
 
 impl Workbench {
@@ -212,6 +215,8 @@ impl Workbench {
             recover_offer: None,
             autosave_seconds: crate::recovery::AUTOSAVE_SECONDS,
             repair: None,
+            #[cfg(test)]
+            ran: Vec::new(),
         }
     }
 
@@ -329,6 +334,8 @@ impl Workbench {
 
     /// Runs a ribbon/menu command by id, reporting errors in the status bar.
     pub(crate) fn command(&mut self, id: &str) {
+        #[cfg(test)]
+        self.ran.push(id.to_owned());
         let repeatable = commands::find(id)
             .filter(|c| ["sketch.", "model.", "work.", "inspect."].iter().any(|p| c.id.starts_with(p)) && c.id != "sketch.finish")
             .or_else(|| {

@@ -261,6 +261,10 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- A list under a button's arrow that the window's edge pushed to the left took no click on its words:
+  the press closed it and nothing ran, though the rows lit up under the pointer. At the default window
+  this was all of Analysis > Displacement Display; narrower, Auto Balloon and Face Fillet. Every list
+  was also 600 wide, over what lay beside it: each is now as wide as its longest row.
 - On the Sheet Metal tab, Hole, Corner Round and Corner Chamfer said a sheet made with Face had no
   solid, and would not open, unless it also had an extrusion.
 - A sweep round a sharp corner used to stop at the first corner of its path, saying nothing, and made a
