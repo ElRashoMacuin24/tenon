@@ -835,6 +835,36 @@ fn esc_leaves_windows_and_tools_that_had_only_their_own_buttons() {
     assert!(wb.drw.as_ref().unwrap().base_dialog.is_none(), "Esc is its Cancel");
 }
 
+/// A tool asked for outside a sketch waits for the plane. Esc, or a new part, ends that, and it does
+/// not come back in whatever sketch is started next.
+#[test]
+fn a_tool_waiting_for_a_plane_goes_with_the_plane() {
+    let mut wb = Workbench::without_kernel();
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("sketch.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(wb.pick_plane && wb.pending_tool == Some("sketch.line"), "it waits for a plane");
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.pick_plane && wb.pending_tool.is_none(), "Esc takes both away");
+    wb.run_ui("sketch.line").unwrap();
+    wb.run_ui("file.new").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.pick_plane && wb.pending_tool.is_none(), "and so does a new part");
+    // The next sketch has no tool running that nobody asked for.
+    wb.run_ui("sketch.new").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    assert_eq!(wb.active_tool_id(), None);
+    // Asked for, it runs.
+    wb.finish_sketch();
+    wb.run_ui("sketch.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    assert_eq!(wb.active_tool_id(), Some("sketch.line"));
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

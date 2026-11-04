@@ -623,6 +623,7 @@ impl Workbench {
                 self.path = None;
                 self.mode = Mode::Model;
                 self.panel = None;
+                self.pick_plane = false;
                 self.view = View::default();
                 self.chrome.sheet = Default::default();
                 self.stop_runs();
@@ -730,6 +731,7 @@ impl Workbench {
                 self.path = None;
                 self.mode = Mode::Model;
                 self.panel = None;
+                self.pick_plane = false;
                 self.view = View::default();
                 self.chrome.sheet = Default::default();
                 self.stop_runs();
@@ -817,6 +819,7 @@ impl Workbench {
         self.path = Some(path.to_path_buf());
         self.mode = Mode::Model;
         self.panel = None;
+        self.pick_plane = false;
         self.view = View::default();
         self.chrome.sheet = Default::default();
         self.stop_runs();

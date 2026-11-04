@@ -268,6 +268,8 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- A sketch tool asked for outside a sketch, then cancelled, came back in the next sketch started, even
+  after File > New Part.
 - Esc now leaves what the guide says it does: the windows with an X or a Cancel button, topmost first,
   the navigation bar's Pan, Zoom and Orbit, and Free Rotate, whose button now lights while it is on.
 - `asm.undo` did not take back `asm.edit_part`: it took back the assembly's step before it, placed

@@ -902,6 +902,8 @@ impl Workbench {
             // (The Stress Analysis environment was of a part that has been left.)
             self.stop_runs();
             self.analysis = None;
+            self.pick_plane = false;
+            self.pending_tool = None;
             return;
         }
         if self.chrome.sheet.flat_view && !self.is_sheet_metal() {
@@ -915,6 +917,10 @@ impl Workbench {
         // asking be cancelled, and it must not wait to take a later click.
         if self.pick_plane && (self.is_sketching() || self.is_sketching3d() || self.flat_shown()) {
             self.pick_plane = false;
+        }
+        // (A tool asked for outside a sketch waits for the plane, and goes when that does.)
+        if !self.pick_plane {
+            self.pending_tool = None;
         }
     }
 
@@ -950,6 +956,7 @@ impl Workbench {
                 self.path = None;
                 self.mode = crate::workbench::Mode::Model;
                 self.panel = None;
+                self.pick_plane = false;
                 self.view = Default::default();
                 self.chrome.sheet = SheetUi::default();
                 self.stop_runs();
