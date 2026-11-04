@@ -48,8 +48,8 @@ The rules for all three kinds of document:
   add a feature, both new features take the same id. The merged file is then refused when
   opened ("two features have id 14: Fillet2 and Hole3"). Renumbering such a merge is not
   automatic yet.
-- **Unknown top-level fields** of a part are kept when it is saved again; inside records they
-  are not. Unknown fields of assemblies and drawings are not kept.
+- **Unknown top-level fields** of a part are kept when it is saved again, by the window, a script
+  or `tenon-cli upgrade`; inside records they are not. Unknown fields of assemblies and drawings are not kept.
 - **Limits.**
   - Files up to 64 MiB of text are read.
   - At most 10 000 features, and 20 000 entities and 20 000 constraints per sketch.

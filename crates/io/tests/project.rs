@@ -154,3 +154,24 @@ fn a_save_is_refused_over_what_changed_since_it_was_read_until_it_is_allowed() {
     assert_ne!(std::fs::read_to_string(&file).unwrap(), theirs);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn what_a_later_build_put_at_the_top_of_a_file_is_saved_again() {
+    let dir = scratch("later-fields");
+    let file = dir.join("later.tenon");
+    let mut s = Session::default();
+    plate(&mut s);
+    run(&mut s, None, "file.save", json!({ "path": file.to_string_lossy() }));
+    let theirs = format!("future_top = 1\n{}", std::fs::read_to_string(&file).unwrap());
+    std::fs::write(&file, theirs).unwrap();
+    // Opened and saved by command, as the window and scripts do.
+    let mut s = Session::default();
+    run(&mut s, None, "file.open", json!({ "path": file.to_string_lossy() }));
+    run(&mut s, None, "param.add", json!({ "name": "a", "equation": "1 mm" }));
+    run(&mut s, None, "file.save", json!({ "path": file.to_string_lossy() }));
+    assert!(std::fs::read_to_string(&file).unwrap().contains("future_top = 1"));
+    // A new part has none of it.
+    run(&mut s, None, "file.new", json!({}));
+    run(&mut s, None, "file.save", json!({ "path": file.to_string_lossy() }));
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("future_top"));
+}

@@ -86,6 +86,9 @@ const MAX_FOLLOW: usize = 4;
 
 /// A document with undo/redo and a cached regeneration.
 pub struct Session {
+    /// Top-level fields of the file it came from that this build does not know: saved again with
+    /// it, for a later build whose they are.
+    pub file_extra: serde_json::Map<String, Value>,
     doc: Document,
     undo: Vec<Document>,
     /// How many steps have been put on `undo`, less those taken off: where a group of steps
@@ -105,7 +108,7 @@ impl Default for Session {
 
 impl Session {
     pub fn new(doc: Document) -> Self {
-        Session { doc, undo: Vec::new(), steps: 0, redo: Vec::new(), revision: 1, saved_revision: 1, regen: None }
+        Session { file_extra: serde_json::Map::new(), doc, undo: Vec::new(), steps: 0, redo: Vec::new(), revision: 1, saved_revision: 1, regen: None }
     }
     pub fn document(&self) -> &Document {
         &self.doc
@@ -130,6 +133,7 @@ impl Session {
     /// Replaces the document (e.g. after opening a file); undo history is cleared.
     pub fn replace_document(&mut self, mut doc: Document, k: Option<&mut dyn Kernel>) {
         self.release_regen(k);
+        self.file_extra.clear();
         // Files from before parameters get their names now.
         doc.name_values();
         self.doc = doc;

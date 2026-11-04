@@ -24,7 +24,7 @@ pub(crate) fn path_in(p: &Value, key: &str) -> Result<PathBuf, CmdError> {
 
 fn file_save(s: &mut Session, p: &Value) -> CmdResult {
     let path = path(p)?;
-    let kept = project::save(&path, s.document(), &Map::new()).map_err(|e| CmdError(e.to_string()))?;
+    let kept = project::save(&path, s.document(), &s.file_extra).map_err(|e| CmdError(e.to_string()))?;
     s.mark_saved();
     let kept: Vec<String> = kept.map(|k| k.display().to_string()).into_iter().collect();
     Ok(json!({ "path": path.display().to_string(), "kept_version_1": kept }))
@@ -92,9 +92,10 @@ fn library_new(s: &mut Session, p: &Value) -> CmdResult {
 
 fn file_open(s: &mut Session, p: &Value) -> CmdResult {
     let path = path(p)?;
-    let (doc, _) = project::open(&path).map_err(|e| CmdError(e.to_string()))?;
+    let (doc, extra) = project::open(&path).map_err(|e| CmdError(e.to_string()))?;
     let name = doc.name.clone();
     s.replace_document(doc, None);
+    s.file_extra = extra;
     Ok(json!({ "path": path.display().to_string(), "name": name, "features": s.document().features().len() }))
 }
 
