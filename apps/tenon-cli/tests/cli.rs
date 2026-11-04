@@ -357,3 +357,19 @@ fn a_step_file_the_reader_dies_on_is_said_to_be_unreadable() {
     assert!(good.status.success() && String::from_utf8_lossy(&good.stdout).contains("volume"), "{good:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn upgrade_does_not_call_what_is_no_document_current() {
+    let dir = scratch("upgrade-no-document");
+    let note = dir.join("note.tenon");
+    std::fs::write(&note, b"not a tenon file").unwrap();
+    let out = cli(&["upgrade".as_ref(), note.as_os_str()]);
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{said}");
+    assert!(said.contains("not a Tenon project"), "{said}");
+    // A real one still is.
+    let good = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m1-bracket/bracket.tenon");
+    let out = cli(&["upgrade".as_ref(), good.as_os_str()]);
+    assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).contains("already current"), "{out:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -465,15 +465,22 @@ pub fn upgrade(files: &[&Path]) -> Result<Report, String> {
     let mut list = Vec::new();
     for path in files {
         let data = tenon_io::project::read_file(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        if !tenon_io::project::is_version_1(&data) {
-            lines.push(format!("{}: already current", path.display()));
-            list.push(json!({ "file": path.display().to_string(), "upgraded": false }));
-            continue;
-        }
         let full = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         let dir = full.parent().map(Path::to_path_buf).unwrap_or_default();
         let err = |e: tenon_io::project::ProjectError| format!("{}: {e}", path.display());
         let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if !tenon_io::project::is_version_1(&data) {
+            // (Only what reads as a document is current; anything else is said to be what it is.)
+            match ext.as_str() {
+                tenon_io::asm::EXTENSION => tenon_io::asm::from_bytes(&data, &dir).map(|_| ()),
+                tenon_io::drw::EXTENSION => tenon_io::drw::from_bytes(&data, &dir).map(|_| ()),
+                _ => tenon_io::project::from_bytes(&data).map(|_| ()),
+            }
+            .map_err(err)?;
+            lines.push(format!("{}: already current", path.display()));
+            list.push(json!({ "file": path.display().to_string(), "upgraded": false }));
+            continue;
+        }
         let kept = match ext.as_str() {
             tenon_io::asm::EXTENSION => tenon_io::asm::save(path, &tenon_io::asm::from_bytes(&data, &dir).map_err(err)?).map_err(err)?,
             tenon_io::drw::EXTENSION => tenon_io::drw::save(path, &tenon_io::drw::from_bytes(&data, &dir).map_err(err)?).map_err(err)?,
