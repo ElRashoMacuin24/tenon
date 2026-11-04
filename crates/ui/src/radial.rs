@@ -175,6 +175,7 @@ impl Workbench {
         let mut chosen: Option<&'static str> = None;
         let mut inside_any = false;
         let pointer = ui.input(|i| i.pointer.hover_pos());
+        crate::chrome::press_ends_here(ui.ctx(), "tn_radial");
         egui::Area::new(egui::Id::new("tn_radial")).order(egui::Order::Foreground).fixed_pos(pos2(0.0, 0.0)).show(ui.ctx(), |ui| {
             let p = ui.painter();
             p.circle_filled(menu.center, 6.0, t.panel);
@@ -229,7 +230,7 @@ impl Workbench {
         if let Some(id) = chosen {
             self.chrome.radial = None;
             self.command(id);
-        } else if esc || (pressed && !inside_any && !ui.input(|i| i.pointer.secondary_down())) {
+        } else if esc || (pressed && !inside_any) {
             self.chrome.radial = None;
         }
     }

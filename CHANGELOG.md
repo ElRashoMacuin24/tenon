@@ -133,7 +133,8 @@ views and Baseline and Ordinate dimensions.
   box and not for a panel that is open. Search finds what a button reads.
 - **Keys:** L, C, A, D, X and O outside a sketch ask for a plane, as their buttons do. **Esc** leaves windows,
   topmost first, the navigation bar's tools and Free Rotate, whose button now lights. The File menu closes on a
-  press elsewhere, and a second click closes what it opened.
+  press elsewhere, and a second click closes what it opened. The press that closes a menu or a list ends there: it
+  does not also run or select what is under it.
 - **A part that does not build, or a part file gone,** said nothing where it was used: the component was not
   there, with a mass of 0, no interference, and exports written without it. It is now red in the browser and on the
   status line, Interference and the exports refuse and name it, the Properties window says what its figures leave

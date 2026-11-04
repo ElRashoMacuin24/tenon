@@ -4798,6 +4798,11 @@ An audit by real pointer and keyboard, after DEC-139 had run every entry by its 
   the hole table, and "hol" still finds Hole Table first by its name.
 - **A set of dimensions on a view turned on the sheet is refused** (DEC-132's gap, and the audit's first choice
   of the two): measuring along the view's own axes means laying the whole set out turned.
+- **The press that closes a menu ends there.** Going through to what is under it, as it did, was the fault the
+  audit counted: a click meant only to dismiss a list ran a ribbon command. egui's own popups let it through; a
+  layer the size of the window just under each of Tenon's menus catches it. So a menu gone takes one click, and
+  the button under it a second. And so a click on what opened it is simply that press, with no need to remember
+  what it closed.
 - **A part that does not build fails what needs its solid** (`asm.mass`, interference, exports), as a part's own
   export does: a figure without the part reads as if all were well. A parts list goes on listing it, with
   `failing`. In the window the kernel is on its own thread and these are its jobs: they are refused before they

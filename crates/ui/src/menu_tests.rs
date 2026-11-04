@@ -911,6 +911,147 @@ fn a_menu_closes_on_a_press_elsewhere_and_on_what_opened_it() {
     assert!(wb.chrome.dropdown.is_some());
 }
 
+/// The press that closes a menu ends there. It went on to what was under it: a click meant only to
+/// dismiss the File menu or a list ran a ribbon command, or changed the selection.
+#[test]
+fn the_press_that_closes_a_menu_ends_there() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.exec("model.box", json!({ "width": 40, "depth": 20, "height": 10 })).unwrap();
+    wb.look_from(Vec3::new(1.0, -2.0, 1.5));
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let top = crate::tests::on_screen(&wb, Vec3::new(20.0, 10.0, 10.0));
+    let tab = crate::tests::pressable(&d, "tn_file_tab");
+    let button = drawn_at(&d, "ribbon model.fillet").unwrap().center();
+    let right_click = |wb: &mut Workbench, d: &mut Driver| {
+        let at = wb.view.rect.center() + vec2(300.0, -200.0);
+        d.frame(wb, vec![egui::Event::PointerMoved(at)]);
+        d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, true)]);
+        d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, false)]);
+        d.frame(wb, vec![]);
+    };
+    type Opens = fn(&mut Workbench);
+    // Each by what shows it, whether it is open, and an entry of it with the command that runs.
+    let menus: [(&str, Opens, fn(&Workbench) -> bool, fn(&Driver) -> egui::Pos2, &[&str]); 4] = [
+        (
+            "the File menu",
+            |w| w.chrome.file_menu = Some(egui::pos2(6.0, 60.0)),
+            |w| w.chrome.file_menu.is_some(),
+            |d| crate::tests::pressable(d, "app.about"),
+            &["app.about"],
+        ),
+        (
+            "a list",
+            |w| w.chrome.dropdown = Some(("model.box", egui::pos2(300.0, 130.0))),
+            |w| w.chrome.dropdown.is_some(),
+            |d| crate::tests::pressable(d, "list model.sphere"),
+            &["model.sphere"],
+        ),
+        (
+            "the browser's menu",
+            |w| w.chrome.browser_menu = Some(egui::pos2(120.0, 180.0)),
+            |w| w.chrome.browser_menu.is_some(),
+            |d| d.text_pos("Collapse All").unwrap(),
+            &[],
+        ),
+        (
+            "the radial menu",
+            |w| w.open_radial(egui::pos2(1100.0, 300.0)),
+            |w| w.chrome.radial.is_some(),
+            |d| d.text_pos("Home View").unwrap(),
+            &["view.home"],
+        ),
+    ];
+    for (name, open, is_open, entry, runs) in menus {
+        // On the part: nothing is selected, and nothing said of it.
+        open(&mut wb);
+        d.frame(&mut wb, vec![]);
+        d.frame(&mut wb, vec![]);
+        assert!(is_open(&wb), "{name}");
+        wb.set_status("Before");
+        d.click(&mut wb, top);
+        d.frame(&mut wb, vec![]);
+        assert!(!is_open(&wb), "{name}: a press on the part closes it");
+        assert_eq!((wb.view.selection.len(), wb.status()), (0, "Before"), "{name}");
+        // The menu gone, the same click is a click.
+        d.click(&mut wb, top);
+        d.frame(&mut wb, vec![]);
+        assert_eq!(wb.view.selection.len(), 1, "{name}: {}", wb.status());
+        wb.view.selection.clear();
+        d.frame(&mut wb, vec![]);
+
+        // On a ribbon button: nothing is run.
+        open(&mut wb);
+        d.frame(&mut wb, vec![]);
+        d.frame(&mut wb, vec![]);
+        wb.ran.clear();
+        d.click(&mut wb, button);
+        d.frame(&mut wb, vec![]);
+        assert!(!is_open(&wb), "{name}: a press on a button closes it");
+        assert_eq!(wb.ran, [] as [&str; 0], "{name}");
+        assert!(wb.panel.is_none(), "{name}");
+        d.click(&mut wb, button);
+        d.frame(&mut wb, vec![]);
+        assert_eq!(wb.ran, ["model.fillet"], "{name}");
+        wb.command("ui.cancel");
+        d.frame(&mut wb, vec![]);
+        d.frame(&mut wb, vec![]);
+
+        // On a tab: the tab stays as it was.
+        open(&mut wb);
+        d.frame(&mut wb, vec![]);
+        d.frame(&mut wb, vec![]);
+        let (was, other) = (wb.chrome.tab, d.text_pos("Inspect").expect("the Inspect tab"));
+        d.click(&mut wb, other);
+        d.frame(&mut wb, vec![]);
+        assert!(!is_open(&wb), "{name}");
+        assert_eq!(wb.chrome.tab, was, "{name}");
+
+        // By the other button: it closes as well, and no other menu opens.
+        open(&mut wb);
+        d.frame(&mut wb, vec![]);
+        d.frame(&mut wb, vec![]);
+        right_click(&mut wb, &mut d);
+        assert!(!is_open(&wb), "{name}: a right-click elsewhere closes it");
+        assert!(wb.chrome.radial.is_none(), "{name}");
+
+        // Opened again its own entries take a click: it is over what caught the press.
+        open(&mut wb);
+        d.frame(&mut wb, vec![]);
+        d.frame(&mut wb, vec![]);
+        wb.ran.clear();
+        let at = entry(&d);
+        d.click(&mut wb, at);
+        d.frame(&mut wb, vec![]);
+        assert!(!is_open(&wb), "{name}");
+        assert_eq!(wb.ran, runs, "{name}");
+        wb.chrome.about = false;
+        wb.panel = None;
+        d.settle(&mut wb);
+        d.frame(&mut wb, vec![]);
+    }
+
+    // In a sketch a click that dismisses a menu is no point of a line.
+    let sketch = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    let name = wb.document().feature(tenon_model::FeatureId(u32::try_from(sketch.as_u64().unwrap()).unwrap())).unwrap().name.clone();
+    wb.edit_sketch_named(&name).unwrap();
+    d.settle(&mut wb);
+    wb.run_ui("sketch.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, tab);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.file_menu.is_some());
+    let at = wb.view.rect.center();
+    d.click(&mut wb, at);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.file_menu.is_none());
+    let Mode::Sketch(s) = &wb.mode else { panic!("left the sketch") };
+    assert!(s.clicks.is_empty(), "{:?}", s.clicks.len());
+}
+
 /// Keys a tooltip shows do what it says: those of the 3D Model tab in a 3D sketch (they finish it, as
 /// they do a 2D sketch), and those of the Sketch tab outside a sketch (they ask for a plane, as the
 /// buttons do).

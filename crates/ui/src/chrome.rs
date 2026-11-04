@@ -24,8 +24,17 @@ const RIBBON_ARROW: f32 = 18.0;
 pub(crate) const DOC_TABS_H: f32 = 26.0;
 pub(crate) const STATUS_H: f32 = 22.0;
 
-/// The File tab, as what a press closed ([`Chrome::closed_by_press`]).
-const FILE_TAB: &str = "tn_file_tab";
+/// Under the menu whose Area has the id `menu`, and over all else: the press that closes the menu
+/// lands here and ends, so a click meant only to dismiss it does not also run or select what is beneath.
+pub(crate) fn press_ends_here(ctx: &egui::Context, menu: &str) {
+    let order = egui::Order::Foreground;
+    let whole = ctx.content_rect();
+    let layer = egui::Area::new(egui::Id::new((menu, "press ends here"))).order(order).fixed_pos(whole.min).show(ctx, |ui| {
+        ui.set_min_size(whole.size());
+    });
+    // (Pressed, this comes to the top of its order; the menu is kept directly above it.)
+    ctx.set_sublayer(layer.response.layer_id, egui::LayerId::new(order, egui::Id::new(menu)));
+}
 
 /// Window-level state.
 #[derive(Debug, Clone)]
@@ -72,9 +81,6 @@ pub(crate) struct Chrome {
     pub search_had_keys: bool,
     /// A split button's drop-down: the button's id and where to open the list.
     pub dropdown: Option<(&'static str, Pos2)>,
-    /// A list or the File menu that the press now going on closed: the same click on what opens it
-    /// is not to open it again.
-    pub closed_by_press: Option<&'static str>,
     /// How far the ribbon is scrolled, and how wide its panels came to in the last frame: a
     /// window narrower than a tab's ribbon goes along it by the arrows at its ends.
     pub ribbon_scroll: f32,
@@ -138,7 +144,6 @@ impl Default for Chrome {
             search_pick: 0,
             search_had_keys: false,
             dropdown: None,
-            closed_by_press: None,
             ribbon_scroll: 0.0,
             ribbon_width: 0.0,
             save_prompt: None,
@@ -658,8 +663,8 @@ impl Workbench {
             if resp.hovered() { t.accent.gamma_multiply(1.15) } else { t.accent },
         );
         ui.painter().text(file.center(), Align2::CENTER_CENTER, "File", theme::body(), t.accent_text);
-        if resp.clicked() && self.chrome.closed_by_press != Some(FILE_TAB) {
-            self.chrome.file_menu = if self.chrome.file_menu.is_some() { None } else { Some(file.left_bottom() + vec2(0.0, 2.0)) };
+        if resp.clicked() {
+            self.chrome.file_menu = Some(file.left_bottom() + vec2(0.0, 2.0));
         }
         let mut x = file.right() + 6.0;
         let sketching = self.is_sketching();
@@ -809,7 +814,6 @@ impl Workbench {
         }
         self.chrome.ribbon_scroll = scrolled.clamp(0.0, reach);
         match clicked {
-            Some((id, Some(_))) if self.chrome.closed_by_press == Some(id) => {}
             Some((id, Some(at))) => self.chrome.dropdown = Some((id, at)),
             Some((id, None)) => self.command(id),
             None => {}
@@ -823,6 +827,7 @@ impl Workbench {
             self.chrome.dropdown = None;
             return;
         };
+        press_ends_here(ui.ctx(), "tn_dropdown");
         let mut chosen = None;
         // As wide as its longest row, so that it covers no more than it must and rarely has to move
         // for the window's edge.
@@ -861,18 +866,8 @@ impl Workbench {
         if let Some(id) = chosen {
             self.chrome.dropdown = None;
             self.command(id);
-        } else if outside {
+        } else if outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.chrome.dropdown = None;
-            self.chrome.closed_by_press = commands::find(id).map(|c| c.id);
-        } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.chrome.dropdown = None;
-        }
-    }
-
-    /// What a press closed is free to be opened again once the button has come up.
-    pub(crate) fn press_is_over(&mut self, ui: &Ui) {
-        if !ui.input(|i| i.pointer.any_down()) {
-            self.chrome.closed_by_press = None;
         }
     }
 
@@ -978,6 +973,7 @@ impl Workbench {
         let Some(at) = self.chrome.file_menu else {
             return;
         };
+        press_ends_here(ui.ctx(), "tn_file_menu");
         let mut chosen = None;
         let entries = if self.in_drawing() { commands::DRW_FILE_MENU } else { FILE_MENU };
         let shown = egui::Area::new(egui::Id::new("tn_file_menu")).order(egui::Order::Foreground).fixed_pos(at).show(ui.ctx(), |ui| {
@@ -1006,7 +1002,6 @@ impl Workbench {
         // A press anywhere else closes it, as it does a list.
         if ui.input(|i| i.pointer.any_pressed() && !i.pointer.interact_pos().is_some_and(|p| shown.inner.contains(p))) {
             self.chrome.file_menu = None;
-            self.chrome.closed_by_press = Some(FILE_TAB);
         }
         if let Some(id) = chosen {
             self.chrome.file_menu = None;

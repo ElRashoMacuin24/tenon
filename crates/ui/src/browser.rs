@@ -169,10 +169,11 @@ impl Workbench {
         }
         let menu_at = pos2(header.right() - 14.0, header.center().y);
         if header_button(ui, menu_at, Icon::Menu, "Browser options", t, "menu") {
-            self.chrome.browser_menu = if self.chrome.browser_menu.is_some() { None } else { Some(menu_at + vec2(-130.0, 12.0)) };
+            self.chrome.browser_menu = Some(menu_at + vec2(-130.0, 12.0));
         }
         let mut expand_all = None;
         if let Some(at) = self.chrome.browser_menu {
+            crate::chrome::press_ends_here(ui.ctx(), "tn_browser_menu");
             let area = egui::Area::new(egui::Id::new("tn_browser_menu")).order(egui::Order::Foreground).fixed_pos(at).show(ui.ctx(), |ui| {
                 egui::Frame::menu(ui.style()).fill(t.panel).show(ui, |ui| {
                     ui.set_min_width(130.0);
@@ -184,9 +185,7 @@ impl Workbench {
                     }
                 });
             });
-            let outside = ui.input(|i| i.pointer.any_pressed())
-                && !area.response.contains_pointer()
-                && !ui.rect_contains_pointer(Rect::from_center_size(menu_at, vec2(18.0, 18.0)));
+            let outside = ui.input(|i| i.pointer.any_pressed()) && !area.response.contains_pointer();
             if expand_all.is_some() || outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.chrome.browser_menu = None;
             }
