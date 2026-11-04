@@ -146,21 +146,28 @@ axis clicked in the view, and an angle of up to 359.9 degrees (a sheet has a sea
 straight line (a ring, a cone or a flat ring) unrolls exactly. A profile of several lines and
 arcs cannot, and the flat pattern says so in words, and by how much: each row round the axis is
 as long as it is on the neutral surface, so the area is right and the sheet stretches to make up
-the rest.
+the rest. A flat ring is flat faces like any other: stamp it, cut it or put a flange on it. Cut Across
+Bend and Cut Normal follow a cylinder; a profile that reaches a cone or the round part of a profile is
+refused, and an ordinary Cut goes straight through it.
 
 **Lofted Flange** makes a sheet between two open profiles in two sketches (a round going to a
 square, say). Click the profiles in the view. **Die Formed** is one smooth surface, laid flat by
 triangles: the panel, the browser row's tip and the flat pattern say how close that is, and it is
-worth trying a part before cutting many. **Press Brake** is flat facets with a bend between each
+worth trying a part before cutting many. It can be cut straight through, and that is in its flat
+pattern; with anything joined to it or cut part way into it, it has no flat pattern. Two profiles
+that twist it from one rim to the other thin it, and past 2 % it is refused with the thickness it
+would come to. **Press Brake** is flat facets with a bend between each
 two, to a chord tolerance, and unfolds exactly. Where folds meet at a corner of a profile they stop
 short of it, as a relief; a smaller bend radius makes that smaller.
 
 **Punch Tool** stamps a shape from the punch library at a sketch's centre points, or at clicks
 on a flat face: a round hole, a square, a rectangle, an obround slot and a D-shape, cut through;
 a dimple and a louver, pressed out of the sheet. Each has its own sizes, and a rotation. A
-stamp stays on one flat face: across a bend or over an edge it is refused, and it says which.
+stamp stays on one flat face: across a bend or over an edge it is refused, and it says which. A
+formed shape needs whole sheet under it, so it will not close over a hole; a cut may take one with it.
 In the flat pattern and its DXF a cut is its outline and a formed shape a centre mark and the
-line it bends at, each with its name.
+line it bends at, each with its name; a formed shape that has since been cut has no flat pattern,
+until the cut is moved clear of it.
 
 ## Assemblies
 

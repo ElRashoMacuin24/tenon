@@ -112,14 +112,19 @@ shows it in [ROADMAP.md](ROADMAP.md).
 - **Contour Roll:** an open profile rolled round an axis as sheet, up to 359.9 degrees. Its flat
   pattern unrolls each line and arc at the neutral surface: exactly for one straight line (a ring,
   a cone, a flat ring), and row by row for anything else, with a warning that says how far out it
-  is. New command `sheet.contour_roll`.
+  is. A flat ring takes punches, cuts and flanges like any flat face. Cut Across Bend and Cut Normal
+  follow a cylinder, and refuse in words a profile that reaches a cone or a round part. New command
+  `sheet.contour_roll`, and in the kernel `direct_faces`.
 - **Lofted Flange:** a sheet between two open profiles, as one smooth die-formed surface laid flat
   by triangles (and saying how close that is) or as press-brake facets with bends between them, to
   a chord tolerance, which unfold exactly. A round going to a square comes out as the textbook
-  one. New command `sheet.lofted_flange`, and in the kernel `ruled_sheet`.
+  one. A die-formed sheet is held to its thickness: too thick for a curve, or twisted enough to thin it
+  by more than 2 %, it is refused with the figures, and with anything joined to it or cut part way into
+  it, it has no flat pattern. New command `sheet.lofted_flange`, and in the kernel `ruled_sheet`.
 - **Punch Tool:** a library of shapes written for Tenon, stamped at a sketch's centre points or at
   clicks on a flat face, with a rotation: round, square, rectangle, obround slot and D-shape as
-  cuts, a dimple and a louver as formed shapes. Refused in words across a bend. In the flat
+  cuts, a dimple and a louver as formed shapes. Refused in words across a bend, and a formed shape over a
+  hole. In the flat
   pattern and its DXF and SVG a cut is its outline and a formed shape a centre mark and a bend line,
   each with its name (new layers `PUNCH` and `PUNCH_ID`; `punches` of `sheet.export_dxf` and
   `sheet.export_svg` leaves them out). New command `sheet.punch`.

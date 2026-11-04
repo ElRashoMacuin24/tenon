@@ -4879,7 +4879,7 @@
       "id": "sheet.lofted_flange",
       "label": "Lofted Flange",
       "undoable": true,
-      "description": "sketches: [two sketches], each an open profile (lines and arcs end to end), the sheet between them; forming: \"die_formed\" (default: one smooth surface; laid flat by triangles, and the flat pattern says how close that is; corners of the profiles are rounded to the bend radius) | \"press_brake\" (flat facets with a bend at every line between two; arcs are taken as chords); chord (press_brake: how far a chord may leave its arc, mm; default 0.5); position: \"default\" (the sheet is on the left of the first profile, the inside of its first corner) | \"flipped\" | \"symmetric\"; radius (inside, of the bends; default BendRadius); operation: \"join\" (default) | \"new_body\"",
+      "description": "sketches: [two sketches], each an open profile (lines and arcs end to end), the sheet between them; forming: \"die_formed\" (default: one smooth surface; laid flat by triangles, and the flat pattern says how close that is; corners of the profiles are rounded to the bend radius) | \"press_brake\" (flat facets with a bend at every line between two; arcs are taken as chords); chord (press_brake: how far a chord may leave its arc, mm; default 0.5); position: \"default\" (the sheet is on the left of the first profile, the inside of its first corner) | \"flipped\" | \"symmetric\"; radius (inside, of the bends; default BendRadius); operation: \"join\" (default) | \"new_body\". A die-formed sheet too thick for a curve of its profiles, or twisted so that it comes to more than 2 % under the thickness, is refused; with anything joined to it or cut part way into it, it has no flat pattern, where facets do",
       "params": {
         "type": "object",
         "properties": {
@@ -4941,7 +4941,7 @@
       "id": "sheet.punch",
       "label": "Punch Tool",
       "undoable": true,
-      "description": "sketch (on a flat side of the sheet: its centre points are where the shape is stamped); points: [ids] (default: every centre point); shape: \"round\" (default; diameter) | \"square\" (side) | \"rectangle\" (length, width) | \"obround\" (length overall, width) | \"d_shape\" (diameter; across: from the flat to the far side of the circle) | \"dimple\" (diameter, depth) | \"louver\" (length along the hinge, width from the hinge to the lip laid flat, height of the lip); a size left out is what the library starts it as; rotation (rad, about the sketch's normal from its X); flip (a formed shape stands out of the sheet's other side). Each stamp stays on one flat face: across a bend or over an edge it is refused. In the flat pattern a cut is its outline with the punch's name; a formed shape is its name, its centre mark and the line it bends at",
+      "description": "sketch (on a flat side of the sheet: its centre points are where the shape is stamped); points: [ids] (default: every centre point); shape: \"round\" (default; diameter) | \"square\" (side) | \"rectangle\" (length, width) | \"obround\" (length overall, width) | \"d_shape\" (diameter; across: from the flat to the far side of the circle) | \"dimple\" (diameter, depth) | \"louver\" (length along the hinge, width from the hinge to the lip laid flat, height of the lip); a size left out is what the library starts it as; rotation (rad, about the sketch's normal from its X); flip (a formed shape stands out of the sheet's other side). Each stamp stays on one flat face: across a bend or over an edge it is refused, and a formed shape will not close over a hole. In the flat pattern a cut is its outline with the punch's name; a formed shape is its name, its centre mark and the line it bends at, and one cut since it was stamped has no flat pattern",
       "params": {
         "type": "object",
         "properties": {
@@ -5146,7 +5146,7 @@
       "id": "sheet.cut_across_bend",
       "label": "Cut Across Bend",
       "undoable": true,
-      "description": "sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern",
+      "description": "sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern. It follows a cylinder of a rolled sheet like a bend; a profile that reaches a cone, a round part of a rolled profile or a die-formed face is refused",
       "params": {
         "type": "object",
         "properties": {
@@ -5193,7 +5193,7 @@
       "id": "sheet.cut_normal",
       "label": "Cut Normal",
       "undoable": true,
-      "description": "sketch (on any plane that looks at the sheet: a face of it, or a work plane over it at any angle; its profile of lines, arcs and circles); regions; distance (how deep from the side of the sheet that looks at the sketch; default and at most Thickness: through). The profile is cut out of every flat face and bend of that side it is seen on, looking along the sketch's normal, and each is cut square to itself: a cut whose walls are square to the sheet whatever the angle of the sketch, so the flat pattern has one clean outline. (On a face parallel to the sketch it is the profile; at an angle, or on a bend, the profile as it is seen there.)",
+      "description": "sketch (on any plane that looks at the sheet: a face of it, or a work plane over it at any angle; its profile of lines, arcs and circles); regions; distance (how deep from the side of the sheet that looks at the sketch; default and at most Thickness: through). The profile is cut out of every flat face and bend of that side it is seen on, looking along the sketch's normal, and each is cut square to itself: a cut whose walls are square to the sheet whatever the angle of the sketch, so the flat pattern has one clean outline. (On a face parallel to the sketch it is the profile; at an angle, or on a bend, the profile as it is seen there.) A profile over a cone, a round part of a rolled profile or a die-formed face is refused",
       "params": {
         "type": "object",
         "properties": {
@@ -5411,7 +5411,7 @@
       "id": "sheet.flat",
       "label": "Flat Pattern",
       "undoable": false,
-      "description": "The part laid flat: length and width (the sheet it is cut from), area, cut_length (round the outline and every hole), holes, and each bend's angle (rad), inside radius, allowance (its width in the flat), up (bent towards the A side) and centre lines. face: the A side (default: the part's, else the largest flat face); body (default: the only one); curves: true adds the outlines (outer, inner) as lines, arcs, circles and polylines",
+      "description": "The part laid flat: length and width (the sheet it is cut from), area, cut_length (round the outline and every hole), holes, and each bend's angle (rad), inside radius, allowance (its width in the flat), up (bent towards the A side) and centre lines. notes (when there are any): what the pattern is not exact about, in words: a die-formed or rolled shape that does not lay flat exactly, and how far out it is. marks (when there are any): each stamp of a punch, its name, its centre, whether it is formed, and the lines a formed one bends at. face: the A side (default: the part's, else the largest flat face); body (default: the only one); curves: true adds the outlines (outer, inner) as lines, arcs, circles and polylines",
       "params": {
         "type": "object",
         "properties": {
