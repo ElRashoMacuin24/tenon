@@ -1485,3 +1485,21 @@ fn what_repeats_a_suppressed_patterns_elements_is_out_with_them_and_hidden_stays
     assert_eq!(tree_of(e, &more[1]), true);
     assert!((weighed(e) - 4000.0).abs() < 1e-6);
 }
+
+#[test]
+fn a_part_file_gone_is_listed_once_however_many_ways_it_is_used() {
+    let dir = scratch("gone");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    mirrored_ell(e);
+    run(e, "asm.save", json!({ "path": "a.tenonasm" }));
+    std::fs::remove_file(dir.join("ell.tenon")).unwrap();
+    let opened = run(e, "asm.open", json!({ "path": "a.tenonasm" }));
+    let missing = opened["missing"].as_array().unwrap();
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    assert!(missing[0].as_str().unwrap().contains("ell.tenon"), "{missing:?}");
+    assert_eq!(opened["components"], 2);
+    // Each component still says why, as ever.
+    let tree = run(e, "asm.tree", json!({}));
+    assert!(tree["components"].as_array().unwrap().iter().all(|c| !c["missing"].is_null()), "{tree}");
+}

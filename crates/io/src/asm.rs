@@ -161,8 +161,7 @@ fn asm_open(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
     let path = path(p)?;
     let (asm, parts) = open(&path).map_err(|e| CmdError(format!("cannot open {}: {e}", path.display())))?;
     s.replace(asm, parts);
-    let missing: Vec<String> =
-        s.parts.iter().filter_map(|(k, p)| p.missing.as_ref().map(|m| format!("{}: {m}", tenon_assembly::key_file(k)))).collect();
+    let missing: Vec<String> = tenon_assembly::session::missing_parts(&s.parts).into_iter().map(|(file, why)| format!("{file}: {why}")).collect();
     if let Some(k) = k {
         s.refresh(k).map_err(CmdError)?;
     }

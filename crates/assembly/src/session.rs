@@ -340,6 +340,13 @@ pub fn symmetric_about(scene: &Scene, axis: OriginAxis) -> bool {
     })
 }
 
+/// What cannot be had of `parts`, a file once: `(file, why)`. A part in a row of its design table,
+/// or a part's mirror image, says no more when its part file is what cannot be read.
+pub fn missing_parts(parts: &Parts) -> Vec<(&str, &str)> {
+    let of_file = |p: &Part| p.variant.as_ref().is_some_and(|v| parts.get(&v.base).is_some_and(|b| b.missing.is_some()));
+    parts.iter().filter(|(_, p)| !of_file(p)).filter_map(|(k, p)| p.missing.as_deref().map(|why| (crate::model::key_file(k), why))).collect()
+}
+
 /// How to place `source` again in its position mirrored in `plane`, for a part that is the same
 /// as its mirror image: `about` its own middle plane square to that axis or, with none given, the
 /// one that turns it least (of those it is the same about).

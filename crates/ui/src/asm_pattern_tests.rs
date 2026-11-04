@@ -1015,6 +1015,23 @@ fn a_part_of_a_suppressed_chain_of_patterns_is_out_of_the_view_and_hidden_stays_
 }
 
 #[test]
+fn a_part_file_gone_is_told_as_one_when_an_assembly_is_opened() {
+    let dir = scratch("gone");
+    post_part(&dir.join("post.tenon"));
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    opened(&mut wb, &mut d, &[(&dir.join("post.tenon"), [50.0, 0.0, 0.0])]);
+    wb.asm_exec("asm.mirror", json!({ "components": [1], "plane": { "geom": { "type": "plane", "plane": "YZ" } } })).unwrap();
+    d.settle(&mut wb);
+    let file = dir.join("a.tenonasm");
+    wb.save_assembly(&file).unwrap();
+    std::fs::remove_file(dir.join("post.tenon")).unwrap();
+    wb.open(&file).unwrap();
+    d.settle(&mut wb);
+    assert!(wb.status_error && wb.status().contains("(1 part file(s) missing"), "{}", wb.status());
+}
+
+#[test]
 fn opening_turned_components_in_the_app_changes_nothing_and_saves_the_same_bytes() {
     use std::time::{Duration, Instant};
     let dir = scratch("same-bytes");

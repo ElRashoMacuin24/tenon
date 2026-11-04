@@ -402,7 +402,7 @@ impl Workbench {
         s.replace(asm, parts);
         // (After the parts in a row of their design tables are worked out: one of those may be
         // what cannot be had.)
-        let missing: Vec<String> = s.parts.values().filter_map(|p| p.missing.clone()).collect();
+        let missing: Vec<String> = asm_session::missing_parts(&s.parts).into_iter().map(|(_, why)| why.to_owned()).collect();
         self.leave_drawing();
         self.enter_assembly(AsmDoc::new(s, Some(path.to_path_buf())));
         match missing.first() {
