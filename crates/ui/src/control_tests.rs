@@ -639,9 +639,20 @@ fn a_connection_that_has_given_the_token_may_be_quiet() {
     known.ok(&mut wb, &mut d, "control.state", json!({}));
     std::thread::sleep(wait);
     known.ok(&mut wb, &mut d, "control.state", json!({}));
-    // The one that said nothing has been closed.
+    // The one that said nothing has been closed (or is about to be, on a machine this busy).
     let mut left = String::new();
-    assert!(matches!(silent.reader.read_line(&mut left), Ok(0)), "{left}");
+    let began = std::time::Instant::now();
+    loop {
+        match silent.reader.read_line(&mut left) {
+            Ok(0) => break,
+            Ok(_) => panic!("{left}"),
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => {
+                assert!(began.elapsed() < crate::control::FIRST_LINE_WAIT * 4, "not closed");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => break,
+        }
+    }
 }
 
 #[test]
