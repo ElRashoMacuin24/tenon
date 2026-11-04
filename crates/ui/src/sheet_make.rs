@@ -477,8 +477,9 @@ impl Workbench {
                 section(ui, "Input Geometry", true, |ui| {
                     egui::Grid::new("tn_props_roll_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         ui.label("Profile").on_hover_text("An open profile: lines and arcs end to end, all on one side of the axis");
+                        let doc = self.document();
                         egui::ComboBox::from_id_salt("tn_props_roll_sketch").selected_text(name(p.sketch)).show_ui(ui, |ui| {
-                            for (id, n) in sketches {
+                            for (id, n) in sketches.iter().filter(|s| p.editing.is_none_or(|e| doc.index_of(s.0) < doc.index_of(e))) {
                                 ui.selectable_value(&mut p.sketch, *id, n);
                             }
                         });
@@ -684,14 +685,23 @@ impl Workbench {
                             .map(|s| s.0)
                             .filter(|id| doc.sketch(*id).is_some_and(|sk| !tenon_model::hole_centres(sk).is_empty()))
                             .collect();
-                        egui::ComboBox::from_id_salt("tn_props_punch_sketch").selected_text(shown).show_ui(ui, |ui| {
+                        let list = egui::ComboBox::from_id_salt("tn_props_punch_sketch").selected_text(shown).show_ui(ui, |ui| {
                             if p.editing.is_none() {
                                 ui.selectable_value(&mut p.sketch, None, "Clicks on a face");
                             }
-                            for id in &with_points {
-                                ui.selectable_value(&mut p.sketch, Some(*id), name(*id));
+                            for id in with_points.iter().filter(|id| p.editing.is_none_or(|e| doc.index_of(**id) < doc.index_of(e))) {
+                                let r = ui.selectable_value(&mut p.sketch, Some(*id), name(*id));
+                                crate::drawing::remember(ui, &format!("tn_punch_sketch_{}", id.0), r.rect);
+                                if r.clicked() {
+                                    // The points were of the sketch it had: of another, all its centres.
+                                    p.points = match p.editing.and_then(|e| doc.feature(e)).map(|f| &f.kind) {
+                                        Some(FeatureKind::Punch(was)) if was.sketch == *id => was.points.clone(),
+                                        _ => Vec::new(),
+                                    };
+                                }
                             }
                         });
+                        crate::drawing::remember(ui, "tn_punch_sketch", list.response.rect);
                         ui.end_row();
                         let stamps = match p.sketch {
                             Some(id) if p.points.is_empty() => doc.sketch(id).map_or(0, |sk| tenon_model::hole_centres(sk).len()),
@@ -714,7 +724,9 @@ impl Workbench {
         let doc = self.document();
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
         let mut best: Option<(FeatureId, f32)> = None;
-        for id in self.open_profiles() {
+        // (A feature being edited goes only by what comes before it.)
+        let editing = if let Some(Panel::LoftedFlange(p)) = &self.panel { p.editing } else { None };
+        for id in self.open_profiles().into_iter().filter(|id| editing.is_none_or(|e| doc.index_of(*id) < doc.index_of(e))) {
             let (Some(sk), Some(frame)) = (doc.sketch(id), self.sketch_frame(id)) else { continue };
             let screen = |q: Vec2| self.view.camera.project(frame.plane_point(q), w, h).map(|(x, y, _)| rect.min + vec2(x as f32, y as f32));
             for (e, entity) in sk.entities() {

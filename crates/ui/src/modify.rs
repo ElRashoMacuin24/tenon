@@ -114,7 +114,7 @@ impl Workbench {
             && p.editing.is_none_or(|e| self.document().index_of(id) < self.document().index_of(e));
         if !ok {
             let name = self.feature_name(id);
-            self.set_error(format!("{name} cannot be copied: only earlier features that add or remove material can"));
+            self.set_error(format!("{name} cannot be copied: a pattern or mirror copies an earlier Extrude, Revolve, Hole, Rib, Sweep, Coil, Loft, Face or pattern, and not this"));
             return;
         }
         if let Some(Panel::Pattern(p)) = &mut self.panel {

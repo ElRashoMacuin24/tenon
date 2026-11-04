@@ -402,3 +402,151 @@ fn a_shape_that_does_not_unroll_exactly_says_so_on_its_panel_its_row_and_its_fla
         d.texts()
     );
 }
+
+/// A flat ring is a flat side like any other: a click on it stamps it, from either face.
+#[test]
+fn a_flat_ring_is_stamped_by_a_click_on_it() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1200.0));
+    new_part(&mut d, &mut wb);
+    lines(&mut wb, json!({ "plane": "xz" }), &[(30.0, 10.0), (60.0, 10.0)]);
+    frames(&mut d, &mut wb);
+    wb.exec("sheet.contour_roll", json!({ "sketch": 1, "axis": "z", "angle": 2.0, "direction": "symmetric" })).unwrap();
+    frames(&mut d, &mut wb);
+    // By hand: (60^2 - 30^2) / 2 x 2 x 2.
+    let whole = volume(&wb);
+    assert!(near(whole, 5400.0, 1e-6), "{whole}");
+    wb.look_from(Vec3::new(0.3, -0.3, 1.0));
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    press(&mut d, &mut wb, "sheet.punch");
+    d.click(&mut wb, pressable(&d, "tn_punch_library_close"));
+    frames(&mut d, &mut wb);
+    // The top of the ring, in the middle of it: the panel takes the click, and says nothing against it.
+    let at = on_screen(&wb, Vec3::new(45.0, 0.0, 12.0));
+    d.click(&mut wb, at);
+    frames(&mut d, &mut wb);
+    let Some(Panel::Punch(p)) = &wb.panel else { panic!("the panel: {}", wb.status()) };
+    assert_eq!(p.face_points.len(), 1, "{}", wb.status());
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.exec("model.regenerate", json!({})).unwrap()["error"].is_null(), "{}", wb.status());
+    // Round 10: its area x 2.
+    assert!(near(volume(&wb), whole - 25.0 * PI * 2.0, 1e-5), "{}: {}", volume(&wb), wb.status());
+}
+
+/// Editing a punch: another sketch means that sketch's centres, not the point ids of the old one;
+/// and only a sketch before the punch is on the list, since it cannot go by one after it.
+#[test]
+fn a_punch_edited_to_another_sketch_goes_by_that_sketch_and_only_earlier_ones_are_offered() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1200.0));
+    new_part(&mut d, &mut wb);
+    plate_in_view(&mut d, &mut wb);
+    let whole = volume(&wb);
+    let up = wb.exec("work.plane", json!({ "by": "offset", "base": "xy", "distance": 2 })).unwrap()["feature"].as_u64().unwrap();
+    let sketch =
+        |wb: &mut Workbench| wb.exec("sketch.create", json!({ "work_plane": up, "project_origin": false })).unwrap()["feature"].as_u64().unwrap();
+    let one = sketch(&mut wb);
+    let p1 = wb.exec("sketch.point", json!({ "sketch": one, "x": 20, "y": 20 })).unwrap()["point"].as_u64().unwrap();
+    let two = sketch(&mut wb);
+    for (x, y) in [(50, 20), (50, 40), (70, 40)] {
+        wb.exec("sketch.point", json!({ "sketch": two, "x": x, "y": y })).unwrap();
+    }
+    wb.exec("sheet.punch", json!({ "sketch": one, "points": [p1], "shape": "round", "diameter": 6 })).unwrap();
+    let late = sketch(&mut wb);
+    wb.exec("sketch.point", json!({ "sketch": late, "x": 30, "y": 40 })).unwrap();
+    frames(&mut d, &mut wb);
+    let stamp = 9.0 * PI * 2.0;
+    assert!(near(volume(&wb), whole - stamp, 1e-5));
+
+    let row = browser_row(&d, "Punch1");
+    double_click(&mut d, &mut wb, row.center());
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::Punch(p)) if p.points.len() == 1), "{}", wb.status());
+    // The list, opened by the pointer: the two before it, and not the one after.
+    d.click(&mut wb, pressable(&d, "tn_punch_sketch"));
+    frames(&mut d, &mut wb);
+    let offered = |d: &Driver, id: u64| {
+        d.ctx
+            .data(|x| x.get_temp::<std::collections::BTreeMap<String, egui::Rect>>(egui::Id::new("tn_buttons")))
+            .unwrap_or_default()
+            .contains_key(&format!("tn_punch_sketch_{id}"))
+    };
+    assert!(offered(&d, one) && offered(&d, two) && !offered(&d, late));
+    d.click(&mut wb, pressable(&d, &format!("tn_punch_sketch_{two}")));
+    frames(&mut d, &mut wb);
+    let Some(Panel::Punch(p)) = &wb.panel else { panic!("{}", wb.status()) };
+    assert!(p.points.is_empty() && p.sketch == Some(tenon_model::FeatureId(two as u32)), "{p:?}");
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    // Three stamps now.
+    assert!(wb.exec("model.regenerate", json!({})).unwrap()["error"].is_null(), "{}", wb.status());
+    assert!(near(volume(&wb), whole - 3.0 * stamp, 1e-5), "{}: {}", volume(&wb), wb.status());
+    let punch = wb.document().features().iter().find(|f| f.name == "Punch1").unwrap();
+    let FeatureKind::Punch(p) = &punch.kind else { panic!("{punch:?}") };
+    assert!(p.points.is_empty() && p.sketch.0 as u64 == two, "{p:?}");
+
+    // Back to the first, with the first's own point, chosen again.
+    let row = browser_row(&d, "Punch1");
+    double_click(&mut d, &mut wb, row.center());
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, "tn_punch_sketch"));
+    frames(&mut d, &mut wb);
+    d.click(&mut wb, pressable(&d, &format!("tn_punch_sketch_{one}")));
+    frames(&mut d, &mut wb);
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), whole - stamp, 1e-5), "{}: {}", volume(&wb), wb.status());
+}
+
+/// What a twist comes to is said where a person looks: on the panel, on the browser row and with
+/// the flat pattern; and past what a sheet can be it is said on the panel, and nothing is made.
+#[test]
+fn a_twisted_sheet_says_how_thick_it_is_on_its_panel_its_row_and_its_flat_pattern_and_past_that_is_refused() {
+    let twisted = |d: &mut Driver, wb: &mut Workbench, degrees: f64| {
+        new_part(d, wb);
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        lines(wb, json!({ "plane": "xy" }), &[(0.0, 0.0), (100.0, 0.0)]);
+        let up = wb.exec("work.plane", json!({ "by": "offset", "base": "xy", "distance": 80 })).unwrap()["feature"].as_u64().unwrap();
+        lines(wb, json!({ "work_plane": up }), &[(50.0 - 50.0 * cos, -50.0 * sin), (50.0 + 50.0 * cos, 50.0 * sin)]);
+        frames(d, wb);
+        wb.run_ui("sheet.lofted_flange").unwrap();
+        frames(d, wb);
+    };
+    let says =
+        |d: &Driver| d.texts().iter().any(|t| t.contains("twists by up to") && t.contains("thick on the whole") && t.contains("the rule says 2 mm"));
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1000.0));
+    twisted(&mut d, &mut wb, 15.0);
+    assert!(says(&d), "on the panel: {:?}", d.texts());
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none() && !says(&d), "{}", wb.status());
+    let row = browser_row(&d, "Lofted Flange1").center();
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(row)]);
+    for _ in 0..60 {
+        d.frame(&mut wb, vec![]);
+    }
+    assert!(says(&d), "on its row: {:?}", d.texts());
+    d.frame(&mut wb, vec![egui::Event::PointerGone]);
+    wb.run_ui("sheet.flat_view").unwrap();
+    frames(&mut d, &mut wb);
+    frames(&mut d, &mut wb);
+    assert!(says(&d), "with the flat pattern: {:?}", d.texts());
+
+    // Past it: the panel says so before anything is made, and Enter makes nothing.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 1000.0));
+    twisted(&mut d, &mut wb, 45.0);
+    let refused = |d: &Driver| d.texts().iter().any(|t| t.contains("These profiles twist") && t.contains("Press Brake"));
+    assert!(refused(&d), "on the panel: {:?}", d.texts());
+    assert_eq!(volume(&wb), 0.0, "no preview of what cannot be");
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    frames(&mut d, &mut wb);
+    assert_eq!(volume(&wb), 0.0, "{}", wb.status());
+    // Like any feature that fails: it says why in the view.
+    assert!(d.texts().iter().any(|t| t.contains("These profiles twist")), "{:?}", d.texts());
+}
