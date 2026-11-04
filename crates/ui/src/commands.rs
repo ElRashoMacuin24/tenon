@@ -479,9 +479,15 @@ pub const RIBBON: &[RibbonTab] = &[
                         0,
                     ),
                     small("sheet.punch", "Punch Tool", "Stamp a shape from a library", Icon::SheetCut, LATER),
-                    small("sheet.rip", "Rip", "Open a seam so that a closed shape can be laid flat", Icon::Split, LATER),
-                    small("sheet.unfold", "Unfold", "Flatten chosen bends to work across them", Icon::FlatPattern, LATER),
-                    small("sheet.refold", "Refold", "Fold flattened bends again", Icon::FoldedPart, LATER),
+                    small(
+                        "sheet.rip",
+                        "Rip",
+                        "Open a seam in a face, so that a closed shape can be laid flat: a slit through a point, a slit between two points, or the whole face out",
+                        Icon::Split,
+                        0,
+                    ),
+                    small("sheet.unfold", "Unfold", "Lay chosen bends flat from a face that stays, to work across them", Icon::FlatPattern, 0),
+                    small("sheet.refold", "Refold", "Fold back the bends an Unfold laid flat, with what was cut across them", Icon::FoldedPart, 0),
                 ],
             },
             RibbonPanel {

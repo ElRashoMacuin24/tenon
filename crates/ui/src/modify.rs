@@ -69,6 +69,7 @@ impl Workbench {
             Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_) | Panel::Keep(_)) => {
                 Some(Wants { edges: false, faces: true })
             }
+            Some(Panel::Unfold(_) | Panel::Refold(_)) => Some(Wants { edges: false, faces: true }),
             // A support is on faces. A fixed one may be on edges in their place: it is on
             // whichever was clicked first, until that is cleared.
             Some(Panel::Support(s)) => {
@@ -143,6 +144,15 @@ impl Workbench {
             Some(Panel::CornerSeam(p)) => edges(&p.edges),
             Some(Panel::Bend(p)) => edges(&p.edges),
             Some(Panel::ContourFlange(p)) => edges(&p.edges),
+            Some(Panel::Rip(p)) => {
+                let mut v: Vec<Pick> = p.face.as_ref().and_then(face).into_iter().collect();
+                if let Some(along) = &p.along {
+                    v.extend(edges(std::slice::from_ref(along)));
+                }
+                v
+            }
+            Some(Panel::Unfold(p)) => p.face.iter().chain(&p.bends).filter_map(face).collect(),
+            Some(Panel::Refold(p)) => p.bends.iter().filter_map(face).collect(),
             Some(Panel::Chamfer(p)) => {
                 let mut v = edges(&p.edges);
                 v.extend(p.reference.as_ref().and_then(face));
@@ -293,6 +303,13 @@ impl Workbench {
             (Pick::Face { body, face }, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) => {
                 self.bodies_referable(body, face)
             }
+            // A flat face stays where it is, a round one is a bend to lay flat.
+            (Pick::Face { body, face }, Some(Panel::Unfold(_))) => {
+                self.face_ref_of(body, face).is_some()
+                    && matches!(surface(body, face), Some(SurfaceKind::Plane { .. } | SurfaceKind::Cylinder { .. }))
+            }
+            // A face of a strip the unfold made.
+            (Pick::Face { body, face }, Some(Panel::Refold(r))) => self.face_ref_of(body, face).is_some_and(|f| f.origin.feature() == r.unfold),
             // A direction is read off the edge or face as it is: it needs no name.
             (pick, Some(Panel::Load(_))) if self.picking_direction() => self.direction_of(pick).is_some(),
             // A point is the middle of the face or edge clicked.
@@ -433,6 +450,19 @@ impl Workbench {
                 if !f.rip && f.edges.len() > 2 {
                     f.edges.remove(1);
                 }
+            }
+            (Some(Panel::Unfold(u)), None, Some(r)) => {
+                if r.fingerprint.surface == "plane" {
+                    // What stays where it is: one face.
+                    u.face = if present && toggle { None } else { Some(r) };
+                } else {
+                    u.all = false;
+                    edit_list(&mut u.bends, r, present, toggle, same_face);
+                }
+            }
+            (Some(Panel::Refold(u)), None, Some(r)) => {
+                u.all = false;
+                edit_list(&mut u.bends, r, present, toggle, same_face);
             }
             (Some(Panel::Chamfer(c)), Some(r), _) => edit_list(&mut c.edges, r, present, toggle, same_edge),
             (Some(Panel::Chamfer(c)), None, Some(r)) if c.method != ChamferMethod::Distance => {
@@ -652,6 +682,10 @@ impl Workbench {
             }
             return true;
         }
+        if matches!(self.panel, Some(Panel::Rip(_))) {
+            self.rip_pointer(resp, rect);
+            return true;
+        }
         if matches!(self.panel, Some(Panel::Hole(_))) {
             self.view.hover = None;
             let point = self.hole_point_at(resp.interact_pointer_pos(), rect);
@@ -805,6 +839,23 @@ impl Workbench {
             Some(Panel::CornerSeam(f)) => f.edges.clear(),
             Some(Panel::Bend(f)) => f.edges.clear(),
             Some(Panel::ContourFlange(f)) => f.edges.clear(),
+            Some(Panel::Rip(f)) => {
+                f.face = None;
+                f.points.clear();
+                f.along = None;
+            }
+            // The bends first: the view comes back to the part with them folded, to pick again.
+            Some(Panel::Unfold(f)) => {
+                if f.bends.is_empty() {
+                    f.face = None;
+                }
+                f.bends.clear();
+                f.all = false;
+            }
+            Some(Panel::Refold(f)) => {
+                f.bends.clear();
+                f.all = false;
+            }
             Some(Panel::Chamfer(c)) => c.edges.clear(),
             Some(Panel::Shell(s)) => s.faces.clear(),
             Some(Panel::Keep(p)) => p.faces.clear(),

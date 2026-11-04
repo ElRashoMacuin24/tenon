@@ -70,6 +70,8 @@ mod recovery_tests;
 #[cfg(test)]
 mod save_tests;
 #[cfg(test)]
+mod sheet_open_tests;
+#[cfg(test)]
 mod sheet_tests;
 #[cfg(test)]
 mod sketch_tests;

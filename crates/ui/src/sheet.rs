@@ -9,13 +9,15 @@ use std::path::{Path, PathBuf};
 
 use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, pos2, vec2};
 use serde_json::json;
-use tenon_geom::Vec2;
+use tenon_geom::{Vec2, Vec3};
 use tenon_io::flat::Marks;
+use tenon_kernel::{CurveKind, SurfaceKind};
 use tenon_model::sheet::{
-    self, BendPosition, CornerOptions, CornerShape, DoubleBend, FlangeWidth, FlatPattern, FoldLocation, HeightDatum, HemShape, ReliefShape, Seam,
-    Sides,
+    self, BendPosition, CornerOptions, CornerShape, DoubleBend, FlangeWidth, FlatPattern, FoldLocation, HeightDatum, HemShape, ReliefShape, RipWay,
+    Seam, Sides,
 };
-use tenon_model::{EdgeRef, Extrude, ExtrudeExtent, FeatureId, FeatureKind, Operation, RegionSel};
+use tenon_model::{EdgeRef, Extrude, ExtrudeExtent, FaceRef, FeatureId, FeatureKind, Operation, RegionSel};
+use tenon_render::pick::{pick_edge_in, pick_face_in};
 use tenon_sketch::Geometry;
 
 use crate::commands::{FLAT_TAB, MODEL_TAB, SHEET_TAB};
@@ -23,6 +25,7 @@ use crate::panels::Panel;
 use crate::print_dialog::PartJob;
 use crate::properties::{Equations, eq_value_field, flip_button, fmt_value, picked_row, section};
 use crate::theme::{self, Tokens};
+use crate::viewport::Pick;
 use crate::workbench::{Geo, Workbench};
 
 /// A flat piece of sheet from a sketch profile.
@@ -432,6 +435,103 @@ impl FoldPanel {
     }
 }
 
+/// The way a rip goes, as the panel chooses it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RipChoice {
+    Point,
+    Between,
+    Face,
+}
+
+/// A seam opened in a face of the sheet: Rip.
+#[derive(Clone, Debug)]
+pub(crate) struct RipPanel {
+    pub editing: Option<FeatureId>,
+    pub face: Option<FaceRef>,
+    pub way: RipChoice,
+    /// What was clicked on the face: the point, or the two.
+    pub points: Vec<Vec3>,
+    /// The edge a slit through a point runs alongside.
+    pub along: Option<EdgeRef>,
+    /// A gap of this rip's own, in place of the rule's.
+    pub own_gap: bool,
+    pub gap: f64,
+}
+
+impl RipPanel {
+    /// The feature, once all it needs is picked.
+    pub(crate) fn kind(&self) -> Option<FeatureKind> {
+        let way = match (self.way, self.points.as_slice()) {
+            (RipChoice::Face, _) => RipWay::Face,
+            (RipChoice::Point, [at, ..]) => RipWay::Point { at: *at, along: self.along.clone() },
+            (RipChoice::Between, [from, to, ..]) => RipWay::Between { from: *from, to: *to },
+            _ => return None,
+        };
+        let gap = (self.own_gap && self.way != RipChoice::Face).then_some(self.gap);
+        Some(FeatureKind::Rip(sheet::Rip { face: self.face.clone()?, way, gap }))
+    }
+
+    pub(crate) fn eq_pointers(&self) -> Vec<(&'static str, &'static str)> {
+        if self.own_gap && self.way != RipChoice::Face { vec![("gap", "/gap")] } else { Vec::new() }
+    }
+
+    /// What to do next, in words.
+    pub(crate) fn what_is_missing(&self) -> &'static str {
+        match self.way {
+            RipChoice::Face => "Rip: click the face to take out",
+            RipChoice::Point => "Rip: click the point on the face that the slit goes through",
+            RipChoice::Between => "Rip: click the point on the face where the slit starts, then the point where it ends",
+        }
+    }
+}
+
+/// Bends laid flat from a stationary face: Unfold.
+#[derive(Clone, Debug)]
+pub(crate) struct UnfoldPanel {
+    pub editing: Option<FeatureId>,
+    /// The flat face that stays where it is.
+    pub face: Option<FaceRef>,
+    /// Each bend to lay flat, by a round face of it.
+    pub bends: Vec<FaceRef>,
+    /// Every bend of the sheet, without clicking them.
+    pub all: bool,
+}
+
+impl UnfoldPanel {
+    pub(crate) fn kind(&self) -> Option<FeatureKind> {
+        let bends = if self.all { Vec::new() } else { self.bends.clone() };
+        (self.all || !bends.is_empty()).then_some(())?;
+        Some(FeatureKind::Unfold(sheet::UnfoldBends { face: self.face.clone()?, bends }))
+    }
+
+    pub(crate) fn what_is_missing(&self) -> &'static str {
+        if self.face.is_none() {
+            "Unfold: click the flat face of the sheet that stays where it is"
+        } else {
+            "Unfold: click the round face of a bend to lay flat, or tick All Bends"
+        }
+    }
+}
+
+/// Bends an unfold laid flat folded back: Refold.
+#[derive(Clone, Debug)]
+pub(crate) struct RefoldPanel {
+    pub editing: Option<FeatureId>,
+    pub unfold: FeatureId,
+    /// Each bend to fold back, by a face of its flat strip.
+    pub bends: Vec<FaceRef>,
+    /// All that are still flat, without clicking them.
+    pub all: bool,
+}
+
+impl RefoldPanel {
+    pub(crate) fn kind(&self) -> Option<FeatureKind> {
+        let bends = if self.all { Vec::new() } else { self.bends.clone() };
+        (self.all || !bends.is_empty()).then_some(())?;
+        Some(FeatureKind::Refold(sheet::Refold { unfold: self.unfold, bends }))
+    }
+}
+
 /// What is typed into Sheet Metal Defaults: each size as its equation, and the two shapes.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DefaultsEdit {
@@ -800,6 +900,9 @@ impl Workbench {
             "sheet.corner_seam" => self.open_corner_seam(None)?,
             "sheet.bend" => self.open_bend(None)?,
             "sheet.fold" => self.open_fold(None)?,
+            "sheet.rip" => self.open_rip(None)?,
+            "sheet.unfold" => self.open_unfold(None)?,
+            "sheet.refold" => self.open_refold(None)?,
             "sheet.cut" => self.open_sheet_cut(None)?,
             "sheet.corner_round" => {
                 self.open_modify("fillet", None)?;
@@ -1226,6 +1329,226 @@ impl Workbench {
             "Corner Seam: click the edge at the end of each of the two faces, where they come together (in an overlap, the first runs across the second), then OK. To open a square corner that has no seam, choose Corner Rip and click the corner's edge.",
         );
         Ok(())
+    }
+
+    pub(crate) fn open_rip(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        let sizes = self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::Rip(r) => {
+                    let (way, points, along) = match &r.way {
+                        RipWay::Point { at, along } => (RipChoice::Point, vec![*at], along.clone()),
+                        RipWay::Between { from, to } => (RipChoice::Between, vec![*from, *to], None),
+                        RipWay::Face => (RipChoice::Face, Vec::new(), None),
+                    };
+                    RipPanel { editing, face: Some(r.face.clone()), way, points, along, own_gap: r.gap.is_some(), gap: r.gap.unwrap_or(sizes.gap) }
+                }
+                _ => return Err("not a rip".into()),
+            },
+            None => {
+                if !self.has_sheet() {
+                    return Err(NO_SHEET.into());
+                }
+                RipPanel { editing: None, face: None, way: RipChoice::Point, points: Vec::new(), along: None, own_gap: false, gap: sizes.gap }
+            }
+        };
+        self.panel = Some(Panel::Rip(panel));
+        self.start_equations();
+        self.view.selection.clear();
+        self.set_status("Rip: click the point on a face of the sheet that the slit goes through, then OK. A closed shape can be laid flat once it is open. Point to Point and Whole Face are the other ways.");
+        Ok(())
+    }
+
+    pub(crate) fn open_unfold(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::Unfold(u) => UnfoldPanel { editing, face: Some(u.face.clone()), bends: u.bends.clone(), all: u.bends.is_empty() },
+                _ => return Err("not an unfold".into()),
+            },
+            None => {
+                if !self.has_sheet() {
+                    return Err(NO_SHEET.into());
+                }
+                // What is selected already says what it is, as a click would.
+                let picked = self.picked_faces();
+                let round = |f: &&FaceRef| f.fingerprint.surface == "cylinder";
+                UnfoldPanel {
+                    editing: None,
+                    face: picked.iter().find(|f| f.fingerprint.surface == "plane").cloned(),
+                    bends: picked.iter().filter(round).cloned().collect(),
+                    all: false,
+                }
+            }
+        };
+        self.panel = Some(Panel::Unfold(panel));
+        self.start_equations();
+        self.view.selection.clear();
+        self.set_status(
+            "Unfold: click the flat face that stays where it is, then the round face of each bend to lay flat (or tick All Bends), then OK.",
+        );
+        Ok(())
+    }
+
+    /// The unfolds of the part before feature `before` (all of them, without one): id and name.
+    pub(crate) fn unfolds_before(&self, before: Option<FeatureId>) -> Vec<(FeatureId, String)> {
+        let doc = self.document();
+        let end = before.and_then(|id| doc.index_of(id)).unwrap_or(usize::MAX);
+        doc.features()
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| *i < end && matches!(f.kind, FeatureKind::Unfold(_)))
+            .map(|(_, f)| (f.id, f.name.clone()))
+            .collect()
+    }
+
+    pub(crate) fn open_refold(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
+        self.document().sheet_sizes().map_err(|e| if self.document().sheet_metal().is_none() { NOT_SHEET.to_owned() } else { e })?;
+        let panel = match editing {
+            Some(id) => match &self.document().feature(id).ok_or("no such feature")?.kind {
+                FeatureKind::Refold(r) => RefoldPanel { editing, unfold: r.unfold, bends: r.bends.clone(), all: r.bends.is_empty() },
+                _ => return Err("not a refold".into()),
+            },
+            None => {
+                let Some((unfold, _)) = self.unfolds_before(None).pop() else {
+                    return Err("The part has no unfold, so it has nothing to fold back: lay bends flat first with Unfold.".into());
+                };
+                RefoldPanel { editing: None, unfold, bends: Vec::new(), all: true }
+            }
+        };
+        self.panel = Some(Panel::Refold(panel));
+        self.start_equations();
+        self.view.selection.clear();
+        self.set_status("Refold: every bend the unfold laid flat folds back, with what was cut across it. Untick All Bends and click a flat strip to fold back only some, then OK.");
+        Ok(())
+    }
+
+    /// Hover and clicks in the viewport while Rip is open: a click on a face is the point on it,
+    /// or (a slit through a point having one) on a straight edge is what the slit runs alongside.
+    pub(crate) fn rip_pointer(&mut self, resp: &egui::Response, rect: Rect) {
+        let Some(pos) = resp.hover_pos() else {
+            self.view.hover = None;
+            return;
+        };
+        let (x, y, w, h) = (f64::from(pos.x - rect.left()), f64::from(pos.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
+        let takes_edge = matches!(&self.panel, Some(Panel::Rip(p)) if p.way == RipChoice::Point && p.face.is_some() && !p.points.is_empty());
+        if takes_edge
+            && let Some(e) = pick_edge_in(tree.as_deref(), &meshes, &self.view.camera, w, h, x, y, 5.0)
+            && matches!(self.scene.bodies.get(e.body).and_then(|b| b.curves.get(e.edge as usize)), Some(CurveKind::Line { .. }))
+            && let Some(r) = self.scene.bodies.get(e.body).and_then(|b| b.edge_ref(e.edge))
+        {
+            self.view.hover = Some(Pick::Edge { body: e.body, edge: e.edge });
+            if resp.clicked()
+                && let Some(Panel::Rip(p)) = &mut self.panel
+            {
+                p.along = if p.along.as_ref() == Some(&r) { None } else { Some(r) };
+            }
+            return;
+        }
+        let (o, d) = self.view.camera.ray(x, y, w, h);
+        let hit = pick_face_in(tree.as_deref(), &meshes, o, d);
+        let side = hit.filter(|f| {
+            self.scene
+                .bodies
+                .get(f.body)
+                .and_then(|b| b.faces.get(f.face as usize))
+                .is_some_and(|(name, info)| name.is_some() && matches!(info.surface, SurfaceKind::Plane { .. } | SurfaceKind::Cylinder { .. }))
+        });
+        self.view.hover = side.as_ref().map(|f| Pick::Face { body: f.body, face: f.face });
+        if !resp.clicked() {
+            return;
+        }
+        let Some(hit) = side else {
+            self.set_error("Rip: click a face of the sheet, flat or round.");
+            return;
+        };
+        let Some(face) = self.face_ref_of(hit.body, hit.face) else { return };
+        let at = self.rip_point_on(hit.body, hit.face, hit.point, rect);
+        let Some(Panel::Rip(p)) = &mut self.panel else { return };
+        let same_face = p.face.as_ref().is_some_and(|f| f.origin == face.origin);
+        match p.way {
+            RipChoice::Face => {
+                p.points.clear();
+                p.face = Some(face);
+            }
+            RipChoice::Point => {
+                if !same_face {
+                    p.along = None;
+                }
+                p.face = Some(face);
+                p.points = vec![at];
+            }
+            RipChoice::Between => {
+                // Another face starts over; a third point takes the place of the second.
+                if !same_face || p.points.is_empty() {
+                    p.face = Some(face);
+                    p.points = vec![at];
+                } else {
+                    p.points.truncate(1);
+                    p.points.push(at);
+                }
+            }
+        }
+    }
+
+    /// Where a click at `point` on a face is taken to be: on an edge of the face it is within a
+    /// few pixels of (a slit then goes through that edge), else where it is, to a hundredth of a
+    /// millimetre.
+    fn rip_point_on(&self, body: usize, face: u32, point: Vec3, rect: Rect) -> Vec3 {
+        let tidy = |v: f64| (v * 100.0).round() / 100.0;
+        let tidied = Vec3::new(tidy(point.x), tidy(point.y), tidy(point.z));
+        let Some(b) = self.scene.bodies.get(body) else { return tidied };
+        let Some(name) = b.faces.get(face as usize).and_then(|f| f.0) else { return tidied };
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let screen = |q: Vec3| self.view.camera.project(q, w, h).map(|(x, y, _)| Vec2::new(x, y));
+        let Some(here) = screen(point) else { return tidied };
+        let mut best: Option<(f64, Vec3)> = None;
+        for (i, (names, _)) in b.edges.iter().enumerate() {
+            if !names.is_some_and(|n| n.contains(&name)) {
+                continue;
+            }
+            let (Some([s, e]), Some(curve)) = (b.ends.get(i), b.curves.get(i)) else { continue };
+            let near = match curve {
+                CurveKind::Line { .. } => {
+                    let d = *e - *s;
+                    let along = if d.len() > 1e-9 { ((point - *s).dot(d) / d.dot(d)).clamp(0.0, 1.0) } else { 0.0 };
+                    *s + d * along
+                }
+                CurveKind::Circle { axis, radius } => {
+                    let from = point - axis.origin();
+                    let flat = from - axis.dir() * from.dot(axis.dir());
+                    if flat.len() < 1e-9 {
+                        continue;
+                    }
+                    axis.origin() + flat.normalized() * *radius
+                }
+                _ => continue,
+            };
+            let Some(at) = screen(near) else { continue };
+            let off = at.dist(here);
+            if off <= 8.0 && best.is_none_or(|x| off < x.0) {
+                best = Some((off, near));
+            }
+        }
+        best.map_or(tidied, |b| b.1)
+    }
+
+    /// Rip: the points clicked on the face, and the slit between two of them.
+    pub(crate) fn rip_overlay(&self, ui: &egui::Ui, rect: Rect, t: &Tokens) {
+        let Some(Panel::Rip(p)) = &self.panel else { return };
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let screen = |q: Vec3| self.view.camera.project(q, w, h).map(|(x, y, _)| rect.min + vec2(x as f32, y as f32));
+        let painter = ui.painter().with_clip_rect(rect);
+        let marks: Vec<Pos2> = p.points.iter().filter_map(|q| screen(*q)).collect();
+        if let [a, b] = marks.as_slice() {
+            painter.line_segment([*a, *b], Stroke::new(1.5, t.accent));
+        }
+        for at in marks {
+            painter.circle_filled(at, 4.5, t.accent);
+            painter.line_segment([at - vec2(8.0, 0.0), at + vec2(8.0, 0.0)], Stroke::new(1.0, t.accent));
+            painter.line_segment([at - vec2(0.0, 8.0), at + vec2(0.0, 8.0)], Stroke::new(1.0, t.accent));
+        }
     }
 
     /// The sketch a new contour flange follows: the one being drawn, otherwise the last that has
@@ -1682,6 +2005,151 @@ impl Workbench {
                                     .entered;
                         } else {
                             ui.label(RichText::new(format!("{} mm", fmt_value(p.radius))).color(t.text_dim));
+                        }
+                        ui.end_row();
+                    });
+                });
+            }
+            Panel::Rip(p) => {
+                section(ui, "Input Geometry", true, |ui| {
+                    egui::Grid::new("tn_props_rip_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Way").on_hover_text("How the seam is opened in the face");
+                        let was = p.way;
+                        choice(
+                            ui,
+                            "tn_rip_way",
+                            &mut p.way,
+                            &[
+                                (RipChoice::Point, "point", "Single Point", "A slit right across the face, through a point of it"),
+                                (RipChoice::Between, "between", "Point to Point", "A slit from one point of the face to another"),
+                                (RipChoice::Face, "face", "Whole Face", "The face is taken out, and the sheet behind it"),
+                            ],
+                        );
+                        // What was clicked for the one way is no use to another.
+                        if was != p.way {
+                            p.points.clear();
+                            p.along = None;
+                            if p.way != RipChoice::Face && was == RipChoice::Face {
+                                p.face = None;
+                            }
+                        }
+                        ui.end_row();
+                        ui.label("Face").on_hover_text("A flat side of the sheet, or a round side of a bend or a tube");
+                        clear |= picked_row(ui, usize::from(p.face.is_some()), "click a face");
+                        ui.end_row();
+                        match p.way {
+                            RipChoice::Point => {
+                                ui.label("Point").on_hover_text("Where on the face the slit goes through");
+                                ui.label(p.points.first().map_or("click on the face".to_owned(), |q| {
+                                    format!("{}, {}, {}", fmt_value(q.x), fmt_value(q.y), fmt_value(q.z))
+                                }));
+                                ui.end_row();
+                                ui.label("Alongside").on_hover_text("A straight edge the slit runs alongside. Without one: on a bend along its axis, on a flat face alongside the bend beside it, else across the face's short way");
+                                let picked = picked_row(ui, usize::from(p.along.is_some()), "click an edge, or as it comes");
+                                if picked {
+                                    p.along = None;
+                                }
+                                ui.end_row();
+                            }
+                            RipChoice::Between => {
+                                ui.label("Points").on_hover_text("Where the slit starts and ends. Clicked on an edge of the face, it goes through that edge");
+                                ui.label(match p.points.len() {
+                                    0 => "click where it starts".to_owned(),
+                                    1 => "click where it ends".to_owned(),
+                                    n => format!("{n} selected"),
+                                });
+                                ui.end_row();
+                            }
+                            RipChoice::Face => {}
+                        }
+                    });
+                });
+                if p.way != RipChoice::Face {
+                    section(ui, "Gap", true, |ui| {
+                        egui::Grid::new("tn_props_rip_gap").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                            ui.label("Gap").on_hover_text("How wide the slit is, as the flat pattern has it");
+                            let mut by_rule = !p.own_gap;
+                            let r = ui.checkbox(&mut by_rule, "By rule");
+                            crate::drawing::remember(ui, "tn_rip_by_rule", r.rect);
+                            r.on_hover_text("The part's GapSize, from Sheet Metal Defaults");
+                            if by_rule == p.own_gap {
+                                p.own_gap = !by_rule;
+                                if let (false, Some(s)) = (p.own_gap, sizes) {
+                                    p.gap = s.gap;
+                                }
+                            }
+                            ui.end_row();
+                            ui.label("");
+                            if p.own_gap {
+                                enter |= eq_value_field(
+                                    ui,
+                                    egui::Id::new("tn_props_rip_gap_value"),
+                                    &mut p.gap,
+                                    eqs,
+                                    "gap",
+                                    "mm",
+                                    0.001..=1000.0,
+                                    110.0,
+                                    t,
+                                )
+                                .entered;
+                            } else {
+                                ui.label(RichText::new(format!("{} mm", fmt_value(p.gap))).color(t.text_dim));
+                            }
+                            ui.end_row();
+                        });
+                    });
+                }
+            }
+            Panel::Unfold(p) => {
+                section(ui, "Input Geometry", true, |ui| {
+                    egui::Grid::new("tn_props_unfold_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Stationary Face").on_hover_text("The flat face of the sheet that stays where it is");
+                        ui.label(if p.face.is_some() { "1 selected" } else { "click a flat face" });
+                        ui.end_row();
+                        ui.label("Bends").on_hover_text("Each bend to lay flat, by a round face of it");
+                        let all = ui.checkbox(&mut p.all, "All Bends");
+                        crate::drawing::remember(ui, "tn_unfold_all", all.rect);
+                        all.on_hover_text("Every bend of the sheet, without clicking them");
+                        ui.end_row();
+                        ui.label("");
+                        if p.all {
+                            ui.label(RichText::new("every bend of the sheet").color(t.text_dim));
+                        } else {
+                            clear |= picked_row(ui, p.bends.len(), "click a round face of a bend");
+                        }
+                        ui.end_row();
+                    });
+                });
+            }
+            Panel::Refold(p) => {
+                let unfolds = self.unfolds_before(p.editing);
+                section(ui, "Input Geometry", true, |ui| {
+                    egui::Grid::new("tn_props_refold_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Unfold").on_hover_text("The unfold whose bends these are");
+                        let was = p.unfold;
+                        egui::ComboBox::from_id_salt("tn_props_refold_unfold")
+                            .selected_text(unfolds.iter().find(|u| u.0 == p.unfold).map_or("?".into(), |u| u.1.clone()))
+                            .show_ui(ui, |ui| {
+                                for (id, name) in &unfolds {
+                                    ui.selectable_value(&mut p.unfold, *id, name);
+                                }
+                            });
+                        // What was clicked is on the strips of the other.
+                        if was != p.unfold {
+                            p.bends.clear();
+                        }
+                        ui.end_row();
+                        ui.label("Bends").on_hover_text("Each bend to fold back, by a face of the flat strip it became");
+                        let all = ui.checkbox(&mut p.all, "All Bends");
+                        crate::drawing::remember(ui, "tn_refold_all", all.rect);
+                        all.on_hover_text("Every bend of that unfold that is still flat, without clicking them");
+                        ui.end_row();
+                        ui.label("");
+                        if p.all {
+                            ui.label(RichText::new("all that are still flat").color(t.text_dim));
+                        } else {
+                            clear |= picked_row(ui, p.bends.len(), "click a flat strip");
                         }
                         ui.end_row();
                     });
