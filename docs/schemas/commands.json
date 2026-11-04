@@ -5894,7 +5894,7 @@
       "id": "sheet.cut_across_bend",
       "label": "Cut Across Bend",
       "undoable": true,
-      "description": "sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern. It follows a cylinder of a rolled sheet like a bend; a profile that reaches a cone, a round part of a rolled profile or a die-formed face is refused",
+      "description": "on a sheet with a flat side: sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern. It follows a cylinder of a rolled sheet like a bend; a profile that reaches a cone, a round part of a rolled profile or a die-formed face is refused",
       "params": {
         "type": "object",
         "properties": {
@@ -5941,7 +5941,7 @@
       "id": "sheet.cut_normal",
       "label": "Cut Normal",
       "undoable": true,
-      "description": "sketch (on any plane that looks at the sheet: a face of it, or a work plane over it at any angle; its profile of lines, arcs and circles); regions; distance (how deep from the side of the sheet that looks at the sketch; default and at most Thickness: through). The profile is cut out of every flat face and bend of that side it is seen on, looking along the sketch's normal, and each is cut square to itself: a cut whose walls are square to the sheet whatever the angle of the sketch, so the flat pattern has one clean outline. (On a face parallel to the sketch it is the profile; at an angle, or on a bend, the profile as it is seen there.) A profile over a cone, a round part of a rolled profile or a die-formed face is refused",
+      "description": "on a sheet with a flat side: sketch (on any plane that looks at the sheet: a face of it, or a work plane over it at any angle; its profile of lines, arcs and circles); regions; distance (how deep from the side of the sheet that looks at the sketch; default and at most Thickness: through). The profile is cut out of every flat face and bend of that side it is seen on, looking along the sketch's normal, and each is cut square to itself: a cut whose walls are square to the sheet whatever the angle of the sketch, so the flat pattern has one clean outline. (On a face parallel to the sketch it is the profile; at an angle, or on a bend, the profile as it is seen there.) A profile over a cone, a round part of a rolled profile or a die-formed face is refused",
       "params": {
         "type": "object",
         "properties": {
