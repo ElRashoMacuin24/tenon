@@ -11,6 +11,10 @@ use tenon_model::EdgeRef;
 pub const MAX_SHEETS: usize = 500;
 pub const MAX_VIEWS: usize = 5_000;
 pub const MAX_ANNOTATIONS: usize = 50_000;
+/// Most places one set of dimensions may measure.
+pub const MAX_SET_PLACES: usize = 500;
+/// How far apart a baseline set's dimension lines go (sheet mm), unless told otherwise.
+pub const SET_SPACING: f64 = 8.0;
 
 macro_rules! id_type {
     ($name:ident, $what:literal) => {
@@ -342,6 +346,58 @@ impl DimKind {
     }
 }
 
+/// Which way a set of dimensions measures on the sheet (DEC-132).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetAxis {
+    /// Along the sheet: its dimension lines run left to right, one above another.
+    Horizontal,
+    /// Up the sheet: its dimension lines run bottom to top, side by side.
+    Vertical,
+}
+
+impl SetAxis {
+    /// The name commands take.
+    pub fn id(self) -> &'static str {
+        match self {
+            SetAxis::Horizontal => "horizontal",
+            SetAxis::Vertical => "vertical",
+        }
+    }
+
+    pub fn from_id(s: &str) -> Option<SetAxis> {
+        Some(match s.to_ascii_lowercase().as_str() {
+            "horizontal" => SetAxis::Horizontal,
+            "vertical" => SetAxis::Vertical,
+            _ => return None,
+        })
+    }
+
+    /// Of a point, how far along what is measured.
+    pub fn along(self, p: Vec2) -> f64 {
+        match self {
+            SetAxis::Horizontal => p.x,
+            SetAxis::Vertical => p.y,
+        }
+    }
+
+    /// Of a point, how far across what is measured.
+    pub fn across(self, p: Vec2) -> f64 {
+        match self {
+            SetAxis::Horizontal => p.y,
+            SetAxis::Vertical => p.x,
+        }
+    }
+
+    /// The point so far along and so far across.
+    pub fn point(self, along: f64, across: f64) -> Vec2 {
+        match self {
+            SetAxis::Horizontal => Vec2::new(along, across),
+            SetAxis::Vertical => Vec2::new(across, along),
+        }
+    }
+}
+
 /// What an annotation is.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -383,6 +439,35 @@ pub enum AnnotKind {
     /// The centre line of a symmetric feature: midway between two lines of a view (parallel: along
     /// their common length; meeting: their angle's bisector), drawn a little past both.
     CenterlineBisector { view: ViewId, a: GeomPick, b: GeomPick },
+    /// Dimensions all measured from `datum`, one for each of `targets`, stacked evenly away from
+    /// the view (DEC-132). `offset` from the view's centre on the sheet says where the first
+    /// dimension line goes; only how far across what is measured counts.
+    Baseline {
+        view: ViewId,
+        axis: SetAxis,
+        datum: GeomPick,
+        targets: Vec<GeomPick>,
+        offset: Vec2,
+        /// Between one dimension line and the next (sheet mm): more where their text needs it.
+        #[serde(default = "set_spacing")]
+        spacing: f64,
+        /// Decimal places at most (trailing zeros dropped).
+        #[serde(default = "two")]
+        precision: u8,
+    },
+    /// Values measured from `origin` (itself 0), each on its own extension line with no arrows
+    /// (DEC-132). `offset` from the view's centre on the sheet says where the values line up; only
+    /// how far across what is measured counts.
+    Ordinate {
+        view: ViewId,
+        axis: SetAxis,
+        origin: GeomPick,
+        targets: Vec<GeomPick>,
+        offset: Vec2,
+        /// Decimal places at most (trailing zeros dropped).
+        #[serde(default = "two")]
+        precision: u8,
+    },
     /// Text on a sheet.
     Note {
         sheet: SheetId,
@@ -401,6 +486,10 @@ fn note_height() -> f64 {
     3.5
 }
 
+fn set_spacing() -> f64 {
+    SET_SPACING
+}
+
 impl AnnotKind {
     /// The view the annotation belongs to, if it belongs to one.
     pub fn view(&self) -> Option<ViewId> {
@@ -411,7 +500,9 @@ impl AnnotKind {
             | AnnotKind::PartsList { view, .. }
             | AnnotKind::CenterMark { view, .. }
             | AnnotKind::Centerline { view, .. }
-            | AnnotKind::CenterlineBisector { view, .. } => Some(*view),
+            | AnnotKind::CenterlineBisector { view, .. }
+            | AnnotKind::Baseline { view, .. }
+            | AnnotKind::Ordinate { view, .. } => Some(*view),
             AnnotKind::Note { .. } => None,
         }
     }
@@ -464,6 +555,11 @@ pub struct Drawing {
 
 fn finite2(v: Vec2) -> bool {
     v.x.is_finite() && v.y.is_finite() && v.x.abs() <= tol::MAX_SIZE && v.y.abs() <= tol::MAX_SIZE
+}
+
+/// What a baseline and an ordinate set read from a file have in common is in range.
+fn set_ok(targets: &[GeomPick], offset: Vec2, precision: u8) -> bool {
+    !targets.is_empty() && targets.len() <= MAX_SET_PLACES && finite2(offset) && precision <= 6
 }
 
 impl Drawing {
@@ -650,6 +746,10 @@ impl Drawing {
                 AnnotKind::HoleTable { at, .. } | AnnotKind::PartsList { at, .. } => finite2(*at),
                 AnnotKind::Balloon { attach, offset, .. } => finite2(*offset) && attach.is_finite(),
                 AnnotKind::CenterMark { .. } | AnnotKind::Centerline { .. } | AnnotKind::CenterlineBisector { .. } => true,
+                AnnotKind::Baseline { targets, offset, spacing, precision, .. } => {
+                    set_ok(targets, *offset, *precision) && spacing.is_finite() && *spacing > 0.0 && *spacing <= 1000.0
+                }
+                AnnotKind::Ordinate { targets, offset, precision, .. } => set_ok(targets, *offset, *precision),
                 AnnotKind::Note { sheet, at, text, height } => {
                     sheets.contains(sheet) && finite2(*at) && text.len() <= 10_000 && height.is_finite() && *height > 0.0 && *height < 100.0
                 }

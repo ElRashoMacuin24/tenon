@@ -13,7 +13,10 @@ use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult, EdgeFingerprint, EdgeRef, FaceOrigin};
 
 use crate::annotate::{self, format_number, from_sheet, hole_rows, parts_rows, to_sheet};
-use crate::model::{AnnotId, AnnotKind, Annotation, DimKind, Drawing, GeomPick, Orientation, PickPoint, SheetId, Side, View, ViewId, ViewKind};
+use crate::dimsets;
+use crate::model::{
+    AnnotId, AnnotKind, Annotation, DimKind, Drawing, GeomPick, Orientation, PickPoint, SET_SPACING, SetAxis, SheetId, Side, View, ViewId, ViewKind,
+};
 use crate::session::DrwSession;
 use crate::views::{project, seen_size};
 
@@ -207,6 +210,20 @@ fn drw_info(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
                             o.insert("item".into(), json!(annotate::item_of(m, *component)));
                         }
                     }
+                    (AnnotKind::Baseline { .. } | AnnotKind::Ordinate { .. }, Some(e)) => match dimsets::layout(d, e, a) {
+                        Ok(l) => {
+                            o.insert("rows".into(), set_rows(&l));
+                            if let Some(step) = l.step {
+                                o.insert("step".into(), json!(step));
+                            }
+                            if let Some(problem) = l.problem() {
+                                o.insert("problem".into(), json!(problem));
+                            }
+                        }
+                        Err(err) => {
+                            o.insert("problem".into(), json!(err));
+                        }
+                    },
                     _ => {}
                 }
             }
@@ -634,6 +651,139 @@ fn drw_dimension_auto(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value
     Ok(json!({ "added": ids.len(), "annotations": ids, "dimensions": added }))
 }
 
+/// What a set's places come to, as `drw.info` and the commands that make one say it. `place` is a
+/// target's number in the set (0 for the first; null for an ordinate set's origin).
+fn set_rows(l: &dimsets::SetLayout) -> Value {
+    let rows: Vec<Value> =
+        l.rows.iter().map(|r| json!({ "place": r.place, "value": r.value, "shown": r.shown, "at": v2(r.text), "level": r.level })).collect();
+    json!(rows)
+}
+
+fn set_axis(p: &Value) -> Result<Option<SetAxis>, CmdError> {
+    match arg(p, "axis") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_str().and_then(SetAxis::from_id).map(Some).ok_or_else(|| CmdError("`axis` must be horizontal or vertical".into())),
+    }
+}
+
+/// A list of picks; none when not given.
+fn picks(p: &Value, key: &str) -> Result<Vec<GeomPick>, CmdError> {
+    match arg(p, key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|x| serde_json::from_value(x.clone()).map_err(|e| CmdError(format!("`{key}` holds something that is not a pick (make one with drw.pick): {e}"))))
+            .collect(),
+        Some(_) => Err(CmdError(format!("`{key}` must be a list of picks"))),
+    }
+}
+
+fn precision_param(p: &Value) -> Result<Option<u8>, CmdError> {
+    match arg(p, "precision") {
+        None | Some(Value::Null) => Ok(None),
+        Some(x) => Ok(Some(x.as_u64().and_then(|n| u8::try_from(n).ok()).filter(|n| *n <= 6).ok_or("`precision` must be 0 to 6")?)),
+    }
+}
+
+fn spacing_param(p: &Value) -> Result<Option<f64>, CmdError> {
+    let spacing = opt_num(p, "spacing")?;
+    if spacing.is_some_and(|x| x <= 0.0 || x > 1000.0) {
+        return Err("`spacing` must be more than 0 and at most 1000".into());
+    }
+    Ok(spacing)
+}
+
+/// Makes a baseline set (`spacing` given) or an ordinate set, after checking it can be measured:
+/// `make` gets its direction and where it goes from the view's centre.
+fn add_set(s: &mut DrwSession, p: &Value, from: &GeomPick, spacing: Option<f64>, make: impl FnOnce(SetAxis, Vec2) -> AnnotKind) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    let v = view(s.drawing(), vid)?.clone();
+    let targets = picks(p, "targets")?;
+    if targets.is_empty() {
+        return Err(CmdError("`targets` must hold at least one pick: an edge or point to measure".into()));
+    }
+    let at = opt_vec2(p, "at")?;
+    let ev = s.current()?;
+    let axis = match set_axis(p)? {
+        Some(a) => a,
+        None => dimsets::axis_for(s.drawing(), ev, vid, at, from, &targets).map_err(CmdError)?,
+    };
+    let at = match at {
+        Some(a) => a,
+        None => {
+            let room = spacing.map_or(0.0, |x| x * (targets.len() as f64 - 1.0)) + SET_SPACING;
+            dimsets::default_at(s.drawing(), ev, vid, axis, room).map_err(CmdError)?
+        }
+    };
+    let kind = make(axis, at - v.center);
+    // Refuse what cannot be measured.
+    let probe = Annotation { id: AnnotId(u32::MAX), kind: kind.clone() };
+    let l = dimsets::check(s.drawing(), ev, &probe).map_err(CmdError)?;
+    let aid = add_annotation(s, kind)?;
+    Ok(json!({ "annotation": aid.0, "axis": axis.id(), "rows": set_rows(&l), "step": l.step }))
+}
+
+fn drw_baseline(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let (view, datum) = (view_id(p, "view")?, pick(p, "datum")?);
+    let (spacing, precision) = (spacing_param(p)?.unwrap_or(SET_SPACING), precision_param(p)?.unwrap_or(2));
+    let targets = picks(p, "targets")?;
+    let from = datum.clone();
+    add_set(s, p, &from, Some(spacing), |axis, offset| AnnotKind::Baseline { view, axis, datum, targets, offset, spacing, precision })
+}
+
+fn drw_ordinate(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let (view, origin) = (view_id(p, "view")?, pick(p, "origin")?);
+    let precision = precision_param(p)?.unwrap_or(2);
+    let targets = picks(p, "targets")?;
+    let from = origin.clone();
+    add_set(s, p, &from, None, |axis, offset| AnnotKind::Ordinate { view, axis, origin, targets, offset, precision })
+}
+
+/// The set `kind` with what `p` changes of it: another datum or origin, places taken away (their
+/// numbers as `drw.info` gives them) and then added, another direction or spacing.
+fn set_changed(kind: &AnnotKind, p: &Value) -> Result<Option<AnnotKind>, CmdError> {
+    let (datum, axis_given, spacing_given) = (opt_pick(p, "datum")?, set_axis(p)?, spacing_param(p)?);
+    let (add, remove) = (picks(p, "add")?, arg(p, "remove").filter(|r| !r.is_null()));
+    if datum.is_none() && axis_given.is_none() && spacing_given.is_none() && add.is_empty() && remove.is_none() {
+        return Ok(None);
+    }
+    let mut out = kind.clone();
+    let (from, targets, axis) = match &mut out {
+        AnnotKind::Baseline { datum, targets, axis, .. } => (datum, targets, axis),
+        AnnotKind::Ordinate { origin, targets, axis, .. } => (origin, targets, axis),
+        _ => return Err("`datum`, `add`, `remove`, `axis` and `spacing` are for baseline and ordinate sets".into()),
+    };
+    if let Some(d) = datum {
+        *from = d;
+    }
+    if let Some(a) = axis_given {
+        *axis = a;
+    }
+    if let Some(r) = remove {
+        let numbers = r.as_array().ok_or("`remove` must be a list of place numbers, as drw.info gives them")?;
+        let mut gone = Vec::with_capacity(numbers.len());
+        for n in numbers {
+            let i = n.as_u64().and_then(|i| usize::try_from(i).ok()).filter(|i| *i < targets.len());
+            gone.push(i.ok_or_else(|| CmdError(format!("`remove` holds {n}, and the set's places are 0 to {}", targets.len().saturating_sub(1))))?);
+        }
+        let mut i = 0;
+        targets.retain(|_| {
+            i += 1;
+            !gone.contains(&(i - 1))
+        });
+    }
+    targets.extend(add);
+    if targets.is_empty() {
+        return Err("a set needs at least one place: delete it instead".into());
+    }
+    match (&mut out, spacing_given) {
+        (AnnotKind::Baseline { spacing, .. }, Some(x)) => *spacing = x,
+        (AnnotKind::Ordinate { .. }, Some(_)) => return Err("an ordinate set has no spacing: its values line up".into()),
+        _ => {}
+    }
+    Ok(Some(out))
+}
+
 /// Adds a centre mark or line after checking it can be drawn; returns it and its segments.
 fn add_center(s: &mut DrwSession, kind: AnnotKind) -> CmdResult {
     let probe = Annotation { id: AnnotId(u32::MAX), kind: kind.clone() };
@@ -802,18 +952,36 @@ fn drw_note(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
     Ok(json!({ "annotation": aid.0 }))
 }
 
-/// Moves an annotation by `by` (sheet mm), or changes a dimension's text or precision.
+/// Moves an annotation by `by` (sheet mm), or changes a dimension's text or precision, or what is
+/// in a baseline or ordinate set.
 fn drw_annotation_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let aid = annot_id(p, "annotation")?;
     let by = opt_vec2(p, "by")?.unwrap_or(Vec2::new(0.0, 0.0));
     let text = arg(p, "text").map(|t| t.as_str().map(str::to_owned));
-    let precision = match arg(p, "precision") {
-        None | Some(Value::Null) => None,
-        Some(x) => Some(x.as_u64().and_then(|n| u8::try_from(n).ok()).filter(|n| *n <= 6).ok_or("`precision` must be 0 to 6")?),
+    let precision = precision_param(p)?;
+    let current = s.drawing().annotation(aid).ok_or_else(|| CmdError(format!("{aid} does not exist")))?;
+    let set = set_changed(&current.kind, p)?;
+    // A changed set must still be measurable, before anything is touched.
+    let checked = match &set {
+        Some(kind) => Some(dimsets::check(s.drawing(), s.current()?, &Annotation { id: aid, kind: kind.clone() }).map_err(CmdError)?),
+        None => None,
     };
     s.edit(|d| {
         let a = d.annotations.iter_mut().find(|a| a.id == aid).ok_or_else(|| CmdError(format!("{aid} does not exist")))?;
+        if let Some(kind) = set {
+            a.kind = kind;
+        }
         match &mut a.kind {
+            AnnotKind::Baseline { axis, offset, precision: pr, .. } | AnnotKind::Ordinate { axis, offset, precision: pr, .. } => {
+                if text.is_some() {
+                    return Err("the values of a baseline or ordinate set have no text of their own".into());
+                }
+                // Only across: along, each dimension stays with what it measures.
+                *offset += axis.point(0.0, axis.across(by));
+                if let Some(x) = precision {
+                    *pr = x;
+                }
+            }
             AnnotKind::Dimension { offset, text: t, precision: pr, .. } => {
                 *offset += by;
                 if let Some(x) = text {
@@ -839,7 +1007,10 @@ fn drw_annotation_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Valu
         }
         Ok(())
     })?;
-    Ok(json!({ "annotation": aid.0 }))
+    Ok(match checked {
+        Some(l) => json!({ "annotation": aid.0, "rows": set_rows(&l), "step": l.step }),
+        None => json!({ "annotation": aid.0 }),
+    })
 }
 
 fn drw_delete(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
@@ -1045,6 +1216,22 @@ static COMMANDS: &[DrwCommand] = &[
         run: drw_dimension_auto,
     },
     DrwCommand {
+        id: "drw.baseline",
+        label: "Baseline",
+        help: "view; datum: a pick to measure from; targets: [picks] of what to measure to (a circle's centre, a line's middle, or the point picked; drw.pick); axis: horizontal | vertical (default: by where it goes, else the way they are most spread); at: where the first dimension line goes on the sheet (default outside the view); spacing: between dimension lines, sheet mm (default 8, more where their text needs it); precision (decimals, default 2). One record with one dimension to each target, the shortest nearest the view, following the model. drw.annotation.edit adds and takes away, moves and changes it",
+        mutates: true,
+        views: true,
+        run: drw_baseline,
+    },
+    DrwCommand {
+        id: "drw.ordinate",
+        label: "Ordinate",
+        help: "view; origin: a pick to measure from; targets: [picks] of what to measure to (a circle's centre, a line's middle, or the point picked; drw.pick); axis: horizontal | vertical (default: by where it goes, else the way they are most spread); at: where the values line up on the sheet (default outside the view); precision (decimals, default 2). One record: the origin marked 0 and each target its position from it, signed, on its own extension line with no arrows, the values moved apart where they would touch, following the model. drw.annotation.edit adds and takes away, moves and changes it",
+        mutates: true,
+        views: true,
+        run: drw_ordinate,
+    },
+    DrwCommand {
         id: "drw.hole_table",
         label: "Hole Table",
         help: "view (a part view); origin: a pick for the datum (default the view's bottom-left); at: the table's top-left (default top right of the sheet)",
@@ -1087,7 +1274,7 @@ static COMMANDS: &[DrwCommand] = &[
     DrwCommand {
         id: "drw.annotation.edit",
         label: "Edit Annotation",
-        help: "annotation; by: [dx, dy] (move); text (dimension text, \"<>\" the value, null for the value alone; or a note's text); precision",
+        help: "annotation; by: [dx, dy] (move; a baseline or ordinate set only across what it measures); text (dimension text, \"<>\" the value, null for the value alone; or a note's text); precision. Of a baseline or ordinate set also: remove: [place numbers from drw.info], add: [picks], datum: a pick (its datum or origin), axis: horizontal | vertical, spacing (baseline)",
         mutates: true,
         views: false,
         run: drw_annotation_edit,

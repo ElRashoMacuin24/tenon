@@ -18,6 +18,10 @@ const PARENT: Param = req("parent", Id, "the view it is made from");
 const ANNOTATION: Param = req("annotation", Id, "the annotation's id, as drw.info lists it");
 pub const AT: Param = opt("at", POINT, "where it goes on the sheet, [x, y] in mm from the sheet's lower left");
 pub const VIEW_SCALE: Param = opt("scale", SCALE, "a number or \"1:2\" (default: its parent's, or what fits the sheet)");
+const SET_AXIS: Param =
+    opt("axis", Word(&["horizontal", "vertical"]), "which way a set measures (default: by where it goes, else the way its places are most spread)");
+const SET_SPACING: Param = opt("spacing", Length, "between a baseline set's dimension lines, sheet mm (default 8, more where their text needs it)");
+const SET_PRECISION: Param = opt("precision", Int, "decimals (default 2)");
 
 static SCHEMAS: &[C] = &[
     C::new("drw.info", &[]),
@@ -104,6 +108,29 @@ static SCHEMAS: &[C] = &[
     C::new("drw.dimension.suggest", &[VIEW]),
     C::new("drw.dimension.auto", &[VIEW, opt("accept", List(&Int), "which of drw.dimension.suggest's, by number (default all)")]),
     C::new(
+        "drw.baseline",
+        &[
+            VIEW,
+            req("datum", PICK, "a pick to measure from: a circle's centre, a line's middle, or the point picked"),
+            req("targets", List(&PICK), "picks of what to measure to, at least one"),
+            SET_AXIS,
+            opt("at", POINT, "where the first dimension line goes on the sheet (default outside the view)"),
+            SET_SPACING,
+            SET_PRECISION,
+        ],
+    ),
+    C::new(
+        "drw.ordinate",
+        &[
+            VIEW,
+            req("origin", PICK, "a pick to measure from: a circle's centre, a line's middle, or the point picked"),
+            req("targets", List(&PICK), "picks of what to measure to, at least one"),
+            SET_AXIS,
+            opt("at", POINT, "where the values line up on the sheet (default outside the view)"),
+            SET_PRECISION,
+        ],
+    ),
+    C::new(
         "drw.hole_table",
         &[
             VIEW,
@@ -135,9 +162,14 @@ static SCHEMAS: &[C] = &[
         "drw.annotation.edit",
         &[
             ANNOTATION,
-            opt("by", POINT, "how far to move it, [dx, dy]"),
+            opt("by", POINT, "how far to move it, [dx, dy] (a baseline or ordinate set: only across what it measures)"),
             opt("text", Either(&[Text, Null]), "a dimension's text (\"<>\" is the value; null for the value alone), or a note's"),
             opt("precision", Int, "a dimension's decimals"),
+            opt("remove", List(&Int), "of a baseline or ordinate set: places to take away, by number as drw.info gives them"),
+            opt("add", List(&PICK), "of a baseline or ordinate set: picks to add"),
+            opt("datum", PICK, "of a baseline or ordinate set: its datum or origin"),
+            SET_AXIS,
+            SET_SPACING,
         ],
     ),
     C::new("drw.delete", &[ANNOTATION]),
