@@ -779,6 +779,33 @@ fn a_rib_fills_the_corner_of_an_l_bracket() {
 }
 
 #[test]
+fn a_cut_to_next_from_outside_the_part_says_what_the_rule_is() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    block(&mut s, &mut k, 40.0, 20.0, 10.0);
+    regenerates(&mut s, &mut k);
+    // A circle on a plane 15 above the block, the block straight ahead of it, flipped or not.
+    let plane = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 15 }))["feature"].as_u64().unwrap();
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": plane, "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 20, "cy": 10, "r": 3 }));
+    let cut = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "to_next": true, "operation": "cut", "reverse": true }))["feature"].as_u64().unwrap();
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert_eq!(r["error"]["feature"], cut, "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().contains("this sketch starts outside the part: use Through All, To or a distance"), "{r}");
+}
+
+#[test]
+fn a_taper_says_what_sides_it_can_lean() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.ellipse", json!({ "sketch": sk, "cx": 0, "cy": 0, "x": 20, "y": 0, "minor": 10 }));
+    let ex = run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 10, "taper": 0.02 }))["feature"].as_u64().unwrap();
+    let r = run(&mut s, &mut k, "model.regenerate", json!({}));
+    assert_eq!(r["error"]["feature"], ex, "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().contains("curved sides cannot be tapered yet"), "{r}");
+    assert!(!r["error"]["message"].as_str().unwrap().contains("too steep"), "{r}");
+}
+
+#[test]
 fn edge_references_survive_shortening_and_added_sketch_geometry() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     let (sk, ex, l, width) = block(&mut s, &mut k, 40.0, 20.0, 10.0);

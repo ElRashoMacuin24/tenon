@@ -3225,6 +3225,9 @@ first, as OCCT asks, and moves the parameter a quarter turn to match. The shim b
 **Files** gain the entity type `ellipse` (`center`, `major`, `minor`), additive. `sketch.ellipse`
 takes the centre, the end of one axis and half the other.
 
+A taper on an ellipse, a spline or a letter's curves is a gap: the kernel's draft takes straight
+and round sides only, and the message says so (not that the taper is too steep).
+
 ## DEC-121 Smooth (G2) (2026-10-17)
 
 Inventor's Constrain panel has Smooth (G2): a spline joined to another curve is tangent to it

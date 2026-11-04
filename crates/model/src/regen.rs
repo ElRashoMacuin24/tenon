@@ -464,6 +464,12 @@ impl From<KernelError> for Stop {
     }
 }
 
+/// Whether a profile has a side that is neither straight nor round.
+fn has_free_curves(profile: &Profile) -> bool {
+    let free = |l: &tenon_kernel::Loop| l.curves.iter().any(|c| matches!(c.curve, Curve2::BSpline { .. } | Curve2::Ellipse { .. } | Curve2::EllipseArc { .. }));
+    profile.regions.iter().any(|r| free(&r.outer) || r.holes.iter().any(free))
+}
+
 /// The profile `sel` names in `sketch`, in `frame`: its regions of curves taken together, and
 /// the letters of the texts it names (DEC-102). By default, the regions of curves; a sketch
 /// with none, its texts.
@@ -1391,7 +1397,13 @@ impl<'a> Ctx<'a> {
                 (0..topo.faces).filter(|i| matches!(names.get(*i as usize), Some(Some(FaceOrigin::Side { .. })))).map(|i| op.shape.face(i)).collect();
             let away = frame.z() * sign;
             let pull = if taper > 0.0 { away } else { -away };
-            let drafted = self.k.draft(op.shape, &sides, pull, taper.abs(), &frame)?;
+            let drafted = match self.k.draft(op.shape, &sides, pull, taper.abs(), &frame) {
+                Ok(drafted) => drafted,
+                Err(_) if has_free_curves(&profile) => {
+                    return Err("This profile's curved sides cannot be tapered yet: straight and round ones can, and an ellipse, a spline or the curves of a letter are neither. Take the taper off, or draw the profile with lines, arcs and circles.".into());
+                }
+                Err(err) => return Err(err.into()),
+            };
             match self.k.topology(drafted.shape) {
                 Ok(new) => Ok((drafted.shape, names_of_modify(&drafted.history, &names, &topo, id, new.faces))),
                 Err(err) => {
@@ -1530,7 +1542,12 @@ impl<'a> Ctx<'a> {
                 }
             }
             if out.is_empty() {
-                return Err("the profile meets no face of the part ahead: flip it, or give a distance".into());
+                return Err(if kind == BoolOp::Cut {
+                    "the profile meets no face of the part ahead: flip it, or give a distance"
+                } else {
+                    "To Next cuts through the material the sketch starts in, and this sketch starts outside the part: use Through All, To or a distance"
+                }
+                .into());
             }
             Ok(out)
         };
