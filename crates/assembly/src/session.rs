@@ -1111,10 +1111,21 @@ impl AsmSession {
     }
 
     /// Re-solves after parts changed (their geometry moved), as one undo step when anything moved.
+    /// A move no further than a relationship may be out is none: what is read back from a file
+    /// holds only to its nine decimals, and solving it is no change to it.
     pub fn update(&mut self) -> Result<Solved, CmdError> {
         let mut solved = Solved::default();
         self.edit(|asm, parts| {
+            let was = asm.clone();
             solved = solve_assembly(asm, parts, None);
+            let near = |a: Vec3, b: Vec3| a.near(b, tol::ASSEMBLY_BROKEN);
+            let unmoved = |(a, b): (&Component, &Component)| {
+                let (f, g) = (&a.placement, &b.placement);
+                a.key() == b.key() && near(f.origin(), g.origin()) && near(f.x(), g.x()) && near(f.z(), g.z())
+            };
+            if solved.converged && asm.components.iter().zip(&was.components).all(unmoved) {
+                *asm = was;
+            }
             Ok(())
         })?;
         self.failing = solved.failing.clone();

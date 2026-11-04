@@ -1314,7 +1314,7 @@ fn a_source_deleted_and_brought_back_by_undo_has_its_part_again() {
     run(e, "asm.undo", json!({}));
     assert!((weighed(e) - 20000.0).abs() < 1e-6);
 
-    // The same goes for what deleting a pattern or lowering a count closes.
+    // Deleted again, it stays open while undo can name it.
     run(e, "asm.delete", json!({ "component": source }));
     assert!(e.asm.parts.contains_key(&key), "undo can still name it");
 
@@ -1405,7 +1405,14 @@ fn a_frame_at_no_axis_in_particular_is_read_back_to_the_same_bytes() {
     place["component"] = source.clone();
     run(e, "asm.place", place);
     let along = run(e, "asm.geom", json!({ "component": source, "axis": "x" }));
-    run(e, "asm.pattern", json!({ "components": [source], "type": "rectangular", "direction": along, "count": 40, "spacing": 500 }));
+    let row = run(e, "asm.pattern", json!({ "components": [source], "type": "rectangular", "direction": along, "count": 40, "spacing": 500 }));
+    // And relationships at that turn, in a loop through an element and back to its source: as read
+    // back they hold only to what a file keeps.
+    let free = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [100, 100, 100], "grounded": false }))["component"].clone();
+    let (a, b) = (cap(e, &row["components"][1], 2, "end"), cap(e, &free, 2, "end"));
+    run(e, "asm.constrain", json!({ "type": "flush", "a": a, "b": b }));
+    let (a, b) = (cap(e, &free, 2, "end"), cap(e, &source, 2, "end"));
+    run(e, "asm.constrain", json!({ "type": "flush", "a": a, "b": b }));
     let z = run(e, "asm.geom", json!({ "axis": "z" }));
     let round = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [100, 0, 0], "grounded": false }))["component"].clone();
     run(e, "asm.pattern", json!({ "components": [round], "type": "circular", "axis": z, "count": 7, "angle": 2.5 }));

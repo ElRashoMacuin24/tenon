@@ -3657,7 +3657,9 @@ assembly (as a part in a design table's row does), and the solver's frames are t
 rounding. So a solve leaves what is the same as far as a file can tell (`same_placement`), and for
 an element that allows for how far off it stands: a direction read back is a part in a thousand
 million out, which at 20 m along it is 2e-5 mm, enough to read as moved, make a new undo step, and
-ask to save a file just opened.
+ask to save a file just opened. A relationship at such a turn, as read back, holds to 2e-8 mm, well
+above the solver's 1e-9, so `update` takes a move no further than a relationship may be out
+(`ASSEMBLY_BROKEN`) for none.
 
 **Smaller ones.** A second direction along the first is refused (`rule_of`): elements would stand on
 one another and the parts list count them; part patterns only union. What would put a component

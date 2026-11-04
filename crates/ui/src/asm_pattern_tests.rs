@@ -1089,6 +1089,15 @@ fn opening_turned_components_in_the_app_changes_nothing_and_saves_the_same_bytes
     run(&mut s, "asm.mirror", json!({ "components": [1], "plane": yz }));
     let z = run(&mut s, "asm.geom", json!({ "axis": "z" }));
     run(&mut s, "asm.pattern", json!({ "components": [1], "type": "circular", "axis": z, "count": 7, "angle": 2.5 }));
+    // And relationships at that turn, in a loop through an element and back to its source.
+    let free =
+        run(&mut s, "asm.insert", json!({ "path": dir.join("post.tenon").to_string_lossy(), "at": [100, 100, 100], "grounded": false }))["component"]
+            .clone();
+    let top = |c: &serde_json::Value| json!({ "component": c, "face": { "type": "cap", "feature": 2, "end": "end" } });
+    let (x, y) = (run(&mut s, "asm.geom", top(&json!(2))), run(&mut s, "asm.geom", top(&free)));
+    run(&mut s, "asm.constrain", json!({ "type": "flush", "a": x, "b": y }));
+    let (x, y) = (run(&mut s, "asm.geom", top(&free)), run(&mut s, "asm.geom", top(&json!(1))));
+    run(&mut s, "asm.constrain", json!({ "type": "flush", "a": x, "b": y }));
     let (a, b) = (dir.join("a.tenonasm"), dir.join("b.tenonasm"));
     run(&mut s, "asm.save", json!({ "path": a.to_string_lossy() }));
 
