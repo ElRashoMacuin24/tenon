@@ -193,6 +193,24 @@ fn command_docs_are_generated_from_the_registry() {
 }
 
 #[test]
+fn every_parameter_of_a_commands_schema_is_named_in_its_row() {
+    let generated = tenon_cli::commands_markdown();
+    let row = |id: &str| generated.lines().find(|l| l.starts_with(&format!("| `{id}` |"))).unwrap_or_default().to_owned();
+    let schema: serde_json::Value = serde_json::from_str(&tenon_cli::commands_schema_text()).unwrap();
+    let mut missing = Vec::new();
+    for c in schema["commands"].as_array().unwrap() {
+        let id = c["id"].as_str().unwrap();
+        let said = row(id);
+        for name in c["params"]["properties"].as_object().into_iter().flatten().map(|(name, _)| name) {
+            if name != "equations" && !said.contains(name.as_str()) {
+                missing.push(format!("{id}: {name}"));
+            }
+        }
+    }
+    assert!(missing.is_empty(), "the summaries in the registry do not say these, as docs/commands.md and agents read them:\n{}", missing.join("\n"));
+}
+
+#[test]
 fn base64_matches_rfc_4648_vectors() {
     for (input, out) in
         [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")]

@@ -959,7 +959,7 @@ static COMMANDS: &[DrwCommand] = &[
     DrwCommand {
         id: "drw.view.projected",
         label: "Projected View",
-        help: "parent (view); side: right | left | above | below | above_right | above_left | below_right | below_left (diagonals: isometric); at: [x, y] (sheet mm); scale",
+        help: "parent (view); side: right | left | above | below | above_right | above_left | below_right | below_left (diagonals: isometric); at: [x, y] (sheet mm); scale; hidden (hidden lines shown)",
         mutates: true,
         views: false,
         run: drw_projected,

@@ -3871,7 +3871,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "document.material",
         "Material",
-        "name: a material of the library (see document.materials), or null for none; density (g/cm^3) and color (\"#rrggbb\") to change them or to describe a material of one's own",
+        "name: a material of the library (see document.materials), or null for none; density (g/cm^3) and color (\"#rrggbb\") to change them or to describe a material of one's own; youngs_modulus (MPa), poisson and yield_strength (MPa): how strong it is, for a stress study",
         true,
         document_material
     ),
@@ -3920,7 +3920,7 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "sketch.create",
         label: "New Sketch",
-        help: "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref; project_origin (default true: a fixed point at the part origin, returned as `origin`); project_edges (default false): on a face, the face's edges are shown in the sketch as reference geometry, as sketch.project does (or give `edges` and `geometry` as for sketch.project). Returns the feature, and the entities `projected`",
+        help: "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref, or work_plane: a work plane's id; project_origin (default true: a fixed point at the part origin, returned as `origin`); project_edges (default false): on a face, the face's edges are shown in the sketch as reference geometry, as sketch.project does (or give `edges` and `geometry` as for sketch.project). Returns the feature, and the entities `projected`",
         mutates: true,
         run: Run::Opt(sketch_create),
     },
@@ -4136,14 +4136,14 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.extrude",
         "Extrude",
-        "sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join | cut | new_body | intersect; regions: the closed regions to use (default: every outer one), each as sketch.info lists it under `select`: [curve ids] for what those curves enclose, or {left: [ids], right: [ids], nth} for one region of a divided sketch; taper (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through_all only)",
+        "sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true, or to: a plane it goes as far as (a planar face reference, {\"work\": id} or an origin plane), with from: a plane it starts at for Between, or to_next: true (joined, as far as the part's next faces; cut, through the material it starts in); reverse; operation: join | cut | new_body | intersect; regions: the closed regions to use (default: every outer one), each as sketch.info lists it under `select`: [curve ids] for what those curves enclose, or {left: [ids], right: [ids], nth} for one region of a divided sketch; taper (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through_all only)",
         true,
         model_extrude
     ),
     doc_cmd!(
         "model.revolve",
         "Revolve",
-        "sketch; axis: line id or \"x\" | \"y\" | \"z\" (default: the sketch's centre line, when it has one); angle (rad, default full); symmetric; operation; regions",
+        "sketch; axis: line id or \"x\" | \"y\" | \"z\" (default: the sketch's centre line, when it has one); angle (rad, default full) with backward (rad, a second angle the other way), or symmetric, or to: a plane through the axis it goes round to, or to_next: true; reverse (the other way round the axis); operation; regions",
         true,
         model_revolve
     ),
@@ -4171,7 +4171,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.hole",
         "Hole",
-        "sketch; points: [point ids] (default: the sketch's centre points, i.e. points on no curve); diameter; depth or through_all: true; type: simple | counterbore (counterbore_diameter, counterbore_depth) | countersink (countersink_diameter, countersink_angle: rad, default 90 deg); tip_angle (rad, default 118 deg) or flat_bottom: true; reverse (drill along the sketch normal)",
+        "sketch; points: [point ids] (default: the sketch's centre points, i.e. points on no curve); diameter; depth or through_all: true; to: a plane it goes as far as, in place of depth; type: simple | counterbore (counterbore_diameter, counterbore_depth) | spotface (spotface_diameter, spotface_depth: the hole is measured from its floor) | countersink (countersink_diameter, countersink_angle: rad, default 90 deg); tip_angle (rad, default 118 deg) or flat_bottom: true; reverse (drill along the sketch normal); tapped: true puts the thread on each hole's wall, cosmetic: thread_length (default the full depth), pitch (default ISO coarse), designation, left",
         true,
         model_hole
     ),
@@ -4248,14 +4248,14 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.mirror",
         "Mirror",
-        "features: [feature ids]; plane: \"xy\" | \"yz\" | \"xz\", or face: a planar face reference",
+        "features: [feature ids]; plane: \"xy\" | \"yz\" | \"xz\", or face: a planar face reference, or work_plane: a work plane's id",
         true,
         model_mirror
     ),
     doc_cmd!(
         "work.plane",
         "Work Plane",
-        "by: offset (base: plane, distance) | angle (base: plane, axis: in the base plane, angle: rad) | midplane (a, b: parallel planes); a plane is \"xy\" | \"yz\" | \"xz\", a face reference or {\"work\": plane id}",
+        "by: offset (base: plane, distance) | angle (base: plane, axis: in the base plane, angle: rad) | midplane (a, b: parallel planes) | three_points (points: [three of a work point, a sketch point, a circle's centre, the origin]); a plane is \"xy\" | \"yz\" | \"xz\", a face reference or {\"work\": plane id}",
         true,
         work_plane
     ),
@@ -4385,7 +4385,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.flange",
         "Flange",
-        "edges: [edge references] (straight edges of the sheet's rim; the flange bends towards the side each is on); height; angle (rad, default a quarter turn); datum: \"outer\" (default: the height is overall) | \"inner\" | \"tangent\"; position: \"inside\" (default: the flange's outer face goes through the edge) | \"adjacent\" (the bend starts at the edge) | \"outside\" | \"tangent\"; flip (bend to the other side); radius (default BendRadius); width (in the middle of the edge) or offsets: [from the start, from the end] (default: the whole edge). Edges that meet at a corner get the rule's corner relief, and their walls are brought together to leave the rule's gap (miter: false leaves each wall ending where its bend does). Edges on the tops of two walls either side of a corner are mitred the same way: lips turned in over a tray do not share its corners",
+        "edges: [edge references] (straight edges of the sheet's rim; the flange bends towards the side each is on); height; angle (rad, default a quarter turn); datum: \"outer\" (default: the height is overall) | \"inner\" | \"tangent\"; position: \"inside\" (default: the flange's outer face goes through the edge) | \"adjacent\" (the bend starts at the edge) | \"outside\" | \"tangent\"; flip (bend to the other side); radius (default BendRadius); width (in the middle of the edge) or offsets: [from the start, from the end] (default: the whole edge). Edges that meet at a corner get the rule's corner relief, and their walls are brought together to leave the rule's gap (miter: false leaves each wall ending where its bend does). Edges on the tops of two walls either side of a corner are mitred the same way: lips turned in over a tray do not share its corners. A corner may have its own seam, overlap, gap, relief and relief_size, as sheet.corner_seam's",
         true,
         sheet_flange
     ),
@@ -4413,7 +4413,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.corner_rip",
         "Corner Rip",
-        "edges: [edge references]: each the edge of a square corner where two walls of the sheet meet with no seam between them (the corner of a shelled box, say), its outside edge or its inside one. The corner is opened along the edge, as far as the edge goes: seam: \"symmetric\" (default: both walls stop where their inner faces are the gap apart, and the corner between them goes) | \"overlap\" (the first wall keeps the corner and the second stops the gap short of it; the first is the wall whose face the edge reference names first) | \"reverse_overlap\"; overlap (how much of the other wall's thickness the wall that keeps the corner covers, 0 to 1; default 1); gap (default GapSize). Bends are not made of the sharp edges that are left",
+        "edges: [edge references]: each the edge of a square corner where two walls of the sheet meet with no seam between them (the corner of a shelled box, say), its outside edge or its inside one. The corner is opened along the edge, as far as the edge goes: seam: \"symmetric\" (default: both walls stop where their inner faces are the gap apart, and the corner between them goes) | \"overlap\" (the first wall keeps the corner and the second stops the gap short of it; the first is the wall whose face the edge reference names first) | \"reverse_overlap\"; overlap (how much of the other wall's thickness the wall that keeps the corner covers, 0 to 1; default 1); gap (default GapSize); relief and relief_size, as sheet.corner_seam's. Bends are not made of the sharp edges that are left",
         true,
         sheet_corner_rip
     ),
@@ -4579,7 +4579,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "study.set",
         "Change Support or Load",
-        "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references], or of a fixed support or a force edges: [edge references] (one takes the place of the other); name; suppressed: true leaves it out of the study for now, and keeps it; of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals; of gravity: direction, acceleration; of a pin: radial, axial, tangential; of a moment: newton_millimetres, axis (or own); of a bearing load: newtons, direction; of a remote force: newtons, direction, point; of a body load: rpm, axis, point",
+        "Changes a support or a load of a study: what is given takes the place of what it had. study; item: its id; faces: [face references], or of a fixed support or a force edges: [edge references] (one takes the place of the other); name; suppressed: true leaves it out of the study for now, and keeps it; depth (mm: how deep it holds, below a face); of a force: newtons, direction (as for study.force, or normal: square to its faces); of a pressure: megapascals; of gravity: direction, acceleration; of a pin: radial, axial, tangential; of a moment: newton_millimetres, axis (or own); of a bearing load: newtons, direction; of a remote force: newtons, direction, point; of a body load: rpm, axis, point",
         true,
         study_set
     ),

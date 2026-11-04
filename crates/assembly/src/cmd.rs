@@ -709,7 +709,7 @@ static COMMANDS: &[AsmCommand] = &[
     AsmCommand {
         id: "asm.constrain",
         label: "Constrain",
-        help: "type: mate | flush | angle | insert; a, b: targets from asm.geom; offset (mm); angle (rad, for angle); aligned (insert: axes the same way)",
+        help: "type: mate | flush | angle | insert | tangent | symmetry; a, b: targets from asm.geom; offset (mm); angle (rad, for angle); aligned (insert: axes the same way); inside (tangent: one inside the other); plane (symmetry: a target from asm.geom, the plane they are mirrored in)",
         mutates: true,
         kernel: false,
         run: asm_constrain,
@@ -725,7 +725,7 @@ static COMMANDS: &[AsmCommand] = &[
     AsmCommand {
         id: "asm.edit_relationship",
         label: "Edit Relationship",
-        help: "relationship; offset, angle, flip, aligned, type (joints) as in asm.constrain / asm.joint",
+        help: "relationship; offset, angle, flip, aligned, inside, type (joints) as in asm.constrain / asm.joint",
         mutates: true,
         kernel: false,
         run: asm_edit_relationship,
