@@ -84,12 +84,7 @@ impl Diff {
 
 /// The changes from the file at `a` to the file at `b`.
 pub fn diff_files(a: &Path, b: &Path) -> Result<Diff, ProjectError> {
-    let read = |p: &Path| -> Result<Vec<u8>, ProjectError> {
-        if std::fs::metadata(p)?.len() > project::MAX_FILE {
-            return Err(ProjectError::NotAProject(format!("{} is too large", p.display())));
-        }
-        Ok(std::fs::read(p)?)
-    };
+    let read = project::read_file;
     let named = |p: &Path, e: ProjectError| match e {
         ProjectError::NotAProject(m) => ProjectError::NotAProject(format!("{}: {m}", p.display())),
         ProjectError::Damaged(m) => ProjectError::Damaged(format!("{}: {m}", p.display())),

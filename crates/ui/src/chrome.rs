@@ -73,6 +73,8 @@ pub(crate) struct Chrome {
     pub ribbon_width: f32,
     /// "Save changes?" waiting for an answer.
     pub save_prompt: Option<SavePrompt>,
+    /// A file that a save would replace though it has changed on disk: what to do about it.
+    pub overwrite_prompt: Option<std::path::PathBuf>,
     /// Application Options: where Gmsh and CalculiX are, as typed (empty: on the search path).
     pub programs: [String; 2],
     /// The report of the fault Tenon met last time, to tell of once.
@@ -130,8 +132,17 @@ impl Default for Chrome {
             ribbon_scroll: 0.0,
             ribbon_width: 0.0,
             save_prompt: None,
+            overwrite_prompt: None,
         }
     }
+}
+
+/// What "<file> has changed on disk" was answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OverwriteAnswer {
+    Overwrite,
+    SaveAs,
+    Cancel,
 }
 
 /// The answers to "Save changes?".
@@ -416,6 +427,59 @@ impl Workbench {
         }
         if let Some(a) = answer {
             self.answer_save_prompt(a);
+        }
+    }
+
+    /// "<file> has changed on disk": a save was refused because another window or program saved it
+    /// since it was opened here. Overwrite, Save As or Cancel; Esc is Cancel, and it is the
+    /// button Enter answers, since the other two lose or scatter someone's work.
+    pub(crate) fn overwrite_prompt(&mut self, ui: &Ui) {
+        if let Some(path) = tenon_io::project::take_refused_save() {
+            self.chrome.overwrite_prompt = Some(path);
+        }
+        let Some(path) = self.chrome.overwrite_prompt.clone() else { return };
+        let mut answer = None;
+        egui::Modal::new(egui::Id::new("tn_overwrite_prompt")).show(ui.ctx(), |ui| {
+            ui.set_width(420.0);
+            let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+            ui.label(egui::RichText::new(format!("{name} has changed on disk")).font(theme::body()).strong());
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Another window or program has saved it since it was opened here. Overwriting replaces what it saved.").font(theme::small()));
+            ui.add_space(12.0);
+            let size = vec2(88.0, 24.0);
+            ui.horizontal(|ui| {
+                ui.add_space(ui.available_width() - 3.0 * size.x - 2.0 * ui.spacing().item_spacing.x);
+                for (label, key, a) in [
+                    ("Overwrite", "tn_overwrite_yes", OverwriteAnswer::Overwrite),
+                    ("Save As", "tn_overwrite_as", OverwriteAnswer::SaveAs),
+                    ("Cancel", "tn_overwrite_cancel", OverwriteAnswer::Cancel),
+                ] {
+                    let r = ui.add_sized(size, egui::Button::new(label));
+                    crate::drawing::remember(ui, key, r.rect);
+                    if a == OverwriteAnswer::Cancel && !ui.ctx().memory(|m| m.focused().is_some()) {
+                        r.request_focus();
+                    }
+                    if r.clicked() {
+                        answer = Some(a);
+                    }
+                }
+            });
+        });
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            answer = Some(OverwriteAnswer::Cancel);
+        }
+        let Some(answer) = answer else { return };
+        self.chrome.overwrite_prompt = None;
+        let done = match answer {
+            OverwriteAnswer::Cancel => Ok(()),
+            OverwriteAnswer::Overwrite => {
+                tenon_io::project::may_overwrite(&path);
+                self.save_everything()
+            }
+            OverwriteAnswer::SaveAs => self.run_unprompted("file.save_as"),
+        };
+        if let Err(e) = done {
+            self.set_error(format!("Not saved: {e}"));
         }
     }
 

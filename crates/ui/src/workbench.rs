@@ -397,6 +397,13 @@ impl Workbench {
         if self.drw.is_some() { self.save_drawing_ui(false) } else { self.run_unprompted("file.save") }
     }
 
+    /// Where the user says to save a document. Its dialog has asked about a file already there.
+    pub(crate) fn pick_where_to_save(&self, name: &str, extension: &str) -> Result<PathBuf, String> {
+        let path = self.services.pick_save.as_ref().and_then(|f| f(name, extension)).ok_or("no file chosen")?;
+        tenon_io::project::may_overwrite(&path);
+        Ok(path)
+    }
+
     /// Runs a command without asking to save first.
     pub(crate) fn run_unprompted(&mut self, id: &str) -> Result<(), String> {
         // A button whose milestone has not come says so, whatever environment it is pressed in.
@@ -538,7 +545,7 @@ impl Workbench {
                     (Some(p), "file.save") => p,
                     _ => {
                         let file = format!("{name}.{}", tenon_io::asm::EXTENSION);
-                        self.services.pick_save.as_ref().and_then(|f| f(&file, tenon_io::asm::EXTENSION)).ok_or("no file chosen")?
+                        self.pick_where_to_save(&file, tenon_io::asm::EXTENSION)?
                     }
                 };
                 self.save_assembly(&path)?;
@@ -548,7 +555,7 @@ impl Workbench {
                     (Some(p), "file.save") => p.clone(),
                     _ => {
                         let name = format!("{}.tenon", self.document().name);
-                        self.services.pick_save.as_ref().and_then(|f| f(&name, "tenon")).ok_or("no file chosen")?
+                        self.pick_where_to_save(&name, "tenon")?
                     }
                 };
                 self.save(&path)?;
@@ -970,7 +977,7 @@ impl Workbench {
         // While "Save changes?" or "Recover unsaved work?" is open, keys are for it alone (Delete
         // must not delete what it asks about); they are handed back just before the prompts are
         // drawn.
-        let held: Vec<egui::Event> = if self.chrome.save_prompt.is_some() || self.recover_offer.is_some() {
+        let held: Vec<egui::Event> = if self.chrome.save_prompt.is_some() || self.chrome.overwrite_prompt.is_some() || self.recover_offer.is_some() {
             ui.input_mut(|i| {
                 let (keys, rest) =
                     std::mem::take(&mut i.events).into_iter().partition(|e| matches!(e, egui::Event::Key { .. } | egui::Event::Text(_)));
@@ -1057,6 +1064,7 @@ impl Workbench {
         self.radial_ui(ui, &t);
         ui.input_mut(|i| i.events.extend(held));
         self.save_prompt(ui);
+        self.overwrite_prompt(ui);
         self.recover_prompt(ui);
         self.autosave();
         self.keys_elsewhere = ui.ctx().egui_wants_keyboard_input() || egui::Popup::is_any_open(ui.ctx());

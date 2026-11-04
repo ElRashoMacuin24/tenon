@@ -116,6 +116,9 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- Saving replaced a file another window or program had saved since it was opened here, with no
+  word, and that work was gone. It now asks: Overwrite, Save As or Cancel. A save that fails no
+  longer leaves `name.tmp` beside the file, and says which file it was.
 - In a window narrower than a tab's ribbon, what did not fit could not be reached, with nothing to
   show it was there (Finish Analysis under about 1130 wide, Go to Flat Pattern under about 1215).
   The ribbon now has an arrow at the end that goes on, and scrolls with the wheel.

@@ -503,7 +503,7 @@ impl Workbench {
             Some(p) => p,
             None => {
                 let file = format!("{name}.{}", tenon_io::drw::EXTENSION);
-                self.services.pick_save.as_ref().and_then(|f| f(&file, tenon_io::drw::EXTENSION)).ok_or("no file chosen")?
+                self.pick_where_to_save(&file, tenon_io::drw::EXTENSION)?
             }
         };
         self.with_parts_home(|wb| wb.with_model_home(|wb| wb.save_drawing(&path)))

@@ -2,8 +2,11 @@
 //! version 2 and later are text ([`crate::text`], laid out by [`crate::layout`]); version 1 was a
 //! zip holding `project.json`, still read and upgraded in memory.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -31,6 +34,8 @@ pub enum ProjectError {
     TooNew(u32),
     #[error("the project is damaged: {0}")]
     Damaged(String),
+    #[error("{} has changed on disk since it was opened here, and is not overwritten without asking", .0.display())]
+    ChangedOnDisk(PathBuf),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -179,10 +184,87 @@ pub fn from_bytes(data: &[u8]) -> Result<(Document, Map<String, Value>), Project
     Ok((document, file.extra))
 }
 
+/// What says that a file is as it was: when it was last written, and how long it is.
+type Stamp = (std::time::SystemTime, u64);
+
+fn stamp_of(path: &Path) -> Option<Stamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+/// Each document file as this program last read or wrote it. One document is open to a window,
+/// so two windows are two programs, and either may save over what the other just saved.
+static SEEN: Mutex<BTreeMap<PathBuf, Stamp>> = Mutex::new(BTreeMap::new());
+
+fn seen() -> std::sync::MutexGuard<'static, BTreeMap<PathBuf, Stamp>> {
+    SEEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn seen_key(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn remember(path: &Path) {
+    if let Some(stamp) = stamp_of(path) {
+        seen().insert(seen_key(path), stamp);
+    }
+}
+
+thread_local! {
+    /// The last file a save on this thread was refused over: see [`take_refused_save`].
+    static REFUSED: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+/// The file a save was last refused over because it changed on disk (`ProjectError::ChangedOnDisk`),
+/// once: for a window to ask about, whichever document's save it was.
+pub fn take_refused_save() -> Option<PathBuf> {
+    REFUSED.with_borrow_mut(Option::take)
+}
+
+/// The file at `path` may be saved over whatever has happened to it: the user said so.
+pub fn may_overwrite(path: &Path) {
+    seen().remove(&seen_key(path));
+}
+
+/// Reads a file that is a document's or a part's, of [`MAX_FILE`] bytes at most. What is not a
+/// plain file (a device, a pipe) has no length to go by and might never end: it is no document.
+pub fn read_file(path: &Path) -> Result<Vec<u8>, ProjectError> {
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Err(ProjectError::NotAProject(format!("{} is not a file", path.display())));
+    }
+    if meta.len() > MAX_FILE {
+        return Err(ProjectError::NotAProject("the file is too large".into()));
+    }
+    let mut data = Vec::new();
+    std::fs::File::open(path)?.take(MAX_FILE + 1).read_to_end(&mut data)?;
+    if data.len() as u64 > MAX_FILE {
+        return Err(ProjectError::NotAProject("the file is too large".into()));
+    }
+    Ok(data)
+}
+
+/// [`read_file`], of a file that may be saved over later: what it is now is remembered, so that a
+/// save can tell when another window or program has changed it since.
+pub fn read_to_edit(path: &Path) -> Result<Vec<u8>, ProjectError> {
+    let data = read_file(path)?;
+    remember(path);
+    Ok(data)
+}
+
 /// Writes a file atomically (a temporary file, then a rename). A version-1 file about to be
 /// replaced is first kept beside it as `name.v1.ext`, once (older Tenon builds cannot read
-/// version 2); that copy is returned.
+/// version 2); that copy is returned. A file this program has read or written, and that has
+/// changed since, is refused: see [`may_overwrite`].
 pub fn write_file(path: &Path, bytes: &[u8]) -> Result<Option<PathBuf>, ProjectError> {
+    let key = seen_key(path);
+    let was = seen().get(&key).copied();
+    if let (Some(was), Some(now)) = (was, stamp_of(path))
+        && was != now
+    {
+        REFUSED.with_borrow_mut(|r| *r = Some(path.to_path_buf()));
+        return Err(ProjectError::ChangedOnDisk(path.to_path_buf()));
+    }
     let mut kept = None;
     if let Ok(mut f) = std::fs::File::open(path) {
         let mut magic = [0u8; 4];
@@ -197,8 +279,14 @@ pub fn write_file(path: &Path, bytes: &[u8]) -> Result<Option<PathBuf>, ProjectE
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)?;
+    let named = |e: std::io::Error| ProjectError::Io(std::io::Error::new(e.kind(), format!("{}: {e}", path.display())));
+    std::fs::write(&tmp, bytes).map_err(named)?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        // (Left behind, it would be a stray copy of the part beside the file.)
+        let _ = std::fs::remove_file(&tmp);
+        named(e)
+    })?;
+    remember(path);
     Ok(kept)
 }
 
@@ -217,9 +305,5 @@ pub fn save(path: &Path, doc: &Document, extra: &Map<String, Value>) -> Result<O
 }
 
 pub fn open(path: &Path) -> Result<(Document, Map<String, Value>), ProjectError> {
-    let len = std::fs::metadata(path)?.len();
-    if len > MAX_FILE {
-        return Err(ProjectError::NotAProject("the file is too large".into()));
-    }
-    from_bytes(&std::fs::read(path)?)
+    from_bytes(&read_to_edit(path)?)
 }

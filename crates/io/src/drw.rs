@@ -92,11 +92,7 @@ pub fn load_model(path: &Path) -> DrwModel {
 
 /// Reads a drawing and the model files its views show.
 pub fn open(path: &Path) -> Result<(Drawing, BTreeMap<String, DrwModel>), ProjectError> {
-    let len = std::fs::metadata(path)?.len();
-    if len > project::MAX_FILE {
-        return Err(ProjectError::NotAProject("the file is too large".into()));
-    }
-    let d = from_bytes(&std::fs::read(path)?, &folder_of(path))?;
+    let d = from_bytes(&project::read_to_edit(path)?, &folder_of(path))?;
     let models = d.models().into_iter().map(|k| (k.clone(), load_model(Path::new(&k)))).collect();
     Ok((d, models))
 }

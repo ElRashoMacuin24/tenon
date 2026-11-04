@@ -367,3 +367,90 @@ fn exit_and_the_window_close_button_ask_first() {
     assert!(wb.exit_requested() && wb.close_requested());
     assert_eq!(features(&dir.join("Part1.tenon")), 1);
 }
+
+/// The part `pin.tenon` opened from a copy of its own, with a parameter added so that it has
+/// something to save, and `what` saved over the file by another window meanwhile.
+fn opened_and_saved_over_by_another(name: &str) -> (Workbench, Driver, PathBuf, String) {
+    let dir = example("m3-pivot", &["pin.tenon"], name);
+    let file = dir.join("pin.tenon");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.open(&file).unwrap();
+    d.settle(&mut wb);
+    wb.exec("param.add", json!({ "name": "from_this_window", "equation": "1 mm" })).unwrap();
+    // (A longer file, so that it differs whatever the clock's grain.)
+    let theirs = format!("{}\n# saved by the other window\n", std::fs::read_to_string(&file).unwrap());
+    std::fs::write(&file, &theirs).unwrap();
+    (wb, d, file, theirs)
+}
+
+#[test]
+fn saving_over_what_another_window_saved_asks_first() {
+    let (mut wb, mut d, file, theirs) = opened_and_saved_over_by_another("changed");
+    // Save: nothing is written, and it says so.
+    ctrl(&mut d, &mut wb, egui::Key::S);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.chrome.overwrite_prompt.as_deref(), Some(file.as_path()), "{}", wb.status());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), theirs);
+
+    // Cancel: as it was, and the part still has its changes.
+    press(&mut d, &mut wb, "tn_overwrite_cancel");
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.overwrite_prompt.is_none());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), theirs);
+    assert!(wb.session.is_dirty());
+
+    // Save again: asked again. Overwrite: this window's work is what is there now.
+    ctrl(&mut d, &mut wb, egui::Key::S);
+    press(&mut d, &mut wb, "tn_overwrite_yes");
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.overwrite_prompt.is_none());
+    assert!(!wb.status_error, "{}", wb.status());
+    let ours = std::fs::read_to_string(&file).unwrap();
+    assert!(ours.contains("from_this_window") && !ours.contains("the other window"), "{ours}");
+
+    // From now on it is this window's to save, without asking.
+    wb.exec("param.add", json!({ "name": "and_again", "equation": "2 mm" })).unwrap();
+    ctrl(&mut d, &mut wb, egui::Key::S);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.overwrite_prompt.is_none(), "{}", wb.status());
+    assert!(std::fs::read_to_string(&file).unwrap().contains("and_again"));
+}
+
+#[test]
+fn save_as_leaves_what_another_window_saved_where_it_is() {
+    let (mut wb, mut d, file, theirs) = opened_and_saved_over_by_another("changed-as");
+    let elsewhere = file.with_file_name("mine.tenon");
+    let to = elsewhere.clone();
+    wb.services.pick_save = Some(Box::new(move |_, _| Some(to.clone())));
+    ctrl(&mut d, &mut wb, egui::Key::S);
+    press(&mut d, &mut wb, "tn_overwrite_as");
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.overwrite_prompt.is_none());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), theirs, "theirs is left");
+    assert!(std::fs::read_to_string(&elsewhere).unwrap().contains("from_this_window"));
+    assert_eq!(wb.path.as_deref(), Some(elsewhere.as_path()));
+}
+
+#[test]
+fn a_save_that_cannot_be_done_leaves_no_stray_copy_and_names_the_file() {
+    let dir = scratch("read-only");
+    let file = dir.join("held.tenon");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.save(&file).unwrap();
+    let mut permissions = std::fs::metadata(&file).unwrap().permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&file, permissions.clone()).unwrap();
+    wb.exec("param.add", json!({ "name": "a", "equation": "1 mm" })).unwrap();
+    ctrl(&mut d, &mut wb, egui::Key::S);
+    d.frame(&mut wb, vec![]);
+    let renamed = cfg!(windows);
+    if renamed {
+        assert!(wb.status_error && wb.status().contains("held.tenon"), "{}", wb.status());
+    }
+    assert!(!dir.join("held.tenon.tmp").exists(), "a stray copy was left");
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    std::fs::set_permissions(&file, permissions).unwrap();
+}

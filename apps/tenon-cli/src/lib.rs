@@ -464,7 +464,7 @@ pub fn upgrade(files: &[&Path]) -> Result<Report, String> {
     let mut lines = Vec::new();
     let mut list = Vec::new();
     for path in files {
-        let data = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let data = tenon_io::project::read_file(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         if !tenon_io::project::is_version_1(&data) {
             lines.push(format!("{}: already current", path.display()));
             list.push(json!({ "file": path.display().to_string(), "upgraded": false }));

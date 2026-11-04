@@ -110,3 +110,47 @@ fn bad_files_are_rejected_with_reasons() {
     assert!(tenon_io::cmd::run(&mut t, "file.open", &json!({ "path": "C:/definitely/missing.tenon" }), None).is_err());
     assert_eq!(t.document(), &Document::default());
 }
+
+#[test]
+fn what_is_not_a_plain_file_is_no_document() {
+    let dir = std::env::temp_dir().join(format!("tenon-not-a-file-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let e = project::read_file(&dir).unwrap_err().to_string();
+    assert!(e.contains("is not a file") || e.contains("cannot read"), "{e}");
+    // (Its length is nothing to go by, and it never ends.)
+    #[cfg(unix)]
+    {
+        let e = project::open(std::path::Path::new("/dev/zero")).unwrap_err().to_string();
+        assert!(e.contains("is not a file"), "{e}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_save_is_refused_over_what_changed_since_it_was_read_until_it_is_allowed() {
+    let dir = std::env::temp_dir().join(format!("tenon-seen-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("seen.tenon");
+    let doc = tenon_model::Document::default();
+    let extra = serde_json::Map::new();
+    project::save(&file, &doc, &extra).unwrap();
+    // Saved again with nothing between: no question.
+    project::save(&file, &doc, &extra).unwrap();
+    // Another program writes it.
+    let theirs = format!("{}\n# theirs\n", std::fs::read_to_string(&file).unwrap());
+    std::fs::write(&file, &theirs).unwrap();
+    let e = project::save(&file, &doc, &extra).unwrap_err();
+    assert!(matches!(e, project::ProjectError::ChangedOnDisk(_)), "{e}");
+    assert!(e.to_string().contains("seen.tenon"), "{e}");
+    assert_eq!(project::take_refused_save().as_deref(), Some(file.as_path()));
+    assert_eq!(project::take_refused_save(), None, "once");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), theirs);
+    // Reading it again makes it what is known; or the user says.
+    project::open(&file).unwrap();
+    project::save(&file, &doc, &extra).unwrap();
+    std::fs::write(&file, &theirs).unwrap();
+    project::may_overwrite(&file);
+    project::save(&file, &doc, &extra).unwrap();
+    assert_ne!(std::fs::read_to_string(&file).unwrap(), theirs);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -111,12 +111,8 @@ pub fn save(path: &Path, asm: &Assembly) -> Result<Option<PathBuf>, ProjectError
 
 /// Reads an assembly and every part file it uses. A part that cannot be read is marked missing.
 pub fn open(path: &Path) -> Result<(Assembly, Parts), ProjectError> {
-    let len = std::fs::metadata(path)?.len();
-    if len > project::MAX_FILE {
-        return Err(ProjectError::NotAProject("the file is too large".into()));
-    }
     let full = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    let asm = from_bytes(&std::fs::read(path)?, &folder_of(&full))?;
+    let asm = from_bytes(&project::read_to_edit(path)?, &folder_of(&full))?;
     let mut parts = Parts::new();
     for c in &asm.components {
         if parts.contains_key(&c.part) {

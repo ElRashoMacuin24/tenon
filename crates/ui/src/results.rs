@@ -382,6 +382,7 @@ impl Workbench {
             || c.dropdown.is_some()
             || c.radial.is_some()
             || c.save_prompt.is_some()
+            || c.overwrite_prompt.is_some()
             || self.recover_offer.is_some()
     }
 
