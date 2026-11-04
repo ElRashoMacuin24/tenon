@@ -497,6 +497,46 @@ fn geometry_is_moved_copied_turned_and_scaled_with_the_modify_tools() {
 }
 
 #[test]
+fn the_dimension_tool_goes_on_asking_after_a_value_is_typed() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.line", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 30, "y2": 0 })).unwrap();
+    wb.exec("sketch.line", json!({ "sketch": f.0, "x1": 0, "y1": 20, "x2": 30, "y2": 20 })).unwrap();
+    d.settle(&mut wb);
+    let at = |wb: &Workbench, x: f64, y: f64| on_screen(wb, Vec3::new(x, y, 0.0));
+    const ASKS: &str = "Click a line, circle, arc or ellipse, or two points or lines; then click where the dimension goes.";
+    d.tap(&mut wb, egui::Key::D);
+    assert_eq!(wb.status(), ASKS);
+    // A line, where the dimension goes, a value and Enter: the tool is still on, and still asks.
+    let (line, place) = (at(&wb, 15.0, 0.0), at(&wb, 15.0, -8.0));
+    d.click(&mut wb, line);
+    move_to(&mut d, &mut wb, place);
+    d.click(&mut wb, place);
+    assert!(matches!(wb.panel, Some(Panel::Value(_))), "the value box is open: {}", wb.status());
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![egui::Event::Text("40".into())]);
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(wb.active_tool_id(), Some("sketch.dimension"));
+    assert_eq!(wb.status(), ASKS);
+    // Esc gives up the value box and the tool with it, and it says what is in hand then.
+    let (line, place) = (at(&wb, 15.0, 20.0), at(&wb, 15.0, 28.0));
+    d.click(&mut wb, line);
+    move_to(&mut d, &mut wb, place);
+    d.click(&mut wb, place);
+    assert!(matches!(wb.panel, Some(Panel::Value(_))), "the value box is open: {}", wb.status());
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert!(wb.active_tool_id().is_none());
+    assert!(wb.status().starts_with("Click to select"), "{}", wb.status());
+}
+
+#[test]
 fn the_scale_tool_says_when_a_text_would_be_no_text() {
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
     let mut d = Driver::new(vec2(1400.0, 860.0));

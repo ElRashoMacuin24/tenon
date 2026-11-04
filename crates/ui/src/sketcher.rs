@@ -123,7 +123,7 @@ impl Tool {
     fn id(self) -> Option<&'static str> {
         TOOLS.iter().find(|(_, t)| *t == self).map(|(id, _)| *id)
     }
-    fn hint(self) -> &'static str {
+    pub(crate) fn hint(self) -> &'static str {
         match self {
             Tool::Select => "Click to select; drag points to move them; Delete removes the selection.",
             Tool::Line => "Click points to draw lines; Esc or right-click ends the chain.",

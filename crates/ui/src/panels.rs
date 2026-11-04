@@ -2321,9 +2321,11 @@ impl Workbench {
             self.panel = Some(panel);
         } else if !keep {
             self.panel_eqs.clear();
-            // (What the panel asked for is no longer asked, if nothing has been said since.)
+            // (What the panel asked for is no longer asked, if nothing has been said since. In a
+            // sketch a tool is still in hand, and goes on asking for what it wants next.)
             if self.panel.is_none() && !self.status_error && self.status == said_before {
-                self.set_status("Ready");
+                let asks = if let Mode::Sketch(sm) = &self.mode { sm.tool.hint() } else { "Ready" };
+                self.set_status(asks);
             }
         }
         if let Some(id) = reopen {
