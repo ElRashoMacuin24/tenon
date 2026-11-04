@@ -3,7 +3,7 @@
 //! schema, whichever registry it is in ([`schema`]).
 
 use tenon_drawing::schemas::{AT, SIZES, VIEW_SCALE};
-use tenon_model::schema::Ty::{Angle, Bool, Either, Face, Id, Int, Length, Null, Number, Path, Text, Vector, Word};
+use tenon_model::schema::Ty::{Angle, Bool, Either, Face, Id, Int, Length, List, Null, Number, Path, Text, Vector, Word};
 use tenon_model::schema::{CommandSchema as C, Param, opt, req};
 
 const LINEAR: Param = opt("linear", Length, "how far the mesh may be from the surface (default 0.01)");
@@ -114,6 +114,15 @@ static ASSEMBLY: &[C] = &[
             req("path", Path, "the folder its file is kept in, beside the assembly (written the first time the part is used)"),
             AT3,
             GROUNDED,
+        ],
+    ),
+    C::new(
+        "asm.copy",
+        &[
+            req("components", List(&Id), "the components to copy"),
+            opt("by", Vector(3), "how far from what they are copied from, [x, y, z] (default: beside it)"),
+            opt("new_files", Bool, "a new part file for each part file copied (default false: further occurrences of the same parts)"),
+            opt("folder", Path, "for new_files: the folder they are saved in, beside the assembly"),
         ],
     ),
     C::new("asm.export_step", &[req("path", Path, "the file to write (.step)"), EXPLODED]),

@@ -2,7 +2,7 @@
 //! command of `cmd::commands()`; a test holds the two lists together, and every run of a
 //! command in a test holds its entry to what the command is given and what it reads.
 
-use tenon_model::schema::Ty::{Angle, Bool, Either, Id, Length, List, Null, Object, Text, Vector, Word};
+use tenon_model::schema::Ty::{Angle, Bool, Either, Id, Int, Length, List, Null, Object, Text, Vector, Word};
 use tenon_model::schema::{CommandSchema as C, Param, Ty, opt, req};
 
 const COMPONENT: Param = req("component", Id, "the component's id, as asm.tree lists it");
@@ -75,6 +75,7 @@ static SCHEMAS: &[C] = &[
             req("name", Text, "the new name (1 to 256 characters)"),
             opt("component", Id, "the component to rename"),
             opt("relationship", Id, "or the relationship (neither: the assembly)"),
+            opt("pattern", Id, "or the pattern or mirror"),
         ],
     ),
     C::new(
@@ -124,6 +125,62 @@ static SCHEMAS: &[C] = &[
     C::new("asm.explode.positions", &[]),
     C::new("asm.undo", &[]),
     C::new("asm.redo", &[]),
+    C::new(
+        "asm.pattern",
+        &[
+            req("components", List(&Id), "the components to repeat"),
+            req("type", Word(&["rectangular", "circular"]), "in rows along directions, or round an axis"),
+            opt("direction", TARGET, "rectangular: a target from asm.geom giving the way, a straight edge, an axis or a flat face"),
+            opt("count", Int, "how many, the original counted"),
+            opt("spacing", Length, "rectangular: the distance from one to the next"),
+            opt("reverse", Bool, "the other way (default false)"),
+            opt("direction2", TARGET, "rectangular: a second direction, for rows of rows"),
+            opt("count2", Int, "how many in the second direction"),
+            opt("spacing2", Length, "the spacing in the second direction"),
+            opt("reverse2", Bool, "the second direction the other way (default false)"),
+            opt("axis", TARGET, "circular: a target from asm.geom giving the axis, a straight edge, a round face or a circular edge"),
+            opt("angle", Angle, "circular: over how much of a turn they spread evenly (default: all of it)"),
+        ],
+    ),
+    C::new(
+        "asm.mirror",
+        &[
+            req("components", List(&Id), "the components to reflect"),
+            req("plane", TARGET, "a target from asm.geom: a plane or flat face"),
+            opt("reuse", List(&Id), "those of the components, parts the same as their mirror image, to place again in the mirrored position"),
+        ],
+    ),
+    C::new(
+        "asm.edit_pattern",
+        &[
+            req("pattern", Id, "the pattern or mirror, as asm.tree lists it"),
+            opt("components", List(&Id), "what it repeats"),
+            opt("type", Word(&["rectangular", "circular"]), "in rows along directions, or round an axis (not for a mirror)"),
+            opt("direction", TARGET, "a target from asm.geom giving the way"),
+            opt("count", Int, "how many, the original counted"),
+            opt("spacing", Length, "the distance from one to the next"),
+            opt("reverse", Bool, "the other way"),
+            opt("direction2", Either(&[TARGET, Null]), "a second direction; null for none"),
+            opt("count2", Int, "how many in the second direction"),
+            opt("spacing2", Length, "the spacing in the second direction"),
+            opt("reverse2", Bool, "the second direction the other way"),
+            opt("axis", TARGET, "a target from asm.geom giving the axis"),
+            opt("angle", Angle, "over how much of a turn they spread evenly"),
+            opt("plane", TARGET, "a mirror's plane or flat face"),
+            opt("reuse", List(&Id), "those a mirror places again in the mirrored position"),
+        ],
+    ),
+    C::new(
+        "asm.suppress_pattern",
+        &[req("pattern", Id, "the pattern or mirror"), opt("suppressed", Bool, "true to suppress it (default), false to bring it back")],
+    ),
+    C::new(
+        "asm.delete_pattern",
+        &[
+            req("pattern", Id, "the pattern or mirror"),
+            opt("keep_elements", Bool, "the elements stay, as components of their own (default false: they go with it)"),
+        ],
+    ),
     C::new("asm.interference", &[opt("components", List(&Id), "the components to check against one another (default all)")]),
     C::new(
         "asm.edit_part",

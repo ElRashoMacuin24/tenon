@@ -355,7 +355,7 @@ impl Engine {
         let frames = if exploded { tenon_assembly::session::exploded(asm) } else { asm.components.iter().map(|c| (c.id, c.placement)).collect() };
         // Each body from its part's own mesh, where its component stands: nothing is copied.
         let (mut meshes, mut colors) = (Vec::new(), Vec::new());
-        for c in asm.components.iter().filter(|c| c.visible) {
+        for c in asm.shown() {
             let (Some(scene), Some(f)) = (tenon_assembly::session::scene_of(&self.asm.parts, c), frames.get(&c.id)) else { continue };
             for b in &scene.bodies {
                 meshes.push(tenon_kernel::Placed::new(&b.mesh, Some(f)));

@@ -621,6 +621,51 @@ Implemented in `crates/io/src/asm.rs` and `crates/assembly/src/model.rs`; tested
   - `{ type = "origin" }`;
   - `{ type = "work", feature }`.
 - **Explode steps** move `components` by `distance` along a unit `direction`.
+- **`mirrored_placement`** on a component, in place of `placement` (DEC-130, DEC-124): it holds its
+  part's mirror image in the part's own XY plane, not the part: a mirrored occurrence of the same
+  file. The field is a right-handed frame as `placement` is: the image of a part at the frame F in a
+  plane is its mirror image at that plane's reflection of F with its Z turned over. A build that
+  does not know it refuses the file, which to it has no `placement`; without the reflection it would
+  be the part itself, in the wrong hand. (`placement` with `mirrored = true` reads as well.) Nothing
+  is written for the mirror image: it is worked out from the part file each time. A part file does
+  not say it: the part's layout has a `reflected` field only so that what is kept of such a scene
+  (DEC-091) has a name of its own, and one in a part file, put there by hand, is read as false and
+  not written back.
+- **`[[pattern]]`** (optional, with `next_pattern`; DEC-130): a pattern or mirror, one record:
+
+  ```toml
+  [[pattern]]
+  id = 1
+  name = "Pattern:1"
+  sources = [2]
+  type = "rectangular"
+  first = { along = { geom = { type = "axis", axis = "X" } }, count = 5, spacing = 40.0 }
+  second = { along = { geom = { type = "axis", axis = "Y" } }, reverse = true, count = 2, spacing = 50.0 }
+  elements = [
+    { at = [1, 0], components = [3] },
+    { at = [2, 0], components = [4] },
+  ]
+  ```
+
+  - `sources` are what it repeats. `suppressed` is written only when true: its elements, and what a
+    later pattern makes of them, are out of the assembly (not drawn, listed, weighed, checked or
+    exported). Each one's `visible` stays what was asked of it alone, and is not changed by this.
+  - `type`: `rectangular` (`first`, optional `second`: each `along`, a target; `count`, the source
+    counted; `spacing` in mm, positive; `reverse` written only when true); `circular` (`axis`, a
+    target; `count`; `angle` in radians, over how much of a turn they spread evenly, a whole turn
+    shared out and less than that from the first to the last; `reverse`); `mirror` (`plane`, a
+    target; `reuse`, optional: `{ component, about }`, a source placed again and the axis, `"X"`,
+    `"Y"` or `"Z"`, square to the middle plane of its part it is symmetric about).
+  - `elements` is one for every place the counts make but the sources' own: `at` is its place
+    along the first direction and the second (for a circular pattern's and a mirror's second, 0),
+    `components` a component for each source, in their order. They are ordinary `[[component]]`
+    records, whose `placement` is written as well.
+  - A pattern may repeat the elements of those before it, and take its rule from them, and from no
+    others. Anything else, or counts that do not say the elements there are, is damage, and refused.
+  - **A build from before them** (0.1.0 among them) opens a file of patterns: each element is a free
+    component where it stands, a suppressed pattern's among them, shown, the parts list counting
+    them all. Saved by it, the records are gone. A file with a mirrored occurrence it refuses
+    (`mirrored_placement`).
 - **Validation:** relationships must name existing components, and never join a component to
   itself.
 
@@ -805,7 +850,7 @@ Features
     what Optimize Shape is asked: its target, thinnest member, resolution, element size, symmetry,
     sharpening and most rounds, each set of kept faces that was added, removed or changed with its
     depth, and the settings given or taken away as a whole);
-  - assemblies: components (a changed placement shows as "moved"), relationships and explode
+  - assemblies: components (a changed placement shows as "moved"), relationships, patterns and explode
     steps;
   - drawings: the drawing's own fields, sheets, views and annotations.
 - **"(from H)"** marks a value that follows from a changed parameter.
@@ -857,7 +902,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   A 0.1.0 build refuses, in the words "the project is damaged", a file using text, an ellipse or
   a Smooth constraint; To, To Next or Between of an extrusion; To, To Next or two angles of a
   revolution, or one turned the other way; a spotface or To hole; a variable or face
-  fillet; a work plane through three points; or a Tangent or Symmetry relationship. It opens the part the same and silently loses, on
+  fillet; a work plane through three points; a Tangent or Symmetry relationship; or a mirrored
+  occurrence. It opens the part the same and silently loses, on
   a save, a tapped hole's thread (`tapped`; the drawing's note and the Threads list lose it at
   once), which points are sketch points (`sketch_point`), which sketches are shown (`visible`)
   and a study's `[study.optimize]`.
@@ -877,7 +923,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   `pin` and `frictionless` supports, the `gravity` load and `suppressed` (DEC-097), then
   `edges` and the `moment`, `bearing`, `remote_force` and `body` loads (DEC-100), then a
   part's `part_number` and `description` (DEC-101), and after 0.1.0, among others, a study's
-  `[study.optimize]` (DEC-123).
+  `[study.optimize]` (DEC-123), and an assembly's `[[pattern]]` and `next_pattern` and a
+  component's `mirrored_placement` (DEC-130).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

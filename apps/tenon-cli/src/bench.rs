@@ -307,7 +307,7 @@ fn assembly_view(rows: &mut Vec<Row>, make: Make, model: &str, file: &Path, budg
     // full and (where it has one) from far away, with where it stands. Nothing is copied.
     let asm = e.asm.assembly();
     let mut bodies: Vec<(&tenon_kernel::Mesh, Option<&tenon_kernel::Mesh>, &tenon_geom::Frame)> = Vec::new();
-    for c in asm.components.iter().filter(|c| c.visible) {
+    for c in asm.shown() {
         let Some(scene) = tenon_assembly::session::scene_of(&e.asm.parts, c) else { continue };
         for b in &scene.bodies {
             bodies.push((&b.mesh, b.far.as_deref(), &c.placement));

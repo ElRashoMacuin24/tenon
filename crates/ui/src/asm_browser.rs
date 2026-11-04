@@ -1,9 +1,10 @@
-//! The model browser of an assembly: the assembly, its relationships, its origin, then the
-//! components in the order they were placed, each with the relationships that hold it.
+//! The model browser of an assembly: the assembly, its relationships, its origin, its patterns
+//! with their elements under them, then the other components in the order they were placed, each
+//! with the relationships that hold it.
 
 use egui::{Align2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::json;
-use tenon_assembly::{ComponentId, Geom, RelationshipId, Target};
+use tenon_assembly::{ComponentId, Geom, PatternId, PatternKind, RelationshipId, Target};
 use tenon_model::{OriginAxis, OriginPlane};
 
 use crate::icons::{self, Icon};
@@ -25,6 +26,13 @@ enum Action {
     DeleteRelationship(RelationshipId),
     /// An origin plane or axis of the assembly, for the open panel.
     Origin(Target),
+    /// What a pattern repeats and its elements.
+    SelectPattern(PatternId),
+    EditPattern(PatternId),
+    SuppressPattern(PatternId, bool),
+    DeletePattern(PatternId, bool),
+    /// The components of an element.
+    SelectAll(Vec<ComponentId>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -86,8 +94,13 @@ enum Line {
     Origin,
     /// One of those ([`ORIGIN`]).
     OriginItem(usize),
-    /// A component, by its place among the assembly's.
-    Component(usize),
+    /// A pattern or mirror, by its place among the assembly's.
+    Pattern(usize),
+    /// The heading of an element of a pattern of several components: by the pattern's place and
+    /// the element's number among those of the pattern, 1 being the sources.
+    Element(usize, usize),
+    /// A component, by its place among the assembly's, and how far in it is listed.
+    Component(usize, u8),
 }
 
 /// The assembly's own planes, axes and centre point, as the Origin folder lists them.
@@ -118,8 +131,10 @@ impl Workbench {
         p.text(pos2(tab.left() + 8.0, tab.center().y), Align2::LEFT_CENTER, "Model", theme::body(), t.text);
         p.hline(header.x_range(), header.bottom(), Stroke::new(1.0, t.border));
         ui.add_space(header.height() + 2.0);
+        let problems = self.pattern_problems();
         let Some(a) = self.asm.as_ref() else { return };
         let asm = a.session.assembly();
+        let out = asm.suppressed_elements();
         let origin_open = self.chrome.origin_open;
         let dof = self.asm_dof().map(|(per, _)| per.iter().map(|d| d.count()).collect::<Vec<_>>()).unwrap_or_default();
         // The relationships that hold each component, found once: not for every component in turn.
@@ -142,16 +157,46 @@ impl Workbench {
         if origin_open {
             lines.extend((0..ORIGIN.len()).map(Line::OriginItem));
         }
+        // Every pattern with what it repeats and its elements under it; those are not listed again
+        // among the components.
+        let at: std::collections::HashMap<ComponentId, usize> =
+            if asm.patterns.is_empty() { Default::default() } else { asm.components.iter().enumerate().map(|(i, c)| (c.id, i)).collect() };
+        let mut under: std::collections::HashSet<ComponentId> = Default::default();
+        let list = |lines: &mut Vec<Line>, i: usize, c: ComponentId, depth: u8| {
+            lines.push(Line::Component(i, depth));
+            if a.expanded.contains(&c) {
+                lines.extend(held.get(&c).into_iter().flatten().map(|r| Line::Relationship(*r)));
+            }
+        };
+        for (pi, p) in asm.patterns.iter().enumerate() {
+            lines.push(Line::Pattern(pi));
+            under.extend(p.sources.iter().copied());
+            under.extend(p.elements.iter().flat_map(|e| e.components.iter().copied()));
+            if a.patterns_closed.contains(&p.id) {
+                continue;
+            }
+            let several = p.sources.len() > 1;
+            for (n, row) in std::iter::once(p.sources.as_slice()).chain(p.elements.iter().map(|e| e.components.as_slice())).enumerate() {
+                if several {
+                    lines.push(Line::Element(pi, n + 1));
+                }
+                for c in row {
+                    if let Some(i) = at.get(c) {
+                        list(&mut lines, *i, *c, if several { 3 } else { 2 });
+                    }
+                }
+            }
+        }
         for (i, c) in asm.components.iter().enumerate() {
-            lines.push(Line::Component(i));
-            if a.expanded.contains(&c.id) {
-                lines.extend(held.get(&c.id).into_iter().flatten().map(|r| Line::Relationship(*r)));
+            if !under.contains(&c.id) {
+                list(&mut lines, i, c.id, 1);
             }
         }
         let mut action: Option<Action> = None;
         let mut toggle_rel = false;
         let mut toggle_origin = false;
         let mut toggle_comp: Option<ComponentId> = None;
+        let mut toggle_pattern: Option<PatternId> = None;
         egui::ScrollArea::vertical().id_salt("tn_asm_browser").auto_shrink([false, false]).show_viewport(ui, |ui, sight| {
             let pitch = crate::browser::ROW_H + ui.spacing().item_spacing.y;
             let first = ((sight.min.y / pitch).floor().max(0.0) as usize).min(lines.len());
@@ -222,7 +267,66 @@ impl Workbench {
                             action = Some(Action::Origin(Target { component: None, geom: geom.clone() }));
                         }
                     }
-                    Line::Component(i) => {
+                    Line::Pattern(i) => {
+                        let Some(p) = asm.patterns.get(i) else { continue };
+                        let problem = problems.get(&p.id);
+                        let style = if p.suppressed {
+                            Style::Dim
+                        } else if problem.is_some() {
+                            Style::Error
+                        } else {
+                            Style::Normal
+                        };
+                        let icon = match p.kind {
+                            PatternKind::Rectangular { .. } => Icon::PatternRect,
+                            PatternKind::Circular { .. } => Icon::PatternCircular,
+                            PatternKind::Mirror { .. } => Icon::Mirror,
+                        };
+                        let label = crate::asm_pattern::pattern_label(p);
+                        let (mut resp, toggled) = row(ui, t, 1, icon, &label, Some(!a.patterns_closed.contains(&p.id)), style, false);
+                        if let Some(m) = problem {
+                            resp = resp.on_hover_text(m);
+                        }
+                        if toggled {
+                            toggle_pattern = Some(p.id);
+                        } else if resp.double_clicked() {
+                            action = Some(Action::EditPattern(p.id));
+                        } else if resp.clicked() {
+                            action = Some(Action::SelectPattern(p.id));
+                        }
+                        resp.context_menu(|ui| {
+                            if ui.button("Edit").clicked() {
+                                action = Some(Action::EditPattern(p.id));
+                                ui.close();
+                            }
+                            if ui.button(if p.suppressed { "Unsuppress" } else { "Suppress" }).clicked() {
+                                action = Some(Action::SuppressPattern(p.id, !p.suppressed));
+                                ui.close();
+                            }
+                            if ui
+                                .button("Make Elements Independent")
+                                .on_hover_text("The record goes; its elements stay, as components of their own")
+                                .clicked()
+                            {
+                                action = Some(Action::DeletePattern(p.id, true));
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("Delete").clicked() {
+                                action = Some(Action::DeletePattern(p.id, false));
+                                ui.close();
+                            }
+                        });
+                    }
+                    Line::Element(pi, n) => {
+                        let Some(p) = asm.patterns.get(pi) else { continue };
+                        let row_of = if n <= 1 { Some(p.sources.as_slice()) } else { p.elements.get(n - 2).map(|e| e.components.as_slice()) };
+                        let (resp, _) = row(ui, t, 2, Icon::Part, &format!("Element:{n}"), None, Style::Normal, false);
+                        if resp.clicked() {
+                            action = Some(Action::SelectAll(row_of.unwrap_or(&[]).to_vec()));
+                        }
+                    }
+                    Line::Component(i, depth) => {
                         let Some(c) = asm.components.get(i) else { continue };
                         let has = held.get(&c.id).is_some_and(|of| !of.is_empty());
                         let open = a.expanded.contains(&c.id);
@@ -231,23 +335,30 @@ impl Workbench {
                             Style::Error
                         } else if a.selected.contains(&c.id) {
                             Style::Selected
-                        } else if !c.visible {
+                        } else if !c.visible || out.contains(&c.id) {
                             Style::Dim
                         } else {
                             Style::Normal
                         };
-                        // A component in a size of its own says which.
+                        // A component in a size of its own says which, and a mirrored one that it is.
                         let label = match &c.row {
                             Some(size) => format!("{} ({size})", c.name),
                             None => c.name.clone(),
                         };
-                        let (mut resp, toggled) = row(ui, t, 1, Icon::Part, &label, has.then_some(open), style, c.grounded);
+                        let label = if c.mirrored { format!("{label} (mirrored)") } else { label };
+                        let element = asm.pattern_of(c.id);
+                        let (mut resp, toggled) = row(ui, t, depth, Icon::Part, &label, has.then_some(open), style, c.grounded);
                         resp = resp.on_hover_ui(|ui| {
                             ui.label(match &missing {
                                 Some(m) => format!("{} is missing: {m}", c.part),
                                 None => {
                                     let d = dof.get(i).copied().unwrap_or(6);
-                                    format!("{}\n{}", c.part, if c.grounded { "Grounded".to_string() } else { format!("{d} degrees of freedom") })
+                                    let state = match element {
+                                        Some(p) => format!("An element of {}", p.name),
+                                        None if c.grounded => "Grounded".to_string(),
+                                        None => format!("{d} degrees of freedom"),
+                                    };
+                                    format!("{}\n{state}", c.part)
                                 }
                             });
                         });
@@ -263,14 +374,15 @@ impl Workbench {
                                 action = Some(Action::Edit(c.id));
                                 ui.close();
                             }
-                            if ui.button(if c.grounded { "Unground" } else { "Grounded" }).clicked() {
+                            // (An element is held by its pattern, and is the size of what it repeats.)
+                            if element.is_none() && ui.button(if c.grounded { "Unground" } else { "Grounded" }).clicked() {
                                 action = Some(Action::Ground(c.id, !c.grounded));
                                 ui.close();
                             }
                             // The sizes of a part with a design table (the rows of the table): the
                             // one this component is, ticked.
                             let rows = tenon_assembly::cmd::rows_of(&a.session.parts, &c.part);
-                            if !rows.is_empty() {
+                            if !rows.is_empty() && element.is_none() {
                                 ui.menu_button("Size", |ui| {
                                     if ui
                                         .radio(c.row.is_none(), "As the part file")
@@ -292,10 +404,12 @@ impl Workbench {
                                 action = Some(Action::Visible(c.id, !c.visible));
                                 ui.close();
                             }
-                            ui.separator();
-                            if ui.button("Delete").clicked() {
-                                action = Some(Action::DeleteComponent(c.id));
-                                ui.close();
+                            if element.is_none() {
+                                ui.separator();
+                                if ui.button("Delete").clicked() {
+                                    action = Some(Action::DeleteComponent(c.id));
+                                    ui.close();
+                                }
                             }
                         });
                     }
@@ -314,6 +428,11 @@ impl Workbench {
                 && !a.expanded.remove(&c)
             {
                 a.expanded.insert(c);
+            }
+            if let Some(p) = toggle_pattern
+                && !a.patterns_closed.remove(&p)
+            {
+                a.patterns_closed.insert(p);
             }
         }
         if let Some(act) = action {
@@ -335,9 +454,9 @@ impl Workbench {
                         a.selected = vec![c];
                     }
                 }
-                // A component picked for a tweak.
+                // A component picked for a tweak, or to pattern, mirror or copy.
                 if let Some(Panel::Asm(p)) = &mut self.panel
-                    && p.tool == crate::asm_panel::AsmTool::Tweak
+                    && (p.tool == crate::asm_panel::AsmTool::Tweak || (p.is_repeat() && p.slot == crate::asm_pattern::SLOT_COMPONENTS))
                     && !p.components.contains(&c)
                 {
                     p.components.push(c);
@@ -364,12 +483,45 @@ impl Workbench {
             Action::Suppress(r, on) => self.asm_exec("asm.suppress", json!({ "relationship": r.0, "suppressed": on })).map(|_| ()),
             Action::DeleteRelationship(r) => self.asm_exec("asm.delete", json!({ "relationship": r.0 })).map(|_| ()),
             Action::Origin(target) => {
-                if let Some(Panel::Asm(p)) = &mut self.panel
+                let text = format!("Assembly: {:?}", target.geom).replace("Plane { plane: ", "").replace("Axis { axis: ", "").replace(" }", "");
+                if matches!(&self.panel, Some(Panel::Asm(p)) if p.is_repeat()) {
+                    self.put_repeat_pick(target, text);
+                } else if let Some(Panel::Asm(p)) = &mut self.panel
                     && p.editing.is_none()
                     && p.tool != crate::asm_panel::AsmTool::Tweak
                 {
-                    let text = format!("Assembly: {:?}", target.geom).replace("Plane { plane: ", "").replace("Axis { axis: ", "").replace(" }", "");
                     p.put((target, text));
+                }
+                Ok(())
+            }
+            Action::SelectPattern(id) => {
+                if let Some(a) = self.asm.as_mut()
+                    && let Some(p) = a.session.assembly().pattern(id)
+                {
+                    a.selected = p.sources.iter().copied().chain(p.elements.iter().flat_map(|e| e.components.iter().copied())).collect();
+                }
+                Ok(())
+            }
+            Action::EditPattern(id) => self.edit_pattern(id),
+            Action::SuppressPattern(id, on) => self.asm_exec("asm.suppress_pattern", json!({ "pattern": id.0, "suppressed": on })).map(|_| ()),
+            Action::DeletePattern(id, keep) => {
+                let r = self.asm_exec("asm.delete_pattern", json!({ "pattern": id.0, "keep_elements": keep })).map(|_| ());
+                if let Some(a) = self.asm.as_mut() {
+                    a.selected.retain(|c| a.session.assembly().component(*c).is_some());
+                }
+                r
+            }
+            Action::SelectAll(ids) => {
+                if let Some(Panel::Asm(p)) = &mut self.panel
+                    && p.is_repeat()
+                    && p.slot == crate::asm_pattern::SLOT_COMPONENTS
+                {
+                    for c in &ids {
+                        p.toggle_component(*c, true);
+                    }
+                }
+                if let Some(a) = self.asm.as_mut() {
+                    a.selected = ids;
                 }
                 Ok(())
             }

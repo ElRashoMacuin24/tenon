@@ -172,26 +172,27 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `asm.save` | Save Assembly | path (.tenonasm); parts changed in place are saved to their own files first | no |
 | `asm.insert` | Place Component | path (.tenon part file); at: [x, y, z] (default: grounded at the origin for the first, beside the others after); grounded; row: a row of the part's design table (the component is the part in that size) | yes |
 | `asm.insert_standard` | Place Standard Part | part: a standard part's id (see library.list); size: one of its sizes; path: the folder its file is kept in, beside the assembly (the file is written there the first time the part is used; every size comes from the one file); at, grounded: as asm.insert | yes |
+| `asm.copy` | Copy Components | components: [ids]; by: [x, y, z] (mm, default beside what is copied); new_files: a new part file for each part file copied, saved in folder, with a name no file has (default false: further occurrences of the same parts); folder: beside the assembly. Copies are independent, and not grounded; the relationships among those copied come too. Returns the components, relationships and files made | yes |
 | `asm.export_step` | Export Assembly STEP | path (.step); exploded (default false) | no |
 | `asm.export_stl` | Export Assembly STL | path (.stl); exploded (default false); linear (mm), angular (rad) deflection; ascii (default binary). Every visible component's solids in one file, each where it is. Returns the solid and triangle counts and whether the surface is closed (watertight) | no |
 | `asm.export_3mf` | Export Assembly 3MF | path (.3mf); exploded (default false); linear (mm), angular (rad) deflection. An object for each part (each size of one), an item for each visible component where it is, with materials and colours. Returns the counts and whether every surface is closed (watertight) | no |
 | `asm.export_bom` | Export Bill of Materials | path (.csv) | no |
-| `asm.tree` | Assembly Tree | none | no |
+| `asm.tree` | Assembly Tree | the components (each with where it stands, whether it is mirrored and what pattern it is an element of), the relationships and the patterns and mirrors | no |
 | `asm.geom` | Assembly Geometry | component; and face: a face origin or {"body", "index"} \| edge: [face origin, face origin] or {"body", "index"} \| plane: "xy" \| "yz" \| "xz" \| axis: "x" \| "y" \| "z" \| origin: true \| work: feature id. Without component: the assembly's own origin planes, axes and point. Returns a target for asm.constrain and asm.joint | no |
 | `asm.constrain` | Constrain | type: mate \| flush \| angle \| insert \| tangent \| symmetry; a, b: targets from asm.geom; offset (mm); angle (rad, for angle); aligned (insert: axes the same way); inside (tangent: one inside the other); plane (symmetry: a target from asm.geom, the plane they are mirrored in) | yes |
 | `asm.joint` | Joint | type: rigid \| revolute \| slider \| cylindrical \| planar \| ball; a, b: targets from asm.geom (their origins); flip (Z axes the same way); offset (mm along A's Z); angle (rad, rigid and slider) | yes |
 | `asm.edit_relationship` | Edit Relationship | relationship; offset, angle, flip, aligned, inside, type (joints) as in asm.constrain / asm.joint | yes |
 | `asm.suppress` | Suppress Relationship | relationship, suppressed (default true) | yes |
 | `asm.delete` | Delete | component or relationship | yes |
-| `asm.rename` | Rename | name; component or relationship (neither: the assembly) | yes |
+| `asm.rename` | Rename | name; component, relationship or pattern (none: the assembly) | yes |
 | `asm.set_row` | Change Size | component; row: a row of its part's design table (the component is the part in that size), or null for the part as its file has it | yes |
 | `asm.ground` | Ground | component, grounded (default true) | yes |
 | `asm.visible` | Visibility | component, visible (default true) | yes |
 | `asm.move` | Free Move | component; by: [x, y, z]; turn: {axis, angle (rad), through: a point (default its centre)}; the relationships then pull it where they must | yes |
 | `asm.place` | Place At | component; origin: [x, y, z]; z, x: its part's Z and X directions (default unturned) | yes |
-| `asm.update` | Update | solves again (after parts changed) | yes |
+| `asm.update` | Update | solves again (after parts changed). Returns converged, failing (relationships that do not hold) and, when there are any, patterns_failing (patterns and mirrors whose rule cannot be worked out, whose elements stay where they are) | yes |
 | `asm.dof` | Degrees of Freedom | each component's free directions and axes (others held still), and the assembly's total | no |
-| `asm.bom` | Bill of Materials | one row per part: quantity, volume, material and mass (grams, of one) | no |
+| `asm.bom` | Bill of Materials | one row per part: quantity, volume, material and mass (grams, of one). A mirrored part has a row of its own, with mirrored true | no |
 | `asm.mass` | Assembly Mass | total volume, mass (grams) and centre of mass of the visible components, each at its part's material | no |
 | `asm.explode.add` | Tweak Components | components: [ids]; direction: [x, y, z] or "x" \| "-z" ...; distance (mm) | yes |
 | `asm.explode.auto` | Auto Explode | spacing (mm, default a quarter of the assembly's size): replaces the exploded view with one made from the relationships | yes |
@@ -199,6 +200,11 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `asm.explode.positions` | Exploded Positions | where each component is in the exploded view | no |
 | `asm.undo` | Undo | none | no |
 | `asm.redo` | Redo | none | no |
+| `asm.pattern` | Pattern Components | components: [ids]; type: rectangular (direction: a target from asm.geom, count, spacing (mm), reverse; direction2, count2, spacing2, reverse2 for rows of rows) or circular (axis: a target, count, angle (rad, over how much of a turn they spread evenly, default all of it), reverse). One record; its elements are components held by it, which follow what they repeat | yes |
+| `asm.mirror` | Mirror Components | components: [ids]; plane: a target from asm.geom, a plane or flat face; reuse: those of the components, parts the same as their mirror image, to place again in the mirrored position instead of reflecting. One record; each mirrored occurrence holds its part reflected and has its own row in the parts list | yes |
+| `asm.edit_pattern` | Edit Pattern | pattern; what is given changes, as in asm.pattern or asm.mirror, the rest stays: components; type (not of a mirror); direction, count, spacing, reverse; direction2 (null: no second direction), count2, spacing2, reverse2; axis, angle; plane, reuse. Elements are moved, added or taken away; those taken away take their relationships | yes |
+| `asm.suppress_pattern` | Suppress Pattern | pattern, suppressed (default true): its elements, and what a later pattern makes of them, are out of the assembly (not drawn, listed or checked) until it is brought back. One hidden on its own stays hidden | yes |
+| `asm.delete_pattern` | Delete Pattern | pattern; keep_elements (default false): the elements stay where they stand, as components of their own, instead of going with it | yes |
 | `asm.interference` | Interference | components (default all): every pair of visible components whose solids overlap, with the overlap volume | no |
 | `asm.edit_part` | Edit Part in Place | component; run: a part command; with: its parameters. The part changes for every component using it; the assembly is solved again | yes |
 | `drw.new` | New Drawing | name; standard: ansi (default, third-angle) \| iso (first-angle); size: A \| B \| C \| D \| A4 \| A3 \| A2 \| A1. Or template: a drawing file (.tenondrw) whose standard, properties, sheets and notes the new drawing starts with | no |

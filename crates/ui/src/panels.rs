@@ -2107,6 +2107,9 @@ impl Workbench {
                             crate::asm_panel::AsmTool::Constrain => "asm.constrain",
                             crate::asm_panel::AsmTool::Joint => "asm.joint",
                             crate::asm_panel::AsmTool::Tweak => "asm.explode.tweak",
+                            crate::asm_panel::AsmTool::Pattern => "asm.pattern",
+                            crate::asm_panel::AsmTool::Mirror => "asm.mirror",
+                            crate::asm_panel::AsmTool::Copy => "asm.copy",
                         });
                     }
                 }

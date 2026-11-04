@@ -7430,6 +7430,47 @@
       }
     },
     {
+      "id": "asm.copy",
+      "label": "Copy Components",
+      "undoable": true,
+      "description": "components: [ids]; by: [x, y, z] (mm, default beside what is copied); new_files: a new part file for each part file copied, saved in folder, with a name no file has (default false: further occurrences of the same parts); folder: beside the assembly. Copies are independent, and not grounded; the relationships among those copied come too. Returns the components, relationships and files made",
+      "params": {
+        "type": "object",
+        "properties": {
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "the components to copy"
+          },
+          "by": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "how far from what they are copied from, [x, y, z] (default: beside it)"
+          },
+          "new_files": {
+            "type": "boolean",
+            "description": "a new part file for each part file copied (default false: further occurrences of the same parts)"
+          },
+          "folder": {
+            "type": "string",
+            "x-path": true,
+            "description": "for new_files: the folder they are saved in, beside the assembly"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "components"
+        ]
+      }
+    },
+    {
       "id": "asm.export_step",
       "label": "Export Assembly STEP",
       "undoable": false,
@@ -7549,7 +7590,7 @@
       "id": "asm.tree",
       "label": "Assembly Tree",
       "undoable": false,
-      "description": "",
+      "description": "the components (each with where it stands, whether it is mirrored and what pattern it is an element of), the relationships and the patterns and mirrors",
       "params": {
         "type": "object",
         "properties": {},
@@ -7848,7 +7889,7 @@
       "id": "asm.rename",
       "label": "Rename",
       "undoable": true,
-      "description": "name; component or relationship (neither: the assembly)",
+      "description": "name; component, relationship or pattern (none: the assembly)",
       "params": {
         "type": "object",
         "properties": {
@@ -7865,6 +7906,11 @@
             "type": "integer",
             "minimum": 0,
             "description": "or the relationship (neither: the assembly)"
+          },
+          "pattern": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "or the pattern or mirror"
           }
         },
         "additionalProperties": false,
@@ -8073,7 +8119,7 @@
       "id": "asm.update",
       "label": "Update",
       "undoable": true,
-      "description": "solves again (after parts changed)",
+      "description": "solves again (after parts changed). Returns converged, failing (relationships that do not hold) and, when there are any, patterns_failing (patterns and mirrors whose rule cannot be worked out, whose elements stay where they are)",
       "params": {
         "type": "object",
         "properties": {},
@@ -8095,7 +8141,7 @@
       "id": "asm.bom",
       "label": "Bill of Materials",
       "undoable": false,
-      "description": "one row per part: quantity, volume, material and mass (grams, of one)",
+      "description": "one row per part: quantity, volume, material and mass (grams, of one). A mirrored part has a row of its own, with mirrored true",
       "params": {
         "type": "object",
         "properties": {},
@@ -8235,6 +8281,263 @@
         "type": "object",
         "properties": {},
         "additionalProperties": false
+      }
+    },
+    {
+      "id": "asm.pattern",
+      "label": "Pattern Components",
+      "undoable": true,
+      "description": "components: [ids]; type: rectangular (direction: a target from asm.geom, count, spacing (mm), reverse; direction2, count2, spacing2, reverse2 for rows of rows) or circular (axis: a target, count, angle (rad, over how much of a turn they spread evenly, default all of it), reverse). One record; its elements are components held by it, which follow what they repeat",
+      "params": {
+        "type": "object",
+        "properties": {
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "the components to repeat"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "rectangular",
+              "circular"
+            ],
+            "description": "in rows along directions, or round an axis"
+          },
+          "direction": {
+            "type": "object",
+            "description": "rectangular: a target from asm.geom giving the way, a straight edge, an axis or a flat face"
+          },
+          "count": {
+            "type": "integer",
+            "description": "how many, the original counted"
+          },
+          "spacing": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "rectangular: the distance from one to the next"
+          },
+          "reverse": {
+            "type": "boolean",
+            "description": "the other way (default false)"
+          },
+          "direction2": {
+            "type": "object",
+            "description": "rectangular: a second direction, for rows of rows"
+          },
+          "count2": {
+            "type": "integer",
+            "description": "how many in the second direction"
+          },
+          "spacing2": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the spacing in the second direction"
+          },
+          "reverse2": {
+            "type": "boolean",
+            "description": "the second direction the other way (default false)"
+          },
+          "axis": {
+            "type": "object",
+            "description": "circular: a target from asm.geom giving the axis, a straight edge, a round face or a circular edge"
+          },
+          "angle": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "circular: over how much of a turn they spread evenly (default: all of it)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "components",
+          "type"
+        ]
+      }
+    },
+    {
+      "id": "asm.mirror",
+      "label": "Mirror Components",
+      "undoable": true,
+      "description": "components: [ids]; plane: a target from asm.geom, a plane or flat face; reuse: those of the components, parts the same as their mirror image, to place again in the mirrored position instead of reflecting. One record; each mirrored occurrence holds its part reflected and has its own row in the parts list",
+      "params": {
+        "type": "object",
+        "properties": {
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "the components to reflect"
+          },
+          "plane": {
+            "type": "object",
+            "description": "a target from asm.geom: a plane or flat face"
+          },
+          "reuse": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "those of the components, parts the same as their mirror image, to place again in the mirrored position"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "components",
+          "plane"
+        ]
+      }
+    },
+    {
+      "id": "asm.edit_pattern",
+      "label": "Edit Pattern",
+      "undoable": true,
+      "description": "pattern; what is given changes, as in asm.pattern or asm.mirror, the rest stays: components; type (not of a mirror); direction, count, spacing, reverse; direction2 (null: no second direction), count2, spacing2, reverse2; axis, angle; plane, reuse. Elements are moved, added or taken away; those taken away take their relationships",
+      "params": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the pattern or mirror, as asm.tree lists it"
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "what it repeats"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "rectangular",
+              "circular"
+            ],
+            "description": "in rows along directions, or round an axis (not for a mirror)"
+          },
+          "direction": {
+            "type": "object",
+            "description": "a target from asm.geom giving the way"
+          },
+          "count": {
+            "type": "integer",
+            "description": "how many, the original counted"
+          },
+          "spacing": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the distance from one to the next"
+          },
+          "reverse": {
+            "type": "boolean",
+            "description": "the other way"
+          },
+          "direction2": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "a second direction; null for none"
+          },
+          "count2": {
+            "type": "integer",
+            "description": "how many in the second direction"
+          },
+          "spacing2": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the spacing in the second direction"
+          },
+          "reverse2": {
+            "type": "boolean",
+            "description": "the second direction the other way"
+          },
+          "axis": {
+            "type": "object",
+            "description": "a target from asm.geom giving the axis"
+          },
+          "angle": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "over how much of a turn they spread evenly"
+          },
+          "plane": {
+            "type": "object",
+            "description": "a mirror's plane or flat face"
+          },
+          "reuse": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "those a mirror places again in the mirrored position"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "pattern"
+        ]
+      }
+    },
+    {
+      "id": "asm.suppress_pattern",
+      "label": "Suppress Pattern",
+      "undoable": true,
+      "description": "pattern, suppressed (default true): its elements, and what a later pattern makes of them, are out of the assembly (not drawn, listed or checked) until it is brought back. One hidden on its own stays hidden",
+      "params": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the pattern or mirror"
+          },
+          "suppressed": {
+            "type": "boolean",
+            "description": "true to suppress it (default), false to bring it back"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "pattern"
+        ]
+      }
+    },
+    {
+      "id": "asm.delete_pattern",
+      "label": "Delete Pattern",
+      "undoable": true,
+      "description": "pattern; keep_elements (default false): the elements stay where they stand, as components of their own, instead of going with it",
+      "params": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the pattern or mirror"
+          },
+          "keep_elements": {
+            "type": "boolean",
+            "description": "the elements stay, as components of their own (default false: they go with it)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "pattern"
+        ]
       }
     },
     {

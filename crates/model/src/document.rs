@@ -1246,6 +1246,10 @@ pub struct Document {
     /// Stress studies of the part: where it is held and what pushes on it (see `study.rs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) studies: Vec<crate::study::Study>,
+    /// The part as its mirror image in its own XY plane: how an assembly's mirrored occurrence
+    /// has it (DEC-130). Worked out from the part file, which never says it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    reflected: bool,
 }
 
 impl Default for Document {
@@ -1263,7 +1267,20 @@ impl Default for Document {
             table: None,
             sheet: None,
             studies: Vec::new(),
+            reflected: false,
         }
+    }
+}
+
+impl Document {
+    /// Whether the part is built as its mirror image in its own XY plane (DEC-130).
+    pub fn reflected(&self) -> bool {
+        self.reflected
+    }
+
+    /// Builds the part as its mirror image in its own XY plane, or as itself again.
+    pub fn set_reflected(&mut self, on: bool) {
+        self.reflected = on;
     }
 }
 
@@ -1468,6 +1485,7 @@ impl Document {
             sheet: self.sheet.clone(),
             // (A part as it was part way up its history is looked at, not studied.)
             studies: Vec::new(),
+            reflected: self.reflected,
         }
     }
 

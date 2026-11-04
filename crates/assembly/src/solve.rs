@@ -76,6 +76,8 @@ pub struct End {
     pub prim: Prim,
     /// The radius of the round face it is (a cylinder's or sphere's), else 0.
     pub radius: f64,
+    /// It is of a component holding its part's mirror image.
+    pub mirrored: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -205,8 +207,8 @@ fn mate_prim(p: Prim) -> Prim {
 }
 
 /// A joint frame in assembly coordinates: origin, X, Z.
-fn joint_frame(prim: &Prim, pose: &Pose) -> (Vec3, Vec3, Vec3) {
-    let f = prim.joint_frame();
+fn joint_frame(end: &End, pose: &Pose) -> (Vec3, Vec3, Vec3) {
+    let f = end.prim.joint_frame(end.mirrored);
     (pose.r.apply(f.origin()) + pose.t, pose.r.apply(f.x()), pose.r.apply(f.z()))
 }
 
@@ -297,8 +299,8 @@ fn residual(rel: &Rel, poses: &[Pose], out: &mut Vec<f64>) {
             }
         }
         Law::Joint { joint, flip, offset, angle } => {
-            let (oa, xa, za) = joint_frame(&rel.a.prim, &qa);
-            let (ob, xb, zb) = joint_frame(&rel.b.prim, &qb);
+            let (oa, xa, za) = joint_frame(&rel.a, &qa);
+            let (ob, xb, zb) = joint_frame(&rel.b, &qb);
             let s = if flip { 1.0 } else { -1.0 };
             if joint != JointKind::Ball {
                 push3(out, zb - za * s);
@@ -467,7 +469,7 @@ pub fn snap(bodies: &[Body], rel: &Rel) -> Motion {
             Law::Joint { flip, .. } => Some(if flip { da } else { -da }),
         }
     };
-    let (ja, jb) = (joint_frame(&rel.a.prim, &qa), joint_frame(&rel.b.prim, &qb));
+    let (ja, jb) = (joint_frame(&rel.a, &qa), joint_frame(&rel.b, &qb));
     let (da, db) = match rel.law {
         Law::Joint { .. } => (Some(ja.2), Some(jb.2)),
         _ => (pa.direction(), pb.direction()),
@@ -699,7 +701,7 @@ mod tests {
         Prim::Plane { point: Vec3::new(0.0, 5.0, 5.0), normal: -Vec3::X }
     }
     fn end(body: usize, prim: Prim) -> End {
-        End { body: Some(body), prim, radius: 0.0 }
+        End { body: Some(body), prim, radius: 0.0, mirrored: false }
     }
 
     #[test]
@@ -732,7 +734,7 @@ mod tests {
 
     #[test]
     fn tangents_hold_round_faces_against_planes_and_each_other() {
-        let round = |body: usize, prim: Prim, radius: f64| End { body: Some(body), prim, radius };
+        let round = |body: usize, prim: Prim, radius: f64| End { body: Some(body), prim, radius, mirrored: false };
         // A cylinder of radius 5 lying along X, on the fixed block's top (z = 10): its axis at
         // 15, and it may still roll, slide either way and turn about the plane's normal.
         let bodies = vec![body(Vec3::ZERO, true), body(Vec3::new(3.0, 2.0, 30.0), false)];

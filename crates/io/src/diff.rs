@@ -691,6 +691,7 @@ fn assembly(a: &Value, b: &Value, out: &mut Vec<Change>) {
     let summary = |r: &Value| r["kind"]["type"].as_str().unwrap_or("?").replace('_', " ");
     let detail = |x: &Value, y: &Value| generic_detail(x, y, &[]);
     records("Relationships", &a["relationships"], &b["relationships"], &label, &summary, &detail, out);
+    records("Patterns", &a["patterns"], &b["patterns"], &label, &summary, &detail, out);
     records("Explode", &a["explode"], &b["explode"], &label, &|_| String::new(), &detail, out);
 }
 

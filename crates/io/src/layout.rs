@@ -43,6 +43,7 @@ pub(crate) const PART: Shape = Shape {
         ("params", "parameters"),
         ("features", "feature"),
         ("studies", "study"),
+        ("reflected", "reflected"),
     ],
     kinds: &[("features", &["id", "name", "suppressed", "visible"])],
     computed: &[],
@@ -56,11 +57,13 @@ pub(crate) const ASSEMBLY: Shape = Shape {
         ("name", "name"),
         ("next_component", "next_component"),
         ("next_relationship", "next_relationship"),
+        ("next_pattern", "next_pattern"),
         ("components", "component"),
         ("relationships", "relationship"),
+        ("patterns", "pattern"),
         ("explode", "explode"),
     ],
-    kinds: &[("relationships", &["id", "name", "suppressed"])],
+    kinds: &[("relationships", &["id", "name", "suppressed"]), ("patterns", &["id", "name", "suppressed", "sources", "elements"])],
     computed: &[("components", "placement")],
     tables: &[],
 };
@@ -127,6 +130,9 @@ pub(crate) fn to_file(head: &Map<String, Value>, shape: &Shape, version: u32) ->
                 }
             }
         }
+        if shape.what == "assembly" && *mem == "components" {
+            v.as_array_mut().into_iter().flatten().for_each(mirrored_out);
+        }
         if *mem == "params" {
             v = Value::Object(first(&v, &["next", "user", "model"]));
         }
@@ -168,6 +174,9 @@ pub(crate) fn from_file(file: Map<String, Value>, shape: &Shape) -> Map<String, 
                 }
                 *r = unflatten(r, own);
             }
+        }
+        if shape.what == "assembly" && *mem == "components" {
+            v.as_array_mut().into_iter().flatten().for_each(mirrored_in);
         }
         body.insert((*mem).into(), v);
     }
@@ -237,6 +246,32 @@ fn type_in(r: &mut Value) {
     if let Some((_, memory)) = OWN_TYPES.iter().find(|(file, _)| Some(*file) == own) {
         o.insert("type".into(), Value::from(*memory));
     }
+}
+
+/// A mirrored occurrence's frame, in a file, in place of `placement` and `mirrored`. A build that
+/// does not know `mirrored` would read the part itself, unreflected and with no word; `placement`
+/// is one it cannot do without, so it refuses the file, as it does a type it does not know (DEC-124).
+const MIRRORED_PLACEMENT: &str = "mirrored_placement";
+
+/// A component as a file has it: see [`MIRRORED_PLACEMENT`].
+fn mirrored_out(r: &mut Value) {
+    let Some(o) = r.as_object() else { return };
+    if o.get("mirrored") != Some(&Value::Bool(true)) {
+        return;
+    }
+    let out = o.iter().filter(|(k, _)| k.as_str() != "mirrored");
+    *r = Value::Object(out.map(|(k, v)| (if k == "placement" { MIRRORED_PLACEMENT.to_owned() } else { k.clone() }, v.clone())).collect());
+}
+
+/// The reverse of [`mirrored_out`]. A file that says `mirrored` and `placement` reads as well.
+fn mirrored_in(r: &mut Value) {
+    let Some(o) = r.as_object() else { return };
+    if !o.contains_key(MIRRORED_PLACEMENT) || o.contains_key("placement") {
+        return;
+    }
+    let mut out: Map<String, Value> = o.iter().map(|(k, v)| (if k == MIRRORED_PLACEMENT { "placement".to_owned() } else { k.clone() }, v.clone())).collect();
+    out.insert("mirrored".into(), Value::Bool(true));
+    *r = Value::Object(out);
 }
 
 /// A sketch feature (flattened) with its sketch's fields in place of it: entities and
@@ -536,6 +571,27 @@ mod tests {
         expected["document"]["features"][0]["kind"]["sketch"]["entities"][0][1]["geometry"]["pos"] = json!({ "x": 30.0, "y": 0.0 });
         expected["document"]["features"][1]["kind"]["edges"][0]["fingerprint"]["mid"]["x"] = json!(4769.097335529);
         assert_eq!(Value::Object(back), expected);
+    }
+
+    #[test]
+    fn a_mirrored_occurrence_has_no_placement_a_build_before_it_could_read() {
+        let frame = json!({ "origin": { "x": 1.0, "y": 2.0, "z": 3.0 } });
+        let head = json!({ "format": "tenon-assembly", "assembly": { "name": "A", "components": [
+            { "id": 1, "name": "P:1", "part": "p.tenon", "placement": frame, "visible": true },
+            { "id": 2, "name": "P:2", "part": "p.tenon", "placement": frame, "visible": true, "mirrored": true },
+        ] } });
+        let file = to_file(head.as_object().unwrap(), &ASSEMBLY, 2).unwrap();
+        assert_eq!(file["component"][0]["placement"], frame);
+        let image = file["component"][1].as_object().unwrap();
+        assert_eq!(image.keys().map(String::as_str).collect::<Vec<_>>(), ["id", "name", "part", "mirrored_placement", "visible"]);
+
+        // Back as it was, and a file with the two fields says the same.
+        let read = |file: Map<String, Value>| from_file(file, &ASSEMBLY)["assembly"]["components"][1].clone();
+        let back = read(file.clone());
+        assert_eq!((&back["placement"], &back["mirrored"]), (&frame, &json!(true)));
+        let mut said = file;
+        said["component"][1] = json!({ "id": 2, "name": "P:2", "part": "p.tenon", "placement": frame, "mirrored": true });
+        assert_eq!(read(said)["mirrored"], true);
     }
 
     #[test]

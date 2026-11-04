@@ -21,12 +21,18 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 - **Hole:** Tap Drill is now Tapped, which puts the thread on the wall. A hole from 0.1.0 opens as it
   is: Simple, whatever its size, until you choose Tapped; its own Thread feature stays.
 - **Constrain:** Flush is now Mate's second solution.
+- **Mirror feature:** a flat face a Mirror feature made now has its normal out of the material, as
+  every other face has, so a sketch on it faces outward and an extrude from it goes outward. A file
+  from before with such a sketch changes: what is drawn on it lands reflected in the plane, and an
+  extrude that was reversed to get round this now goes into the part.
 - **Going back to 0.1.0.** It refuses a file that uses what is new, in the words "the project is
   damaged", though it is not: text, ellipses or Smooth; an extrusion To, To Next or Between; a
   revolution To, To Next, by two angles or Flipped; a spotface or To hole; a variable or face fillet;
-  a work plane through three points; a Tangent or Symmetry relationship. Other new things it opens, and on a save it loses them: a
-  tapped hole's thread (the solid is the same), which points are sketch points, which sketches are
-  shown, and a study's Optimize Shape settings.
+  a work plane through three points; a Tangent or Symmetry relationship; a mirrored occurrence in an
+  assembly. Other new things it opens, and on a save it loses them: a tapped hole's thread (the solid
+  is the same), which points are sketch points, which sketches are shown, a study's Optimize Shape
+  settings, and an assembly's patterns (each element is then a free component where it stands, those
+  of a suppressed pattern shown and counted).
 
 ### Stress checks
 
@@ -97,6 +103,21 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 
 ### Parts and assemblies
 
+- **Pattern**, **Mirror** and **Copy** of components, greyed on the Assemble tab until now. Pattern
+  repeats chosen components in rows along one or two directions (a picked edge, flat face or axis, a
+  count and a spacing) or round an axis (a count and an angle). It is one record, a row in the
+  browser with its elements under it; a count or spacing changed moves, adds or takes away elements;
+  they follow what they repeat and what gives the direction. Each element is a component: it is
+  counted in the parts list, can be constrained to, and is drawn, checked and exported as any other.
+  Mirror reflects chosen components in a plane or flat face: each is a mirrored occurrence of the
+  same part file holding its reflected geometry, on a row of its own in the parts list as a mirrored
+  part, or for a part that is the same as its mirror image, the same part placed again in the
+  mirrored position. Copy makes independent copies beside what they are copied from, of the same
+  parts or in new part files saved beside the assembly, with the constraints among them. New
+  commands `asm.pattern`, `asm.mirror`, `asm.edit_pattern`, `asm.suppress_pattern`,
+  `asm.delete_pattern`, `asm.copy`; `asm.rename` takes `pattern`; `asm.tree` and `asm.bom` say what is
+  mirrored and what is an element. An assembly file gains `[[pattern]]` records, `next_pattern` and a
+  component's `mirrored_placement`.
 - **Delete Features.** Deleting a feature from the browser now says what goes with it: the
   sketches it is made from, and the features that use it, each with a tick, in one undo step.
   `feature.delete` takes `consumed` and `dependents`.
@@ -141,6 +162,8 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 
 ### Fixed
 
+- Undo after deleting the last component of a part brought it back with nothing behind it, not drawn,
+  and refused by mass and export until the file was opened again. It now comes back with its part.
 - OK with nothing touched changes nothing now, on any feature: a through cut stays through, and an
   angle comes back to the bit. A window's panel asks for no more once it has closed, in Stress
   Analysis and assemblies as in a part. Keep Faces and Symmetry no longer put a stress result out of

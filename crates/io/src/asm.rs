@@ -1,6 +1,7 @@
 //! Assembly files (`.tenonasm`, DEC-024) and the assembly commands that touch files: new, open,
 //! save (with the parts changed in place), insert a part file, export STEP and the parts list.
 
+use std::collections::BTreeMap;
 use std::path::{Component as PathPart, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -86,6 +87,7 @@ pub fn from_bytes(data: &[u8], dir: &Path) -> Result<Assembly, ProjectError> {
     let file = AsmFile::deserialize(&head).map_err(|e| {
         project::locate::<tenon_assembly::Component>(&head, &layout::ASSEMBLY, "components", &lines)
             .or_else(|| project::locate::<tenon_assembly::Relationship>(&head, &layout::ASSEMBLY, "relationships", &lines))
+            .or_else(|| project::locate::<tenon_assembly::Pattern>(&head, &layout::ASSEMBLY, "patterns", &lines))
             .unwrap_or_else(|| ProjectError::Damaged(e.to_string()))
     })?;
     let mut asm = file.assembly;
@@ -98,7 +100,8 @@ pub fn from_bytes(data: &[u8], dir: &Path) -> Result<Assembly, ProjectError> {
     Ok(asm)
 }
 
-fn folder_of(path: &Path) -> PathBuf {
+/// The folder a file is in ("." for one named without a folder).
+pub fn folder_of(path: &Path) -> PathBuf {
     let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
     if parent.as_os_str().is_empty() { PathBuf::from(".") } else { parent }
 }
@@ -156,8 +159,7 @@ fn asm_open(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
     let path = path(p)?;
     let (asm, parts) = open(&path).map_err(|e| CmdError(format!("cannot open {}: {e}", path.display())))?;
     s.replace(asm, parts);
-    let missing: Vec<String> =
-        s.parts.iter().filter_map(|(k, p)| p.missing.as_ref().map(|m| format!("{}: {m}", tenon_assembly::key_file(k)))).collect();
+    let missing: Vec<String> = tenon_assembly::session::missing_parts(&s.parts).into_iter().map(|(file, why)| format!("{file}: {why}")).collect();
     if let Some(k) = k {
         s.refresh(k).map_err(CmdError)?;
     }
@@ -188,11 +190,25 @@ fn asm_save(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
 fn asm_insert(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let path = path(p)?;
     let key = part_key(&path);
-    if !s.parts.contains_key(&key) {
-        let (doc, _) = project::open(&path).map_err(|e| CmdError(format!("cannot open {}: {e}", path.display())))?;
-        let mut part = Part::new(tenon_model::Document::default());
-        part.session.replace_document(doc, None);
-        s.add_part(&key, part);
+    // (One kept only for undo's sake is read again: the file may have changed since.)
+    let kept = s.parts.get(&key).is_some_and(|x| !x.session.is_dirty()) && !s.assembly().components.iter().any(|c| c.part == key);
+    if !s.parts.contains_key(&key) || kept {
+        let (doc, extra) = project::open(&path).map_err(|e| CmdError(format!("cannot open {}: {e}", path.display())))?;
+        match s.parts.get_mut(&key) {
+            // (The entry stays, so whoever regenerates it sees its revision move on.)
+            Some(part) => {
+                part.session.replace_document(doc, None);
+                part.session.file_extra = extra;
+                part.missing = None;
+                s.sync_variants();
+            }
+            None => {
+                let mut part = Part::new(tenon_model::Document::default());
+                part.session.replace_document(doc, None);
+                part.session.file_extra = extra;
+                s.add_part(&key, part);
+            }
+        }
     }
     if let Some(k) = k.as_deref_mut() {
         s.refresh(k).map_err(CmdError)?;
@@ -232,6 +248,94 @@ fn asm_insert(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> 
     }
     let c = s.component(id)?;
     Ok(json!({ "component": id.0, "name": c.name, "grounded": c.grounded, "row": c.row }))
+}
+
+/// A name no file has yet, in `folder`, for a copy of the part file called `stem`:
+/// "bracket-copy.tenon", then "bracket-copy2.tenon" and so on. Nothing is ever written over.
+fn copy_file(folder: &Path, stem: &str) -> PathBuf {
+    let name = |n: u32| if n == 1 { format!("{stem}-copy.tenon") } else { format!("{stem}-copy{n}.tenon") };
+    (1..u32::MAX).map(|n| folder.join(name(n))).find(|f| !f.exists()).unwrap_or_else(|| folder.join(name(u32::MAX)))
+}
+
+/// Independent copies of components, moved by `by` (by default beside what they are copied
+/// from): further occurrences of their parts, or with `new_files` of new part files saved in
+/// `folder`, one for each part file copied. The relationships among them come too.
+fn asm_copy(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let ids = tenon_assembly::cmd::components_param(s, p)?;
+    let by = match tenon_assembly::cmd::opt_vec3(p, "by")? {
+        Some(by) => by,
+        None => tenon_assembly::session::copy_offset(s.assembly(), &s.parts, &ids),
+    };
+    let new_files = arg(p, "new_files").and_then(Value::as_bool).unwrap_or(false);
+    let mut files: BTreeMap<String, String> = BTreeMap::new();
+    let mut written: Vec<PathBuf> = Vec::new();
+    if new_files {
+        let folder = match arg(p, "folder").filter(|v| !v.is_null()) {
+            Some(_) => {
+                let s = arg(p, "folder").and_then(Value::as_str).filter(|s| !s.is_empty() && s.len() <= 4096 && !s.contains('\0'));
+                PathBuf::from(s.ok_or("invalid `folder`")?)
+            }
+            None => return Err("give `folder`: where the new part files go, beside the assembly".into()),
+        };
+        std::fs::create_dir_all(&folder).map_err(|e| CmdError(format!("cannot make the folder {}: {e}", folder.display())))?;
+        let chosen: Vec<String> = ids.iter().filter_map(|c| s.assembly().component(*c)).map(|c| c.part.clone()).collect();
+        for part in chosen {
+            if files.contains_key(&part) {
+                continue;
+            }
+            let from = s.parts.get(&part).filter(|x| x.missing.is_none());
+            let from = from.ok_or_else(|| CmdError(format!("{}: the part cannot be copied, as it could not be read", tenon_assembly::key_file(&part))))?;
+            let (mut doc, extra) = (from.session.document().clone(), from.session.file_extra.clone());
+            // (A new part of its own: not the old one's number.)
+            if doc.name.len() <= 195 {
+                doc.name = format!("{} Copy", doc.name);
+            }
+            doc.part_number = None;
+            let stem = Path::new(&part).file_stem().map_or_else(|| "part".to_owned(), |x| x.to_string_lossy().into_owned());
+            let file = copy_file(&folder, &stem);
+            project::save(&file, &doc, &extra).map_err(|e| CmdError(format!("cannot write {}: {e}", file.display())))?;
+            let key = part_key(&file);
+            let mut made = Part::new(tenon_model::Document::default());
+            made.session.replace_document(doc, None);
+            made.session.file_extra = extra;
+            s.add_part(&key, made);
+            written.push(file);
+            files.insert(part, key);
+        }
+    }
+    if let Some(k) = k.as_deref_mut() {
+        s.refresh(k).map_err(CmdError)?;
+    }
+    let done = s.edit(|asm, parts| {
+        let made = tenon_assembly::session::copy_components(asm, &ids, by, &files)?;
+        tenon_assembly::cmd::solve_or_refuse(asm, parts, None)?;
+        Ok(made)
+    });
+    let (made, relationships) = match done {
+        Ok(made) => made,
+        Err(e) => {
+            // (Nothing is left of a copy that was refused.)
+            for f in &written {
+                let _ = std::fs::remove_file(f);
+                s.parts.remove(&part_key(f));
+            }
+            return Err(e);
+        }
+    };
+    if !written.is_empty()
+        && let Some(k) = k
+    {
+        s.refresh(k).map_err(CmdError)?;
+    }
+    let names: Vec<String> = made.iter().filter_map(|c| s.assembly().component(*c)).map(|c| c.name.clone()).collect();
+    Ok(json!({
+        "components": made.iter().map(|c| c.0).collect::<Vec<_>>(),
+        "names": names,
+        "relationships": relationships.iter().map(|r| r.0).collect::<Vec<_>>(),
+        "by": [by.x, by.y, by.z],
+        "files": written.iter().map(|f| f.display().to_string()).collect::<Vec<_>>(),
+        "dof": tenon_assembly::session::dof(s.assembly(), &s.parts).1,
+    }))
 }
 
 /// The file a standard part is kept in, in `folder`: "hex-screw-iso-4017.tenon".
@@ -298,9 +402,7 @@ pub struct ObjectInfo {
 
 /// The object of every visible component.
 pub fn object_infos(asm: &Assembly, parts: &Parts) -> std::collections::BTreeMap<tenon_assembly::ComponentId, ObjectInfo> {
-    asm.components
-        .iter()
-        .filter(|c| c.visible)
+    asm.shown()
         .filter_map(|c| {
             let key = c.key();
             let doc = parts.get(&key)?.session.document();
@@ -308,6 +410,7 @@ pub fn object_infos(asm: &Assembly, parts: &Parts) -> std::collections::BTreeMap
                 Some(row) => format!("{}, {row}", doc.name),
                 None => doc.name.clone(),
             };
+            let name = if c.mirrored { format!("{name}, mirrored") } else { name };
             let material = doc.material().map_or_else(|| "Generic".to_owned(), |m| m.name.clone());
             Some((c.id, ObjectInfo { key, name, material, color: doc.color().unwrap_or(crate::cmd::PLAIN) }))
         })
@@ -470,6 +573,14 @@ static COMMANDS: &[AsmCommand] = &[
         true,
         false,
         asm_insert_standard
+    ),
+    cmd!(
+        "asm.copy",
+        "Copy Components",
+        "components: [ids]; by: [x, y, z] (mm, default beside what is copied); new_files: a new part file for each part file copied, saved in folder, with a name no file has (default false: further occurrences of the same parts); folder: beside the assembly. Copies are independent, and not grounded; the relationships among those copied come too. Returns the components, relationships and files made",
+        true,
+        false,
+        asm_copy
     ),
     cmd!("asm.export_step", "Export Assembly STEP", "path (.step); exploded (default false)", false, true, asm_export_step),
     cmd!(

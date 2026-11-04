@@ -12,6 +12,7 @@
 mod analysis;
 mod asm_browser;
 mod asm_panel;
+mod asm_pattern;
 mod assembly;
 mod bodies;
 mod browser;
@@ -53,6 +54,8 @@ pub use workbench::{Services, Workbench};
 
 #[cfg(test)]
 mod analysis_tests;
+#[cfg(test)]
+mod asm_pattern_tests;
 #[cfg(test)]
 mod asm_tests;
 #[cfg(test)]

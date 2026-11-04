@@ -551,7 +551,9 @@ impl Workbench {
             Panel::Keep(p) => ("Keep Faces", p.editing.and_then(|id| self.study_item_name(id))),
             Panel::Symmetry(_) => ("Symmetry", self.active_study().map(|s| s.name.clone())),
             Panel::Asm(p) => {
-                (p.title(), p.editing.and_then(|r| self.asm.as_ref().and_then(|a| a.session.assembly().relationship(r)).map(|r| r.name.clone())))
+                let asm = self.asm.as_ref().map(|a| a.session.assembly());
+                let name = p.editing.and_then(|r| asm.and_then(|a| a.relationship(r)).map(|r| r.name.clone()));
+                (p.title(), name.or_else(|| p.pattern.and_then(|id| asm.and_then(|a| a.pattern(id)).map(|x| x.name.clone()))))
             }
             _ => return,
         };
@@ -1817,7 +1819,7 @@ impl Workbench {
                             });
                         });
                     }
-                    Panel::Asm(p) => self.asm_panel_ui(ui, p, t),
+                    Panel::Asm(p) => enter |= self.asm_panel_ui(ui, p, t),
                     _ => {}
                 }
             });
