@@ -271,7 +271,8 @@ fn mirrored_in(r: &mut Value) {
     if !o.contains_key(MIRRORED_PLACEMENT) || o.contains_key("placement") {
         return;
     }
-    let mut out: Map<String, Value> = o.iter().map(|(k, v)| (if k == MIRRORED_PLACEMENT { "placement".to_owned() } else { k.clone() }, v.clone())).collect();
+    let mut out: Map<String, Value> =
+        o.iter().map(|(k, v)| (if k == MIRRORED_PLACEMENT { "placement".to_owned() } else { k.clone() }, v.clone())).collect();
     out.insert("mirrored".into(), Value::Bool(true));
     *r = Value::Object(out);
 }

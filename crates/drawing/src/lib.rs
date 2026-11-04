@@ -27,9 +27,9 @@ pub mod views;
 
 pub use graphics::{Align, Graphics, Owner, Pen, Text};
 pub use model::{
-    AnnotId, AnnotKind, Annotation, Boundary, BreakLines, DimKind, Drawing, GeomPick, MAX_ANNOTATIONS, MAX_SET_PLACES, MAX_SHEETS, MAX_VIEWS, ModKind,
-    Orientation, PickPoint, Props, SET_SPACING, SetAxis, Sheet, SheetId, SheetSize, Side, Standard, TitleBlock, TitleField, TitleLine, View, ViewId,
-    ViewKind, ViewMod,
+    AnnotId, AnnotKind, Annotation, Boundary, BreakLines, DimKind, Drawing, GeomPick, MAX_ANNOTATIONS, MAX_SET_PLACES, MAX_SHEETS, MAX_VIEWS,
+    ModKind, Orientation, PickPoint, Props, SET_SPACING, SetAxis, Sheet, SheetId, SheetSize, Side, Standard, TitleBlock, TitleField, TitleLine, View,
+    ViewId, ViewKind, ViewMod,
 };
 pub use session::{DrwModel, DrwSession};
 pub use views::{Evaluation, ModelGeometry, ModelSource, ViewGeometry};

@@ -1519,12 +1519,7 @@ impl Workbench {
                 _ => return Err("not a hole".into()),
             },
             None => {
-                if !self.document().features().iter().any(|f| {
-                    matches!(
-                        f.kind,
-                        FeatureKind::Extrude(_) | FeatureKind::Revolve(_) | FeatureKind::Sweep(_) | FeatureKind::Coil(_) | FeatureKind::Loft(_)
-                    )
-                }) {
+                if !self.has_solid() {
                     return Err("there is no solid to drill yet: extrude or revolve a sketch first".into());
                 }
                 // The sketch being edited, else the last sketch with centre points that nothing

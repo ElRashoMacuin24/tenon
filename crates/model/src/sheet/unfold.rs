@@ -822,7 +822,9 @@ fn round_base(solid: &Read, f: u32, t: f64, opts: &Unfold) -> Result<Option<Char
         SurfaceKind::Cylinder { axis, .. } | SurfaceKind::Cone { axis, .. } | SurfaceKind::Torus { axis, .. } => radial(axis, face.centroid),
         _ => return Ok(None),
     }) else {
-        return Err("The sheet goes all the way round (a tube), so it cannot be laid flat: it needs an open seam somewhere. Open one with Rip.".into());
+        return Err(
+            "The sheet goes all the way round (a tube), so it cannot be laid flat: it needs an open seam somewhere. Open one with Rip.".into()
+        );
     };
     // Which side of the sheet the viewer is on decides which way round the flat is.
     let up = |w: Vec3| {

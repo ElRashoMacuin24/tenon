@@ -194,11 +194,7 @@ pub(crate) fn text_width(ui: &Ui, text: &str, font: egui::FontId) -> f32 {
 
 pub(crate) fn tooltip(cmd: &UiCommand) -> String {
     let key = cmd.key.map(|k| format!(" ({k})")).unwrap_or_default();
-    let mut s = format!("{}{key}\n{}", cmd.name(), cmd.tip);
-    if !cmd.available() {
-        s.push_str(&format!("\nArrives in {}", cmd.arrives()));
-    }
-    s
+    format!("{}{key}\n{}", cmd.name(), cmd.tip)
 }
 
 /// A small downward triangle (drop-down marker).
@@ -237,12 +233,10 @@ fn ribbon_button(ui: &Ui, rect: Rect, cmd: &UiCommand, active: bool, t: &Tokens)
             p.line_segment(line, Stroke::new(1.0, t.pressed));
         }
     }
-    let enabled = cmd.available();
-    let (icon_color, text_color) = if enabled { (t.icon, t.text) } else { (t.icon_disabled, t.text_disabled) };
     match cmd.size {
         Size::Large => {
             let ir = Rect::from_center_size(pos2(rect.center().x, rect.top() + 19.0), vec2(30.0, 30.0));
-            icons::paint_colored(p, ir, cmd.icon, icon_color, t, enabled);
+            icons::paint_colored(p, ir, cmd.icon, t.icon, t, true);
             let lines: Vec<&str> = cmd.label.split('\n').collect();
             for (i, line) in lines.iter().enumerate() {
                 let y = rect.top() + 38.0 + i as f32 * 13.0;
@@ -250,26 +244,26 @@ fn ribbon_button(ui: &Ui, rect: Rect, cmd: &UiCommand, active: bool, t: &Tokens)
                 // (A label of one line has its arrow below it, drawn after this.)
                 if last && has_more && lines.len() > 1 {
                     let w = text_width(ui, line, theme::small());
-                    p.text(pos2(rect.center().x - 5.0, y), Align2::CENTER_TOP, *line, theme::small(), text_color);
-                    caret(ui, pos2(rect.center().x + w / 2.0, y + 7.0), text_color);
+                    p.text(pos2(rect.center().x - 5.0, y), Align2::CENTER_TOP, *line, theme::small(), t.text);
+                    caret(ui, pos2(rect.center().x + w / 2.0, y + 7.0), t.text);
                 } else {
-                    p.text(pos2(rect.center().x, y), Align2::CENTER_TOP, *line, theme::small(), text_color);
+                    p.text(pos2(rect.center().x, y), Align2::CENTER_TOP, *line, theme::small(), t.text);
                 }
             }
             if has_more && lines.len() == 1 {
-                caret(ui, pos2(rect.center().x, rect.top() + 58.0), text_color);
+                caret(ui, pos2(rect.center().x, rect.top() + 58.0), t.text);
             }
         }
         Size::Small => {
             let ir = Rect::from_min_size(pos2(rect.left() + 3.0, rect.center().y - 8.0), vec2(16.0, 16.0));
-            icons::paint_colored(p, ir, cmd.icon, icon_color, t, enabled);
-            p.text(pos2(ir.right() + 5.0, rect.center().y), Align2::LEFT_CENTER, cmd.name(), theme::small(), text_color);
+            icons::paint_colored(p, ir, cmd.icon, t.icon, t, true);
+            p.text(pos2(ir.right() + 5.0, rect.center().y), Align2::LEFT_CENTER, cmd.name(), theme::small(), t.text);
             if has_more {
-                caret(ui, pos2(rect.right() - 6.0, rect.center().y), text_color);
+                caret(ui, pos2(rect.right() - 6.0, rect.center().y), t.text);
             }
         }
         Size::Icon => {
-            icons::paint_colored(p, rect.shrink(3.0), cmd.icon, icon_color, t, enabled);
+            icons::paint_colored(p, rect.shrink(3.0), cmd.icon, t.icon, t, true);
         }
     }
     let resp = resp.on_hover_text(tooltip(cmd));
@@ -290,8 +284,7 @@ pub(crate) fn icon_button(ui: &Ui, rect: Rect, cmd: &UiCommand, active: bool, t:
     } else if resp.hovered() {
         ui.painter().rect_filled(rect, 3.0, t.hover);
     }
-    let enabled = cmd.available();
-    icons::paint_colored(ui.painter(), rect.shrink(rect.width() * 0.18), cmd.icon, if enabled { t.icon } else { t.icon_disabled }, t, enabled);
+    icons::paint_colored(ui.painter(), rect.shrink(rect.width() * 0.18), cmd.icon, t.icon, t, true);
     resp.on_hover_text(tooltip(cmd)).clicked()
 }
 
@@ -602,14 +595,13 @@ impl Workbench {
                             if i == self.chrome.search_pick || rresp.hovered() {
                                 ui.painter().rect_filled(row, 3.0, t.hover);
                             }
-                            let enabled = c.available();
                             icons::paint_colored(
                                 ui.painter(),
                                 Rect::from_min_size(row.left_top() + vec2(4.0, 8.0), vec2(18.0, 18.0)),
                                 c.icon,
-                                if enabled { t.icon } else { t.icon_disabled },
+                                t.icon,
                                 t,
-                                enabled,
+                                true,
                             );
                             let key = c.key.map(|k| format!("   {k}")).unwrap_or_default();
                             ui.painter().text(
@@ -617,10 +609,9 @@ impl Workbench {
                                 Align2::LEFT_TOP,
                                 format!("{}{key}", c.name()),
                                 theme::body(),
-                                if enabled { t.text } else { t.text_disabled },
+                                t.text,
                             );
                             let place = commands::location(c.id).unwrap_or_else(|| "Menus and toolbars".into());
-                            let place = if enabled { place } else { format!("{place} ({})", c.arrives()) };
                             ui.painter().text(row.left_top() + vec2(28.0, 18.0), Align2::LEFT_TOP, place, theme::small(), t.text_dim);
                             if rresp.clicked() {
                                 run = Some(c.id);
@@ -819,7 +810,6 @@ impl Workbench {
                 ui.set_min_width(170.0);
                 for m in cmd.more {
                     let Some(c) = commands::find(m) else { continue };
-                    let enabled = c.available();
                     let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(170.0), 26.0), Sense::CLICK);
                     if resp.hovered() {
                         ui.painter().rect_filled(row, 3.0, t.hover);
@@ -828,17 +818,11 @@ impl Workbench {
                         ui.painter(),
                         Rect::from_min_size(row.left_top() + vec2(4.0, 4.0), vec2(18.0, 18.0)),
                         c.icon,
-                        if enabled { t.icon } else { t.icon_disabled },
+                        t.icon,
                         t,
-                        enabled,
+                        true,
                     );
-                    ui.painter().text(
-                        row.left_center() + vec2(28.0, 0.0),
-                        Align2::LEFT_CENTER,
-                        c.name(),
-                        theme::body(),
-                        if enabled { t.text } else { t.text_disabled },
-                    );
+                    ui.painter().text(row.left_center() + vec2(28.0, 0.0), Align2::LEFT_CENTER, c.name(), theme::body(), t.text);
                     if resp.on_hover_text(tooltip(c)).clicked() {
                         chosen = Some(c.id);
                     }
@@ -1045,10 +1029,4 @@ impl Workbench {
         self.punch_library_window(ui, &t);
         self.print_window(ui, &t);
     }
-}
-
-/// Every ribbon id with a handler in this milestone (for tests).
-#[cfg(test)]
-pub(crate) fn available_ids() -> Vec<&'static str> {
-    crate::commands::all().filter(|c| c.available()).map(|c| c.id).collect()
 }

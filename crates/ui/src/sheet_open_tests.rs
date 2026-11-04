@@ -99,7 +99,7 @@ fn inside_of_bend() -> Vec3 {
 #[test]
 fn rip_unfold_and_refold_are_there_to_be_used_and_say_what_they_need() {
     for id in ["sheet.rip", "sheet.unfold", "sheet.refold"] {
-        assert!(find(id).is_some_and(|c| c.available()), "{id} is greyed");
+        assert!(find(id).is_some(), "{id} is on the ribbon");
     }
     assert!(find("sheet.rip").unwrap().tip.contains("closed shape can be laid flat"));
     assert!(find("sheet.unfold").unwrap().tip.contains("Lay chosen bends flat"));
@@ -310,7 +310,11 @@ fn what_cannot_be_folded_back_says_so_in_the_app() {
     frames(&mut d, &mut wb);
     // The panel stays, and says why, as on any panel whose preview has failed.
     assert!(matches!(wb.panel, Some(Panel::Refold(_))), "{}", wb.status());
-    assert!(wb.status_error && wb.status().contains("not sheet of one thickness") && wb.status().contains("Make the cut go through"), "{}", wb.status());
+    assert!(
+        wb.status_error && wb.status().contains("not sheet of one thickness") && wb.status().contains("Make the cut go through"),
+        "{}",
+        wb.status()
+    );
     assert!(!wb.document().features().iter().any(|f| matches!(f.kind, tenon_model::FeatureKind::Refold(_))), "nothing is made");
     let said: Vec<String> = wb
         .scene()

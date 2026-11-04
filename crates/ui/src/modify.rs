@@ -266,10 +266,9 @@ impl Workbench {
     fn pick_end_plane(&mut self, resp: &egui::Response, rect: Rect) -> bool {
         // (The plane its own sketch lies on is no end for it: what is seen through that is.)
         let own = self.panel_sketch_plane();
-        let on_own = resp
-            .hover_pos()
-            .and_then(|pos| self.ucs_at(pos, rect, true, false, false))
-            .is_some_and(|r| matches!((r, &own), (Reference::UcsPlane(f, p), Some(PlaneRef::Ucs { feature, plane })) if f == *feature && p == *plane));
+        let on_own = resp.hover_pos().and_then(|pos| self.ucs_at(pos, rect, true, false, false)).is_some_and(
+            |r| matches!((r, &own), (Reference::UcsPlane(f, p), Some(PlaneRef::Ucs { feature, plane })) if f == *feature && p == *plane),
+        );
         if on_own {
             self.view.ucs_hover = None;
         } else if self.pick_ucs_part(resp, rect, true, false, false) {

@@ -96,7 +96,6 @@ fn block(wb: &mut Workbench, d: &mut Driver) -> FeatureId {
 #[test]
 fn start_3d_sketch_is_a_button_that_works_and_says_what_it_does() {
     let c = crate::commands::find("sketch.new_3d").unwrap();
-    assert!(c.available(), "it is not grey");
     assert!(c.tip.contains("no plane"), "{}", c.tip);
     let (mut wb, mut d) = app();
     wb.run_ui("sketch.new_3d").unwrap();

@@ -284,7 +284,8 @@ fn asm_copy(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> Cm
                 continue;
             }
             let from = s.parts.get(&part).filter(|x| x.missing.is_none());
-            let from = from.ok_or_else(|| CmdError(format!("{}: the part cannot be copied, as it could not be read", tenon_assembly::key_file(&part))))?;
+            let from =
+                from.ok_or_else(|| CmdError(format!("{}: the part cannot be copied, as it could not be read", tenon_assembly::key_file(&part))))?;
             let (mut doc, extra) = (from.session.document().clone(), from.session.file_extra.clone());
             // (A new part of its own: not the old one's number.)
             if doc.name.len() <= 195 {

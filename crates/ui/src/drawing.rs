@@ -19,8 +19,8 @@ use tenon_drawing::views::{Evaluation, base_frame, projected_frame, seen_size};
 use tenon_drawing::{AnnotKind, DrwModel, DrwSession, Graphics, Orientation, Owner, SheetId, Side, Standard, ViewId, ViewKind};
 use tenon_geom::Vec2;
 
-use crate::drw_views::{ModPanel, ModPick, ModWhat, OverlayPanel, draw_panels, source_view};
 use crate::dim_sets::SetPanel;
+use crate::drw_views::{ModPanel, ModPick, ModWhat, OverlayPanel, draw_panels, source_view};
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 use crate::viewport::{HOVER, Nav, SELECTED};
@@ -342,7 +342,12 @@ impl DrwDoc {
     /// click on an overlay means the view it is over.
     fn view_at(&self, g: &Graphics, at: Vec2) -> Option<ViewId> {
         let d = self.session.drawing();
-        d.views.iter().rev().filter(|v| v.sheet == self.sheet && !matches!(v.kind, ViewKind::Overlay { .. })).map(|v| v.id).find(|v| over_view(g, *v, at))
+        d.views
+            .iter()
+            .rev()
+            .filter(|v| v.sheet == self.sheet && !matches!(v.kind, ViewKind::Overlay { .. }))
+            .map(|v| v.id)
+            .find(|v| over_view(g, *v, at))
     }
 }
 
@@ -762,10 +767,7 @@ impl Workbench {
             return Ok(());
         }
         if !self.in_drawing() {
-            return Err(match crate::commands::find(id) {
-                Some(c) if !c.available() => c.not_yet(),
-                _ => "open or start a drawing first (File > New Drawing)".into(),
-            });
+            return Err("open or start a drawing first (File > New Drawing)".into());
         }
         let selected = self.selected_view();
         // The view a new one is made from: what is drawn over a view stands for that view.
@@ -879,12 +881,7 @@ impl Workbench {
             "drw.edit_model" => self.edit_model_from_drawing()?,
             "drw.delete" => self.delete_selected()?,
             "export.pdf" | "export.svg" | "export.dxf" => self.export_drawing(&id["export.".len()..])?,
-            _ => {
-                return Err(match crate::commands::find(id) {
-                    Some(c) if !c.available() => c.not_yet(),
-                    _ => format!("unknown command `{id}`"),
-                });
-            }
+            _ => return Err(format!("unknown command `{id}`")),
         }
         Ok(())
     }

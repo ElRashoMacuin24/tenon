@@ -9,7 +9,6 @@ use tenon_kernel_occt::OcctKernel;
 use tenon_model::{CapEnd, FaceOrigin, FeatureId};
 
 use crate::Workbench;
-use crate::chrome::available_ids;
 use crate::panels::Panel;
 use crate::sketcher::Click;
 use crate::viewport::Pick;
@@ -54,7 +53,7 @@ fn renders_every_tab_and_size_without_a_kernel() {
 
 #[test]
 fn every_available_command_has_a_handler() {
-    for id in available_ids() {
+    for id in crate::commands::all().map(|c| c.id) {
         let mut wb = Workbench::without_kernel();
         if id.starts_with("sketch.") && id != "sketch.new" {
             wb.create_sketch(json!({ "plane": "xy" })).unwrap();
@@ -163,6 +162,15 @@ pub(crate) struct Driver {
 }
 
 impl Driver {
+    /// All that the last frame drew, to tell whether a window has changed.
+    pub(crate) fn drawn(&self) -> String {
+        format!("{:?}", self.shapes)
+    }
+    /// What the last frame drew in a part of the window.
+    pub(crate) fn drawn_in(&self, rect: Rect) -> String {
+        let there: Vec<_> = self.shapes.iter().filter(|c| c.shape.visual_bounding_rect().intersects(rect)).collect();
+        format!("{there:?}")
+    }
     pub(crate) fn new(size: egui::Vec2) -> Driver {
         Driver { ctx: egui::Context::default(), time: 0.0, size, shapes: Vec::new() }
     }

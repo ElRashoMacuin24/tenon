@@ -14,8 +14,7 @@ use crate::document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Emboss, EmbossStyle, Extrude,
     ExtrudeExtent, FeatureKind, Fillet, Hole, HoleExtent, HoleType, Loft, MAX_SWEEP_CURVES, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef,
     PointSel, RadiusAt, RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread,
-    ThreadLength, Ucs,
-    WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
+    ThreadLength, Ucs, WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};

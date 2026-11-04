@@ -129,7 +129,7 @@ fn a_baseline_set_is_made_changed_moved_and_deleted_by_clicking() {
     let (mut wb, mut d) = drawing_of_plate("baseline", Orientation::Top, 1.0);
 
     // Annotate > Baseline: not greyed; the panel opens and says what to do.
-    assert!(crate::commands::find("drw.baseline").unwrap().available());
+    assert!(crate::commands::find("drw.baseline").is_some());
     press(&mut d, &mut wb, "ribbon drw.baseline");
     let p = panel(&wb).expect("the panel is open");
     assert!(!p.ordinate && p.from.is_none());
@@ -308,7 +308,7 @@ fn drawn(wb: &Workbench, a: u32) -> (Vec<Vec<Vec2>>, usize, Vec<tenon_drawing::T
 fn an_ordinate_set_goes_where_it_is_clicked_with_its_values_kept_apart() {
     let _quiet = crate::tests::timing_lock();
     let (mut wb, mut d) = drawing_of_plate("ordinate", Orientation::Top, 0.5);
-    assert!(crate::commands::find("drw.ordinate").unwrap().available());
+    assert!(crate::commands::find("drw.ordinate").is_some());
     press(&mut d, &mut wb, "ribbon drw.ordinate");
     assert!(d.texts().iter().any(|t| t == "Ordinate Dimensions"), "{:?}", d.texts());
     assert!(wb.status().contains("click the origin"), "{}", wb.status());

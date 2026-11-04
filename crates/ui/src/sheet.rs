@@ -981,12 +981,7 @@ impl Workbench {
                 let path = self.services.pick_save.as_ref().and_then(|f| f(&name, ext)).ok_or("no file chosen")?;
                 self.export_flat(&path, ext == "svg")?;
             }
-            _ => {
-                return Err(match crate::commands::find(id) {
-                    Some(c) if !c.available() => c.not_yet(),
-                    _ => format!("unknown command `{id}`"),
-                });
-            }
+            _ => return Err(format!("unknown command `{id}`")),
         }
         Ok(())
     }

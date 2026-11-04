@@ -127,6 +127,10 @@ impl Workbench {
                     | FeatureKind::Coil(_)
                     | FeatureKind::Loft(_)
                     | FeatureKind::Derive(_)
+                    | FeatureKind::SheetFace(_)
+                    | FeatureKind::ContourFlange(_)
+                    | FeatureKind::ContourRoll(_)
+                    | FeatureKind::LoftedFlange(_)
             )
         })
     }

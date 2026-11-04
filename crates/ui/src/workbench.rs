@@ -416,10 +416,6 @@ impl Workbench {
 
     /// Runs a command without asking to save first.
     pub(crate) fn run_unprompted(&mut self, id: &str) -> Result<(), String> {
-        // A button whose milestone has not come says so, whatever environment it is pressed in.
-        if let Some(c) = commands::find(id).filter(|c| !c.available()) {
-            return Err(c.not_yet());
-        }
         // Modelling from inside a 3D sketch leaves it first, as from inside a 2D sketch.
         if self.is_sketching3d()
             && id != "sketch.new_3d"
@@ -703,12 +699,7 @@ impl Workbench {
             "view.orbit" | "view.pan" | "view.zoom" => self.view.toggle_nav(id),
             _ if id.starts_with("sketch.") => self.sketch_tool(id)?,
             _ if id.starts_with("sketch3d.") => self.sketch3d_tool(id)?,
-            _ => {
-                return Err(match commands::find(id) {
-                    Some(c) if !c.available() => c.not_yet(),
-                    _ => format!("unknown command `{id}`"),
-                });
-            }
+            _ => return Err(format!("unknown command `{id}`")),
         }
         Ok(())
     }

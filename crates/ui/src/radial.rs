@@ -33,7 +33,7 @@ fn entry(id: &'static str) -> Option<RadialEntry> {
         "ui.ok" => "OK".to_owned(),
         "ui.cancel" => "Cancel".to_owned(),
         "view.previous" => "Previous View".to_owned(),
-        _ => commands::find(id).filter(|c| c.available()).map(|c| c.label.to_owned())?,
+        _ => commands::find(id).map(|c| c.label.to_owned())?,
     };
     Some(RadialEntry { label, id })
 }

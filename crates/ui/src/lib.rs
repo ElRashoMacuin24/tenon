@@ -43,8 +43,8 @@ mod results;
 pub mod settings;
 mod shape;
 mod sheet;
-mod sketch3d;
 mod sheet_make;
+mod sketch3d;
 mod sketch_tools;
 mod sketcher;
 mod sweeps;
@@ -74,6 +74,8 @@ mod drw_views_tests;
 #[cfg(test)]
 mod explore_tests;
 #[cfg(test)]
+mod menu_tests;
+#[cfg(test)]
 mod panel_tests;
 #[cfg(test)]
 mod part_tests;
@@ -86,9 +88,9 @@ mod recovery_tests;
 #[cfg(test)]
 mod save_tests;
 #[cfg(test)]
-mod sheet_open_tests;
-#[cfg(test)]
 mod sheet_make_tests;
+#[cfg(test)]
+mod sheet_open_tests;
 #[cfg(test)]
 mod sheet_tests;
 #[cfg(test)]
