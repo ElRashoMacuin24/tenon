@@ -268,6 +268,8 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- The File menu closes on a press anywhere else, as a list under an arrow does; a second click on File or
+  on an arrow closes it, and does not open it again.
 - A sketch tool asked for outside a sketch, then cancelled, came back in the next sketch started, even
   after File > New Part.
 - Esc now leaves what the guide says it does: the windows with an X or a Cancel button, topmost first,

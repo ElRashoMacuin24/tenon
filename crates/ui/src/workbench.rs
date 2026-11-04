@@ -1178,6 +1178,7 @@ impl Workbench {
         egui::CentralPanel::default().frame(Frame::NONE.fill(t.viewport_bottom)).show(ui, |ui| self.viewport(ui, render, &t));
         self.file_menu(ui, &t);
         self.dropdown(ui, &t);
+        self.press_is_over(ui);
         self.panels(ui);
         self.windows(ui);
         self.asm_windows(ui);

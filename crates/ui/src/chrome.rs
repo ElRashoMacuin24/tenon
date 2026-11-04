@@ -24,6 +24,9 @@ const RIBBON_ARROW: f32 = 18.0;
 pub(crate) const DOC_TABS_H: f32 = 26.0;
 pub(crate) const STATUS_H: f32 = 22.0;
 
+/// The File tab, as what a press closed ([`Chrome::closed_by_press`]).
+const FILE_TAB: &str = "tn_file_tab";
+
 /// Window-level state.
 #[derive(Debug, Clone)]
 pub(crate) struct Chrome {
@@ -67,6 +70,9 @@ pub(crate) struct Chrome {
     pub search_pick: usize,
     /// A split button's drop-down: the button's id and where to open the list.
     pub dropdown: Option<(&'static str, Pos2)>,
+    /// A list or the File menu that the press now going on closed: the same click on what opens it
+    /// is not to open it again.
+    pub closed_by_press: Option<&'static str>,
     /// How far the ribbon is scrolled, and how wide its panels came to in the last frame: a
     /// window narrower than a tab's ribbon goes along it by the arrows at its ends.
     pub ribbon_scroll: f32,
@@ -129,6 +135,7 @@ impl Default for Chrome {
             search: String::new(),
             search_pick: 0,
             dropdown: None,
+            closed_by_press: None,
             ribbon_scroll: 0.0,
             ribbon_width: 0.0,
             save_prompt: None,
@@ -642,7 +649,7 @@ impl Workbench {
             if resp.hovered() { t.accent.gamma_multiply(1.15) } else { t.accent },
         );
         ui.painter().text(file.center(), Align2::CENTER_CENTER, "File", theme::body(), t.accent_text);
-        if resp.clicked() {
+        if resp.clicked() && self.chrome.closed_by_press != Some(FILE_TAB) {
             self.chrome.file_menu = if self.chrome.file_menu.is_some() { None } else { Some(file.left_bottom() + vec2(0.0, 2.0)) };
         }
         let mut x = file.right() + 6.0;
@@ -791,6 +798,7 @@ impl Workbench {
         }
         self.chrome.ribbon_scroll = scrolled.clamp(0.0, reach);
         match clicked {
+            Some((id, Some(_))) if self.chrome.closed_by_press == Some(id) => {}
             Some((id, Some(at))) => self.chrome.dropdown = Some((id, at)),
             Some((id, None)) => self.command(id),
             None => {}
@@ -842,8 +850,18 @@ impl Workbench {
         if let Some(id) = chosen {
             self.chrome.dropdown = None;
             self.command(id);
-        } else if outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        } else if outside {
             self.chrome.dropdown = None;
+            self.chrome.closed_by_press = commands::find(id).map(|c| c.id);
+        } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.chrome.dropdown = None;
+        }
+    }
+
+    /// What a press closed is free to be opened again once the button has come up.
+    pub(crate) fn press_is_over(&mut self, ui: &Ui) {
+        if !ui.input(|i| i.pointer.any_down()) {
+            self.chrome.closed_by_press = None;
         }
     }
 
@@ -951,24 +969,33 @@ impl Workbench {
         };
         let mut chosen = None;
         let entries = if self.in_drawing() { commands::DRW_FILE_MENU } else { FILE_MENU };
-        egui::Area::new(egui::Id::new("tn_file_menu")).order(egui::Order::Foreground).fixed_pos(at).show(ui.ctx(), |ui| {
-            Frame::menu(ui.style()).fill(t.panel).show(ui, |ui| {
-                ui.set_min_width(190.0);
-                for (label, id) in entries {
-                    if crate::drawing::button(ui, label, id).clicked() {
-                        chosen = Some(*id);
+        let shown = egui::Area::new(egui::Id::new("tn_file_menu")).order(egui::Order::Foreground).fixed_pos(at).show(ui.ctx(), |ui| {
+            Frame::menu(ui.style())
+                .fill(t.panel)
+                .show(ui, |ui| {
+                    ui.set_min_width(190.0);
+                    for (label, id) in entries {
+                        if crate::drawing::button(ui, label, id).clicked() {
+                            chosen = Some(*id);
+                        }
                     }
-                }
-                ui.separator();
-                for (label, id) in [("Options...", "tools.options"), ("About Tenon", "app.about"), ("Exit", "app.exit")] {
-                    if crate::drawing::button(ui, label, id).clicked() {
-                        chosen = Some(id);
+                    ui.separator();
+                    for (label, id) in [("Options...", "tools.options"), ("About Tenon", "app.about"), ("Exit", "app.exit")] {
+                        if crate::drawing::button(ui, label, id).clicked() {
+                            chosen = Some(id);
+                        }
                     }
-                }
-            });
+                })
+                .response
+                .rect
         });
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.chrome.file_menu = None;
+        }
+        // A press anywhere else closes it, as it does a list.
+        if ui.input(|i| i.pointer.any_pressed() && !i.pointer.interact_pos().is_some_and(|p| shown.inner.contains(p))) {
+            self.chrome.file_menu = None;
+            self.chrome.closed_by_press = Some(FILE_TAB);
         }
         if let Some(id) = chosen {
             self.chrome.file_menu = None;

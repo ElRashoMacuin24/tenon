@@ -865,6 +865,52 @@ fn a_tool_waiting_for_a_plane_goes_with_the_plane() {
     assert_eq!(wb.active_tool_id(), Some("sketch.line"));
 }
 
+/// The File menu closes on a press elsewhere, as a list does; and a press on what opened either
+/// closes it, and it does not open again as the button comes up.
+#[test]
+fn a_menu_closes_on_a_press_elsewhere_and_on_what_opened_it() {
+    let mut wb = Workbench::without_kernel();
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let file = crate::tests::pressable(&d, "tn_file_tab");
+    d.click(&mut wb, file);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.file_menu.is_some());
+    // In the view.
+    let middle = wb.view.rect.center();
+    d.click(&mut wb, middle);
+    assert!(wb.chrome.file_menu.is_none(), "a press in the view closes it");
+    // On the tab: closed, and not opened again.
+    d.click(&mut wb, file);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.file_menu.is_some());
+    d.click(&mut wb, file);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.file_menu.is_none(), "a second click on File closes it");
+    // And a third opens it: the second's press is over.
+    d.click(&mut wb, file);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.file_menu.is_some());
+    // Its entries still take a click.
+    let about = crate::tests::pressable(&d, "app.about");
+    wb.ran.clear();
+    d.click(&mut wb, about);
+    assert_eq!(wb.ran, ["app.about"]);
+    assert!(wb.chrome.file_menu.is_none());
+    d.tap(&mut wb, egui::Key::Escape);
+    // A list: its arrow twice closes it, and three times opens it.
+    open_list(&mut d, &mut wb, "model.box", 1400.0);
+    let on = drawn_at(&d, "ribbon model.box").unwrap();
+    let arrow = egui::pos2(on.center().x, on.bottom() - 6.0);
+    d.click(&mut wb, arrow);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.dropdown.is_none(), "a second click on the arrow closes it");
+    d.click(&mut wb, arrow);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.dropdown.is_some());
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);
