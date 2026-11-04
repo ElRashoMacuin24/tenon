@@ -91,6 +91,9 @@ impl Kernel for Timed {
     fn roll(&mut self, profile: &Profile, rho: f64, inner: f64, outer: f64) -> KResult<Op> {
         timed!(self, "roll", self.inner.roll(profile, rho, inner, outer))
     }
+    fn ruled_sheet(&mut self, a: [&[Vec3]; 2], b: [&[Vec3]; 2], tags: [u64; 4]) -> KResult<Op> {
+        timed!(self, "ruled_sheet", self.inner.ruled_sheet(a, b, tags))
+    }
     fn sweep(&mut self, profile: &Profile, path: &Path3, opts: &SweepOpts) -> KResult<Op> {
         timed!(self, "sweep", self.inner.sweep(profile, path, opts))
     }

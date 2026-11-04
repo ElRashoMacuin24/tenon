@@ -264,3 +264,47 @@ fn half_a_disc_and_most_of_one_roll_into_the_volume_their_area_has() {
         k.release(op.shape);
     }
 }
+
+/// Points evenly along a line, or round a quarter of a circle about the Z axis.
+fn along(n: usize, f: impl Fn(f64) -> Vec3) -> Vec<Vec3> {
+    (0..n).map(|i| f(i as f64 / (n - 1) as f64)).collect()
+}
+
+#[test]
+fn a_ruled_sheet_is_the_solid_between_two_ruled_surfaces() {
+    let mut k = OcctKernel::new();
+    // A plate 20 x 30, 2 thick: both sides flat.
+    let rim = |x: f64, z: f64| along(9, move |f| Vec3::new(x, 30.0 * f, z));
+    let (a0, a1, b0, b1) = (rim(0.0, 0.0), rim(20.0, 0.0), rim(0.0, 2.0), rim(20.0, 2.0));
+    let op = k.ruled_sheet([&a0, &a1], [&b0, &b1], [1, 2, 3, 4]).unwrap();
+    assert!(k.is_valid(op.shape).unwrap());
+    let topo = k.topology(op.shape).unwrap();
+    assert_eq!((topo.solids, topo.faces), (1, 6));
+    let volume = k.mass_properties(op.shape, 1.0).unwrap().volume;
+    assert!((volume - 1200.0).abs() < 1e-3, "{volume}");
+    // Each wall is reported by its tag, the two sides by their roles.
+    for tag in 1..=4 {
+        assert_eq!(faces_of(&op, tag).len(), 1, "tag {tag}");
+    }
+    let side = |role| op.history.roles_of(role).map(|t| k.face_info(op.shape.face(t.index)).unwrap().centroid.z).collect::<Vec<_>>();
+    let (low, high) = (side(PrimitiveRole::StartCap), side(PrimitiveRole::EndCap));
+    assert!(low.len() == 1 && low[0].abs() < 1e-6 && high.len() == 1 && (high[0] - 2.0).abs() < 1e-6, "{low:?} {high:?}");
+    k.release(op.shape);
+
+    // A quarter of a ring, radii 30 and 32, 40 long: curved rims.
+    let round = |r: f64, z: f64| along(33, move |f| Vec3::new(r * (f * FRAC_PI_2).cos(), r * (f * FRAC_PI_2).sin(), z));
+    let (a0, a1, b0, b1) = (round(30.0, 0.0), round(30.0, 40.0), round(32.0, 0.0), round(32.0, 40.0));
+    let op = k.ruled_sheet([&a0, &a1], [&b0, &b1], [1, 2, 3, 4]).unwrap();
+    assert!(k.is_valid(op.shape).unwrap());
+    let volume = k.mass_properties(op.shape, 1.0).unwrap().volume;
+    let want = FRAC_PI_2 / 2.0 * (32.0 * 32.0 - 30.0 * 30.0) * 40.0;
+    assert!((volume - want).abs() < 1e-2 * want / 100.0, "{volume} {want}");
+    k.release(op.shape);
+
+    // What is no sheet is an error, in the kernel's words.
+    let short = along(3, |f| Vec3::new(f, 0.0, 0.0));
+    assert!(matches!(k.ruled_sheet([&short, &short], [&short, &short], [0; 4]), Err(KernelError::InvalidInput(_))));
+    let (a0, a1) = (round(30.0, 0.0), rim(1.0, 1.0));
+    assert!(matches!(k.ruled_sheet([&a0, &a1], [&a0, &a1], [0; 4]), Err(KernelError::InvalidInput(_))));
+    assert_eq!(k.live_shapes(), 0);
+}

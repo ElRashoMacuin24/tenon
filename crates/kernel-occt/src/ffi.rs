@@ -242,6 +242,10 @@ pub(crate) mod bridge {
         /// The profile's outline rolled round its frame's Z axis: x is the angle `x / rho` from the
         /// frame's X, y the distance along the axis; from radius `inner` to radius `outer`.
         fn roll(profile: &ProfileIn, rho: f64, inner: f64, outer: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// The solid between the ruled surfaces through rims `a0`, `a1` and through rims `b0`,
+        /// `b1`: start cap and end cap; `tags`: the walls along `a0`, along `a1`, at the first
+        /// points, at the last.
+        fn ruled_sheet(a0: &[V3], a1: &[V3], b0: &[V3], b1: &[V3], tags: &[u64], hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// Revolution of the profile about an axis, from angle `start` sweeping `sweep` radians;
         /// `full` makes a closed revolution.
         fn revolve(profile: &ProfileIn, origin: &V3, dir: &V3, start: f64, sweep: f64, full: bool, hist: &mut HistoryOut)

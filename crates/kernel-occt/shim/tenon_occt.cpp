@@ -60,7 +60,9 @@
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRep_Builder.hxx>
+#include <GeomAPI_Interpolate.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx>
+#include <NCollection_HArray1.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <Geom_Circle.hxx>
 #include <Geom_Ellipse.hxx>
@@ -1074,6 +1076,92 @@ std::unique_ptr<Shape> roll(const ProfileIn& profile, double rho, double inner, 
           }
           break;
         }
+      }
+    }
+    return out;
+  });
+}
+
+namespace {
+
+// A smooth curve through points, one step of its parameter from each to the next.
+TopoDS_Edge edge_through(rust::Slice<const V3> points) {
+  const int n = static_cast<int>(points.size());
+  occ::handle<NCollection_HArray1<gp_Pnt>> at = new NCollection_HArray1<gp_Pnt>(1, n);
+  occ::handle<NCollection_HArray1<double>> steps = new NCollection_HArray1<double>(1, n);
+  for (int i = 0; i < n; ++i) {
+    at->SetValue(i + 1, pnt(points[static_cast<std::size_t>(i)]));
+    steps->SetValue(i + 1, static_cast<double>(i));
+  }
+  GeomAPI_Interpolate curve(at, steps, false, 1.0e-9);
+  curve.Perform();
+  if (!curve.IsDone()) {
+    throw std::runtime_error("could not draw a curve through the points of a rim");
+  }
+  BRepBuilderAPI_MakeEdge edge(curve.Curve());
+  if (!edge.IsDone()) {
+    throw std::runtime_error("could not make an edge of a rim");
+  }
+  return edge.Edge();
+}
+
+TopoDS_Edge straight(const V3& a, const V3& b) {
+  BRepBuilderAPI_MakeEdge edge(pnt(a), pnt(b));
+  if (!edge.IsDone()) {
+    throw std::runtime_error("a line across a ruled sheet has no length");
+  }
+  return edge.Edge();
+}
+
+} // namespace
+
+std::unique_ptr<Shape> ruled_sheet(rust::Slice<const V3> a0, rust::Slice<const V3> a1, rust::Slice<const V3> b0, rust::Slice<const V3> b1,
+                                   rust::Slice<const std::uint64_t> tags, HistoryOut& hist) {
+  return guarded("ruled_sheet", [&] {
+    const std::size_t n = a0.size();
+    if (n < 4 || a1.size() != n || b0.size() != n || b1.size() != n || tags.size() != 4) {
+      throw std::invalid_argument("a ruled sheet has four rims of at least four points, as many on each, and four tags");
+    }
+    const TopoDS_Edge rim_a0 = edge_through(a0);
+    const TopoDS_Edge rim_a1 = edge_through(a1);
+    const TopoDS_Edge rim_b0 = edge_through(b0);
+    const TopoDS_Edge rim_b1 = edge_through(b1);
+    const TopoDS_Face side_a = BRepFill::Face(rim_a0, rim_a1);
+    const TopoDS_Face side_b = BRepFill::Face(rim_b0, rim_b1);
+    const TopoDS_Face walls[4] = {
+        BRepFill::Face(rim_a0, rim_b0),
+        BRepFill::Face(rim_a1, rim_b1),
+        BRepFill::Face(straight(a0[0], a1[0]), straight(b0[0], b1[0])),
+        BRepFill::Face(straight(a0[n - 1], a1[n - 1]), straight(b0[n - 1], b1[n - 1])),
+    };
+    BRepBuilderAPI_Sewing sew(1.0e-6);
+    sew.Add(side_a);
+    sew.Add(side_b);
+    for (const TopoDS_Face& wall : walls) {
+      sew.Add(wall);
+    }
+    sew.Perform();
+    if (sew.NbFreeEdges() > 0) {
+      throw std::runtime_error("the faces of the ruled sheet do not close");
+    }
+    TopExp_Explorer shells(sew.SewedShape(), TopAbs_SHELL);
+    if (!shells.More()) {
+      throw std::runtime_error("the faces of the ruled sheet do not make a shell");
+    }
+    BRepBuilderAPI_MakeSolid make_solid(TopoDS::Shell(shells.Current()));
+    if (!make_solid.IsDone()) {
+      throw std::runtime_error("the ruled sheet is not a solid");
+    }
+    TopoDS_Solid solid = make_solid.Solid();
+    BRepLib::OrientClosedSolid(solid);
+    require_valid(solid, "the ruled sheet gave an invalid solid (is it too tightly curved for its thickness, or does it cross itself?)");
+    auto out = wrap(solid);
+    add_role(hist, ROLE_START_CAP, *out, sew.Modified(side_a));
+    add_role(hist, ROLE_END_CAP, *out, sew.Modified(side_b));
+    for (std::size_t i = 0; i < 4; ++i) {
+      TagGen gen{tags[i], 0, 0};
+      if (locate(*out, sew.Modified(walls[i]), gen.gen_kind, gen.gen_index)) {
+        hist.tagged.push_back(gen);
       }
     }
     return out;

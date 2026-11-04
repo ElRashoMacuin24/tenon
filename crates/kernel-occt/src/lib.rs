@@ -462,6 +462,29 @@ impl Kernel for OcctKernel {
         self.finish(shape, hist)
     }
 
+    fn ruled_sheet(&mut self, a: [&[Vec3]; 2], b: [&[Vec3]; 2], tags: [u64; 4]) -> KResult<Op> {
+        self.not_cancelled()?;
+        let n = a[0].len();
+        if n < 4 || a[1].len() != n || b[0].len() != n || b[1].len() != n {
+            return Err(bad("a ruled sheet has four rims of at least four points, as many on each"));
+        }
+        if n > 20_000 {
+            return Err(bad("a ruled sheet's rims have too many points"));
+        }
+        let points = |rim: &[Vec3]| -> KResult<Vec<sys::V3>> {
+            rim.iter()
+                .map(|p| {
+                    check::point("a point of a ruled sheet", *p)?;
+                    Ok(v3(*p))
+                })
+                .collect()
+        };
+        let (a0, a1, b0, b1) = (points(a[0])?, points(a[1])?, points(b[0])?, points(b[1])?);
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::ruled_sheet(&a0, &a1, &b0, &b1, &tags, &mut hist).map_err(failed("ruled_sheet"))?;
+        self.finish(shape, hist)
+    }
+
     fn revolve(&mut self, profile: &Profile, axis: &Axis, angle: &AngleExtent) -> KResult<Op> {
         self.not_cancelled()?;
         check::point("revolve axis origin", axis.origin())?;
