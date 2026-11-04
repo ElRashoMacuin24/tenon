@@ -3400,7 +3400,8 @@ against the code as it was before it:
   same to within what its curved sides came to (38 studies: peaks within 0.06%, displacements within
   0.08%). On a wall not symmetric about the load (part of a round, a slot's end, a bore with slanted
   ends) it is not: what is left over can be more than the load (about 1.75 times, on a rounded corner),
-  the old load came out off the way asked, about twice its size there, and the new one goes the way
+  the old load came out off the way asked and too large (1.2 times on a square corner's fillet loaded
+  along a side, about twice on a 45 degree wedge), and the new one goes the way
   asked with its pushes no longer square to the face. Peaks and displacements on such walls move by tens of percent, up to about 50%, either way, and the far field
   is nearer an even force of the same size than it was. No square load can do this in general: pushes
   square to a 45 degree wedge cannot add up to a direction outside it. Whether so large a remainder

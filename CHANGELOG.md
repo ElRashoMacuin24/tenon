@@ -5,6 +5,29 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ## Unreleased
 
+**New:** Optimize Shape in Stress Analysis works out where material is needed to carry a study's
+loads, for a share of the mass kept, as a shape to model over (it needs Gmsh and CalculiX, as
+Simulate does). Sketches gain text, ellipses, arc slots, Stretch and Smooth (G2). Parts gain Extrude
+To, To Next and Between, Revolve To and To Next, spotface and tapped holes, holes placed by clicking
+a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and placing by the pointer.
+
+### Coming from 0.1.0
+
+- **Your files open as they were,** and one that uses nothing new is saved byte for byte, so it goes
+  on opening in 0.1.0.
+- **Solve again** any study with a bearing load on a wall not symmetric about the load: results move
+  by tens of percent (below). A part in pieces with a piece not held fast is now refused, where it
+  gave a meaningless answer.
+- **Hole:** Tap Drill is now Tapped, which puts the thread on the wall. A hole from 0.1.0 opens as it
+  is: Simple, whatever its size, until you choose Tapped; its own Thread feature stays.
+- **Constrain:** Flush is now Mate's second solution.
+- **Going back to 0.1.0.** It refuses a file that uses what is new, in the words "the project is
+  damaged", though it is not: text, ellipses or Smooth; an extrusion To, To Next or Between; a
+  revolution To, To Next, by two angles or Flipped; a spotface or To hole; a variable or face fillet;
+  a Tangent or Symmetry relationship. Other new things it opens, and on a save it loses them: a
+  tapped hole's thread (the solid is the same), which points are sketch points, which sketches are
+  shown, and a study's Optimize Shape settings.
+
 ### Stress checks
 
 - **Optimize Shape** (topology optimization): in Stress Analysis, the Optimize panel works out
@@ -32,8 +55,8 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
   to the side of the element it is on. On a whole round with flat ends that changes little (at most
   0.08% in the 38 studies compared). On a wall not symmetric about the load (a rounded corner, a
   slot's end, a bore with slanted ends) it changes results by tens of percent, up or down: the old
-  load came out off the way asked, about twice its size on a rounded corner, and the new one goes
-  the way asked, with its pushes then no longer square to the face, since pushes square to such a
+  load came out off the way asked and too large (1.2 times on a square corner's fillet loaded along
+  a side, up to about twice on a shallower round), and the new one goes the way asked, with its pushes then no longer square to the face, since pushes square to such a
   wall cannot add up to that direction. Studies with a bearing load on such a wall should be solved
   again.
 
@@ -116,6 +139,9 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- A change while Simulate runs now stops it, as it does Optimize Shape. Define A-Side gives up on
+  Esc, as it says. Finish Analysis closes Mesh Settings. A long status is cut at the counts, with all
+  of it under the pointer.
 - A run ended by a crash or from outside left its working folder in the system's temporary folder
   for good. The first run of a later start now takes those away.
 - After Undo or Redo the status bar went on saying what had been undone, and in a new sketch the

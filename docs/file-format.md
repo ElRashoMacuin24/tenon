@@ -853,8 +853,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   that does not know an optional field or table of a record opens the file without it and drops
   it when it saves, so what would make another part without it gets a type of its own (DEC-124).
   A 0.1.0 build refuses, in the words "the project is damaged", a file using text, an ellipse or
-  a Smooth constraint; To, To Next, Between or two distances of an extrusion; To, To Next or two
-  angles of a revolution, or one turned the other way; a spotface or To hole; a variable or face
+  a Smooth constraint; To, To Next or Between of an extrusion; To, To Next or two angles of a
+  revolution, or one turned the other way; a spotface or To hole; a variable or face
   fillet; or a Tangent or Symmetry relationship. It opens the part the same and silently loses, on
   a save, a tapped hole's thread (`tapped`; the drawing's note and the Threads list lose it at
   once), which points are sketch points (`sketch_point`), which sketches are shown (`visible`)
