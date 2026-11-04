@@ -4000,3 +4000,150 @@ there to take from.
 **Old builds.** A closed list of annotation types meant a build from before this refuses such a
 file whole, with the line and the type's name, and changes nothing. That cannot be changed from
 here, and it is the safer way: it does not drop what it does not know and save over it.
+
+## DEC-133 Emboss, Derive and a user coordinate system (2026-11-03)
+
+The owner said "Make sure all the features on the menu are available not grayed out". Three of the
+greyed entries are features of a part. What they should do comes from how such commands are
+commonly understood.
+
+**Emboss.** Three ways, as a feature with a sketch, a depth, a direction and a taper:
+
+- *Raise and Recess* go on what the profile is seen on along the sketch's normal. Weighed first and
+  not built: the whole part offset by the depth (`BRepOffsetAPI_MakeOffsetShape`), cut to the
+  profile. That offsets every face, walls too, so that a letter near a wall would go up the wall,
+  and OCCT's offset of a whole part with small fillets is a known weak point. Built instead: a box
+  round the profile is taken through the part, the faces of the part inside it that look the way the
+  feature looks (more than about a degree) are each thickened by the depth along their own normal
+  (`Kernel::thicken`, OCCT's simple offset, no intersections to go wrong), and what comes of it is
+  cut to the profile's prism. So only the faces it goes on are followed, the sides of what is raised
+  run along the sketch's normal as the profile is seen, and a surface OCCT offsets exactly stays
+  exact: the volumes on a flat face, a cylinder, a cone and a ball agree with hand figures to 1e-2
+  mm^3.
+
+  What was built first and did not hold, found by a review with hand figures: one normal for a whole
+  face, and "seen" as joined to the space above. Once the box passed a shaft's side the whole round
+  came as one face, and one normal at the middle of its (u, v) box decided for all of it, so that
+  according to where the seam fell a wide profile raised a collar right round, was refused falsely,
+  did nothing with no error, or left a chip. And the space above runs round under an overhang, so the
+  floor under a flange took a layer through the flange. Now each face is first cut where it turns
+  away (`Kernel::facing`: its normal square to the way it is looked at), and each piece that looks
+  the right way loses what lies in the shadow of another piece (that piece swept along the normal,
+  `Kernel::prism_of_face`, cut from it). The cut of a cylinder, cone or ball is exact: a plane, through
+  the axis, the apex or the centre. Any other surface is searched on a grid of its (u, v) box, the
+  places where the normal's sign changes put right by halving along the grid's lines and joined up into
+  curves on the surface, each its own edge where it turns sharply. OCCT's `Contap_Contour` does the
+  same search and was weighed; its several kinds of line would each need turning into edges, and
+  the search is short enough to own and to test. A plane or a surface swept along the look was
+  weighed and left, since such a sheet is tangent to the surface exactly where it should cut it. Nor is
+  the whole part swept: that makes one solid per face with faces lying on faces. Each layer is cut to
+  the profile before they are joined, and where the kernel cannot make a whole of them (the layers on
+  a shaft's rounded end and its flat, which touch all round, came to nothing, with no complaint), they
+  go on to the part separately, which it does well. What the profile
+  is seen from goes by the profile, not by the box round it, which grew with the depth and could reach
+  the plate's outside from a sketch in a hole's middle. The sketch plane on or above a face looks down
+  at it; a profile in the material looks from where the material over it ends; one in open space
+  looks from there, as far up as the next material over it; the sketch's normal says which way, and
+  Flip the other.
+
+  It goes on one solid, the last that the profile falls on, as a feature goes on the last solid. Going
+  on every solid it is seen on was weighed and left: a feature changes one solid everywhere else in
+  the program. So each solid is judged by itself, and another solid lying over it does not hide it. What leaves the part in more pieces, or changes nothing, is refused in words.
+- *From Sketch Plane* is the sketch plane made a land: on the side the feature looks, the prism is
+  taken out of the part; on the other it is added; each as far as the depth. Where the plane lies
+  off the part the shape stands up to it, where it lies in the part it goes down to it, and at a
+  slope both, in one feature. The other reading, also weighed and not built, a symmetric difference
+  of one prism with the part, would leave material floating over a pocket wherever the prism
+  straddles the surface. What is added must reach the part, or it is refused in words, and so is a
+  plane on the part's surface, with which nothing would change. Flipped on the surface, what is added
+  reaches the part only along the rim of what is taken away; flipped inside the part, a closed space
+  stays under it. Comparing the solids and shells with what they were refuses both, and leaves
+  the part as it was, since a preview must not show it either way.
+- *Wrap to Face* lays the profile round one cylinder or cone with its lengths kept. On a cylinder
+  it is `Kernel::roll`, written for sheet metal bends (it now takes ellipse arcs too, exactly, as it
+  did circles): `x` along the round is the angle `x / r`. On a cone, a new `Kernel::roll_cone`: the
+  cone rolled out on the sketch's plane, which is what keeps lengths: `(x, y)` lies `hypot(x, y)` from
+  the apex, `atan2(x, y) / sin(a)` round. Lines go to curves on the cone, so each curve is a spline
+  through 25 points in the cone's (angle, distance) plane, and the sides are ruled between the two
+  cones. The tool reaches a little (`OVER`, at most 0.05 mm) past the layer on both sides and is cut
+  to the layer on the picked face, that face thickened by the depth: so that cut meets no face lying
+  on a face, and what runs past the face's edge is left off, as a raised profile stops at a
+  face's edge. (Without it a profile past the end of a shaft stood in the air, and one wholly past it
+  was a second, floating solid.) A profile wholly off the face is refused. Where the sketch lies:
+  across the axis, from the axis as seen on the sketch's plane, so a letter added does not shift the
+  others; along a cone, the profile's middle stays where it is seen. A hole's wall is the same, the
+  material outside.
+
+Positive taper is the way that lets the shape out of a mould (what is raised narrows going up, what
+is recessed going down, a land from the plane opens away from it), hinged at the sketch plane.
+Refused with Wrap to Face: the sides there are square to the surface and left so.
+
+**Derive.** A feature holding the other part's path, a scale, an optional mirror plane and join or
+new solid. Its solid is rebuilt from that file each time, in this part's kernel: nothing of its
+contents is in this file, which keeps how a file holds another's geometry open for the owner.
+
+The model crate reads no files. As an assembly session is handed its parts, a `Document` is handed
+a table (`Links`, never written, carried in an `Arc` so a snapshot for the worker costs nothing):
+what each path it names came to, a `Document` or why not in words, with a stamp that changes with
+the file or anything it derives from. `tenon_io::derive` fills it in: when a file is opened, when
+a command adds or changes a feature, when `model.regenerate` or Rebuild All runs, and when crash
+recovery puts a kept part back. A save does not: a change of the other file comes on a rebuild or
+on opening, so that Ctrl+S never changes the geometry unasked. Saved in a new place, it is read only
+to find out whether its paths now lead back to it. The stamp goes into
+the feature's prefix hash, so a rebuild starts from the checkpoint before it. The table changing is
+no edit: `Session::set_links` puts it in the undo history too, with no step and nothing unsaved.
+
+Paths are as an assembly's (DEC-024): full in memory, relative to the file on disk, rewritten when
+the file is saved elsewhere. A relative path set through `feature.add` or `feature.update` is from this
+part's file, and refused in words when it has none; a script's is from the script's folder, as
+every other path of a script is. A file missing or not readable leaves a table entry in words: the
+feature fails with them, the features after it are not computed as after any failure, and the part opens.
+
+*Deriving itself.* Files are read along a chain from the document's own file, compared by their
+canonical paths; a file already on the chain gets an entry that says so, and the chain has a length
+limit. `model.derive` and the panel refuse at once, including when the trouble is further down. A
+part told before it has a file, then saved over what it derives from, is caught when it is saved.
+
+Faces are named after the face they were there, `From { feature, source: its name's key, ordinal:
+which solid }`, so features built on a derived solid hold on as long as the other part's names do.
+Work features, sketches and parameters do not come in.
+
+**UCS.** One feature, `WorkGeom::Ucs(Frame)`, with typed offsets and turns from the origin or another
+UCS, or three points. Turns are about its own X, then the Y that gives, then the Z that gives, each in
+the file, so a change to one reads as that change. Its planes are what the origin planes are to the
+part's origin (a sketch on its YZ has its x along its Y), so the two read alike.
+
+The references are new variants of what work features already go through (`PlaneRef::Ucs { feature,
+plane }`, `AxisSel::Ucs`, `AxisRef::Ucs`, `DirectionRef::Ucs`, `PointSel::Ucs`), not a work plane and
+two more features for each UCS: three planes, three axes and a point would fill the browser. In the
+browser a UCS opens as the Origin folder does, and in the view each part of the triad is picked.
+Point picks gain corners (`PointSel::Vertex`: an edge and which end, kept as where it was picked,
+judged from the edge's own middle, so that it is the same corner after the edge has moved), for three
+points on a plain box; a three-point work plane takes them too.
+
+Measure took faces and edges only. Since a UCS "can be used wherever", `Entity::Work` measures to work
+planes, axes and points and a UCS's parts: plain geometry between themselves, and to a face or
+edge through a stand-in the kernel measures to (a face of a plane, a thin cylinder of an axis, a small
+ball of a point), with the far end then put on the line or point itself. One picked alone says where
+it is and which way it goes, having no size to say.
+
+The triad is a share of the part, kept between 56 and 130 pixels of the view: a floor in millimetres
+hid it on a part of 1 mm (it reached behind the camera) and made it fill the view on one of 2 mm. Of
+an axis that still reaches behind the camera, what lies in front is drawn. Its name has a backing,
+to be read over a lit face, and one being set up is called New UCS, as a plane or an axis is New plane
+or New axis, in the view.
+
+**What was left out, said in ROADMAP.md:** Emboss: a top face's appearance of its own; one way only of
+the three directions from the plane; the wedge over an outside corner stays open (each face has its
+own layer); one solid only; a taper hinged at the sketch plane, not at the faces; Wrap to Face onto
+one face only and with no taper. Derive: choosing which solids, sketches,
+work features or parameters come in; a scale per axis; following the file without a rebuild. An
+assembly or drawing that shows a derived part takes a change of the other file when it is opened
+again. UCS: pick by vertex for its origin and points only, no moving it with the triad's handles; no
+coordinate readout in a UCS when sketching.
+
+**Reading the other file** goes as every read of a file does since DEC-125: through `project::read_file`
+(a plain file, of the size a document may be), and not to another machine because a file names it,
+unless the file naming it is on that machine. What is wrong says so on the feature. Its sizes, and
+Emboss's and a UCS's, are the rebuild's to judge (DEC-126); only a path that can be no file is refused
+on reading.

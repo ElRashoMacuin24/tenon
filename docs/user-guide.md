@@ -139,15 +139,56 @@ sketch's or work feature's menu in the browser has **Visibility**, which shows o
 
 Extrude, Revolve, Sweep, Loft, Coil, Rib; Hole, Thread,
 Fillet, Chamfer, Shell, Draft, Split, Combine; rectangular and circular patterns, Mirror;
-work planes, axes and points; Box, Cylinder, Sphere and Torus. Every one opens its panel
+work planes, axes and points; Emboss, Derive and UCS; Box, Cylinder, Sphere and Torus. Every one opens its panel
 again when its row is double-clicked. A fillet can be Variable (a radius at each end of its
 edges, marked in the view), and **Face Fillet** (under Fillet) rounds every edge between two
 sets of faces.
 
+**Emboss** puts a closed profile from a sketch on the part, its text too. Draw it first: the panel
+opens on the last sketch nothing has been made from yet, and its list has the others. **Raise from Face** and
+**Recess into Face** go on what the profile is seen on along the sketch's normal, by the depth along
+each face's normal, so that on a shaft the top follows the round; Direction says which way the
+faces look. Only what can be seen from the sketch takes it: a profile wider than a shaft stops at
+the shaft's sides, and a floor under an overhang takes nothing where the overhang covers it. It
+goes on one solid, the last that the profile falls on, even if the profile is seen on another as
+well, and even if another solid lies over it: solids are judged one at a time; a profile drawn in open space, in a hole's middle say, is seen from there. A profile that
+falls on nothing, or a cut that would leave a piece of the part loose, is refused in words.
+
+**From Sketch Plane** adds material on one side of the plane and takes it away on the other, each as
+far as the depth: the shape ends on the plane. Direction changes the two sides over. Keep the plane
+off the part's surface: on the surface one way changes nothing, and the other would leave what is
+added standing loose on the rim of what is taken away; a plane inside the part, flipped, would shut
+a hollow in under what is added. All of these are refused in words, and the part stays as it was.
+
+A taper leans the sides so that the shape comes out of a mould. It is hinged at the sketch plane, so
+with the plane away from the faces the foot of what is raised is wider than the profile, the more
+the further off it is: for the profile's own size at the foot, draw the sketch on the face. Tick
+**Wrap to Face** and click a cylinder or a cone to lay the profile round it with its lengths kept: a
+word as long as the round it covers. It stays on that face: what runs past the face's edge is left
+off, and a profile wholly off the face is refused. It reads as the sketch does from the side its
+normal looks to, so face the sketch outward. On a cone a straight line stays straight as the cone
+would be laid out flat, so a long line of text bends down at its ends.
+
+**Derive** brings in the solid of another part file: choose the file, then a scale and a mirror
+plane if it needs them, joined to the part or as a new solid. Nothing of that file is copied into
+this one: its path is kept relative to this file, so a folder of parts can move together. When the
+other file has changed, **Manage > Rebuild All** (or opening the part again) takes the change;
+saving the part does not, under this name or another. If the file is gone the feature says so, the
+part still opens, and a double-click on its row lets you choose the file again.
+
+**UCS** (Work Features) is a coordinate system of your own: typed offsets and turns from the
+part's origin or from another UCS, or Three Points clicked on the part (its origin, a point on its
+X, a point on its Y side). It is drawn as a triad, and its row in the browser opens like the Origin
+folder. Each of its planes, axes and its origin can be clicked in the view or the browser wherever
+work planes, axes and points are taken: to start a sketch, for Extrude To, for a mirror plane or
+a pattern's direction, and to measure to. The triad keeps a size you can see and click whatever the
+size of the part. Measure says where one of its axes or planes is, and which way it goes, before a
+second pick gives the distance and the angle.
+
 **Inspect > Properties** gives the part its number and description (for parts lists) and
 its material (its colour, density and how strong it is), and says its mass, volume, centre
 of gravity and moments of inertia. **Inspect > Measure** measures
-distances, angles, lengths and areas.
+distances, angles, lengths and areas, and to work features.
 
 ## Sheet metal
 

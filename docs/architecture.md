@@ -109,8 +109,13 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
 - **Tool solids.** Features that a pattern or mirror copies keep their solid before it was
   combined with the part (`Regen::tools`); a pattern transforms copies of it and combines each
   copy the same way (DEC-022).
-- **Work geometry.** Work planes, axes and points are computed in history order into
-  `Regen::work`; sketches, mirrors, patterns and revolves look them up there.
+- **Work geometry.** Work planes, axes, points and user coordinate systems are computed in
+  history order into `Regen::work`; sketches, mirrors, patterns and revolves look them up there.
+- **Other part files.** The model crate reads no files. A `Document` carries a table of what each
+  part file its Derive features name came to (`Links`, never written), filled in by
+  `tenon_io::derive` when a file is opened, a command names one, the part is rebuilt or recovery
+  puts it back, and not on a save; the feature rebuilds that document through the same kernel
+  (DEC-133).
 - **End of Part.** Features at and below the marker get `RolledBack` and are not computed.
 - **Checkpoints.** `RegenCache` keeps the part as it stood before each feature (in a history
   longer than 128, before every few): second handles to its shapes (`Kernel::duplicate`, no

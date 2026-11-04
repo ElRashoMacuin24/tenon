@@ -343,10 +343,15 @@ pub fn version_1_copy(path: &Path) -> PathBuf {
 }
 
 /// Writes `doc` to `path` atomically; returns where a version-1 original was kept, if one was.
+/// The part files it derives from are written relative to the file (DEC-133).
 pub fn save(path: &Path, doc: &Document, extra: &Map<String, Value>) -> Result<Option<PathBuf>, ProjectError> {
-    write_file(path, &to_bytes(doc, extra)?)
+    write_file(path, &to_bytes(&crate::derive::written(doc, path), extra)?)
 }
 
+/// Reads the part at `path`, with what it derives from: a part that is missing does not stop it
+/// opening, and the feature that needs it says so when it is rebuilt.
 pub fn open(path: &Path) -> Result<(Document, Map<String, Value>), ProjectError> {
-    from_bytes(&read_to_edit(path)?)
+    let (mut doc, extra) = from_bytes(&read_to_edit(path)?)?;
+    crate::derive::attach(&mut doc, path);
+    Ok((doc, extra))
 }

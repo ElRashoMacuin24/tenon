@@ -91,6 +91,18 @@ impl Kernel for Timed {
     fn roll(&mut self, profile: &Profile, rho: f64, inner: f64, outer: f64) -> KResult<Op> {
         timed!(self, "roll", self.inner.roll(profile, rho, inner, outer))
     }
+    fn roll_cone(&mut self, profile: &Profile, half_angle: f64, inner: f64, outer: f64) -> KResult<Op> {
+        timed!(self, "roll_cone", self.inner.roll_cone(profile, half_angle, inner, outer))
+    }
+    fn thicken(&mut self, face: FaceId, distance: f64) -> KResult<Op> {
+        timed!(self, "thicken", self.inner.thicken(face, distance))
+    }
+    fn facing(&mut self, face: FaceId, way: Vec3) -> KResult<Vec<ShapeHandle>> {
+        timed!(self, "facing", self.inner.facing(face, way))
+    }
+    fn prism_of_face(&mut self, face: FaceId, along: Vec3) -> KResult<ShapeHandle> {
+        timed!(self, "prism_of_face", self.inner.prism_of_face(face, along))
+    }
     fn sweep(&mut self, profile: &Profile, path: &Path3, opts: &SweepOpts) -> KResult<Op> {
         timed!(self, "sweep", self.inner.sweep(profile, path, opts))
     }
@@ -135,6 +147,9 @@ impl Kernel for Timed {
     }
     fn edge_info(&self, edge: EdgeId) -> KResult<EdgeInfo> {
         timed!(self, "edge_info", self.inner.edge_info(edge))
+    }
+    fn face_normal(&self, face: FaceId) -> KResult<Vec3> {
+        timed!(self, "face_normal", self.inner.face_normal(face))
     }
     fn edge_points(&self, edge: EdgeId, deflection: f64) -> KResult<Vec<Vec3>> {
         timed!(self, "edge_points", self.inner.edge_points(edge, deflection))

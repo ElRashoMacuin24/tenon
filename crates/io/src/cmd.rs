@@ -25,6 +25,7 @@ pub(crate) fn path_in(p: &Value, key: &str) -> Result<PathBuf, CmdError> {
 fn file_save(s: &mut Session, p: &Value) -> CmdResult {
     let path = path(p)?;
     let kept = project::save(&path, s.document(), &s.file_extra).map_err(|e| CmdError(e.to_string()))?;
+    crate::derive::set_home(s, &path);
     s.mark_saved();
     let kept: Vec<String> = kept.map(|k| k.display().to_string()).into_iter().collect();
     Ok(json!({ "path": path.display().to_string(), "kept_version_1": kept }))
@@ -271,6 +272,13 @@ static COMMANDS: &[CommandSpec] = &[
         run: Run::Doc(library_new),
     },
     CommandSpec {
+        id: "model.derive",
+        label: "Derive",
+        help: "The solid of another part file brought into this one, rebuilt from that file each time: path (.tenon; kept relative to this file when it is saved); scale (default 1, about the origin); mirror: a plane, then mirrored in it; operation: join (default) | new_body. A file that is missing or does not read is refused here, and in a part that already has it the feature says so and the part still opens. When the file changes, the part follows on model.regenerate or on being opened again, and not on file.save. A part cannot derive itself, directly or through another. In feature.add and feature.update, a relative path is from this part's file, and refused when it has none",
+        mutates: true,
+        run: Run::Doc(crate::derive::model_derive),
+    },
+    CommandSpec {
         id: "file.diff",
         label: "Compare Files",
         help: "a, b: two parts, assemblies or drawings (any format version). Returns what changed from a to b: each change's section, op (added, removed, changed, moved), item and detail; same; and the text tenon-cli diff prints",
@@ -347,5 +355,13 @@ pub fn all_commands() -> impl Iterator<Item = &'static CommandSpec> {
 /// Runs any command (model or file) by id.
 pub fn run(s: &mut Session, id: &str, params: &Value, kernel: Option<&mut dyn Kernel>) -> CmdResult {
     let spec = find(id).ok_or_else(|| CmdError(format!("unknown command `{id}`")))?;
-    s.run_as(spec, crate::schemas::schema(id), params, kernel)
+    // (Rebuilding takes what the part files it derives from hold now; whatever a command added
+    // or changed, what it names is read.)
+    if id == "model.regenerate" {
+        crate::derive::reload(s);
+    }
+    let full = crate::derive::full_path_in_feature(s, id, params)?;
+    let result = s.run_as(spec, crate::schemas::schema(id), full.as_ref().unwrap_or(params), kernel);
+    crate::derive::follow(s);
+    result
 }

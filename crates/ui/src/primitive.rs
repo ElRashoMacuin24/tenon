@@ -148,6 +148,7 @@ impl PrimitivePanel {
             PlaneRef::Origin(o) => json!({ "plane": format!("{o:?}").to_lowercase() }),
             PlaneRef::Face(f) => json!({ "face": f }),
             PlaneRef::Work(id) => json!({ "work_plane": id.0 }),
+            PlaneRef::Ucs { feature, plane } => json!({ "ucs_plane": { "ucs": feature.0, "plane": format!("{plane:?}").to_lowercase() } }),
         };
         p["x"] = json!(c.x);
         p["y"] = json!(c.y);
@@ -324,6 +325,10 @@ impl Workbench {
                 WorkGeom::Plane(f) if w == id => Some(*f),
                 _ => None,
             }),
+            PlaneRef::Ucs { feature, plane } => self.scene.work.iter().find_map(|(w, g)| match g {
+                WorkGeom::Ucs(f) if w == feature => tenon_model::regen::ucs_plane(f, *plane),
+                _ => None,
+            }),
         }
     }
 
@@ -479,6 +484,7 @@ impl Workbench {
             PlaneRef::Origin(OriginPlane::YZ) => "YZ Plane".into(),
             PlaneRef::Face(_) => "Face".into(),
             PlaneRef::Work(id) => self.feature_name(*id),
+            PlaneRef::Ucs { feature, plane } => format!("{} {plane:?} Plane", self.feature_name(*feature)),
         }
     }
 

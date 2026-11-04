@@ -3,7 +3,7 @@
 //! schema, whichever registry it is in ([`schema`]).
 
 use tenon_drawing::schemas::{AT, SIZES, VIEW_SCALE};
-use tenon_model::schema::Ty::{Angle, Bool, Either, Face, Id, Int, Length, List, Null, Number, Path, Text, Vector, Word};
+use tenon_model::schema::Ty::{Angle, Bool, Either, Face, Id, Int, Length, List, Null, Number, Object, Path, Text, Vector, Word};
 use tenon_model::schema::{CommandSchema as C, Param, opt, req};
 
 const LINEAR: Param = opt("linear", Length, "how far the mesh may be from the surface (default 0.01)");
@@ -26,6 +26,20 @@ static PART: &[C] = &[
         &[
             req("part", Text, "a standard part's id (see library.list)"),
             opt("size", Text, "one of its sizes (default: the one it is drawn at, such as M8x30 for a screw)"),
+        ],
+    ),
+    C::new(
+        "model.derive",
+        &[
+            req("path", Path, "the other part's file (.tenon)"),
+            opt("scale", Number, "scaled by this about the origin, 0.001 to 1000 (default 1)"),
+            opt(
+                "mirror",
+                Either(&[Word(&["xy", "yz", "xz"]), Face, Object]),
+                "then mirrored in this plane: an origin plane, a flat face, a work plane {\"work\": id} or a plane of a UCS {\"ucs\": id, \"plane\": \"xy\"}",
+            ),
+            opt("operation", Word(&["join", "new_body"]), "joined to the part (default) or a new solid"),
+            opt("equations", Object, "equations for values of the feature: {\"/scale\": \"size / 10\"}"),
         ],
     ),
     C::new("file.diff", &[req("a", Path, "a part, assembly or drawing file"), req("b", Path, "the file to compare it with")]),

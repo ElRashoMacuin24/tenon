@@ -357,7 +357,7 @@
       "id": "sketch.create",
       "label": "New Sketch",
       "undoable": true,
-      "description": "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref, or work_plane: a work plane's id; project_origin (default true: a fixed point at the part origin, returned as `origin`); project_edges (default false): on a face, the face's edges are shown in the sketch as reference geometry, as sketch.project does (or give `edges` and `geometry` as for sketch.project). Returns the feature, and the entities `projected`",
+      "description": "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref, or work_plane: a work plane's id, or ucs_plane: a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}; project_origin (default true: a fixed point at the part origin, returned as `origin`); project_edges (default false): on a face, the face's edges are shown in the sketch as reference geometry, as sketch.project does (or give `edges` and `geometry` as for sketch.project). Returns the feature, and the entities `projected`",
       "params": {
         "type": "object",
         "properties": {
@@ -378,6 +378,10 @@
             "type": "integer",
             "minimum": 0,
             "description": "a work plane's feature id"
+          },
+          "ucs_plane": {
+            "type": "object",
+            "description": "a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}"
           },
           "project_origin": {
             "type": "boolean",
@@ -3106,7 +3110,7 @@
       "id": "model.draft",
       "label": "Draft",
       "undoable": true,
-      "description": "faces: [face references] (the faces to tilt, on one body); the neutral plane, where the faces stay put: plane (\"xy\" | \"yz\" | \"xz\"), face (a planar face reference) or work_plane (id); angle (radians from the plane's normal, the pull direction); reverse (tilt the other way)",
+      "description": "faces: [face references] (the faces to tilt, on one body); the neutral plane, where the faces stay put: plane (\"xy\" | \"yz\" | \"xz\"), face (a planar face reference), work_plane (id) or ucs_plane (as sketch.create); angle (radians from the plane's normal, the pull direction); reverse (tilt the other way)",
       "params": {
         "type": "object",
         "properties": {
@@ -3135,6 +3139,10 @@
             "minimum": 0,
             "description": "a work plane's feature id"
           },
+          "ucs_plane": {
+            "type": "object",
+            "description": "a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}"
+          },
           "angle": {
             "type": "number",
             "x-unit": "rad",
@@ -3160,7 +3168,7 @@
       "id": "model.split",
       "label": "Split",
       "undoable": true,
-      "description": "the cutting plane: plane (\"xy\" | \"yz\" | \"xz\"), face (a planar face reference) or work_plane (id); keep: \"both\" (two bodies, default) | \"front\" (the side the plane's normal points to) | \"back\"; body: a face reference on the one body to split (default: every body the plane passes through)",
+      "description": "the cutting plane: plane (\"xy\" | \"yz\" | \"xz\"), face (a planar face reference), work_plane (id) or ucs_plane (as sketch.create); keep: \"both\" (two bodies, default) | \"front\" (the side the plane's normal points to) | \"back\"; body: a face reference on the one body to split (default: every body the plane passes through)",
       "params": {
         "type": "object",
         "properties": {
@@ -3181,6 +3189,10 @@
             "type": "integer",
             "minimum": 0,
             "description": "a work plane's feature id"
+          },
+          "ucs_plane": {
+            "type": "object",
+            "description": "a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}"
           },
           "keep": {
             "type": "string",
@@ -3293,6 +3305,76 @@
         "additionalProperties": false,
         "required": [
           "face"
+        ]
+      }
+    },
+    {
+      "id": "model.emboss",
+      "label": "Emboss",
+      "undoable": true,
+      "description": "A closed profile (text included) on the last solid it falls on. sketch; regions; style: raise (default) | recess: from the faces it is seen on along the sketch's normal, as far as they look that way and nothing lies over them, by depth along their normals, following them where they curve; from_plane: material added on one side of the sketch plane and taken away on the other, each as far as depth, refused when what is added would come loose or shut a hollow in. reverse: the faces that look against the sketch's normal; from the plane, the sides changed over. taper: rad its sides lean, hinged at the sketch plane, what is raised narrowing going up and what is recessed going down. wrap: a cylinder's or cone's face reference (Wrap to Face): raised or recessed, the profile laid round it with its lengths kept, stopping at the face's edge and refused when it lies off the face",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                {
+                  "type": "object"
+                }
+              ]
+            },
+            "description": "the closed regions of the sketch to use, each as sketch.info lists it under `select`: [curve ids], {left, right, nth} for one region of a divided sketch, or {text: id} for a text's letters (default: every outer region; a sketch of texts alone, its texts)"
+          },
+          "style": {
+            "type": "string",
+            "enum": [
+              "raise",
+              "recess",
+              "from_plane"
+            ],
+            "description": "raised from the faces (default), recessed into them, or from the sketch plane: added on one side and taken away on the other"
+          },
+          "depth": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "how far from the faces, or from the sketch plane"
+          },
+          "reverse": {
+            "type": "boolean",
+            "description": "the faces that look against the sketch's normal; from the plane, the sides changed over (default false)"
+          },
+          "taper": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "how far its sides lean: what is raised narrows going up, what is recessed going down (default 0)"
+          },
+          "wrap": {
+            "$ref": "#/$defs/face_ref",
+            "description": "Wrap to Face: a cylinder or cone to lay the profile round with its lengths kept"
+          },
+          "equations": {
+            "type": "object",
+            "description": "equations for values of the feature, by where the value is in its definition: {\"/distance\": \"width / 2\"} (lengths in mm, angles in degrees)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "depth"
         ]
       }
     },
@@ -3464,7 +3546,7 @@
       "id": "model.mirror",
       "label": "Mirror",
       "undoable": true,
-      "description": "features: [feature ids]; plane: \"xy\" | \"yz\" | \"xz\", or face: a planar face reference, or work_plane: a work plane's id",
+      "description": "features: [feature ids]; plane: \"xy\" | \"yz\" | \"xz\", or face: a planar face reference, or work_plane: a work plane's id, or ucs_plane: as sketch.create",
       "params": {
         "type": "object",
         "properties": {
@@ -3493,6 +3575,10 @@
             "type": "integer",
             "minimum": 0,
             "description": "a work plane's feature id"
+          },
+          "ucs_plane": {
+            "type": "object",
+            "description": "a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}"
           },
           "equations": {
             "type": "object",
@@ -3627,7 +3713,7 @@
                 }
               ]
             },
-            "description": "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference} or {\"sketch_point\": {\"sketch\": id, \"point\": id}}; from the first toward the second is its X"
+            "description": "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference}, {\"sketch_point\": {\"sketch\": id, \"point\": id}}, {\"ucs\": id} (its origin) or {\"vertex\": {\"edge\": edge reference, \"near\": {\"x\", \"y\", \"z\"}}} (the end of the edge nearer that place); from the first toward the second is its X"
           },
           "equations": {
             "type": "object",
@@ -3806,6 +3892,82 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "id": "work.ucs",
+      "label": "UCS",
+      "undoable": true,
+      "description": "A user coordinate system. by: offset (base: another UCS, default the part's origin; x, y, z along its axes; rx, ry, rz: rad, about its own X, then the Y and the Z that gives) | three_points (points: its origin, a point on its +X, a point on the +Y side of its XY plane). Its planes serve as {\"ucs\": id, \"plane\": \"xy\"}, its axes as {\"ucs\": id, \"axis\": \"x\"} and its origin as {\"ucs\": id} in a point",
+      "params": {
+        "type": "object",
+        "properties": {
+          "by": {
+            "type": "string",
+            "enum": [
+              "offset",
+              "three_points"
+            ],
+            "description": "how it is placed (default offset)"
+          },
+          "base": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "offset: the UCS it is measured from (default: the part's origin)"
+          },
+          "x": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "offset: along the base's X (default 0)"
+          },
+          "y": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "offset: along the base's Y (default 0)"
+          },
+          "z": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "offset: along the base's Z (default 0)"
+          },
+          "rx": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "offset: turned about its own X (default 0)"
+          },
+          "ry": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "offset: then about the Y that gives (default 0)"
+          },
+          "rz": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "offset: then about the Z that gives (default 0)"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "origin"
+                  ]
+                },
+                {
+                  "type": "object"
+                }
+              ]
+            },
+            "description": "three_points: its origin, a point on its +X, a point on the +Y side of its XY plane, each as work.plane takes one"
+          },
+          "equations": {
+            "type": "object",
+            "description": "equations for values of the feature, by where the value is in its definition: {\"/distance\": \"width / 2\"} (lengths in mm, angles in degrees)"
+          }
+        },
+        "additionalProperties": false
       }
     },
     {
@@ -4257,7 +4419,7 @@
       "id": "model.work",
       "label": "Work Features",
       "undoable": false,
-      "description": "where every work plane, axis and point is",
+      "description": "where every work plane, axis, point and UCS is",
       "params": {
         "type": "object",
         "properties": {},
@@ -4268,17 +4430,17 @@
       "id": "model.measure",
       "label": "Measure",
       "undoable": false,
-      "description": "a, and optionally b: {\"face\": face reference} | {\"edge\": edge reference} | {\"body\": n, \"face\" or \"edge\": index}; one gives its area, length or diameter, two give the distance (with the nearest points) and the angle",
+      "description": "a, and optionally b: {\"face\": face reference} | {\"edge\": edge reference} | {\"body\": n, \"face\" or \"edge\": index} | {\"work\": id} | {\"ucs\": id} (its origin) | {\"ucs\": id, \"plane\": \"xy\"} | {\"ucs\": id, \"axis\": \"x\"}; one gives its area, length or diameter (a point, where it is; a plane or an axis, a point of it and the way it goes: Normal X, Y, Z or Along X, Y, Z), two give the distance (with the nearest points) and the angle",
       "params": {
         "type": "object",
         "properties": {
           "a": {
             "type": "object",
-            "description": "what to measure: {\"face\": n} or {\"edge\": n} (numbered as model.faces and model.edges list them, with \"body\": b for a body other than 0), or a face or edge reference under the same key"
+            "description": "what to measure: {\"face\": n} or {\"edge\": n} (numbered as model.faces and model.edges list them, with \"body\": b for a body other than 0), a face or edge reference under the same key, a work feature {\"work\": id}, or of a UCS {\"ucs\": id} (its origin), {\"ucs\": id, \"plane\": \"xy\"} or {\"ucs\": id, \"axis\": \"x\"}"
           },
           "b": {
             "type": "object",
-            "description": "a second face or edge: the distance and angle between the two"
+            "description": "a second of those: the distance and angle between the two"
           }
         },
         "additionalProperties": false,
@@ -6573,7 +6735,7 @@
       "id": "model.box",
       "label": "Box",
       "undoable": true,
-      "description": "A box as two ordinary features: a sketch of a dimensioned rectangle, and its extrusion, made in one undo step. plane: xy | yz | xz (default xy), or face, or work_plane, as sketch.create; x, y: a corner in the sketch (default the origin), or with centered: true its centre; width (along the sketch's x), depth (along its y), height; operation (default join); reverse. Returns sketch, feature and their names",
+      "description": "A box as two ordinary features: a sketch of a dimensioned rectangle, and its extrusion, made in one undo step. plane: xy | yz | xz (default xy), or face, or work_plane, or ucs_plane, as sketch.create; x, y: a corner in the sketch (default the origin), or with centered: true its centre; width (along the sketch's x), depth (along its y), height; operation (default join); reverse. Returns sketch, feature and their names",
       "params": {
         "type": "object",
         "properties": {
@@ -6594,6 +6756,10 @@
             "type": "integer",
             "minimum": 0,
             "description": "or a work plane's feature id"
+          },
+          "ucs_plane": {
+            "type": "object",
+            "description": "or a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}"
           },
           "x": {
             "type": "number",
@@ -6651,7 +6817,7 @@
       "id": "model.cylinder",
       "label": "Cylinder",
       "undoable": true,
-      "description": "A cylinder as two ordinary features: a sketch of a dimensioned circle, and its extrusion, made in one undo step. plane, face or work_plane, as sketch.create; x, y: its centre in the sketch (default the origin); diameter; height; operation (default join); reverse. Returns sketch, feature and their names",
+      "description": "A cylinder as two ordinary features: a sketch of a dimensioned circle, and its extrusion, made in one undo step. plane, face, work_plane or ucs_plane, as sketch.create; x, y: its centre in the sketch (default the origin); diameter; height; operation (default join); reverse. Returns sketch, feature and their names",
       "params": {
         "type": "object",
         "properties": {
@@ -6672,6 +6838,10 @@
             "type": "integer",
             "minimum": 0,
             "description": "or a work plane's feature id"
+          },
+          "ucs_plane": {
+            "type": "object",
+            "description": "or a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}"
           },
           "x": {
             "type": "number",
@@ -6719,7 +6889,7 @@
       "id": "model.sphere",
       "label": "Sphere",
       "undoable": true,
-      "description": "A sphere as two ordinary features: a sketch of a dimensioned circle with a centre line through it, and its revolution, made in one undo step. plane, face or work_plane, as sketch.create; x, y: its centre in the sketch (default the origin); diameter; operation (default join). Returns sketch, feature and their names",
+      "description": "A sphere as two ordinary features: a sketch of a dimensioned circle with a centre line through it, and its revolution, made in one undo step. plane, face, work_plane or ucs_plane, as sketch.create; x, y: its centre in the sketch (default the origin); diameter; operation (default join). Returns sketch, feature and their names",
       "params": {
         "type": "object",
         "properties": {
@@ -6740,6 +6910,10 @@
             "type": "integer",
             "minimum": 0,
             "description": "or a work plane's feature id"
+          },
+          "ucs_plane": {
+            "type": "object",
+            "description": "or a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}"
           },
           "x": {
             "type": "number",
@@ -6777,7 +6951,7 @@
       "id": "model.torus",
       "label": "Torus",
       "undoable": true,
-      "description": "A torus as two ordinary features: a sketch of a dimensioned circle beside an axis, and its revolution, made in one undo step. plane, face or work_plane, as sketch.create (the ring stands square to it, about the sketch's upright); x, y: its centre in the sketch (default the origin); diameter: across the ring, from the middle of its section to the middle opposite; section: how thick the ring is; operation (default join). Returns sketch, feature and their names",
+      "description": "A torus as two ordinary features: a sketch of a dimensioned circle beside an axis, and its revolution, made in one undo step. plane, face, work_plane or ucs_plane, as sketch.create (the ring stands square to it, about the sketch's upright); x, y: its centre in the sketch (default the origin); diameter: across the ring, from the middle of its section to the middle opposite; section: how thick the ring is; operation (default join). Returns sketch, feature and their names",
       "params": {
         "type": "object",
         "properties": {
@@ -6798,6 +6972,10 @@
             "type": "integer",
             "minimum": 0,
             "description": "or a work plane's feature id"
+          },
+          "ucs_plane": {
+            "type": "object",
+            "description": "or a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}"
           },
           "x": {
             "type": "number",
@@ -6929,6 +7107,61 @@
         "additionalProperties": false,
         "required": [
           "part"
+        ]
+      }
+    },
+    {
+      "id": "model.derive",
+      "label": "Derive",
+      "undoable": true,
+      "description": "The solid of another part file brought into this one, rebuilt from that file each time: path (.tenon; kept relative to this file when it is saved); scale (default 1, about the origin); mirror: a plane, then mirrored in it; operation: join (default) | new_body. A file that is missing or does not read is refused here, and in a part that already has it the feature says so and the part still opens. When the file changes, the part follows on model.regenerate or on being opened again, and not on file.save. A part cannot derive itself, directly or through another. In feature.add and feature.update, a relative path is from this part's file, and refused when it has none",
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "x-path": true,
+            "description": "the other part's file (.tenon)"
+          },
+          "scale": {
+            "type": "number",
+            "description": "scaled by this about the origin, 0.001 to 1000 (default 1)"
+          },
+          "mirror": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "xy",
+                  "yz",
+                  "xz"
+                ]
+              },
+              {
+                "$ref": "#/$defs/face_ref"
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "then mirrored in this plane: an origin plane, a flat face, a work plane {\"work\": id} or a plane of a UCS {\"ucs\": id, \"plane\": \"xy\"}"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "join",
+              "new_body"
+            ],
+            "description": "joined to the part (default) or a new solid"
+          },
+          "equations": {
+            "type": "object",
+            "description": "equations for values of the feature: {\"/scale\": \"size / 10\"}"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "path"
         ]
       }
     },

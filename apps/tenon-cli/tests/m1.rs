@@ -255,3 +255,30 @@ fn m1_demo_part_regenerates_and_tessellates_within_budget() {
     assert!(m <= TESSELLATE_BUDGET_MS, "tessellation took {m:.1} ms; budget {TESSELLATE_BUDGET_MS} ms");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_script_names_the_file_of_a_derive_from_its_own_folder_every_way() {
+    let dir = scratch("derive-definition");
+    let script = r#"[
+        { "run": "sketch.create", "as": "s", "with": { "plane": "xy" } },
+        { "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 10, "y2": 10 } },
+        { "run": "model.extrude", "with": { "sketch": "$s.feature", "distance": 5 } },
+        { "run": "file.save", "with": { "path": "other.tenon" } },
+        { "run": "file.new", "with": { "name": "mine" } },
+        { "run": "model.derive", "as": "d", "with": { "path": "other.tenon" } },
+        { "run": "feature.update", "with": { "feature": "$d.feature", "kind": { "type": "derive", "path": "other.tenon", "scale": 2.0 } } },
+        { "run": "model.mass" },
+        { "run": "file.new", "with": { "name": "mine2" } },
+        { "run": "feature.add", "with": { "kind": { "type": "derive", "path": "other.tenon" } } },
+        { "run": "model.mass" }
+    ]"#;
+    let report = tenon_cli::run_script(kernel(), script, &dir).unwrap();
+    let masses: Vec<f64> = report.json["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["run"] == "model.mass")
+        .map(|s| s["result"]["bodies"][0]["volume"].as_f64().unwrap())
+        .collect();
+    assert!((masses[0] - 4000.0).abs() < 1e-6 && (masses[1] - 500.0).abs() < 1e-6, "{masses:?}");
+}

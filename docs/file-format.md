@@ -37,7 +37,8 @@ The rules for all three kinds of document:
     characters are written as they are.
   - An empty optional value is left out, because TOML has no `null`.
 - **Stable output.** Saving a document that did not change gives the same bytes on every OS.
-  There are no timestamps, no "written by" field and no absolute paths. Computed values (solved
+  There are no timestamps, no "written by" field and no absolute paths (but for a file on another
+  drive, which has no relative path). Computed values (solved
   sketch positions, solved component placements, reference fingerprints) are rounded to
   `tol::FILE_DECIMALS` (9) decimals of a millimetre. A recompute therefore never shows as a
   change. Values the user gave (dimensions, distances, equations) are written exactly.
@@ -247,9 +248,10 @@ shows until a feature uses it and a work feature shows.
 | `pattern_rect` | `features`, `dir1`, `count1`, `spacing1`, `reverse1`, optional `dir2`, `count2`, `spacing2`, `reverse2` |
 | `pattern_circular` | `features`, `axis`, `count`, `angle`, `reverse` |
 | `mirror` | `features`, `plane` |
-| `work_plane` | `by`: `offset` (`base` plane, `distance`), `angle` (`base`, `axis`, `angle`), `midplane` (`a`, `b`) or `three_points` (`points`: three of `"origin"`, `{ work = <point id> }`, `{ center = <edge reference> }` or `{ sketch_point = { sketch, point } }`; DEC-116) |
+| `work_plane` | `by`: `offset` (`base` plane, `distance`), `angle` (`base`, `axis`, `angle`), `midplane` (`a`, `b`) or `three_points` (`points`: three of `"origin"`, `{ work = <point id> }`, `{ center = <edge reference> }`, `{ sketch_point = { sketch, point } }`, `{ ucs = <UCS id> }` (its origin) or `{ vertex = { edge = <edge reference>, near = { x, y, z } } }` (the end of the edge on the side of its middle `near` is on, as it was when picked; DEC-116, DEC-133)) |
 | `work_axis` | `by`: `along` (`axis`) or `planes` (`a`, `b`) |
 | `work_point` | `by`: `center` (`edge`) or `intersection` (`axis`, `plane`) |
+| `ucs` | A user coordinate system (DEC-133). `by`: `offset` (optional `base`: the id of the UCS it is measured from, else the part's origin; `x`, `y`, `z`: millimetres along that one's axes; `rx`, `ry`, `rz`: radians about its own X, then the Y that gives, then the Z that gives) or `three_points` (`points`: its origin, a point on its +X and a point on the +Y side of its XY plane, each as a work plane's) |
 | `rib` | `sketch`, `lines` (sketch line ids), `thickness`, `extent`, `flip` |
 | `sweep` | `sketch`, `regions`, `path` (`{ sketch = <id>, curves = [<line and arc ids>] }`: the path's sketch and its curves, joined end to end), `fixed` (the profile keeps its direction instead of turning with the path), `operation` |
 | `coil` | `sketch`, `regions`, `axis` (revolve axis), `pitch` (mm per turn), `turns`, `left` (left-handed), `operation` |
@@ -258,6 +260,8 @@ shows until a feature uses it and a work feature shows.
 | `split` | `plane` (the cutting plane), `keep`: `"both"` (two bodies), `"front"` (the side the plane's normal points to) or `"back"`; optional `body` (a face reference on the one body to split; without it, every body the plane passes through) |
 | `combine` | `base` (a face reference on the body that stays), `tools` (a face reference on each other body), `operation` (`"join"`, `"cut"` or `"intersect"`), `keep_tools` |
 | `thread` | `face` (a face reference on a round shaft or hole); optional `pitch` (mm; without it, the ISO coarse pitch for the face's diameter); optional `designation` (text for drawings; without it, `M<diameter>x<pitch>`); `length`: `"full"` or `{ distance = mm }` from the end it starts at; `reverse` (start from the other end); `left` (left-handed); `modelled` (the groove is cut into the part; otherwise the thread is cosmetic) |
+| `emboss` | A closed profile on the part (DEC-133): `sketch`, `regions`, `style`: `"raise"`, `"recess"` (from or into the faces seen from the sketch along its normal, as far as they look that way and nothing lies over them, following them) or `"from_plane"` (added on one side of the sketch plane and taken on the other); `depth`; optional `reverse` (written only when true: faces that look against the sketch's normal; from the plane, the sides changed over), `taper` (radians its sides lean: what is raised narrows going up, what is recessed going down, a land from the plane opens away from it) and `wrap` (a face reference on a cylinder or cone: the profile laid round it with its lengths kept, as far as the face goes; no `taper`, not with `from_plane`) |
+| `derive` | The solid of another part file (DEC-133): `path` (relative to this file's folder, with `/` separators; a file on another drive is written in full), `scale` (0.001 to 1000, about the origin), optional `mirror` (a plane, then mirrored in it), `operation` (`"join"` or `"new_body"`). Nothing of the other file is written here: its solid is rebuilt from it each time. A file that cannot be read leaves the feature failing in words, and this file still opens. A part that derives itself, directly or through another, fails the same way |
 | `sheet_face` | `sketch`, `regions`, `flip` (the thickness goes behind the sketch plane), `operation` (`"join"` or `"new_body"`): a profile made one `Thickness` thick |
 | `flange` | `edges` (edge references: straight edges of the sheet's rim), `angle` (radians the sheet turns, 1 to 179 degrees), `height`, `datum` (`"outer"`, `"inner"` or `"tangent"`: what the height is measured from), `position` (`"inside"`, `"adjacent"`, `"outside"` or `"tangent"`: where the bend lies relative to the edge), `flip` (bend to the other side); optional `radius` (the bend's inside radius; without it the part's `BendRadius`); `width` (`"edge"`, `{ centered = { width = w } }` or `{ offset = { start = a, end = b } }`); optional `miter`, written when false: where the flange meets another of the same feature at a corner, each wall ends where its bend does instead of being brought up to the part's `GapSize` from the other; and what its corners have of their own in place of the rule's, each optional: `seam` (`"symmetric"`, the usual, `"overlap"` or `"reverse_overlap"`: how the two walls are brought together, the first being the one whose edge comes first), `overlap` (0 to 1, the part of the other wall's thickness covered; 1 when not written), `gap`, `relief` (`"round"`, `"square"` or `"trim"`) and `relief_size` |
 | `hem` | `edges` (as a flange's), `shape` (`{ single = { gap = g, length = l } }`, `{ double = { gap = g, length = l } }`: the gap between the layers and the length over all; `{ rolled = { radius = r, angle = a } }`, `{ teardrop = { radius = r, angle = a } }`: the inside radius and the angle in radians, 1 to 350 degrees rolled and 181 to 270 for a teardrop), `flip` (fold to the other side), `width` (as a flange's) |
@@ -273,12 +277,13 @@ shows until a feature uses it and a work feature shows.
 Field values:
 
 - **A plane:** `{ origin = "XY" | "YZ" | "XZ" }`, `{ face = <face reference> }` (a planar
-  face), or `{ work = <work plane id> }`.
-- **A revolve axis:** `{ sketch_line = <entity id> }`, `{ origin = "X" | "Y" | "Z" }` or
-  `{ work = <id> }`.
+  face), `{ work = <work plane id> }`, or `{ ucs = { feature = <UCS id>, plane = "XY" | "YZ" | "XZ" } }`.
+- **A revolve axis:** `{ sketch_line = <entity id> }`, `{ origin = "X" | "Y" | "Z" }`,
+  `{ work = <id> }` or `{ ucs = { feature = <UCS id>, axis = "X" | "Y" | "Z" } }`.
 - **An axis** (patterns, work features): `{ origin = "X" }`, `{ edge = <edge reference> }`,
-  `{ face = <face reference> }` (a cylinder's axis) or `{ work = <id> }`.
-- **A direction:** `{ origin = "X" }`, `{ edge = <edge reference> }` or `{ work = <id> }`.
+  `{ face = <face reference> }` (a cylinder's axis), `{ work = <id> }` or the same `ucs` form.
+- **A direction:** `{ origin = "X" }`, `{ edge = <edge reference> }`, `{ work = <id> }` or the
+  same `ucs` form.
 - **`regions`:** the closed regions of the sketch the feature is made from. Lines, arcs and
   circles that cross or touch divide one another, so a line through a circle gives two regions.
   Regions side by side are used as one: the curve between them leaves no face.
@@ -957,7 +962,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   a Smooth constraint; To, To Next or Between of an extrusion; To, To Next or two angles of a
   revolution, or one turned the other way; a spotface or To hole; a variable or face
   fillet; a work plane through three points; a Tangent or Symmetry relationship; a mirrored
-  occurrence; an auxiliary or overlay view; or a baseline or ordinate set. It opens the part the same and silently loses, on
+  occurrence; an auxiliary or overlay view; a baseline or ordinate set; or an emboss, a derived part
+  or a UCS. It opens the part the same and silently loses, on
   a save, a tapped hole's thread (`tapped`; the drawing's note and the Threads list lose it at
   once), which points are sketch points (`sketch_point`), which sketches are shown (`visible`),
   a study's `[study.optimize]`, an assembly's `[[pattern]]`s (each element a free component where it
@@ -979,8 +985,10 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   `edges` and the `moment`, `bearing`, `remote_force` and `body` loads (DEC-100), then a
   part's `part_number` and `description` (DEC-101), and after 0.1.0, among others, a study's
   `[study.optimize]` (DEC-123), an assembly's `[[pattern]]` and `next_pattern` and a component's
-  `mirrored_placement` (DEC-130), and a drawing view's `auxiliary` and `overlay` kinds and its
-  `mods` (DEC-131).
+  `mirrored_placement` (DEC-130), a drawing view's `auxiliary` and `overlay` kinds and its `mods`
+  (DEC-131), a drawing's `baseline` and `ordinate` annotations (DEC-132), and the feature types
+  `emboss`, `derive` and `ucs` with the `ucs` forms of a plane, an axis and a direction and a
+  three-point plane's `ucs` and `vertex` points (DEC-133).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

@@ -124,10 +124,13 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         FeatureKind::PatternRect(_) => &[("/count1", Ul), ("/spacing1", Mm), ("/count2", Ul), ("/spacing2", Mm)],
         FeatureKind::PatternCircular(_) => &[("/count", Ul), ("/angle", Deg)],
         FeatureKind::WorkPlane(_) => &[("/distance", Mm), ("/angle", Deg)],
+        FeatureKind::Ucs(_) => &[("/x", Mm), ("/y", Mm), ("/z", Mm), ("/rx", Deg), ("/ry", Deg), ("/rz", Deg)],
         FeatureKind::Rib(_) => &[("/thickness", Mm), ("/extent/distance", Mm)],
         FeatureKind::Coil(_) => &[("/pitch", Mm), ("/turns", Ul)],
         FeatureKind::Draft(_) => &[("/angle", Deg)],
         FeatureKind::Thread(_) => &[("/pitch", Mm), ("/length/distance", Mm)],
+        FeatureKind::Emboss(_) => &[("/depth", Mm), ("/taper", Deg)],
+        FeatureKind::Derive(_) => &[("/scale", Ul)],
         FeatureKind::Flange(_) => &[
             ("/angle", Deg),
             ("/height", Mm),

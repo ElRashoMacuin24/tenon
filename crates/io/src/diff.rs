@@ -254,6 +254,7 @@ fn shape_settings(o: &Value) -> [(&'static str, String); 7] {
     let plane = |v: &Value| match (v["origin"].as_str(), v["work"].as_u64()) {
         (Some(origin), _) => origin.to_owned(),
         (_, Some(id)) => format!("work plane {id}"),
+        _ if v["ucs"].is_object() => format!("the {} plane of UCS {}", show(&v["ucs"]["plane"]), show(&v["ucs"]["feature"])),
         _ => format!("the face {}", show(&v["face"]["origin"])),
     };
     let planes: Vec<String> = o["symmetry"].as_array().into_iter().flatten().map(plane).collect();

@@ -207,6 +207,16 @@ impl Engine {
                 o.insert(param.name.to_owned(), json!(full));
             }
         }
+        // (The file of a Derive set by its definition is a path too, once the part has no file
+        // of its own for it to be relative to.)
+        if matches!(id, "feature.add" | "feature.update")
+            && self.session.document().links().home.is_none()
+            && let Some(kind) = o.get_mut("kind").and_then(Value::as_object_mut)
+            && kind.get("type").and_then(Value::as_str) == Some("derive")
+            && let Some(full) = kind.get("path").and_then(Value::as_str).filter(|path| Path::new(path).is_relative()).map(|path| self.base.join(path))
+        {
+            kind.insert("path".to_owned(), json!(full.to_string_lossy()));
+        }
         p
     }
 

@@ -66,6 +66,7 @@ pub(crate) enum AxisChoice {
     Origin(OriginAxis),
     Line(EntityId),
     Work(FeatureId),
+    Ucs(FeatureId, OriginAxis),
 }
 
 /// Where a revolution ends besides an angle or a full turn (DEC-112).
@@ -416,9 +417,26 @@ impl RibPanel {
 pub(crate) struct MeasurePanel {
     pub a: Option<Pick>,
     pub b: Option<Pick>,
+    /// In place of `a` or `b`: a work feature, or a plane, axis or origin of a UCS, and what it
+    /// is called.
+    pub work_a: Option<(tenon_model::measure::Entity, String)>,
+    pub work_b: Option<(tenon_model::measure::Entity, String)>,
     pub result: Option<Result<tenon_model::measure::Measurement, String>>,
     /// The measurement asked for and not answered yet.
     pub pending: Option<u64>,
+}
+
+impl MeasurePanel {
+    /// What was clicked: the first is the first entity, the second the second, a third starts over.
+    pub(crate) fn take(&mut self, pick: Option<Pick>, work: Option<(tenon_model::measure::Entity, String)>) {
+        let (first, second) = (self.a.is_some() || self.work_a.is_some(), self.b.is_some() || self.work_b.is_some());
+        if first && !second {
+            (self.b, self.work_b) = (pick, work);
+        } else {
+            (self.a, self.work_a) = (pick, work);
+            (self.b, self.work_b) = (None, None);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -644,6 +662,8 @@ pub(crate) enum Panel {
     Split(crate::bodies::SplitPanel),
     Combine(crate::bodies::CombinePanel),
     Thread(crate::bodies::ThreadPanel),
+    Emboss(crate::emboss::EmbossPanel),
+    Derive(crate::emboss::DerivePanel),
     /// A sheet metal face.
     SheetFace(crate::sheet::FacePanel),
     /// Cut: a profile through the sheet, round its bends when asked.
@@ -722,6 +742,8 @@ impl Panel {
             Panel::Split(p) => p.editing,
             Panel::Combine(p) => p.editing,
             Panel::Thread(p) => p.editing,
+            Panel::Emboss(p) => p.editing,
+            Panel::Derive(p) => p.editing,
             Panel::SheetFace(p) => p.editing,
             Panel::SheetCut(p) => p.editing,
             Panel::Flange(p) => p.editing,
@@ -816,8 +838,14 @@ impl Panel {
             Panel::Work(w) => match w.method {
                 crate::work::WorkMethod::Offset => vec![("distance", "/distance")],
                 crate::work::WorkMethod::Angle => vec![("degrees", "/angle")],
+                crate::work::WorkMethod::UcsOffset => {
+                    vec![("ucs_x", "/x"), ("ucs_y", "/y"), ("ucs_z", "/z"), ("ucs_rx", "/rx"), ("ucs_ry", "/ry"), ("ucs_rz", "/rz")]
+                }
                 _ => vec![],
             },
+            Panel::Emboss(p) if p.wrapping => vec![("depth", "/depth")],
+            Panel::Emboss(_) => vec![("depth", "/depth"), ("taper", "/taper")],
+            Panel::Derive(_) => vec![("scale", "/scale")],
             _ => vec![],
         }
     }
@@ -911,6 +939,7 @@ pub(crate) fn plane_json(plane: &PlaneRef) -> Value {
         PlaneRef::Origin(o) => json!(format!("{o:?}").to_lowercase()),
         PlaneRef::Face(f) => serde_json::to_value(f).unwrap_or(Value::Null),
         PlaneRef::Work(id) => json!({ "work": id.0 }),
+        PlaneRef::Ucs { feature, plane } => json!({ "ucs": feature.0, "plane": format!("{plane:?}").to_lowercase() }),
     }
 }
 
@@ -986,6 +1015,7 @@ impl RevolvePanel {
             AxisChoice::Origin(a) => AxisRef::Origin(a),
             AxisChoice::Line(l) => AxisRef::SketchLine(l),
             AxisChoice::Work(w) => AxisRef::Work(w),
+            AxisChoice::Ucs(feature, axis) => AxisRef::Ucs { feature, axis },
         };
         FeatureKind::Revolve(Revolve { sketch: self.sketch, regions: self.regions.clone(), axis, angle, operation: self.operation, reverse })
     }
@@ -1052,6 +1082,11 @@ impl Workbench {
                 Some(kind) => with_feature(self.document(), p.editing, kind),
                 None => rolled(p.editing),
             },
+            Some(Panel::Emboss(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind),
+                None => rolled(p.editing),
+            },
+            Some(Panel::Derive(p)) => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::SheetFace(p)) => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::SheetCut(p)) => with_feature(self.document(), p.editing, p.kind()),
             // With an edge picked the flange shows as it will be; further edges are picked on that.
@@ -1112,9 +1147,7 @@ impl Workbench {
             None => None,
         };
         // The document, not the scene: the scene may still be regenerating.
-        let solid = self.document().features().iter().any(|f| {
-            matches!(f.kind, FeatureKind::Extrude(_) | FeatureKind::Revolve(_) | FeatureKind::Sweep(_) | FeatureKind::Coil(_) | FeatureKind::Loft(_))
-        });
+        let solid = self.has_solid();
         if editing.is_none() && !solid {
             return Err("there is no solid yet: extrude or revolve a sketch first".into());
         }
@@ -1282,6 +1315,7 @@ impl Workbench {
                         AxisRef::Origin(a) => AxisChoice::Origin(a),
                         AxisRef::SketchLine(l) => AxisChoice::Line(l),
                         AxisRef::Work(w) => AxisChoice::Work(w),
+                        AxisRef::Ucs { feature, axis } => AxisChoice::Ucs(feature, axis),
                     };
                     RevolvePanel {
                         editing,
@@ -1560,6 +1594,7 @@ impl Workbench {
                             AxisRef::Origin(a) => json!(format!("{a:?}").to_lowercase()),
                             AxisRef::SketchLine(l) => json!(l.0),
                             AxisRef::Work(w) => json!({ "work": w.0 }),
+                            AxisRef::Ucs { feature, axis } => json!({ "ucs": feature.0, "axis": format!("{axis:?}").to_lowercase() }),
                         };
                         match &r.angle {
                             RevolveAngle::Full => {}
@@ -1687,10 +1722,13 @@ impl Workbench {
                             PlaneRef::Origin(o) => p["plane"] = json!(format!("{o:?}").to_lowercase()),
                             PlaneRef::Face(f) => p["face"] = json!(f),
                             PlaneRef::Work(id) => p["work_plane"] = json!(id.0),
+                            PlaneRef::Ucs { feature, plane } => {
+                                p["ucs_plane"] = json!({ "ucs": feature.0, "plane": format!("{plane:?}").to_lowercase() });
+                            }
                         }
                         ("model.mirror", p)
                     }
-                    k @ (FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_)) => {
+                    k @ (FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_) | FeatureKind::Ucs(_)) => {
                         let Some(params) = crate::work::work_params(k) else { return false };
                         params
                     }
@@ -1714,6 +1752,8 @@ impl Workbench {
                     | FeatureKind::Split(_)
                     | FeatureKind::Combine(_)
                     | FeatureKind::Thread(_)
+                    | FeatureKind::Emboss(_)
+                    | FeatureKind::Derive(_)
                     | FeatureKind::SheetFace(_)
                     | FeatureKind::Flange(_)
                     | FeatureKind::Hem(_)
@@ -2098,6 +2138,31 @@ impl Workbench {
                     }
                 }
             }
+            Panel::Emboss(p) => {
+                if commit {
+                    match p.kind() {
+                        None => self.set_error("Emboss: click the cylinder or cone to wrap the profile round, or untick Wrap to Face".to_string()),
+                        Some(kind) => {
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("model.emboss");
+                            }
+                        }
+                    }
+                }
+            }
+            Panel::Derive(p) => {
+                if commit {
+                    if p.mirrored && p.mirror.is_none() {
+                        self.set_error("Derive: click the plane to mirror in, or untick Mirror".to_string());
+                    } else {
+                        keep = !self.commit_panel(&ptrs, p.editing, p.kind());
+                        if !keep && again {
+                            reopen = Some("model.derive");
+                        }
+                    }
+                }
+            }
             Panel::Asm(p) => {
                 if commit {
                     let done = self.commit_asm_panel(p);
@@ -2405,6 +2470,7 @@ fn direction_json(d: &DirectionRef) -> Value {
         DirectionRef::Origin(a) => json!(format!("{a:?}").to_lowercase()),
         DirectionRef::Edge(e) => json!(e),
         DirectionRef::Work(id) => json!({ "work": id.0 }),
+        DirectionRef::Ucs { feature, axis } => json!({ "ucs": feature.0, "axis": format!("{axis:?}").to_lowercase() }),
     }
 }
 

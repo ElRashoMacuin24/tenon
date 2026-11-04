@@ -90,6 +90,7 @@ impl Workbench {
                 WorkSlot::A | WorkSlot::B => Wants { edges: false, faces: true },
                 WorkSlot::Axis => Wants { edges: true, faces: true },
                 WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => Wants { edges: true, faces: false },
+                WorkSlot::Base => Wants { edges: false, faces: false },
             }),
             _ => None,
         }
@@ -153,6 +154,11 @@ impl Workbench {
             Some(Panel::Support(p)) => p.faces.iter().filter_map(face).chain(edges(&p.edges)).collect(),
             Some(Panel::Load(p)) => p.faces.iter().filter_map(face).chain(edges(&p.edges)).collect(),
             Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => self.bodies_picks(),
+            Some(Panel::Emboss(_)) => self.wrap_picks(),
+            Some(Panel::Derive(d)) => match &d.mirror {
+                Some(PlaneRef::Face(f)) if d.mirrored => face(f).into_iter().collect(),
+                _ => Vec::new(),
+            },
             Some(Panel::Measure(m)) => m.a.into_iter().chain(m.b).collect(),
             Some(Panel::Pattern(p)) => {
                 // The faces of the features being copied, and the picked direction, axis or plane.
@@ -172,17 +178,17 @@ impl Workbench {
                         .flatten()
                         .filter_map(|d| match d {
                             DirectionRef::Edge(e) => find_edge(&self.scene, e).map(|(body, edge)| Pick::Edge { body, edge }),
-                            DirectionRef::Origin(_) | DirectionRef::Work(_) => None,
+                            DirectionRef::Origin(_) | DirectionRef::Work(_) | DirectionRef::Ucs { .. } => None,
                         })
                         .collect(),
                     CopyKind::Circular => match &p.axis {
                         AxisSel::Edge(e) => edges(std::slice::from_ref(e)),
                         AxisSel::Face(f) => face(f).into_iter().collect(),
-                        AxisSel::Origin(_) | AxisSel::Work(_) => Vec::new(),
+                        AxisSel::Origin(_) | AxisSel::Work(_) | AxisSel::Ucs { .. } => Vec::new(),
                     },
                     CopyKind::Mirror => match &p.plane {
                         PlaneRef::Face(f) => face(f).into_iter().collect(),
-                        PlaneRef::Origin(_) | PlaneRef::Work(_) => Vec::new(),
+                        PlaneRef::Origin(_) | PlaneRef::Work(_) | PlaneRef::Ucs { .. } => Vec::new(),
                     },
                 };
                 v.extend(refs);
@@ -202,6 +208,8 @@ impl Workbench {
             Some(Panel::Extrude(e)) => matches!(e.extent, crate::panels::ExtentChoice::To | crate::panels::ExtentChoice::Between),
             Some(Panel::Hole(h)) => h.to_plane,
             Some(Panel::Revolve(r)) => !r.full && r.term == crate::panels::RevTerm::To,
+            // (Derive: the plane it is mirrored in.)
+            Some(Panel::Derive(d)) => d.mirrored,
             _ => false,
         }
     }
@@ -221,13 +229,14 @@ impl Workbench {
             }
             Some(Panel::Hole(h)) if h.to_plane => h.to = Some(plane),
             Some(Panel::Revolve(r)) if !r.full && r.term == crate::panels::RevTerm::To => r.to = Some(plane),
+            Some(Panel::Derive(d)) if d.mirrored => d.mirror = Some(plane),
             _ => return false,
         }
         true
     }
 
-    /// The work plane the sketch of the open panel lies on, if it lies on one.
-    fn panel_sketch_plane(&self) -> Option<FeatureId> {
+    /// The work plane or plane of a UCS the sketch of the open panel lies on, if it lies on one.
+    fn panel_sketch_plane(&self) -> Option<PlaneRef> {
         let sketch = match &self.panel {
             Some(Panel::Extrude(p)) => p.sketch,
             Some(Panel::Revolve(p)) => p.sketch,
@@ -235,7 +244,7 @@ impl Workbench {
             _ => return None,
         };
         match &self.document().feature(sketch)?.kind {
-            FeatureKind::Sketch { plane: PlaneRef::Work(id), .. } => Some(*id),
+            FeatureKind::Sketch { plane: plane @ (PlaneRef::Work(_) | PlaneRef::Ucs { .. }), .. } => Some(plane.clone()),
             _ => None,
         }
     }
@@ -245,8 +254,17 @@ impl Workbench {
     fn pick_end_plane(&mut self, resp: &egui::Response, rect: Rect) -> bool {
         // (The plane its own sketch lies on is no end for it: what is seen through that is.)
         let own = self.panel_sketch_plane();
+        let on_own = resp
+            .hover_pos()
+            .and_then(|pos| self.ucs_at(pos, rect, true, false, false))
+            .is_some_and(|r| matches!((r, &own), (Reference::UcsPlane(f, p), Some(PlaneRef::Ucs { feature, plane })) if f == *feature && p == *plane));
+        if on_own {
+            self.view.ucs_hover = None;
+        } else if self.pick_ucs_part(resp, rect, true, false, false) {
+            return true;
+        }
         if let Some(pos) = resp.hover_pos()
-            && let Some((id, _)) = self.work_at(pos, rect, true, false).filter(|(id, _)| Some(*id) != own)
+            && let Some((id, _)) = self.work_at(pos, rect, true, false).filter(|(id, _)| own != Some(PlaneRef::Work(*id)))
         {
             self.view.hover = None;
             self.view.work_hover = Some(id);
@@ -303,7 +321,7 @@ impl Workbench {
                     && match w.slot {
                         WorkSlot::A | WorkSlot::B => matches!(surface(body, face), Some(SurfaceKind::Plane { .. })),
                         WorkSlot::Axis => matches!(surface(body, face), Some(SurfaceKind::Cylinder { .. } | SurfaceKind::Cone { .. })),
-                        WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => false,
+                        WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 | WorkSlot::Base => false,
                     }
             }
             (Pick::Face { body, face }, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) => {
@@ -638,7 +656,22 @@ impl Workbench {
     /// Hover and clicks in the viewport while a Fillet, Chamfer, Shell or Hole panel is open.
     /// Returns false when no such panel is open.
     pub(crate) fn panel_pointer(&mut self, resp: &egui::Response, rect: Rect) -> bool {
+        self.view.pointer = resp.hover_pos().or_else(|| resp.interact_pointer_pos());
         if matches!(self.panel, Some(Panel::Measure(_))) {
+            // A work feature or part of a UCS, drawn over the part.
+            if self.pick_ucs_part(resp, rect, true, true, true) {
+                return true;
+            }
+            if let Some(pos) = resp.hover_pos()
+                && let Some(id) = self.work_point_at(pos, rect).or_else(|| self.work_at(pos, rect, false, true).map(|w| w.0))
+            {
+                self.view.hover = None;
+                self.view.work_hover = Some(id);
+                if resp.clicked() {
+                    self.pick_reference(Reference::Work(id));
+                }
+                return true;
+            }
             // Any face or edge: the first click is the first entity, the second the second, a
             // third starts over.
             let (meshes, tree) = (self.scene.placed(), self.body_tree());
@@ -650,21 +683,25 @@ impl Workbench {
                 let (o, d) = self.view.camera.ray(x, y, w, h);
                 pick_face_in(tree.as_deref(), &meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
             });
+            drop(meshes);
             self.view.hover = hover;
             if resp.clicked()
                 && let Some(p) = hover
             {
                 if let Some(Panel::Measure(m)) = &mut self.panel {
-                    match (m.a, m.b) {
-                        (None, _) => m.a = Some(p),
-                        (Some(_), None) => m.b = Some(p),
-                        _ => {
-                            m.a = Some(p);
-                            m.b = None;
-                        }
-                    }
+                    m.take(Some(p), None);
                 }
                 self.request_measure();
+            }
+            // (A work plane is wide, and is taken only where there is none of the part to take.)
+            if hover.is_none()
+                && let Some(pos) = resp.hover_pos()
+                && let Some((id, _)) = self.work_at(pos, rect, true, false)
+            {
+                self.view.work_hover = Some(id);
+                if resp.clicked() {
+                    self.pick_reference(Reference::Work(id));
+                }
             }
             return true;
         }
@@ -694,8 +731,43 @@ impl Workbench {
             }
             return true;
         }
+        // Wrap to Face: a cylinder or cone clicked is what the profile is laid round; once there is
+        // one, a click inside a region of the sketch chooses as for any profile.
+        if self.wrap_wanted() {
+            if matches!(&self.panel, Some(Panel::Emboss(p)) if p.face.is_some())
+                && resp.clicked()
+                && let Some(pos) = resp.interact_pointer_pos()
+                && self.toggle_profile_at(pos, rect)
+            {
+                self.view.hover = None;
+                return true;
+            }
+            let (meshes, tree) = (self.scene.placed(), self.body_tree());
+            let hover = resp.hover_pos().and_then(|p| {
+                let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+                let (o, d) = self.view.camera.ray(x, y, w, h);
+                pick_face_in(tree.as_deref(), &meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
+            });
+            self.view.hover = hover.filter(|p| matches!(p, Pick::Face { body, face } if self.round_for_wrap(*body, *face)));
+            if resp.clicked()
+                && let Some(p) = hover
+                && !self.wrap_pick(p)
+            {
+                self.set_error("Wrap to Face lays the profile round a cylinder or a cone: click one of those.");
+            }
+            return true;
+        }
+        if matches!(self.panel, Some(Panel::Derive(_))) {
+            if self.picking_to() {
+                self.pick_end_plane(resp, rect);
+            }
+            return true;
+        }
         if matches!(self.panel, Some(Panel::Revolve(_) | Panel::Coil(_))) {
             // A work axis, or a line of the profile's sketch, clicked: the axis to turn about.
+            if self.pick_ucs_part(resp, rect, false, true, false) {
+                return true;
+            }
             if let Some(pos) = resp.hover_pos()
                 && let Some((id, _)) = self.work_at(pos, rect, false, true)
             {
@@ -716,7 +788,15 @@ impl Workbench {
         }
         if matches!(
             self.panel,
-            Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Sweep(_) | Panel::Coil(_) | Panel::SheetFace(_) | Panel::SheetCut(_))
+            Some(
+                Panel::Extrude(_)
+                    | Panel::Revolve(_)
+                    | Panel::Sweep(_)
+                    | Panel::Coil(_)
+                    | Panel::SheetFace(_)
+                    | Panel::SheetCut(_)
+                    | Panel::Emboss(_)
+            )
         ) {
             // A click inside a closed region of the profile's sketch: that region joins the
             // feature, or leaves it.
@@ -740,6 +820,9 @@ impl Workbench {
         if matches!(&self.panel, Some(Panel::Work(w)) if w.slot.point().is_some())
             && let Some(pos) = resp.hover_pos()
         {
+            if self.pick_ucs_part(resp, rect, false, false, true) {
+                return true;
+            }
             if let Some(id) = self.work_point_at(pos, rect) {
                 self.view.hover = None;
                 self.view.work_hover = Some(id);
@@ -760,6 +843,9 @@ impl Workbench {
         }
         // Work planes and axes are drawn over the part, so they are picked first.
         let (planes, axes) = self.work_accepted();
+        if (planes || axes) && self.pick_ucs_part(resp, rect, planes, axes, false) {
+            return true;
+        }
         if (planes || axes)
             && let Some(pos) = resp.hover_pos()
             && let Some((id, _)) = self.work_at(pos, rect, planes, axes)

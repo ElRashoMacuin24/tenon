@@ -159,6 +159,39 @@ pub trait Kernel: Send {
         let _ = (profile, rho, inner, outer);
         unsupported!("roll")
     }
+    /// A flat outline laid round a cone so that its lengths are kept: the cone rolled out on the
+    /// outline's plane, as sheet is. The profile is one region without holes; its frame's origin
+    /// is the apex, its Z the way the cone widens, its X where the outline's line `x = 0` lies.
+    /// A point `(x, y)` lies `hypot(x, y)` along the cone from the apex and `atan2(x, y) /
+    /// sin(half_angle)` radians round the axis, turning from X towards Y. The solid reaches from
+    /// `inner` to `outer`, distances from the cone along its outward normal (either may be
+    /// negative). Faces are reported as [`Kernel::roll`]'s are: the one at `inner` is the start
+    /// cap, the one at `outer` the end cap, the sides by the tags of the curves.
+    fn roll_cone(&mut self, profile: &Profile, half_angle: f64, inner: f64, outer: f64) -> KResult<Op> {
+        let _ = (profile, half_angle, inner, outer);
+        unsupported!("roll_cone")
+    }
+    /// A solid made of a face of a shape and the same face `distance` along its own normal (which
+    /// looks out of the shape; negative goes the other way), its sides square to the face. Where
+    /// the face curves, the far side follows it. The history's end cap is the far side.
+    fn thicken(&mut self, face: FaceId, distance: f64) -> KResult<Op> {
+        let _ = (face, distance);
+        unsupported!("thicken")
+    }
+    /// What of a face looks along `way` (its normal, out of the shape, has some of `way` in it): a
+    /// shape of one face for each piece, cut where the face turns away, which is where its normal
+    /// is square to `way`. A piece keeps the surface and the way it looks. None of them when none
+    /// of it does.
+    fn facing(&mut self, face: FaceId, way: Vec3) -> KResult<Vec<ShapeHandle>> {
+        let _ = (face, way);
+        unsupported!("facing")
+    }
+    /// A face swept straight along `along`: a solid, with the face at one end and the face moved
+    /// by `along` at the other. It should not turn away along `along`: see [`Kernel::facing`].
+    fn prism_of_face(&mut self, face: FaceId, along: Vec3) -> KResult<ShapeHandle> {
+        let _ = (face, along);
+        unsupported!("prism_of_face")
+    }
     fn sweep(&mut self, profile: &Profile, path: &Path3, opts: &SweepOpts) -> KResult<Op> {
         let _ = (profile, path, opts);
         unsupported!("sweep")
@@ -232,6 +265,11 @@ pub trait Kernel: Send {
     fn edge_info(&self, edge: EdgeId) -> KResult<EdgeInfo> {
         let _ = edge;
         unsupported!("edge_info")
+    }
+    /// The way a face looks, out of its solid, at about its middle: a unit vector.
+    fn face_normal(&self, face: FaceId) -> KResult<Vec3> {
+        let _ = face;
+        unsupported!("face_normal")
     }
     /// Points along an edge from its start to its end (as [`EdgeInfo`] has them), close enough
     /// together that the straight lines between them stay within `deflection` (mm) of the edge.

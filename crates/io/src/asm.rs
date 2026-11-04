@@ -298,6 +298,7 @@ fn asm_copy(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> Cm
             let mut made = Part::new(tenon_model::Document::default());
             made.session.replace_document(doc, None);
             made.session.file_extra = extra;
+            crate::derive::set_home(&mut made.session, &file);
             s.add_part(&key, made);
             written.push(file);
             files.insert(part, key);

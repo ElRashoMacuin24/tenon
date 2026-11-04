@@ -120,6 +120,10 @@ pub(crate) struct View {
     pub plane_hover: Option<OriginPlane>,
     /// The work plane, axis or point under the pointer, when it can be picked.
     pub work_hover: Option<tenon_model::FeatureId>,
+    /// The plane, axis or origin of a UCS under the pointer, when it can be picked.
+    pub ucs_hover: Option<crate::work::Reference>,
+    /// Where the pointer was as the open panel last looked (which end of an edge it is at).
+    pub pointer: Option<Pos2>,
     pub selection: Vec<Pick>,
     pub anim: Option<ViewAnim>,
     pub style: VisualStyle,
@@ -159,6 +163,8 @@ impl Default for View {
             hover: None,
             plane_hover: None,
             work_hover: None,
+            ucs_hover: None,
+            pointer: None,
             selection: Vec::new(),
             anim: None,
             style: VisualStyle::default(),
@@ -668,6 +674,9 @@ impl Workbench {
         if resp.clicked() {
             let r = match under {
                 Some(tenon_model::PlaneRef::Work(id)) => self.create_sketch(json!({ "work_plane": id.0 })),
+                Some(tenon_model::PlaneRef::Ucs { feature, plane }) => {
+                    self.create_sketch(json!({ "ucs_plane": { "ucs": feature.0, "plane": format!("{plane:?}").to_lowercase() } }))
+                }
                 Some(tenon_model::PlaneRef::Face(fr)) => {
                     self.view.selection = self.view.hover.into_iter().collect();
                     self.create_sketch(json!({ "face": fr }))
@@ -687,6 +696,15 @@ impl Workbench {
     pub(crate) fn plane_under(&mut self, p: Pos2, rect: Rect) -> Option<tenon_model::PlaneRef> {
         let (o, d) =
             self.view.camera.ray(f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+        // A plane of a UCS, as a work plane, is drawn over the part.
+        self.view.ucs_hover = None;
+        if let Some(r @ crate::work::Reference::UcsPlane(feature, plane)) = self.ucs_at(p, rect, true, false, false) {
+            self.view.ucs_hover = Some(r);
+            self.view.work_hover = None;
+            self.view.hover = None;
+            self.view.plane_hover = None;
+            return Some(tenon_model::PlaneRef::Ucs { feature, plane });
+        }
         let (meshes, tree) = (self.scene.placed(), self.body_tree());
         let face = pick_face_in(tree.as_deref(), &meshes, o, d)
             .filter(|h| {
@@ -724,6 +742,7 @@ impl Workbench {
 
     fn model_pointer(&mut self, ui: &Ui, resp: &egui::Response, rect: Rect) {
         self.view.work_hover = None;
+        self.view.ucs_hover = None;
         // Selection box: a left drag with no navigation tool.
         if resp.drag_started_by(egui::PointerButton::Primary) && self.left_drag_tool(ui) == Nav::Select {
             self.view.box_start = ui.input(|i| i.pointer.press_origin());

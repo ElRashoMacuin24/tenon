@@ -205,6 +205,13 @@ fn mirror_of(plane: &PlaneRef, r: &tenon_model::Regen, doc: &tenon_model::Docume
                 _ => Err(format!("{name} cannot be a plane of symmetry: it is not a plane that is on the part")),
             }
         }
+        PlaneRef::Ucs { feature, plane } => {
+            let name = doc.feature(*feature).map_or_else(|| format!("UCS {}", feature.0), |f| format!("{} {plane:?}", f.name));
+            match r.work.get(feature).and_then(|g| if let WorkGeom::Ucs(f) = g { tenon_model::regen::ucs_plane(f, *plane) } else { None }) {
+                Some(f) => Ok((Mirror { point: f.origin(), normal: f.z() }, name)),
+                None => Err(format!("{name} cannot be a plane of symmetry: it is not a plane that is on the part")),
+            }
+        }
         PlaneRef::Face(_) => Err(FACE_PLANE_REFUSED.into()),
     }
 }

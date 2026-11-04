@@ -25,6 +25,7 @@ mod dim_sets;
 mod dims;
 mod drawing;
 mod drw_views;
+mod emboss;
 pub mod icons;
 mod library_dialog;
 mod modify;
@@ -72,6 +73,8 @@ mod drw_views_tests;
 mod explore_tests;
 #[cfg(test)]
 mod panel_tests;
+#[cfg(test)]
+mod part_tests;
 #[cfg(test)]
 mod primitive_tests;
 #[cfg(test)]

@@ -462,6 +462,58 @@ impl Kernel for OcctKernel {
         self.finish(shape, hist)
     }
 
+    fn roll_cone(&mut self, profile: &Profile, half_angle: f64, inner: f64, outer: f64) -> KResult<Op> {
+        self.not_cancelled()?;
+        if !(half_angle.is_finite() && half_angle > 1e-3 && half_angle < std::f64::consts::FRAC_PI_2 - 1e-3) {
+            return Err(bad("a cone's half angle must be between 0 and 90 degrees"));
+        }
+        if !(tol::is_valid_coord(inner) && tol::is_valid_coord(outer) && outer - inner >= tol::LINEAR) {
+            return Err(bad("the outer distance of an outline laid round a cone must be the larger"));
+        }
+        if profile.regions.len() != 1 || profile.regions.iter().any(|r| !r.holes.is_empty()) {
+            return Err(bad("an outline laid round a cone is one region without holes"));
+        }
+        let p = profile_in(profile)?;
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::roll_cone(&p, half_angle, inner, outer, &mut hist).map_err(failed("roll_cone"))?;
+        self.finish(shape, hist)
+    }
+
+    fn thicken(&mut self, face: FaceId, distance: f64) -> KResult<Op> {
+        self.not_cancelled()?;
+        if !(tol::is_valid_coord(distance) && distance.abs() >= tol::LINEAR) {
+            return Err(bad("a face is thickened by a distance that is not nothing"));
+        }
+        let mut hist = sys::HistoryOut::default();
+        let shape = sys::thicken(self.get(face.shape)?, face.index, distance, &mut hist).map_err(failed("thicken"))?;
+        self.finish(shape, hist)
+    }
+
+    fn facing(&mut self, face: FaceId, way: Vec3) -> KResult<Vec<ShapeHandle>> {
+        self.not_cancelled()?;
+        let way = check::point("the way a face is looked at", way)?;
+        if way.len() < tol::LINEAR {
+            return Err(bad("a face is looked at from a direction that is not nothing"));
+        }
+        let list = sys::facing(self.get(face.shape)?, face.index, &v3(way.normalized())).map_err(failed("facing"))?;
+        let mut out = Vec::new();
+        for i in 0..sys::shape_list_len(&list) {
+            let s = sys::shape_list_get(&list, i).map_err(failed("facing"))?;
+            out.push(self.insert(s)?);
+        }
+        Ok(out)
+    }
+
+    fn prism_of_face(&mut self, face: FaceId, along: Vec3) -> KResult<ShapeHandle> {
+        self.not_cancelled()?;
+        let along = check::point("the way a face is swept", along)?;
+        if along.len() < tol::LINEAR {
+            return Err(bad("a face is swept by a distance that is not nothing"));
+        }
+        let shape = sys::prism_of_face(self.get(face.shape)?, face.index, &v3(along)).map_err(failed("prism_of_face"))?;
+        self.insert(shape)
+    }
+
     fn revolve(&mut self, profile: &Profile, axis: &Axis, angle: &AngleExtent) -> KResult<Op> {
         self.not_cancelled()?;
         check::point("revolve axis origin", axis.origin())?;
@@ -505,6 +557,12 @@ impl Kernel for OcctKernel {
         let mut hist = sys::HistoryOut::default();
         let out = sys::transform(self.get(shape)?, kind, &a, &b, value, &mut hist).map_err(failed("transform"))?;
         self.finish(out, hist)
+    }
+
+    fn face_normal(&self, face: FaceId) -> KResult<Vec3> {
+        let mut out = sys::V3::default();
+        sys::face_normal(self.get(face.shape)?, face.index, &mut out).map_err(failed("face_normal"))?;
+        Ok(vec3(&out))
     }
 
     fn fillet(&mut self, body: ShapeHandle, edges: &[EdgeId], radius: f64) -> KResult<Op> {

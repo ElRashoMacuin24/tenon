@@ -12,13 +12,14 @@ use tenon_kernel::{
 };
 use tenon_sketch::{EntityId, RegionKey, Sketch, SketchRegion, default_regions, profile, regions, text_regions};
 
+mod emboss;
 mod sheet;
 
 use crate::FeatureId;
 use crate::document::{
     AxisRef, AxisSel, ChamferSize, Coil, Combine, DirectionRef, Document, Draft, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent,
-    HoleType, Loft, Operation, PlaneRef, PointSel, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Split, SplitKeep, Sweep, Thread, ThreadLength,
-    WorkAxis, WorkPlane, WorkPoint,
+    HoleType, Loft, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Split, SplitKeep,
+    Sweep, Thread, ThreadLength, Ucs, WorkAxis, WorkPlane, WorkPoint,
 };
 use crate::naming::{
     CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
@@ -146,6 +147,20 @@ pub enum WorkGeom {
     Plane(Frame),
     Axis(Axis),
     Point(Vec3),
+    /// A user coordinate system: its origin and directions.
+    Ucs(Frame),
+}
+
+/// A plane of a user coordinate system standing at `frame`: what the origin plane of that name is
+/// to the part's origin (DEC-133).
+pub fn ucs_plane(frame: &Frame, plane: OriginPlane) -> Option<Frame> {
+    let f = plane.frame();
+    Frame::new(frame.to_world(f.origin()), frame.dir_to_world(f.z()), frame.dir_to_world(f.x()))
+}
+
+/// An axis of a user coordinate system standing at `frame` (DEC-133).
+pub fn ucs_axis(frame: &Frame, axis: OriginAxis) -> Option<Axis> {
+    Axis::new(frame.origin(), frame.dir_to_world(axis.axis().dir()))
 }
 
 /// `v` turned `angle` radians about the unit direction `k` (right-hand rule).
@@ -294,6 +309,10 @@ fn prefix_hashes(doc: &Document, copied: &std::collections::BTreeSet<FeatureId>)
                 | FeatureKind::Fold(_)
         ) {
             rule.hash(&mut h);
+        }
+        // (A derived part is what the other file holds, which is no part of its definition.)
+        if let FeatureKind::Derive(d) = &f.kind {
+            doc.links().sources.get(&d.path).map(|s| s.stamp).hash(&mut h);
         }
         (i >= end).hash(&mut h);
         copied.contains(&f.id).hash(&mut h);
@@ -476,6 +495,8 @@ fn reflect(regen: &mut Regen, k: &mut dyn Kernel) -> Result<(), KernelError> {
             WorkGeom::Plane(f) => WorkGeom::Plane(reflected_plane(&f)),
             WorkGeom::Axis(a) => WorkGeom::Axis(Axis::new(reflected_point(a.origin()), reflected_point(a.dir())).unwrap_or(a)),
             WorkGeom::Point(p) => WorkGeom::Point(reflected_point(p)),
+            // (Stays a right-handed frame, as a sketch's does: its X and Y are the images of its own.)
+            WorkGeom::Ucs(f) => WorkGeom::Ucs(reflected_frame(&f)),
         };
     }
     for f in regen.sketch_frames.values_mut() {
@@ -736,6 +757,8 @@ impl<'a> Ctx<'a> {
             FeatureKind::Split(s) => self.split(f.id, s),
             FeatureKind::Combine(c) => self.combine_bodies(c),
             FeatureKind::Thread(t) => self.thread(f.id, t),
+            FeatureKind::Emboss(e) => self.emboss(f.id, e),
+            FeatureKind::Derive(d) => self.derive(f.id, d),
             FeatureKind::SheetFace(s) => self.sheet_face(f.id, s),
             FeatureKind::Flange(fl) => self.flange(f.id, fl),
             FeatureKind::Hem(h) => self.hem(f.id, h),
@@ -800,6 +823,11 @@ impl<'a> Ctx<'a> {
                 self.regen.work.insert(f.id, g);
                 Ok(())
             }
+            FeatureKind::Ucs(u) => {
+                let g = WorkGeom::Ucs(self.ucs_frame(u)?);
+                self.regen.work.insert(f.id, g);
+                Ok(())
+            }
             FeatureKind::WorkPoint(w) => {
                 let p = match w {
                     WorkPoint::Center { edge } => match self.edge_geometry(edge)?.curve {
@@ -819,6 +847,48 @@ impl<'a> Ctx<'a> {
                 Ok(())
             }
         }
+    }
+
+    /// Where a user coordinate system stands (DEC-133).
+    fn ucs_frame(&mut self, u: &Ucs) -> Result<Frame, Stop> {
+        u.check()?;
+        match u {
+            Ucs::Offset { base, x, y, z, rx, ry, rz } => {
+                let from = match base {
+                    Some(id) => self.ucs(*id)?,
+                    None => Frame::WORLD,
+                };
+                let origin = from.to_world(Vec3::new(*x, *y, *z));
+                // About its own X, then the Y that gives, then the Z that gives.
+                let (ex, ey, ez) = (from.x(), rotate(from.y(), from.x(), *rx), rotate(from.z(), from.x(), *rx));
+                let (ex, ez) = (rotate(ex, ey, *ry), rotate(ez, ey, *ry));
+                let ex = rotate(ex, ez, *rz);
+                Ok(Frame::new(origin, ez, ex).ok_or("the UCS is out of range")?)
+            }
+            Ucs::ThreePoints { points } => {
+                let [a, b, c] = &**points;
+                let (a, b, c) = (self.point_of(a)?, self.point_of(b)?, self.point_of(c)?);
+                let x = b - a;
+                let n = x.cross(c - a);
+                if x.len() < tenon_geom::tol::LINEAR || n.len() < tenon_geom::tol::LINEAR * x.len() {
+                    return Err("the three points are in one line (or two are one): a UCS needs three apart".into());
+                }
+                Ok(Frame::new(a, n, x).ok_or("the UCS is out of range")?)
+            }
+        }
+    }
+
+    /// Where the user coordinate system `id` stands, or why it cannot be used.
+    fn ucs(&self, id: FeatureId) -> Result<Frame, Stop> {
+        match self.work(id)? {
+            WorkGeom::Ucs(f) => Ok(f),
+            _ => Err(format!("{} is not a UCS", label(self.doc, id)).into()),
+        }
+    }
+
+    /// An axis of the user coordinate system `id`.
+    fn ucs_line(&self, id: FeatureId, axis: OriginAxis) -> Result<Axis, Stop> {
+        Ok(ucs_axis(&self.ucs(id)?, axis).ok_or("the UCS has no such axis")?)
     }
 
     fn work_plane(&mut self, w: &WorkPlane) -> Result<Frame, Stop> {
@@ -878,6 +948,14 @@ impl<'a> Ctx<'a> {
                     .and_then(|s| s.point(*point))
                     .ok_or_else(|| format!("the point is no longer in {}", label(self.doc, *sketch)))?;
                 Ok(frame.plane_point(q))
+            }
+            PointSel::Ucs(id) => Ok(self.ucs(*id)?.origin()),
+            PointSel::Vertex { edge, near } => {
+                // Which end: the one on the side of the edge's middle it was picked on, so that it
+                // is the same corner when the edge has since moved or changed its length.
+                let info = self.edge_geometry(edge)?;
+                let (side, middle) = (*near - edge.fingerprint.mid, (info.start + info.end) * 0.5);
+                Ok(if (info.start - middle).dot(side) >= (info.end - middle).dot(side) { info.start } else { info.end })
             }
         }
     }
@@ -1038,6 +1116,7 @@ impl<'a> Ctx<'a> {
                 _ => Err("the direction edge is not straight".into()),
             },
             DirectionRef::Work(id) => Ok(self.work_axis(*id)?.dir()),
+            DirectionRef::Ucs { feature, axis } => Ok(self.ucs_line(*feature, *axis)?.dir()),
         }
     }
 
@@ -1058,6 +1137,7 @@ impl<'a> Ctx<'a> {
                 }
             }
             AxisSel::Work(id) => self.work_axis(*id),
+            AxisSel::Ucs { feature, axis } => self.ucs_line(*feature, *axis),
         }
     }
 
@@ -1339,6 +1419,7 @@ impl<'a> Ctx<'a> {
                 WorkGeom::Plane(f) => Ok(f),
                 _ => Err(format!("{} is not a work plane", label(self.doc, *id)).into()),
             },
+            PlaneRef::Ucs { feature, plane } => Ok(ucs_plane(&self.ucs(*feature)?, *plane).ok_or("the UCS has no such plane")?),
         }
     }
 
@@ -1699,6 +1780,7 @@ impl<'a> Ctx<'a> {
                 Axis::new(a3, b3 - a3).ok_or("the revolve axis has no length")?
             }
             AxisRef::Work(w) => self.work_axis(*w)?,
+            AxisRef::Ucs { feature, axis } => self.ucs_line(*feature, *axis)?,
         };
         // A flat profile turned about a line square to it sweeps no solid, and a kernel may say
         // nothing about that.
@@ -1824,6 +1906,7 @@ impl<'a> Ctx<'a> {
                 Axis::new(a3, b3 - a3).ok_or("the coil axis has no length")?
             }
             AxisRef::Work(w) => self.work_axis(*w)?,
+            AxisRef::Ucs { feature, axis } => self.ucs_line(*feature, *axis)?,
         };
         let profile = profile_of(sketch, frame, &c.regions)?;
         // Turns closer together than the profile is tall run into each other, and a kernel may
@@ -2238,8 +2321,19 @@ impl<'a> Ctx<'a> {
         Ok(())
     }
 
-    /// Adds a feature's tool solids to the part according to `operation`.
+    /// Adds a feature's tool solids to the part according to `operation`: to its last solid.
     fn combine(&mut self, id: FeatureId, tools: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>, operation: Operation) -> Result<(), Stop> {
+        self.combine_at(id, tools, operation, None)
+    }
+
+    /// The same, to solid `at` when it is said which.
+    fn combine_at(
+        &mut self,
+        id: FeatureId,
+        tools: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>,
+        operation: Operation,
+        at: Option<usize>,
+    ) -> Result<(), Stop> {
         let kind = match operation {
             Operation::NewBody => None,
             Operation::Join if self.regen.bodies.is_empty() => None,
@@ -2272,7 +2366,8 @@ impl<'a> Ctx<'a> {
             return Ok(());
         };
         let shapes: Vec<ShapeHandle> = tools.iter().map(|t| t.0).collect();
-        let Some(target) = self.regen.bodies.last() else {
+        let at = at.or(self.regen.bodies.len().checked_sub(1));
+        let Some(target) = at.and_then(|i| self.regen.bodies.get(i)) else {
             for s in shapes {
                 self.k.release(s);
             }
@@ -2305,7 +2400,7 @@ impl<'a> Ctx<'a> {
         let inputs: Vec<&[Option<FaceOrigin>]> = std::iter::once(target_names.as_slice()).chain(tools.iter().map(|t| t.1.as_slice())).collect();
         let new_names = names_of_boolean(&op.history, &inputs, faces);
         self.k.release(target_shape);
-        if let Some(body) = self.regen.bodies.last_mut() {
+        if let Some(body) = at.and_then(|i| self.regen.bodies.get_mut(i)) {
             body.shape = op.shape;
             body.names = new_names;
         }

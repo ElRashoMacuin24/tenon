@@ -29,7 +29,8 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   damaged", though it is not: text, ellipses or Smooth; an extrusion To, To Next or Between; a
   revolution To, To Next, by two angles or Flipped; a spotface or To hole; a variable or face fillet;
   a work plane through three points; a Tangent or Symmetry relationship; a mirrored occurrence in an
-  assembly; an auxiliary or overlay view; a baseline or ordinate set. Other new things it opens, and on a save it loses them: a
+  assembly; an auxiliary or overlay view; a baseline or ordinate set; an emboss, a derived part or a
+  UCS. Other new things it opens, and on a save it loses them: a
   tapped hole's thread (the solid is the same), which points are sketch points, which sketches are
   shown, a study's Optimize Shape settings, an assembly's patterns (each element is then a free
   component where it stands, those of a suppressed pattern shown and counted), and a drawing view's
@@ -104,6 +105,22 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 
 ### Parts and assemblies
 
+- **Emboss:** a closed profile, text included, raised from or recessed into the faces it is seen
+  on, following them where they curve, as far as they look toward the sketch and nothing lies over
+  them; or from the sketch plane (added on one side of it and taken away on the other, refused in
+  words when what is added would come loose or shut a hollow in), with a direction and a taper.
+  **Wrap to Face** lays it round a cylinder or a cone with its lengths kept, stopping at the face's
+  edge. New command `model.emboss`.
+- **Derive:** the solid of another part file brought in, by a path kept relative to this file,
+  scaled, mirrored, joined or a new solid. It follows that file on Rebuild All and on opening, not
+  on a save; a file that is gone fails in words and the part still opens; a part cannot derive
+  itself. New command `model.derive`.
+- **UCS:** a coordinate system of your own, by offsets and turns from the origin or another UCS or
+  through three points, shown as a triad that keeps a size you can see and click on a part of any
+  size. Its planes, axes and origin serve wherever work features do: sketches, Extrude To, Mirror,
+  patterns, Revolve, Measure. Corners of the part can now be clicked for three-point work planes
+  too, and Measure measures to work features and says where one of them is. New command `work.ucs`;
+  `ucs_plane` on the commands that name a plane by `plane`, `face` and `work_plane`.
 - **Pattern**, **Mirror** and **Copy** of components, greyed on the Assemble tab until now. Pattern
   repeats chosen components in rows along one or two directions (a picked edge, flat face or axis, a
   count and a spacing) or round an axis (a count and an angle). It is one record, a row in the

@@ -11,10 +11,10 @@ use tenon_kernel::{Kernel, ShapeHandle};
 use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions};
 
 use crate::document::{
-    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Extrude, ExtrudeExtent, FeatureKind,
-    Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RadiusAt, RectPattern, RegionSel,
-    Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, WorkAxis, WorkPlane,
-    WorkPoint, hole_centres, open_lines,
+    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Emboss, EmbossStyle, Extrude,
+    ExtrudeExtent, FeatureKind, Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RadiusAt,
+    RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, Ucs,
+    WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
@@ -300,6 +300,27 @@ impl Session {
             self.revision += 1;
         }
         more
+    }
+
+    /// What has been read of the part files the document's features derive from changed. It is
+    /// no edit: there is no undo step and nothing unsaved, and a document in the undo history has
+    /// it too, so that undoing does not bring back what a file no longer holds.
+    pub fn set_links(&mut self, links: std::sync::Arc<crate::document::Links>) {
+        // (Only where its file is, its first save: the part is the same part.)
+        let changed = *self.doc.links() != *links;
+        if !changed && self.doc.links().home == links.home {
+            return;
+        }
+        for d in std::iter::once(&mut self.doc).chain(&mut self.undo).chain(&mut self.redo) {
+            d.set_links(links.clone());
+        }
+        if changed {
+            let saved = !self.is_dirty();
+            self.revision += 1;
+            if saved {
+                self.saved_revision = self.revision;
+            }
+        }
     }
 
     /// Runs a command of this crate's registry. `kernel` is required for geometry commands.
@@ -1025,6 +1046,14 @@ fn shape_needs(st: &Study, r: &Regen, k: &dyn Kernel, d: &Document) -> Vec<Strin
                 let name = feature.map_or_else(|| format!("Work plane {}", id.0), |f| f.name.clone());
                 needs.push(format!("{name} cannot be a plane of symmetry: {why}. Choose another (study.shape, with symmetry)"));
             }
+            PlaneRef::Ucs { feature, .. } => {
+                if !matches!(r.work.get(feature), Some(WorkGeom::Ucs(_))) {
+                    let name = d.feature(*feature).map_or_else(|| format!("UCS {}", feature.0), |f| f.name.clone());
+                    needs.push(format!(
+                        "{name} cannot give a plane of symmetry: it is no longer on the part. Choose another (study.shape, with symmetry)"
+                    ));
+                }
+            }
         }
     }
     // Those that can be mirrored in, at right angles.
@@ -1035,6 +1064,10 @@ fn shape_needs(st: &Study, r: &Regen, k: &dyn Kernel, d: &Document) -> Vec<Strin
             PlaneRef::Origin(o) => Some(o.frame().z()),
             PlaneRef::Work(id) => match r.work.get(id) {
                 Some(WorkGeom::Plane(f)) => Some(f.z()),
+                _ => None,
+            },
+            PlaneRef::Ucs { feature, plane } => match r.work.get(feature) {
+                Some(WorkGeom::Ucs(f)) => crate::regen::ucs_plane(f, *plane).map(|p| p.z()),
                 _ => None,
             },
             PlaneRef::Face(_) => None,
@@ -1200,6 +1233,9 @@ fn plane_param(p: &Value) -> Result<PlaneRef, CmdError> {
     if arg(p, "work_plane").is_some() {
         return Ok(PlaneRef::Work(FeatureId(id_u32(p, "work_plane")?)));
     }
+    if let Some(v) = arg(p, "ucs_plane") {
+        return ucs_plane_of(v)?.ok_or_else(|| CmdError("`ucs_plane` must be {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}".into()));
+    }
     if let Some(face) = arg(p, "face") {
         return Ok(PlaneRef::Face(serde_json::from_value::<FaceRef>(face.clone()).map_err(|e| CmdError(format!("`face`: {e}")))?));
     }
@@ -1226,11 +1262,37 @@ fn work_id(v: &Value) -> Option<FeatureId> {
     v.get("work").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()).map(FeatureId)
 }
 
+/// The user coordinate system `{"ucs": id, ...}` names.
+fn ucs_id(v: &Value) -> Option<FeatureId> {
+    v.get("ucs").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()).map(FeatureId)
+}
+
+/// `{"ucs": id, "plane": "xy"}`: a plane of a user coordinate system.
+fn ucs_plane_of(v: &Value) -> Result<Option<PlaneRef>, CmdError> {
+    let (Some(feature), Some(plane)) = (ucs_id(v), v.get("plane").and_then(Value::as_str)) else { return Ok(None) };
+    let plane = match plane.to_ascii_lowercase().as_str() {
+        "xy" => OriginPlane::XY,
+        "yz" => OriginPlane::YZ,
+        "xz" => OriginPlane::XZ,
+        _ => return Err(format!("unknown plane `{plane}` of a UCS (xy, yz or xz)").into()),
+    };
+    Ok(Some(PlaneRef::Ucs { feature, plane }))
+}
+
+/// `{"ucs": id, "axis": "x"}`: an axis of a user coordinate system.
+fn ucs_axis_of(v: &Value) -> Result<Option<(FeatureId, OriginAxis)>, CmdError> {
+    let (Some(feature), Some(axis)) = (ucs_id(v), v.get("axis").and_then(Value::as_str)) else { return Ok(None) };
+    Ok(Some((feature, origin_axis(axis)?)))
+}
+
 /// A pattern direction: `"x" | "y" | "z"`, an edge reference, or `{"work": axis id}`.
 fn direction_param(p: &Value, key: &str) -> Result<DirectionRef, CmdError> {
     let v = field(p, key)?;
     if let Some(id) = work_id(v) {
         return Ok(DirectionRef::Work(id));
+    }
+    if let Some((feature, axis)) = ucs_axis_of(v)? {
+        return Ok(DirectionRef::Ucs { feature, axis });
     }
     match v {
         Value::String(a) => Ok(DirectionRef::Origin(origin_axis(a)?)),
@@ -1245,6 +1307,9 @@ fn axis_param(p: &Value, key: &str) -> Result<AxisSel, CmdError> {
     if let Some(id) = work_id(v) {
         return Ok(AxisSel::Work(id));
     }
+    if let Some((feature, axis)) = ucs_axis_of(v)? {
+        return Ok(AxisSel::Ucs { feature, axis });
+    }
     match v {
         Value::String(a) => Ok(AxisSel::Origin(origin_axis(a)?)),
         Value::Object(o) if o.contains_key("faces") => Ok(AxisSel::Edge(parse(p, key)?)),
@@ -1253,11 +1318,15 @@ fn axis_param(p: &Value, key: &str) -> Result<AxisSel, CmdError> {
     }
 }
 
-/// A plane value: `"xy" | "yz" | "xz"`, a face reference, or `{"work": plane id}`.
-fn plane_value(p: &Value, key: &str) -> Result<PlaneRef, CmdError> {
+/// A plane value: `"xy" | "yz" | "xz"`, a face reference, `{"work": plane id}` or
+/// `{"ucs": id, "plane": "xy"}`.
+pub fn plane_value(p: &Value, key: &str) -> Result<PlaneRef, CmdError> {
     let v = field(p, key)?;
     if let Some(id) = work_id(v) {
         return Ok(PlaneRef::Work(id));
+    }
+    if let Some(plane) = ucs_plane_of(v)? {
+        return Ok(plane);
     }
     match v {
         Value::String(s) => match s.to_ascii_lowercase().as_str() {
@@ -1267,6 +1336,18 @@ fn plane_value(p: &Value, key: &str) -> Result<PlaneRef, CmdError> {
             _ => Err(format!("unknown plane `{s}` (xy, yz or xz)").into()),
         },
         _ => Ok(PlaneRef::Face(parse(p, key)?)),
+    }
+}
+
+/// A plane must be what it says it is: a work plane, or a plane of a UCS.
+fn check_plane(s: &Session, plane: &PlaneRef) -> Result<(), CmdError> {
+    let wrong = |id: FeatureId, want: fn(&FeatureKind) -> bool, what: &str| {
+        if s.document().feature(id).is_some_and(|f| want(&f.kind)) { Ok(()) } else { Err(CmdError(format!("{id} is not a {what}"))) }
+    };
+    match plane {
+        PlaneRef::Work(id) => wrong(*id, |k| matches!(k, FeatureKind::WorkPlane(_)), "work plane"),
+        PlaneRef::Ucs { feature, .. } => wrong(*feature, |k| matches!(k, FeatureKind::Ucs(_)), "UCS"),
+        _ => Ok(()),
     }
 }
 
@@ -1280,27 +1361,36 @@ fn check_work_refs(s: &Session, kind: &FeatureKind) -> Result<(), CmdError> {
             None => Err(format!("{id} does not exist").into()),
         }
     };
+    let ucs = |id: FeatureId| is(id, |k| matches!(k, FeatureKind::Ucs(_)), "UCS");
     let plane = |r: &PlaneRef| match r {
         PlaneRef::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkPlane(_)), "work plane"),
+        PlaneRef::Ucs { feature, .. } => ucs(*feature),
         _ => Ok(()),
     };
     let axis = |a: &AxisSel| match a {
         AxisSel::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkAxis(_)), "work axis"),
+        AxisSel::Ucs { feature, .. } => ucs(*feature),
         _ => Ok(()),
     };
-    match kind {
-        FeatureKind::WorkPlane(WorkPlane::Offset { base, .. }) => plane(base),
-        FeatureKind::WorkPlane(WorkPlane::Angle { base, axis: a, .. }) => plane(base).and(axis(a)),
-        FeatureKind::WorkPlane(WorkPlane::Midplane { a, b }) => plane(a).and(plane(b)),
-        FeatureKind::WorkPlane(WorkPlane::ThreePoints { points }) => points.iter().try_for_each(|q| match q {
+    let points = |list: &[PointSel; 3]| {
+        list.iter().try_for_each(|q| match q {
             PointSel::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkPoint(_)), "work point"),
+            PointSel::Ucs(id) => ucs(*id),
             PointSel::SketchPoint { sketch, point } => match doc.sketch(*sketch) {
                 Some(sk) if sk.point(*point).is_some() => Ok(()),
                 Some(_) => Err(CmdError(format!("{} is no point of {sketch}", point.0))),
                 None => Err(CmdError(format!("{sketch} is not a sketch"))),
             },
             _ => Ok(()),
-        }),
+        })
+    };
+    match kind {
+        FeatureKind::WorkPlane(WorkPlane::Offset { base, .. }) => plane(base),
+        FeatureKind::WorkPlane(WorkPlane::Angle { base, axis: a, .. }) => plane(base).and(axis(a)),
+        FeatureKind::WorkPlane(WorkPlane::Midplane { a, b }) => plane(a).and(plane(b)),
+        FeatureKind::WorkPlane(WorkPlane::ThreePoints { points: list }) => points(list),
+        FeatureKind::Ucs(Ucs::ThreePoints { points: list }) => points(list),
+        FeatureKind::Ucs(Ucs::Offset { base: Some(id), .. }) => ucs(*id),
         FeatureKind::WorkAxis(WorkAxis::Along { axis: a }) => axis(a),
         FeatureKind::WorkAxis(WorkAxis::Planes { a, b }) => plane(a).and(plane(b)),
         FeatureKind::WorkPoint(WorkPoint::Intersection { axis: a, plane: p }) => axis(a).and(plane(p)),
@@ -1308,6 +1398,7 @@ fn check_work_refs(s: &Session, kind: &FeatureKind) -> Result<(), CmdError> {
         FeatureKind::PatternCircular(c) => axis(&c.axis),
         FeatureKind::PatternRect(r) => std::iter::once(&r.dir1).chain(r.dir2.as_ref()).try_for_each(|d| match d {
             DirectionRef::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkAxis(_)), "work axis"),
+            DirectionRef::Ucs { feature, .. } => ucs(*feature),
             _ => Ok(()),
         }),
         FeatureKind::Sketch { plane: p, .. } => plane(p),
@@ -1348,6 +1439,56 @@ fn work_point(s: &mut Session, p: &Value) -> CmdResult {
     let kind = FeatureKind::WorkPoint(def);
     check_work_refs(s, &kind)?;
     add_feature(s, kind, p)
+}
+
+/// A user coordinate system: moved and turned from the part's origin or another UCS, or through
+/// three points.
+fn work_ucs(s: &mut Session, p: &Value) -> CmdResult {
+    let def = match arg(p, "by").and_then(Value::as_str).unwrap_or("offset") {
+        "offset" => {
+            let or_zero = |key: &str| Ok::<f64, CmdError>(opt_num(p, key)?.unwrap_or(0.0));
+            Ucs::Offset {
+                base: opt_id(p, "base")?.map(FeatureId),
+                x: or_zero("x")?,
+                y: or_zero("y")?,
+                z: or_zero("z")?,
+                rx: or_zero("rx")?,
+                ry: or_zero("ry")?,
+                rz: or_zero("rz")?,
+            }
+        }
+        "three_points" => Ucs::ThreePoints { points: Box::new(parse(p, "points")?) },
+        other => return Err(format!("unknown way to place a UCS `{other}` (offset, three_points)").into()),
+    };
+    def.check().map_err(CmdError)?;
+    let kind = FeatureKind::Ucs(def);
+    check_work_refs(s, &kind)?;
+    add_feature(s, kind, p)
+}
+
+/// A closed profile raised from or recessed into the part, or laid round a cylinder or a cone.
+fn model_emboss(s: &mut Session, p: &Value) -> CmdResult {
+    let style = match arg(p, "style").and_then(Value::as_str).unwrap_or("raise") {
+        "raise" => EmbossStyle::Raise,
+        "recess" => EmbossStyle::Recess,
+        "from_plane" => EmbossStyle::FromPlane,
+        other => return Err(format!("unknown style `{other}` (raise, recess, from_plane)").into()),
+    };
+    let sketch = sketch_id(p)?;
+    if s.document().sketch(sketch).is_none() {
+        return Err(format!("{sketch} is not a sketch").into());
+    }
+    let emboss = Emboss {
+        sketch,
+        regions: region_sel(p)?,
+        style,
+        depth: num(p, "depth")?,
+        reverse: arg(p, "reverse").and_then(Value::as_bool).unwrap_or(false),
+        taper: opt_num(p, "taper")?.filter(|t| *t != 0.0),
+        wrap: if arg(p, "wrap").is_some_and(|v| !v.is_null()) { Some(parse(p, "wrap")?) } else { None },
+    };
+    emboss.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Emboss(emboss), p)
 }
 
 fn feature_list(p: &Value) -> Result<Vec<FeatureId>, CmdError> {
@@ -1408,11 +1549,7 @@ fn model_mirror(s: &mut Session, p: &Value) -> CmdResult {
 
 fn sketch_create(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let plane = plane_param(p)?;
-    if let PlaneRef::Work(id) = plane
-        && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
-    {
-        return Err(format!("{id} is not a work plane").into());
-    }
+    check_plane(s, &plane)?;
     // The part origin projected into the sketch: a fixed construction point at (0, 0) that
     // geometry can snap and be constrained to.
     let mut sketch = Sketch::new();
@@ -2195,7 +2332,7 @@ fn region_sel(p: &Value) -> Result<RegionSel, CmdError> {
 
 /// Adds a feature, with `equations` (value field: equation) from the parameters if given, in one
 /// undo step.
-fn add_feature(s: &mut Session, kind: FeatureKind, p: &Value) -> CmdResult {
+pub fn add_feature(s: &mut Session, kind: FeatureKind, p: &Value) -> CmdResult {
     let equations = equations_param(p)?;
     let id = s.edit(|d| {
         let id = d.add(kind).map_err(CmdError)?;
@@ -2210,11 +2347,7 @@ fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
     let between = |key: &str| -> Result<PlaneRef, CmdError> {
         let plane = plane_value(p, key)?;
-        if let PlaneRef::Work(id) = plane
-            && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
-        {
-            return Err(format!("{id} is not a work plane").into());
-        }
+        check_plane(s, &plane)?;
         Ok(plane)
     };
     let extent = if arg(p, "from").is_some() {
@@ -2224,11 +2357,7 @@ fn model_extrude(s: &mut Session, p: &Value) -> CmdResult {
         ExtrudeExtent::Between { from: between("from")?, to: between("to")? }
     } else if arg(p, "to").is_some() {
         let plane = plane_value(p, "to")?;
-        if let PlaneRef::Work(id) = plane
-            && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
-        {
-            return Err(format!("{id} is not a work plane").into());
-        }
+        check_plane(s, &plane)?;
         ExtrudeExtent::To(plane)
     } else if arg(p, "to_next").and_then(Value::as_bool).unwrap_or(false) {
         ExtrudeExtent::ToNext
@@ -2267,11 +2396,7 @@ fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
         _ if arg(p, "to_next").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::ToNext,
         _ if arg(p, "to").is_some() => {
             let plane = plane_value(p, "to")?;
-            if let PlaneRef::Work(id) = plane
-                && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
-            {
-                return Err(format!("{id} is not a work plane").into());
-            }
+            check_plane(s, &plane)?;
             RevolveAngle::To(plane)
         }
         (None, None) => RevolveAngle::Full,
@@ -2353,11 +2478,7 @@ fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
     };
     let extent = if arg(p, "to").is_some() {
         let plane = plane_value(p, "to")?;
-        if let PlaneRef::Work(id) = plane
-            && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
-        {
-            return Err(format!("{id} is not a work plane").into());
-        }
+        check_plane(s, &plane)?;
         HoleExtent::To(plane)
     } else if arg(p, "through_all").and_then(Value::as_bool).unwrap_or(false) {
         HoleExtent::ThroughAll
@@ -2475,6 +2596,11 @@ fn axis_ref(s: &Session, p: &Value) -> Result<AxisRef, CmdError> {
             check_work_refs(s, &FeatureKind::WorkAxis(WorkAxis::Along { axis: AxisSel::Work(id) }))?;
             AxisRef::Work(id)
         }
+        v if ucs_id(v).is_some() => {
+            let (feature, axis) = ucs_axis_of(v)?.ok_or("`axis` must be {\"ucs\": id, \"axis\": \"x\" | \"y\" | \"z\"}")?;
+            check_work_refs(s, &FeatureKind::WorkAxis(WorkAxis::Along { axis: AxisSel::Ucs { feature, axis } }))?;
+            AxisRef::Ucs { feature, axis }
+        }
         _ => AxisRef::SketchLine(EntityId(id_u32(p, "axis")?)),
     })
 }
@@ -2533,15 +2659,14 @@ fn model_loft(s: &mut Session, p: &Value) -> CmdResult {
 /// A plane that must be named: plane ("xy" | "yz" | "xz"), face (a planar face reference) or
 /// work_plane (a work plane id).
 fn plane_named(s: &Session, p: &Value) -> Result<PlaneRef, CmdError> {
-    if !["plane", "face", "work_plane"].iter().any(|k| arg(p, k).is_some()) {
-        return Err("name the plane: plane (xy, yz or xz), face (a planar face reference) or work_plane (a work plane id)".into());
+    if !["plane", "face", "work_plane", "ucs_plane"].iter().any(|k| arg(p, k).is_some()) {
+        return Err(
+            "name the plane: plane (xy, yz or xz), face (a planar face reference), work_plane (a work plane id) or ucs_plane ({\"ucs\": id, \"plane\": \"xy\"})"
+                .into(),
+        );
     }
     let plane = plane_param(p)?;
-    if let PlaneRef::Work(id) = plane
-        && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
-    {
-        return Err(format!("{id} is not a work plane").into());
-    }
+    check_plane(s, &plane)?;
     Ok(plane)
 }
 
@@ -2750,7 +2875,10 @@ fn feature_visibility(s: &mut Session, p: &Value) -> CmdResult {
     let visible = field(p, "visible")?.as_bool().ok_or("`visible` must be true or false")?;
     s.edit(|d| {
         let f = d.feature_mut(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?;
-        if !matches!(f.kind, FeatureKind::Sketch { .. } | FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_)) {
+        if !matches!(
+            f.kind,
+            FeatureKind::Sketch { .. } | FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_) | FeatureKind::Ucs(_)
+        ) {
             return Err(CmdError(format!("{} is no sketch or work feature: its visibility is the part's", f.name)));
         }
         f.visible = Some(visible);
@@ -2905,10 +3033,22 @@ fn model_faces(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     Ok(json!({ "body": body, "faces": out }))
 }
 
-/// A face or edge to measure: `{"face": <face reference>}`, `{"edge": <edge reference>}`, or
-/// `{"body": n, "face": index}` / `{"body": n, "edge": index}`.
+/// What to measure: `{"face": <face reference>}`, `{"edge": <edge reference>}`,
+/// `{"body": n, "face": index}` / `{"body": n, "edge": index}`, a work feature as `{"work": id}`,
+/// or of a UCS `{"ucs": id}` (its origin), `{"ucs": id, "plane": "xy"}` or `{"ucs": id, "axis": "x"}`.
 fn entity_param(r: &Regen, k: &dyn Kernel, v: &Value, key: &str) -> Result<crate::measure::Entity, CmdError> {
-    use crate::measure::Entity;
+    use crate::measure::{Entity, WorkPart};
+    if let Some(feature) = work_id(v) {
+        return Ok(Entity::Work { feature, part: WorkPart::Whole });
+    }
+    if let Some(feature) = ucs_id(v) {
+        let part = match (ucs_plane_of(v)?, ucs_axis_of(v)?) {
+            (Some(PlaneRef::Ucs { plane, .. }), _) => WorkPart::Plane(plane),
+            (_, Some((_, axis))) => WorkPart::Axis(axis),
+            _ => WorkPart::Whole,
+        };
+        return Ok(Entity::Work { feature, part });
+    }
     let body = v.get("body").and_then(Value::as_u64).map_or(0, |b| b as usize);
     let index = |x: &Value| x.as_u64().and_then(|i| u32::try_from(i).ok());
     match (v.get("face"), v.get("edge")) {
@@ -2928,7 +3068,7 @@ fn entity_param(r: &Regen, k: &dyn Kernel, v: &Value, key: &str) -> Result<crate
         (_, Some(e)) => {
             Ok(Entity::Edge { body, edge: index(e).ok_or_else(|| CmdError(format!("`{key}.edge` must be an index or an edge reference")))? })
         }
-        _ => Err(format!("`{key}` needs a face or an edge").into()),
+        _ => Err(format!("`{key}` needs a face, an edge, a work feature or a UCS").into()),
     }
 }
 
@@ -2957,6 +3097,9 @@ fn model_work(s: &mut Session, k: &mut dyn Kernel, _p: &Value) -> CmdResult {
             }
             crate::regen::WorkGeom::Axis(a) => json!({ "feature": id.0, "type": "axis", "origin": v3(a.origin()), "direction": v3(a.dir()) }),
             crate::regen::WorkGeom::Point(p) => json!({ "feature": id.0, "type": "point", "point": v3(*p) }),
+            crate::regen::WorkGeom::Ucs(f) => {
+                json!({ "feature": id.0, "type": "ucs", "origin": v3(f.origin()), "x": v3(f.x()), "y": v3(f.y()), "z": v3(f.z()) })
+            }
         })
         .collect();
     Ok(json!({ "work": out }))
@@ -3707,7 +3850,7 @@ fn as_one_step<T>(s: &mut Session, f: impl FnOnce(&mut Session) -> Result<T, Cmd
 /// The plane a primitive's sketch goes on, said as for sketch.create.
 fn primitive_plane(p: &Value) -> Value {
     let mut on = json!({});
-    for key in ["plane", "face", "work_plane"] {
+    for key in ["plane", "face", "work_plane", "ucs_plane"] {
         if let Some(v) = arg(p, key).filter(|v| !v.is_null()) {
             on[key] = v.clone();
         }
@@ -3920,7 +4063,7 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "sketch.create",
         label: "New Sketch",
-        help: "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref, or work_plane: a work plane's id; project_origin (default true: a fixed point at the part origin, returned as `origin`); project_edges (default false): on a face, the face's edges are shown in the sketch as reference geometry, as sketch.project does (or give `edges` and `geometry` as for sketch.project). Returns the feature, and the entities `projected`",
+        help: "plane: \"xy\" | \"yz\" | \"xz\" (default xy), or face: a face reference from model.face_ref, or work_plane: a work plane's id, or ucs_plane: a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}; project_origin (default true: a fixed point at the part origin, returned as `origin`); project_edges (default false): on a face, the face's edges are shown in the sketch as reference geometry, as sketch.project does (or give `edges` and `geometry` as for sketch.project). Returns the feature, and the entities `projected`",
         mutates: true,
         run: Run::Opt(sketch_create),
     },
@@ -4206,14 +4349,14 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.draft",
         "Draft",
-        "faces: [face references] (the faces to tilt, on one body); the neutral plane, where the faces stay put: plane (\"xy\" | \"yz\" | \"xz\"), face (a planar face reference) or work_plane (id); angle (radians from the plane's normal, the pull direction); reverse (tilt the other way)",
+        "faces: [face references] (the faces to tilt, on one body); the neutral plane, where the faces stay put: plane (\"xy\" | \"yz\" | \"xz\"), face (a planar face reference), work_plane (id) or ucs_plane (as sketch.create); angle (radians from the plane's normal, the pull direction); reverse (tilt the other way)",
         true,
         model_draft
     ),
     doc_cmd!(
         "model.split",
         "Split",
-        "the cutting plane: plane (\"xy\" | \"yz\" | \"xz\"), face (a planar face reference) or work_plane (id); keep: \"both\" (two bodies, default) | \"front\" (the side the plane's normal points to) | \"back\"; body: a face reference on the one body to split (default: every body the plane passes through)",
+        "the cutting plane: plane (\"xy\" | \"yz\" | \"xz\"), face (a planar face reference), work_plane (id) or ucs_plane (as sketch.create); keep: \"both\" (two bodies, default) | \"front\" (the side the plane's normal points to) | \"back\"; body: a face reference on the one body to split (default: every body the plane passes through)",
         true,
         model_split
     ),
@@ -4232,6 +4375,13 @@ static COMMANDS: &[CommandSpec] = &[
         model_thread
     ),
     doc_cmd!(
+        "model.emboss",
+        "Emboss",
+        "A closed profile (text included) on the last solid it falls on. sketch; regions; style: raise (default) | recess: from the faces it is seen on along the sketch's normal, as far as they look that way and nothing lies over them, by depth along their normals, following them where they curve; from_plane: material added on one side of the sketch plane and taken away on the other, each as far as depth, refused when what is added would come loose or shut a hollow in. reverse: the faces that look against the sketch's normal; from the plane, the sides changed over. taper: rad its sides lean, hinged at the sketch plane, what is raised narrowing going up and what is recessed going down. wrap: a cylinder's or cone's face reference (Wrap to Face): raised or recessed, the profile laid round it with its lengths kept, stopping at the face's edge and refused when it lies off the face",
+        true,
+        model_emboss
+    ),
+    doc_cmd!(
         "model.pattern.rect",
         "Rectangular Pattern",
         "features: [feature ids]; direction: \"x\" | \"y\" | \"z\" or an edge reference (straight edge); count; spacing; reverse; optional direction2, count2, spacing2, reverse2",
@@ -4248,7 +4398,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.mirror",
         "Mirror",
-        "features: [feature ids]; plane: \"xy\" | \"yz\" | \"xz\", or face: a planar face reference, or work_plane: a work plane's id",
+        "features: [feature ids]; plane: \"xy\" | \"yz\" | \"xz\", or face: a planar face reference, or work_plane: a work plane's id, or ucs_plane: as sketch.create",
         true,
         model_mirror
     ),
@@ -4267,6 +4417,13 @@ static COMMANDS: &[CommandSpec] = &[
         work_axis
     ),
     doc_cmd!("work.point", "Work Point", "edge: a circular edge reference (its centre); or axis and plane (where they meet)", true, work_point),
+    doc_cmd!(
+        "work.ucs",
+        "UCS",
+        "A user coordinate system. by: offset (base: another UCS, default the part's origin; x, y, z along its axes; rx, ry, rz: rad, about its own X, then the Y and the Z that gives) | three_points (points: its origin, a point on its +X, a point on the +Y side of its XY plane). Its planes serve as {\"ucs\": id, \"plane\": \"xy\"}, its axes as {\"ucs\": id, \"axis\": \"x\"} and its origin as {\"ucs\": id} in a point",
+        true,
+        work_ucs
+    ),
     doc_cmd!(
         "feature.add",
         "Add Feature",
@@ -4347,11 +4504,11 @@ static COMMANDS: &[CommandSpec] = &[
     geo_cmd!("model.topology", "Topology", "", model_topology),
     geo_cmd!("model.faces", "Faces", "body (default 0)", model_faces),
     geo_cmd!("model.edges", "Edges", "body (default 0): every edge with the names of its two faces", model_edges),
-    geo_cmd!("model.work", "Work Features", "where every work plane, axis and point is", model_work),
+    geo_cmd!("model.work", "Work Features", "where every work plane, axis, point and UCS is", model_work),
     geo_cmd!(
         "model.measure",
         "Measure",
-        "a, and optionally b: {\"face\": face reference} | {\"edge\": edge reference} | {\"body\": n, \"face\" or \"edge\": index}; one gives its area, length or diameter, two give the distance (with the nearest points) and the angle",
+        "a, and optionally b: {\"face\": face reference} | {\"edge\": edge reference} | {\"body\": n, \"face\" or \"edge\": index} | {\"work\": id} | {\"ucs\": id} (its origin) | {\"ucs\": id, \"plane\": \"xy\"} | {\"ucs\": id, \"axis\": \"x\"}; one gives its area, length or diameter (a point, where it is; a plane or an axis, a point of it and the way it goes: Normal X, Y, Z or Along X, Y, Z), two give the distance (with the nearest points) and the angle",
         model_measure
     ),
     geo_cmd!(
@@ -4621,28 +4778,28 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.box",
         "Box",
-        "A box as two ordinary features: a sketch of a dimensioned rectangle, and its extrusion, made in one undo step. plane: xy | yz | xz (default xy), or face, or work_plane, as sketch.create; x, y: a corner in the sketch (default the origin), or with centered: true its centre; width (along the sketch's x), depth (along its y), height; operation (default join); reverse. Returns sketch, feature and their names",
+        "A box as two ordinary features: a sketch of a dimensioned rectangle, and its extrusion, made in one undo step. plane: xy | yz | xz (default xy), or face, or work_plane, or ucs_plane, as sketch.create; x, y: a corner in the sketch (default the origin), or with centered: true its centre; width (along the sketch's x), depth (along its y), height; operation (default join); reverse. Returns sketch, feature and their names",
         true,
         model_box
     ),
     doc_cmd!(
         "model.cylinder",
         "Cylinder",
-        "A cylinder as two ordinary features: a sketch of a dimensioned circle, and its extrusion, made in one undo step. plane, face or work_plane, as sketch.create; x, y: its centre in the sketch (default the origin); diameter; height; operation (default join); reverse. Returns sketch, feature and their names",
+        "A cylinder as two ordinary features: a sketch of a dimensioned circle, and its extrusion, made in one undo step. plane, face, work_plane or ucs_plane, as sketch.create; x, y: its centre in the sketch (default the origin); diameter; height; operation (default join); reverse. Returns sketch, feature and their names",
         true,
         model_cylinder
     ),
     doc_cmd!(
         "model.sphere",
         "Sphere",
-        "A sphere as two ordinary features: a sketch of a dimensioned circle with a centre line through it, and its revolution, made in one undo step. plane, face or work_plane, as sketch.create; x, y: its centre in the sketch (default the origin); diameter; operation (default join). Returns sketch, feature and their names",
+        "A sphere as two ordinary features: a sketch of a dimensioned circle with a centre line through it, and its revolution, made in one undo step. plane, face, work_plane or ucs_plane, as sketch.create; x, y: its centre in the sketch (default the origin); diameter; operation (default join). Returns sketch, feature and their names",
         true,
         model_sphere
     ),
     doc_cmd!(
         "model.torus",
         "Torus",
-        "A torus as two ordinary features: a sketch of a dimensioned circle beside an axis, and its revolution, made in one undo step. plane, face or work_plane, as sketch.create (the ring stands square to it, about the sketch's upright); x, y: its centre in the sketch (default the origin); diameter: across the ring, from the middle of its section to the middle opposite; section: how thick the ring is; operation (default join). Returns sketch, feature and their names",
+        "A torus as two ordinary features: a sketch of a dimensioned circle beside an axis, and its revolution, made in one undo step. plane, face, work_plane or ucs_plane, as sketch.create (the ring stands square to it, about the sketch's upright); x, y: its centre in the sketch (default the origin); diameter: across the ring, from the middle of its section to the middle opposite; section: how thick the ring is; operation (default join). Returns sketch, feature and their names",
         true,
         model_torus
     ),
