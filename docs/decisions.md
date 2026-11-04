@@ -3539,3 +3539,32 @@ encodings had not shipped. Files that use nothing new are as they were, to the b
 A tapped hole, sketch points, shown sketches and `[study.optimize]` stay optional fields: 0.1.0
 builds the same solid from them, so refusing the file would cost more than the loss, which
 `docs/file-format.md` and the changelog list.
+
+## DEC-125 What the audit before 0.2.0 settled (2026-11-03)
+
+Auditors went through the program ahead of 0.2.0; what they found is fixed, each with its test
+(ROADMAP.md, "Getting 0.2.0 ready"). These are the choices a later reader will want the reasons for.
+
+- **A mesh the solver refuses is made again, once.** A stress check's mesher arguments stay as they
+  are, so that every study that solves today gives the same answer; only when the solver says
+  `nonpositive jacobian` does the mesher go again with `Mesh.HighOrderOptimize 2` added, which keeps
+  elements curved. 48 plates with blind drilled holes all solve (33 did not). If it still fails, the
+  study says what helps, and does not go on to straight mid-side nodes as a shape does.
+- **Saving asks over a file that changed since this program read or wrote it.** One document is open
+  to a window, so two windows are two programs. `project` remembers each document file's modified
+  time and length as it last read or wrote it, for the process, and `write_file` refuses
+  (`ChangedOnDisk`) when they differ; the window asks Overwrite, Save As or Cancel, for a part saved
+  with its assembly as well. A script gets the words. Save As has asked in its own dialog.
+- **What a file says is held to limits when read,** since a small file should not be able to hang or
+  end the program: a text to what `sketch.text` takes; a name to 1000 bytes (commands take 200 or
+  256, so nothing 0.1.0 could write is refused); 4 million values in all, counted before parsing,
+  which bounds memory to about a gigabyte where 64 MB of text could take 8; only plain files. A path
+  naming another machine is not followed unless the file is on that machine itself: Windows would
+  connect there, offering the user's credentials.
+- **The STEP reader runs in a process of its own for `tenon-cli info` and `convert`.** It dies on some
+  damaged files by faults nothing catches, and the kernel's other uses of STEP only write it.
+- **Closing waits three seconds for the geometry thread,** then leaves it: an operation inside the
+  kernel cannot be stopped, and the window must close. The thread ends with the program.
+- **A solver left running by a parent that was killed is not dealt with.** A job object would do it, and
+  takes unsafe code outside the kernel crate; it ends on its own, or at its limit. Its folder is
+  cleared at the next run.

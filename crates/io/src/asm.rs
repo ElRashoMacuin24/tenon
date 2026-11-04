@@ -120,9 +120,10 @@ pub fn open(path: &Path) -> Result<(Assembly, Parts), ProjectError> {
         }
         let opened = project::may_read_from(Path::new(&c.part), &full).and_then(|()| project::open(Path::new(&c.part)).map_err(|e| e.to_string()));
         let part = match opened {
-            Ok((doc, _)) => {
+            Ok((doc, extra)) => {
                 let mut p = Part::new(tenon_model::Document::default());
                 p.session.replace_document(doc, None);
+                p.session.file_extra = extra;
                 p
             }
             Err(e) => Part::missing(e),
@@ -170,7 +171,8 @@ fn asm_save(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
     for (key, part) in s.parts.iter_mut() {
         // (A part in a row of its design table is worked out from its file's entry: not a file.)
         if part.variant.is_none() && part.missing.is_none() && part.session.is_dirty() {
-            let k = project::save(Path::new(key), part.session.document(), &Map::new()).map_err(|e| CmdError(format!("cannot save {key}: {e}")))?;
+            let k = project::save(Path::new(key), part.session.document(), &part.session.file_extra)
+                .map_err(|e| CmdError(format!("cannot save {key}: {e}")))?;
             kept.extend(k.map(|k| k.display().to_string()));
             part.session.mark_saved();
             saved.push(key.clone());

@@ -166,5 +166,6 @@ fn a_part_on_another_machine_is_not_gone_to_because_a_file_says_so() {
     let (_, parts) = tenon_io::asm::open(&file).unwrap();
     assert!(started.elapsed().as_secs_f64() < 5.0, "{:?}", started.elapsed());
     let why = parts.values().next().unwrap().missing.clone().unwrap();
-    assert!(why.contains("another machine (192.0.2.1)"), "{why}");
+    // (Elsewhere than Windows a path with two slashes is an ordinary path, on this machine.)
+    assert!(!cfg!(windows) || why.contains("another machine (192.0.2.1)"), "{why}");
 }

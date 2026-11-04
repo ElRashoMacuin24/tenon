@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          grep -q "^version = \"$version\"\s*$" Cargo.toml || { echo "Cargo.toml is not version $version"; exit 1; }
+          grep -q "^version = \"$version\"[[:space:]]*$" Cargo.toml || { echo "Cargo.toml is not version $version"; exit 1; }
           grep -q "^## $version" CHANGELOG.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
 
       - name: Linux packages for the windowing stack

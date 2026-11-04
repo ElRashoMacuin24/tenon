@@ -234,7 +234,15 @@ fn scratch_owner(name: &str) -> Option<u32> {
 fn program_runs(id: u32) -> bool {
     if cfg!(windows) {
         let filter = format!("PID eq {id}");
-        let asked = Command::new("tasklist").args(["/FI", &filter, "/FO", "CSV", "/NH"]).output();
+        let mut command = Command::new("tasklist");
+        command.args(["/FI", &filter, "/FO", "CSV", "/NH"]);
+        #[cfg(windows)]
+        {
+            // No console window flashing up beside the app.
+            use std::os::windows::process::CommandExt as _;
+            command.creation_flags(0x0800_0000);
+        }
+        let asked = command.output();
         asked.map_or(true, |out| String::from_utf8_lossy(&out.stdout).contains(&format!("\"{id}\"")))
     } else {
         Command::new("ps").args(["-p", &id.to_string()]).output().map_or(true, |out| out.status.success())

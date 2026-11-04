@@ -80,9 +80,10 @@ pub fn load_model(path: &Path) -> DrwModel {
         }
     } else {
         match project::open(path) {
-            Ok((doc, _)) => {
+            Ok((doc, extra)) => {
                 let mut s = Session::default();
                 s.replace_document(doc, None);
+                s.file_extra = extra;
                 DrwModel::Part(Box::new(s))
             }
             Err(e) => DrwModel::Missing(e.to_string()),
@@ -207,7 +208,7 @@ pub fn save_models(s: &mut DrwSession, kept: &mut Vec<String>) -> Result<Vec<Str
     for (key, m) in s.models.iter_mut() {
         match m {
             DrwModel::Part(p) if p.is_dirty() => {
-                keep(project::save(Path::new(key), p.document(), &Map::new()).map_err(|e| CmdError(format!("cannot save {key}: {e}")))?);
+                keep(project::save(Path::new(key), p.document(), &p.file_extra).map_err(|e| CmdError(format!("cannot save {key}: {e}")))?);
                 p.mark_saved();
                 saved.push(key.clone());
             }
@@ -215,7 +216,7 @@ pub fn save_models(s: &mut DrwSession, kept: &mut Vec<String>) -> Result<Vec<Str
                 for (pk, part) in a.parts.iter_mut() {
                     if part.missing.is_none() && part.session.is_dirty() {
                         keep(
-                            project::save(Path::new(pk), part.session.document(), &Map::new())
+                            project::save(Path::new(pk), part.session.document(), &part.session.file_extra)
                                 .map_err(|e| CmdError(format!("cannot save {pk}: {e}")))?,
                         );
                         part.session.mark_saved();

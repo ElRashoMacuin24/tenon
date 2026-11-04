@@ -618,7 +618,8 @@ fn a_connection_is_short_of_everything_until_it_gives_the_token() {
     // A first line longer than any first request needs is refused, without the rest being read.
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
     stream.set_read_timeout(Some(std::time::Duration::from_secs(20))).unwrap();
-    let _ = stream.write_all(&vec![b'x'; 100 * 1024]);
+    // (Just over the limit: a socket closed with more to read loses what it answered.)
+    let _ = stream.write_all(&vec![b'x'; 64 * 1024 + 1]);
     let mut answer = String::new();
     let _ = std::io::BufRead::read_line(&mut std::io::BufReader::new(&stream), &mut answer);
     assert!(answer.contains("request too long"), "{answer}");
