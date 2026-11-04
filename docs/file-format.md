@@ -461,13 +461,16 @@ name as a sketch's does: `target = { kind = "dimension", sketch = 3, constraint 
 constraints. `entity` is a `reference = true` entity, listed once at most. `to` is `{ edge = <an edge
 reference> }`, or `{ point = ... }` with `"origin"`, `{ work = id }`, `{ center = <edge reference> }`, `{
 sketch_point = { sketch, point } }`, `{ sketch3d_point = { sketch, point } }` or `{ vertex = { edge = <edge
-reference>, end = 0 or 1 } }`: an end of a named edge, 0 where the edge starts. What it refers to must come
-before the sketch. At every regeneration each is found again and its entity put there, and the sketch
-solved; the positions in the file are those of the last regeneration. What is not found leaves its entity
-where it is. A 3D sketch with no links has no `links` field.
+reference>, end = 0 or 1, towards = { x, y, z } } }`: an end of a named edge, 0 where the edge starts when it was
+chosen. The optional `towards` is the way from the edge's other end to this one, as it was then, and it decides
+which end is meant when the kernel names the edge the other way round; without it, `end` decides. A vertex in a
+three-point plane or a work point has the same fields. What it refers to must come before the sketch. At every
+regeneration each is found again and its entity put there, and the sketch solved; the positions in the file are
+those of the last regeneration. What is not found leaves its entity where it is. A 3D sketch with no links has no
+`links` field.
 
-A sweep's `path` may name a `sketch3d` feature as its `sketch`, with any of its curves in `curves`. A work
-plane may be `{ by = "square_to_curve", sketch, curve, end }`, a work point `{ by = "at", point = ... }`, and
+A sweep's `path` may name a `sketch3d` feature as its `sketch`, with any of its curves in `curves`; they join end
+to end by shared points, by a `coincident`, or by being reference points at one place. A work plane may be `{ by = "square_to_curve", sketch, curve, end }`, a work point `{ by = "at", point = ... }`, and
 an axis `{ sketch3d_line = { sketch, line } }`.
 
 An older build refuses a file with a `sketch3d` feature, naming the record ("line 41: feature 3 (3D

@@ -133,4 +133,12 @@ taken away), without a check.
     `model.sweep`'s `path_sketch` may be a 3D sketch. A work point at a point is a command of its own because
     `work.point` could not take it: which parameters must be given together is not a thing that changes
     within a version. A point of a 3D sketch command is `Either`: a point's id, `[x, y, z]`, `"origin"` or an
-    object saying what of the part it stands for, with `at` where there is no kernel. 250 commands.
+    object saying what of the part it stands for, with `at` where there is no kernel. 250 commands. A vertex may
+    say `towards`, the way from the edge's other end to it: `[x, y, z]` in a point of a 3D sketch command,
+    `{"x", "y", "z"}` in `work.plane`'s `points` and `work.point_at`'s `point`, found by the command when it has the
+    kernel. `model.pattern.circular`'s `axis` may be a line of a 3D sketch too. `sketch3d.length` and `model.sweep`
+    by default also take edges brought in that join the sketch's curves, or with none of its own the run of the
+    first edge. New refusals in words, with the same types: `model.extrude`, `model.revolve`, `model.sweep`,
+    `model.coil`, `model.loft`, `feature.add` and the sheet metal commands given a work plane or a 3D sketch as a
+    profile, and `sketch3d.move` on a point that follows the part or is fixed (it had returned `{}`, moving
+    nothing).

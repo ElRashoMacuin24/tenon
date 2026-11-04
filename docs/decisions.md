@@ -3540,8 +3540,13 @@ Two lines are not offered it: that is Parallel, and it says so.
 **Over-constraining is refused in words.** As the 2D sketch: a trial solve, each constraint left out in
 turn to find what it conflicts with, then the rank of the Jacobian with and without it. Added: a solve that
 "succeeds" by leaving nothing of a line (along X and along Y both) counts as a conflict, since a solver is
-content with a line of no length. The words name what is in the way: "This would over-constrain the
-sketch: e3 parallel to Y cannot be had with what already holds it. It conflicts with: e3 parallel to X."
+content with a line of no length. The words name what is in the way, and by what the window shows, as ids
+are shown nowhere: "This would over-constrain the sketch: this line parallel to Y cannot be had with what
+already holds it. It conflicts with: this line parallel to X. Delete one of them." What a constraint is on is
+"this line" or "these two lines"; anything else is told by where it is ("the point at (0, 0, 50) fixed", "the
+line from (0, 0, 0) to (0, 0, 50) parallel to Z"). A Fix adds no rows, so leaving out each constraint in turn
+never names it: what holds a point though no equation says so is named as well, a Fix or that it follows the
+part. When the solve names nothing, the constraints on the same points are named.
 
 **A bend keeps its corner.** A bend is an arc, two tangents and a radius, and the corner it rounds stays as a
 construction point held where the tangents at the arc's ends meet (`Corner`, three rows). So the freedoms of
@@ -3565,15 +3570,15 @@ the app's thread has no kernel and would have drawn something else.
 **A click.** On a point of the sketch, a vertex, a work point, the origin; on a face, where the pointer is
 on it; else in the plane through the last point that faces the viewer. Near an axis through the last
 point a line stays on that axis and is held to it. A vertex or work point makes reference geometry
-linked to it (`PointSel::Vertex`, which three-point planes can now use too; the end of a named edge), found
+linked to it (`PointSel::Vertex`, which three-point planes can now use too; an end of a named edge, below), found
 again at every regeneration as a projected edge is. Typed X, Y, Z go in a box at the top of the view, there
 while a tool places points: the 2D sketch's boxes beside the cursor say how long and at what angle, which is
 not what is wanted here. A typed point off the screen brings the view round to it.
 
 **Include Geometry** brings in a straight edge as a reference line, so that lines can be parallel to it, and
 any other as `Edge`: a circle's by its middle point, exactly, and any other by the points of its mesh (a
-sweep along one runs along a spline through those, which is near enough to see, not to the kernel's
-tolerance). They follow the part as projected edges do (`Regen::sketches3d`, `Session::follow_links`).
+sweep along one runs along a spline through those, near but not to the kernel's tolerance). They follow the part
+as projected edges do (`Regen::sketches3d`, `Session::follow_links`).
 
 **What the part does with it.** The path of a Sweep: a click on a curve in the Sweep panel, or the list. Rails
 of a Loft: Loft has none. A work point at a point (`work.point_at`: `work.point`'s schema could not grow
@@ -3596,10 +3601,82 @@ lines. The shell takes one outline with no holes, and a profile that keeps its d
 both are refused in words. The alternative, refusing every sharp corner, was the smaller change; but a mitred
 tube is what such a path is drawn to get.
 
+**A sharp corner goes round only between two straight lines.** The review found the first version of the above
+claiming "any path". It is not so. Beside a spline the kernel makes no solid. Beside an arc it sometimes does,
+and then it is wrong: a half circle of radius 30 with a line of 60 off its end, by a tube of radius 1, came to
+515.46 where pi times 154.25 is 484.59, 6% too much; other angles made no solid. Between lines, with arcs and
+tangent splines elsewhere on the path, it is right to the figures. So `Path3::corner_at_curve` refuses a corner
+at anything not straight, before the kernel, saying to make the two tangent or put a line and a bend between.
+The check also looks where a path closes, which it had not, so a loop sharp only where it closes goes by the
+mitre too (hand 30404.64: `what_a_sweep_can_go_round_it_goes_round_and_what_it_cannot_it_says`). A spline's
+ends are natural, so one closed on itself always has a corner where it closes, and is refused with that said. A
+2D path is held to the same: it never did go round such a corner, stopping at it without a word.
+
+**A bend must fit, whatever is asked of it.** The rows of a tangent say which line a direction lies along, not
+which way it runs, so a radius of 70 on lines of 50 solved, with the line running back through its far end,
+reading Fully Constrained: a path no one drew. A solver with no inequalities cannot hold this off, so a check
+after every solve (`Sketch3d::turned_back`) takes the bend's radius, its turn and the distance from the corner
+to each far end, and refuses in the words `add_bend` has. A radius that does not fit with its corner and far
+ends held is refused there and then: trying again with those let go was what had found the folded answer. So
+for a length held to a corner, a point dragged past one, and a part that moves a linked point so that a bend no
+longer fits (the sketch says it cannot follow). Two curves held tangent that come to their joint from one side
+are refused the same way.
+
+**A sweep goes on along a path that changes under it.** A sweep's path is a list of curves, and Bend is this
+sketch's main edit: a bend trimmed two curves of the list and added one that was not in it, and the sweep broke.
+So the commands keep the list as they change the sketch: a bend joins it when both its lines are in it, what is
+deleted leaves it (unless all of it goes: a path with nothing in it cannot be saved, and the sweep says the path
+is gone). A line or spline drawn on from the end of a path joins it when the sweep ran along all that the sketch
+has, and it joins end to end; a path chosen as part of a sketch stays that part. A flag on the sweep saying "the
+whole sketch" was the other way, and it would have needed saying in the file, what the whole is when curves are
+apart, and how it mixes with a chosen list. The 2D sibling fails the same way after a sketch fillet: left, as
+another path, and said in ROADMAP.md. A plane square to a line at the corner a bend rounds goes to where the line
+now ends, and back when the bend is deleted. While a 3D sketch is open the part is regenerated from all of it as
+it was opened: the sketch, its links, and the features that use it (`Sketch3dMode::as_opened`). Cutting back only
+the sketch had geometry just brought in reported as lost, in the wrong colour, until Finish.
+
+**Which end of an edge.** A vertex is an end of a named edge, and the kernel can name the edge the other way
+round after a change (an extrusion reversed), which moved a point to the other corner of the part. The review's
+suggestion was the end nearer where it was. That was tried on paper and fails the first time a block is made ten
+times wider: the corner at x = 40 is nearer the end at 0 than the one at 400. So a vertex keeps which way it lay
+from the edge's other end when it was chosen (`towards`), which holds through moving and stretching, and a
+reference line and a curved edge choose the same way, by the way they ran. A part turned by more than a quarter
+turn about puts the point on the other end. The window has the two ends and says it; a command works it out if
+it has the kernel, and without either the kernel's order stands. A name from the faces at the vertex would be
+better still, but the window has no topology to hand, as it has no kernel.
+
+**An edge brought in, as a path and as a direction.** A direction at its end was the first chord of what is
+drawn, 2.81 degrees off for a whole circle in 64 pieces, so a plane square to it and a line tangent to it were
+that much out, and a ring swept from that plane short by the cosine. Now a circle's direction is from the three
+points that say it (for a whole one, its quarter point), and any other edge's is that of the spline a path
+has for it, so a line held tangent to one is what the path needs at the joint. That spline is through the mesh's
+points, which are of single precision and may run the other way from the edge: it is turned round if so, and
+its ends are the edge's own, or nothing would join it. It comes within a part in ten thousand of a half ellipse's
+length, tested. A whole curved edge that is not a circle closes with a corner, as any natural spline: refused in
+words. Two edges brought in that meet at a corner of the part have no shared point and cannot be held coincident,
+neither being able to move, so reference points at one place count as one joint for a path. The sweep's default
+takes edges that join what the sketch has, or with nothing of its own the run of the first edge, and a click on a
+curve in the panel takes the run it is in, so a path of edges can be had in the window; a curve marked as
+construction stays out unless it is the one clicked. A curve closed on itself is a run alone: a path round a rim
+and on would cross itself where it does.
+
+**Equal goes to the corner.** A length on a bent line becomes the distance to its corner; an Equal did not, so the
+solver moved the whole path to make a trimmed line as long as an untrimmed one. An Equal on lines measures each
+as far as the corners it rounds. There is no new constraint for it, so an Equal added after the bend means the
+same, while a Length added after a bend is of the line as it now is: said here, as it reads oddly.
+
+**Deleting.** A bend's centre and corner are there for it alone, and the view offers them to a click, so deleting
+either deletes the bend and gives the corner back. A dimension's value is selected by a click and deleted as a
+symbol is; the refusal had been telling people to delete what they could not select.
+
+**A 3D sketch is no profile.** `model.extrude` took one without a word, and the file saved could not be opened.
+It was an older hole (a work plane did the same), so `Document::add` now holds every feature to what
+`validate` will ask of it when the file is read, for all that takes a profile from a sketch.
+
 **In a file** it is a feature of type `sketch3d`, laid out as a sketch is. An older build refuses a file with
 one, naming the record, as for every new feature type (docs/file-format.md).
 
 **Left out, and said so** in ROADMAP.md: arcs other than bends, helical and equation curves, silhouette and
 intersection curves, constraints to a surface or a plane, angle and driven dimensions, a dimension's value
 dragged, relative coordinates, a point on a curve (only ends meet), spline handles, moving by a triad, a
-3D sketch shown in a drawing view.
+3D sketch shown in a drawing view, a spline that closes smoothly, a path picked curve by curve in the window.

@@ -2361,7 +2361,7 @@
       "id": "sketch3d.point",
       "label": "3D Point",
       "undoable": true,
-      "description": "sketch; at: [x, y, z], or what of the part it stands for and follows: \"origin\", {\"work\": id} or {\"vertex\": edge reference, \"end\": 0 or 1}. Returns the point",
+      "description": "sketch; at: [x, y, z], or what of the part it stands for and follows: \"origin\", {\"work\": id} or {\"vertex\": edge reference, \"end\": 0 or 1, \"towards\": [x, y, z], the way from the edge's other end to this one, found for you when the kernel is to hand}. Returns the point",
       "params": {
         "type": "object",
         "properties": {
@@ -2859,7 +2859,7 @@
       "id": "sketch3d.length",
       "label": "3D Sketch Length",
       "undoable": false,
-      "description": "sketch; curves (default: its own curves that are not construction). Returns the length in all, and each",
+      "description": "sketch; curves (default: what a sweep runs along by default, as model.sweep says). Returns the length in all, and each",
       "params": {
         "type": "object",
         "properties": {
@@ -2874,7 +2874,7 @@
               "type": "integer",
               "minimum": 0
             },
-            "description": "which curves (default: its own that are not construction)"
+            "description": "which curves (default: what a sweep runs along by default)"
           }
         },
         "additionalProperties": false,
@@ -3444,7 +3444,7 @@
       "id": "model.sweep",
       "label": "Sweep",
       "undoable": true,
-      "description": "sketch (the profile); regions; path_sketch (a sketch or a 3D sketch); path: [curve ids], joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not); the sweep starts at the end nearer the profile; fixed (keep the profile's orientation; default: turn it with the path); operation",
+      "description": "sketch (the profile); regions; path_sketch (a sketch or a 3D sketch); path: [curve ids], joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not, with the edges brought in that join them, or with none of its own the edges brought in that join the first); the sweep starts at the end nearer the profile; fixed (keep the profile's orientation; default: turn it with the path); operation",
       "params": {
         "type": "object",
         "properties": {
@@ -3482,7 +3482,7 @@
               "type": "integer",
               "minimum": 0
             },
-            "description": "the path's curves, joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not construction)"
+            "description": "the path's curves, joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not construction, with the edges brought in that join them, or with none of its own the edges brought in that join the first)"
           },
           "fixed": {
             "type": "boolean",
@@ -3937,7 +3937,7 @@
       "id": "model.pattern.circular",
       "label": "Circular Pattern",
       "undoable": true,
-      "description": "features: [feature ids]; axis: \"x\" | \"y\" | \"z\", an edge reference (straight or circular edge) or a face reference (cylinder or cone); count; angle (rad, default a full turn: copies spread evenly); reverse",
+      "description": "features: [feature ids]; axis: \"x\" | \"y\" | \"z\", an edge reference (straight or circular edge), a face reference (cylinder or cone), {\"work\": id} or a line of a 3D sketch as {\"sketch3d\": id, \"line\": id}; count; angle (rad, default a full turn: copies spread evenly); reverse",
       "params": {
         "type": "object",
         "properties": {
@@ -3969,7 +3969,7 @@
                 "type": "object"
               }
             ],
-            "description": "an origin axis, a straight or circular edge, a cylinder or cone, or a work axis as {\"work\": id}"
+            "description": "an origin axis, a straight or circular edge, a cylinder or cone, a work axis as {\"work\": id}, or a line of a 3D sketch as {\"sketch3d\": id, \"line\": id}"
           },
           "count": {
             "type": "integer",
@@ -4046,7 +4046,7 @@
       "id": "work.plane",
       "label": "Work Plane",
       "undoable": true,
-      "description": "by: offset (base: plane, distance) | angle (base: plane, axis: in the base plane, angle: rad) | midplane (a, b: parallel planes); a plane is \"xy\" | \"yz\" | \"xz\", a face reference or {\"work\": plane id}",
+      "description": "by: offset (base: plane, distance) | angle (base: plane, axis: in the base plane, angle: rad) | midplane (a, b: parallel planes) | three_points (points: three points; see work.point_at for what a point is, and also {\"work\": id} or {\"center\": edge reference}) | square_to_curve (sketch: a 3D sketch, curve, end: the end of the curve it goes through, square to the curve there); a plane is \"xy\" | \"yz\" | \"xz\", a face reference or {\"work\": plane id}",
       "params": {
         "type": "object",
         "properties": {
@@ -4165,7 +4165,7 @@
                 }
               ]
             },
-            "description": "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference}, {\"sketch_point\": {\"sketch\": id, \"point\": id}}, {\"sketch3d_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}; from the first toward the second is its X"
+            "description": "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference}, {\"sketch_point\": {\"sketch\": id, \"point\": id}}, {\"sketch3d_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1, \"towards\": {\"x\": .., \"y\": .., \"z\": ..}}}; from the first toward the second is its X"
           },
           "sketch": {
             "type": "integer",
@@ -4194,7 +4194,7 @@
       "id": "work.axis",
       "label": "Work Axis",
       "undoable": true,
-      "description": "axis: \"x\" | \"y\" | \"z\", an edge reference, a cylindrical face reference or {\"work\": id}; or a, b: two planes it lies on",
+      "description": "axis: \"x\" | \"y\" | \"z\", an edge reference, a cylindrical face reference, {\"work\": id} or a line of a 3D sketch as {\"sketch3d\": id, \"line\": id}; or a, b: two planes it lies on",
       "params": {
         "type": "object",
         "properties": {
@@ -4365,7 +4365,7 @@
       "id": "work.point_at",
       "label": "Work Point at a Point",
       "undoable": true,
-      "description": "point: {\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}",
+      "description": "point: {\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1, \"towards\": the way from the edge's other end to this one, as {\"x\": .., \"y\": .., \"z\": ..}, found for you when the kernel is to hand}}",
       "params": {
         "type": "object",
         "properties": {
@@ -4381,7 +4381,7 @@
                 "type": "object"
               }
             ],
-            "description": "{\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}"
+            "description": "{\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1, \"towards\": {\"x\": .., \"y\": .., \"z\": ..}}}"
           },
           "equations": {
             "type": "object",

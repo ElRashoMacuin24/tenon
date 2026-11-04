@@ -122,26 +122,34 @@ place of the Sketch tab. It is a feature in the browser; double-click its row to
   the face. A click on nothing is in the plane through the last point that faces you, so orbit first to
   choose how a line leaves. Near an axis through the last point, the line stays on that axis and is held to it
   (the rubber band takes the axis's colour). Esc ends the chain.
-- **Spline**. Click or type the points it goes through; Enter or Make Spline makes it.
+- **Spline**. Click or type the points it goes through; Enter (once the box has done with it) or Make Spline
+  makes it. Enter in the box puts the point typed.
 - **Bend**. Click the corner where two lines meet and say the radius. The corner stays as a faint point: what
-  held it still holds it, and delete the bend to have the corner back.
+  held it still holds it, and delete the bend (its arc, its centre or its corner) to have the corner back. A radius
+  too large for its lines is refused with the largest that fits, when it is first said and if it is changed.
 - **Point**. A point on its own: on a vertex or a work point it follows the part.
 - **Include Geometry**. Click edges of the part: they come in, in amber, and follow the part. Break Link makes
   a straight one or a point the sketch's own.
 
 Constraints are on the tab too: Coincident, Fix, Parallel to X, Y or Z, Parallel, Perpendicular, Equal and
 Tangent (two curves that meet at an end). **Dimension** takes a line's length, a bend's radius or the distance
-between two points, and X, Y and Z Coordinate where a point is; double-click a value to change it, and a
-dimension is a parameter like a sketch's. The status bar says how many degrees of freedom are left, and what
-is held whole changes colour. What would over-constrain the sketch is refused, and the status bar says why.
-Drag a point to move it, in the plane that faces you. A curve selected says its length in the status bar;
-Measure (Inspect) takes a click on a curve too, and Shift adds up several.
+between two points, and X, Y and Z Coordinate where a point is; double-click a value to change it, click it and
+press Delete to remove it, and a dimension is a parameter like a sketch's. The status bar says how many degrees
+of freedom are left, and what is held whole changes colour. What would over-constrain the sketch is refused, and
+the status bar says why and what is in the way. Drag a point to move it, in the plane that faces you; one that
+follows the part or is fixed stays, and says so. A curve selected says its length in the status bar; Measure
+(Inspect) takes a click on a curve too, and Shift adds up several. An Equal on a bent line measures it to the
+corner, as a length that was on it before the bend does.
 
-**Sweep** takes a 3D sketch as its path: from its list, or a click on one of its curves. Round a corner with no
-bend it is mitred, if the profile is one outline with no holes. The profile goes on a
-plane across the path's start. **Work Plane > Square to a 3D Sketch Curve** makes that plane: click the curve
-near its end. **Work Point > At a Point** takes a point of the sketch, a work axis a line of it, and a
-three-point plane its points or vertices of the part.
+**Sweep** takes a 3D sketch as its path: from its list, which takes all the sketch's lines, bends and splines
+and the edges brought in that join them, or a click on a curve, which takes the run of curves it is in. With
+nothing of its own, the edges brought in are the path. Make an edge construction to keep it out. A bend made or
+deleted after the sweep is taken in by it, and so is a line drawn on from the end of a path that was all the
+sketch had. Round a corner with no bend it is mitred, between two straight lines, if the profile is one outline
+with no holes; at a spline or an arc it says so, and to make the two tangent or put a line and a bend between. A
+spline closed on itself has a corner where it closes. The profile goes on a plane across the path's start. **Work
+Plane > Square to a 3D Sketch Curve** makes that plane: click the curve near its end. **Work Point > At a Point**
+takes a point of the sketch, a work axis a line of it, and a three-point plane its points or vertices of the part.
 
 ## Features
 

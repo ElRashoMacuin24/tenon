@@ -14,11 +14,15 @@ shows it in [ROADMAP.md](ROADMAP.md).
   dimensions of a length, a distance, a coordinate and a radius, which are parameters; the degrees of freedom
   shown, and over-constraining refused in words. A Sweep runs along its curves in any direction (a new
   `Curve3::BSpline` for splines); work points, axes and planes come from its points and lines, among them
-  a plane square to a curve at its end; Measure takes its curves. New commands `sketch.new_3d`, `sketch3d.*` and
-  `work.point_at`; a new `sketch3d` feature type in part files, which older builds refuse (DEC-136).
+  a plane square to a curve at its end; Measure takes its curves. A sweep goes on along a path that is bent, unbent
+  or drawn on from its end after it was made. New commands `sketch.new_3d`, `sketch3d.*` and `work.point_at`; a new
+  `sketch3d` feature type in part files, which older builds refuse (DEC-136).
 - **A sweep round a sharp corner** used to stop at the first corner of its path, saying nothing, and made a
-  third of the tube it should. It is now mitred, for any path; a profile with holes, or one that keeps its
-  direction, is refused there in words.
+  third of the tube it should. It is now mitred between two straight lines, for any path, where it closes on
+  itself too. A sharp corner at a curve (a spline, an arc, a spline closed on itself), a profile with holes, or
+  one that keeps its direction is refused there in words, saying what to do.
+- **A profile from what is no sketch** is refused when it is asked for. Extrude and the others took a work plane
+  or a 3D sketch without a word, and the file saved could not be opened.
 
 ### Stress checks
 
