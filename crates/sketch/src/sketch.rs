@@ -24,12 +24,18 @@ pub enum SketchError {
     Invalid(String),
     #[error("the sketch is full")]
     TooMany,
-    #[error("the constraint conflicts with {0:?}")]
+    #[error("the constraint conflicts with {}", numbered(.0))]
     Conflict(Vec<ConstraintId>),
-    #[error("the constraint is redundant with {0:?}")]
+    #[error("the constraint is redundant with {}", numbered(.0))]
     Redundant(Vec<ConstraintId>),
     #[error("the sketch is too large to solve in one system")]
     TooLarge,
+}
+
+/// Constraints by their numbers.
+fn numbered(ids: &[ConstraintId]) -> String {
+    let list: Vec<String> = ids.iter().map(|c| c.0.to_string()).collect();
+    format!("constraint{} {}", if ids.len() == 1 { "" } else { "s" }, list.join(", "))
 }
 
 pub type SketchResult<T> = Result<T, SketchError>;
@@ -965,6 +971,36 @@ impl Sketch {
     }
 
     // ---- integrity --------------------------------------------------------------------------
+
+    /// What is wrong, for someone looking at the sketch: constraints in words, not by number, and
+    /// what to do about a spline asked to be smooth at both ends with too few points to bend as
+    /// each end asks. (`self` is the sketch as it was before the constraint was tried.)
+    pub fn say(&self, tried: Option<&crate::constraint::Constraint>, e: &SketchError) -> String {
+        let (SketchError::Conflict(ids) | SketchError::Redundant(ids)) = e else { return e.to_string() };
+        let held: Vec<&crate::constraint::Constraint> = ids.iter().filter_map(|c| self.constraints.get(c)).collect();
+        if let Some(crate::constraint::Constraint::Smooth { a, b }) = tried {
+            let spline = [a, b].into_iter().find_map(|c| match self.geometry(*c) {
+                Some(Geometry::Spline { poles, .. }) => Some((*c, poles.len())),
+                _ => None,
+            });
+            let smooth_already = |c: EntityId| self.constraints.values().any(|k| matches!(k, crate::constraint::Constraint::Smooth { a, b } if *a == c || *b == c));
+            if let Some((c, poles)) = spline
+                && poles < 6
+                && smooth_already(c)
+            {
+                return format!("a spline needs at least 6 control points to be smooth at both ends, and this one has {poles}");
+            }
+        }
+        let mut names: Vec<String> = held.iter().map(|c| c.name().replace('_', " ")).collect();
+        names.sort();
+        names.dedup();
+        let how = if matches!(e, SketchError::Conflict(_)) { "conflicts with" } else { "is one too many with" };
+        match names.as_slice() {
+            [] => format!("the constraint {how} what the sketch already has"),
+            [one] => format!("the constraint {how} a {one} constraint already there"),
+            many => format!("the constraint {how} the {} constraints already there", many.join(", ")),
+        }
+    }
 
     /// Checks references and values, e.g. after loading a file.
     pub fn validate(&self) -> SketchResult<()> {

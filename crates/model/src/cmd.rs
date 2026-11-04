@@ -1636,7 +1636,7 @@ fn sketch_constrain(s: &mut Session, p: &Value) -> CmdResult {
                                 (`driven`: true), which shows the size without setting it"
                         .into());
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(CmdError(sk.say(Some(&c), &e))),
             }
         };
         if let Some(at) = at {

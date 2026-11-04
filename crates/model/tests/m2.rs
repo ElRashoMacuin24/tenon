@@ -1613,3 +1613,15 @@ fn a_fillet_varies_along_its_edge_or_rounds_the_edges_between_two_faces() {
     let r = run(&mut t, &mut k2, "model.regenerate", json!({}));
     assert!(r["error"]["message"].as_str().unwrap().contains("do not meet"), "{r}");
 }
+
+#[test]
+fn a_conflict_says_what_it_is_with_in_words() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let line = run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 10, "y2": 1 }))["line"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "length", "line": line, "value": 10 } }));
+    run(&mut s, &mut k, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "horizontal", "line": line } }));
+    let e = s.exec("sketch.constrain", &json!({ "sketch": sk, "constraint": { "type": "vertical", "line": line } }), Some(&mut k)).unwrap_err().0;
+    assert!(e.contains("conflicts with") && (e.contains("horizontal") || e.contains("length")), "{e}");
+    assert!(!e.contains("ConstraintId"), "{e}");
+}
