@@ -121,3 +121,50 @@ version = 3
     assert!(asm::run(&mut t, "asm.open", &json!({ "path": dir.join("nope.tenonasm").to_str().unwrap() }), None).is_err());
     assert_eq!(*t.assembly(), Assembly::default());
 }
+
+/// An assembly of one part, on another machine.
+const ELSEWHERE: &str = r#"format = "tenon-assembly"
+version = 2
+name = "A"
+next_component = 2
+next_relationship = 1
+relationship = []
+explode = []
+
+[[component]]
+id = 1
+name = "P:1"
+part = "//192.0.2.1/share/x.tenon"
+placement = { origin = { x = 0.0, y = 0.0, z = 0.0 }, x = { x = 1.0, y = 0.0, z = 0.0 }, y = { x = 0.0, y = 1.0, z = 0.0 }, z = { x = 0.0, y = 0.0, z = 1.0 } }
+grounded = true
+"#;
+
+#[test]
+fn a_part_on_another_machine_is_not_gone_to_because_a_file_says_so() {
+    use tenon_io::project::may_read_from;
+    let (here, there, share) = (Path::new("C:/parts/a.tenonasm"), Path::new("//server/parts/a.tenonasm"), Path::new("//server/parts/p.tenon"));
+    // On a drive, nothing to ask.
+    assert!(may_read_from(Path::new("C:/parts/p.tenon"), here).is_ok());
+    assert!(may_read_from(Path::new("p.tenon"), here).is_ok());
+    // A file here does not send Tenon to a machine, in either kind of slash.
+    assert!(may_read_from(share, here).unwrap_err().contains("another machine (server)"));
+    assert!(may_read_from(Path::new("\\\\Server\\parts\\p.tenon"), here).is_err());
+    // One opened from that machine may name what is beside it there, and not another.
+    assert!(may_read_from(share, there).is_ok());
+    assert!(may_read_from(Path::new("//SERVER/other/p.tenon"), there).is_ok());
+    assert!(may_read_from(Path::new("//elsewhere/parts/p.tenon"), there).is_err());
+    // A device is no part, wherever it is asked from.
+    assert!(may_read_from(Path::new("//./pipe/x"), here).unwrap_err().contains("is not a file"));
+    assert!(may_read_from(Path::new("//./pipe/x"), there).is_err());
+    assert!(may_read_from(Path::new("//?/C:/x"), here).is_err());
+
+    // An assembly that names one opens at once, with that part missing and saying why.
+    let dir = scratch("elsewhere");
+    let file = dir.join("a.tenonasm");
+    std::fs::write(&file, ELSEWHERE).unwrap();
+    let started = std::time::Instant::now();
+    let (_, parts) = tenon_io::asm::open(&file).unwrap();
+    assert!(started.elapsed().as_secs_f64() < 5.0, "{:?}", started.elapsed());
+    let why = parts.values().next().unwrap().missing.clone().unwrap();
+    assert!(why.contains("another machine (192.0.2.1)"), "{why}");
+}

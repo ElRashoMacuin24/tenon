@@ -24,6 +24,11 @@ pub const MAX_PROJECT_JSON: u64 = 64 * 1024 * 1024;
 /// Largest project file accepted.
 pub const MAX_FILE: u64 = 256 * 1024 * 1024;
 
+/// Whether what `path` names is on another machine, or is a device (to know it, say, before looking).
+pub fn names_a_machine(path: &Path) -> bool {
+    machine_of(path).is_some()
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
     #[error("cannot read or write the file: {0}")]
@@ -224,6 +229,27 @@ pub fn take_refused_save() -> Option<PathBuf> {
 /// The file at `path` may be saved over whatever has happened to it: the user said so.
 pub fn may_overwrite(path: &Path) {
     seen().remove(&seen_key(path));
+}
+
+/// The machine a path names, if it names one (`//host/share/...`, in either kind of slash): for a
+/// device or a verbatim path (`//./...`, `//?/...`), `.` or `?`.
+fn machine_of(path: &Path) -> Option<String> {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let rest = text.strip_prefix("//")?;
+    Some(rest.split('/').next().unwrap_or_default().to_lowercase())
+}
+
+/// Whether a path a file names may be read, for a file at `from`. What is on another machine is
+/// not: to look for it, Windows connects to the machine the file names and offers it the user's
+/// credentials, and the window waits meanwhile. A file on a share may name what is on that
+/// machine, as an assembly its parts beside it. A device is no document, and the words say so.
+pub fn may_read_from(path: &Path, from: &Path) -> Result<(), String> {
+    match machine_of(path) {
+        None => Ok(()),
+        Some(machine) if machine == "." || machine == "?" => Err(format!("{} is not a file", path.display())),
+        Some(machine) if machine_of(from).as_deref() == Some(machine.as_str()) => Ok(()),
+        Some(machine) => Err(format!("it is on another machine ({machine}), and a file does not send Tenon there: open it from where you keep it")),
+    }
 }
 
 /// Reads a file that is a document's or a part's, of [`MAX_FILE`] bytes at most. What is not a

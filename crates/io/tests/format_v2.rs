@@ -626,6 +626,37 @@ fn what_an_older_build_would_misbuild_is_written_as_a_type_it_refuses() {
 }
 
 #[test]
+fn a_text_in_a_file_is_held_to_what_the_command_takes() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, "sketch.text", json!({ "sketch": sk, "x": 1, "y": 2, "text": "HHHH", "height": 4 }));
+    let text = String::from_utf8(project::to_bytes(s.document(), &Map::new()).unwrap()).unwrap();
+    assert!(project::from_bytes(text.as_bytes()).is_ok());
+    // A million letters would hang the rebuild; here they are refused at once, in words.
+    let long = text.replace("text = \"HHHH\"", &format!("text = \"{}\"", "H".repeat(1_000_000)));
+    assert!(damaged(&long).contains("a text has at most 2000 characters"), "{}", damaged(&long));
+    let flat = text.replace("height = 4.0", "height = 0.0");
+    assert!(damaged(&flat).contains("a text's height must be from 0.01 to 10000 mm"), "{}", damaged(&flat));
+}
+
+#[test]
+fn a_name_in_a_file_is_held_to_a_length() {
+    let text = enclosure_text();
+    let name = |n: usize| format!("name = \"{}\"", "N".repeat(n));
+    let first = text.lines().find(|l| l.starts_with("name = ")).unwrap().to_owned();
+    // What a command can have given it opens, as it did: 256 bytes.
+    assert!(project::from_bytes(text.replacen(&first, &name(256), 1).as_bytes()).is_ok());
+    // A name of a million bytes is no name, and is said so rather than drawn.
+    let said = damaged(&text.replacen(&first, &name(1_000_000), 1));
+    assert!(said.contains("the name of the part") && said.contains("1000000 bytes"), "{said}");
+    assert!(said.len() < 200, "{said}");
+    // So too a feature's.
+    let feature = text.lines().filter(|l| l.starts_with("name = ")).nth(1).unwrap().to_owned();
+    let said = damaged(&text.replacen(&feature, &name(2000), 1));
+    assert!(said.contains("the name of a feature"), "{said}");
+}
+
+#[test]
 fn a_sketch_shown_by_the_user_says_so_on_its_record() {
     let mut s = Session::default();
     let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();

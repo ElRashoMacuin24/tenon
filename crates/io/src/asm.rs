@@ -118,13 +118,14 @@ pub fn open(path: &Path) -> Result<(Assembly, Parts), ProjectError> {
         if parts.contains_key(&c.part) {
             continue;
         }
-        let part = match project::open(Path::new(&c.part)) {
+        let opened = project::may_read_from(Path::new(&c.part), &full).and_then(|()| project::open(Path::new(&c.part)).map_err(|e| e.to_string()));
+        let part = match opened {
             Ok((doc, _)) => {
                 let mut p = Part::new(tenon_model::Document::default());
                 p.session.replace_document(doc, None);
                 p
             }
-            Err(e) => Part::missing(e.to_string()),
+            Err(e) => Part::missing(e),
         };
         parts.insert(c.part.clone(), part);
     }

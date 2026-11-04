@@ -116,6 +116,12 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- What a file says is now held to limits, as the commands' words are: a text to its 2000 characters
+  (a small file could hang the rebuild), a name to 1000 bytes (a very long one crashed the window),
+  and a part or model on another machine is not gone to because a file names it (Windows would
+  connect there, offering the user's credentials) unless the file is on that machine itself.
+- A stress study no longer runs what it finds in a `.pixi` folder of the working folder: only a
+  program built in a checkout looks in that checkout's.
 - Saving replaced a file another window or program had saved since it was opened here, with no
   word, and that work was gone. It now asks: Overwrite, Save As or Cancel. A save that fails no
   longer leaves `name.tmp` beside the file, and says which file it was.

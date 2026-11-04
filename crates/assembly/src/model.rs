@@ -424,6 +424,10 @@ impl Assembly {
 
     /// Checks a document read from a file (or built by commands): ids, references, numbers.
     pub fn validate(&self) -> Result<(), String> {
+        tenon_model::name_in_file("the assembly", &self.name)?;
+        for r in &self.relationships {
+            tenon_model::name_in_file("a relationship", &r.name)?;
+        }
         if self.components.len() > MAX_COMPONENTS {
             return Err(format!("more than {MAX_COMPONENTS} components"));
         }

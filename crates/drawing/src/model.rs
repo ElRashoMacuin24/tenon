@@ -579,6 +579,13 @@ impl Drawing {
 
     /// Checks a document read from a file: ids, references, numbers.
     pub fn validate(&self) -> Result<(), String> {
+        tenon_model::name_in_file("the drawing", &self.name)?;
+        for s in &self.sheets {
+            tenon_model::name_in_file("a sheet", &s.name)?;
+        }
+        for v in &self.views {
+            tenon_model::name_in_file("a view", &v.name)?;
+        }
         if self.sheets.is_empty() || self.sheets.len() > MAX_SHEETS {
             return Err(format!("a drawing has 1 to {MAX_SHEETS} sheets"));
         }

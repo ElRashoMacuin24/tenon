@@ -1149,6 +1149,20 @@ pub fn prop_ok(text: &str) -> Result<(), String> {
     }
 }
 
+/// The longest name a file may give a document or anything in it, in bytes. Commands take 200 or
+/// 256, and files are let a little more; a much longer one is no name, and takes more of the
+/// graphics card to draw than it has.
+pub const MAX_NAME_IN_FILE: usize = 1000;
+
+/// Whether a name read from a file is one: see [`MAX_NAME_IN_FILE`].
+pub fn name_in_file(what: &str, name: &str) -> Result<(), String> {
+    if name.len() > MAX_NAME_IN_FILE {
+        let start: String = name.chars().take(40).collect();
+        return Err(format!("the name of {what} (\"{start}...\") is {} bytes long, and a name has at most {MAX_NAME_IN_FILE}", name.len()));
+    }
+    Ok(())
+}
+
 /// Most features one document may hold (hostile-input cap).
 pub const MAX_FEATURES: usize = 10_000;
 
@@ -1567,6 +1581,10 @@ impl Document {
     pub fn validate(&self) -> Result<(), String> {
         if self.features.len() > MAX_FEATURES {
             return Err("too many features".into());
+        }
+        name_in_file("the part", &self.name)?;
+        for f in &self.features {
+            name_in_file("a feature", &f.name)?;
         }
         for (what, said) in [("part number", &self.part_number), ("description", &self.description)] {
             if let Some(text) = said {

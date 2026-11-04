@@ -975,6 +975,11 @@ impl Sketch {
             if id.0 > self.next_entity {
                 return Err(invalid(format!("{id} is beyond the id counter")));
             }
+            // (A text is what `sketch.text` would take, however it came: what it takes to outline
+            // a text goes as the square of its letters.)
+            if let Geometry::Text { text, height, angle, .. } = &e.geometry {
+                check_text(text, *height, *angle).map_err(|why| invalid(format!("{id}: {why}")))?;
+            }
             match &e.geometry {
                 Geometry::Point { pos } if !valid_pos(*pos) => return Err(invalid(format!("{id} has an invalid position"))),
                 Geometry::Circle { radius, .. } if !tol::is_valid_size(*radius) => return Err(invalid(format!("{id} has an invalid radius"))),

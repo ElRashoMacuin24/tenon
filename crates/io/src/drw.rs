@@ -93,7 +93,18 @@ pub fn load_model(path: &Path) -> DrwModel {
 /// Reads a drawing and the model files its views show.
 pub fn open(path: &Path) -> Result<(Drawing, BTreeMap<String, DrwModel>), ProjectError> {
     let d = from_bytes(&project::read_to_edit(path)?, &folder_of(path))?;
-    let models = d.models().into_iter().map(|k| (k.clone(), load_model(Path::new(&k)))).collect();
+    let full = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let models = d
+        .models()
+        .into_iter()
+        .map(|k| {
+            let model = match project::may_read_from(Path::new(&k), &full) {
+                Ok(()) => load_model(Path::new(&k)),
+                Err(why) => DrwModel::Missing(why),
+            };
+            (k, model)
+        })
+        .collect();
     Ok((d, models))
 }
 
@@ -109,6 +120,11 @@ pub fn save(path: &Path, d: &Drawing) -> Result<Option<PathBuf>, ProjectError> {
 pub fn model_stamp(key: &str, m: &DrwModel) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
+    // (A model on another machine that it was not sent to is not looked for, about once a second.)
+    if matches!(m, DrwModel::Missing(_)) && project::names_a_machine(Path::new(key)) {
+        key.hash(&mut h);
+        return h.finish();
+    }
     let mut file = |p: &str| {
         p.hash(&mut h);
         match std::fs::metadata(p) {
@@ -240,10 +256,7 @@ pub fn as_template(d: &Drawing, name: &str) -> Drawing {
 
 /// Reads a drawing file to start a new drawing from (its models are not read).
 pub fn read_drawing_template(path: &Path, name: &str) -> Result<Drawing, ProjectError> {
-    if std::fs::metadata(path)?.len() > project::MAX_FILE {
-        return Err(ProjectError::NotAProject("the file is too large".into()));
-    }
-    let d = from_bytes(&std::fs::read(path)?, &folder_of(path))?;
+    let d = from_bytes(&project::read_file(path)?, &folder_of(path))?;
     Ok(as_template(&d, name))
 }
 
