@@ -141,6 +141,22 @@ Flange, Contour Flange, Hem, Fold, Bend, Corner Seam, Cut (also across bends) an
 Round/Chamfer. **Go to Flat Pattern** lays it flat; **File > Export Flat Pattern DXF**
 writes it for a cutter.
 
+A shape that closes on itself (a tube, a box section) cannot be laid flat until it is open.
+**Rip** opens a seam in a face: click a point of it for a slit right across it; in **Way**,
+Point to Point for a slit between two clicks (a click at an edge of the face goes through that
+edge), or Whole Face to take the face out. The **Gap** is how wide the slit is in the flat
+pattern. A slit through a point runs along a bend's axis, on a flat face alongside the bend beside
+it, or else across the short way: click a straight edge for it to run alongside that.
+
+**Unfold** lays bends flat so that you can work across them: click the flat face that stays where
+it is, then the round face of each bend (or tick **All Bends**), then OK. The part is now that
+partly flat sheet, and each bend a strip as wide as its allowance. Cut, drill or sketch on it as on
+any plate. **Refold** folds back what an unfold laid flat: all of it, or untick All Bends and click
+the strips you want. A hole cut across a strip comes back on both faces and round the bend.
+What is in a strip has to be sheet of one thickness, cut right through. A cut that does not go
+through, something joined to the strip alone, sheet added across it, or a cut right across it that
+leaves nothing to carry what is beyond, cannot go round a bend: Refold says which, and does nothing.
+
 ## Assemblies
 
 **File > New Assembly**, then **Place** (P) part files: the first is grounded at the

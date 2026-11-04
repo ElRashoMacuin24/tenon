@@ -36,8 +36,10 @@ In parts, you can:
   folds along a line drawn across a face, hems, sheet along an open profile or along an edge,
   bend and corner reliefs, cuts that go round the bends as drawn on the flat sheet and cuts
   square to the sheet from a sketch at any angle; open the square corners of a shelled box
-  and bend its sharp edges, so that it too lays flat; lay them flat by K factor and export
-  the flat pattern as DXF for a cutter;
+  and bend its sharp edges, so that it too lays flat; rip a seam in a tube or a closed box
+  so that it can be laid flat; lay chosen bends flat to work across them, and fold them back with
+  what was cut going round the bend; lay them flat by K factor and export the flat pattern as DXF
+  for a cutter;
 - drive any dimension or feature value by an equation of named parameters (fx);
 - keep one part in several sizes with a design table, and use it in an assembly in any of them;
 - give the part a material and a colour, and read its mass, volume and centre of gravity;

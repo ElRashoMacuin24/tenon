@@ -90,10 +90,10 @@ fn rips_unfolds_and_refolds_are_records_read_back_to_the_same_bytes() {
     assert!(back.features().iter().any(|f| matches!(f.kind, FeatureKind::Rip(_))));
     // What a file says of a bad gap, or of a whole face with a gap of its own, is refused with its line.
     let bad = text.replace("gap = 0.5", "gap = -1.0");
-    let e = project::from_bytes(bad.as_bytes()).err().expect("a gap that cannot be").to_string();
+    let e = project::from_bytes(bad.as_bytes()).expect_err("a gap that cannot be").to_string();
     assert!(e.contains("gap of a rip"), "{e}");
     let bad = text.replace("way = \"face\"", "way = \"face\"\ngap = 1.0");
-    let e = project::from_bytes(bad.as_bytes()).err().expect("a gap a whole face has not").to_string();
+    let e = project::from_bytes(bad.as_bytes()).expect_err("a gap a whole face has not").to_string();
     assert!(e.contains("no gap of its own"), "{e}");
     let bad = text.replace("way = \"face\"", "way = \"slit\"");
     assert!(project::from_bytes(bad.as_bytes()).is_err());

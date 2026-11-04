@@ -289,6 +289,38 @@ fn a_refold_of_some_of_the_bends_is_clicked_on_their_flat_strips() {
     assert!(wb.scene().bodies[0].volume > 0.0);
 }
 
+#[test]
+fn what_cannot_be_folded_back_says_so_in_the_app() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    bracket(&mut wb, &mut d);
+    let top = wb.exec("model.face_ref", json!({ "at": [10, 20, T] })).unwrap();
+    let bend = wb.exec("model.face_ref", json!({ "at": [inside_of_bend().x, inside_of_bend().y, inside_of_bend().z] })).unwrap();
+    wb.exec("sheet.unfold", json!({ "face": top.clone(), "bends": [bend] })).unwrap();
+    // A pocket in the strip, a millimetre into a sheet two thick.
+    let sk = wb.exec("sketch.create", json!({ "face": top })).unwrap()["feature"].as_u64().unwrap();
+    frames(&mut d, &mut wb);
+    let frame = wb.sketch_frame(tenon_model::FeatureId(sk as u32)).unwrap();
+    let (a, b) = (frame.to_local(Vec3::new(55.5, 10.0, T)), frame.to_local(Vec3::new(56.5, 30.0, T)));
+    wb.exec("sketch.rectangle", json!({ "sketch": sk, "x1": a.x, "y1": a.y, "x2": b.x, "y2": b.y })).unwrap();
+    wb.exec("model.extrude", json!({ "sketch": sk, "distance": 1, "reverse": true, "operation": "cut" })).unwrap();
+    frames(&mut d, &mut wb);
+    press(&mut d, &mut wb, "Refold");
+    d.tap(&mut wb, egui::Key::Enter);
+    frames(&mut d, &mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let said: Vec<String> = wb
+        .scene()
+        .status
+        .iter()
+        .filter_map(|(_, s)| match s {
+            tenon_model::FeatureStatus::Error { message } => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(said.len() == 1 && said[0].contains("not sheet of one thickness") && said[0].contains("Make the cut go through"), "{said:?}");
+}
+
 /// A tube 50 long, 10 inside radius, 2 thick, along Z, seen from where its outside can be clicked.
 fn tube(wb: &mut Workbench, d: &mut Driver) -> f64 {
     wb.exec("sheet.defaults", json!({ "thickness": T, "bend_radius": R, "k_factor": 0.44, "gap": 1 })).unwrap();

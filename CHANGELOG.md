@@ -5,6 +5,16 @@ shows it in [ROADMAP.md](ROADMAP.md).
 
 ## Unreleased
 
+### Sheet metal
+
+- **Rip, Unfold and Refold** are on the Sheet Metal tab, no longer greyed. Rip opens a seam in a
+  face, flat or round, so that a closed shape can be laid flat: a slit through a point, a slit
+  between two points, or the whole face out. A tube that was ripped lays flat from its round side.
+  Unfold lays chosen bends flat from a face that stays where it is, so that cuts can go across
+  them; Refold folds them back, with what was cut going round the bend, and says in words what
+  cannot be folded back. New commands `sheet.rip`, `sheet.unfold`, `sheet.refold`, new feature types
+  `rip`, `unfold`, `refold` in the part file.
+
 ### Stress checks
 
 - **Optimize Shape** (topology optimization): in Stress Analysis, the Optimize panel works out

@@ -5137,6 +5137,132 @@
       }
     },
     {
+      "id": "sheet.rip",
+      "label": "Rip",
+      "undoable": true,
+      "description": "face: a face reference: a flat side of the sheet, or one side of a bend or a tube. A seam is opened in it, so that a shape that closes on itself can be laid flat. way: \"point\" (default: a slit right across the face through at: [x, y, z]; on a bend or a tube along its axis, on a flat face alongside the bend beside it, else across its short way, or alongside the straight edge along: an edge reference) | \"between\" (a slit from from: [x, y, z] to to: [x, y, z], both on the face; a point on the edge of the face takes the slit through that edge) | \"face\" (the whole face is taken out, and the sheet behind it). gap: how wide a slit is, as the flat pattern has it (default GapSize; a whole face has none)",
+      "params": {
+        "type": "object",
+        "properties": {
+          "face": {
+            "$ref": "#/$defs/face_ref",
+            "description": "a flat side of the sheet, or one side of a bend or a tube"
+          },
+          "way": {
+            "type": "string",
+            "enum": [
+              "point",
+              "between",
+              "face"
+            ],
+            "description": "a slit through a point, a slit between two points, or the whole face out (default point)"
+          },
+          "at": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "with way point: the point on the face [x, y, z]"
+          },
+          "along": {
+            "$ref": "#/$defs/edge_ref",
+            "description": "with way point, on a flat face: the straight edge the slit runs alongside"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "with way between: where the slit starts [x, y, z]"
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "with way between: where it ends [x, y, z]"
+          },
+          "gap": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "how wide a slit is (default GapSize; a whole face has none)"
+          },
+          "equations": {
+            "type": "object",
+            "description": "equations for values of the feature, by where the value is in its definition: {\"/distance\": \"width / 2\"} (lengths in mm, angles in degrees)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "face"
+        ]
+      }
+    },
+    {
+      "id": "sheet.unfold",
+      "label": "Unfold",
+      "undoable": true,
+      "description": "face: a face reference, the flat side of the sheet that stays where it is. bends: [face references], a round face of each bend to lay flat (default: every bend). Each becomes a flat strip as wide as its allowance, in the plane of the sheet on the side towards the face, and the sheet beyond it comes round with it. The part after this is that partly flat sheet, for cuts and other work to follow on it; sheet.refold folds it back. A bend that is not all that joins the sheet on its two sides (a tube, a box) cannot be laid flat until it is ripped",
+      "params": {
+        "type": "object",
+        "properties": {
+          "face": {
+            "$ref": "#/$defs/face_ref",
+            "description": "the flat side of the sheet that stays where it is"
+          },
+          "bends": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "a round face of each bend to lay flat (default: every bend)"
+          },
+          "equations": {
+            "type": "object",
+            "description": "equations for values of the feature, by where the value is in its definition: {\"/distance\": \"width / 2\"} (lengths in mm, angles in degrees)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "face"
+        ]
+      }
+    },
+    {
+      "id": "sheet.refold",
+      "label": "Refold",
+      "undoable": true,
+      "description": "unfold: the feature (default: the last unfold in the history). bends: [face references], a face of the flat strip of each bend to fold back (default: all of its bends still flat). Each strip is rolled up again as it now is, what was cut out of it going round the bend, and the sheet beyond turns back with it. Refused, in words, when what is in the strip is not sheet of one thickness cut straight through, when something is joined to the strip alone, when the sheet on its two sides is joined some other way, when a cut has left nothing of the strip to hold the two sides together, and when what comes round would run into the sheet",
+      "params": {
+        "type": "object",
+        "properties": {
+          "unfold": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the unfold whose bends these are (default: the last in the history)"
+          },
+          "bends": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/face_ref"
+            },
+            "description": "a face of the flat strip of each bend to fold back (default: all still flat)"
+          },
+          "equations": {
+            "type": "object",
+            "description": "equations for values of the feature, by where the value is in its definition: {\"/distance\": \"width / 2\"} (lengths in mm, angles in degrees)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "id": "sheet.a_side",
       "label": "Define A-Side",
       "undoable": true,

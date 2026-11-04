@@ -505,6 +505,47 @@ A bend whose end would lie against sheet that runs on beside it is refused, sayi
 corner that was not ripped, or the corner of the next edge when the edges are bent one at a
 time. `radius` is the bends' own inside radius in place of the rule's.
 
+`sheet.rip` opens a seam in a face, so that a shape that closes on itself can be laid flat:
+`at` for a slit right across the face through that point (on a bend or a tube along its axis, on a
+flat face alongside the bend beside it, else across its short way, or alongside the edge `along`),
+`way: "between"` with `from` and `to` for a slit between two points, `way: "face"` to take the
+whole face out. `gap` is how wide a slit is in the flat, the rule's `GapSize` unless given. A tube
+10 inside radius and 2 thick, 50 long, whose neutral surface is at 10.88:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3, "gap": 1 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.circle", "with": { "sketch": "$s.feature", "cx": 0, "cy": 0, "r": 10 } },
+{ "run": "sketch.circle", "with": { "sketch": "$s.feature", "cx": 0, "cy": 0, "r": 12 } },
+{ "run": "model.extrude", "with": { "sketch": "$s.feature", "distance": 50 } },
+{ "run": "model.face_ref", "with": { "at": [0, -12, 20] }, "as": "side" },
+{ "run": "sheet.rip", "with": { "face": "$side", "at": [0, -12, 20] } },
+{ "run": "sheet.flat", "expect": { "length": 67.3610561421, "width": 50, "bends.0.angle": 6.19127355 } }
+```
+
+`sheet.unfold` lays bends flat from the flat face that stays where it is: `bends` names each by a
+round face of it, and without them it is every bend. `sheet.refold` folds them back (the last unfold's
+unless told `unfold`; all that are flat unless told `bends`, each by a face of the strip it became).
+What is cut meanwhile goes round the bend. A hole of radius 6 across the bend of a bracket, cut
+while it is flat:
+
+```json
+{ "run": "sheet.defaults", "with": { "thickness": 2, "bend_radius": 3 } },
+{ "run": "sketch.create", "with": { "plane": "xy" }, "as": "s" },
+{ "run": "sketch.rectangle", "with": { "sketch": "$s.feature", "x1": 0, "y1": 0, "x2": 60, "y2": 40 } },
+{ "run": "sheet.face", "with": { "sketch": "$s.feature" } },
+{ "run": "model.edge_ref", "with": { "at": [60, 20, 2] }, "as": "edge" },
+{ "run": "sheet.flange", "with": { "edges": ["$edge"], "height": 20 } },
+{ "run": "model.face_ref", "with": { "at": [10, 20, 2] }, "as": "top" },
+{ "run": "sheet.unfold", "with": { "face": "$top" } },
+{ "run": "model.mass", "expect": { "bodies.0.volume": 6087.57518 }, "note": "76.0947 x 40 x 2: 55 of plate, 6.0947 of bend, 15 of wall" },
+{ "run": "sketch.create", "with": { "face": "$top" }, "as": "h" },
+{ "run": "sketch.circle", "with": { "sketch": "$h.feature", "cx": 58.04734, "cy": 20, "r": 6 } },
+{ "run": "model.extrude", "with": { "sketch": "$h.feature", "distance": 5, "reverse": true, "operation": "cut" } },
+{ "run": "sheet.refold" },
+{ "run": "sheet.flat", "expect": { "length": 76.09469, "holes": 1, "area": 2930.69025 } }
+```
+
 `sheet.flat` lays the part flat and returns the size of the sheet (`length`, `width`), its
 `area`, the `cut_length`, the number of cut-outs (`holes`) and every bend's `angle`, `radius`,
 `allowance` and whether it is `up`; with `curves: true`, the outlines too. `sheet.export_dxf`
