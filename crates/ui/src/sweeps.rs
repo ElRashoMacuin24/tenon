@@ -498,6 +498,9 @@ impl Workbench {
         let chosen: Vec<FeatureId> = match &self.panel {
             Some(Panel::Sweep(p)) => std::iter::once(p.sketch).chain(p.path.as_ref().map(|c| c.sketch)).collect(),
             Some(Panel::Coil(p)) => vec![p.sketch],
+            Some(Panel::ContourRoll(p)) => vec![p.sketch],
+            Some(Panel::LoftedFlange(p)) => p.sketches.iter().flatten().copied().collect(),
+            Some(Panel::Punch(p)) => p.sketch.into_iter().collect(),
             // (Its lines can be clicked to turn about.)
             Some(Panel::Revolve(p)) => vec![p.sketch],
             // (Its closed regions can be clicked to choose what is extruded.)
@@ -564,6 +567,7 @@ impl Workbench {
         match &self.panel {
             Some(Panel::Revolve(p)) => Some((p.sketch, p.axis)),
             Some(Panel::Coil(p)) => Some((p.sketch, p.axis)),
+            Some(Panel::ContourRoll(p)) => Some((p.sketch, p.axis)),
             _ => None,
         }
     }
@@ -573,6 +577,7 @@ impl Workbench {
         match &mut self.panel {
             Some(Panel::Revolve(p)) => p.axis = axis,
             Some(Panel::Coil(p)) => p.axis = axis,
+            Some(Panel::ContourRoll(p)) => p.axis = axis,
             _ => return false,
         }
         true

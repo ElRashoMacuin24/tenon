@@ -54,8 +54,11 @@ fn sketch_of<'a>(doc: &'a Document, regen: &'a crate::Regen, id: FeatureId) -> R
 }
 
 fn rims_of(doc: &Document, regen: &crate::Regen, l: &LoftedFlange) -> Result<Rims, String> {
-    let (s0, f0) = sketch_of(doc, regen, l.sketches[0])?;
-    let (s1, f1) = sketch_of(doc, regen, l.sketches[1])?;
+    rims_between([sketch_of(doc, regen, l.sketches[0])?, sketch_of(doc, regen, l.sketches[1])?])
+}
+
+fn rims_between(sketches: [(&Sketch, Frame); 2]) -> Result<Rims, String> {
+    let [(s0, f0), (s1, f1)] = sketches;
     let (r0, _) =
         contour_path(s0, &[]).map_err(|e| e.replace("A contour flange", "A lofted flange").replace("a contour flange", "a lofted flange"))?;
     let (mut r1, _) =
@@ -112,6 +115,42 @@ pub(crate) fn lofted_skin(doc: &Document, regen: &crate::Regen, l: &LoftedFlange
     let (columns, normals) = smooth_sheet(&rims, l, sizes)?;
     let (lo, hi) = l.reach(sizes.thickness);
     Ok(Skin::new(&columns, &normals, lo, hi, sizes.k_factor, rims.sign))
+}
+
+/// What a lofted flange's panel says of it: how it is laid flat, and how close that is.
+pub fn lofted_words(l: &LoftedFlange, sketches: [(&Sketch, Frame); 2], sizes: &Sizes) -> Result<String, String> {
+    let rims = rims_between(sketches)?;
+    match l.forming {
+        Forming::DieFormed => {
+            let (columns, normals) = smooth_sheet(&rims, l, sizes)?;
+            let (lo, hi) = l.reach(sizes.thickness);
+            Ok(Skin::new(&columns, &normals, lo, hi, sizes.k_factor, rims.sign).words)
+        }
+        Forming::PressBrake { chord } => {
+            let points = |runs: &[Run], frame: &Frame| loft::points_of(runs, frame, |radius| loft::chord_step(radius, chord), |_| 1);
+            let (a, b) = (points(&rims.runs[0], &rims.frames[0]), points(&rims.runs[1], &rims.frames[1]));
+            let n = loft::facets(&a, &b, rims.sign)?.len();
+            Ok(format!(
+                "Press brake: {n} flat facet{} with {} bend{} between them, each within {} mm of the profiles' arcs. Laid flat by unfolding them, which is exact. Where folds meet at a corner of a profile they stop short of it, as a relief.",
+                if n == 1 { "" } else { "s" },
+                n.saturating_sub(1),
+                if n == 2 { "" } else { "s" },
+                crate::explain::mm(chord)
+            ))
+        }
+    }
+}
+
+/// What a contour roll's panel says of it: whether it unrolls exactly.
+pub fn roll_words(c: &ContourRoll, sketch: &Sketch) -> Result<String, String> {
+    let skip: Vec<tenon_sketch::EntityId> = if let AxisRef::SketchLine(l) = c.axis { vec![l] } else { Vec::new() };
+    let (runs, _) =
+        contour_path(sketch, &skip).map_err(|e| e.replace("A contour flange", "A contour roll").replace("a contour flange", "a contour roll"))?;
+    Ok(if matches!(runs.as_slice(), [Run::Line { .. }]) {
+        "One straight line: a cylinder, a cone or a flat ring, which unrolls exactly.".to_owned()
+    } else {
+        "This profile does not unroll exactly: only one straight line does. Each line and arc is unrolled row by row at its neutral surface; the flat pattern says how far out that is.".to_owned()
+    })
 }
 
 impl Ctx<'_> {
@@ -244,6 +283,43 @@ impl Ctx<'_> {
         if outlines.iter().any(|o| o.len() < 3) {
             return Err(too_tight());
         }
+        // Where each bend's ends are, on each of its two facets. An end runs straight across from
+        // where one facet stops to where the other does. Where one stops well short of the other
+        // (at a corner of a profile, where the bends beside it stop it) the bend ends square where
+        // the shorter stops, and the longer is cut back to there too: that is the relief at the
+        // corner. (Laid flat, bends are wider than the corners they round: what is left of two
+        // facets at a corner would otherwise lie across one another.)
+        let mut ends: Vec<Option<[(f64, f64); 2]>> = Vec::with_capacity(folds.len());
+        for (i, fold) in folds.iter().enumerate() {
+            let Some(b) = fold else {
+                ends.push(None);
+                continue;
+            };
+            let reach = |corners: &[Vec3], side: usize| -> Option<(f64, f64)> {
+                let at_line = corners.iter().filter(|q| ((**q - b.from).dot(b.into[side]) - b.back[side]).abs() < 1e-7);
+                let along: Vec<f64> = at_line.map(|q| (*q - b.from).dot(b.along)).collect();
+                let (least, most) = along.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, m), v| (l.min(*v), m.max(*v)));
+                (most - least > 1e-6).then_some((least, most))
+            };
+            let (Some(mut first), Some(mut second)) = (reach(&outlines[i], 0), reach(&outlines[i + 1], 1)) else { return Err(too_tight()) };
+            let wide = 2.0 * b.angle * rho;
+            if (first.0 - second.0).abs() > wide {
+                let at = first.0.max(second.0);
+                let longer = if first.0 < second.0 { i } else { i + 1 };
+                outlines[longer] = loft::clipped(&outlines[longer], b.from + b.along * at, b.along);
+                (first.0, second.0) = (at, at);
+            }
+            if (first.1 - second.1).abs() > wide {
+                let at = first.1.min(second.1);
+                let longer = if first.1 > second.1 { i } else { i + 1 };
+                outlines[longer] = loft::clipped(&outlines[longer], b.from + b.along * at, -b.along);
+                (first.1, second.1) = (at, at);
+            }
+            if first.1 - first.0 < 1e-6 || second.1 - second.0 < 1e-6 || outlines[i].len() < 3 || outlines[i + 1].len() < 3 {
+                return Err(too_tight());
+            }
+            ends.push(Some([first, second]));
+        }
         let mut pieces: Vec<Named> = Vec::with_capacity(2 * facets.len());
         let built = (|| -> Result<(), Stop> {
             for (i, (facet, corners)) in facets.iter().zip(&outlines).enumerate() {
@@ -265,16 +341,8 @@ impl Ctx<'_> {
                 let profile = Profile { frame, regions: vec![Region { outer: outline::to_loop(&around), holes: vec![] }] };
                 pieces.push(self.sheet_prism(id, &profile, t, Some([facet_key(i, 1000), facet_key(i, 1001)]))?);
             }
-            for (i, fold) in folds.iter().enumerate() {
-                let Some(b) = fold else { continue };
-                // How far along the fold line each facet reaches where the bend meets it.
-                let reach = |corners: &[Vec3], side: usize| -> Option<(f64, f64)> {
-                    let at_line = corners.iter().filter(|q| ((**q - b.from).dot(b.into[side]) - b.back[side]).abs() < 1e-7);
-                    let along: Vec<f64> = at_line.map(|q| (*q - b.from).dot(b.along)).collect();
-                    let (least, most) = along.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, m), v| (l.min(*v), m.max(*v)));
-                    (most - least > 1e-6).then_some((least, most))
-                };
-                let (Some(first), Some(second)) = (reach(&outlines[i], 0), reach(&outlines[i + 1], 1)) else { return Err(too_tight()) };
+            for (i, (fold, reach)) in folds.iter().zip(&ends).enumerate() {
+                let (Some(b), Some([first, second])) = (fold, reach) else { continue };
                 let turn = b.out[0].cross(b.out[1]).dot(b.along);
                 let (z, way) = if turn >= 0.0 { (b.along, 1.0) } else { (-b.along, -1.0) };
                 let frame = Frame::new(b.axis, z, b.out[0]).ok_or_else(&too_tight)?;
@@ -314,7 +382,8 @@ impl Ctx<'_> {
         }
         let joined = self.sheet_step(BoolOp::Union, first, false, rest)?;
         let (whole, solids) = (volume(self, joined.0), self.k.topology(joined.0).map(|s| s.solids));
-        if !matches!(solids, Ok(1)) || !matches!(whole, Ok(v) if (v - added).abs() <= 1e-5 * (1.0 + added)) {
+        // (To a thousandth: where folds meet at a corner their bends overlap by a hair at their ends.)
+        if !matches!(solids, Ok(1)) || !matches!(whole, Ok(v) if (v - added).abs() <= 1e-3 * added) {
             self.k.release(joined.0);
             return Err(
                 "The facets and bends of the lofted flange could not be joined into one sheet. Try another chord tolerance or bend radius, or move the profiles a little."

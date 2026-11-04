@@ -125,6 +125,9 @@ pub enum Icon {
     /// A wall bent up from the edge of a sheet.
     Flange,
     ContourFlange,
+    ContourRoll,
+    LoftedFlange,
+    Punch,
     Hem,
     Bend,
     SheetCut,
@@ -190,8 +193,8 @@ fn category(icon: Icon) -> Option<Category> {
     Some(match icon {
         Extrude | Revolve | Sweep | Loft | Coil | Fillet | Chamfer | Shell | Hole | Rib | Draft | Thread | Combine | Split | Part | Body | Cube
         | MassProps | PatternRect | PatternCircular | Mirror | Assembly | Place | CreateComponent | Explode | BaseView | ProjectedView
-        | DetailView | SheetFace | Flange | SheetCut | FlatPattern | FoldedPart | ASide | SheetDefaults | ConvertSheet | PrimBox | PrimCylinder
-        | PrimSphere | PrimTorus => Category::Solid,
+        | DetailView | SheetFace | Flange | SheetCut | Punch | FlatPattern | FoldedPart | ASide | SheetDefaults | ConvertSheet | PrimBox
+        | PrimCylinder | PrimSphere | PrimTorus => Category::Solid,
         Plane | Axis | Point | Ucs | LookAt => Category::Work,
         NewSketch | FinishSketch => Category::Sketch,
         _ => return None,
@@ -967,6 +970,27 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.line(&[(0.26, 0.82), (0.74, 0.82)]);
             pen.arc((0.74, 0.7), 0.12, 0.12, PI / 2.0, 0.0);
             pen.line(&[(0.86, 0.7), (0.86, 0.2)]);
+        }
+        // A sheet rolled most of the way round its axis, seen along the axis.
+        Icon::ContourRoll => {
+            pen.arc((0.5, 0.5), 0.38, 0.38, 0.6, 2.0 * PI - 0.6);
+            pen.arc((0.5, 0.5), 0.26, 0.26, 0.6, 2.0 * PI - 0.6);
+            pen.dot((0.5, 0.5), 0.05);
+        }
+        // A sheet going from a round end to a square one.
+        Icon::LoftedFlange => {
+            pen.arc((0.5, 0.26), 0.2, 0.1, 0.0, 2.0 * PI);
+            pen.closed(&[(0.14, 0.72), (0.86, 0.72), (0.86, 0.9), (0.14, 0.9)]);
+            pen.line(&[(0.3, 0.26), (0.14, 0.72)]);
+            pen.line(&[(0.7, 0.26), (0.86, 0.72)]);
+        }
+        // A stamp coming down on a sheet.
+        Icon::Punch => {
+            pen.fill(&[(0.06, 0.72), (0.94, 0.72), (0.94, 0.88), (0.06, 0.88)], soft);
+            pen.closed(&[(0.06, 0.72), (0.94, 0.72), (0.94, 0.88), (0.06, 0.88)]);
+            pen.closed(&[(0.36, 0.12), (0.64, 0.12), (0.64, 0.46), (0.36, 0.46)]);
+            pen.line(&[(0.42, 0.56), (0.42, 0.72)]);
+            pen.line(&[(0.58, 0.56), (0.58, 0.72)]);
         }
         // An edge folded back flat on itself.
         Icon::Hem => {

@@ -175,6 +175,8 @@ fn a_round_to_square_transition_as_press_brake_facets_comes_to_the_known_sheet()
     let bends = f["bends"].as_array().unwrap();
     // A facet for each chord and each side of the square, and a bend between each two.
     assert_eq!(bends.len() as f64, 2.0 * chords + 3.0 - 1.0, "{chords} chords a quarter: {} bends", bends.len());
+    // It only ever folds one way, as the sheet round a corner does: not a bump among them.
+    assert!(bends.iter().all(|b| b["up"] == bends[0]["up"]), "{f}");
     let area = num(&f, "area");
     assert!(close(area, known, known * 0.02), "{area} {known}");
     // A tolerance that would make too many is said.

@@ -127,48 +127,50 @@ fn triangle_area(a: Vec3, b: Vec3, c: Vec3) -> f64 {
     (b - a).cross(c - a).len() / 2.0
 }
 
-/// The direction of a run of points at each of them, as the neighbours on either side have it.
-fn tangents(p: &[Vec3]) -> Vec<Vec3> {
+/// How much more a triangle of a sheet counts for the more it twists: enough that the sheet takes
+/// the surface that lies flat when there is one, and not so much that it goes the long way round.
+const TWIST: f64 = 25.0;
+
+/// The directions a run of points comes into each of them from and goes on from there.
+fn ways(p: &[Vec3]) -> Vec<[Vec3; 2]> {
+    let step = |a: usize, b: usize| {
+        let d = p[b] - p[a];
+        if d.len() > 1e-12 { d.normalized() } else { Vec3::ZERO }
+    };
     (0..p.len())
         .map(|i| {
-            let (x, y) = (p[i.saturating_sub(1)], p[(i + 1).min(p.len() - 1)]);
-            let d = y - x;
-            if d.len() > 1e-12 { d.normalized() } else { Vec3::ZERO }
+            let (before, after) = (i.saturating_sub(1), (i + 1).min(p.len() - 1));
+            let (come, go) = (step(before, i), step(i, after));
+            [if before == i { go } else { come }, if after == i { come } else { go }]
         })
         .collect()
 }
 
-/// The strip of triangles of least area between two runs of points, from their first points to
-/// their last: the pairs of points it visits in order, each step going on along one of the two.
-pub(crate) fn matched(a: &[Vec3], b: &[Vec3]) -> Vec<(usize, usize)> {
-    matched_by(a, b, 0.0)
+/// How far the plane of a triangle is from being tangent to the curve at its point on that curve:
+/// nothing when one of the directions the curve has there lies in the plane (at a corner, when
+/// the plane passes between the two ways it runs), else the sine of the least angle to the plane.
+fn off_tangent(corners: [Vec3; 3], way: [Vec3; 2]) -> f64 {
+    let n = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
+    if n.len() < 1e-12 {
+        return 0.0;
+    }
+    let n = n.normalized();
+    let (come, go) = (n.dot(way[0]), n.dot(way[1]));
+    if come * go <= 0.0 { 0.0 } else { come.abs().min(go.abs()) }
 }
 
-/// [`matched`], the area of a triangle counting for more the more the sheet twists along the
-/// line it starts from, by `twist` x (the sine of the angle between the sheet's two normals
-/// there, at the two ends of the line) squared. A sheet with no twist in it is one that can be
-/// laid flat: along each line between the two curves it has one tangent plane.
+/// The strip of triangles between two runs of points, from their first points to their last: the
+/// pairs of points it visits in order, each step going on along one of the two. Of all such strips
+/// it has the least area, a triangle counting for more the less its plane is tangent to the
+/// curve at the point it stands on, by `twist` x that sine squared. A sheet with no twist in it
+/// is one that can be laid flat: along each line between the two curves it has one tangent plane,
+/// tangent to both curves.
 fn matched_by(a: &[Vec3], b: &[Vec3], twist: f64) -> Vec<(usize, usize)> {
     let (n, m) = (a.len(), b.len());
     if n == 0 || m == 0 {
         return Vec::new();
     }
-    let (ta, tb) = (tangents(a), tangents(b));
-    let weight = |i: usize, j: usize| -> f64 {
-        if twist == 0.0 {
-            return 1.0;
-        }
-        let g = b[j] - a[i];
-        let (p, q) = (ta[i].cross(g), tb[j].cross(g));
-        let (lp, lq) = (p.len(), q.len());
-        if lp < 1e-12 || lq < 1e-12 {
-            return 1.0;
-        }
-        // (A sheet that doubles back is as bad as one at a right angle.)
-        let sin = p.cross(q).len() / (lp * lq);
-        let sin = if p.dot(q) < 0.0 { 1.0 } else { sin };
-        1.0 + twist * sin * sin
-    };
+    let (wa, wb) = (ways(a), ways(b));
     let at = |i: usize, j: usize| i * m + j;
     let mut cost = vec![f64::INFINITY; n * m];
     // From where each cell was come to: true along `a`.
@@ -177,14 +179,18 @@ fn matched_by(a: &[Vec3], b: &[Vec3], twist: f64) -> Vec<(usize, usize)> {
     for i in 0..n {
         for j in 0..m {
             if i > 0 {
-                let c = cost[at(i - 1, j)] + triangle_area(a[i - 1], a[i], b[j]) * weight(i, j);
+                let t = [a[i - 1], a[i], b[j]];
+                let sin = off_tangent(t, wb[j]);
+                let c = cost[at(i - 1, j)] + triangle_area(t[0], t[1], t[2]) * (1.0 + twist * sin * sin);
                 if c < cost[at(i, j)] {
                     cost[at(i, j)] = c;
                     from_a[at(i, j)] = true;
                 }
             }
             if j > 0 {
-                let c = cost[at(i, j - 1)] + triangle_area(a[i], b[j - 1], b[j]) * weight(i, j);
+                let t = [a[i], b[j - 1], b[j]];
+                let sin = off_tangent(t, wa[i]);
+                let c = cost[at(i, j - 1)] + triangle_area(t[0], t[1], t[2]) * (1.0 + twist * sin * sin);
                 if c < cost[at(i, j)] {
                     cost[at(i, j)] = c;
                     from_a[at(i, j)] = false;
@@ -223,7 +229,7 @@ const SAME_PLANE: f64 = 1e-7;
 /// The facets of the strip between `a` and `b`, `sign` turning their normals to the side the
 /// sheet's thickness is measured from. An error says why there are none.
 pub(crate) fn facets(a: &[Vec3], b: &[Vec3], sign: f64) -> Result<Vec<Facet>, String> {
-    let path = matched(a, b);
+    let path = matched_by(a, b, TWIST);
     // The triangles, with the normal each has and the line it ends on.
     struct Tri {
         normal: Vec3,
@@ -384,7 +390,7 @@ fn smoothed(v: &[f64], half: usize) -> Vec<f64> {
 /// The columns of a smooth sheet between two runs of points: for each, a point on each run. The
 /// matching of least area, made smooth, and never standing still on either run.
 pub(crate) fn columns(a: &[Vec3], b: &[Vec3]) -> Vec<[Vec3; 2]> {
-    let path = matched_by(a, b, 25.0);
+    let path = matched_by(a, b, TWIST);
     let (la, lb) = (lengths(a), lengths(b));
     let (ta, tb) = (la.last().copied().unwrap_or(0.0).max(1e-12), lb.last().copied().unwrap_or(0.0).max(1e-12));
     let ua: Vec<f64> = path.iter().map(|p| la[p.0] / ta).collect();
@@ -639,7 +645,7 @@ mod tests {
         // Three points on a line, one point across from their middle: two triangles.
         let a = [Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 0.0)];
         let b = [Vec3::new(10.0, 10.0, 0.0)];
-        assert_eq!(matched(&a, &b), vec![(0, 0), (1, 0), (2, 0)]);
+        assert_eq!(matched_by(&a, &b, 0.0), vec![(0, 0), (1, 0), (2, 0)]);
         // Two parallel lines in one plane are one facet whatever the points along them.
         let b = [Vec3::new(0.0, 10.0, 0.0), Vec3::new(5.0, 10.0, 0.0), Vec3::new(20.0, 10.0, 0.0)];
         let f = facets(&a, &b, 1.0).unwrap();

@@ -244,3 +244,39 @@ fn a_contour_roll_is_kept_in_the_file_and_taken_back_and_suppressed() {
     run(&mut s, &mut k, "edit.undo", json!({}));
     assert_eq!(volume(&mut s, &mut k), 0.0, "the roll itself taken back");
 }
+
+/// What is cut in a rolled sheet is cut in its flat pattern, where it lies on the sheet unrolled.
+#[test]
+fn a_hole_in_a_ring_is_in_its_flat_pattern_where_it_lies_on_the_neutral_surface() {
+    let (mut s, mut k) = start();
+    let sk = lines_on(&mut s, &mut k, "xz", &[(50.0, 0.0), (50.0, 40.0)]);
+    run(&mut s, &mut k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": PI, "direction": "symmetric", "position": "flipped" }));
+    let whole = flat(&mut s, &mut k);
+    // Half a ring either side of the plane of the sketch, so its middle is on +X at radius 50 or
+    // so. A round hole of radius 5, drilled along X from a plane beside it, 20 up the ring.
+    let wp = id(&run(&mut s, &mut k, "work.plane", json!({ "by": "offset", "base": "yz", "distance": 100 })), "feature");
+    let c = id(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp, "project_origin": false })), "feature");
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": c, "cx": 0, "cy": 20, "r": 5 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": c, "distance": 200, "operation": "cut", "reverse": true }));
+    let p = flat(&mut s, &mut k);
+    assert_eq!(p["holes"], 1, "{p}");
+    let hole = &p["inner"][0];
+    let points: Vec<(f64, f64)> = hole
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|c| c["points"].as_array().cloned().unwrap_or_else(|| vec![c["start"].clone(), c["end"].clone()]))
+        .map(|q| (q["x"].as_f64().unwrap(), q["y"].as_f64().unwrap()))
+        .collect();
+    let (x0, x1) = points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), q| (l.min(q.0), h.max(q.0)));
+    let (y0, y1) = points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), q| (l.min(q.1), h.max(q.1)));
+    // Along the axis it is its own 10. Round the axis, as it lies on a neutral surface of radius
+    // rho: a chord of half-length 5 on the side it is laid out from, the larger, of radius 52.
+    let rho = 50.0 + K * T;
+    let side = 52.0;
+    let round = 2.0 * rho * (5.0f64 / side).asin();
+    assert!(close(y1 - y0, 10.0, 1e-2) && close(x1 - x0, round, 0.05), "{} {} {round}: {hole}", x1 - x0, y1 - y0);
+    // In the middle of the sheet's length, 20 up it.
+    let along = num(&whole, "length").max(num(&whole, "width"));
+    assert!(close((x0 + x1) / 2.0, along / 2.0, 1e-2) && close((y0 + y1) / 2.0, 20.0, 1e-2), "{hole}");
+}

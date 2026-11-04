@@ -251,7 +251,7 @@ impl PunchShape {
                 let y = across - r;
                 let half = (y / r).clamp(-1.0, 1.0).asin();
                 // Counter-clockwise round the circle from the flat's right-hand end to its left.
-                let (from, to) = (half, PI - half + TAU * 0.0);
+                let (from, to) = (half, PI - half);
                 let (right, left) = (Vec2::polar(Vec2::ZERO, r, from), Vec2::polar(Vec2::ZERO, r, to));
                 vec![
                     TaggedCurve2 { tag: tag(0), curve: Curve2::Arc { center: Vec2::ZERO, radius: r, start_angle: to, end_angle: from + TAU } },
@@ -325,7 +325,6 @@ impl PunchShape {
 /// A louver's flap for a lip `height` above the face: how far it turns at its hinge, and how long
 /// it runs straight after that. It is `width` long laid flat. An error says what cannot be.
 pub fn louver_flap(width: f64, height: f64, t: f64, r: f64, k: f64) -> Result<(f64, f64), String> {
-    let _ = t;
     let neutral = r + k * t;
     let straight = |turn: f64| width - turn * neutral;
     // How high the top of the lip stands, for a turn at the hinge: the top of the sheet is the

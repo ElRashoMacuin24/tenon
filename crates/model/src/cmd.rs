@@ -3406,7 +3406,7 @@ fn sheet_lofted_flange(s: &mut Session, p: &Value) -> CmdResult {
             }
             Forming::DieFormed
         }
-        "press_brake" => Forming::PressBrake { chord: opt_num(p, "chord")?.unwrap_or(0.1) },
+        "press_brake" => Forming::PressBrake { chord: opt_num(p, "chord")?.unwrap_or(0.5) },
         other => return Err(format!("unknown forming `{other}` (die_formed, press_brake)").into()),
     };
     let flange = LoftedFlange {
@@ -4541,7 +4541,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.lofted_flange",
         "Lofted Flange",
-        "sketches: [two sketches], each an open profile (lines and arcs end to end), the sheet between them; forming: \"die_formed\" (default: one smooth surface; laid flat by triangles, and the flat pattern says how close that is; corners of the profiles are rounded to the bend radius) | \"press_brake\" (flat facets with a bend at every line between two; arcs are taken as chords); chord (press_brake: how far a chord may leave its arc, mm; default 0.1); position: \"default\" (the sheet is on the left of the first profile, the inside of its first corner) | \"flipped\" | \"symmetric\"; radius (inside, of the bends; default BendRadius); operation: \"join\" (default) | \"new_body\"",
+        "sketches: [two sketches], each an open profile (lines and arcs end to end), the sheet between them; forming: \"die_formed\" (default: one smooth surface; laid flat by triangles, and the flat pattern says how close that is; corners of the profiles are rounded to the bend radius) | \"press_brake\" (flat facets with a bend at every line between two; arcs are taken as chords); chord (press_brake: how far a chord may leave its arc, mm; default 0.5); position: \"default\" (the sheet is on the left of the first profile, the inside of its first corner) | \"flipped\" | \"symmetric\"; radius (inside, of the bends; default BendRadius); operation: \"join\" (default) | \"new_body\"",
         true,
         sheet_lofted_flange
     ),

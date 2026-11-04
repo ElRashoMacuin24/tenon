@@ -678,7 +678,15 @@ impl Workbench {
             }
             return true;
         }
-        if matches!(self.panel, Some(Panel::Revolve(_) | Panel::Coil(_))) {
+        if matches!(self.panel, Some(Panel::LoftedFlange(_))) {
+            self.lofted_pointer(resp, rect);
+            return true;
+        }
+        if matches!(&self.panel, Some(Panel::Punch(p)) if p.on_face()) {
+            self.punch_face_pick(resp, rect);
+            return true;
+        }
+        if matches!(self.panel, Some(Panel::Revolve(_) | Panel::Coil(_) | Panel::ContourRoll(_))) {
             // A work axis, or a line of the profile's sketch, clicked: the axis to turn about.
             if let Some(pos) = resp.hover_pos()
                 && let Some((id, _)) = self.work_at(pos, rect, false, true)

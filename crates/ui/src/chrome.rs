@@ -930,6 +930,7 @@ impl Workbench {
         self.design_table_window(ui, &t);
         self.sheet_defaults_window(ui, &t);
         self.library_window(ui, &t);
+        self.punch_library_window(ui, &t);
         self.print_window(ui, &t);
     }
 }

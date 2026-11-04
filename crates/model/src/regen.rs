@@ -14,6 +14,7 @@ use tenon_sketch::{EntityId, RegionKey, Sketch, SketchRegion, default_regions, p
 
 mod sheet;
 pub(crate) use sheet::make::lofted_skin;
+pub use sheet::make::{lofted_words, roll_words};
 
 use crate::FeatureId;
 use crate::document::{

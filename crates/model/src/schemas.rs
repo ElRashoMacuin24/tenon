@@ -896,7 +896,7 @@ static SCHEMAS: &[C] = &[
         &[
             req("sketches", IDS, "the two sketches of the open profiles, each lines and arcs end to end"),
             opt("forming", Word(&["die_formed", "press_brake"]), "one smooth surface, or flat facets with bends between them (default die_formed)"),
-            opt("chord", Length, "press_brake: how far a chord may leave the arc it stands for (default 0.1)"),
+            opt("chord", Length, "press_brake: how far a chord may leave the arc it stands for (default 0.5)"),
             opt("position", Word(&["default", "flipped", "symmetric"]), "which side of the profiles the sheet's thickness is on"),
             opt("operation", Word(&["join", "new_body"]), "default join"),
             RADIUS,

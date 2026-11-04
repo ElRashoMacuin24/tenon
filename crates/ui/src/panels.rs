@@ -623,6 +623,12 @@ pub(crate) enum Panel {
     Bend(crate::sheet::BendPanel),
     /// A face of the sheet folded along a line drawn across it.
     Fold(crate::sheet::FoldPanel),
+    /// A sheet rolled round an axis.
+    ContourRoll(crate::sheet_make::RollPanel),
+    /// A sheet between two open profiles.
+    LoftedFlange(crate::sheet_make::LoftedPanel),
+    /// Shapes from the punch library stamped into a face of the sheet.
+    Punch(crate::sheet_make::PunchPanel),
     /// A box, a cylinder, a sphere or a torus, set up by clicks on a plane.
     Primitive(crate::primitive::PrimitivePanel),
     /// Fixed, in the Stress Analysis environment: the faces that are held.
@@ -691,6 +697,9 @@ impl Panel {
             Panel::Hem(p) => p.editing,
             Panel::ContourFlange(p) => p.editing,
             Panel::Fold(p) => p.editing,
+            Panel::ContourRoll(p) => p.editing,
+            Panel::LoftedFlange(p) => p.editing,
+            Panel::Punch(p) => p.editing,
             Panel::CornerSeam(p) => p.editing,
             Panel::Bend(p) => p.editing,
             _ => None,
@@ -764,6 +773,9 @@ impl Panel {
             Panel::Hem(p) => p.eq_pointers(),
             Panel::ContourFlange(p) => p.eq_pointers(),
             Panel::Fold(p) => p.eq_pointers(),
+            Panel::ContourRoll(p) => p.eq_pointers(),
+            Panel::LoftedFlange(p) => p.eq_pointers(),
+            Panel::Punch(p) => p.eq_pointers(),
             Panel::CornerSeam(p) => p.eq_pointers(),
             Panel::Bend(p) => p.eq_pointers(),
             Panel::Thread(p) => {
@@ -952,6 +964,15 @@ impl Workbench {
             Some(Panel::Hem(p)) => rolled(p.editing),
             Some(Panel::ContourFlange(p)) => with_feature(self.document(), p.editing, p.kind()),
             Some(Panel::Fold(p)) => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::ContourRoll(p)) => with_feature(self.document(), p.editing, p.kind()),
+            Some(Panel::LoftedFlange(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind),
+                None => rolled(p.editing),
+            },
+            Some(Panel::Punch(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind),
+                None => p.on_face_document(self.document()).map(|(d, _)| d).or_else(|| rolled(p.editing)),
+            },
             // With both edges picked the bend shows as it will be.
             Some(Panel::Bend(p)) => match p.kind() {
                 Some(kind) => with_feature(self.document(), p.editing, kind),
@@ -1384,7 +1405,7 @@ impl Workbench {
     }
 
     /// Commits a feature from a panel with the equations typed into its fields.
-    fn commit_panel(&mut self, ptrs: &[(&'static str, &'static str)], editing: Option<FeatureId>, kind: FeatureKind) -> bool {
+    pub(crate) fn commit_panel(&mut self, ptrs: &[(&'static str, &'static str)], editing: Option<FeatureId>, kind: FeatureKind) -> bool {
         let eqs = self.panel_equations(ptrs, editing.is_some(), &kind);
         self.commit_feature_eq(editing, kind, eqs)
     }
@@ -1597,7 +1618,10 @@ impl Workbench {
                     | FeatureKind::SharpBend(_)
                     | FeatureKind::Fold(_)
                     | FeatureKind::CutAcrossBend(_)
-                    | FeatureKind::CutNormal(_) => ("feature.add", json!({ "kind": kind_json })),
+                    | FeatureKind::CutNormal(_)
+                    | FeatureKind::ContourRoll(_)
+                    | FeatureKind::LoftedFlange(_)
+                    | FeatureKind::Punch(_) => ("feature.add", json!({ "kind": kind_json })),
                     FeatureKind::Sketch { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
@@ -1788,6 +1812,27 @@ impl Workbench {
             Panel::ContourFlange(p) => {
                 if commit {
                     keep = !self.commit_panel(&ptrs, p.editing, p.kind());
+                }
+            }
+            Panel::ContourRoll(p) => {
+                if commit {
+                    keep = !self.commit_panel(&ptrs, p.editing, p.kind());
+                }
+            }
+            Panel::LoftedFlange(p) => {
+                if commit {
+                    match p.kind() {
+                        Some(kind) => keep = !self.commit_panel(&ptrs, p.editing, kind),
+                        None => self.set_error("Lofted Flange: click the two profiles it goes between".to_string()),
+                    }
+                }
+            }
+            Panel::Punch(p) => {
+                if commit {
+                    keep = match p.kind() {
+                        Some(kind) => !self.commit_panel(&ptrs, p.editing, kind),
+                        None => !self.commit_punch_on_face(&ptrs, p),
+                    };
                 }
             }
             Panel::Fillet(p) => {

@@ -402,7 +402,7 @@ impl Workbench {
             Some(Panel::Draft(d)) => (d.slot == crate::bodies::DraftSlot::Plane, false),
             Some(Panel::Split(_)) => (true, false),
             Some(Panel::Primitive(p)) => (p.on.is_none(), false),
-            Some(Panel::Revolve(_) | Panel::Coil(_)) => (false, true),
+            Some(Panel::Revolve(_) | Panel::Coil(_) | Panel::ContourRoll(_)) => (false, true),
             // A load's direction may be along a work axis.
             Some(Panel::Load(_)) => (false, self.picking_direction()),
             _ => (false, false),
@@ -470,7 +470,7 @@ impl Workbench {
             Some(Panel::Pattern(p)) => set_pattern_ref(p, plane, axis),
             Some(Panel::Draft(_) | Panel::Split(_)) => plane.is_some_and(|p| self.bodies_plane(p)),
             Some(Panel::Primitive(_)) => plane.is_some_and(|p| self.primitive_on(p)),
-            Some(Panel::Revolve(_) | Panel::Coil(_)) => match axis {
+            Some(Panel::Revolve(_) | Panel::Coil(_) | Panel::ContourRoll(_)) => match axis {
                 Some(AxisSel::Origin(o)) => self.set_panel_axis(crate::panels::AxisChoice::Origin(o)),
                 Some(AxisSel::Work(w)) => self.set_panel_axis(crate::panels::AxisChoice::Work(w)),
                 _ => false,
