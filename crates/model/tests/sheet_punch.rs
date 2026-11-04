@@ -442,3 +442,43 @@ fn a_louver_too_low_to_clear_its_opening_says_how_high_it_must_be() {
     let e = tenon_model::sheet::punch::louver_flap(15.0, 0.1, 0.5, 3.0, 0.44).unwrap_err();
     assert!(e.contains("at least") && e.contains("higher"), "{e}");
 }
+
+/// Stamps that stand clear of one another go out in one boolean: one at a time, each took as long as
+/// the holes already there, and a sheet punched four hundred times took half a minute to rebuild.
+/// Those that come together still go one at a time, and the volume is right either way.
+#[test]
+fn stamps_clear_of_one_another_go_out_together_and_those_that_meet_apart() {
+    use tenon_kernel::Kernel;
+    use tenon_kernel::timed::Timed;
+    let booleans = |doc: &tenon_model::Document| {
+        let mut k = Timed::new(Box::new(OcctKernel::new()));
+        let mut regen = tenon_model::regenerate(doc, &mut k);
+        assert!(regen.first_error().is_none(), "{:?}", regen.first_error());
+        let (count, volume): (u64, f64) =
+            (k.tally().get("boolean").map_or(0, |b| b.0), regen.bodies.iter().map(|b| k.mass_properties(b.shape, 1.0).unwrap().volume).sum());
+        regen.release(&mut k);
+        (count, volume)
+    };
+    // A grid of 25 round holes, 6 across.
+    let (mut s, mut k) = start();
+    plate(&mut s, &mut k, 200.0, 200.0);
+    let points: Vec<(f64, f64)> = (0..25).map(|i| (20.0 + f64::from(i % 5) * 30.0, 20.0 + f64::from(i / 5) * 30.0)).collect();
+    let sk = points_on_top(&mut s, &mut k, &points);
+    run(&mut s, &mut k, "sheet.punch", json!({ "sketch": sk, "shape": "round", "diameter": 6 }));
+    let by_hand = (40000.0 - 25.0 * PI * 9.0) * T;
+    let (count, v) = booleans(s.document());
+    assert!(close(v, by_hand, 1e-5), "{v} {by_hand}");
+    assert!(count <= 3, "one to see what the stamps share with the sheet, one to cut them, and the sheet itself: {count}");
+
+    // Two stamps that overlap, and one clear of them: the three take the area they cover together.
+    let (mut s, mut k) = start();
+    plate(&mut s, &mut k, 200.0, 200.0);
+    let sk = points_on_top(&mut s, &mut k, &[(50.0, 50.0), (56.0, 50.0), (120.0, 50.0)]);
+    run(&mut s, &mut k, "sheet.punch", json!({ "sketch": sk, "shape": "round", "diameter": 10 }));
+    // Two circles of radius 5, their centres 6 apart: the lens between them.
+    let (r, d) = (5.0f64, 6.0f64);
+    let lens = 2.0 * r * r * (d / (2.0 * r)).acos() - d / 2.0 * (4.0 * r * r - d * d).sqrt();
+    let by_hand = (40000.0 - 3.0 * PI * r * r + lens) * T;
+    let (_, v) = booleans(s.document());
+    assert!(close(v, by_hand, 1e-5), "{v} {by_hand}");
+}

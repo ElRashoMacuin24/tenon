@@ -670,12 +670,11 @@ impl Ctx<'_> {
             (cuts, pieces, on.unwrap_or(0))
         };
         let body = self.body_shape(bi)?;
-        self.sheet_assemble(
+        self.sheet_assemble_apart(
             bi,
             body,
             cuts,
             pieces,
-            Vec::new(),
             "punch",
             ["Move it clear of what it runs into, or make it smaller.", "the stamp does not meet the sheet where it should."],
         )?;

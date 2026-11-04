@@ -15,9 +15,9 @@ under [Where OCCT is the limit](#where-occt-is-the-limit) and
 
 ## How it is measured
 
-`tenon-cli bench` times, on the example models and four made for the purpose (a plate with
-40 holes as 42 features, a plate with an elliptical window, a tray with four mitred lips, a grid
-of 100 bolts and nozzles):
+`tenon-cli bench` times, on the example models and five made for the purpose (a plate with
+40 holes as 42 features, a plate with an elliptical window, a tray with four mitred lips, a sheet
+punched 225 times, a grid of 100 bolts and nozzles):
 
 - a part rebuilt from nothing on a new kernel; meshed and measured for the screen; rebuilt
   after an edit of its last feature and of one half way up its history, as the app rebuilds
@@ -65,8 +65,9 @@ Milliseconds.
 | m8-tray (sheet metal) | 228 | 13 | 12 | 5.4 | 40 |
 | A plate with 40 holes (42 features) | 167 | 78 | 7.7 | 76 | 106 |
 | A tray with four mitred lips | 444 | 20 | 350 | 12 | 413 |
+| A sheet punched 225 times | 424 | 742 | 418 | 730 | 418 |
 
-A flat pattern: 1.3 ms for the tray, 2.1 ms for the tray with lips.
+A flat pattern: 1.3 ms for the tray, 2.1 ms for the tray with lips, 20 ms for the punched sheet.
 
 Three of these rows are not what the columns suggest, and are the kernel's doing:
 
@@ -239,6 +240,12 @@ These are the kernel's own costs, measured above, that Tenon can only avoid aski
 
 - **Booleans**: half to three quarters of every rebuild. 5 ms for a hole in a bracket; 139 ms
   to cut a thread; 143 ms for the 23 of a sheet metal tray.
+- **What a boolean is given at once.** A boolean's cost goes with the faces of the part, so tools taken
+  out one at a time cost the square of how many there are. A punch's stamps took half a minute at 400
+  (88 % in 800 booleans, `tenon-cli bench profile`), where the same holes cut from one sketch took half
+  a second. Stamps clear of one another now go out in one boolean: 830 ms for 400 round holes and
+  1.5 s for 100 louvers, of which 1 s in the three booleans. (Tools that lie against one another still
+  go singly, DEC-067.)
 - **The volume of faces on free surfaces**: a helical thread (81 ms in 5 sums), rolled faces
   with a mitre or a profile cut across them (196 ms in 68 for the tray with lips). On a
   wall pushed out of a free curve the kernel's quick sum settles some parts in a hundred

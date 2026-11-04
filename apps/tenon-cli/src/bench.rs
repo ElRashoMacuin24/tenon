@@ -222,6 +222,32 @@ fn lipped_tray(make: Make, work: &Path) -> Result<Document, String> {
     Ok(e.session.document().clone())
 }
 
+/// A sheet 500 x 500 and 2 thick, stamped `n` times with a round hole or a louver: what a punch is for.
+pub fn punched_plate(make: Make, work: &Path, n: u32, louver: bool) -> Result<Document, String> {
+    let mut e = Engine::new(make(), work);
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).map_err(|err| format!("{id}: {err}"));
+    run(&mut e, "sheet.defaults", json!({ "thickness": 2, "bend_radius": 3 }))?;
+    let sk = run(&mut e, "sketch.create", json!({ "plane": "xy" }))?["feature"].clone();
+    run(&mut e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 500, "y2": 500 }))?;
+    run(&mut e, "sheet.face", json!({ "sketch": sk }))?;
+    let top = run(&mut e, "model.face_ref", json!({ "at": [250, 250, 2] }))?;
+    let sk = run(&mut e, "sketch.create", json!({ "face": top, "project_edges": false }))?["feature"].clone();
+    let id = FeatureId(u32::try_from(sk.as_u64().unwrap_or(0)).map_err(|_| "too many features")?);
+    let frame = *e.session.regen(e.kernel.as_mut()).sketch_frames.get(&id).ok_or("the sketch on the top has no place")?;
+    let side = f64::from(n).sqrt().ceil() as u32;
+    for i in 0..n {
+        let at = frame.to_local(tenon_geom::Vec3::new(16.0 + f64::from(i % side) * 24.0, 16.0 + f64::from(i / side) * 24.0, 2.0));
+        run(&mut e, "sketch.point", json!({ "sketch": sk, "x": at.x, "y": at.y }))?;
+    }
+    let stamp = if louver {
+        json!({ "sketch": sk, "shape": "louver", "length": 12, "width": 8, "height": 4 })
+    } else {
+        json!({ "sketch": sk, "shape": "round", "diameter": 6 })
+    };
+    run(&mut e, "sheet.punch", stamp)?;
+    Ok(e.session.document().clone())
+}
+
 /// How long laying `doc` flat takes, once it is rebuilt.
 fn flat(rows: &mut Vec<Row>, make: Make, model: &str, doc: &Document, budget: f64) -> Result<(), String> {
     let mut k = make();
@@ -484,8 +510,18 @@ pub fn run(make: Make, examples: &Path, work: &Path) -> Result<Vec<Row>, String>
         PartBudget { rebuild: 4000.0, mesh: 150.0, edit_last: 3200.0, edit_middle: 4400.0 },
     )?;
 
+    let punched = punched_plate(make, work, 225, false)?;
+    part(
+        &mut rows,
+        make,
+        "a sheet punched 225 times",
+        &punched,
+        PartBudget { rebuild: 5000.0, mesh: 6000.0, edit_last: 5000.0, edit_middle: 5000.0 },
+    )?;
+
     flat(&mut rows, make, "m8-tray/tray.tenon", &open("m8-tray", "tray.tenon")?, 100.0)?;
     flat(&mut rows, make, "a tray with four mitred lips", &lipped, 100.0)?;
+    flat(&mut rows, make, "a sheet punched 225 times", &punched, 300.0)?;
 
     assembly(&mut rows, make, "m3-pivot/pivot.tenonasm", &examples.join("m3-pivot").join("pivot.tenonasm"), 100.0)?;
     assembly(&mut rows, make, "m6-fittings/fittings.tenonasm", &examples.join("m6-fittings").join("fittings.tenonasm"), 5000.0)?;
@@ -552,6 +588,9 @@ pub fn profile(make: Make, examples: &Path, work: &Path) -> Result<Report, Strin
     docs.push(("a plate with 40 holes (42 features)".into(), many_holes(make, work)?));
     docs.push(("a plate with an elliptical window".into(), elliptical_window(make, work)?));
     docs.push(("a tray with four mitred lips".into(), lipped_tray(make, work)?));
+    docs.push(("a sheet punched 100 times".into(), punched_plate(make, work, 100, false)?));
+    docs.push(("a sheet punched 400 times".into(), punched_plate(make, work, 400, false)?));
+    docs.push(("a sheet with 100 louvers".into(), punched_plate(make, work, 100, true)?));
     let shares = |tally: &Tally, total: f64| -> (String, Value) {
         let mut calls: Vec<(&str, u64, f64)> = tally.iter().map(|(what, (n, ms))| (*what, *n, *ms)).collect();
         calls.sort_by(|a, b| b.2.total_cmp(&a.2));

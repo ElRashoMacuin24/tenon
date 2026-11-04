@@ -210,20 +210,58 @@ impl Ctx<'_> {
     /// platforms, DEC-067.) The tools are used up; `target` is released when it is not the part's
     /// own body (`keep`).
     fn sheet_cut(&mut self, target: Named, keep: bool, tools: Vec<Named>, what: &str) -> Result<Named, Stop> {
+        self.sheet_cut_runs(target, keep, tools.into_iter().map(|t| vec![t]).collect(), what)
+    }
+
+    /// As [`Self::sheet_cut`], for tools that may stand clear of one another, as a punch's stamps do.
+    /// Those in a row with a clear gap all round go out in one boolean, which takes about as long as
+    /// one of them: one at a time, each takes as long as the holes already there, and four hundred
+    /// stamps take a minute. Tools that come near one another still go separately.
+    fn sheet_cut_apart(&mut self, target: Named, keep: bool, tools: Vec<Named>, what: &str) -> Result<Named, Stop> {
+        const GAP: f64 = 1e-3;
+        let mut runs: Vec<Vec<Named>> = Vec::new();
+        let mut boxes: Vec<tenon_geom::Aabb3> = Vec::new();
+        for tool in tools {
+            let at = self.k.bounding_box(tool.0).ok().flatten();
+            let far = |o: &tenon_geom::Aabb3, b: &tenon_geom::Aabb3| {
+                o.max.x + GAP < b.min.x
+                    || b.max.x + GAP < o.min.x
+                    || o.max.y + GAP < b.min.y
+                    || b.max.y + GAP < o.min.y
+                    || o.max.z + GAP < b.min.z
+                    || b.max.z + GAP < o.min.z
+            };
+            let clear = at.is_some_and(|b| boxes.iter().all(|o| far(o, &b)));
+            match runs.last_mut() {
+                Some(run) if clear => run.push(tool),
+                _ => {
+                    boxes.clear();
+                    runs.push(vec![tool]);
+                }
+            }
+            boxes.extend(at);
+        }
+        self.sheet_cut_runs(target, keep, runs, what)
+    }
+
+    /// Takes each run of tools out of `target` in one boolean, and sees that what went is what they
+    /// shared with the part.
+    fn sheet_cut_runs(&mut self, target: Named, keep: bool, runs: Vec<Vec<Named>>, what: &str) -> Result<Named, Stop> {
         let volume = |ctx: &Self, s: ShapeHandle| ctx.k.mass_properties(s, 1.0).map(|m| m.volume);
         let (mut now, mut own) = (target, keep);
-        let mut pending = tools.into_iter();
+        let mut pending = runs.into_iter();
         let result = (|| -> Result<(), Stop> {
-            for tool in pending.by_ref() {
+            for run in pending.by_ref() {
                 let before = volume(self, now.0);
-                // What the tool can take: what it shares with the part, and no more than itself.
-                let most = volume(self, tool.0);
-                let shared = self.k.boolean(BoolOp::Intersect, now.0, &[tool.0]).ok().and_then(|op| {
+                // What the tools can take: what they share with the part, and no more than themselves.
+                let most = run.iter().map(|t| volume(self, t.0)).sum::<Result<f64, _>>();
+                let shapes: Vec<ShapeHandle> = run.iter().map(|t| t.0).collect();
+                let shared = self.k.boolean(BoolOp::Intersect, now.0, &shapes).ok().and_then(|op| {
                     let v = volume(self, op.shape);
                     self.k.release(op.shape);
                     v.ok()
                 });
-                now = self.sheet_step(BoolOp::Cut, now.clone(), own, vec![tool])?;
+                now = self.sheet_step(BoolOp::Cut, now.clone(), own, run)?;
                 own = false;
                 let (Ok(before), Ok(most)) = (before, most) else { continue };
                 let took = before - volume(self, now.0)?;
@@ -249,7 +287,7 @@ impl Ctx<'_> {
         match result {
             Ok(()) => Ok(now),
             Err(e) => {
-                for (s, _) in pending {
+                for (s, _) in pending.flatten() {
                     self.k.release(s);
                 }
                 if !own {
@@ -553,6 +591,19 @@ impl Ctx<'_> {
         self.sheet_assemble_more(bi, body, cuts, pieces, after, 0, what, advice)
     }
 
+    /// As [`Self::sheet_assemble`], for cuts that may stand clear of one another ([`Self::sheet_cut_apart`]).
+    pub(in crate::regen) fn sheet_assemble_apart(
+        &mut self,
+        bi: usize,
+        body: ShapeHandle,
+        cuts: Vec<Named>,
+        pieces: Vec<Named>,
+        what: &str,
+        advice: [&str; 2],
+    ) -> Result<(), Stop> {
+        self.assemble(bi, body, cuts, pieces, Vec::new(), 0, true, what, advice)
+    }
+
     /// As [`Self::sheet_assemble`], for pieces that bring `more` separate solids of their own
     /// (another piece of sheet that the rest joins to this one): the body may come out in that
     /// many more pieces than it was, and no more.
@@ -565,6 +616,22 @@ impl Ctx<'_> {
         pieces: Vec<Named>,
         after: Vec<Named>,
         more: u32,
+        what: &str,
+        advice: [&str; 2],
+    ) -> Result<(), Stop> {
+        self.assemble(bi, body, cuts, pieces, after, more, false, what, advice)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        &mut self,
+        bi: usize,
+        body: ShapeHandle,
+        cuts: Vec<Named>,
+        pieces: Vec<Named>,
+        after: Vec<Named>,
+        more: u32,
+        apart: bool,
         what: &str,
         advice: [&str; 2],
     ) -> Result<(), Stop> {
@@ -593,6 +660,7 @@ impl Ctx<'_> {
                     before_join = volume(self, now.0)?;
                 }
                 now = match kind {
+                    BoolOp::Cut if apart && n == 0 => self.sheet_cut_apart(now.clone(), own, tools, what)?,
                     BoolOp::Cut => self.sheet_cut(now.clone(), own, tools, what)?,
                     _ => self.sheet_step(kind, now.clone(), own, tools)?,
                 };
