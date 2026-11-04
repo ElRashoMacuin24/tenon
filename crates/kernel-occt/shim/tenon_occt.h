@@ -75,6 +75,10 @@ std::unique_ptr<Shape> extrude(const ProfileIn& profile, double start, double le
 // The outline rolled round the frame's Z axis: its x is the angle x / rho from the frame's X,
 // its y the distance along the axis; the solid reaches from radius `inner` to `outer`.
 std::unique_ptr<Shape> roll(const ProfileIn& profile, double rho, double inner, double outer, HistoryOut& hist);
+// The outline laid round a cone with its apex at the frame's origin, widening along its Z.
+std::unique_ptr<Shape> roll_cone(const ProfileIn& profile, double half_angle, double inner, double outer, HistoryOut& hist);
+// A solid from a face and the same face `distance` along its normal.
+std::unique_ptr<Shape> thicken(const Shape& shape, std::uint32_t face, double distance, HistoryOut& hist);
 std::unique_ptr<Shape> revolve(const ProfileIn& profile, const V3& origin, const V3& dir, double start, double sweep, bool full,
                                HistoryOut& hist);
 std::unique_ptr<Shape> transform(const Shape& shape, std::uint8_t kind, const V3& a, const V3& b, double value, HistoryOut& hist);
@@ -94,6 +98,7 @@ std::unique_ptr<Shape> draft(const Shape& body, rust::Slice<const std::uint32_t>
 void topology(const Shape& shape, TopoOut& out);
 void face_info(const Shape& shape, std::uint32_t index, FaceOut& out);
 void edge_info(const Shape& shape, std::uint32_t index, EdgeOut& out);
+void face_normal(const Shape& shape, std::uint32_t index, V3& out);
 void edge_points(const Shape& shape, std::uint32_t index, double deflection, rust::Vec<double>& out);
 void tessellate(const Shape& shape, double linear, double angular, bool relaxed, bool apart, MeshOut& out);
 void mass_properties(const Shape& shape, MassOut& out);

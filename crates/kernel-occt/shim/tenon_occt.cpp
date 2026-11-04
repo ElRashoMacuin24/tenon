@@ -46,9 +46,13 @@
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepFill.hxx>
+#include <Geom2dAPI_Interpolate.hxx>
 #include <Geom2dConvert.hxx>
 #include <Geom2d_BSplineCurve.hxx>
 #include <Geom2d_Circle.hxx>
+#include <Geom2d_Ellipse.hxx>
+#include <Geom_ConicalSurface.hxx>
+#include <NCollection_HArray1.hxx>
 #include <Geom2d_TrimmedCurve.hxx>
 #include <TopoDS_Shell.hxx>
 #include <TopoDS_Solid.hxx>
@@ -727,6 +731,7 @@ std::unique_ptr<Shape> extrude(const ProfileIn& profile, double start, double le
 namespace {
 
 void require_valid(const TopoDS_Shape& s, const char* message);
+const TopoDS_Face& face_at(const Shape& body, std::uint32_t index);
 
 // How a curve of a rolled outline lies on the cylinders.
 enum : int {
@@ -800,6 +805,10 @@ std::unique_ptr<Shape> roll(const ProfileIn& profile, double rho, double inner, 
           reach(profile.poles[k]);
         }
         break;
+      case 5:
+        reach(c->cx - c->r);
+        reach(c->cx + c->r);
+        break;
       default:
         throw std::invalid_argument("a rolled outline is made of lines, arcs and splines");
       }
@@ -872,6 +881,31 @@ std::unique_ptr<Shape> roll(const ProfileIn& profile, double rho, double inner, 
         occ::handle<Geom2d_Circle> circle = new Geom2d_Circle(gp_Ax22d(gp_Pnt2d(c->cx, c->cy), gp_Dir2d(1.0, 0.0), gp_Dir2d(0.0, 1.0)), c->r);
         occ::handle<Geom2d_TrimmedCurve> arc = new Geom2d_TrimmedCurve(circle, a0, a1);
         occ::handle<Geom2d_BSplineCurve> spline = Geom2dConvert::CurveToBSplineCurve(arc);
+        for (int i = 1; i <= spline->NbPoles(); ++i) {
+          const gp_Pnt2d pole = spline->Pole(i);
+          spline->SetPole(i, gp_Pnt2d(angle(pole.X()), pole.Y()));
+        }
+        rc.curve = spline;
+        rc.first = spline->FirstParameter();
+        rc.last = spline->LastParameter();
+        break;
+      }
+      case 5: {
+        double a0 = c->a0;
+        double a1 = c->a1;
+        while (a1 <= a0) {
+          a1 += kTwoPi;
+        }
+        if (a1 - a0 > kTwoPi - 1e-6) {
+          throw std::invalid_argument("an ellipse arc of a rolled outline must be less than a whole ellipse");
+        }
+        const gp_Dir2d major(c->x0, c->y0);
+        const gp_Ax22d ax(gp_Pnt2d(c->cx, c->cy), major, gp_Dir2d(-major.Y(), major.X()));
+        occ::handle<Geom2d_Ellipse> ellipse = new Geom2d_Ellipse(ax, c->r, c->x1);
+        rc.a = corner(ellipse->Value(a0).X(), ellipse->Value(a0).Y());
+        rc.b = corner(ellipse->Value(a1).X(), ellipse->Value(a1).Y());
+        // (As a rational spline, its poles then moved: exact, as an arc of a circle is.)
+        occ::handle<Geom2d_BSplineCurve> spline = Geom2dConvert::CurveToBSplineCurve(new Geom2d_TrimmedCurve(ellipse, a0, a1));
         for (int i = 1; i <= spline->NbPoles(); ++i) {
           const gp_Pnt2d pole = spline->Pole(i);
           spline->SetPole(i, gp_Pnt2d(angle(pole.X()), pole.Y()));
@@ -1074,6 +1108,284 @@ std::unique_ptr<Shape> roll(const ProfileIn& profile, double rho, double inner, 
           }
           break;
         }
+      }
+    }
+    return out;
+  });
+}
+
+namespace {
+
+// A point of a curve of a profile's plane, at `t` from 0 to 1 along it.
+gp_Pnt2d curve_point(const CurveIn& c, const ProfileIn& profile, double t) {
+  switch (c.kind) {
+  case 0:
+    return gp_Pnt2d(c.x0 + (c.x1 - c.x0) * t, c.y0 + (c.y1 - c.y0) * t);
+  case 1: {
+    double a1 = c.a1;
+    while (a1 <= c.a0) {
+      a1 += kTwoPi;
+    }
+    const double a = c.a0 + (a1 - c.a0) * t;
+    return gp_Pnt2d(c.cx + c.r * std::cos(a), c.cy + c.r * std::sin(a));
+  }
+  case 3: {
+    // A clamped uniform B-spline, by de Boor's way.
+    const int n = static_cast<int>(c.pole_count);
+    const int deg = static_cast<int>(c.degree);
+    if (deg < 1 || n <= deg || (static_cast<std::size_t>(c.pole_start) + static_cast<std::size_t>(n)) * 2 > profile.poles.size()) {
+      throw std::invalid_argument("invalid B-spline in an outline laid round a cone");
+    }
+    const auto knot = [&](int i) { return static_cast<double>(std::clamp(i - deg, 0, n - deg)); };
+    const double u = t * static_cast<double>(n - deg);
+    int span = std::clamp(static_cast<int>(u) + deg, deg, n - 1);
+    std::vector<gp_XY> d;
+    for (int j = 0; j <= deg; ++j) {
+      const std::size_t k = (static_cast<std::size_t>(c.pole_start) + static_cast<std::size_t>(span - deg + j)) * 2;
+      d.emplace_back(profile.poles[k], profile.poles[k + 1]);
+    }
+    for (int r = 1; r <= deg; ++r) {
+      for (int j = deg; j >= r; --j) {
+        const int i = span - deg + j;
+        const double den = knot(i + deg - r + 1) - knot(i);
+        const double a = den > 0.0 ? (u - knot(i)) / den : 0.0;
+        const std::size_t at = static_cast<std::size_t>(j);
+        d[at] = d[at - 1] * (1.0 - a) + d[at] * a;
+      }
+    }
+    return gp_Pnt2d(d[static_cast<std::size_t>(deg)]);
+  }
+  case 5: {
+    double a1 = c.a1;
+    while (a1 <= c.a0) {
+      a1 += kTwoPi;
+    }
+    const double a = c.a0 + (a1 - c.a0) * t;
+    const double px = c.r * std::cos(a);
+    const double py = c.x1 * std::sin(a);
+    return gp_Pnt2d(c.cx + c.x0 * px - c.y0 * py, c.cy + c.y0 * px + c.x0 * py);
+  }
+  default:
+    throw std::invalid_argument("an outline laid round a cone is made of lines, arcs, ellipse arcs and splines");
+  }
+}
+
+} // namespace
+
+std::unique_ptr<Shape> roll_cone(const ProfileIn& profile, double half_angle, double inner, double outer, HistoryOut& hist) {
+  return guarded("roll_cone", [&] {
+    if (!(half_angle > 1e-3 && half_angle < 0.5 * kTwoPi / 2.0 - 1e-3 && outer > inner + 1e-9)) {
+      throw std::invalid_argument("an outline laid round a cone needs a half angle between 0 and 90 degrees, and the outer distance the larger");
+    }
+    const gp_Pnt apex = pnt(profile.frame.origin);
+    const gp_Dir axis = dir(profile.frame.z_dir);
+    const gp_Dir zero = dir(profile.frame.x_dir);
+    const double sine = std::sin(half_angle);
+    const double cotangent = std::cos(half_angle) / sine;
+    std::vector<const CurveIn*> input;
+    for (const CurveIn& c : profile.curves) {
+      if (c.region != 0 || c.loop_index != 0) {
+        throw std::invalid_argument("an outline laid round a cone is one loop without holes");
+      }
+      input.push_back(&c);
+    }
+    if (input.size() < 2) {
+      throw std::invalid_argument("an outline laid round a cone needs at least two curves");
+    }
+    // Enough along each curve that the spline through them is within a micron of it.
+    constexpr int kSamples = 25;
+    // Where it lies on the cone: the angle round, and how far from the apex.
+    auto laid = [&](const gp_Pnt2d& q) {
+      const double rho = std::hypot(q.X(), q.Y());
+      if (rho < 1e-6) {
+        throw std::invalid_argument("an outline laid round a cone must not reach its apex");
+      }
+      return gp_Pnt2d(std::atan2(q.X(), q.Y()) / sine, rho);
+    };
+    // How far round it reaches: the cones' seam is put opposite its middle.
+    double lo = std::numeric_limits<double>::infinity();
+    double hi = -lo;
+    for (const CurveIn* c : input) {
+      for (int i = 0; i < kSamples; ++i) {
+        const double u = laid(curve_point(*c, profile, static_cast<double>(i) / (kSamples - 1))).X();
+        lo = std::min(lo, u);
+        hi = std::max(hi, u);
+      }
+    }
+    if (!(hi - lo < kTwoPi - 0.05)) {
+      throw std::invalid_argument("an outline laid round a cone must reach less than once round its axis");
+    }
+    const double shift = 0.5 * kTwoPi - 0.5 * (lo + hi);
+    const gp_Dir side = axis.Crossed(zero);
+    const gp_Dir x_dir(zero.XYZ() * std::cos(shift) - side.XYZ() * std::sin(shift));
+    // The two cones: `t` along the normal from the given one has its apex back along the axis, and
+    // what is `rho` from the given apex is `rho + t cot(half angle)` from its own.
+    const double offsets[2] = {inner, outer};
+    occ::handle<Geom_ConicalSurface> cone[2];
+    for (int k = 0; k < 2; ++k) {
+      const gp_Pnt at(apex.XYZ() - axis.XYZ() * (offsets[k] / sine));
+      cone[k] = new Geom_ConicalSurface(gp_Ax3(at, axis, x_dir), half_angle, 0.0);
+    }
+    // The corners, and each curve in the cone's (angle, distance) plane.
+    std::vector<gp_Pnt2d> corners;
+    auto corner = [&](const gp_Pnt2d& q) {
+      for (std::size_t i = 0; i < corners.size(); ++i) {
+        if (corners[i].Distance(q) < 1e-7) {
+          return i;
+        }
+      }
+      corners.push_back(q);
+      return corners.size() - 1;
+    };
+    std::vector<std::pair<std::size_t, std::size_t>> ends;
+    std::vector<occ::handle<Geom2d_Curve>> curves;
+    for (const CurveIn* c : input) {
+      auto pts = new NCollection_HArray1<gp_Pnt2d>(1, kSamples);
+      occ::handle<NCollection_HArray1<gp_Pnt2d>> points = pts;
+      for (int i = 0; i < kSamples; ++i) {
+        const gp_Pnt2d q = laid(curve_point(*c, profile, static_cast<double>(i) / (kSamples - 1)));
+        points->SetValue(i + 1, gp_Pnt2d(q.X() + shift, q.Y()));
+      }
+      const std::size_t a = corner(curve_point(*c, profile, 0.0));
+      const std::size_t b = corner(curve_point(*c, profile, 1.0));
+      if (a == b) {
+        throw std::invalid_argument("a curve of an outline laid round a cone ends where it starts");
+      }
+      ends.emplace_back(a, b);
+      Geom2dAPI_Interpolate fit(points, false, 1.0e-9);
+      fit.Perform();
+      if (!fit.IsDone()) {
+        throw std::runtime_error("could not fit a curve of an outline laid round a cone");
+      }
+      curves.push_back(fit.Curve());
+    }
+    std::vector<TopoDS_Vertex> vertices[2];
+    std::vector<TopoDS_Edge> edges[2];
+    for (int k = 0; k < 2; ++k) {
+      const double along = offsets[k] * cotangent;
+      for (const gp_Pnt2d& c : corners) {
+        const gp_Pnt2d q = laid(c);
+        vertices[k].push_back(BRepBuilderAPI_MakeVertex(cone[k]->Value(q.X() + shift, q.Y() + along)).Vertex());
+      }
+      for (std::size_t i = 0; i < curves.size(); ++i) {
+        occ::handle<Geom2d_Curve> moved = occ::down_cast<Geom2d_Curve>(curves[i]->Translated(gp_Vec2d(0.0, along)));
+        BRepBuilderAPI_MakeEdge mk(moved, cone[k], vertices[k][ends[i].first], vertices[k][ends[i].second], moved->FirstParameter(), moved->LastParameter());
+        if (!mk.IsDone()) {
+          throw std::runtime_error("could not build an edge of an outline laid round a cone");
+        }
+        TopoDS_Edge edge = mk.Edge();
+        if (!BRepLib::BuildCurve3d(edge, 1.0e-7)) {
+          throw std::runtime_error("could not work out an edge of an outline laid round a cone");
+        }
+        edges[k].push_back(edge);
+      }
+    }
+    BRepBuilderAPI_Sewing sew(1.0e-6);
+    for (int k = 0; k < 2; ++k) {
+      BRepBuilderAPI_MakeWire wire;
+      for (const TopoDS_Edge& e : edges[k]) {
+        wire.Add(e);
+        if (!wire.IsDone()) {
+          throw std::runtime_error("the curves of an outline laid round a cone do not join end to end");
+        }
+      }
+      if (!BRep_Tool::IsClosed(wire.Wire())) {
+        throw std::runtime_error("an outline laid round a cone is not closed");
+      }
+      BRepBuilderAPI_MakeFace face(cone[k], wire.Wire(), true);
+      if (!face.IsDone()) {
+        throw std::runtime_error("could not build a round face of an outline laid round a cone");
+      }
+      sew.Add(face.Face());
+    }
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+      sew.Add(BRepFill::Face(edges[0][i], edges[1][i]));
+    }
+    sew.Perform();
+    if (sew.NbFreeEdges() > 0) {
+      throw std::runtime_error("the faces of an outline laid round a cone do not close");
+    }
+    TopExp_Explorer shells(sew.SewedShape(), TopAbs_SHELL);
+    if (!shells.More()) {
+      throw std::runtime_error("the faces of an outline laid round a cone do not make a shell");
+    }
+    BRepBuilderAPI_MakeSolid make_solid(TopoDS::Shell(shells.Current()));
+    if (!make_solid.IsDone()) {
+      throw std::runtime_error("an outline laid round a cone is not a solid");
+    }
+    TopoDS_Solid solid = make_solid.Solid();
+    BRepLib::OrientClosedSolid(solid);
+    require_valid(solid, "an outline laid round a cone gave an invalid solid");
+
+    auto out = wrap(solid);
+    // Which face is which: the two round ones by where their apex is, each side by the curve of
+    // the outline its edge on the inner cone is.
+    std::vector<gp_Pnt> middles;
+    for (const TopoDS_Edge& e : edges[0]) {
+      BRepAdaptor_Curve curve(e);
+      middles.push_back(curve.Value(0.5 * (curve.FirstParameter() + curve.LastParameter())));
+    }
+    for (int f = 1; f <= out->faces.Extent(); ++f) {
+      const TopoDS_Face& face = TopoDS::Face(out->faces(f));
+      BRepAdaptor_Surface surface(face);
+      if (surface.GetType() == GeomAbs_Cone) {
+        const gp_Pnt tip = surface.Cone().Apex();
+        const double t = apex.XYZ().Subtracted(tip.XYZ()).Dot(axis.XYZ()) * sine;
+        if (std::abs(t - inner) < 1e-7) {
+          add_role(hist, ROLE_START_CAP, *out, face);
+          continue;
+        }
+        if (std::abs(t - outer) < 1e-7) {
+          add_role(hist, ROLE_END_CAP, *out, face);
+          continue;
+        }
+      }
+      for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));
+        const gp_Pnt mid = curve.Value(0.5 * (curve.FirstParameter() + curve.LastParameter()));
+        std::size_t best = 0;
+        for (std::size_t i = 1; i < middles.size(); ++i) {
+          if (mid.Distance(middles[i]) < mid.Distance(middles[best])) {
+            best = i;
+          }
+        }
+        if (mid.Distance(middles[best]) < 1e-5) {
+          TagGen gen{input[best]->tag, 0, 0};
+          if (locate(*out, face, gen.gen_kind, gen.gen_index)) {
+            hist.tagged.push_back(gen);
+          }
+          break;
+        }
+      }
+    }
+    return out;
+  });
+}
+
+std::unique_ptr<Shape> thicken(const Shape& shape, std::uint32_t face, double distance, HistoryOut& hist) {
+  return guarded("thicken", [&] {
+    const TopoDS_Face& from = face_at(shape, face);
+    BRepOffsetAPI_MakeThickSolid mk;
+    mk.MakeThickSolidBySimple(from, distance);
+    mk.Build();
+    if (!mk.IsDone()) {
+      throw std::runtime_error("the face could not be thickened");
+    }
+    // (It comes inside out as often as not.)
+    TopExp_Explorer solids(mk.Shape(), TopAbs_SOLID);
+    if (!solids.More()) {
+      throw std::runtime_error("thickening the face gave no solid");
+    }
+    TopoDS_Solid solid = TopoDS::Solid(solids.Current());
+    BRepLib::OrientClosedSolid(solid);
+    require_valid(solid, "thickening the face gave an invalid solid");
+    auto out = wrap(solid);
+    // The far side: the one face that the face itself does not touch.
+    for (int f = 1; f <= out->faces.Extent(); ++f) {
+      const TopoDS_Shape& candidate = out->faces(f);
+      BRepExtrema_DistShapeShape apart(candidate, from);
+      if (apart.IsDone() && apart.Value() > 0.5 * std::abs(distance)) {
+        add_role(hist, ROLE_END_CAP, *out, candidate);
       }
     }
     return out;
@@ -1921,6 +2233,31 @@ void face_info(const Shape& s, std::uint32_t index, FaceOut& out) {
       out.kind = 10;
       break;
     }
+  });
+}
+
+void face_normal(const Shape& s, std::uint32_t index, V3& out) {
+  guarded("face_normal", [&] {
+    const TopoDS_Face& face = face_at(s, index);
+    BRepAdaptor_Surface surf(face, true);
+    double u0 = 0.0;
+    double u1 = 0.0;
+    double v0 = 0.0;
+    double v1 = 0.0;
+    BRepTools::UVBounds(face, u0, u1, v0, v1);
+    gp_Pnt at;
+    gp_Vec du;
+    gp_Vec dv;
+    surf.D1(0.5 * (u0 + u1), 0.5 * (v0 + v1), at, du, dv);
+    gp_Vec n = du.Crossed(dv);
+    if (n.Magnitude() < 1e-12) {
+      throw std::runtime_error("the face has no normal at its middle");
+    }
+    n.Normalize();
+    if (face.Orientation() == TopAbs_REVERSED) {
+      n.Reverse();
+    }
+    out = V3{n.X(), n.Y(), n.Z()};
   });
 }
 

@@ -242,6 +242,12 @@ pub(crate) mod bridge {
         /// The profile's outline rolled round its frame's Z axis: x is the angle `x / rho` from the
         /// frame's X, y the distance along the axis; from radius `inner` to radius `outer`.
         fn roll(profile: &ProfileIn, rho: f64, inner: f64, outer: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// The profile's outline laid round a cone with its apex at the frame's origin, widening
+        /// along its Z: `(x, y)` lies `hypot(x, y)` from the apex, `atan2(x, y) / sin(half_angle)`
+        /// radians round from the frame's X; from `inner` to `outer` along the cone's normal.
+        fn roll_cone(profile: &ProfileIn, half_angle: f64, inner: f64, outer: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// A solid from face `face` of `shape` and the face `distance` along its normal.
+        fn thicken(shape: &Shape, face: u32, distance: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// Revolution of the profile about an axis, from angle `start` sweeping `sweep` radians;
         /// `full` makes a closed revolution.
         fn revolve(profile: &ProfileIn, origin: &V3, dir: &V3, start: f64, sweep: f64, full: bool, hist: &mut HistoryOut)
@@ -283,6 +289,8 @@ pub(crate) mod bridge {
         fn topology(shape: &Shape, out: &mut TopoOut) -> Result<()>;
         fn face_info(shape: &Shape, index: u32, out: &mut FaceOut) -> Result<()>;
         fn edge_info(shape: &Shape, index: u32, out: &mut EdgeOut) -> Result<()>;
+        /// The way a face looks, out of its solid, at about its middle.
+        fn face_normal(shape: &Shape, index: u32, out: &mut V3) -> Result<()>;
         /// Points along an edge from its start to its end, x, y, z each, within `deflection` of it.
         fn edge_points(shape: &Shape, index: u32, deflection: f64, out: &mut Vec<f64>) -> Result<()>;
         fn tessellate(shape: &Shape, linear: f64, angular: f64, relaxed: bool, apart: bool, out: &mut MeshOut) -> Result<()>;
