@@ -249,7 +249,7 @@ choice, DEC-029).
 Hidden-line removal: `crates/kernel-occt/tests/m4.rs`. Drawing crate: `crates/drawing/src`.
 Sheet raster: `lines_dashes_and_text_land_on_white_paper`. Files: `crates/io/tests/drw.rs`.
 Commands and demo: `apps/tenon-cli/tests/m4.rs` (6). UI (real pointer and key input):
-`crates/ui/src/drw_tests.rs` (10).
+`crates/ui/src/drw_tests.rs`.
 
 | Feature | Status | Proof / gap |
 |---|---|---|
