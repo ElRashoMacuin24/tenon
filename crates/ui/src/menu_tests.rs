@@ -1055,6 +1055,28 @@ fn words_on_an_empty_document_read_right() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// What the guide says is there: New Sheet Metal Part on a drawing's File menu.
+#[test]
+fn a_drawing_s_file_menu_starts_a_sheet_metal_part() {
+    let mut wb = Workbench::without_kernel();
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("file.new_drawing").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let file = crate::tests::pressable(&d, "tn_file_tab");
+    d.click(&mut wb, file);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let entry = crate::tests::pressable(&d, "file.new_sheet_metal");
+    d.click(&mut wb, entry);
+    d.frame(&mut wb, vec![]);
+    if wb.chrome.save_prompt.is_some() {
+        wb.answer_save_prompt(crate::chrome::SaveAnswer::DontSave);
+        d.frame(&mut wb, vec![]);
+    }
+    assert!(!wb.in_drawing() && wb.is_sheet_metal(), "{}", wb.status());
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

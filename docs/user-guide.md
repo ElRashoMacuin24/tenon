@@ -27,7 +27,7 @@ Intel Macs and other systems: build Tenon from its source ([setup.md](https://gi
 
 - **The ribbon** across the top holds the commands of what you are working on, in tabs:
   3D Model, Sketch, Inspect, Tools, Manage, View, Environments for a part (Sheet Metal and Flat
-  Pattern on a sheet metal part, Stress Analysis while you are in it); Assemble for an assembly;
+  Pattern on a sheet metal part, Analysis while you are in Stress Analysis); Assemble for an assembly;
   Place Views and Annotate for a drawing. In a window narrower than the ribbon, an arrow at its end goes along it.
 - **Search commands** (top right) finds any command by name.
 - **The browser** on the left lists the part's features in order (or the assembly's
@@ -263,6 +263,7 @@ A bend with a cut through it has to be cut square to the sheet to be laid flat: 
 Cut Normal or Cut Across Bend. A plain straight cut meets a bend's inside and its outside in different
 places, and Unfold says so. If you unfold from two different faces, fold back the last first: the part
 then comes back where it was. Oldest first it comes to the same shape, moved as a whole.
+
 **Contour Roll** rolls an open profile round an axis as sheet: a line of the sketch or an
 axis clicked in the view, and an angle of up to 359.9 degrees (a sheet has a seam). One
 straight line (a ring, a cone or a flat ring) unrolls exactly. A profile of several lines and
@@ -330,7 +331,7 @@ An assembly file refers to its parts by where they are relative to it: move them
 
 ## Drawings
 
-**File > New Drawing** (ANSI or ISO), or **New Drawing from Template**. **Base** shows a
+**File > New Drawing** (ANSI), or **New Drawing from Template** (ANSI or ISO). **Base** shows a
 part or an assembly; then projected, section, detail and isometric views. Dimensions follow
 the model; hole tables, parts lists, balloons and text are on Annotate. **Export PDF, SVG or
 DXF** from the File menu.
@@ -352,6 +353,7 @@ DXF** from the File menu.
   the status bar and the view's row say so. A centre mark or a hole's tag goes with what it marks.
   Each has a row under its view: double-click it to change it, right-click it to suppress or
   delete it. A panel closes when you start another tool or go to another sheet.
+
 **Baseline** and **Ordinate** (Annotate > Dimension) measure several places from one. Click the
 datum or origin (an edge, a circle for its centre; near a line's end, that end), then what to
 measure. A second click on one takes it away. The set shows where it would go; click clear of

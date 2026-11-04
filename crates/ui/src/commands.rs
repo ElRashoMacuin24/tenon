@@ -458,6 +458,11 @@ pub const RIBBON: &[RibbonTab] = &[
                     large("work.plane", "Plane", "Construction plane: offset, angled, mid-plane or through three points", Icon::Plane),
                     small("work.axis", "Axis", "Construction axis: on an edge or cylinder, or where two planes meet", Icon::Axis),
                     small("work.point", "Point", "Construction point: a circle centre, or where an axis meets a plane", Icon::Point),
+                    small(
+                        "work.ucs",
+                        "UCS",
+                        "A coordinate system of your own, by offsets and turns or three points: its planes, axes and origin serve as work features",
+                        Icon::Ucs),
                 ],
             },
             RibbonPanel {
@@ -1066,6 +1071,7 @@ pub const FILE_MENU: &[(&str, &str)] = &[
 /// File menu entries in a drawing.
 pub const DRW_FILE_MENU: &[(&str, &str)] = &[
     ("New Part", "file.new"),
+    ("New Sheet Metal Part", "file.new_sheet_metal"),
     ("New Assembly", "file.new_assembly"),
     ("New Drawing", "file.new_drawing"),
     ("New Drawing from Template...", "file.new_drawing_template"),
