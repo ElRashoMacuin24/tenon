@@ -1040,16 +1040,24 @@ fn patterns_and_mirrors_are_saved_and_read_back_to_the_same_bytes() {
         assert!(err.contains(says), "{from}: {err}");
     }
 
-    // The mirror image is told apart in what is kept of a part's scene: what a document says for
-    // it, in its own words, is read back, and differs from the part's.
+    // The mirror image is told apart in what is kept of a part's scene, whose name comes of these
+    // bytes. A part file edited by hand to say the same is read as the part it is, and saved so.
     let (doc, _) = tenon_io::project::open(&dir.join("block.tenon")).unwrap();
     let plain = tenon_io::project::to_bytes(&doc, &serde_json::Map::new()).unwrap();
     let mut image = doc.clone();
     image.set_reflected(true);
     let bytes = tenon_io::project::to_bytes(&image, &serde_json::Map::new()).unwrap();
     assert_ne!(plain, bytes);
-    assert!(tenon_io::project::from_bytes(&bytes).unwrap().0.reflected());
     assert!(!tenon_io::project::from_bytes(&plain).unwrap().0.reflected());
+    assert!(!tenon_io::project::from_bytes(&bytes).unwrap().0.reflected());
+    std::fs::write(dir.join("said.tenon"), &bytes).unwrap();
+    run(e, "file.open", json!({ "path": "said.tenon" }));
+    run(e, "file.save", json!({ "path": "said2.tenon" }));
+    assert_eq!(std::fs::read(dir.join("said2.tenon")).unwrap(), plain);
+    run(e, "asm.new", json!({ "name": "Said" }));
+    run(e, "asm.insert", json!({ "path": "said.tenon" }));
+    same(vec3(&run(e, "asm.mass", json!({}))["center_of_mass"]), [5.0, 5.0, 5.0]);
+    assert_eq!(run(e, "asm.bom", json!({}))["rows"][0]["mirrored"], false);
 }
 
 /// The face of a component's part that is the `end` ("start" or "end") of feature `feature`, as a

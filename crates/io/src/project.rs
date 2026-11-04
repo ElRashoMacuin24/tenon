@@ -173,6 +173,9 @@ pub fn from_bytes(data: &[u8]) -> Result<(Document, Map<String, Value>), Project
     })?;
     let mut document = file.document;
     document.validate().map_err(ProjectError::Damaged)?;
+    // (Only what is kept of a mirrored occurrence's scene is said to be a mirror image, never a part
+    // file: one edited by hand to say it is read as the part it is, and saved so.)
+    document.set_reflected(false);
     // (A design table's active row is the part as it stands: the part's own values are the ones
     // that count, should a file edited by hand say two things.)
     document.table_follow();
