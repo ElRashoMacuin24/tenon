@@ -603,6 +603,13 @@ impl Workbench {
     }
 
     pub(crate) fn finish_sketch(&mut self) {
+        // (Words typed and not yet OK'd are not dropped with no word.)
+        if let Mode::Sketch(s) = &mut self.mode
+            && let Some(tb) = s.text_box.take().filter(|tb| !tb.text.trim().is_empty())
+        {
+            let feature = s.feature;
+            self.place_text(feature, &tb);
+        }
         if let Mode::Sketch(s) = &self.mode {
             let name = self.feature_name(s.feature);
             self.mode = Mode::Model;
@@ -792,6 +799,8 @@ impl Workbench {
         let Some(mut tb) = sm.text_box.clone() else { return };
         let feature = sm.feature;
         let (mut open, mut ok, mut cancel) = (true, false, false);
+        // (As Esc does on any other box.)
+        cancel |= ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let title = if tb.editing.is_some() { "Edit Text" } else { "Format Text" };
         egui::Window::new(title)
             .id(egui::Id::new("tn_format_text"))
@@ -831,24 +840,35 @@ impl Workbench {
                     }
                 });
             });
-        // (OK with nothing typed leaves the box open, to be typed in.)
+        // (A value its field refused is said, and no OK is taken with the value from before it.
+        // OK with nothing typed leaves the box open, to be typed in.)
+        let refused = ui.ctx().data_mut(|d| d.remove_temp::<String>(egui::Id::new(crate::properties::FIELD_REFUSED)));
         let empty = ok && tb.text.trim().is_empty();
-        sm.text_box = (open && (!ok || empty) && !cancel).then(|| tb.clone());
+        let ok = ok && !empty && refused.is_none();
+        sm.text_box = (open && !ok && !cancel).then(|| tb.clone());
+        if let Some(said) = refused {
+            self.set_error(said);
+            return;
+        }
         if empty {
             self.set_error("Type the text first: a text needs some words.");
             return;
         }
-        if !ok {
-            return;
+        if ok {
+            self.place_text(feature, &tb);
         }
-        sm.text_height = tb.height;
+    }
+
+    /// What the Format Text box holds, put in the sketch.
+    fn place_text(&mut self, feature: FeatureId, tb: &TextBox) {
+        if let Mode::Sketch(sm) = &mut self.mode {
+            sm.text_height = tb.height;
+        }
         let angle = tb.angle.to_radians();
-        match tb.editing {
+        let done = match tb.editing {
             Some(id) => {
                 let p = json!({ "sketch": feature.0, "entity": id.0, "text": tb.text, "height": tb.height, "angle": angle });
-                if self.exec_status("sketch.edit_text", p).is_some() {
-                    self.set_status("Changed the text.");
-                }
+                self.exec_status("sketch.edit_text", p).map(|_| "Changed the text.")
             }
             None => {
                 let mut m = Map::new();
@@ -857,10 +877,15 @@ impl Workbench {
                 m.insert("text".into(), json!(tb.text));
                 m.insert("height".into(), json!(tb.height));
                 m.insert("angle".into(), json!(angle));
-                if self.exec_status("sketch.text", Value::Object(m)).is_some() {
-                    self.set_status("Placed the text. Click to place another; Esc ends. Double-click a text to change it.");
-                }
+                self.exec_status("sketch.text", Value::Object(m)).map(|_| "Placed the text. Click to place another; Esc ends. Double-click a text to change it.")
             }
+        };
+        let Some(done) = done else { return };
+        let missing: String = tenon_sketch::text::not_in_font(&tb.text).into_iter().collect();
+        if missing.is_empty() {
+            self.set_status(done);
+        } else {
+            self.set_status(format!("The font has no {missing}: they are boxes, and are cut or raised as boxes. {done}"));
         }
     }
 

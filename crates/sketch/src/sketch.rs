@@ -319,10 +319,15 @@ impl Sketch {
         }
     }
 
-    /// Where the sketch reaches: its points, and the corners of its texts' boxes.
+    /// Where the sketch reaches: its points, its curves, and the corners of its texts' boxes.
     pub fn extent(&self) -> Vec<Vec2> {
         let points = self.entities().filter_map(|(id, _)| self.point(id));
-        points.chain(self.texts().filter_map(|t| self.text_corners(t)).flatten()).collect()
+        // (A circle's or an ellipse's points are its centre, far from where it reaches.)
+        let curves = self.entities().filter(|(_, e)| e.geometry.is_curve()).flat_map(|(id, e)| {
+            let size = e.geometry.points().first().and_then(|p| self.point(*p)).map_or(1.0, |at| at.x.abs().max(at.y.abs()).max(1.0));
+            self.tessellate(id, size * 0.01)
+        });
+        points.chain(curves).chain(self.texts().filter_map(|t| self.text_corners(t)).flatten()).collect()
     }
 
     /// The texts of the sketch.

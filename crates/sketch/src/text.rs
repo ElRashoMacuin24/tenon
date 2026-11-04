@@ -166,6 +166,19 @@ impl OutlinePen for Pen {
 /// The contours of `text` (one line or several), the left end of its first line's baseline at
 /// `at`, its capital letters `height` tall, turned `angle` radians about `at`. Characters the
 /// font does not have are drawn as its missing-letter box.
+/// The characters of `text` that the font does not have, each once: they show as empty boxes.
+pub fn not_in_font(text: &str) -> Vec<char> {
+    let Ok(font) = FontRef::new(FONT) else { return Vec::new() };
+    let charmap = font.charmap();
+    let mut out: Vec<char> = Vec::new();
+    for c in text.chars().filter(|c| !c.is_control()) {
+        if charmap.map(c).is_none() && !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
 pub fn contours(text: &str, at: Vec2, height: f64, angle: f64) -> Vec<Contour> {
     let Ok(font) = FontRef::new(FONT) else { return Vec::new() };
     let location = LocationRef::default();

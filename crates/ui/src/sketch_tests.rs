@@ -1163,3 +1163,60 @@ fn a_fillet_is_made_variable_or_between_two_sets_of_faces_by_clicks() {
     let round = (1.0 - PI / 4.0) * 40.0;
     assert!((8000.0 - volume(&wb) - round).abs() < 1e-6 * 8000.0, "{} ({})", volume(&wb), wb.status());
 }
+
+#[test]
+fn the_format_text_box_refuses_what_a_field_refused_closes_on_esc_and_keeps_what_was_typed() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 40, "y2": 20 })).unwrap();
+    d.settle(&mut wb);
+    let texts = |wb: &Workbench| wb.document().sketch(f).unwrap().texts().count();
+    let open = |d: &mut Driver, wb: &mut Workbench| {
+        d.click(wb, pressable(d, "ribbon sketch.text"));
+        d.frame(wb, vec![]);
+        let start = on_screen(wb, Vec3::new(0.0, 25.0, 0.0));
+        move_to(d, wb, start);
+        d.click(wb, start);
+        d.frame(wb, vec![]);
+        d.frame(wb, vec![]);
+    };
+    let box_open = |wb: &Workbench| matches!(&wb.mode, Mode::Sketch(s) if s.text_box.is_some());
+
+    // A height that is no number: said, the box stays, and nothing is placed.
+    open(&mut d, &mut wb);
+    assert!(box_open(&wb), "{}", wb.status());
+    crate::tests::type_into(&mut d, &mut wb, "tn_sketch_text", "AB");
+    crate::tests::type_into(&mut d, &mut wb, "tn_text_height", "abc");
+    d.click(&mut wb, pressable(&d, "tn_sketch_text_ok"));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status_error, "{}", wb.status());
+    assert!(box_open(&wb) && texts(&wb) == 0, "{}", wb.status());
+
+    // Esc closes it.
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(!box_open(&wb));
+    assert_eq!(texts(&wb), 0);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+
+    // Finish with words typed: they are placed, not dropped.
+    open(&mut d, &mut wb);
+    crate::tests::type_into(&mut d, &mut wb, "tn_sketch_text", "CD");
+    wb.finish_sketch();
+    assert_eq!(texts(&wb), 1, "{}", wb.status());
+
+    // Characters the font does not have are named.
+    wb.edit_feature(f).unwrap();
+    d.settle(&mut wb);
+    open(&mut d, &mut wb);
+    crate::tests::type_into(&mut d, &mut wb, "tn_sketch_text", "A日");
+    d.click(&mut wb, pressable(&d, "tn_sketch_text_ok"));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("The font has no 日"), "{}", wb.status());
+}
