@@ -199,3 +199,116 @@ fn a_running_tenons_work_is_never_offered_to_another() {
     let (third, _) = tenon(&base);
     assert!(third.recover_offer.is_none(), "nothing was unsaved when it stopped");
 }
+
+/// A part that derives its solid, 20 x 10 x 5, from another file beside it. Both are written.
+fn deriving_part(dir: &Path) -> PathBuf {
+    let other = dir.join("other.tenon");
+    let mine = dir.join("mine.tenon");
+    let mut k = OcctKernel::new();
+    let mut s = tenon_model::Session::default();
+    let sk = tenon_io::cmd::run(&mut s, "sketch.create", &json!({ "plane": "xy" }), Some(&mut k)).unwrap()["feature"].as_u64().unwrap();
+    tenon_io::cmd::run(&mut s, "sketch.rectangle", &json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 20, "y2": 10 }), Some(&mut k)).unwrap();
+    tenon_io::cmd::run(&mut s, "model.extrude", &json!({ "sketch": sk, "distance": 5 }), Some(&mut k)).unwrap();
+    tenon_io::cmd::run(&mut s, "file.save", &json!({ "path": other.to_string_lossy() }), Some(&mut k)).unwrap();
+    let mut s = tenon_model::Session::default();
+    tenon_io::cmd::run(&mut s, "model.derive", &json!({ "path": other.to_string_lossy() }), Some(&mut k)).unwrap();
+    tenon_io::cmd::run(&mut s, "file.save", &json!({ "path": mine.to_string_lossy() }), Some(&mut k)).unwrap();
+    mine
+}
+
+/// Drops `wb` as a crash would, starts another Tenon and takes the Recover button.
+fn crash_and_recover(wb: Workbench, base: &Path) -> (Workbench, Driver) {
+    drop(wb);
+    let (mut wb, mut d) = tenon(base);
+    for _ in 0..3 {
+        d.frame(&mut wb, vec![]);
+    }
+    let at = pressable(&d, "tn_recover_recover");
+    d.click(&mut wb, at);
+    work(&mut d, &mut wb);
+    assert!(wb.status().starts_with("Recovered"), "{}", wb.status());
+    (wb, d)
+}
+
+/// What a part's own file and table say once it is back.
+#[track_caller]
+fn it_can_read_what_it_derives(s: &tenon_model::Session, file: &Path) {
+    let links = s.document().links();
+    assert_eq!(links.home.as_deref(), Some(tenon_io::asm::part_key(file).as_str()));
+    assert_eq!(links.sources.len(), 1, "what it derives from is read");
+    assert!(links.sources.values().all(|v| v.document.is_ok()));
+}
+
+#[test]
+fn a_part_that_derives_comes_back_able_to_build_itself() {
+    let _quiet = crate::tests::timing_lock();
+    // Open by itself.
+    let (base, dir) = (scratch("derive-part-base"), scratch("derive-part"));
+    let mine = deriving_part(&dir);
+    let (mut wb, mut d) = tenon(&base);
+    wb.open(&mine).unwrap();
+    wb.exec("work.ucs", json!({ "x": 60, "z": 20 })).unwrap();
+    work(&mut d, &mut wb);
+    let (mut wb, mut d) = crash_and_recover(wb, &base);
+    it_can_read_what_it_derives(&wb.session, &mine);
+    work(&mut d, &mut wb);
+    assert!((wb.scene().bodies.iter().map(|b| b.volume).sum::<f64>() - 1000.0).abs() < 1e-6, "{}", wb.status());
+    // Saved, its path is relative to the file again.
+    wb.save(&mine).unwrap();
+    assert!(std::fs::read_to_string(&mine).unwrap().contains("path = \"other.tenon\""));
+    wb.shutdown();
+
+    // Shown in a drawing, edited from it: its view is whole, and Update keeps it so.
+    let (base, dir) = (scratch("derive-drw-base"), scratch("derive-drw"));
+    let mine = deriving_part(&dir);
+    let draw = dir.join("mine.tenondrw");
+    let (mut wb, mut d) = tenon(&base);
+    wb.run_ui("file.new_drawing").unwrap();
+    for _ in 0..3 {
+        d.frame(&mut wb, vec![]);
+    }
+    wb.drw_exec("drw.view.base", json!({ "model": mine.to_string_lossy(), "orientation": "front" })).unwrap();
+    wb.save_drawing(&draw).unwrap();
+    for _ in 0..3 {
+        d.frame(&mut wb, vec![]);
+    }
+    let front = crate::tests::browser_row(&d, "VIEW1: mine.tenon");
+    d.click(&mut wb, front.center());
+    wb.run_ui("drw.edit_model").unwrap();
+    wb.exec("work.ucs", json!({ "x": 60, "z": 20 })).unwrap();
+    work(&mut d, &mut wb);
+    assert!(wb.editing_from_drawing());
+    let (mut wb, mut d) = crash_and_recover(wb, &base);
+    let key = tenon_io::asm::part_key(&mine);
+    let Some(tenon_drawing::DrwModel::Part(s)) = wb.drw.as_ref().unwrap().session.models.get(&key) else { panic!("the part is not in the drawing") };
+    it_can_read_what_it_derives(s, &mine);
+    wb.drw_exec("drw.update", json!({})).unwrap();
+    work(&mut d, &mut wb);
+    let info = wb.drw_exec("drw.info", json!({})).unwrap();
+    assert!(info["views"][0]["visible_curves"].as_u64().unwrap() > 0, "{info}");
+    assert!(info["views"][0]["error"].is_null(), "{info}");
+    wb.shutdown();
+
+    // A part of an assembly, changed there.
+    let (base, dir) = (scratch("derive-asm-base"), scratch("derive-asm"));
+    let mine = deriving_part(&dir);
+    let asm = dir.join("mine.tenonasm");
+    let (mut wb, mut d) = tenon(&base);
+    wb.run_ui("file.new_assembly").unwrap();
+    for _ in 0..3 {
+        d.frame(&mut wb, vec![]);
+    }
+    wb.asm_exec("asm.insert", json!({ "path": mine.to_string_lossy() })).unwrap();
+    wb.save_assembly(&asm).unwrap();
+    for _ in 0..3 {
+        d.frame(&mut wb, vec![]);
+    }
+    let key = tenon_io::asm::part_key(&mine);
+    let part = wb.asm.as_mut().unwrap().session.parts.get_mut(&key).unwrap();
+    part.session.exec("work.ucs", &json!({ "x": 60, "z": 20 }), None).unwrap();
+    work(&mut d, &mut wb);
+    let (mut wb, _d) = crash_and_recover(wb, &base);
+    let part = wb.asm.as_ref().unwrap().session.parts.get(&key).unwrap();
+    it_can_read_what_it_derives(&part.session, &mine);
+    wb.shutdown();
+}

@@ -390,7 +390,10 @@ impl crate::Workbench {
                             Ok(())
                         })
                         .map_err(|e| e.0)?;
-                    tenon_io::derive::follow(&mut self.session);
+                    match &top.original {
+                        Some(file) => tenon_io::derive::set_home(&mut self.session, Path::new(file)),
+                        None => tenon_io::derive::follow(&mut self.session),
+                    }
                     self.path = top.original.as_deref().map(PathBuf::from);
                 }
             }
@@ -411,12 +414,17 @@ impl crate::Workbench {
                 _ => {
                     let (doc, _) = tenon_io::project::from_bytes(&bytes).map_err(|e| e.to_string())?;
                     match self.used_part(&key, k.within.as_deref()) {
-                        Some(s) => s
-                            .edit(|d| {
-                                *d = doc;
-                                Ok(())
-                            })
-                            .is_ok(),
+                        Some(s) => {
+                            let put = s
+                                .edit(|d| {
+                                    *d = doc;
+                                    Ok(())
+                                })
+                                .is_ok();
+                            // (What it derives from is not in its bytes: it is read again.)
+                            tenon_io::derive::set_home(s, Path::new(&key));
+                            put
+                        }
                         None => false,
                     }
                 }

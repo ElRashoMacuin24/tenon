@@ -392,3 +392,83 @@ fn emboss_derive_and_ucs_read_back_to_the_same_bytes() {
     assert!(err.contains("not_yet_known"), "{err}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_save_takes_no_change_of_the_other_file() {
+    let dir = folder("save");
+    let other = dir.join("other.tenon");
+    block_file(&other, 0.0, 10.0, 10.0, 5.0);
+    let mine = dir.join("mine.tenon");
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "model.derive", json!({ "path": path(&other) }));
+    run(&mut s, &mut k, "file.save", json!({ "path": path(&mine) }));
+    near(volume(&mut s, &mut k), 500.0);
+    let stood = |s: &mut Session, k: &mut OcctKernel| run(s, k, "model.mass", json!({}))["bodies"][0]["volume"].as_f64().unwrap();
+
+    block_file(&other, 0.0, 10.0, 10.0, 50.0);
+    // An edit elsewhere takes no notice; nor does a save where it was.
+    run(&mut s, &mut k, "document.rename", json!({ "name": "Mine" }));
+    near(stood(&mut s, &mut k), 500.0);
+    run(&mut s, &mut k, "file.save", json!({ "path": path(&mine) }));
+    near(stood(&mut s, &mut k), 500.0);
+    assert!(!s.is_dirty());
+    // Nor a save in a new place, though the path in the file is from there.
+    let sub = dir.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let elsewhere = sub.join("mine.tenon");
+    run(&mut s, &mut k, "file.save", json!({ "path": path(&elsewhere) }));
+    near(stood(&mut s, &mut k), 500.0);
+    assert!(std::fs::read_to_string(&elsewhere).unwrap().contains("path = \"../other.tenon\""));
+    assert_eq!(s.document().links().home.as_deref(), Some(tenon_io::asm::part_key(&elsewhere).as_str()));
+    // A rebuild takes it.
+    near(volume(&mut s, &mut k), 5000.0);
+
+    // A file gone is found out on a rebuild as well, not on a save.
+    std::fs::remove_file(&other).unwrap();
+    run(&mut s, &mut k, "file.save", json!({ "path": path(&elsewhere) }));
+    near(stood(&mut s, &mut k), 5000.0);
+    let said = fails(&mut s, &mut k);
+    assert!(said.contains("other.tenon") && said.contains("missing"), "{said}");
+
+    // Saved over what it derives from, directly and through another, it says so at once.
+    block_file(&other, 0.0, 10.0, 10.0, 5.0);
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "model.derive", json!({ "path": path(&other) }));
+    near(volume(&mut s, &mut k), 500.0);
+    run(&mut s, &mut k, "file.save", json!({ "path": path(&other) }));
+    let said = fails(&mut s, &mut k);
+    assert!(said.contains("cannot derive itself"), "{said}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_relative_path_in_a_definition_is_from_this_file_and_with_no_file_it_is_refused() {
+    let dir = folder("definition");
+    let other = dir.join("other.tenon");
+    block_file(&other, 0.0, 10.0, 10.0, 5.0);
+    let mine = dir.join("mine.tenon");
+    // With no file for it to be relative to, in words, both ways of writing a definition.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let kind = json!({ "type": "derive", "path": "other.tenon" });
+    let e = exec(&mut s, "feature.add", &json!({ "kind": kind }), Some(&mut k)).unwrap_err().to_string();
+    assert!(e.contains("other.tenon") && e.contains("relative") && e.contains("save the part first"), "{e}");
+    assert!(s.document().features().is_empty());
+    let d = feature(&run(&mut s, &mut k, "model.derive", json!({ "path": path(&other) })));
+    let e = exec(&mut s, "feature.update", &json!({ "feature": d, "kind": kind }), Some(&mut k)).unwrap_err().to_string();
+    assert!(e.contains("relative") && e.contains("save the part first"), "{e}");
+    near(volume(&mut s, &mut k), 500.0);
+    // Saved, it is from the file, wherever the program is, and held in full from then on.
+    run(&mut s, &mut k, "file.save", json!({ "path": path(&mine) }));
+    let kind = json!({ "type": "derive", "path": "other.tenon", "scale": 2.0 });
+    run(&mut s, &mut k, "feature.update", json!({ "feature": d, "kind": kind }));
+    near(volume(&mut s, &mut k), 4000.0);
+    assert_eq!(s.document().derived_paths(), vec![tenon_io::asm::part_key(&other)]);
+    // Undone and redone, and saved again: the same.
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    near(volume(&mut s, &mut k), 500.0);
+    run(&mut s, &mut k, "edit.redo", json!({}));
+    near(volume(&mut s, &mut k), 4000.0);
+    run(&mut s, &mut k, "file.save", json!({ "path": path(&mine) }));
+    assert!(std::fs::read_to_string(&mine).unwrap().contains("path = \"other.tenon\""));
+    let _ = std::fs::remove_dir_all(dir);
+}

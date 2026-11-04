@@ -18,6 +18,9 @@ use crate::project;
 /// How deep parts may derive from parts: a chain longer than this is refused, in words.
 const MAX_DEPTH: usize = 16;
 
+/// What a part that leads back to itself is told, first of all.
+const DERIVES_ITSELF: &str = "A part cannot derive itself, directly or through another";
+
 /// The folder a file is in.
 fn folder(file: &Path) -> PathBuf {
     let parent = file.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -59,7 +62,7 @@ fn source_of(path: &str, home: Option<&str>, chain: &mut Vec<String>) -> Source 
     let me = identity(&full);
     if chain.contains(&me) {
         let line: Vec<String> = chain.iter().chain(std::iter::once(&me)).map(|f| name_of(f)).collect();
-        return said(format!("A part cannot derive itself, directly or through another: {}. Choose another file.", line.join(" derives ")));
+        return said(format!("{DERIVES_ITSELF}: {}. Choose another file.", line.join(" derives ")));
     }
     if chain.len() >= MAX_DEPTH {
         return said(format!(
@@ -142,12 +145,53 @@ pub(crate) fn attach(doc: &mut Document, file: &Path) {
     doc.set_links(Arc::new(links));
 }
 
-/// The document's file is now `file` (it was saved there). What it derives from is read again:
-/// relative to where it is now, its paths may lead back to it.
+/// Whether a part read, or what it derives from in turn, leads back to the file it was read for.
+fn leads_back(source: &Source) -> bool {
+    match &source.document {
+        Err(why) => why.starts_with(DERIVES_ITSELF),
+        Ok(doc) => doc.links().sources.values().any(leads_back),
+    }
+}
+
+/// The document's file is now `file` (it was saved there). Saved where it already was, nothing
+/// changes: what it derives from is taken on a rebuild or on opening, not on a save. Saved in a new
+/// place the same holds, except where its paths now lead back to it: those fail from now on.
 pub fn set_home(s: &mut Session, file: &Path) {
     let home = part_key(file);
-    let links = read_links(s.document(), Some(&home), &mut chain_from(Some(&home)));
+    let known = s.document().links();
+    if known.home.as_deref() == Some(home.as_str()) {
+        return;
+    }
+    let mut links = Links { home: Some(home.clone()), ..Links::default() };
+    let mut chain = chain_from(Some(&home));
+    for path in s.document().derived_paths() {
+        let found = source_of(&path, Some(&home), &mut chain);
+        let source = known.sources.get(&path).filter(|_| !leads_back(&found)).cloned().unwrap_or(found);
+        links.sources.insert(path, source);
+    }
     s.set_links(Arc::new(links));
+}
+
+/// `params` of a command that writes a feature's definition with the file of a Derive made full,
+/// as every other way of naming it does: a relative path is from this document's file. With no file
+/// to start from, it is refused in words. None when there is nothing to change.
+pub(crate) fn full_path_in_feature(s: &Session, id: &str, params: &Value) -> Result<Option<Value>, CmdError> {
+    if !matches!(id, "feature.add" | "feature.update") {
+        return Ok(None);
+    }
+    let Some(kind) = arg(params, "kind").filter(|k| k.get("type").and_then(Value::as_str) == Some("derive")) else { return Ok(None) };
+    let Some(path) = kind.get("path").and_then(Value::as_str).filter(|p| !Path::new(p).is_absolute()) else { return Ok(None) };
+    let Some(home) = s.document().links().home.clone() else {
+        return Err(CmdError(format!(
+            "`{path}` is relative, and this part has no file for it to be relative to: give the file's full path, or save the part first."
+        )));
+    };
+    let full = full_path(path, Some(&home));
+    let mut made = params.clone();
+    if let Some(kind) = made.get_mut("kind").and_then(Value::as_object_mut) {
+        kind.insert("path".to_owned(), Value::String(full));
+    }
+    Ok(Some(made))
 }
 
 /// Reads again every part file the document derives from: Rebuild takes what the files now hold.

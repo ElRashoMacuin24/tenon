@@ -273,7 +273,7 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "model.derive",
         label: "Derive",
-        help: "The solid of another part file brought into this one, rebuilt from that file each time: path (.tenon; kept relative to this file when it is saved); scale (default 1, about the origin); mirror: a plane, then mirrored in it; operation: join (default) | new_body. A file that is missing or does not read is refused here, and in a part that already has it the feature says so and the part still opens. When the file changes, the part follows on model.regenerate or on being opened again. A part cannot derive itself, directly or through another",
+        help: "The solid of another part file brought into this one, rebuilt from that file each time: path (.tenon; kept relative to this file when it is saved); scale (default 1, about the origin); mirror: a plane, then mirrored in it; operation: join (default) | new_body. A file that is missing or does not read is refused here, and in a part that already has it the feature says so and the part still opens. When the file changes, the part follows on model.regenerate or on being opened again, and not on file.save. A part cannot derive itself, directly or through another. In feature.add and feature.update, a relative path is from this part's file, and refused when it has none",
         mutates: true,
         run: Run::Doc(crate::derive::model_derive),
     },
@@ -359,7 +359,8 @@ pub fn run(s: &mut Session, id: &str, params: &Value, kernel: Option<&mut dyn Ke
     if id == "model.regenerate" {
         crate::derive::reload(s);
     }
-    let result = s.run_as(spec, crate::schemas::schema(id), params, kernel);
+    let full = crate::derive::full_path_in_feature(s, id, params)?;
+    let result = s.run_as(spec, crate::schemas::schema(id), full.as_ref().unwrap_or(params), kernel);
     crate::derive::follow(s);
     result
 }
