@@ -381,6 +381,14 @@ pub fn check(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetLayout, 
     Ok(l)
 }
 
+/// Where a pick is on the sheet now: the point it stands for (for marking it while a set is made).
+pub fn pick_on_sheet(d: &Drawing, ev: &Evaluation, view: ViewId, pick: &GeomPick) -> Option<Vec2> {
+    let v = d.view(view)?;
+    let g = ev.view(view)?;
+    let m = ev.models.get(&v.model)?;
+    Some(to_sheet(v, g, pick_point(&g.frame, &resolve_pick(m, pick).ok()?)))
+}
+
 /// The sheet box of a view, from its geometry.
 fn view_box(v: &View, g: &ViewGeometry) -> Option<(Vec2, Vec2)> {
     g.bounds.map(|(lo, hi)| (to_sheet(v, g, lo), to_sheet(v, g, hi)))

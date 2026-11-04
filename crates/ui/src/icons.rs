@@ -178,6 +178,8 @@ pub enum Icon {
     CenterMark,
     Centerline,
     CenterlineBisector,
+    Baseline,
+    Ordinate,
     CenterPoint,
     SlotArc,
     Ellipse,
@@ -1243,6 +1245,26 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.line(&[(0.06, 0.84), (0.94, 0.84)]);
             for (a, b) in [(0.0, 0.34), (0.44, 0.56), (0.66, 1.0)] {
                 pen.line(&[(a, 0.5), (b, 0.5)]);
+            }
+        }
+        Icon::Baseline => {
+            // Two dimensions from one line, one above the other.
+            pen.line(&[(0.1, 0.08), (0.1, 0.92)]);
+            pen.line(&[(0.56, 0.5), (0.56, 0.92)]);
+            pen.line(&[(0.9, 0.08), (0.9, 0.92)]);
+            pen.line(&[(0.1, 0.68), (0.56, 0.68)]);
+            pen.arrow_head((0.1, 0.68), (0.56, 0.68));
+            pen.arrow_head((0.56, 0.68), (0.1, 0.68));
+            pen.line(&[(0.1, 0.28), (0.9, 0.28)]);
+            pen.arrow_head((0.1, 0.28), (0.9, 0.28));
+            pen.arrow_head((0.9, 0.28), (0.1, 0.28));
+        }
+        Icon::Ordinate => {
+            // Lines with no arrows up from one place, a value on the end of each.
+            pen.dot((0.14, 0.86), 0.09);
+            for x in [0.14, 0.5, 0.86] {
+                pen.line(&[(x, 0.86), (x, 0.36)]);
+                pen.line(&[(x - 0.11, 0.2), (x + 0.11, 0.2)]);
             }
         }
     }
