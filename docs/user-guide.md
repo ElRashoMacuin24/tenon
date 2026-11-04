@@ -2,7 +2,7 @@
 
 Tenon is free, open-source parametric 3D CAD: you sketch, constrain, build features, assemble
 parts, and document them in drawings. This page is for people who use Tenon. To build it from
-its source, see [setup.md](setup.md).
+its source, see [setup.md](https://github.com/ElRashoMacuin24/tenon/blob/main/docs/setup.md).
 
 ## Installing
 
@@ -21,7 +21,7 @@ The archive also holds example parts, assemblies and drawings (`examples`), the 
 templates (`templates`), this guide and the other documents for users (`docs`), and `tenon-cli`,
 the command-line program.
 
-Intel Macs and other systems: build Tenon from its source ([setup.md](setup.md)).
+Intel Macs and other systems: build Tenon from its source ([setup.md](https://github.com/ElRashoMacuin24/tenon/blob/main/docs/setup.md)).
 
 ## The window
 

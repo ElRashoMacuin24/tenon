@@ -39,8 +39,19 @@ const OS: Os = if cfg!(windows) {
 
 const PROGRAMS: [&str; 2] = ["tenon", "tenon-cli"];
 
-/// What a user reads beyond the first page, from `docs`: into a folder of that name.
-const USER_DOCS: [&str; 7] = ["user-guide.md", "stress.md", "topology.md", "scripts.md", "commands.md", "mcp.md", "file-format.md"];
+/// What a user reads beyond the first page, from `docs`: into a folder of that name. (Each link in
+/// them leads to another of them or to an example; what is not here they link to on GitHub.)
+const USER_DOCS: [&str; 9] = [
+    "user-guide.md",
+    "stress.md",
+    "topology.md",
+    "scripts.md",
+    "commands.md",
+    "mcp.md",
+    "file-format.md",
+    "schemas/README.md",
+    "schemas/commands.json",
+];
 
 /// The user's first page, put at the top of the folder (`{version}` is filled in).
 const README: &str = include_str!("../dist/README.txt");
@@ -746,6 +757,41 @@ fn archive(dist: &Path, name: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The relative links of a page of Markdown: what is in `](...)`, less any `#place`.
+    fn relative_links(page: &str) -> Vec<&str> {
+        page.split("](")
+            .skip(1)
+            .filter_map(|rest| rest.split(')').next())
+            .filter(|link| !link.starts_with("http") && !link.starts_with('#'))
+            .map(|link| link.split('#').next().unwrap_or(link))
+            .collect()
+    }
+
+    #[test]
+    fn every_link_in_the_packaged_docs_leads_to_what_is_packaged() {
+        let packaged = |path: &Path| {
+            // Up from `docs` is the top of the folder, where the examples go.
+            let in_docs = path.strip_prefix("docs").ok().and_then(Path::to_str).map(|p| p.replace('\\', "/"));
+            in_docs.is_some_and(|p| USER_DOCS.contains(&p.as_str()))
+                || (path.starts_with("examples") && !path.starts_with("examples/m0-bracket") && root().join(path).is_file())
+        };
+        for f in USER_DOCS.iter().filter(|f| f.ends_with(".md")) {
+            let page = std::fs::read_to_string(root().join("docs").join(f)).unwrap();
+            let here = Path::new("docs").join(f);
+            for link in relative_links(&page) {
+                let mut at = here.parent().unwrap().to_path_buf();
+                for piece in link.split('/') {
+                    if piece == ".." {
+                        at.pop();
+                    } else {
+                        at.push(piece);
+                    }
+                }
+                assert!(packaged(&at), "docs/{f} links to {link}, which is not in the package");
+            }
+        }
+    }
 
     #[test]
     fn a_programs_imports_are_read_from_it() {

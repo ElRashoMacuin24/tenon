@@ -76,7 +76,7 @@ what they are and where (`{"what": "faces", "facing": "top"}`), each with a refe
 to a later step. See [mcp.md](mcp.md#building) for an example.
 
 The format is a tooling convenience, not a stored document format: it may change between
-milestones, with the change noted in [decisions.md](decisions.md). See
+milestones, with the change noted in [decisions.md](https://github.com/ElRashoMacuin24/tenon/blob/main/docs/decisions.md). See
 [examples/m1-bracket/bracket.json](../examples/m1-bracket/bracket.json) for a complete part.
 
 ## Parameters and equations

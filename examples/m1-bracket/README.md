@@ -28,7 +28,7 @@ pixi run cargo run -p tenon -- examples/m1-bracket/bracket.tenon
 
 `tenon-cli demo m1 --out DIR` runs the same script. `apps/tenon-cli/tests/m1.rs` runs it in CI,
 reads the STEP file back, reopens the project, and holds the performance budget
-([docs/performance.md](../../docs/performance.md)).
+([docs/performance.md](https://github.com/ElRashoMacuin24/tenon/blob/main/docs/performance.md)).
 
 | File | What |
 |---|---|
