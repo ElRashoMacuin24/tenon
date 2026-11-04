@@ -1367,3 +1367,33 @@ fn a_file_listing_more_values_than_a_document_can_use_is_refused_before_it_is_re
     let e = project::from_bytes(&project::zip_json(json.as_bytes()).unwrap()).unwrap_err().to_string();
     assert!(e.contains("more than a document can use"), "{e}");
 }
+
+#[test]
+fn diff_sees_a_sketch_shown_and_does_not_call_a_marked_point_moved() {
+    let scratch = scratch("diff-shown");
+    let diff_of = |a: &[u8], b: &[u8]| {
+        let (x, y) = (scratch.join("a.tenon"), scratch.join("b.tenon"));
+        std::fs::write(&x, a).unwrap();
+        std::fs::write(&y, b).unwrap();
+        tenon_io::diff::diff_files(&x, &y)
+    };
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let text = |s: &Session| project::to_bytes(s.document(), &Map::new()).unwrap();
+    let before = text(&s);
+    run(&mut s, "feature.visibility", json!({ "feature": sk, "visible": true }));
+    let shown = text(&s);
+    let d = diff_of(&before, &shown).unwrap();
+    assert!(d.text().contains("shown"), "{}", d.text());
+    run(&mut s, "feature.visibility", json!({ "feature": sk, "visible": false }));
+    let d = diff_of(&shown, &text(&s)).unwrap();
+    assert!(d.text().contains("hidden"), "{}", d.text());
+
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    let point = run(&mut s, "sketch.point", json!({ "sketch": sk, "x": 1, "y": 2 }))["point"].as_u64().unwrap();
+    let before = text(&s);
+    run(&mut s, "sketch.center_point", json!({ "sketch": sk, "entity": point, "on": false }));
+    let d = diff_of(&before, &text(&s)).unwrap();
+    assert!(!d.text().contains("moved") && d.text().contains("changed"), "{}", d.text());
+}

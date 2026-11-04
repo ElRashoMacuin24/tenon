@@ -532,6 +532,13 @@ fn feature_detail(a: &Value, b: &Value, params: &Value, changed: &BTreeSet<Strin
     if a["suppressed"] != b["suppressed"] {
         out.push(if b["suppressed"].as_bool() == Some(true) { "suppressed".into() } else { "no longer suppressed".into() });
     }
+    if a["visible"] != b["visible"] {
+        out.push(match b["visible"].as_bool() {
+            Some(true) => "shown".into(),
+            Some(false) => "hidden".into(),
+            None => "shown or hidden as its kind is by default".into(),
+        });
+    }
     let (ka, kb) = (&a["kind"], &b["kind"]);
     if ka["type"] != kb["type"] {
         out.push(format!("type {} -> {}", show(&ka["type"]), show(&kb["type"])));
@@ -579,8 +586,9 @@ fn sketch_detail(a: &Value, b: &Value, sketch: u64, params: &Value, changed: &BT
         if let Some(x) = ea.get(k)
             && !same(x, y)
         {
+            // (A point marked or unmarked as a sketch point has not moved.)
             let point = x["geometry"]["type"] == "point" && y["geometry"]["type"] == "point" && x["construction"] == y["construction"];
-            if point { moved += 1 } else { other += 1 }
+            if point && !same(&x["geometry"], &y["geometry"]) { moved += 1 } else { other += 1 }
         }
     }
     for (n, one, many, how) in [
