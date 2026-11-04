@@ -207,7 +207,8 @@ pub trait Kernel: Send {
     }
     /// The same solid with every face on a right-handed surface: the same faces in the same
     /// order, so that an operation's history still holds of it. A revolve can leave a flat face
-    /// on a left-handed plane, whose `normal` then looks into the solid; on this one it looks out.
+    /// on a left-handed plane; on this one it is on a right-handed one. (Its `normal` looks out of
+    /// the solid either way.)
     fn direct_faces(&mut self, shape: ShapeHandle) -> KResult<ShapeHandle> {
         let _ = shape;
         unsupported!("direct_faces")

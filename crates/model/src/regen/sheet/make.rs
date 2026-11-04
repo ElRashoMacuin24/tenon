@@ -216,9 +216,8 @@ pub fn roll_words(c: &ContourRoll, sketch: &Sketch) -> Result<String, String> {
 }
 
 impl Ctx<'_> {
-    /// A revolve whose flat faces look out of the solid, as every sheet metal feature takes a
-    /// flat face's normal to. (The ordinary Revolve keeps what it gives: a sketch put on such a
-    /// face takes its direction from that, and old files must come out as they did.)
+    /// A revolve whose flat faces are on right-handed planes. (A flat face's normal looks out of the
+    /// solid on either; see DEC-140 for what a reference to one made before 0.2.0 means.)
     fn revolved(&mut self, profile: &Profile, axis: &Axis, turn: &AngleExtent) -> Result<Op, Stop> {
         let op = self.k.revolve(profile, axis, turn)?;
         let shape = self.k.direct_faces(op.shape);

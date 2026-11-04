@@ -62,8 +62,10 @@ model / io / cli  ──>  dyn Kernel  ──>  OcctKernel (Rust arena of shapes
   outline runs along or round the axis, ruled ones elsewhere, sewn into a solid and checked.
   `ruled_sheet` (a die-formed sheet) makes its in the same way: two sides ruled between smooth
   curves through points, and four walls between them. `direct_faces` gives a solid the same faces in
-  the same order on right-handed surfaces, for the sheet metal features that revolve: on a left-handed
-  plane a face's normal looks into the solid.
+  the same order on right-handed surfaces, for the sheet metal features that revolve. `face_info` allows
+  for handedness either way, so that a flat face's normal looks out of the solid on a left-handed plane
+  too; with that, no test any longer needs `direct_faces` (tried without, DEC-140), and it stays only as
+  what those features were built and measured with.
   `unify` makes faces that lie in one surface one face across the edges it is told of, with
   the image of every face (OCCT's ShapeUpgrade_UnifySameDomain, every other edge kept).
 - **Volumes to a precision.** `mass_properties` asks OCCT for a solid's volume to 1e-9 a face

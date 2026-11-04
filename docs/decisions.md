@@ -4745,6 +4745,11 @@ extrusion follows the end when the extrusion is flipped, and always has: its ref
 then opposes the normal too, and the test would have held the sketch where the face no longer looks.
 `a_sketch_on_an_ordinary_face_still_turns_with_the_face` holds that.
 
+**`direct_faces`.** DEC-138 asked the kernel for right-handed surfaces because a left-handed plane's
+normal looked into the solid. It no longer does. All the sheet metal tests pass with that call taken out of
+`revolved`. It is left in: what those features were built and measured with, and nothing shipped has
+them, so taking it out would be a change with no test to want it.
+
 **Files.** Nothing is written and no format changes: an old file saves to the same bytes.
 `apps/tenon-cli/tests/fixtures/v0.1.0` holds files 0.1.0's own `tenon-cli` wrote, on faces made by
 Mirror, Chamfer and Revolve, with its own figures in `from_0_1_0.rs`; `m11_solve.rs` has the moment.

@@ -270,8 +270,8 @@ fn along(n: usize, f: impl Fn(f64) -> Vec3) -> Vec<Vec3> {
     (0..n).map(|i| f(i as f64 / (n - 1) as f64)).collect()
 }
 
-/// A flat ring revolved lies on a left-handed plane, and that plane's normal looks into the solid.
-/// With right-handed surfaces it looks out, and every other thing about the solid is as it was.
+/// A flat ring revolved lies on a left-handed plane. With right-handed surfaces its normal looks
+/// out, as it does on the left-handed one, and every other thing about the solid is as it was.
 #[test]
 fn right_handed_faces_look_out_of_the_solid_and_are_the_same_faces() {
     let mut k = OcctKernel::new();
