@@ -11,7 +11,7 @@ use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult, FaceOrigin, FeatureId, OriginAxis, OriginPlane};
 
 use crate::model::{Assembly, ComponentId, Geom, JointKind, MAX_COUNT, PatternId, PatternKind, RelKind, RelationshipId, Run, Target, Tweak};
-use crate::session::{self, AsmSession, auto_explode, bom, dof, exploded, relate, scene_of, solve_assembly};
+use crate::session::{self, AsmSession, Part, auto_explode, bom, dof, exploded, relate, scene_of, solve_assembly};
 
 pub type AsmFn = fn(&mut AsmSession, Option<&mut dyn Kernel>, &Value) -> CmdResult;
 
@@ -143,6 +143,7 @@ fn asm_tree(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
                 "mirrored": c.mirrored, "element_of": element_of.get(&c.id).map(|p| p.0),
                 "placement": frame_json(&c.placement),
                 "missing": s.parts.get(&c.key()).and_then(|p| p.missing.clone()),
+                "failing": s.parts.get(&c.key()).and_then(Part::failing),
                 "dof": d.count(),
             })
         })
@@ -199,7 +200,10 @@ fn asm_dof(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdRe
 fn asm_bom(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdResult {
     let rows: Vec<Value> = bom(s.assembly(), &s.parts)
         .iter()
-        .map(|r| json!({ "item": r.item, "part": r.part, "name": r.name, "mirrored": r.mirrored, "quantity": r.quantity, "volume": r.volume, "material": r.material, "mass": r.mass, "components": r.components }))
+        .map(|r| {
+            let failing = s.parts.get(&r.key).and_then(Part::failing);
+            json!({ "item": r.item, "part": r.part, "name": r.name, "mirrored": r.mirrored, "quantity": r.quantity, "volume": r.volume, "material": r.material, "mass": r.mass, "components": r.components, "failing": failing })
+        })
         .collect();
     let total: usize = rows.iter().filter_map(|r| r["quantity"].as_u64()).map(|q| q as usize).sum();
     Ok(json!({ "rows": rows, "parts": rows.len(), "components": total }))
@@ -211,6 +215,13 @@ fn asm_mass(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
     let (mut volume, mut mass, mut moment) = (0.0, 0.0, Vec3::ZERO);
     let mut rows = Vec::new();
     for c in asm.shown() {
+        // (Not 0, as if all were well, for a part that is not there or does not build.)
+        if let Some(why) = s.parts.get(&c.key()).and_then(|p| p.missing.clone()) {
+            return Err(CmdError(format!("{} is missing: {why}", c.name)));
+        }
+        if let Some(why) = s.parts.get(&c.key()).and_then(Part::failing) {
+            return Err(CmdError(format!("{} does not build: {why}", c.name)));
+        }
         let scene = scene_of(&s.parts, c).ok_or_else(|| CmdError(format!("{}: the part's geometry is not available", c.name)))?;
         let doc = s.parts.get(&c.key()).map(|p| p.session.document());
         let density = doc.map_or(tenon_model::materials::DEFAULT_DENSITY, tenon_model::Document::density);

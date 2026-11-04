@@ -273,7 +273,8 @@ fn build_model(k: &mut dyn Kernel, key: &str, src: &ModelSource, overlaid: bool)
         let pk_shown = tenon_assembly::key_file(&pk).to_owned();
         let mut regen = tenon_model::regenerate(&doc, k);
         if !hidden && let Some((f, msg)) = regen.first_error() {
-            g.error = Some(format!("{pk_shown}: feature {f} fails: {msg}"));
+            let name = doc.feature(f).map_or_else(|| f.to_string(), |x| x.name.clone());
+            g.error = Some(format!("{pk_shown} does not build: {name}: {msg}"));
         }
         match tenon_model::scene(&regen, k, &MeshTol::default()) {
             Ok(s) => {
@@ -975,7 +976,14 @@ pub fn evaluate(k: &mut dyn Kernel, sources: &BTreeMap<String, ModelSource>, d: 
             Some(ModelGeometry { error: Some(e), instances, .. }) if instances.is_empty() => {
                 ViewGeometry { frame: f, error: Some(e.clone()), ..ViewGeometry::default() }
             }
-            Some(m) => compute_view(k, v, &f, model_solids, m, parent.and_then(|p| ev.views.get(&p)), parent.and_then(|p| frames.get(&p))),
+            // A model that is there in part: the view shows what there is, and says what is not.
+            Some(m) => {
+                let mut g = compute_view(k, v, &f, model_solids, m, parent.and_then(|p| ev.views.get(&p)), parent.and_then(|p| frames.get(&p)));
+                if g.error.is_none() {
+                    g.error.clone_from(&m.error);
+                }
+                g
+            }
             None => ViewGeometry { frame: f, error: Some("the model is not loaded".into()), ..ViewGeometry::default() },
         };
         ev.views.insert(v.id, g);

@@ -258,9 +258,20 @@ impl DrwSession {
         self.eval = Some((key, ev));
     }
 
-    /// Puts why each unreadable model file could not be read on it and its views.
+    /// Puts why each unreadable model file could not be read on it and its views, and why a part
+    /// of an assembly could not on the views of the assembly, which are drawn without it.
     pub fn explain_missing(&self, ev: &mut Evaluation) {
         for (key, m) in &self.models {
+            if let DrwModel::Assembly(a) = m
+                && let Some((file, why)) = tenon_assembly::session::missing_parts(&a.parts).first()
+            {
+                let msg = format!("{file} could not be read: {why}");
+                for v in self.drawing.views.iter().filter(|v| &v.model == key) {
+                    if let Some(g) = ev.views.get_mut(&v.id) {
+                        g.error.get_or_insert_with(|| msg.clone());
+                    }
+                }
+            }
             let DrwModel::Missing(why) = m else { continue };
             let msg = format!("{} could not be read: {why}", crate::views::file_name(key));
             if let Some(g) = ev.models.get_mut(key) {
@@ -272,6 +283,21 @@ impl DrwSession {
                 }
             }
         }
+    }
+
+    /// What cannot be had of the models: `(file, why)`, a model file or a part file of an assembly.
+    pub fn missing_of(models: &BTreeMap<String, DrwModel>) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (key, m) in models {
+            match m {
+                DrwModel::Missing(why) => out.push((key.clone(), why.clone())),
+                DrwModel::Assembly(a) => {
+                    out.extend(tenon_assembly::session::missing_parts(&a.parts).into_iter().map(|(file, why)| (file.to_owned(), why.to_owned())));
+                }
+                DrwModel::Part(_) => {}
+            }
+        }
+        out
     }
 
     /// The current views, or an error saying they need a kernel.

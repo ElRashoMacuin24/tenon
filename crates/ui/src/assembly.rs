@@ -81,6 +81,8 @@ pub(crate) enum AsmJob {
 pub(crate) struct AsmDoc {
     pub session: AsmSession,
     pub path: Option<PathBuf>,
+    /// The part that does not build that the status bar has said so of.
+    failing_said: Option<String>,
     /// Which component each body of the shown scene belongs to: (component, body of its part).
     pub map: Vec<(ComponentId, usize)>,
     /// Per body of the shown scene: what it was made from (for the GPU upload).
@@ -132,6 +134,7 @@ impl AsmDoc {
         AsmDoc {
             session,
             path,
+            failing_said: None,
             map: Vec::new(),
             keys: Vec::new(),
             cache: BTreeMap::new(),
@@ -508,6 +511,17 @@ impl Workbench {
         if all_current && a.unconfirmed.is_empty() && matches!(self.geo, Geo::Worker(_)) {
             self.waiting = false;
         }
+        // (Said once a part's geometry has come, and then until something else is said.)
+        if all_current && editing.is_none() {
+            let failing = asm_session::failing_parts(&a.session.parts).into_iter().next().map(|(file, why)| format!("{file} does not build: {why}"));
+            if failing != a.failing_said {
+                a.failing_said.clone_from(&failing);
+                if let Some(said) = failing {
+                    self.set_error(said);
+                }
+            }
+        }
+        let Some(a) = self.asm.as_mut() else { return };
         if a.needs_update && all_current && editing.is_none() {
             a.needs_update = false;
             match a.session.update() {

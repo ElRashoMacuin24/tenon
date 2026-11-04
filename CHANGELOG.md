@@ -267,6 +267,12 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- A part that does not build, as one whose Derive has lost its file, said nothing where it was used: the
+  component was simply not there, with a mass of 0 and no interference. It is now red in the browser and
+  on the status line, what cannot be worked out without it names it, and each drawing view of it says so.
+  A drawing of an assembly with a part file gone left the components out with no word: the view and
+  the status line now say so, and `missing` of `drw.open` lists it. `asm.open`, `drw.open`, `asm.tree` and
+  `asm.bom` gain `failing`.
 - Entries that did nothing and said nothing: Finish Sketch with no sketch open and Clear Explode with no
   exploded view now say so, and Clear Explode says when it has. The Flat Pattern's View tab offered Visual
   Style, the projections, the Orientation Cube and the Navigation Bar, none of which it has: it now has

@@ -50,6 +50,13 @@ pub fn placed_parts(
         if let Some(why) = &part.missing {
             return Err(format!("{} is missing: {why}", c.name));
         }
+        // (A part that does not build is not what it should be: what comes of the rest would read
+        // as if all were well.)
+        let failing = part.session.regen(k).first_error().map(|(f, why)| (f, why.to_owned()));
+        if let Some((f, why)) = failing {
+            let name = part.session.document().feature(f).map_or_else(|| f.to_string(), |x| x.name.clone());
+            return Err(format!("{} does not build: {name}: {why}", c.name));
+        }
         let frame = frames.and_then(|m| m.get(&c.id)).copied().unwrap_or(c.placement);
         let shapes = part.session.regen(k).bodies.iter().map(|b| b.shape).collect();
         out.push(Placed { component: c.id, shapes, frame, bbox });

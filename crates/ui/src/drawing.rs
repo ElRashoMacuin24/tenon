@@ -274,6 +274,8 @@ pub(crate) enum DrwJob {
 pub(crate) struct DrwDoc {
     pub session: DrwSession,
     pub path: Option<PathBuf>,
+    /// The model that does not build that the status bar has said so of.
+    failing_said: Option<String>,
     /// The sheet shown.
     pub sheet: SheetId,
     pub cam: SheetCam,
@@ -310,6 +312,7 @@ impl DrwDoc {
         DrwDoc {
             session,
             path,
+            failing_said: None,
             sheet,
             cam: SheetCam::default(),
             fitted: false,
@@ -520,13 +523,8 @@ impl Workbench {
     /// Opens a drawing and the model files its views show.
     pub fn open_drawing(&mut self, path: &Path) -> Result<(), String> {
         let (d, models) = tenon_io::drw::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
-        let missing: Vec<String> = models
-            .iter()
-            .filter_map(|(k, m)| match m {
-                DrwModel::Missing(why) => Some(format!("{}: {why}", tenon_drawing::views::file_name(k))),
-                _ => None,
-            })
-            .collect();
+        let missing: Vec<String> =
+            DrwSession::missing_of(&models).into_iter().map(|(file, why)| format!("{}: {why}", tenon_drawing::views::file_name(&file))).collect();
         let mut s = DrwSession::default();
         s.replace(d, models);
         tenon_io::drw::stamp_all(&mut s);
@@ -618,6 +616,7 @@ impl Workbench {
             Geo::Sync(k) => {
                 d.session.refresh(k.as_mut());
                 d.eval_seq += 1;
+                self.say_model_failing();
             }
             Geo::Worker(w) => {
                 if d.jobs.values().any(|j| matches!(j, DrwJob::Evaluate(_))) {
@@ -630,6 +629,19 @@ impl Workbench {
                 w.job(request, Box::new(move |k, _| Box::new(tenon_drawing::views::evaluate(k, &sources, &drawing))));
             }
             Geo::Off => {}
+        }
+    }
+
+    /// A model that does not build is said in the status bar when it is found, and then not again
+    /// until something else is the matter. (Its views say so for as long as it lasts.)
+    fn say_model_failing(&mut self) {
+        let Some(d) = self.drw.as_mut() else { return };
+        let failing = d.session.evaluation().and_then(|ev| ev.models.values().find_map(|m| m.error.clone()));
+        if failing != d.failing_said {
+            d.failing_said.clone_from(&failing);
+            if let Some(said) = failing {
+                self.set_error(said);
+            }
         }
     }
 
@@ -652,6 +664,7 @@ impl Workbench {
             DrwJob::Evaluate(key) => {
                 d.session.set_evaluation(key, ev);
                 d.eval_seq += 1;
+                self.say_model_failing();
             }
             DrwJob::Base { model, mut params } => {
                 let size = d.session.drawing().sheet(d.sheet).map(|s| Vec2::new(s.size.width, s.size.height));

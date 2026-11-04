@@ -163,7 +163,10 @@ fn asm_open(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
     if let Some(k) = k {
         s.refresh(k).map_err(CmdError)?;
     }
-    Ok(json!({ "path": path.display().to_string(), "name": s.assembly().name, "components": s.assembly().components.len(), "missing": missing }))
+    let failing: Vec<String> = tenon_assembly::session::failing_parts(&s.parts).into_iter().map(|(file, why)| format!("{file}: {why}")).collect();
+    Ok(
+        json!({ "path": path.display().to_string(), "name": s.assembly().name, "components": s.assembly().components.len(), "missing": missing, "failing": failing }),
+    )
 }
 
 fn asm_save(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {

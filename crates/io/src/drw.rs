@@ -297,19 +297,17 @@ fn drw_new(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRes
 fn drw_open(s: &mut DrwSession, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let path = path(p)?;
     let (d, models) = open(&path).map_err(|e| CmdError(format!("cannot open {}: {e}", path.display())))?;
-    let missing: Vec<String> = models
-        .iter()
-        .filter_map(|(k, m)| match m {
-            DrwModel::Missing(why) => Some(format!("{k}: {why}")),
-            _ => None,
-        })
-        .collect();
+    let missing: Vec<String> = DrwSession::missing_of(&models).into_iter().map(|(file, why)| format!("{file}: {why}")).collect();
     s.replace(d, models);
     stamp_all(s);
     if let Some(k) = k {
         s.refresh(k);
     }
-    Ok(json!({ "path": path.display().to_string(), "name": s.drawing().name, "views": s.drawing().views.len(), "missing": missing }))
+    // (What is read and does not build, which its views say too.)
+    let failing: Vec<String> = s.evaluation().map(|ev| ev.models.values().filter_map(|m| m.error.clone()).collect()).unwrap_or_default();
+    Ok(
+        json!({ "path": path.display().to_string(), "name": s.drawing().name, "views": s.drawing().views.len(), "missing": missing, "failing": failing }),
+    )
 }
 
 /// Saves the drawing as a template: sheets, standard, properties and notes, no views.

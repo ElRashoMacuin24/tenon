@@ -1169,3 +1169,52 @@ fn a_symmetry_takes_its_plane_as_a_third_pick() {
     assert!(placement(&wb, 2).origin().y.abs() < 1e-6, "{:?}", placement(&wb, 2));
     browser_row(&d, "Symmetry:1");
 }
+
+/// A part whose Derive has lost its file: alone it says so in red. Placed or drawn it said nothing, and
+/// the component was simply not there. And a drawing of an assembly with a part file gone.
+#[test]
+fn a_part_that_does_not_build_is_said_where_it_is_used() {
+    let dir = scratch("failing-part");
+    let (shaft, marked, asm, plan) = (dir.join("shaft.tenon"), dir.join("marked.tenon"), dir.join("h.tenonasm"), dir.join("p.tenondrw"));
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.exec("model.cylinder", json!({ "diameter": 30, "height": 100 })).unwrap();
+    wb.save(&shaft).unwrap();
+    wb.run_unprompted("file.new").unwrap();
+    wb.exec("model.derive", json!({ "path": shaft.to_string_lossy() })).unwrap();
+    wb.save(&marked).unwrap();
+    wb.run_unprompted("file.new_assembly").unwrap();
+    wb.place_file(&marked).unwrap();
+    d.settle(&mut wb);
+    wb.panel = None;
+    wb.save_assembly(&asm).unwrap();
+    wb.run_unprompted("file.new_drawing").unwrap();
+    wb.drw_exec("drw.view.base", json!({ "model": asm.to_string_lossy(), "orientation": "top", "scale": 1, "at": [150, 200] })).unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.save_drawing(&plan).unwrap();
+    std::fs::remove_file(&shaft).unwrap();
+
+    wb.open(&asm).unwrap();
+    assert_eq!(wb.status(), format!("Opened {}", asm.display()), "its geometry has not come yet");
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status_error && wb.status().contains("marked.tenon does not build") && wb.status().contains("shaft.tenon"), "{}", wb.status());
+    let row = "marked:1";
+    let t = crate::theme::Tokens::of(wb.chrome.theme);
+    assert_eq!(d.text_color(row), Some(t.history_marker), "its row in the browser is red, among {:?}", d.texts());
+    // Said once: something else said since stays.
+    wb.set_status("Before");
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.status(), "Before");
+
+    wb.open(&plan).unwrap();
+    d.settle(&mut wb);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status_error && wb.status().contains("does not build") && wb.status().contains("shaft.tenon"), "{}", wb.status());
+
+    // The part file itself gone: its assembly's drawing says that, as soon as it is opened.
+    std::fs::remove_file(&marked).unwrap();
+    wb.open(&plan).unwrap();
+    assert!(wb.status_error && wb.status().contains("missing") && wb.status().contains("marked.tenon"), "{}", wb.status());
+    let _ = std::fs::remove_dir_all(dir);
+}

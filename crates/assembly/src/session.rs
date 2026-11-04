@@ -44,6 +44,18 @@ impl Part {
     pub fn is_current(&self) -> bool {
         self.missing.is_some() || self.scene.as_ref().is_some_and(|(rev, _)| *rev == self.session.revision())
     }
+    /// Why the part, read and all, does not build: its first feature that fails, by name, and what
+    /// that says. (A Derive that has lost its file, say. None until its geometry has come.)
+    pub fn failing(&self) -> Option<String> {
+        let (_, scene) = self.scene.as_ref()?;
+        scene.status.iter().find_map(|(f, status)| match status {
+            tenon_model::FeatureStatus::Error { message } => {
+                let name = self.session.document().feature(*f).map_or_else(|| f.to_string(), |x| x.name.clone());
+                Some(format!("{name}: {message}"))
+            }
+            _ => None,
+        })
+    }
 }
 
 /// What a part in one row of its design table, or a part's mirror image, was worked out from.
@@ -345,6 +357,12 @@ pub fn symmetric_about(scene: &Scene, axis: OriginAxis) -> bool {
 pub fn missing_parts(parts: &Parts) -> Vec<(&str, &str)> {
     let of_file = |p: &Part| p.variant.as_ref().is_some_and(|v| parts.get(&v.base).is_some_and(|b| b.missing.is_some()));
     parts.iter().filter(|(_, p)| !of_file(p)).filter_map(|(k, p)| p.missing.as_deref().map(|why| (crate::model::key_file(k), why))).collect()
+}
+
+/// What is read and does not build, of `parts`, a file once: `(file, why)`.
+pub fn failing_parts(parts: &Parts) -> Vec<(&str, String)> {
+    let of_file = |p: &Part| p.variant.as_ref().is_some_and(|v| parts.get(&v.base).is_some_and(|b| b.failing().is_some()));
+    parts.iter().filter(|(_, p)| !of_file(p)).filter_map(|(k, p)| p.failing().map(|why| (crate::model::key_file(k), why))).collect()
 }
 
 /// How to place `source` again in its position mirrored in `plane`, for a part that is the same

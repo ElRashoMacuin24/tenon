@@ -331,7 +331,8 @@ impl Workbench {
                         let has = held.get(&c.id).is_some_and(|of| !of.is_empty());
                         let open = a.expanded.contains(&c.id);
                         let missing = a.session.parts.get(&c.key()).and_then(|p| p.missing.clone());
-                        let style = if missing.is_some() {
+                        let failing = a.session.parts.get(&c.key()).and_then(tenon_assembly::Part::failing);
+                        let style = if missing.is_some() || failing.is_some() {
                             Style::Error
                         } else if a.selected.contains(&c.id) {
                             Style::Selected
@@ -349,9 +350,10 @@ impl Workbench {
                         let element = asm.pattern_of(c.id);
                         let (mut resp, toggled) = row(ui, t, depth, Icon::Part, &label, has.then_some(open), style, c.grounded);
                         resp = resp.on_hover_ui(|ui| {
-                            ui.label(match &missing {
-                                Some(m) => format!("{} is missing: {m}", c.part),
-                                None => {
+                            ui.label(match (&missing, &failing) {
+                                (Some(m), _) => format!("{} is missing: {m}", c.part),
+                                (_, Some(m)) => format!("{} does not build: {m}", c.part),
+                                _ => {
                                     let d = dof.get(i).copied().unwrap_or(6);
                                     let state = match element {
                                         Some(p) => format!("An element of {}", p.name),
