@@ -152,6 +152,24 @@ Double-click a component to change its part in place. **Inspect > Analyze Interf
 finds parts that overlap; **Manage > Bill of Materials** lists them (and exports CSV).
 **Standard Parts** places screws, nuts, washers, bearings and sections in a chosen size.
 
+**Pattern** repeats components: click them, then an edge, flat face or axis for the direction (the
+axes and planes under Origin in the browser serve too), and give a count and a spacing, a second
+direction if there are to be rows of rows; or Circular, a round face or edge for the axis, a count
+and the angle they spread over. The view shows them before OK. In the browser it is one row with
+its elements under it: double-click it to change it, and elements move, come and go; its menu has
+Suppress, Make Elements Independent and Delete. An element is a component like any other to the
+parts list, a constraint or a drawing, but it stands where the pattern puts it: move what it
+repeats.
+
+**Mirror** reflects components in a flat face or a plane. Each is a mirrored occurrence of the same
+part file, with a row of its own in the parts list as a mirrored part; it follows its source, the
+plane, and any change to the part. For a part that is the same as its mirror image, choose Placed
+again: the same part, in the mirrored position, on the same row of the list.
+
+**Copy** makes independent copies, of the same parts or (A new part file) each in a new part file
+beside the assembly. They go beside what they are copied from: type how far instead, or click
+Where and put them down with a click. Constraints among what is copied come too.
+
 An assembly file refers to its parts by where they are relative to it: move them together.
 
 ## Drawings

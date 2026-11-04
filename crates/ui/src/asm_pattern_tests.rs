@@ -650,6 +650,52 @@ fn copy_makes_independent_copies_beside_their_source_or_where_a_click_puts_them(
 }
 
 #[test]
+fn a_pattern_of_two_components_lists_each_element_with_both_and_folds_away() {
+    let dir = scratch("two");
+    box_part(&dir.join("base.tenon"), "Base", 100.0, 40.0, 5.0);
+    box_part(&dir.join("cube.tenon"), "Cube", 10.0, 10.0, 10.0);
+    box_part(&dir.join("peg.tenon"), "Peg", 4.0, 4.0, 12.0);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    opened(&mut wb, &mut d, &[(&dir.join("base.tenon"), [0.0, 0.0, 0.0]), (&dir.join("cube.tenon"), [5.0, 5.0, 5.0]), (&dir.join("peg.tenon"), [8.0, 8.0, 15.0])]);
+    let x = wb.asm_exec("asm.geom", json!({ "axis": "x" })).unwrap();
+    wb.asm_exec("asm.pattern", json!({ "components": [2, 3], "type": "rectangular", "direction": x, "count": 2, "spacing": 30 })).unwrap();
+    d.settle(&mut wb);
+    browser_row(&d, "Pattern:1 (2)");
+    browser_row(&d, "Element:1");
+    let second = browser_row(&d, "Element:2");
+    browser_row(&d, "cube:2");
+    browser_row(&d, "peg:2");
+    // A click on an element's row selects what is in it.
+    d.click(&mut wb, second.center());
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.asm.as_ref().unwrap().selected, [ComponentId(4), ComponentId(5)]);
+    // The box on the pattern's row folds its elements away, and back.
+    let row = browser_row(&d, "Pattern:1 (2)");
+    let bx = egui::pos2(row.left() + 6.0 + 16.0 + 5.0, row.center().y);
+    d.click(&mut wb, bx);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(!d.ctx.data(|x| x.get_temp::<Vec<(String, egui::Rect)>>(egui::Id::new("tn_browser_rows"))).unwrap().iter().any(|(l, _)| l == "Element:2"));
+    browser_row(&d, "base:1");
+    d.click(&mut wb, bx);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    browser_row(&d, "Element:2");
+    // A panel open on a selection takes them all, an element's row at a time.
+    wb.command("asm.copy");
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Asm(p)) = &wb.panel else { panic!() };
+    assert_eq!(p.components, [ComponentId(4), ComponentId(5)]);
+    assert_eq!(wb.scene().bodies.len(), 7, "five and the two copies");
+    d.tap(&mut wb, egui::Key::Escape);
+    d.settle(&mut wb);
+    assert_eq!(wb.scene().bodies.len(), 5);
+    assert!(!wb.status_error, "{}", wb.status());
+}
+
+#[test]
 fn every_button_of_the_pattern_group_is_there_to_press() {
     for id in ["asm.pattern", "asm.mirror", "asm.copy"] {
         let c = crate::commands::find(id).unwrap();

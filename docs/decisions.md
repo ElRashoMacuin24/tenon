@@ -3512,3 +3512,102 @@ against the code as it was before it:
   way to one they all lie on to within the chords. Only then, so as not to move a surface off a flat
   face whose edges the kernel holds loosely. Below about a millionth of the plate's width the two
   heights cannot be told from the drawing's rounding, and it is as it was.
+
+## DEC-130 Pattern, Mirror and Copy of an assembly's components (2026-11-03)
+
+The owner: "Make sure all the features on the menu are available not grayed out". These three
+were greyed on the Assemble tab, with nothing behind them.
+
+**One record for Pattern and Mirror.** `Assembly.patterns` holds a `Pattern`: its sources, its
+rule (`PatternKind`: `Rectangular`, `Circular` or `Mirror`) and its `elements`, each an
+`Element { at, components }` naming a component for every source. The components are ordinary
+components, in the assembly's list, with ids. That is the whole of why an element can be
+constrained to, drawn, listed, counted, checked for interference, exported and dimensioned in a
+drawing with no code that knows about patterns: all of that works on components.
+Tried on paper and dropped: elements worked out when wanted, and kept nowhere. Relationships,
+drawings' balloons and dimensions hold on to components by id, and those would have nothing to
+hold. `at` is what keeps an element the same component when the counts change, so what is held to
+it stays held: going from 3 x 2 to 4 x 2 moves nothing and takes nothing away.
+
+**An element is held by the rule.** To the solver it stands still (`body_of`: fixed, as a grounded
+one), and `session::place_elements` puts it where the rule says from its source, after every
+solve: `solve_assembly` is the one place, so a drag, a relationship, a part's change, Update and
+a command all come to the same. A relationship on an element moves what is held to it, which may
+move the element's source, so a solve and the patterns answer each other for up to eight rounds and
+are then given up on, in words (an element held to its own source). A later pattern may repeat an
+earlier one's elements, and may take its direction from them; `validate` refuses the other way
+round and its own, so that one pass in order is enough. What the commands will not do to an element
+(move, place, ground, delete, change its size) they refuse, saying why and what to do instead.
+An element is out of reach of `asm.delete`: its count says how many there are.
+
+**What goes when.** A count lowered takes the elements beyond it, with their relationships. A
+source deleted takes what stands for it; a pattern with nothing left to repeat goes. The component a
+rule takes its direction, axis or plane from deleted: the pattern goes, and its elements stay as
+components of their own, as `asm.delete_pattern` with `keep_elements` (the browser's Make Elements
+Independent) leaves them. No pattern is left with a rule that names what is not there: a
+relationship in that case goes too, so the alternative of a broken record had no sibling to follow.
+
+**A mirrored occurrence.** The hard part: a reflection is no rigid motion, and everything from the
+solver to the GPU's instancing takes a component's `placement` to be one. So it stays one, and what
+is reflected is the part. `Component.mirrored` says the component holds its part's mirror image in
+the part's own XY plane. The image of a part at a frame F, in a plane R, is then the mirror image
+at the frame R F M, M being that reflection in the part: two reflections, so a rigid frame
+(`session::reflected_frame`). The mirror image itself is a part of the assembly's `Parts` like a
+part in one row of its design table (DEC-048): worked out from the part file's entry, kept under
+a key of its own (`mirrored_key`), never saved, and worked out again when the part changes. It is
+that part's document with `Document::reflected` set, which regeneration honours after the last
+feature: each solid through `Kernel::transform`'s mirror, whose history keeps every face's name, and
+what is said of them (work geometry, sketch planes, threads, whose hand changes) reflected with
+them. From there on it is a part with a mesh of its own, in its own slot on the worker, and every
+reader (the view, picking, mass, interference, STEP, STL, 3MF, a drawing's hidden lines, its parts
+list, balloons) gets true geometry with no change. OCCT's mirror turns the shape's orientation over,
+so normals and volumes come out right: `a_part_built_as_its_mirror_image_is_a_true_solid_with_its_faces_named_as_they_were`
+holds every triangle's winding and normals to it.
+Considered and dropped: a reflecting frame on the component. Every use of a frame would have had to
+learn that it may not be rigid; the GPU's normals, the rigid `Motion` of the solver, `Frame`'s
+own right-handedness check in files. And a new part file for each mirror image (what such
+commands commonly do): the owner asked for "a mirrored occurrence of the same part file", and a
+file nobody can edit apart from its source has only ways to go wrong. A change to the part then
+reaches its image at once. It is said in the parts list as its own row, as "bracket (mirrored)".
+
+**Placed again.** A part that is the same as its mirror image can be the same part in the mirrored
+position, on the same parts list row. The frame is R F S, S being a reflection in the part's own
+plane of symmetry. Which one is worked out: the part's middle planes (through the middle of its
+box, square to its X, Y and Z) are tested by whether every face has its image there, of the same
+kind and area with its direction and centre where they should be (`session::symmetric_about`).
+Of those that hold, the one most square to the mirror's plane turns the part least. The choice is
+kept with the record (`Reused`), and a part that stops being symmetric is shown in red and said in
+words. A part not the same as its mirror image is refused, with that said. Symmetry about planes
+not through its box's middle or not square to its axes is not looked for: such a part is mirrored.
+
+**Copy leaves no record.** Asked for as "independent copies", it has nothing to depend on, so
+nothing to rebuild or to reopen: each copy is an ordinary component, undoable as one step, deletable,
+renamable, opened from its row as any component is. That is a real departure from the general rule
+for these lanes (every command a record reopened from a row), and is here because the owner's own
+word for what it makes is independent. Copies are not grounded, whatever was copied, so that they
+can be moved at once: the same as what is placed after the first. Relationships come when every
+target is on what is copied; one reaching anything else, the assembly's origin included, stays
+behind, as it would pull the copy back. New part files take the document as it is in memory,
+without its part number (it is another part), under "<stem>-copy.tenon" in the assembly's folder
+and the first free name after it, so nothing is written over; a command refused takes its files
+back. An undone copy leaves the file, as Create does. It is in `tenon_io::asm`, since it writes
+files; the assembly crate knows no files.
+
+**Clicks.** The panel's selections fill as Constrain's do; a pick that cannot serve is refused at once
+in words, and the browser's Origin rows serve for the assembly's own axes and planes. Copy's Where
+is DEC-107's rule: the copies' middle under the pointer, in the view's plane through their middle,
+until a click puts them down. While the panel is open the view draws the assembly as OK would
+leave it, by way of `AsmSession::preview`: `shown_assembly` reads it and `sync_variants` keeps its
+parts ready, so a mirror image comes from the worker for a preview and is dropped with it. What the
+preview adds is lit and cannot be picked. A panel found out while testing here: Enter in one of these value
+boxes means OK, as in the part panels (Constrain's does not, and is left as it was).
+
+**The angle.** "Over how much of a turn they spread evenly", as Tenon's part pattern has it, not the
+step from one to the next, which is what the program this is modelled on takes for components: one
+word in one program should mean one thing.
+
+**Found on the way.** A variant part made again after it had gone from the session kept a worker
+slot that believed it had sent revision 1 already, so its scene never came: `sync_assembly` now drops
+slots of parts that are gone. Worth saying because any row-of-a-table part could have met it.
+
+**Not done.** Said row by row in ROADMAP.md.

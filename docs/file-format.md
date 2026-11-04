@@ -619,6 +619,45 @@ Implemented in `crates/io/src/asm.rs` and `crates/assembly/src/model.rs`; tested
   - `{ type = "origin" }`;
   - `{ type = "work", feature }`.
 - **Explode steps** move `components` by `distance` along a unit `direction`.
+- **`mirrored`** on a component (optional, written only when true; DEC-130): it holds its part's
+  mirror image in the part's own XY plane, not the part: a mirrored occurrence of the same file.
+  `placement` stays a right-handed frame: the image of a part at the frame F in a plane is its
+  mirror image at that plane's reflection of F with its Z turned over. Nothing is written for the
+  mirror image: it is worked out from the part file each time. A part file does not say it.
+- **`[[pattern]]`** (optional, with `next_pattern`; DEC-130): a pattern or mirror, one record:
+
+  ```toml
+  [[pattern]]
+  id = 1
+  name = "Pattern:1"
+  sources = [2]
+  type = "rectangular"
+  first = { along = { geom = { type = "axis", axis = "X" } }, count = 5, spacing = 40.0 }
+  second = { along = { geom = { type = "axis", axis = "Y" } }, reverse = true, count = 2, spacing = 50.0 }
+  elements = [
+    { at = [1, 0], components = [3] },
+    { at = [2, 0], components = [4] },
+  ]
+  ```
+
+  - `sources` are what it repeats. `suppressed` is written only when true: its elements are then
+    written with `visible = false`, and left out of the parts list.
+  - `type`: `rectangular` (`first`, optional `second`: each `along`, a target; `count`, the source
+    counted; `spacing` in mm, positive; `reverse` written only when true); `circular` (`axis`, a
+    target; `count`; `angle` in radians, over how much of a turn they spread evenly, a whole turn
+    shared out and less than that from the first to the last; `reverse`); `mirror` (`plane`, a
+    target; `reuse`, optional: `{ component, about }`, a source placed again and the axis, `"X"`,
+    `"Y"` or `"Z"`, square to the middle plane of its part it is symmetric about).
+  - `elements` is one for every place the counts make but the sources' own: `at` is its place
+    along the first direction and the second (for a circular pattern's and a mirror's second, 0),
+    `components` a component for each source, in their order. They are ordinary `[[component]]`
+    records, whose `placement` is written as well.
+  - A pattern may repeat the elements of those before it, and take its rule from them, and from no
+    others. Anything else, or counts that do not say the elements there are, is damage, and refused.
+  - **A build from before them** (0.1.0 among them) opens such a file: each element is a free
+    component where it stands, an element of a suppressed pattern hidden, the parts list counting
+    them all, and each mirrored occurrence the part itself, unreflected, at its frame (so turned over,
+    and not where the mirror image is). Saved by it, the records and `mirrored` are gone.
 - **Validation:** relationships must name existing components, and never join a component to
   itself.
 
@@ -803,7 +842,7 @@ Features
     what Optimize Shape is asked: its target, thinnest member, resolution, element size, symmetry,
     sharpening and most rounds, each set of kept faces that was added, removed or changed with its
     depth, and the settings given or taken away as a whole);
-  - assemblies: components (a changed placement shows as "moved"), relationships and explode
+  - assemblies: components (a changed placement shows as "moved"), relationships, patterns and explode
     steps;
   - drawings: the drawing's own fields, sheets, views and annotations.
 - **"(from H)"** marks a value that follows from a changed parameter.
@@ -868,7 +907,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   `pin` and `frictionless` supports, the `gravity` load and `suppressed` (DEC-097), then
   `edges` and the `moment`, `bearing`, `remote_force` and `body` loads (DEC-100), then a
   part's `part_number` and `description` (DEC-101), and after 0.1.0, among others, a study's
-  `[study.optimize]` (DEC-123).
+  `[study.optimize]` (DEC-123), and an assembly's `[[pattern]]` and `next_pattern` and a
+  component's `mirrored` (DEC-130).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

@@ -200,6 +200,96 @@ fn a_rectangular_pattern_repeats_components_in_rows_and_follows_its_counts() {
 }
 
 #[test]
+fn a_pattern_takes_new_sources_loses_them_and_repeats_what_another_repeats() {
+    let dir = scratch("sources");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    box_part(e, "peg", 2.0, 2.0, 8.0);
+    let (_, block) = rail_and_block(e);
+    let peg = run(e, "asm.insert", json!({ "path": "peg.tenon", "at": [4, 4, 15] }))["component"].clone();
+    let x = run(e, "asm.geom", json!({ "axis": "x" }));
+    let first = run(e, "asm.pattern", json!({ "components": [block], "type": "rectangular", "direction": x, "count": 3, "spacing": 20 }));
+    let (pattern, blocks) = (first["pattern"].clone(), ids(&first["components"]));
+
+    // The peg as well: each element has one of it too, each 20 further on. The blocks that were
+    // there are the same components.
+    let both = run(e, "asm.edit_pattern", json!({ "pattern": pattern, "components": [block, peg] }));
+    assert_eq!(both["elements"], 2);
+    let made = ids(&both["components"]);
+    assert_eq!((made.len(), &made[0], &made[2]), (4, &blocks[0], &blocks[1]));
+    same(origin(e, &made[1]), [24.0, 4.0, 15.0]);
+    same(origin(e, &made[3]), [44.0, 4.0, 15.0]);
+    assert_eq!(run(e, "asm.bom", json!({}))["rows"][2]["quantity"], 3);
+
+    // A pattern of what another makes: the far peg, three more up Y from it, following it.
+    let y = run(e, "asm.geom", json!({ "axis": "y" }));
+    let second = run(e, "asm.pattern", json!({ "components": [made[3]], "type": "rectangular", "direction": y, "count": 4, "spacing": 5 }));
+    let last = ids(&second["components"]).pop().unwrap();
+    same(origin(e, &last), [44.0, 19.0, 15.0]);
+    run(e, "asm.move", json!({ "component": peg, "by": [0, 0, 1] }));
+    same(origin(e, &last), [44.0, 19.0, 16.0]);
+    // An earlier pattern cannot lean on what a later one makes.
+    let err = e.exec("asm.edit_pattern", &json!({ "pattern": pattern, "components": [block, peg, last] })).unwrap_err();
+    assert!(err.contains("depends on it"), "{err}");
+    // Count 2: the far block and peg go, and the second pattern, which repeated that peg, with them.
+    run(e, "asm.edit_pattern", json!({ "pattern": pattern, "count": 2 }));
+    let tree = run(e, "asm.tree", json!({}));
+    assert_eq!(tree["patterns"].as_array().unwrap().len(), 1, "{tree}");
+    assert!(tree["components"].as_array().unwrap().iter().all(|c| c["id"] != last));
+    run(e, "asm.undo", json!({}));
+    assert_eq!(run(e, "asm.tree", json!({}))["patterns"].as_array().unwrap().len(), 2);
+    run(e, "asm.delete_pattern", json!({ "pattern": second["pattern"] }));
+
+    // The peg no longer repeated: what stood for it goes, and it stays; the blocks stay.
+    run(e, "asm.edit_pattern", json!({ "pattern": pattern, "components": [block] }));
+    let tree = run(e, "asm.tree", json!({}));
+    assert_eq!(component(&tree, &peg)["dof"], 6);
+    assert_eq!(run(e, "asm.bom", json!({}))["rows"][2]["quantity"], 1, "{tree}");
+    assert_eq!(run(e, "asm.bom", json!({}))["rows"][1]["quantity"], 3);
+    same(origin(e, &blocks[1]), [40.0, 0.0, 5.0]);
+}
+
+#[test]
+fn a_part_in_a_size_is_mirrored_and_patterned_in_that_size_and_follows_it() {
+    let dir = scratch("sizes");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    run(e, "file.new", json!({ "name": "Pin" }));
+    let sk = run(e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    run(e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 10, "y2": 4 }));
+    run(e, "model.extrude", json!({ "sketch": sk, "distance": 20 }));
+    run(e, "table.create", json!({ "columns": ["d0"], "row": "short" }));
+    run(e, "table.add_row", json!({ "name": "long", "values": { "d0": 50 } }));
+    run(e, "file.save", json!({ "path": "pin.tenon" }));
+    run(e, "asm.new", json!({ "name": "Sizes" }));
+    let pin = run(e, "asm.insert", json!({ "path": "pin.tenon", "at": [30, 0, 0], "row": "long" }))["component"].clone();
+    let (yz, y) = (run(e, "asm.geom", json!({ "plane": "yz" })), run(e, "asm.geom", json!({ "axis": "y" })));
+    let m = run(e, "asm.mirror", json!({ "components": [pin], "plane": yz }));
+    run(e, "asm.pattern", json!({ "components": [pin], "type": "rectangular", "direction": y, "count": 2, "spacing": 10 }));
+    let rows = |e: &mut Engine| {
+        let bom = run(e, "asm.bom", json!({}));
+        bom["rows"].as_array().unwrap().iter().map(|r| (r["part"].as_str().unwrap().to_owned(), r["name"].as_str().unwrap().to_owned(), r["quantity"].as_u64().unwrap(), num(&r["volume"]))).collect::<Vec<_>>()
+    };
+    // 10 x 4 x 50 = 2000 mm^3: the mirror image of that size, on a row of its own.
+    let r = rows(e);
+    assert_eq!((r[0].0.as_str(), r[0].1.as_str(), r[0].2), ("pin (long)", "Pin, long", 2));
+    assert_eq!((r[1].0.as_str(), r[1].1.as_str(), r[1].2), ("pin (long) (mirrored)", "Pin, long, mirrored", 1));
+    assert!((r[1].3 - 2000.0).abs() < 1e-6, "{r:?}");
+    // The source at the file's own size: everything that repeats it follows. 10 x 4 x 20 = 800.
+    run(e, "asm.set_row", json!({ "component": pin, "row": null }));
+    let r = rows(e);
+    assert_eq!((r[0].0.as_str(), r[0].2), ("pin", 2), "{r:?}");
+    assert_eq!((r[1].0.as_str(), r[1].2), ("pin (mirrored)", 1), "{r:?}");
+    assert!((r[1].3 - 800.0).abs() < 1e-6, "{r:?}");
+    let image = ids(&m["components"])[0].clone();
+    assert_eq!(component(&run(e, "asm.tree", json!({})), &image)["row"], Value::Null);
+    // Saved and opened: the same.
+    run(e, "asm.save", json!({ "path": "sizes.tenonasm" }));
+    run(e, "asm.open", json!({ "path": "sizes.tenonasm" }));
+    assert_eq!(rows(e)[1].0, "pin (mirrored)");
+}
+
+#[test]
 fn a_pattern_follows_what_it_depends_on_and_what_is_held_to_an_element_follows_it() {
     let dir = scratch("follow");
     let mut e = Engine::new(kernel(), &dir);
@@ -866,12 +956,18 @@ fn patterns_and_mirrors_are_saved_and_read_back_to_the_same_bytes() {
     );
     let again = run(e, "asm.mirror", json!({ "components": [block], "plane": plane, "reuse": [block] }));
     run(e, "asm.suppress_pattern", json!({ "pattern": again["pattern"] }));
+    // And in a flat face of a component: a reference with its fingerprint, rounded as all are.
+    let flat = (0..6)
+        .map(|i| run(e, "asm.geom", json!({ "component": block, "face": { "body": 0, "index": i } })))
+        .find(|t| t["kind"] == "plane")
+        .unwrap();
+    run(e, "asm.mirror", json!({ "components": [element], "plane": flat }));
     run(e, "asm.save", json!({ "path": "a.tenonasm" }));
     let first = std::fs::read(dir.join("a.tenonasm")).unwrap();
 
     // As it reads: one record to a pattern, its rule and its elements said once.
     let text = String::from_utf8(first.clone()).unwrap();
-    assert!(text.contains("[[pattern]]") && text.contains("next_pattern = 5"), "{text}");
+    assert!(text.contains("[[pattern]]") && text.contains("next_pattern = 6"), "{text}");
     assert!(text.contains("type = \"rectangular\"") && text.contains("type = \"circular\"") && text.contains("type = \"mirror\""), "{text}");
     assert!(text.contains("mirrored = true"), "{text}");
     assert!(!text.contains("reflected"), "the part's mirror image is worked out, never written: {text}");
@@ -920,18 +1016,18 @@ fn patterns_and_mirrors_are_saved_and_read_back_to_the_same_bytes() {
     assert!(diff.changes.iter().any(|c| c.section == "Patterns" && c.detail.contains("count")), "{:?}", diff.changes);
     assert!(diff.changes.iter().any(|c| c.section == "Components" && c.op == '+'), "{:?}", diff.changes);
     for (from, to, says) in [
-        ("next_pattern = 5", "next_pattern = 2", "bad or repeated id"),
+        ("next_pattern = 6", "next_pattern = 2", "bad or repeated id"),
         ("count = 5
 ", "count = 100000
 ", "the count must be"),
         ("spacing = 15.5", "spacing = -2.0", "spacing must be positive"),
-        ("sources = [", "sources = [999, ", "elements"),
+        ("sources = [", "sources = [999, ", "does not stand for"),
     ] {
         assert!(text.contains(from), "{from}");
         let damaged = text.replacen(from, to, 1);
         std::fs::write(dir.join("bad.tenonasm"), damaged).unwrap();
         let err = e.exec("asm.open", &json!({ "path": "bad.tenonasm" })).unwrap_err();
-        assert!(err.contains(says) || err.contains("missing"), "{from}: {err}");
+        assert!(err.contains(says), "{from}: {err}");
     }
 
     // The mirror image is told apart in what is kept of a part's scene: what a document says for

@@ -5,6 +5,25 @@ shows it in [ROADMAP.md](ROADMAP.md).
 
 ## Unreleased
 
+### Assemblies
+
+- **Pattern**, **Mirror** and **Copy** on the Assemble tab, greyed until now. Pattern repeats chosen
+  components in rows along one or two directions (a picked edge, flat face or axis, a count and a
+  spacing) or round an axis (a count and an angle). It is one record, a row in the browser with its
+  elements under it; a count or spacing changed moves, adds or takes away elements; they follow what
+  they repeat and what gives the direction. Each element is a component: it is counted in the parts
+  list, can be constrained to, and is drawn, checked and exported as any other. Mirror reflects
+  chosen components in a plane or flat face: each is a mirrored occurrence of the same part file
+  holding its reflected geometry, on a row of its own in the parts list as a mirrored part, or for a
+  part that is the same as its mirror image, the same part placed again in the mirrored position.
+  Copy makes independent copies beside what they are copied from, of the same parts or in new part
+  files saved beside the assembly, with the constraints among them. New commands `asm.pattern`,
+  `asm.mirror`, `asm.edit_pattern`, `asm.suppress_pattern`, `asm.delete_pattern`, `asm.copy`;
+  `asm.rename` takes `pattern`; `asm.tree` and `asm.bom` say what is mirrored and what is an
+  element. An assembly file gains `[[pattern]]` records, `next_pattern` and a component's
+  `mirrored`: a build from before them opens such a file with each element a free component and each
+  mirrored occurrence unreflected, and drops the records if it saves it. DEC-130.
+
 ### Stress checks
 
 - **Optimize Shape** (topology optimization): in Stress Analysis, the Optimize panel works out
