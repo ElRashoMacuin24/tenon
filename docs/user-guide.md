@@ -122,8 +122,8 @@ place of the Sketch tab. It is a feature in the browser; double-click its row to
   the face. A click on nothing is in the plane through the last point that faces you, so orbit first to
   choose how a line leaves. Near an axis through the last point, the line stays on that axis and is held to it
   (the rubber band takes the axis's colour). Esc ends the chain.
-- **Spline**. Click or type the points it goes through; Enter (once the box has done with it) or Make Spline
-  makes it. Enter in the box puts the point typed.
+- **Spline**. Click or type the points it goes through. Enter in the box puts the point typed; Enter after that,
+  or Make Spline, makes the spline.
 - **Bend**. Click the corner where two lines meet and say the radius. The corner stays as a faint point: what
   held it still holds it, and delete the bend (its arc, its centre or its corner) to have the corner back. A radius
   too large for its lines is refused with the largest that fits, when it is first said and if it is changed.

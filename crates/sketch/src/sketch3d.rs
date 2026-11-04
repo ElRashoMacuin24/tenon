@@ -2442,7 +2442,7 @@ mod tests {
 
     #[test]
     fn what_cannot_be_had_is_said_of_this_line_and_that_point_and_what_holds_them() {
-        let (mut s, l, p) = staircase();
+        let (mut s, l, _) = staircase();
         s.add_constraint(Constraint3::Along { line: l[0], axis: Axis3::Z }).unwrap();
         let e = s.add_constraint(Constraint3::Along { line: l[0], axis: Axis3::X }).unwrap_err().to_string();
         assert!(e.contains("this line parallel to X cannot be had"), "{e}");
@@ -2470,7 +2470,6 @@ mod tests {
         assert!(e.contains("these two lines parallel cannot be had"), "{e}");
         assert!(e.contains("the line from (0, 0, 0) to (0, 0, 50) parallel to Z"), "{e}");
         assert!(e.contains("the line from (0, 0, 50) to (50, 0, 50) parallel to X"), "{e}");
-        let _ = p;
     }
 
     #[test]
