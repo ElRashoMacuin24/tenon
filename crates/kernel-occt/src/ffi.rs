@@ -257,6 +257,13 @@ pub(crate) mod bridge {
         fn facing(shape: &Shape, face: u32, way: &V3) -> Result<UniquePtr<ShapeList>>;
         /// Face `face` swept straight along `along`: a solid.
         fn prism_of_face(shape: &Shape, face: u32, along: &V3) -> Result<UniquePtr<Shape>>;
+        /// The solid between the ruled surfaces through rims `a0`, `a1` and through rims `b0`,
+        /// `b1`: start cap and end cap; `tags`: the walls along `a0`, along `a1`, at the first
+        /// points, at the last.
+        fn ruled_sheet(a0: &[V3], a1: &[V3], b0: &[V3], b1: &[V3], tags: &[u64], hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// The same solid with every face on a right-handed surface: the same faces, in the same
+        /// order.
+        fn direct_faces(body: &Shape) -> Result<UniquePtr<Shape>>;
         /// Revolution of the profile about an axis, from angle `start` sweeping `sweep` radians;
         /// `full` makes a closed revolution.
         fn revolve(profile: &ProfileIn, origin: &V3, dir: &V3, start: f64, sweep: f64, full: bool, hist: &mut HistoryOut)

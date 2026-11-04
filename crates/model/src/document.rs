@@ -1195,6 +1195,12 @@ pub enum FeatureKind {
     Unfold(crate::sheet::UnfoldBends),
     /// Bends an unfold laid flat folded back.
     Refold(crate::sheet::Refold),
+    /// A strip of sheet rolled round an axis.
+    ContourRoll(crate::sheet::ContourRoll),
+    /// A sheet between two open profiles.
+    LoftedFlange(crate::sheet::LoftedFlange),
+    /// Shapes from the punch library stamped into a face of the sheet.
+    Punch(crate::sheet::Punch),
 }
 
 impl FeatureKind {
@@ -1230,6 +1236,9 @@ impl FeatureKind {
             FeatureKind::Rip(r) => r.check(),
             FeatureKind::Unfold(u) => u.check(),
             FeatureKind::Refold(r) => r.check(),
+            FeatureKind::ContourRoll(c) => c.check(),
+            FeatureKind::LoftedFlange(l) => l.check(),
+            FeatureKind::Punch(p) => p.check(),
             _ => Ok(()),
         }
     }
@@ -1304,6 +1313,9 @@ impl FeatureKind {
             FeatureKind::Rip(_) => "Rip",
             FeatureKind::Unfold(_) => "Unfold",
             FeatureKind::Refold(_) => "Refold",
+            FeatureKind::ContourRoll(_) => "Contour Roll",
+            FeatureKind::LoftedFlange(_) => "Lofted Flange",
+            FeatureKind::Punch(_) => "Punch",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -1346,6 +1358,9 @@ impl FeatureKind {
             FeatureKind::Rip(_) => "Rip",
             FeatureKind::Unfold(_) => "Unfold",
             FeatureKind::Refold(_) => "Refold",
+            FeatureKind::ContourRoll(_) => "Contour Roll",
+            FeatureKind::LoftedFlange(_) => "Lofted Flange",
+            FeatureKind::Punch(_) => "Punch",
         }
     }
     /// Features this one depends on.
@@ -1418,6 +1433,12 @@ impl FeatureKind {
             }
             FeatureKind::Unfold(u) => std::iter::once(&u.face).chain(&u.bends).filter_map(FaceRef::feature).collect(),
             FeatureKind::Refold(r) => std::iter::once(r.unfold).chain(r.bends.iter().filter_map(FaceRef::feature)).collect(),
+            FeatureKind::ContourRoll(c) => match c.axis {
+                AxisRef::Work(a) | AxisRef::Ucs { feature: a, .. } => vec![c.sketch, a],
+                _ => vec![c.sketch],
+            },
+            FeatureKind::LoftedFlange(l) => l.sketches.to_vec(),
+            FeatureKind::Punch(p) => vec![p.sketch],
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -2043,7 +2064,12 @@ impl Document {
         for id in kind.copies() {
             match self.feature(*id) {
                 Some(f) if f.kind.has_tool() => {}
-                Some(f) => return Err(format!("{} cannot be copied: only features that add or remove material can", f.name)),
+                Some(f) => {
+                    return Err(format!(
+                        "{} cannot be copied: a pattern or mirror copies an Extrude, Revolve, Hole, Rib, Sweep, Coil, Loft, Face or another pattern, and not this kind of feature",
+                        f.name
+                    ));
+                }
                 None => return Err(format!("{id} does not exist")),
             }
         }
@@ -2146,6 +2172,11 @@ impl Document {
                 FeatureKind::CutAcrossBend(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
                 FeatureKind::CutNormal(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
                 FeatureKind::Fold(fo) if self.sketch(fo.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, fo.sketch)),
+                FeatureKind::ContourRoll(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
+                FeatureKind::LoftedFlange(l) if l.sketches.iter().any(|s| self.sketch(*s).is_none()) => {
+                    return Err(format!("{}: both profiles of a lofted flange must be sketches", f.name));
+                }
+                FeatureKind::Punch(p) if self.sketch(p.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, p.sketch)),
                 _ => {}
             }
             self.check_copies(&f.kind).map_err(|e| format!("{}: {e}", f.name))?;

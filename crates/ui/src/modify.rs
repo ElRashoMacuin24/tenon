@@ -118,7 +118,7 @@ impl Workbench {
             && p.editing.is_none_or(|e| self.document().index_of(id) < self.document().index_of(e));
         if !ok {
             let name = self.feature_name(id);
-            self.set_error(format!("{name} cannot be copied: only earlier features that add or remove material can"));
+            self.set_error(format!("{name} cannot be copied: a pattern or mirror copies an earlier Extrude, Revolve, Hole, Rib, Sweep, Coil, Loft, Face or pattern, and not this"));
             return;
         }
         if let Some(Panel::Pattern(p)) = &mut self.panel {
@@ -822,7 +822,15 @@ impl Workbench {
             }
             return true;
         }
-        if matches!(self.panel, Some(Panel::Revolve(_) | Panel::Coil(_))) {
+        if matches!(self.panel, Some(Panel::LoftedFlange(_))) {
+            self.lofted_pointer(resp, rect);
+            return true;
+        }
+        if matches!(&self.panel, Some(Panel::Punch(p)) if p.on_face()) {
+            self.punch_face_pick(resp, rect);
+            return true;
+        }
+        if matches!(self.panel, Some(Panel::Revolve(_) | Panel::Coil(_) | Panel::ContourRoll(_))) {
             // A work axis, or a line of the profile's sketch, clicked: the axis to turn about.
             if self.pick_ucs_part(resp, rect, false, true, false) {
                 return true;

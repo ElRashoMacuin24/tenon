@@ -14,6 +14,8 @@ use tenon_sketch::{EntityId, RegionKey, Sketch, SketchRegion, default_regions, p
 
 mod emboss;
 mod sheet;
+pub(crate) use sheet::make::lofted_skin;
+pub use sheet::make::{lofted_words, roll_words};
 
 use crate::FeatureId;
 use crate::document::{
@@ -319,6 +321,9 @@ fn prefix_hashes(doc: &Document, copied: &std::collections::BTreeSet<FeatureId>)
                 | FeatureKind::Rip(_)
                 | FeatureKind::Unfold(_)
                 | FeatureKind::Refold(_)
+                | FeatureKind::ContourRoll(_)
+                | FeatureKind::LoftedFlange(_)
+                | FeatureKind::Punch(_)
         ) {
             rule.hash(&mut h);
         }
@@ -679,6 +684,8 @@ impl<'a> Ctx<'a> {
                         KernelError::OperationFailed { .. } => Stop::Failed(crate::explain::explain(&f.kind, &e)),
                         e => e.into(),
                     })?;
+                    let most = law.iter().fold(0.0f64, |m, l| m.max(l.1));
+                    self.die_formed_measures(shape, op.shape, &edges, most, "fillet")?;
                     return self.replace_body(f.id, bi, op);
                 }
                 let op = match self.k.fillet(shape, &ids, fi.radius) {
@@ -708,6 +715,7 @@ impl<'a> Ctx<'a> {
                     }
                     Err(e) => return Err(e.into()),
                 };
+                self.die_formed_measures(shape, op.shape, &edges, fi.radius, "fillet")?;
                 self.replace_body(f.id, bi, op)
             }
             FeatureKind::Chamfer(c) => {
@@ -724,6 +732,12 @@ impl<'a> Ctx<'a> {
                     }
                 };
                 let op = self.k.chamfer(shape, &ids, &spec)?;
+                let size = match &c.size {
+                    ChamferSize::Equal(d) => *d,
+                    ChamferSize::TwoDistances { d1, d2, .. } => d1.max(*d2),
+                    ChamferSize::DistanceAngle { distance, angle, .. } => distance.max(distance * angle.tan().abs()),
+                };
+                self.die_formed_measures(shape, op.shape, &edges, size, "chamfer")?;
                 self.replace_body(f.id, bi, op)
             }
             FeatureKind::Shell(s) => {
@@ -786,6 +800,9 @@ impl<'a> Ctx<'a> {
             FeatureKind::Rip(r) => self.rip(f.id, r),
             FeatureKind::Unfold(u) => self.unfold_bends(f.id, u),
             FeatureKind::Refold(r) => self.refold(f.id, r),
+            FeatureKind::ContourRoll(c) => self.contour_roll(f.id, c),
+            FeatureKind::LoftedFlange(l) => self.lofted_flange(f.id, l),
+            FeatureKind::Punch(p) => self.punch(f.id, p),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };

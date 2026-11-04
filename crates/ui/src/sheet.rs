@@ -605,7 +605,7 @@ impl Default for SheetUi {
 
 /// A list to choose one of. The list is remembered under `key` and each entry under `key` and
 /// its own name; an entry's tip says what it does.
-fn choice<T: Copy + PartialEq>(ui: &mut Ui, key: &str, value: &mut T, options: &[(T, &str, &str, &str)]) {
+pub(crate) fn choice<T: Copy + PartialEq>(ui: &mut Ui, key: &str, value: &mut T, options: &[(T, &str, &str, &str)]) {
     let shown = options.iter().find(|o| o.0 == *value).map_or("?", |o| o.2);
     let list = egui::ComboBox::from_id_salt(key).selected_text(shown).width(118.0).show_ui(ui, |ui| {
         for (v, name, label, tip) in options {
@@ -794,16 +794,23 @@ fn corner_fields(
 const BEND_UP: Color32 = Color32::from_rgb(0x1f, 0x9d, 0x4a);
 const BEND_DOWN: Color32 = Color32::from_rgb(0xd0, 0x45, 0x35);
 
-const NOT_SHEET: &str = "This is not a sheet metal part yet: use Convert to Sheet Metal on the 3D Model tab, or File > New Sheet Metal Part.";
-const NO_SHEET: &str = "there is no sheet yet: make a Face from a sketch first (or a Contour Flange)";
+pub(crate) const NOT_SHEET: &str =
+    "This is not a sheet metal part yet: use Convert to Sheet Metal on the 3D Model tab, or File > New Sheet Metal Part.";
+pub(crate) const NO_SHEET: &str = "there is no sheet yet: make a Face from a sketch first (or a Contour Flange)";
 
 impl Workbench {
     /// The part has a feature that makes sheet (whether or not it is shown yet).
-    fn has_sheet(&self) -> bool {
-        self.document()
-            .features()
-            .iter()
-            .any(|f| matches!(f.kind, FeatureKind::SheetFace(_) | FeatureKind::ContourFlange(_) | FeatureKind::Extrude(_)))
+    pub(crate) fn has_sheet(&self) -> bool {
+        self.document().features().iter().any(|f| {
+            matches!(
+                f.kind,
+                FeatureKind::SheetFace(_)
+                    | FeatureKind::ContourFlange(_)
+                    | FeatureKind::ContourRoll(_)
+                    | FeatureKind::LoftedFlange(_)
+                    | FeatureKind::Extrude(_)
+            )
+        })
     }
 
     pub(crate) fn is_sheet_metal(&self) -> bool {
@@ -905,6 +912,9 @@ impl Workbench {
             "sheet.flange" => self.open_flange(None)?,
             "sheet.hem" => self.open_hem(None)?,
             "sheet.contour_flange" => self.open_contour(None)?,
+            "sheet.contour_roll" => self.open_contour_roll(None)?,
+            "sheet.lofted_flange" => self.open_lofted_flange(None)?,
+            "sheet.punch" => self.open_punch(None)?,
             "sheet.corner_seam" => self.open_corner_seam(None)?,
             "sheet.bend" => self.open_bend(None)?,
             "sheet.fold" => self.open_fold(None)?,
@@ -1585,7 +1595,7 @@ impl Workbench {
 
     /// The sketch a new contour flange follows: the one being drawn, otherwise the last that has
     /// lines or arcs and no closed profile.
-    fn open_profile_sketch(&mut self) -> Result<FeatureId, String> {
+    pub(crate) fn open_profile_sketch(&mut self) -> Result<FeatureId, String> {
         let open = |doc: &tenon_model::Document, id: FeatureId| {
             doc.sketch(id).is_some_and(|sk| {
                 sk.entities().any(|(_, e)| !e.construction && !e.reference && matches!(e.geometry, Geometry::Line { .. } | Geometry::Arc { .. }))
@@ -2646,7 +2656,7 @@ impl Workbench {
     }
 
     fn write_flat(&mut self, path: &Path, svg: bool) {
-        let marks = Marks { bends: self.chrome.sheet.show_bends, extents: self.chrome.sheet.show_extents };
+        let marks = Marks { bends: self.chrome.sheet.show_bends, extents: self.chrome.sheet.show_extents, punches: true };
         let written = match self.flat_now() {
             Some(Ok(f)) => {
                 let data = if svg { tenon_io::flat::svg(f, marks) } else { tenon_io::flat::dxf(f, marks).0 };
@@ -2710,8 +2720,10 @@ impl Workbench {
         };
         // The view: fitted at first, then dragged and wheeled about.
         let fit = |r: Rect| -> (Vec2, f32) {
-            let scale = ((r.width() - 120.0) / flat.length as f32).min((r.height() - 150.0) / flat.width as f32).max(0.01);
-            (Vec2::new(flat.length / 2.0, flat.width / 2.0), scale)
+            // (Below the words at its top, when it has any to say of itself.)
+            let above = 70.0 * flat.notes.len().min(1) as f32;
+            let scale = ((r.width() - 120.0) / flat.length as f32).min((r.height() - 150.0 - above) / flat.width as f32).max(0.01);
+            (Vec2::new(flat.length / 2.0, flat.width / 2.0 + f64::from(above / 2.0 / scale)), scale)
         };
         let (mut centre, mut scale) = self.chrome.sheet.cam.unwrap_or_else(|| fit(rect));
         if resp.dragged() {
@@ -2753,6 +2765,8 @@ impl Workbench {
         }
         // Bend lines: where each bend begins and ends, thin; its centre line, dash-dotted, green
         // for a bend up (towards whoever looks) and red for one down.
+        // (Bends close together are named where their names do not lie on one another.)
+        let mut taken: Vec<Rect> = Vec::new();
         for b in &flat.bends {
             if self.chrome.sheet.show_extents {
                 for seg in &b.extents {
@@ -2761,16 +2775,42 @@ impl Workbench {
             }
             if self.chrome.sheet.show_bends {
                 let color = if b.up { BEND_UP } else { BEND_DOWN };
-                for seg in &b.lines {
+                // (A line in many short pieces, round a rolled sheet, is named once, at its middle.)
+                let named = if b.lines.len() > 2 { Some(b.lines.len() / 2) } else { None };
+                for (i, seg) in b.lines.iter().enumerate() {
                     painter.extend(Shape::dashed_line(&[to_screen(seg[0]), to_screen(seg[1])], Stroke::new(1.5, color), 14.0, 5.0));
-                    let mid = to_screen((seg[0] + seg[1]) * 0.5);
+                    if named.is_some_and(|n| n != i) {
+                        continue;
+                    }
                     let label = format!("{} {}°  R{}", if b.up { "Up" } else { "Down" }, fmt_value(b.angle.to_degrees()), fmt_value(b.radius));
                     let galley = painter.layout_no_wrap(label, theme::small(), color);
-                    let at = mid + vec2(6.0, -galley.size().y - 2.0);
-                    painter.rect_filled(Rect::from_min_size(at - vec2(2.0, 1.0), galley.size() + vec2(4.0, 2.0)), 2.0, t.panel.gamma_multiply(0.85));
+                    let spot = [0.5, 0.35, 0.65, 0.2, 0.8, 0.1, 0.9].into_iter().find_map(|along| {
+                        let at = to_screen(seg[0] + (seg[1] - seg[0]) * along) + vec2(6.0, -galley.size().y - 2.0);
+                        let area = Rect::from_min_size(at - vec2(2.0, 1.0), galley.size() + vec2(4.0, 2.0));
+                        (!taken.iter().any(|r| r.intersects(area))).then_some((at, area))
+                    });
+                    let Some((at, area)) = spot else { continue };
+                    taken.push(area);
+                    painter.rect_filled(area, 2.0, t.panel.gamma_multiply(0.85));
                     painter.galley(at, galley, color);
                 }
             }
+        }
+        // Punches: a formed one's centre mark and where it bends, and every one's name.
+        let punch = Stroke::new(1.2, t.accent);
+        for m in &flat.marks {
+            let at = to_screen(m.center);
+            if m.formed {
+                painter.line_segment([at - vec2(8.0, 0.0), at + vec2(8.0, 0.0)], punch);
+                painter.line_segment([at - vec2(0.0, 8.0), at + vec2(0.0, 8.0)], punch);
+                for seg in &m.lines {
+                    painter.line_segment([to_screen(seg[0]), to_screen(seg[1])], punch);
+                }
+            }
+            let galley = painter.layout_no_wrap(m.name.clone(), theme::small(), t.accent);
+            let corner = at + vec2(10.0, -galley.size().y - 4.0);
+            painter.rect_filled(Rect::from_min_size(corner - vec2(2.0, 1.0), galley.size() + vec2(4.0, 2.0)), 2.0, t.panel.gamma_multiply(0.85));
+            painter.galley(corner, galley, t.accent);
         }
         // What it is cut from.
         let lines = [
@@ -2790,6 +2830,12 @@ impl Workbench {
             let galley = painter.layout_no_wrap(line.clone(), font, if i == 0 { t.text } else { t.text_dim });
             painter.galley(pos2(rect.left() + 14.0, y), galley.clone(), t.text);
             y += galley.size().y + 3.0;
+        }
+        // What the pattern is not exact about, where it cannot be missed.
+        for note in &flat.notes {
+            let galley = painter.layout(note.clone(), theme::small(), t.history_marker, (rect.width() - 28.0).clamp(120.0, 620.0));
+            painter.galley(pos2(rect.left() + 14.0, y + 3.0), galley.clone(), t.history_marker);
+            y += galley.size().y + 6.0;
         }
         // The size of the sheet, along the bottom and up the left of the pattern.
         let (lo, hi) = (to_screen(Vec2::ZERO), to_screen(Vec2::new(flat.length, flat.width)));

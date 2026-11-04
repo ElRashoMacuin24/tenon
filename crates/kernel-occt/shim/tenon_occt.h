@@ -83,6 +83,12 @@ std::unique_ptr<Shape> thicken(const Shape& shape, std::uint32_t face, double di
 std::unique_ptr<ShapeList> facing(const Shape& shape, std::uint32_t face, const V3& way);
 // A face swept straight along `along`: a solid.
 std::unique_ptr<Shape> prism_of_face(const Shape& shape, std::uint32_t face, const V3& along);
+// The solid between the ruled surfaces through two rims each: every rim a smooth curve through its
+// points, a step of its parameter from each point to the next.
+std::unique_ptr<Shape> ruled_sheet(rust::Slice<const V3> a0, rust::Slice<const V3> a1, rust::Slice<const V3> b0, rust::Slice<const V3> b1,
+                                   rust::Slice<const std::uint64_t> tags, HistoryOut& hist);
+// The same solid with every face on a right-handed surface: the same faces, in the same order.
+std::unique_ptr<Shape> direct_faces(const Shape& body);
 std::unique_ptr<Shape> revolve(const ProfileIn& profile, const V3& origin, const V3& dir, double start, double sweep, bool full,
                                HistoryOut& hist);
 std::unique_ptr<Shape> transform(const Shape& shape, std::uint8_t kind, const V3& a, const V3& b, double value, HistoryOut& hist);

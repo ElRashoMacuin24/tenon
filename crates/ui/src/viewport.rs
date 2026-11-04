@@ -479,6 +479,7 @@ impl Workbench {
         self.print_overlay(ui, rect, t);
         if self.has_properties() {
             self.hole_markers(ui, rect, t);
+            self.punch_markers(ui, rect, t);
             self.profile_overlay(ui, rect, t);
             self.axis_overlay(ui, rect, t);
             self.measure_overlay(ui, rect, t);

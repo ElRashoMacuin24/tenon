@@ -250,6 +250,20 @@ pub struct Bend {
     pub face: u32,
 }
 
+/// One stamp of a punch, as the flat pattern shows it: a cut's outline is among the pattern's
+/// holes, and has its name here; a formed shape has its name, its centre mark and where it bends.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PunchMark {
+    /// What it is called: "Dimple 20 x 3".
+    pub name: String,
+    pub center: Vec2,
+    /// A formed shape, not a cut.
+    pub formed: bool,
+    /// Where a formed shape bends, in short straight pieces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lines: Vec<[Vec2; 2]>,
+}
+
 /// A sheet metal part laid flat.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FlatPattern {
@@ -266,6 +280,13 @@ pub struct FlatPattern {
     pub area: f64,
     /// How far a cutter travels round the outline and every hole (mm).
     pub cut_length: f64,
+    /// What the pattern is not exact about, in words: a rolled shape that does not unroll
+    /// exactly, how close a die-formed one is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    /// The punches on the sheet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<PunchMark>,
 }
 
 /// How far round `center` a run of points turns (positive counter-clockwise), when every one of

@@ -471,8 +471,8 @@ pub const RIBBON: &[RibbonTab] = &[
                         Icon::ContourFlange,
                         0,
                     ),
-                    small("sheet.lofted_flange", "Lofted Flange", "A sheet blended between two profiles", Icon::Loft, LATER),
-                    small("sheet.contour_roll", "Contour Roll", "A profile rolled about an axis", Icon::Revolve, LATER),
+                    small("sheet.lofted_flange", "Lofted Flange", "A sheet between two open profiles: one smooth surface, or flat facets with bends between them", Icon::LoftedFlange, 0),
+                    small("sheet.contour_roll", "Contour Roll", "An open profile rolled round an axis as sheet", Icon::ContourRoll, 0),
                     small("sheet.hem", "Hem", "An edge folded back on itself: single, double, rolled or teardrop", Icon::Hem, 0),
                     small(
                         "sheet.bend",
@@ -498,7 +498,7 @@ pub const RIBBON: &[RibbonTab] = &[
                         Icon::CornerSeam,
                         0,
                     ),
-                    small("sheet.punch", "Punch Tool", "Stamp a shape from a library", Icon::SheetCut, LATER),
+                    small("sheet.punch", "Punch Tool", "Stamp a shape from the punch library into a flat face: a cut, a dimple or a louver", Icon::Punch, 0),
                     small(
                         "sheet.rip",
                         "Rip",

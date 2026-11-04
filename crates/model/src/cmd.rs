@@ -4025,28 +4025,18 @@ fn sheet_hem(s: &mut Session, p: &Value) -> CmdResult {
 }
 
 fn sheet_contour_flange(s: &mut Session, p: &Value) -> CmdResult {
-    use crate::sheet::{ContourFlange, Sides};
+    use crate::sheet::ContourFlange;
     if s.document().sheet_metal().is_none() {
         return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
     }
-    let sides = |key: &str| -> Result<Sides, CmdError> {
-        match arg(p, key) {
-            Some(v) if !v.is_null() => parse(p, key),
-            _ => Ok(Sides::default()),
-        }
-    };
-    let operation = match arg(p, "operation").and_then(Value::as_str).unwrap_or("join") {
-        "join" => Operation::Join,
-        "new_body" => Operation::NewBody,
-        other => return Err(CmdError(format!("unknown operation `{other}` for a contour flange (join, new_body)"))),
-    };
+    let operation = sheet_operation(p, "contour flange")?;
     // Along edges of the sheet, when any are given: the distance then says nothing.
     let edges = if arg(p, "edges").is_some_and(|v| !v.is_null()) { edge_refs(p)? } else { Vec::new() };
     let flange = ContourFlange {
         sketch: sketch_id(p)?,
         distance: if edges.is_empty() { num(p, "distance")? } else { opt_num(p, "distance")?.unwrap_or(0.0) },
-        direction: sides("direction")?,
-        position: sides("position")?,
+        direction: sheet_sides(p, "direction")?,
+        position: sheet_sides(p, "position")?,
         radius: opt_num(p, "radius")?,
         width: if edges.is_empty() { crate::sheet::FlangeWidth::Edge } else { sheet_width(p)? },
         edges,
@@ -4054,6 +4044,137 @@ fn sheet_contour_flange(s: &mut Session, p: &Value) -> CmdResult {
     };
     flange.check().map_err(CmdError)?;
     add_feature(s, FeatureKind::ContourFlange(flange), p)
+}
+
+/// A sheet's `direction`, `position` and suchlike: one of two sides, or both alike.
+fn sheet_sides(p: &Value, key: &str) -> Result<crate::sheet::Sides, CmdError> {
+    match arg(p, key) {
+        Some(v) if !v.is_null() => parse(p, key),
+        _ => Ok(crate::sheet::Sides::default()),
+    }
+}
+
+/// A sheet feature's `operation`: joined to the part, or a solid of its own.
+fn sheet_operation(p: &Value, what: &str) -> Result<Operation, CmdError> {
+    match arg(p, "operation").and_then(Value::as_str).unwrap_or("join") {
+        "join" => Ok(Operation::Join),
+        "new_body" => Ok(Operation::NewBody),
+        other => Err(CmdError(format!("unknown operation `{other}` for a {what} (join, new_body)"))),
+    }
+}
+
+fn sheet_contour_roll(s: &mut Session, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let sketch = sketch_id(p)?;
+    let axis = match arg(p, "axis") {
+        // Without an axis, the sketch's centre line is it.
+        None | Some(Value::Null) => {
+            let sk = s.document().sketch(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
+            let lines: Vec<EntityId> = sk.entities().filter(|(_, e)| e.centerline).map(|(id, _)| id).collect();
+            match lines.as_slice() {
+                [one] => AxisRef::SketchLine(*one),
+                [] => return Err("give `axis`: a sketch line's id or \"x\", \"y\" or \"z\" (the sketch has no centre line to roll about)".into()),
+                _ => return Err("give `axis`: the sketch has more than one centre line".into()),
+            }
+        }
+        Some(_) => axis_ref(s, p)?,
+    };
+    let roll = crate::sheet::ContourRoll {
+        sketch,
+        axis,
+        angle: num(p, "angle")?,
+        direction: sheet_sides(p, "direction")?,
+        position: sheet_sides(p, "position")?,
+        radius: opt_num(p, "radius")?,
+        operation: sheet_operation(p, "contour roll")?,
+    };
+    roll.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::ContourRoll(roll), p)
+}
+
+fn sheet_lofted_flange(s: &mut Session, p: &Value) -> CmdResult {
+    use crate::sheet::{Forming, LoftedFlange};
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let sketches = ids(p, "sketches")?;
+    let [first, second] = sketches.as_slice() else {
+        return Err("`sketches` must be the two sketches of the profiles, the first and the second".into());
+    };
+    let sketches = [FeatureId(first.0), FeatureId(second.0)];
+    for id in sketches {
+        if s.document().sketch(id).is_none() {
+            return Err(format!("{id} is not a sketch").into());
+        }
+    }
+    let forming = match arg(p, "forming").and_then(Value::as_str).unwrap_or("die_formed") {
+        "die_formed" => {
+            if opt_num(p, "chord")?.is_some() {
+                return Err(
+                    "`chord` is the tolerance of press-brake facets: a die-formed sheet has none. Say forming: \"press_brake\", or leave it out."
+                        .into(),
+                );
+            }
+            Forming::DieFormed
+        }
+        "press_brake" => Forming::PressBrake { chord: opt_num(p, "chord")?.unwrap_or(0.5) },
+        other => return Err(format!("unknown forming `{other}` (die_formed, press_brake)").into()),
+    };
+    let flange = LoftedFlange {
+        sketches,
+        forming,
+        position: sheet_sides(p, "position")?,
+        radius: opt_num(p, "radius")?,
+        operation: sheet_operation(p, "lofted flange")?,
+    };
+    flange.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::LoftedFlange(flange), p)
+}
+
+fn sheet_punch(s: &mut Session, p: &Value) -> CmdResult {
+    use crate::sheet::{Punch, PunchShape};
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let sketch = sketch_id(p)?;
+    let sk = s.document().sketch(sketch).ok_or_else(|| CmdError(format!("{sketch} is not a sketch")))?;
+    let points = if arg(p, "points").is_some_and(|v| !v.is_null()) { ids(p, "points")? } else { Vec::new() };
+    if let Some(gone) = points.iter().find(|q| sk.point(**q).is_none()) {
+        return Err(format!("point {} is not a point of the sketch", gone.0).into());
+    }
+    if points.is_empty() && crate::document::hole_centres(sk).is_empty() {
+        return Err("The sketch has no centre points: put a point where each stamp goes, or give `points`.".into());
+    }
+    // Each size as given, or what the library starts it as.
+    let family = arg(p, "shape").and_then(Value::as_str).unwrap_or("round");
+    let starts = crate::sheet::PUNCH_LIBRARY.iter().find(|f| f.id == family).ok_or_else(|| {
+        let known: Vec<&str> = crate::sheet::PUNCH_LIBRARY.iter().map(|f| f.id).collect();
+        CmdError(format!("no punch `{family}` in the library ({})", known.join(", ")))
+    })?;
+    let size = |key: &str, start: f64| opt_num(p, key).map(|v| v.unwrap_or(start));
+    let shape = match starts.starts {
+        PunchShape::Round { diameter } => PunchShape::Round { diameter: size("diameter", diameter)? },
+        PunchShape::Square { side } => PunchShape::Square { side: size("side", side)? },
+        PunchShape::Rectangle { length, width } => PunchShape::Rectangle { length: size("length", length)?, width: size("width", width)? },
+        PunchShape::Obround { length, width } => PunchShape::Obround { length: size("length", length)?, width: size("width", width)? },
+        PunchShape::DShape { diameter, across } => PunchShape::DShape { diameter: size("diameter", diameter)?, across: size("across", across)? },
+        PunchShape::Dimple { diameter, depth } => PunchShape::Dimple { diameter: size("diameter", diameter)?, depth: size("depth", depth)? },
+        PunchShape::Louver { length, width, height } => {
+            PunchShape::Louver { length: size("length", length)?, width: size("width", width)?, height: size("height", height)? }
+        }
+    };
+    // Sizes that are not this shape's are a mistake to say so about.
+    for key in ["diameter", "side", "length", "width", "across", "depth", "height"] {
+        if arg(p, key).is_some_and(|v| !v.is_null()) && !starts.sizes.iter().any(|x| x.0 == key) {
+            let takes: Vec<&str> = starts.sizes.iter().map(|x| x.0).collect();
+            return Err(format!("a {} punch has no `{key}`: it takes {}", starts.name, takes.join(", ")).into());
+        }
+    }
+    let punch = Punch { sketch, points, shape, rotation: opt_num(p, "rotation")?.unwrap_or(0.0), flip: flag(p, "flip") };
+    punch.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Punch(punch), p)
 }
 
 fn sheet_corner_seam(s: &mut Session, p: &Value) -> CmdResult {
@@ -4252,6 +4373,17 @@ pub fn flat_value(f: &crate::sheet::FlatPattern, curves: bool) -> Value {
         "holes": f.inner.len(),
         "bends": bends,
     });
+    if !f.notes.is_empty() {
+        v["notes"] = json!(f.notes);
+    }
+    if !f.marks.is_empty() {
+        let marks: Vec<Value> = f
+            .marks
+            .iter()
+            .map(|m| json!({ "name": m.name, "center": [m.center.x, m.center.y], "formed": m.formed, "lines": m.lines.iter().map(seg).collect::<Vec<_>>() }))
+            .collect();
+        v["marks"] = json!(marks);
+    }
     if curves {
         v["outer"] = serde_json::to_value(&f.outer.curves).unwrap_or(Value::Null);
         v["inner"] = serde_json::to_value(f.inner.iter().map(|l| &l.curves).collect::<Vec<_>>()).unwrap_or(Value::Null);
@@ -5262,6 +5394,27 @@ static COMMANDS: &[CommandSpec] = &[
         sheet_contour_flange
     ),
     doc_cmd!(
+        "sheet.contour_roll",
+        "Contour Roll",
+        "sketch (an open profile: lines and arcs end to end, all on one side of the axis and clear of it; corners between lines become bends, an arc is a bend as drawn); axis (in the sketch's plane: a line of the sketch by its id, \"x\", \"y\" or \"z\", or {\"work\": id}; default: the sketch's centre line); angle (rad: how far round, 1 to 359.9 degrees: a sheet has a seam); direction: \"default\" | \"flipped\" | \"symmetric\"; position: \"default\" (the sheet goes on the inside of the profile's first corner, or to the left of one straight line) | \"flipped\" | \"symmetric\"; radius (inside, of the bends made at corners; default BendRadius); operation: \"join\" (default) | \"new_body\". In the flat pattern a straight line is a cylinder or a cone unrolled exactly, at the sheet's neutral surface; a profile of more than one line or arc does not unroll exactly, and the pattern says how far out it is",
+        true,
+        sheet_contour_roll
+    ),
+    doc_cmd!(
+        "sheet.lofted_flange",
+        "Lofted Flange",
+        "sketches: [two sketches], each an open profile (lines and arcs end to end), the sheet between them; forming: \"die_formed\" (default: one smooth surface; laid flat by triangles, and the flat pattern says how close that is; corners of the profiles are rounded to the bend radius) | \"press_brake\" (flat facets with a bend at every line between two; arcs are taken as chords); chord (press_brake: how far a chord may leave its arc, mm; default 0.5); position: \"default\" (the sheet is on the left of the first profile, the inside of its first corner) | \"flipped\" | \"symmetric\"; radius (inside, of the bends; default BendRadius); operation: \"join\" (default) | \"new_body\". A die-formed sheet too thick for a curve of its profiles, or twisted so that it comes to more than 2 % under the thickness, is refused; with anything joined to it or cut part way into it, it has no flat pattern, where facets do",
+        true,
+        sheet_lofted_flange
+    ),
+    doc_cmd!(
+        "sheet.punch",
+        "Punch Tool",
+        "sketch (on a flat side of the sheet: its centre points are where the shape is stamped); points: [ids] (default: every centre point); shape: \"round\" (default; diameter) | \"square\" (side) | \"rectangle\" (length, width) | \"obround\" (length overall, width) | \"d_shape\" (diameter; across: from the flat to the far side of the circle) | \"dimple\" (diameter, depth) | \"louver\" (length along the hinge, width from the hinge to the lip laid flat, height of the lip); a size left out is what the library starts it as; rotation (rad, about the sketch's normal from its X); flip (a formed shape stands out of the sheet's other side). Each stamp stays on one flat face: across a bend or over an edge it is refused, and a formed shape will not close over a hole. In the flat pattern a cut is its outline with the punch's name; a formed shape is its name, its centre mark and the line it bends at, and one cut since it was stamped has no flat pattern",
+        true,
+        sheet_punch
+    ),
+    doc_cmd!(
         "sheet.corner_seam",
         "Corner Seam",
         "edges: [two edge references]: the edge at the end of each of two faces that are bent up from one sheet and come together at a square corner (flanges made apart: edges of one flange close their own corners); the first face's, then the second's. Their bends are ended where the two bend lines cross, the faces brought together, and the corner relieved. seam: \"symmetric\" (default: both stop the gap apart) | \"overlap\" (the first runs across the end of the second) | \"reverse_overlap\"; overlap (how much of the other's thickness is covered, 0 to 1; default 1); gap (default GapSize); relief: \"round\" | \"square\" | \"trim\" and relief_size (default: the rule's)",
@@ -5278,14 +5431,14 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "sheet.cut_across_bend",
         "Cut Across Bend",
-        "sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern",
+        "sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern. It follows a cylinder of a rolled sheet like a bend; a profile that reaches a cone, a round part of a rolled profile or a die-formed face is refused",
         true,
         sheet_cut_across_bend
     ),
     doc_cmd!(
         "sheet.cut_normal",
         "Cut Normal",
-        "sketch (on any plane that looks at the sheet: a face of it, or a work plane over it at any angle; its profile of lines, arcs and circles); regions; distance (how deep from the side of the sheet that looks at the sketch; default and at most Thickness: through). The profile is cut out of every flat face and bend of that side it is seen on, looking along the sketch's normal, and each is cut square to itself: a cut whose walls are square to the sheet whatever the angle of the sketch, so the flat pattern has one clean outline. (On a face parallel to the sketch it is the profile; at an angle, or on a bend, the profile as it is seen there.)",
+        "sketch (on any plane that looks at the sheet: a face of it, or a work plane over it at any angle; its profile of lines, arcs and circles); regions; distance (how deep from the side of the sheet that looks at the sketch; default and at most Thickness: through). The profile is cut out of every flat face and bend of that side it is seen on, looking along the sketch's normal, and each is cut square to itself: a cut whose walls are square to the sheet whatever the angle of the sketch, so the flat pattern has one clean outline. (On a face parallel to the sketch it is the profile; at an angle, or on a bend, the profile as it is seen there.) A profile over a cone, a round part of a rolled profile or a die-formed face is refused",
         true,
         sheet_cut_normal
     ),
@@ -5348,7 +5501,7 @@ static COMMANDS: &[CommandSpec] = &[
     geo_cmd!(
         "sheet.flat",
         "Flat Pattern",
-        "The part laid flat: length and width (the sheet it is cut from), area, cut_length (round the outline and every hole), holes, and each bend's angle (rad), inside radius, allowance (its width in the flat), up (bent towards the A side) and centre lines. face: the A side (default: the part's, else the largest flat face); body (default: the only one); curves: true adds the outlines (outer, inner) as lines, arcs, circles and polylines",
+        "The part laid flat: length and width (the sheet it is cut from), area, cut_length (round the outline and every hole), holes, and each bend's angle (rad), inside radius, allowance (its width in the flat), up (bent towards the A side) and centre lines. notes (when there are any): what the pattern is not exact about, in words: a die-formed or rolled shape that does not lay flat exactly, and how far out it is. marks (when there are any): each stamp of a punch, its name, its centre, whether it is formed, and the lines a formed one bends at. face: the A side (default: the part's, else the largest flat face); body (default: the only one); curves: true adds the outlines (outer, inner) as lines, arcs, circles and polylines",
         sheet_flat
     ),
     geo_cmd!(

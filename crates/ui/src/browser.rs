@@ -143,6 +143,9 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::Unfold(_) => Icon::FlatPattern,
         FeatureKind::Refold(_) => Icon::FoldedPart,
         FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => Icon::SheetCut,
+        FeatureKind::ContourRoll(_) => Icon::ContourRoll,
+        FeatureKind::LoftedFlange(_) => Icon::LoftedFlange,
+        FeatureKind::Punch(_) => Icon::Punch,
     }
 }
 
@@ -390,6 +393,11 @@ impl Workbench {
                     }
                     if let Some(FeatureStatus::Error { message }) = &status {
                         resp = resp.on_hover_text(message.clone());
+                    } else if resp.hovered()
+                        && let Some(Some(Ok(words))) = self.document().feature(id).map(|f| self.feature_words(&f.kind))
+                    {
+                        // (What a rolled or lofted sheet says of how close its flat pattern is.)
+                        resp = resp.on_hover_text(words);
                     }
                     if toggled {
                         if !self.chrome.expanded.remove(&id) {

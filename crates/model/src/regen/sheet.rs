@@ -9,6 +9,8 @@ use tenon_kernel::{
 use tenon_sketch::Sketch;
 
 use super::{Ctx, Stop, label, profile_of};
+
+pub(crate) mod make;
 use crate::FeatureId;
 use crate::naming::{FaceOrigin, edge_key, names_of_boolean, names_of_sweep, pair_key, resolve_edge, sub_key};
 use crate::sheet::flange::{self, Notch, Part, Site};
@@ -116,10 +118,15 @@ impl Ctx<'_> {
     /// of the sheet and the rim (the face one thickness deep beside it).
     fn flange_site(&self, body: ShapeHandle, topo: &Topology, e: u32, t: f64, flip: bool) -> Result<Site, Stop> {
         let info = self.k.edge_info(body.edge(e))?;
+        let adjacent = topo.edge_faces.get(e as usize).map_or(&[][..], Vec::as_slice);
+        for f in adjacent {
+            if matches!(self.k.face_info(body.face(*f))?.surface, SurfaceKind::BSpline | SurfaceKind::Bezier) {
+                return Err("A flange goes on an edge between two flat faces, and this is the rim of a die-formed sheet, which takes none. Make the sheet as Press Brake facets to put flanges on it.".into());
+            }
+        }
         if !matches!(info.curve, CurveKind::Line { .. }) {
             return Err("A flange goes on a straight edge, and an edge picked for it is curved.".into());
         }
-        let adjacent = topo.edge_faces.get(e as usize).map_or(&[][..], Vec::as_slice);
         let &[fa, fb] = adjacent else { return Err("A flange goes on an edge between two faces of the sheet.".into()) };
         let d = (info.end - info.start).normalized();
         // The rim is the face that has, one thickness away, the matching edge of the sheet's
@@ -1709,14 +1716,26 @@ impl Ctx<'_> {
         // The face the sketch is on.
         let seat = crate::sheet::seat_of(self.doc, &self.regen, &*self.k, c.sketch, &frame, &profile.regions)?;
         let Some((bi, base)) = seat else {
-            return Err(
+            return Err(if self.no_flat_side(&opts)? {
+                "A cut across bends is drawn from a flat face of the sheet, and this sheet has none: it is rolled or die-formed all over. It takes an ordinary Cut."
+            } else {
                 "A cut across bends is drawn on the sheet: its sketch must be on a flat face of the sheet, and this one's plane has no face of the part in it. Put the sketch on the face the cut starts from."
-                    .into(),
-            );
+            }
+            .into());
         };
         let body = self.regen.bodies.get(bi).ok_or("no such body")?.shape;
         let tools = wrap::wrap(&*self.k, body, base, &frame, &profile.regions, c.distance.unwrap_or(t), &opts)?;
         self.sheet_tools(id, bi, body, &tools, false)
+    }
+
+    /// Whether the part has a solid with no flat side of a sheet: rolled or die-formed all over.
+    fn no_flat_side(&self, opts: &Unfold) -> Result<bool, Stop> {
+        for body in &self.regen.bodies {
+            if !wrap::has_flat_side(&*self.k, body.shape, opts)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// A cut normal: the profile is taken out of every face and bend of the sheet it is seen
@@ -1732,10 +1751,13 @@ impl Ctx<'_> {
         let profile = profile_of(sketch, frame, &c.regions)?;
         let opts = Unfold { thickness: t, k_factor: sizes.k_factor, base: None, deflection: crate::sheet::FLAT_DEFLECTION };
         let Some((bi, base, toward)) = crate::sheet::seen_on(self.doc, &self.regen, &*self.k, &frame, &profile.regions)? else {
-            return Err(
+            // (A rolled sheet may well look at it, from a side that is not flat.)
+            return Err(if self.no_flat_side(&opts)? {
+                "A cut normal to the sheet starts from a flat side that looks at its sketch, and this sheet has none: it is rolled or die-formed all over. It takes an ordinary Cut."
+            } else {
                 "No side of the sheet looks at the sketch: its plane is edge on to every face of the sheet. Put the sketch on a plane that looks at the face to be cut."
-                    .into(),
-            );
+            }
+            .into());
         };
         let body = self.regen.bodies.get(bi).ok_or("no such body")?.shape;
         let tools = wrap::project(&*self.k, body, base, toward, &frame, &profile.regions, c.distance.unwrap_or(t), &opts)?;
@@ -1806,7 +1828,7 @@ impl Ctx<'_> {
         let t = sizes.thickness;
         let (held, frame) = self.sketch_and_frame(c.sketch)?;
         let sketch: &Sketch = &held;
-        let (drawn, mut ids) = contour_path(sketch)?;
+        let (drawn, mut ids) = contour_path(sketch, &[])?;
         let (bi, body, found) = self.sheet_edges(&c.edges, "contour flange")?;
         let topo = self.k.topology(body)?;
         let mut sites: Vec<(Site, u64)> = Vec::with_capacity(found.len());
@@ -1940,7 +1962,7 @@ impl Ctx<'_> {
         let t = sizes.thickness;
         let (held, frame) = self.sketch_and_frame(c.sketch)?;
         let sketch: &Sketch = &held;
-        let (drawn, ids) = contour_path(sketch)?;
+        let (drawn, ids) = contour_path(sketch, &[])?;
         let (lo, hi) = c.reach(t);
         let path = strip::rounded(&drawn, c.radius.unwrap_or(sizes.bend_radius), lo, hi)?;
         // A face is named after the curve of the sketch it follows (a bend made at a corner:
@@ -1970,13 +1992,13 @@ impl Ctx<'_> {
 /// The open profile a sketch holds: its lines and arcs (not construction or reference geometry)
 /// in order from one end to the other, with the sketch entity each is. The profile runs so that
 /// its first turn is to the left: the left of it is then the inside of its first corner.
-fn contour_path(sketch: &Sketch) -> Result<(Vec<strip::Run>, Vec<tenon_sketch::EntityId>), String> {
+fn contour_path(sketch: &Sketch, skip: &[tenon_sketch::EntityId]) -> Result<(Vec<strip::Run>, Vec<tenon_sketch::EntityId>), String> {
     use tenon_sketch::{EntityId, Geometry};
     // Each curve by where it starts and ends: curves join where their ends are at one place
     // (one point of the sketch, or two that coincide).
     let mut left: Vec<(EntityId, Vec2, Vec2)> = Vec::new();
     for (id, e) in sketch.entities() {
-        if e.construction || e.reference {
+        if e.construction || e.reference || skip.contains(&id) {
             continue;
         }
         match &e.geometry {

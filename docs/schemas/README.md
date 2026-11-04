@@ -116,7 +116,7 @@ taken away), without a check.
     (DEC-118); `sketch.stretch` (DEC-119); `sketch.ellipse` (DEC-120); point ids among `sketch.spline`'s `points`, and the
     constraint type `smooth` (DEC-121); `end_radius`, `radii` and `faces` of `model.fillet`, whose
     `edges` may be left out for `faces` (DEC-122); `study.keep`, `study.shape` and `study.optimize`,
-    and `depth` of `study.set` (DEC-123). 235 commands. Then `asm.pattern`, `asm.mirror`,
+    and `depth` of `study.set` (DEC-123). Then `asm.pattern`, `asm.mirror`,
     `asm.edit_pattern`, `asm.suppress_pattern`, `asm.delete_pattern`, `asm.copy`, and `pattern` of
     `asm.rename` (DEC-130); in what comes back, `asm.update` and the assembly's edits have
     `patterns_failing` when a pattern's rule cannot be worked out. Then `drw.auxiliary`, `drw.overlay`,
@@ -132,6 +132,8 @@ taken away), without a check.
     on the commands that name a plane by `plane`, `face` and `work_plane`, a UCS's `{"ucs": id, ...}`
     among what a plane, an axis or a direction is, and among what `model.measure` measures to (DEC-133).
     Then `sheet.rip`, `sheet.unfold` and `sheet.refold` (DEC-137).
+    Then `sheet.contour_roll`, `sheet.lofted_flange` and `sheet.punch`, and `punches` of
+    `sheet.export_dxf` and `sheet.export_svg` (DEC-138).
   - `study.shape`'s `symmetry` still has the plane's type, so a face passes the schema and is
     refused by the command, in words: a schema that took less would break a program written
     against it, and its description says what is refused. `null` for `min_member`, `element_size`

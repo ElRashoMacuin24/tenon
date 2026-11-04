@@ -1536,3 +1536,109 @@ fn diff_sees_a_sketch_shown_and_does_not_call_a_marked_point_moved() {
     let d = diff_of(&before, &text(&s)).unwrap();
     assert!(!d.text().contains("moved") && d.text().contains("changed"), "{}", d.text());
 }
+
+#[test]
+fn a_contour_roll_a_lofted_flange_and_a_punch_are_written_as_text_and_read_back() {
+    let mut s = Session::default();
+    let extra = Map::new();
+    run(&mut s, "sheet.defaults", json!({ "thickness": 2 }));
+    let line = |s: &mut Session, sk: u64, a: (f64, f64), b: (f64, f64)| {
+        run(s, "sketch.line", json!({ "sketch": sk, "x1": a.0, "y1": a.1, "x2": b.0, "y2": b.1 }));
+    };
+    let new_sketch =
+        |s: &mut Session, plane: &str| run(s, "sketch.create", json!({ "plane": plane, "project_origin": false }))["feature"].as_u64().unwrap();
+    // A contour roll with everything said of it, and one with only what it must have.
+    let roll = new_sketch(&mut s, "xz");
+    line(&mut s, roll, (50.0, 0.0), (50.0, 40.0));
+    run(
+        &mut s,
+        "sheet.contour_roll",
+        json!({ "sketch": roll, "axis": "z", "angle": 3.0, "direction": "flipped", "position": "symmetric", "radius": 2.5, "operation": "new_body" }),
+    );
+    run(&mut s, "sheet.contour_roll", json!({ "sketch": roll, "axis": "z", "angle": 1.5 }));
+    // A lofted flange of each kind.
+    let (low, high) = (new_sketch(&mut s, "xy"), new_sketch(&mut s, "xz"));
+    line(&mut s, low, (0.0, 0.0), (40.0, 0.0));
+    line(&mut s, high, (0.0, 30.0), (40.0, 30.0));
+    run(&mut s, "sheet.lofted_flange", json!({ "sketches": [low, high], "operation": "new_body" }));
+    run(
+        &mut s,
+        "sheet.lofted_flange",
+        json!({ "sketches": [low, high], "forming": "press_brake", "chord": 0.25, "position": "flipped", "radius": 1.5, "operation": "new_body" }),
+    );
+    // A punch of a cut and one of a formed shape, the second on a point named and turned over.
+    let at = new_sketch(&mut s, "xy");
+    let point = run(&mut s, "sketch.point", json!({ "sketch": at, "x": 20, "y": 10 }))["point"].as_u64().unwrap();
+    run(&mut s, "sheet.punch", json!({ "sketch": at, "shape": "d_shape", "diameter": 12, "across": 10, "rotation": 0.5 }));
+    run(&mut s, "sheet.punch", json!({ "sketch": at, "points": [point], "shape": "louver", "length": 30, "width": 15, "height": 5, "flip": true }));
+
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert_eq!(
+        (text.matches("type = \"contour_roll\"").count(), text.matches("type = \"lofted_flange\"").count(), text.matches("type = \"punch\"").count()),
+        (2, 2, 2),
+        "{text}"
+    );
+    let rolled = text.split("type = \"contour_roll\"").nth(1).unwrap().split("[[").next().unwrap();
+    for field in [
+        "axis = { origin = \"Z\" }",
+        "angle = 3.0",
+        "direction = \"flipped\"",
+        "position = \"symmetric\"",
+        "radius = 2.5",
+        "operation = \"new_body\"",
+    ] {
+        assert!(rolled.contains(field), "{field}: {rolled}");
+    }
+    let brake = text.split("type = \"lofted_flange\"").nth(2).unwrap().split("[[").next().unwrap();
+    for field in ["sketches = [", "forming = { press_brake = { chord = 0.25 } }", "position = \"flipped\"", "radius = 1.5"] {
+        assert!(brake.contains(field), "{field}: {brake}");
+    }
+    let die = text.split("type = \"lofted_flange\"").nth(1).unwrap().split("[[").next().unwrap();
+    assert!(die.contains("forming = \"die_formed\"") && !die.contains("radius"), "{die}");
+    let d = text.split("type = \"punch\"").nth(1).unwrap().split("[[").next().unwrap();
+    assert!(
+        d.contains("shape = { d_shape = { diameter = 12.0, across = 10.0 } }")
+            && d.contains("rotation = 0.5")
+            && !d.contains("points")
+            && !d.contains("flip"),
+        "{d}"
+    );
+    let louver = text.split("type = \"punch\"").nth(2).unwrap().split("[[").next().unwrap();
+    assert!(
+        louver.contains("shape = { louver = { length = 30.0, width = 15.0, height = 5.0 } }")
+            && louver.contains("flip = true")
+            && louver.contains("points = ["),
+        "{louver}"
+    );
+
+    // Read back, it is the same part, and saves as the same bytes.
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(back.features().len(), s.document().features().len());
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+    back.validate().unwrap();
+
+    // Sizes that cannot be are the rebuild's to judge (DEC-126): the file opens, and that feature
+    // says what is wrong. What no build can read is refused.
+    let says = |bad: String| {
+        let (doc, _) = project::from_bytes(bad.as_bytes()).expect("sizes are not asked of a file");
+        doc.features().iter().find_map(|f| f.kind.check_sizes().err()).unwrap_or_default()
+    };
+    let e = says(text.replace("angle = 3.0", "angle = 7.0"));
+    assert!(e.contains("leave it a seam"), "{e}");
+    let e = says(text.replace("chord = 0.25", "chord = 0.0"));
+    assert!(e.contains("chord tolerance"), "{e}");
+    let e = says(text.replace("across = 10.0", "across = 2.0"));
+    assert!(e.contains("Across Flat"), "{e}");
+    let e = project::from_bytes(text.replace("shape = { d_shape", "shape = { star").as_bytes()).unwrap_err().to_string();
+    assert!(e.contains("star"), "{e}");
+
+    // The commands that were here before have written nothing new: a part without these saves
+    // as it did.
+    let mut plain = Session::default();
+    run(&mut plain, "sheet.defaults", json!({ "thickness": 2 }));
+    let bare = String::from_utf8(project::to_bytes(plain.document(), &extra).unwrap()).unwrap();
+    for word in ["contour_roll", "lofted_flange", "punch"] {
+        assert!(!bare.contains(word), "{word}: {bare}");
+    }
+}

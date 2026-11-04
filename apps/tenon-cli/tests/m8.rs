@@ -6,7 +6,7 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::path::{Path, PathBuf};
 
-use serde_json::json;
+use serde_json::{Value, json};
 use tenon_cli::Engine;
 use tenon_dxf::Tag;
 use tenon_geom::Vec2;
@@ -255,4 +255,34 @@ fn the_checked_in_m8_example_is_what_the_script_writes() {
             assert!((x - y).abs() <= tolerance, "{file}: {x} vs {y}");
         }
     }
+}
+
+/// What has no flat pattern has no flat pattern file either, in words; and a sheet with what a die
+/// cannot make joined to it does not write the die-formed part alone as if it were the whole.
+#[test]
+fn a_die_formed_sheet_with_something_joined_to_it_writes_no_flat_pattern_file() {
+    let dir = std::env::temp_dir().join(format!("tenon-cli-m8-flat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = Engine::new(kernel(), &dir);
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    run(&mut e, "sheet.defaults", json!({ "thickness": 1, "bend_radius": 1 }));
+    let a = run(&mut e, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].clone();
+    run(&mut e, "sketch.line", json!({ "sketch": a, "x1": 0, "y1": 0, "x2": 100, "y2": 0 }));
+    let w = run(&mut e, "work.plane", json!({ "by": "offset", "base": "xy", "distance": 80 }))["feature"].clone();
+    let b = run(&mut e, "sketch.create", json!({ "work_plane": w, "project_origin": false }))["feature"].clone();
+    run(&mut e, "sketch.line", json!({ "sketch": b, "x1": 0, "y1": 0, "x2": 100, "y2": 0 }));
+    run(&mut e, "sheet.lofted_flange", json!({ "sketches": [a, b] }));
+    // Alone it writes its four rims.
+    let alone = run(&mut e, "sheet.export_dxf", json!({ "path": "alone.dxf" }));
+    assert!((alone["area"].as_f64().unwrap() - 8000.0).abs() < 1e-6, "{alone}");
+    let tab = run(&mut e, "sketch.create", json!({ "plane": "xz", "project_origin": false }))["feature"].clone();
+    run(&mut e, "sketch.rectangle", json!({ "sketch": tab, "x1": 0, "y1": 80, "x2": 100, "y2": 120 }));
+    run(&mut e, "sheet.face", json!({ "sketch": tab, "flip": true }));
+    for (id, file) in [("sheet.export_dxf", "with.dxf"), ("sheet.export_svg", "with.svg")] {
+        let said = e.exec(id, &json!({ "path": file })).unwrap_err().to_string();
+        assert!(said.contains("die-formed sheet") && said.contains("Press Brake"), "{id}: {said}");
+        assert!(!dir.join(file).exists(), "{file}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

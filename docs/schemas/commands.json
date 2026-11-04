@@ -5543,6 +5543,238 @@
       }
     },
     {
+      "id": "sheet.contour_roll",
+      "label": "Contour Roll",
+      "undoable": true,
+      "description": "sketch (an open profile: lines and arcs end to end, all on one side of the axis and clear of it; corners between lines become bends, an arc is a bend as drawn); axis (in the sketch's plane: a line of the sketch by its id, \"x\", \"y\" or \"z\", or {\"work\": id}; default: the sketch's centre line); angle (rad: how far round, 1 to 359.9 degrees: a sheet has a seam); direction: \"default\" | \"flipped\" | \"symmetric\"; position: \"default\" (the sheet goes on the inside of the profile's first corner, or to the left of one straight line) | \"flipped\" | \"symmetric\"; radius (inside, of the bends made at corners; default BendRadius); operation: \"join\" (default) | \"new_body\". In the flat pattern a straight line is a cylinder or a cone unrolled exactly, at the sheet's neutral surface; a profile of more than one line or arc does not unroll exactly, and the pattern says how far out it is",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch of the open profile: lines and arcs end to end, clear of the axis"
+          },
+          "axis": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "x",
+                  "y",
+                  "z"
+                ]
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "what it is rolled about, in the sketch's plane: a line of the sketch (its id), an origin axis, or a work axis as {\"work\": id} (default: the sketch's centre line)"
+          },
+          "angle": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "how far round, 1 to 359.9 degrees"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "default",
+              "flipped",
+              "symmetric"
+            ],
+            "description": "which way round the axis from the sketch"
+          },
+          "position": {
+            "type": "string",
+            "enum": [
+              "default",
+              "flipped",
+              "symmetric"
+            ],
+            "description": "which side of the profile the sheet's thickness is on"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "join",
+              "new_body"
+            ],
+            "description": "default join"
+          },
+          "radius": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the inside bend radius (default: the rule's BendRadius)"
+          },
+          "equations": {
+            "type": "object",
+            "description": "equations for values of the feature, by where the value is in its definition: {\"/distance\": \"width / 2\"} (lengths in mm, angles in degrees)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "angle"
+        ]
+      }
+    },
+    {
+      "id": "sheet.lofted_flange",
+      "label": "Lofted Flange",
+      "undoable": true,
+      "description": "sketches: [two sketches], each an open profile (lines and arcs end to end), the sheet between them; forming: \"die_formed\" (default: one smooth surface; laid flat by triangles, and the flat pattern says how close that is; corners of the profiles are rounded to the bend radius) | \"press_brake\" (flat facets with a bend at every line between two; arcs are taken as chords); chord (press_brake: how far a chord may leave its arc, mm; default 0.5); position: \"default\" (the sheet is on the left of the first profile, the inside of its first corner) | \"flipped\" | \"symmetric\"; radius (inside, of the bends; default BendRadius); operation: \"join\" (default) | \"new_body\". A die-formed sheet too thick for a curve of its profiles, or twisted so that it comes to more than 2 % under the thickness, is refused; with anything joined to it or cut part way into it, it has no flat pattern, where facets do",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketches": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "the two sketches of the open profiles, each lines and arcs end to end"
+          },
+          "forming": {
+            "type": "string",
+            "enum": [
+              "die_formed",
+              "press_brake"
+            ],
+            "description": "one smooth surface, or flat facets with bends between them (default die_formed)"
+          },
+          "chord": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "press_brake: how far a chord may leave the arc it stands for (default 0.5)"
+          },
+          "position": {
+            "type": "string",
+            "enum": [
+              "default",
+              "flipped",
+              "symmetric"
+            ],
+            "description": "which side of the profiles the sheet's thickness is on"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "join",
+              "new_body"
+            ],
+            "description": "default join"
+          },
+          "radius": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the inside bend radius (default: the rule's BendRadius)"
+          },
+          "equations": {
+            "type": "object",
+            "description": "equations for values of the feature, by where the value is in its definition: {\"/distance\": \"width / 2\"} (lengths in mm, angles in degrees)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketches"
+        ]
+      }
+    },
+    {
+      "id": "sheet.punch",
+      "label": "Punch Tool",
+      "undoable": true,
+      "description": "sketch (on a flat side of the sheet: its centre points are where the shape is stamped); points: [ids] (default: every centre point); shape: \"round\" (default; diameter) | \"square\" (side) | \"rectangle\" (length, width) | \"obround\" (length overall, width) | \"d_shape\" (diameter; across: from the flat to the far side of the circle) | \"dimple\" (diameter, depth) | \"louver\" (length along the hinge, width from the hinge to the lip laid flat, height of the lip); a size left out is what the library starts it as; rotation (rad, about the sketch's normal from its X); flip (a formed shape stands out of the sheet's other side). Each stamp stays on one flat face: across a bend or over an edge it is refused, and a formed shape will not close over a hole. In the flat pattern a cut is its outline with the punch's name; a formed shape is its name, its centre mark and the line it bends at, and one cut since it was stamped has no flat pattern",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch of the centre points: on a flat side of the sheet"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "which points of the sketch (default: every centre point)"
+          },
+          "shape": {
+            "type": "string",
+            "enum": [
+              "round",
+              "square",
+              "rectangle",
+              "obround",
+              "d_shape",
+              "dimple",
+              "louver"
+            ],
+            "description": "which shape of the library (default round)"
+          },
+          "diameter": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "round, d_shape, dimple: across the circle"
+          },
+          "side": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "square: its side"
+          },
+          "length": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "rectangle, obround: along the punch's X; louver: along the hinge"
+          },
+          "width": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "rectangle, obround: across it; louver: from the hinge to the lip, laid flat"
+          },
+          "across": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "d_shape: from the flat to the far side of the circle"
+          },
+          "depth": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "dimple: how far its top stands out of the near side"
+          },
+          "height": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "louver: how far the top of its lip stands out of the face"
+          },
+          "rotation": {
+            "type": "number",
+            "x-unit": "rad",
+            "description": "how far the shape is turned, about the sketch's normal from its X (default 0)"
+          },
+          "flip": {
+            "type": "boolean",
+            "description": "a formed shape stands out of the sheet's other side (default false)"
+          },
+          "equations": {
+            "type": "object",
+            "description": "equations for values of the feature, by where the value is in its definition: {\"/distance\": \"width / 2\"} (lengths in mm, angles in degrees)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch"
+        ]
+      }
+    },
+    {
       "id": "sheet.corner_seam",
       "label": "Corner Seam",
       "undoable": true,
@@ -5662,7 +5894,7 @@
       "id": "sheet.cut_across_bend",
       "label": "Cut Across Bend",
       "undoable": true,
-      "description": "sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern",
+      "description": "sketch (on a flat face of the sheet, its profile of lines, arcs and circles drawn as on the flat pattern: past an edge of the face that is a bend line it lies on the bend, then on the face beyond); regions; distance (how deep from the side the sketch is on; default and at most Thickness: through). The profile is cut out of every face and bend it lies on with the sheet laid flat from the sketch's face, so the cut goes round the bends and is the profile in the flat pattern. It follows a cylinder of a rolled sheet like a bend; a profile that reaches a cone, a round part of a rolled profile or a die-formed face is refused",
       "params": {
         "type": "object",
         "properties": {
@@ -5709,7 +5941,7 @@
       "id": "sheet.cut_normal",
       "label": "Cut Normal",
       "undoable": true,
-      "description": "sketch (on any plane that looks at the sheet: a face of it, or a work plane over it at any angle; its profile of lines, arcs and circles); regions; distance (how deep from the side of the sheet that looks at the sketch; default and at most Thickness: through). The profile is cut out of every flat face and bend of that side it is seen on, looking along the sketch's normal, and each is cut square to itself: a cut whose walls are square to the sheet whatever the angle of the sketch, so the flat pattern has one clean outline. (On a face parallel to the sketch it is the profile; at an angle, or on a bend, the profile as it is seen there.)",
+      "description": "sketch (on any plane that looks at the sheet: a face of it, or a work plane over it at any angle; its profile of lines, arcs and circles); regions; distance (how deep from the side of the sheet that looks at the sketch; default and at most Thickness: through). The profile is cut out of every flat face and bend of that side it is seen on, looking along the sketch's normal, and each is cut square to itself: a cut whose walls are square to the sheet whatever the angle of the sketch, so the flat pattern has one clean outline. (On a face parallel to the sketch it is the profile; at an angle, or on a bend, the profile as it is seen there.) A profile over a cone, a round part of a rolled profile or a die-formed face is refused",
       "params": {
         "type": "object",
         "properties": {
@@ -6053,7 +6285,7 @@
       "id": "sheet.flat",
       "label": "Flat Pattern",
       "undoable": false,
-      "description": "The part laid flat: length and width (the sheet it is cut from), area, cut_length (round the outline and every hole), holes, and each bend's angle (rad), inside radius, allowance (its width in the flat), up (bent towards the A side) and centre lines. face: the A side (default: the part's, else the largest flat face); body (default: the only one); curves: true adds the outlines (outer, inner) as lines, arcs, circles and polylines",
+      "description": "The part laid flat: length and width (the sheet it is cut from), area, cut_length (round the outline and every hole), holes, and each bend's angle (rad), inside radius, allowance (its width in the flat), up (bent towards the A side) and centre lines. notes (when there are any): what the pattern is not exact about, in words: a die-formed or rolled shape that does not lay flat exactly, and how far out it is. marks (when there are any): each stamp of a punch, its name, its centre, whether it is formed, and the lines a formed one bends at. face: the A side (default: the part's, else the largest flat face); body (default: the only one); curves: true adds the outlines (outer, inner) as lines, arcs, circles and polylines",
       "params": {
         "type": "object",
         "properties": {
@@ -8171,7 +8403,7 @@
       "id": "sheet.export_dxf",
       "label": "Export Flat Pattern DXF",
       "undoable": false,
-      "description": "path (.dxf): the flat pattern for a cutter, R12 in millimetres with its lower left corner at the origin. Layers: OUTER (the outline), INTERIOR (holes and cut-outs), BEND_UP and BEND_DOWN (bend centre lines), BEND_EXTENT (where bends begin and end). bends (default true), extents (default true): leave those lines out with false. face, body: as for sheet.flat. Returns the sheet's length, width, area and cut_length, and what was written of the outlines (entities)",
+      "description": "path (.dxf): the flat pattern for a cutter, R12 in millimetres with its lower left corner at the origin. Layers: OUTER (the outline), INTERIOR (holes and cut-outs), BEND_UP and BEND_DOWN (bend centre lines), BEND_EXTENT (where bends begin and end), PUNCH (a formed punch's centre mark and bend line), PUNCH_ID (every punch's name). bends (default true), extents (default true), punches (default true): leave those out with false. face, body: as for sheet.flat. Returns the sheet's length, width, area and cut_length, and what was written of the outlines (entities)",
       "params": {
         "type": "object",
         "properties": {
@@ -8187,6 +8419,10 @@
           "extents": {
             "type": "boolean",
             "description": "write where bends begin and end (default true)"
+          },
+          "punches": {
+            "type": "boolean",
+            "description": "write punches' names, and formed punches' centre marks and bend lines (default true)"
           },
           "face": {
             "$ref": "#/$defs/face_ref",
@@ -8207,7 +8443,7 @@
       "id": "sheet.export_svg",
       "label": "Export Flat Pattern SVG",
       "undoable": false,
-      "description": "path (.svg): the flat pattern as a picture at full size; bends, extents, face, body as for sheet.export_dxf",
+      "description": "path (.svg): the flat pattern as a picture at full size; bends, extents, punches, face, body as for sheet.export_dxf",
       "params": {
         "type": "object",
         "properties": {
@@ -8223,6 +8459,10 @@
           "extents": {
             "type": "boolean",
             "description": "draw where bends begin and end (default true)"
+          },
+          "punches": {
+            "type": "boolean",
+            "description": "draw punches' names, and formed punches' centre marks and bend lines (default true)"
           },
           "face": {
             "$ref": "#/$defs/face_ref",

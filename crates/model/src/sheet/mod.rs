@@ -11,39 +11,47 @@
 //!   [`BendBetween`] (two faces made apart joined by a bend: [`join`]), [`SharpBend`] (the
 //!   sharp edge between two faces that touch made a bend where it is), [`Fold`] (a face
 //!   folded along a line), [`CutAcrossBend`] (a profile cut round the bends, as drawn on the
-//!   sheet laid flat) and [`CutNormal`] (one cut where it is seen on the sheet: both [`wrap`]).
+//!   sheet laid flat) and [`CutNormal`] (one cut where it is seen on the sheet: both [`wrap`]),
+//!   [`ContourRoll`] (sheet rolled round an axis), [`LoftedFlange`] (sheet between two profiles:
+//!   [`loft`]) and [`Punch`] (shapes stamped from a library: [`punch`]).
 //!   Other cuts, holes and rounded corners are the ordinary features.
 //!   [`Rip`] opens a seam in a face, so that a closed shape can be laid flat ([`rip`]);
 //!   [`UnfoldBends`] lays chosen bends flat for work across them, and [`Refold`] folds them back
 //!   with what was done meanwhile ([`flatten`]).
 //! - The **flat pattern** ([`flat`], [`unfold`]) is worked out from the solid, not from the
-//!   features, so whatever made the part, what is cut is what the model shows.
+//!   features, so whatever made the part, what is cut is what the model shows. (The features
+//!   say only what the solid cannot: where a die-formed sheet goes, and what a punch has formed.)
 
 pub mod flange;
 pub mod flat;
 pub mod flatten;
 pub mod join;
+pub mod loft;
 pub mod outline;
+pub mod punch;
 pub mod region;
 pub mod rip;
 pub mod strip;
 pub mod unfold;
 pub mod wrap;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tenon_kernel::Kernel;
 
-use crate::document::{Operation, RegionSel};
+use crate::document::{AxisRef, Operation, RegionSel};
 use crate::naming::{EdgeRef, FaceRef};
 use crate::params::{ParamUnit, UserParam};
 use crate::{Document, FeatureId};
 
-pub use flat::{Bend, FlatCurve, FlatLoop, FlatPattern};
+pub use flat::{Bend, FlatCurve, FlatLoop, FlatPattern, PunchMark};
 pub use flatten::FlatBend;
 pub use join::DoubleBend;
-pub use unfold::{Unfold, unfold};
+pub use loft::{Forming, LoftedFlange, Skin};
+pub use punch::{LIBRARY as PUNCH_LIBRARY, Punch, PunchFamily, PunchShape};
+pub use unfold::{Extras, PunchFaces, Unfold, unfold, unfold_with};
 
 /// The names of the part's sheet metal parameters.
 pub const THICKNESS: &str = "Thickness";
@@ -944,8 +952,136 @@ impl ContourFlange {
     }
 }
 
+/// The most a contour roll turns through: a whole turn would close on itself, and a sheet has a
+/// seam (radians).
+pub const MAX_CONTOUR_ROLL: f64 = 359.9 * std::f64::consts::PI / 180.0;
+
+/// A strip of sheet that follows an open profile, rolled round an axis in the profile's plane.
+/// Corners between lines become bends; an arc is a bend as drawn.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ContourRoll {
+    pub sketch: FeatureId,
+    /// What it is rolled about: an axis in the sketch's plane, clear of the profile.
+    pub axis: AxisRef,
+    /// How far round (radians).
+    pub angle: f64,
+    /// The way round the axis it goes from its sketch, the other way, or half each way.
+    #[serde(default)]
+    pub direction: Sides,
+    /// Which side of the profile the sheet's thickness goes: as for a contour flange.
+    #[serde(default)]
+    pub position: Sides,
+    /// The inside radius of the bends made at corners; without it, the part's `BendRadius`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<f64>,
+    /// Join (to the sheet it touches) or a new solid.
+    #[serde(default)]
+    pub operation: Operation,
+}
+
+impl ContourRoll {
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.angle.is_finite() && (MIN_FLANGE_ANGLE..=MAX_CONTOUR_ROLL).contains(&self.angle)) {
+            return Err("A contour roll turns through 1 to 359.9 degrees: a sheet rolled right round closes on itself, so leave it a seam.".into());
+        }
+        if let Some(r) = self.radius
+            && !(r.is_finite() && (MIN_BEND_RADIUS..=1000.0).contains(&r))
+        {
+            return Err(format!("the bend radius must be from {MIN_BEND_RADIUS} to 1000 mm"));
+        }
+        match self.operation {
+            Operation::Join | Operation::NewBody => Ok(()),
+            _ => Err("a contour roll is joined to the part or starts a new solid".into()),
+        }
+    }
+
+    /// How far the sheet reaches to the left of the profile and to its right (negative), for a
+    /// sheet `t` thick.
+    pub fn reach(&self, t: f64) -> (f64, f64) {
+        match self.position {
+            Sides::Default => (0.0, t),
+            Sides::Flipped => (-t, 0.0),
+            Sides::Symmetric => (-t / 2.0, t / 2.0),
+        }
+    }
+}
+
 /// How closely the points of a curve that runs across a bend follow it in a flat pattern (mm).
 pub const FLAT_DEFLECTION: f64 = 0.005;
+
+/// The source a die-formed sheet's two sides are named after.
+pub(crate) const SKIN_SIDES: [u64; 2] = [0x5349_4445_0000_0001, 0x5349_4445_0000_0002];
+
+/// What the part's features know of its solid `bi` that the solid does not say: where a die-formed
+/// sheet goes in the flat, and which of its faces each stamp of a punch made.
+fn extras_of(doc: &Document, regen: &crate::Regen, bi: usize, sizes: &Sizes) -> Result<Extras, String> {
+    use crate::FeatureKind;
+    use crate::regen::FeatureStatus;
+    let mut extras = Extras::default();
+    let Some(body) = regen.bodies.get(bi) else { return Ok(extras) };
+    let named = |feature: FeatureId, sources: &BTreeSet<u64>| -> BTreeSet<u32> {
+        body.names
+            .iter()
+            .enumerate()
+            .filter(
+                |(_, n)| matches!(n, Some(crate::naming::FaceOrigin::From { feature: f, source, .. }) if *f == feature && sources.contains(source)),
+            )
+            .filter_map(|(i, _)| u32::try_from(i).ok())
+            .collect()
+    };
+    for f in doc.features() {
+        if !matches!(regen.status_of(f.id), Some(FeatureStatus::Ok)) {
+            continue;
+        }
+        match &f.kind {
+            FeatureKind::LoftedFlange(l) if l.forming == Forming::DieFormed => {
+                let sides = [named(f.id, &BTreeSet::from([SKIN_SIDES[0]])), named(f.id, &BTreeSet::from([SKIN_SIDES[1]]))];
+                if sides.iter().all(BTreeSet::is_empty) {
+                    continue;
+                }
+                let mut skin = crate::regen::lofted_skin(doc, regen, l, sizes)?;
+                skin.faces = sides.map(|s| s.into_iter().collect());
+                extras.skins.push(Arc::new(skin));
+            }
+            FeatureKind::Punch(p) => {
+                let Some(sketch) = regen.sketches.get(&p.sketch).map(|s| &**s).or(doc.sketch(p.sketch)) else { continue };
+                let points = if p.points.is_empty() { crate::document::hole_centres(sketch) } else { p.points.clone() };
+                let formed = p.shape.is_formed();
+                for point in points {
+                    let every: BTreeSet<u64> = (0..punch::PARTS).map(|n| punch::tag(point, n)).collect();
+                    let faces = named(f.id, &every);
+                    if faces.is_empty() {
+                        continue;
+                    }
+                    // A dimple bends all round its rim; a louver at its hinge, where the flap leaves
+                    // the sheet.
+                    let bends = match p.shape {
+                        PunchShape::Dimple { .. } => faces.clone(),
+                        PunchShape::Louver { .. } => {
+                            named(f.id, &BTreeSet::from([punch::tag(point, punch::PART_FLAP), punch::tag(point, punch::PART_FLAP + 1)]))
+                        }
+                        _ => BTreeSet::new(),
+                    };
+                    if formed {
+                        extras.formed_volume += p.shape.formed_volume(sizes.thickness, sizes.bend_radius, sizes.k_factor);
+                    }
+                    let later: BTreeSet<FeatureId> = doc.features().iter().skip_while(|x| x.id != f.id).skip(1).map(|x| x.id).collect();
+                    let later = body
+                        .names
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, n)| n.as_ref().is_some_and(|n| later.contains(&n.feature())))
+                        .filter_map(|(i, _)| u32::try_from(i).ok())
+                        .collect();
+                    let at = sketch.point(point).zip(regen.sketch_frames.get(&p.sketch)).map(|(at, frame)| frame.plane_point(at));
+                    extras.punches.push(PunchFaces { name: p.shape.name(), formed, faces, bends, later, at });
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(extras)
+}
 
 /// The flat pattern of the part as `regen` has it: of solid `body` (the only one, when it is not
 /// said), laid out from `face` (else the part's A side, else its largest flat face).
@@ -970,7 +1106,8 @@ pub fn pattern_of(doc: &Document, regen: &crate::Regen, k: &dyn Kernel, body: Op
         }
         None => None,
     };
-    unfold(k, shape, &Unfold { thickness: sizes.thickness, k_factor: sizes.k_factor, base, deflection: FLAT_DEFLECTION })
+    let extras = extras_of(doc, regen, bi, &sizes)?;
+    unfold_with(k, shape, &Unfold { thickness: sizes.thickness, k_factor: sizes.k_factor, base, deflection: FLAT_DEFLECTION }, &extras)
 }
 
 /// How a sheet is laid flat by the part's rule.

@@ -324,14 +324,14 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "sheet.export_dxf",
         label: "Export Flat Pattern DXF",
-        help: "path (.dxf): the flat pattern for a cutter, R12 in millimetres with its lower left corner at the origin. Layers: OUTER (the outline), INTERIOR (holes and cut-outs), BEND_UP and BEND_DOWN (bend centre lines), BEND_EXTENT (where bends begin and end). bends (default true), extents (default true): leave those lines out with false. face, body: as for sheet.flat. Returns the sheet's length, width, area and cut_length, and what was written of the outlines (entities)",
+        help: "path (.dxf): the flat pattern for a cutter, R12 in millimetres with its lower left corner at the origin. Layers: OUTER (the outline), INTERIOR (holes and cut-outs), BEND_UP and BEND_DOWN (bend centre lines), BEND_EXTENT (where bends begin and end), PUNCH (a formed punch's centre mark and bend line), PUNCH_ID (every punch's name). bends (default true), extents (default true), punches (default true): leave those out with false. face, body: as for sheet.flat. Returns the sheet's length, width, area and cut_length, and what was written of the outlines (entities)",
         mutates: false,
         run: Run::Geo(crate::flat::export_dxf),
     },
     CommandSpec {
         id: "sheet.export_svg",
         label: "Export Flat Pattern SVG",
-        help: "path (.svg): the flat pattern as a picture at full size; bends, extents, face, body as for sheet.export_dxf",
+        help: "path (.svg): the flat pattern as a picture at full size; bends, extents, punches, face, body as for sheet.export_dxf",
         mutates: false,
         run: Run::Geo(crate::flat::export_svg),
     },

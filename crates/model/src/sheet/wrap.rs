@@ -15,12 +15,12 @@
 use std::collections::BTreeMap;
 
 use tenon_geom::{Frame, Vec2, Vec3};
-use tenon_kernel::{CurveKind, Kernel, Region, ShapeHandle, SurfaceKind};
+use tenon_kernel::{CurveKind, EdgeInfo, Kernel, Region, ShapeHandle, SurfaceKind};
 
 use super::flat::chain;
 use super::outline::{Piece, polygon};
 use super::region::{self, Shape};
-use super::unfold::{Chart, Read, Unfold, base_chart, flatten, follow, read};
+use super::unfold::{Chart, Read, Unfold, base_chart, flatten, follow, normal_at, read};
 use crate::project::Projected;
 
 /// What takes the profile out of one face of the sheet.
@@ -114,6 +114,12 @@ pub(super) fn has_other_side(solid: &Read, i: usize, t: f64) -> bool {
     })
 }
 
+/// Whether the sheet `shape` has a flat side at all.
+pub fn has_flat_side(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<bool, String> {
+    let solid = read(k, shape)?;
+    Ok((0..solid.faces.len()).any(|i| has_other_side(&solid, i, opts.thickness)))
+}
+
 /// Whether face `i` of the solid is a side of the sheet that lies in the plane of `sketch`.
 fn side_in(solid: &Read, i: usize, sketch: &Frame, t: f64) -> bool {
     let Some(face) = solid.faces.get(i) else { return false };
@@ -157,6 +163,82 @@ pub fn seat(k: &dyn Kernel, shape: ShapeHandle, sketch: &Frame, profile: &[Regio
         }
     }
     Ok(best.map(|(f, share, _)| (f, share)))
+}
+
+/// A flat side of the sheet as a stamp sees it, in the coordinates of the sketch on it.
+#[derive(Clone, Debug)]
+pub struct Stamped {
+    pub face: u32,
+    /// The way the face looks, out of the sheet.
+    pub normal: Vec3,
+    /// Its outline and its holes, as points.
+    pub outer: Vec<Vec2>,
+    pub holes: Vec<Vec<Vec2>>,
+    /// Its edges as points, and for each whether a bend of the sheet is beyond it.
+    pub edges: Vec<(Vec<Vec2>, bool)>,
+}
+
+impl Stamped {
+    /// Why the shape given by points `reach` (in the sketch's coordinates) is not all on the face,
+    /// when it is not: a place it goes off the face, and whether that is onto a bend.
+    pub fn off_at(&self, reach: &[Vec2]) -> Option<(Vec2, bool)> {
+        let off = reach.iter().find(|p| !super::flat::within(&self.outer, **p) || self.holes.iter().any(|h| super::flat::within(h, **p)))?;
+        let nearest = self
+            .edges
+            .iter()
+            .map(|(points, bend)| {
+                let d = points.windows(2).map(|w| distance_to(*off, w[0], w[1])).fold(f64::INFINITY, f64::min);
+                (d, *bend)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        Some((*off, nearest.is_some_and(|n| n.1)))
+    }
+
+    /// A point of a hole of the face inside the shape whose outline is the points `reach`, in order
+    /// round it: the hole a formed shape would close over.
+    pub fn over_hole(&self, reach: &[Vec2]) -> Option<Vec2> {
+        self.holes.iter().flatten().find(|p| super::flat::within(reach, **p)).copied()
+    }
+}
+
+fn distance_to(p: Vec2, a: Vec2, b: Vec2) -> f64 {
+    let d = b - a;
+    let f = if d.dot(d) > 1e-18 { ((p - a).dot(d) / d.dot(d)).clamp(0.0, 1.0) } else { 0.0 };
+    p.dist(a + d * f)
+}
+
+/// The side of the sheet `shape` in the plane of `sketch` that point `at` of that plane is on:
+/// what a punch at that point is stamped into. None when it is on none of them.
+pub fn side_at(k: &dyn Kernel, shape: ShapeHandle, sketch: &Frame, at: Vec2, opts: &Unfold) -> Result<Option<Stamped>, String> {
+    let solid = read(k, shape)?;
+    let chart = in_sketch(sketch);
+    for (i, face) in solid.faces.iter().enumerate() {
+        if !side_in(&solid, i, sketch, opts.thickness) {
+            continue;
+        }
+        let Ok(f) = u32::try_from(i) else { continue };
+        let SurfaceKind::Plane { normal, .. } = &face.surface else { continue };
+        let mut curves = Vec::new();
+        let mut edges = Vec::new();
+        for &e in solid.topo.face_edges.get(i).map_or(&[][..], Vec::as_slice) {
+            let Some(info) = solid.edges.get(e as usize).filter(|i| !i.degenerate) else { continue };
+            let curve = flatten(k, shape.edge(e), info, &chart, opts.deflection)?;
+            let beyond = solid.topo.edge_faces.get(e as usize).into_iter().flatten().find(|g| **g != f);
+            let bend = beyond.is_some_and(|g| {
+                matches!(solid.faces.get(*g as usize).map(|x| &x.surface), Some(SurfaceKind::Cylinder { .. }))
+                    && super::unfold::bend_side(*g as usize, &solid.faces, opts.thickness).is_some()
+            });
+            edges.push((curve.points(0.1), bend));
+            curves.push(curve);
+        }
+        let Ok((outer, inner)) = chain(curves) else { continue };
+        let rim = outer.polygon(0.05);
+        if !super::flat::within(&rim, at) {
+            continue;
+        }
+        return Ok(Some(Stamped { face: f, normal: normal.normalized(), outer: rim, holes: inner.iter().map(|h| h.polygon(0.05)).collect(), edges }));
+    }
+    Ok(None)
 }
 
 /// Where edge `e` of `shape` lies in the plane of `sketch` when the sheet is laid flat from its
@@ -212,6 +294,20 @@ pub fn wrap(
     let solid = read(k, shape)?;
     let charts = follow(&solid, base, in_sketch(sketch), opts)?;
     let drawn = drawn(profile, ACROSS)?;
+    // What cannot be followed is said, not left uncut.
+    for (&f, chart) in charts.iter().filter(|(_, c)| c.turned()) {
+        let here = [outline_of(k, shape, &solid, f, chart, opts)?];
+        if !shared(&drawn, &here)?.is_empty() {
+            return Err(format!(
+                "The profile runs onto {ROLLED}, and a cut across bends cannot wrap round that: it would be left uncut. {ROLLED_DO}"
+            ));
+        }
+    }
+    if runs_onto_die_formed(k, shape, &solid, &charts, &|p, chart| chart.map(p), &drawn, opts)? {
+        return Err(format!(
+            "The profile runs onto {DIE_FORMED}, and a cut across bends cannot wrap round that: it would be left uncut. {DIE_FORMED_DO}"
+        ));
+    }
     let nothing = "The profile is not on the sheet: laid flat from the face its sketch is on, no face and no bend lies under it.";
     tools(k, shape, &solid, &charts, &|_, _| Ok(Some(drawn.clone())), depth, nothing, opts)
 }
@@ -219,6 +315,104 @@ pub fn wrap(
 /// A profile as it is seen on one face of the sheet laid flat: its regions, each an outer loop
 /// and its holes.
 type Drawn = Vec<Vec<Vec<Piece>>>;
+
+/// What a profile that reaches the parts of a sheet that a cut cannot follow is told.
+const ROLLED: &str = "a rolled part of the sheet (a cone, or a round part of a rolled profile)";
+const ROLLED_DO: &str =
+    "Keep the profile on the flat faces and cylinders, or use an ordinary Cut for it, which goes straight through whatever is there.";
+const DIE_FORMED: &str = "a die-formed part of the sheet";
+const DIE_FORMED_DO: &str = "Keep the profile on the flat faces, or use an ordinary Cut for it, which goes straight through whatever is there.";
+
+/// How many points of a rim, and of a face each way, are tried under a profile.
+const RIM_POINTS: usize = 96;
+const FACE_POINTS: [usize; 2] = [48, 16];
+
+/// Whether a point of the profile lies at `p`, in the profile's own coordinates.
+fn under(drawn: &Drawn, p: Vec2) -> bool {
+    drawn.iter().any(|loops| region::inside(loops, p))
+}
+
+/// Points along edge `e` of `shape`: as many as it takes to find a profile that crosses it.
+fn along_edge(k: &dyn Kernel, shape: ShapeHandle, e: u32, info: &EdgeInfo, opts: &Unfold) -> Result<Vec<Vec3>, String> {
+    if matches!(info.curve, CurveKind::Line { .. }) {
+        return Ok((0..=RIM_POINTS).map(|i| info.start + (info.end - info.start) * (i as f64 / RIM_POINTS as f64)).collect());
+    }
+    k.edge_points(shape.edge(e), opts.deflection).map_err(|e| e.to_string())
+}
+
+/// Whether the profile, where `to_profile` puts a point of the sheet, reaches across an edge of a
+/// face of `charts` onto a die-formed face: one of no kind that is ever charted.
+#[allow(clippy::too_many_arguments)]
+fn runs_onto_die_formed(
+    k: &dyn Kernel,
+    shape: ShapeHandle,
+    solid: &Read,
+    charts: &BTreeMap<u32, Chart>,
+    to_profile: &dyn Fn(Vec3, &Chart) -> Vec2,
+    drawn: &Drawn,
+    opts: &Unfold,
+) -> Result<bool, String> {
+    for (&f, chart) in charts {
+        for &e in solid.topo.face_edges.get(f as usize).map_or(&[][..], Vec::as_slice) {
+            let Some(info) = solid.edges.get(e as usize).filter(|i| !i.degenerate) else { continue };
+            let free_form = solid.topo.edge_faces.get(e as usize).into_iter().flatten().any(|g| {
+                !charts.contains_key(g)
+                    && matches!(
+                        solid.faces.get(*g as usize).map(|x| &x.surface),
+                        Some(SurfaceKind::BSpline | SurfaceKind::Bezier | SurfaceKind::Other)
+                    )
+            });
+            if !free_form {
+                continue;
+            }
+            if along_edge(k, shape, e, info, opts)?.iter().any(|p| under(drawn, to_profile(*p, chart))) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the profile is seen on a turned face of `charts` that looks `toward` it, where
+/// `in_sketch` puts a point of space in the profile's own coordinates.
+#[allow(clippy::too_many_arguments)]
+fn seen_on_turned(
+    k: &dyn Kernel,
+    shape: ShapeHandle,
+    solid: &Read,
+    charts: &BTreeMap<u32, Chart>,
+    in_sketch: &dyn Fn(Vec3) -> Vec2,
+    toward: Vec3,
+    drawn: &Drawn,
+    opts: &Unfold,
+) -> Result<bool, String> {
+    for (&f, chart) in charts.iter().filter(|(_, c)| c.turned()) {
+        let Some(face) = solid.faces.get(f as usize) else { continue };
+        let inner = matches!(chart, Chart::Turned { inner: true, .. });
+        let looks = |p: Vec3| normal_at(face, p).is_some_and(|n| (if inner { -n } else { n }).dot(toward) > 1e-6);
+        let mut rim: Vec<Vec3> = Vec::new();
+        for &e in solid.topo.face_edges.get(f as usize).map_or(&[][..], Vec::as_slice) {
+            let Some(info) = solid.edges.get(e as usize).filter(|i| !i.degenerate) else { continue };
+            rim.extend(along_edge(k, shape, e, info, opts)?);
+        }
+        // Across its rim, or over its middle: how far round and along it reaches, from the rim.
+        let (mut turn, mut run) = ((f64::INFINITY, f64::NEG_INFINITY), (f64::INFINITY, f64::NEG_INFINITY));
+        for p in &rim {
+            let (angle, along) = chart.round(*p);
+            turn = (turn.0.min(angle), turn.1.max(angle));
+            run = (run.0.min(along), run.1.max(along));
+        }
+        let middle = (0..=FACE_POINTS[0]).flat_map(|i| (0..=FACE_POINTS[1]).map(move |j| (i, j))).filter_map(|(i, j)| {
+            let angle = turn.0 + (turn.1 - turn.0) * i as f64 / FACE_POINTS[0] as f64;
+            let along = run.0 + (run.1 - run.0) * j as f64 / FACE_POINTS[1] as f64;
+            chart.point_of(face, angle, along)
+        });
+        if rim.iter().copied().chain(middle).any(|p| looks(p) && under(drawn, in_sketch(p))) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 
 /// The tools that take a profile `depth` deep out of every face of `charts` it is `seen` on:
 /// `seen` gives the profile in the flat coordinates of a face's chart, or nothing for a face
@@ -311,6 +505,8 @@ fn tools(
                     tools.push(Tool::Bend { face: f, frame, rho: *rho, inner: lo, outer: hi, outline: region::moved(&s.outer, rolled, mirrored) });
                 }
             }
+            // (A profile that reaches the rolled parts of a sheet is refused before it gets here.)
+            Chart::Turned { .. } | Chart::Skin { .. } => {}
         }
     }
     if tools.is_empty() {
@@ -486,6 +682,17 @@ pub fn project(
             _ => Ok(None),
         }
     };
+    // What cannot be followed is said, not left uncut.
+    if seen_on_turned(k, shape, &solid, &charts, &in_sketch, toward, &drawn, opts)? {
+        return Err(format!(
+            "The profile is over {ROLLED}, and a cut normal to the sheet takes only flat faces and cylinders: that part would be left uncut. {ROLLED_DO}"
+        ));
+    }
+    if runs_onto_die_formed(k, shape, &solid, &charts, &|p, _| in_sketch(p), &drawn, opts)? {
+        return Err(format!(
+            "The profile is over {DIE_FORMED}, and a cut normal to the sheet takes only flat faces and cylinders: that part would be left uncut. {DIE_FORMED_DO}"
+        ));
+    }
     let nothing = "The profile is not over the sheet: looking along its sketch's normal, no face and no bend of the sheet is seen under it. Move the profile over the part.";
     tools(k, shape, &solid, &charts, &seen, depth, nothing, opts)
 }

@@ -504,6 +504,9 @@ impl Workbench {
                     | Panel::Rip(_)
                     | Panel::Unfold(_)
                     | Panel::Refold(_)
+                    | Panel::ContourRoll(_)
+                    | Panel::LoftedFlange(_)
+                    | Panel::Punch(_)
                     | Panel::CornerSeam(_)
                     | Panel::Bend(_)
                     | Panel::Primitive(_)
@@ -581,6 +584,9 @@ impl Workbench {
             Panel::Rip(p) => ("Rip", p.editing.map(|f| self.feature_name(f))),
             Panel::Unfold(p) => ("Unfold", p.editing.map(|f| self.feature_name(f))),
             Panel::Refold(p) => ("Refold", p.editing.map(|f| self.feature_name(f))),
+            Panel::ContourRoll(p) => ("Contour Roll", p.editing.map(|f| self.feature_name(f))),
+            Panel::LoftedFlange(p) => ("Lofted Flange", p.editing.map(|f| self.feature_name(f))),
+            Panel::Punch(p) => ("Punch Tool", p.editing.map(|f| self.feature_name(f))),
             Panel::CornerSeam(p) => (if p.rip { "Corner Rip" } else { "Corner Seam" }, p.editing.map(|f| self.feature_name(f))),
             Panel::Bend(p) => ("Bend", p.editing.map(|f| self.feature_name(f))),
             Panel::Primitive(p) => (p.shape.title(), None),
@@ -1711,6 +1717,9 @@ impl Workbench {
                         enter |= entered;
                         clear |= cleared;
                     }
+                    p @ (Panel::ContourRoll(_) | Panel::LoftedFlange(_) | Panel::Punch(_)) => {
+                        enter |= self.sheet_make_properties(ui, p, &mut eqs, &sketches, &work_names, t);
+                    }
                     p @ (Panel::SheetFace(_)
                     | Panel::SheetCut(_)
                     | Panel::Flange(_)
@@ -2014,6 +2023,8 @@ impl Workbench {
             Some(Panel::Sweep(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Coil(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Emboss(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
+            Some(Panel::ContourRoll(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
+            Some(Panel::LoftedFlange(p)) => p.sketches.iter().flatten().next().and_then(|s| self.profile_anchor(*s)).map(|a| a.0),
             Some(Panel::SheetFace(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::SheetCut(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Loft(p)) => p.sections.first().and_then(|s| self.profile_anchor(*s)).map(|a| a.0),
@@ -2030,6 +2041,7 @@ impl Workbench {
                 | Panel::Rip(_)
                 | Panel::Unfold(_)
                 | Panel::Refold(_)
+                | Panel::Punch(_)
                 | Panel::CornerSeam(_)
                 | Panel::Bend(_)
                 | Panel::Support(_)
@@ -2255,6 +2267,7 @@ fn p_before(panel: &Panel, wb: &Workbench, id: tenon_model::FeatureId) -> bool {
         Panel::Pattern(p) => p.editing,
         Panel::Work(w) => w.editing,
         Panel::Coil(p) => p.editing,
+        Panel::ContourRoll(p) => p.editing,
         Panel::Draft(p) => p.editing,
         Panel::Split(p) => p.editing,
         Panel::Derive(p) => p.editing,

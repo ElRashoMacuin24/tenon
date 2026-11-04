@@ -192,6 +192,26 @@ pub trait Kernel: Send {
         let _ = (face, along);
         unsupported!("prism_of_face")
     }
+    /// A die-formed sheet: the solid between two smooth ruled surfaces, each given by its two
+    /// rims. `a` holds the rims of one side, `b` those of the other: every rim is a smooth curve
+    /// through its points (at least four, as many on each), one step of its parameter from each
+    /// point to the next, and each surface is ruled from point to like point of its rims. The
+    /// four walls are ruled between the two sides.
+    ///
+    /// The face of `a` is the start cap, that of `b` the end cap. The wall along the first rims
+    /// is reported by the tag `tags[0]`, that along the second by `tags[1]`, and the walls at the
+    /// first and the last points by `tags[2]` and `tags[3]`.
+    fn ruled_sheet(&mut self, a: [&[Vec3]; 2], b: [&[Vec3]; 2], tags: [u64; 4]) -> KResult<Op> {
+        let _ = (a, b, tags);
+        unsupported!("ruled_sheet")
+    }
+    /// The same solid with every face on a right-handed surface: the same faces in the same
+    /// order, so that an operation's history still holds of it. A revolve can leave a flat face
+    /// on a left-handed plane, whose `normal` then looks into the solid; on this one it looks out.
+    fn direct_faces(&mut self, shape: ShapeHandle) -> KResult<ShapeHandle> {
+        let _ = shape;
+        unsupported!("direct_faces")
+    }
     fn sweep(&mut self, profile: &Profile, path: &Path3, opts: &SweepOpts) -> KResult<Op> {
         let _ = (profile, path, opts);
         unsupported!("sweep")
