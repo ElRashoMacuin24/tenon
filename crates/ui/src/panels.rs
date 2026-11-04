@@ -1326,7 +1326,8 @@ impl Workbench {
                 }) {
                     return Err("there is no solid to drill yet: extrude or revolve a sketch first".into());
                 }
-                // The sketch being edited, else the last sketch with centre points.
+                // The sketch being edited, else the last sketch with centre points that nothing
+                // uses yet: those of a hole already made are that hole's.
                 let sketch = match &self.mode {
                     Mode::Sketch(s) => {
                         let id = s.feature;
@@ -1339,6 +1340,7 @@ impl Workbench {
                         .iter()
                         .rev()
                         .map(|s| s.0)
+                        .filter(|id| !self.document().features().iter().any(|f| f.kind.depends_on().contains(id)))
                         .find(|id| self.document().sketch(*id).is_some_and(|sk| !hole_centres(sk).is_empty()))
                         .unwrap_or(FeatureId(0)),
                 };

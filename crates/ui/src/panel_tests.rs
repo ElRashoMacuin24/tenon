@@ -325,3 +325,56 @@ fn text_alone_on_a_face_is_its_letters_and_not_the_face() {
     d.settle(&mut wb);
     assert!((block - volume(&wb) - letters).abs() < 1.0, "removed {} where the letters are {letters}", block - volume(&wb));
 }
+
+/// Clicks a point of the part in the view.
+fn click_on_part(d: &mut Driver, wb: &mut Workbench, q: tenon_geom::Vec3) {
+    let at = crate::tests::on_screen(wb, q);
+    d.frame(wb, vec![egui::Event::PointerMoved(at)]);
+    d.click(wb, at);
+    d.settle(wb);
+}
+
+#[test]
+fn holes_are_placed_on_a_face_one_after_another() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 80, "y2": 40 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    d.settle(&mut wb);
+    let block = volume(&wb);
+
+    // The first, by H and a click, and OK.
+    d.tap(&mut wb, egui::Key::H);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("click a flat face"), "{}", wb.status());
+    click_on_part(&mut d, &mut wb, Vec3::new(20.0, 20.0, 10.0));
+    ok(&mut d, &mut wb);
+    let one = block - volume(&wb);
+    assert!(one > 100.0, "{one}");
+
+    // The second the same way: the first hole's sketch is not offered again.
+    d.tap(&mut wb, egui::Key::H);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("click a flat face"), "{}", wb.status());
+    let Some(Panel::Hole(p)) = wb.panel.clone() else { panic!("no hole panel: {}", wb.status()) };
+    assert!(p.on_face() && p.points.is_empty());
+    click_on_part(&mut d, &mut wb, Vec3::new(60.0, 20.0, 10.0));
+    ok(&mut d, &mut wb);
+    assert!((block - volume(&wb) - 2.0 * one).abs() < 1e-6, "{}", block - volume(&wb));
+
+    // A sketch of centres drawn for it is still what H takes.
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let sk = sketching(&wb);
+    wb.exec("sketch.point", json!({ "sketch": sk.0, "x": 40, "y": 10 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::H);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Hole(p)) = wb.panel.clone() else { panic!("no hole panel: {}", wb.status()) };
+    assert_eq!((p.sketch, p.points.len()), (sk, 1));
+    d.tap(&mut wb, egui::Key::Escape);
+}
