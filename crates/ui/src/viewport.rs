@@ -323,7 +323,11 @@ impl Workbench {
     }
 
     pub(crate) fn scene_box(&self) -> Option<Aabb3> {
-        self.scene.bbox()
+        // (A 3D sketch shown is part of what there is to see: it is on no plane of the part.)
+        match (self.scene.bbox(), self.sketch3d_box()) {
+            (Some(a), Some(b)) => Some(a.union(&b)),
+            (a, b) => a.or(b),
+        }
     }
 
     /// Radius of everything the camera may need in its depth range.
@@ -449,9 +453,10 @@ impl Workbench {
         }
         self.navigate(ui, &resp, rect);
         let sketching = matches!(self.mode, Mode::Sketch(_));
+        let sketching3d = self.is_sketching3d();
         if self.in_assembly() {
             self.asm_pointer(ui, &resp, rect);
-        } else if !sketching {
+        } else if !sketching && !sketching3d {
             self.model_pointer(ui, &resp, rect);
         }
         self.draw_scene(ui, rect, render);
@@ -461,6 +466,7 @@ impl Workbench {
             if !sketching {
                 self.sketch_wires(ui, rect, t);
             }
+            self.sketch3d_wires(ui, rect, t);
         }
         if self.pick_plane || self.primitive_wants_plane() {
             self.draw_origin_planes(ui, rect, self.view.plane_hover, t);
@@ -482,6 +488,9 @@ impl Workbench {
         }
         if sketching {
             self.sketch_ui(ui, &resp, rect, t);
+        }
+        if sketching3d {
+            self.sketch3d_ui(ui, &resp, rect, t);
         }
         if let Some(banner) = self.messages(ui, rect, t) {
             self.repair_button(ui, banner);
@@ -1137,7 +1146,7 @@ impl Workbench {
                     t.text_dim,
                 );
             }
-        } else if self.document().features().is_empty() && !matches!(self.mode, Mode::Sketch(_)) && !self.pick_plane && self.panel.is_none() {
+        } else if self.document().features().is_empty() && matches!(self.mode, Mode::Model) && !self.pick_plane && self.panel.is_none() {
             // (Not over the planes while one is being picked, nor over a solid being set up.)
             p.text(
                 rect.center() - vec2(0.0, 12.0),

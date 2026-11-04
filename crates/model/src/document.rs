@@ -481,7 +481,8 @@ pub fn open_lines(sk: &Sketch) -> Vec<EntityId> {
     sk.entities().filter(|(id, e)| !e.construction && sk.is_line(*id) && !closed.contains(id)).map(|(id, _)| id).collect()
 }
 
-/// Lines and arcs of a sketch, joined end to end: a sweep's path.
+/// Lines and arcs of a sketch, or lines, bends and splines of a 3D sketch, joined end to end: a
+/// sweep's path.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SketchCurves {
     pub sketch: FeatureId,
@@ -503,10 +504,13 @@ pub struct Sweep {
     pub operation: Operation,
 }
 
+/// Most curves a sweep's path names.
+pub const MAX_SWEEP_CURVES: usize = 1000;
+
 impl Sweep {
     pub fn check(&self) -> Result<(), String> {
-        if self.path.curves.is_empty() || self.path.curves.len() > 1000 {
-            return Err("the sweep path needs 1 to 1000 lines and arcs".into());
+        if self.path.curves.is_empty() || self.path.curves.len() > MAX_SWEEP_CURVES {
+            return Err(format!("the sweep path needs 1 to {MAX_SWEEP_CURVES} lines and arcs"));
         }
         Ok(())
     }
@@ -873,6 +877,11 @@ pub enum AxisSel {
         feature: FeatureId,
         axis: OriginAxis,
     },
+    /// Along a line of a 3D sketch (DEC-136).
+    Sketch3dLine {
+        sketch: FeatureId,
+        line: EntityId,
+    },
 }
 
 impl AxisSel {
@@ -883,6 +892,7 @@ impl AxisSel {
             AxisSel::Edge(e) => e.features(),
             AxisSel::Face(f) => f.feature().into_iter().collect(),
             AxisSel::Work(id) | AxisSel::Ucs { feature: id, .. } => vec![*id],
+            AxisSel::Sketch3dLine { sketch, .. } => vec![*sketch],
         }
     }
 }
@@ -900,6 +910,9 @@ pub enum WorkPlane {
     /// Through three points (DEC-116): from the first toward the second is its X, the third on
     /// its positive Y side.
     ThreePoints { points: [PointSel; 3] },
+    /// Through the end `end` of a curve of a 3D sketch, square to the curve there (DEC-136): where
+    /// a sweep's profile is drawn.
+    SquareToCurve { sketch: FeatureId, curve: EntityId, end: EntityId },
 }
 
 /// A point a work feature goes through (DEC-116).
@@ -916,9 +929,18 @@ pub enum PointSel {
     SketchPoint { sketch: FeatureId, point: EntityId },
     /// The origin of a user coordinate system (DEC-133).
     Ucs(FeatureId),
-    /// A corner of the part: the end of `edge` nearer `near`, which is where it was picked
-    /// (DEC-133).
-    Vertex { edge: EdgeRef, near: Vec3 },
+    /// A point of a 3D sketch (DEC-136).
+    Sketch3dPoint { sketch: FeatureId, point: EntityId },
+    /// A corner of the part: an end of an edge, 0 where the edge starts and 1 where it ends, as
+    /// the kernel had it when it was chosen (DEC-136). The kernel may later name the ends the
+    /// other way round, so `towards` says which is meant: the way from the edge's other end to
+    /// this one, as it was then.
+    Vertex {
+        edge: EdgeRef,
+        end: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        towards: Option<Vec3>,
+    },
 }
 
 impl PointSel {
@@ -928,8 +950,19 @@ impl PointSel {
             PointSel::Origin => Vec::new(),
             PointSel::Work(id) | PointSel::Ucs(id) => vec![*id],
             PointSel::Center(e) | PointSel::Vertex { edge: e, .. } => e.features(),
-            PointSel::SketchPoint { sketch, .. } => vec![*sketch],
+            PointSel::SketchPoint { sketch, .. } | PointSel::Sketch3dPoint { sketch, .. } => vec![*sketch],
         }
+    }
+
+    /// Which end of an edge from `start` to `stop` a vertex is, and which way that lies from the
+    /// other: where `towards` says, if it says, else by `end`.
+    pub fn end_of_edge(start: Vec3, stop: Vec3, end: u8, towards: Option<Vec3>) -> (Vec3, Vec3) {
+        let (this, other) = if end == 0 { (start, stop) } else { (stop, start) };
+        let (this, other) = match towards {
+            Some(t) if (this - other).dot(t) < 0.0 => (other, this),
+            _ => (this, other),
+        };
+        (this, this - other)
     }
 }
 
@@ -951,6 +984,8 @@ pub enum WorkPoint {
     Center { edge: EdgeRef },
     /// Where an axis meets a plane.
     Intersection { axis: AxisSel, plane: PlaneRef },
+    /// At a point: a point of a 3D sketch, of a sketch or a vertex (DEC-136).
+    At { point: PointSel },
 }
 
 /// A user coordinate system (DEC-133): an origin with X, Y and Z directions, whose three planes,
@@ -1101,6 +1136,13 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         projections: Vec<crate::project::Projection>,
     },
+    /// A sketch on no plane (DEC-136).
+    Sketch3d {
+        sketch: tenon_sketch::Sketch3d,
+        /// What its reference geometry stands for: vertices, work points, edges of the part.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        links: Vec<crate::sketch3d::Link3>,
+    },
     Extrude(Extrude),
     Revolve(Revolve),
     Fillet(Fillet),
@@ -1217,6 +1259,7 @@ impl FeatureKind {
     pub fn type_name(&self) -> &'static str {
         match self {
             FeatureKind::Sketch { .. } => "Sketch",
+            FeatureKind::Sketch3d { .. } => "3D Sketch",
             FeatureKind::Extrude(_) => "Extrude",
             FeatureKind::Revolve(_) => "Revolve",
             FeatureKind::Fillet(_) => "Fillet",
@@ -1255,6 +1298,7 @@ impl FeatureKind {
     pub fn default_name(&self) -> &'static str {
         match self {
             FeatureKind::Sketch { .. } => "Sketch",
+            FeatureKind::Sketch3d { .. } => "3D Sketch",
             FeatureKind::Extrude(_) => "Extrusion",
             FeatureKind::Revolve(_) => "Revolution",
             FeatureKind::Fillet(_) => "Fillet",
@@ -1295,6 +1339,7 @@ impl FeatureKind {
             FeatureKind::Sketch { plane, projections, .. } => {
                 plane.feature().into_iter().chain(projections.iter().flat_map(|p| p.edge.features())).collect()
             }
+            FeatureKind::Sketch3d { links, .. } => links.iter().flat_map(|l| l.to.features()).collect(),
             FeatureKind::Extrude(e) => match &e.extent {
                 ExtrudeExtent::To(plane) => std::iter::once(e.sketch).chain(plane.feature()).collect(),
                 ExtrudeExtent::Between { from, to } => std::iter::once(e.sketch).chain(from.feature()).chain(to.feature()).collect(),
@@ -1375,6 +1420,7 @@ impl FeatureKind {
                 WorkPlane::Angle { base, axis, .. } => base.feature().into_iter().chain(axis.features()).collect(),
                 WorkPlane::Midplane { a, b } => a.feature().into_iter().chain(b.feature()).collect(),
                 WorkPlane::ThreePoints { points } => points.iter().flat_map(PointSel::features).collect(),
+                WorkPlane::SquareToCurve { sketch, .. } => vec![*sketch],
             },
             FeatureKind::WorkAxis(w) => match w {
                 WorkAxis::Along { axis } => axis.features(),
@@ -1383,6 +1429,7 @@ impl FeatureKind {
             FeatureKind::WorkPoint(w) => match w {
                 WorkPoint::Center { edge } => edge.features(),
                 WorkPoint::Intersection { axis, plane } => axis.features().into_iter().chain(plane.feature()).collect(),
+                WorkPoint::At { point } => point.features(),
             },
             FeatureKind::Ucs(u) => match u {
                 Ucs::Offset { base, .. } => base.iter().copied().collect(),
@@ -1656,6 +1703,79 @@ impl Document {
             _ => None,
         }
     }
+    /// The 3D sketch of feature `id` (DEC-136).
+    pub fn sketch3d(&self, id: FeatureId) -> Option<&tenon_sketch::Sketch3d> {
+        match &self.feature(id)?.kind {
+            FeatureKind::Sketch3d { sketch, .. } => Some(sketch),
+            _ => None,
+        }
+    }
+    pub fn sketch3d_mut(&mut self, id: FeatureId) -> Option<&mut tenon_sketch::Sketch3d> {
+        match &mut self.feature_mut(id)?.kind {
+            FeatureKind::Sketch3d { sketch, .. } => Some(sketch),
+            _ => None,
+        }
+    }
+    /// What the reference geometry of 3D sketch `id` stands for.
+    pub fn links3(&self, id: FeatureId) -> &[crate::sketch3d::Link3] {
+        match self.feature(id).map(|f| &f.kind) {
+            Some(FeatureKind::Sketch3d { links, .. }) => links,
+            _ => &[],
+        }
+    }
+    /// Sketch `id` can be a sweep's path: a sketch or a 3D sketch.
+    pub fn has_curves(&self, id: FeatureId) -> bool {
+        self.sketch(id).is_some() || self.sketch3d(id).is_some()
+    }
+
+    /// The curves that the sweeps running along sketch `id` name.
+    pub fn sweep_paths_mut(&mut self, id: FeatureId) -> impl Iterator<Item = &mut Vec<EntityId>> {
+        self.features.iter_mut().filter_map(move |f| match &mut f.kind {
+            FeatureKind::Sweep(s) if s.path.sketch == id => Some(&mut s.path.curves),
+            _ => None,
+        })
+    }
+
+    /// The curve and the end of it that each work plane square to a curve of 3D sketch `id` names.
+    pub fn square_planes_mut(&mut self, id: FeatureId) -> impl Iterator<Item = (EntityId, &mut EntityId)> {
+        self.features.iter_mut().filter_map(move |f| match &mut f.kind {
+            FeatureKind::WorkPlane(WorkPlane::SquareToCurve { sketch, curve, end }) if *sketch == id => Some((*curve, end)),
+            _ => None,
+        })
+    }
+
+    /// Refused, in words, when a feature would take its profile from what is no sketch: as the
+    /// file is held to it when read ([`Document::validate`]), so said before it is saved.
+    fn check_profile_sketches(&self, kind: &FeatureKind) -> Result<(), String> {
+        let (profiles, path): (Vec<FeatureId>, Option<FeatureId>) = match kind {
+            FeatureKind::Extrude(e) => (vec![e.sketch], None),
+            FeatureKind::Revolve(r) => (vec![r.sketch], None),
+            FeatureKind::Hole(h) => (vec![h.sketch], None),
+            FeatureKind::Rib(r) => (vec![r.sketch], None),
+            FeatureKind::Sweep(s) => (vec![s.sketch], Some(s.path.sketch)),
+            FeatureKind::Coil(c) => (vec![c.sketch], None),
+            FeatureKind::Loft(l) => (l.sections.clone(), None),
+            FeatureKind::SheetFace(s) => (vec![s.sketch], None),
+            FeatureKind::ContourFlange(c) => (vec![c.sketch], None),
+            FeatureKind::CutAcrossBend(c) => (vec![c.sketch], None),
+            FeatureKind::CutNormal(c) => (vec![c.sketch], None),
+            FeatureKind::Fold(f) => (vec![f.sketch], None),
+            _ => (Vec::new(), None),
+        };
+        let name = |id: FeatureId| self.feature(id).map_or_else(|| id.to_string(), |f| f.name.clone());
+        for id in profiles {
+            if self.sketch3d(id).is_some() {
+                return Err(format!("{} is a 3D sketch, which is on no plane: draw this in a sketch on a plane.", name(id)));
+            }
+            if self.sketch(id).is_none() {
+                return Err(format!("{} is not a sketch: give the sketch that has this in it.", name(id)));
+            }
+        }
+        if let Some(id) = path.filter(|id| !self.has_curves(*id)) {
+            return Err(format!("{} is not a sketch: a path is drawn in a sketch or a 3D sketch.", name(id)));
+        }
+        Ok(())
+    }
 
     /// The edges of the part shown in sketch `id` as reference geometry.
     pub fn projections(&self, id: FeatureId) -> &[crate::project::Projection] {
@@ -1674,8 +1794,10 @@ impl Document {
     /// (deleted, or its link broken).
     pub fn tidy_projections(&mut self) {
         for f in &mut self.features {
-            if let FeatureKind::Sketch { sketch, projections, .. } = &mut f.kind {
-                projections.retain(|p| sketch.is_reference(p.entity));
+            match &mut f.kind {
+                FeatureKind::Sketch { sketch, projections, .. } => projections.retain(|p| sketch.is_reference(p.entity)),
+                FeatureKind::Sketch3d { sketch, links } => links.retain(|l| sketch.is_reference(l.entity)),
+                _ => {}
             }
         }
     }
@@ -1690,6 +1812,7 @@ impl Document {
                 return Err(format!("{dep} does not exist"));
             }
         }
+        self.check_profile_sketches(&kind)?;
         self.next_feature = self.next_feature.checked_add(1).ok_or("feature ids exhausted")?;
         let id = FeatureId(self.next_feature);
         let base = kind.default_name();
@@ -1775,7 +1898,7 @@ impl Document {
         let consumed = self
             .features
             .iter()
-            .filter(|s| !gone.contains(&s.id) && matches!(s.kind, FeatureKind::Sketch { .. }))
+            .filter(|s| !gone.contains(&s.id) && matches!(s.kind, FeatureKind::Sketch { .. } | FeatureKind::Sketch3d { .. }))
             .filter(|s| {
                 let mut users = self.features.iter().filter(|u| u.kind.depends_on().contains(&s.id)).peekable();
                 users.peek().is_some() && users.all(|u| gone.contains(&u.id))
@@ -1855,7 +1978,7 @@ impl Document {
             .unwrap_or_default()
             .into_iter()
             .filter(|d| {
-                matches!(self.feature(*d).map(|f| &f.kind), Some(FeatureKind::Sketch { .. }))
+                matches!(self.feature(*d).map(|f| &f.kind), Some(FeatureKind::Sketch { .. } | FeatureKind::Sketch3d { .. }))
                     && self.features.iter().filter(|f| f.kind.depends_on().contains(d)).count() == 1
             })
             .collect();
@@ -1968,12 +2091,24 @@ impl Document {
                         }
                     }
                 }
+                FeatureKind::Sketch3d { sketch, links } => {
+                    sketch.validate().map_err(|e| format!("{}: {e}", f.name))?;
+                    let mut linked = std::collections::BTreeSet::new();
+                    for l in links {
+                        if !sketch.is_reference(l.entity) {
+                            return Err(format!("{}: {} is said to follow the part but is not reference geometry", f.name, l.entity));
+                        }
+                        if !linked.insert(l.entity) {
+                            return Err(format!("{}: {} is said to follow two things of the part", f.name, l.entity));
+                        }
+                    }
+                }
                 FeatureKind::Extrude(e) if self.sketch(e.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, e.sketch)),
                 FeatureKind::Revolve(r) if self.sketch(r.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, r.sketch)),
                 // (Points that went missing are a regeneration error, as sizes are.)
                 FeatureKind::Hole(h) if self.sketch(h.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, h.sketch)),
                 FeatureKind::Rib(r) if self.sketch(r.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, r.sketch)),
-                FeatureKind::Sweep(s) if self.sketch(s.sketch).is_none() || self.sketch(s.path.sketch).is_none() => {
+                FeatureKind::Sweep(s) if self.sketch(s.sketch).is_none() || !self.has_curves(s.path.sketch) => {
                     return Err(format!("{}: the profile and the path must be sketches", f.name));
                 }
                 FeatureKind::Coil(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),

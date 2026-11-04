@@ -116,6 +116,21 @@ pub(crate) enum ValueFor {
         /// Where its value was put down (sketch coordinates), when it was placed by a click.
         at: Option<tenon_geom::Vec2>,
     },
+    /// A bend of a 3D sketch at this corner: how large.
+    Bend3 {
+        sketch: FeatureId,
+        point: EntityId,
+    },
+    /// A new dimension of a 3D sketch (its value is replaced by the entered one).
+    Dimension3 {
+        sketch: FeatureId,
+        constraint: tenon_sketch::Constraint3,
+    },
+    /// A dimension of a 3D sketch being changed.
+    EditDimension3 {
+        sketch: FeatureId,
+        constraint: tenon_sketch::ConstraintId,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -421,6 +436,8 @@ pub(crate) struct MeasurePanel {
     /// is called.
     pub work_a: Option<(tenon_model::measure::Entity, String)>,
     pub work_b: Option<(tenon_model::measure::Entity, String)>,
+    /// Curves of 3D sketches measured (DEC-136), in place of `a` and `b`.
+    pub curves: Vec<(FeatureId, EntityId)>,
     pub result: Option<Result<tenon_model::measure::Measurement, String>>,
     /// The measurement asked for and not answered yet.
     pub pending: Option<u64>,
@@ -1421,7 +1438,7 @@ impl Workbench {
                         self.finish_sketch();
                         id
                     }
-                    Mode::Model => self
+                    Mode::Model | Mode::Sketch3d(_) => self
                         .sketches()
                         .iter()
                         .rev()
@@ -1463,7 +1480,7 @@ impl Workbench {
                         id
                     }
                     // (With no sketch of centres the holes are placed by clicking a face.)
-                    Mode::Model => self
+                    Mode::Model | Mode::Sketch3d(_) => self
                         .sketches()
                         .iter()
                         .rev()
@@ -1765,7 +1782,7 @@ impl Workbench {
                     | FeatureKind::Fold(_)
                     | FeatureKind::CutAcrossBend(_)
                     | FeatureKind::CutNormal(_) => ("feature.add", json!({ "kind": kind_json })),
-                    FeatureKind::Sketch { .. } => return false,
+                    FeatureKind::Sketch { .. } | FeatureKind::Sketch3d { .. } => return false,
                 };
                 self.exec_status(params.0, params.1)
             }
@@ -2309,6 +2326,23 @@ impl Workbench {
                             let ids: Vec<u32> = curves.iter().map(|c| c.0).collect();
                             self.exec_status("sketch.offset", json!({ "sketch": sketch.0, "curves": ids, "distance": v.value }))
                         }
+                        ValueFor::Bend3 { sketch, point } => {
+                            let r = self.exec_status("sketch3d.bend", json!({ "sketch": sketch.0, "point": point.0, "radius": v.value }));
+                            if r.is_some()
+                                && let Mode::Sketch3d(sm) = &mut self.mode
+                            {
+                                sm.radius = v.value;
+                            }
+                            r
+                        }
+                        ValueFor::Dimension3 { sketch, constraint } => {
+                            let mut c = constraint.clone();
+                            c.set_value(v.value);
+                            self.exec_status("sketch3d.constrain", json!({ "sketch": sketch.0, "constraint": c }))
+                        }
+                        ValueFor::EditDimension3 { sketch, constraint } => {
+                            self.exec_status("sketch3d.set_dimension", json!({ "sketch": sketch.0, "constraint": constraint.0, "value": v.value }))
+                        }
                         ValueFor::Dimension { sketch, constraint, .. } => {
                             let mut c = constraint.clone();
                             let value = if c.is_angular() { v.value.to_radians() } else { v.value };
@@ -2321,6 +2355,11 @@ impl Workbench {
                         }
                     };
                     keep = done.is_none();
+                    // (What a value refused before said is over.)
+                    if done.is_some() && self.status_error {
+                        self.set_status("Ready");
+                        self.sketch3d_hint();
+                    }
                 }
             }
             Panel::SketchPattern(p) => {
@@ -2398,6 +2437,7 @@ impl Workbench {
             if self.panel.is_none() && !self.status_error && self.status == said_before {
                 let asks = if let Mode::Sketch(sm) = &self.mode { sm.tool.hint() } else { "Ready" };
                 self.set_status(asks);
+                self.sketch3d_hint();
             }
         }
         if let Some(id) = reopen {

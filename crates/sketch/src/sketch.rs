@@ -97,7 +97,7 @@ fn invalid(msg: impl Into<String>) -> SketchError {
 /// Serialises an id-keyed map as a list of `[id, value]` pairs. JSON object keys are strings,
 /// which serde cannot turn back into integer ids inside internally tagged enums (the document's
 /// feature list), so a plain list is used.
-mod as_pairs {
+pub(crate) mod as_pairs {
     use std::collections::BTreeMap;
 
     use serde::{Deserialize, Deserializer, Serialize, Serializer};

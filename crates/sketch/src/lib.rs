@@ -6,6 +6,7 @@
 //! - [`SketchSolver`] / [`GaussNewton`]: solving, drag, degrees of freedom, conflict and
 //!   redundancy detection.
 //! - Tools: rectangle, polygon, three-point arc, fillet, trim, offset, mirror.
+//! - [`Sketch3d`]: a sketch on no plane, with its own solver on the same Gauss-Newton (DEC-136).
 //! - [`regions`] / [`profile`]: closed regions and their kernel [`Profile`](tenon_kernel::Profile),
 //!   with entity ids as curve tags.
 #![forbid(unsafe_code)]
@@ -17,6 +18,7 @@ pub mod lm;
 mod modify;
 mod profile;
 mod sketch;
+pub mod sketch3d;
 mod solve;
 pub mod text;
 mod tools;
@@ -26,6 +28,7 @@ pub use entity::{ConstraintId, Entity, EntityId, Geometry, PointRef};
 pub use modify::{MAX_PATTERN, Motion};
 pub use profile::{Piece, RegionKey, SketchRegion, crossing_spline, default_regions, find, key_of, outlines, profile, regions, text_regions};
 pub use sketch::{ArcSlot, MAX_CONSTRAINTS, MAX_ENTITIES, Sketch, SketchError, SketchResult, Slot};
+pub use sketch3d::{Arc3, Axis3, Bend3, Constraint3, EdgeCurve, Entity3, Geometry3, PointRef3, Sketch3d, Through};
 pub use solve::{Dof, GaussNewton, SketchSolver, SolveOptions};
 
 #[cfg(test)]

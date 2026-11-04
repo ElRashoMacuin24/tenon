@@ -680,12 +680,28 @@ impl Kernel for OcctKernel {
                                 path_in.points.push(v3(check::point("path point", *q)?));
                             }
                         }
+                        Curve3::BSpline { poles, knots } => {
+                            if poles.len() < 4 || poles.len() > MAX_PROFILE_CURVES || knots.len() != poles.len() + 4 {
+                                return Err(bad("a path spline needs at least four poles and four more knots than poles"));
+                            }
+                            if !knots.iter().all(|k| k.is_finite()) || knots.windows(2).any(|w| w[1] < w[0]) {
+                                return Err(bad("a path spline's knots must be numbers in order"));
+                            }
+                            path_in.curve_kinds.push(2);
+                            path_in.spline_poles.push(u32::try_from(poles.len()).map_err(|_| bad("the path spline has too many poles"))?);
+                            for q in poles {
+                                path_in.points.push(v3(check::point("path spline pole", *q)?));
+                            }
+                            path_in.knots.extend(knots.iter().copied());
+                        }
                         Curve3::Helix { .. } => return Err(bad("a helix is a whole path by itself")),
                     }
                 }
             }
         }
         let (mode, binormal) = match opts.orientation {
+            // (Round a sharp corner the path is mitred: the plain pipe stops at the first.)
+            SweepOrientation::Frenet if path.has_corner() => (3, Vec3::Z),
             SweepOrientation::Frenet => (0, Vec3::Z),
             SweepOrientation::Fixed => (1, Vec3::Z),
             SweepOrientation::Binormal(b) => (2, b.normalized()),

@@ -77,6 +77,20 @@ impl Workbench {
                 ],
                 vec!["asm.ground", "asm.dof", "asm.bom", "edit.undo", "edit.redo"],
             )
+        } else if self.is_sketching3d() {
+            (
+                [
+                    entry("ui.ok"),
+                    entry("sketch3d.dimension"),
+                    entry("sketch3d.line"),
+                    entry("sketch3d.spline"),
+                    entry("sketch3d.finish"),
+                    entry("sketch3d.bend"),
+                    entry("sketch3d.point"),
+                    entry("view.home"),
+                ],
+                vec!["sketch3d.include", "sketch3d.construction", "sketch3d.break_link", "edit.undo", "edit.redo", "view.fit", "view.previous"],
+            )
         } else if matches!(self.mode, Mode::Sketch(_)) {
             (
                 [

@@ -119,7 +119,11 @@ fn a_ucs_goes_through_three_points_and_follows_them() {
     let corner = |want: [f64; 3], s: &mut Session, k: &mut OcctKernel| {
         let e = on(want);
         let r = run(s, k, "model.edge_ref", json!({ "body": 0, "edge": e["edge"] }));
-        json!({ "vertex": { "edge": r, "near": { "x": want[0], "y": want[1], "z": want[2] } } })
+        // (Which end, by the way it lies from the edge's middle.)
+        let mid = &r["fingerprint"]["mid"];
+        let from_mid = |key: &str, at: f64| at - mid[key].as_f64().unwrap();
+        let towards = json!({ "x": from_mid("x", want[0]), "y": from_mid("y", want[1]), "z": from_mid("z", want[2]) });
+        json!({ "vertex": { "edge": r, "end": 0, "towards": towards } })
     };
     let (o, x, y) = (corner([40.0, 0.0, 10.0], &mut s, &mut k), corner([40.0, 20.0, 10.0], &mut s, &mut k), corner([0.0, 0.0, 10.0], &mut s, &mut k));
     let u = feature(&run(&mut s, &mut k, "work.ucs", json!({ "by": "three_points", "points": [o, x, y] })));

@@ -239,6 +239,7 @@ shows until a feature uses it and a work feature shows.
 | `type` | Fields |
 |---|---|
 | `sketch` | `plane`, `next_entity`, `next_constraint`, `entities`, `constraints`; optional `projections` (all below) |
+| `sketch3d` | `next_entity`, `next_constraint`, `entities`, `constraints`; optional `links` ([3D sketches](#3d-sketches)) |
 | `extrude` | `sketch`, `regions`, `extent`, `reverse`, `operation`; optional `taper` (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through-all only) |
 | `revolve` | `sketch`, `regions`, `axis` (revolve axis), `angle`, `operation`. Turned the other way (`reverse = true`), its type is `flipped_revolve`, so that a build that does not know `reverse` refuses the file rather than build it on the other side (DEC-124) |
 | `fillet` | `edges` (edge references), `radius`; optional `radii` (a variable radius: `[{ at, radius }, ...]`, `at` from 0 at each edge's start to 1 at its end, `radius` being the start's; its type is then `variable_fillet`) and `faces` (a face fillet: two lists of face references, `edges` then empty; its type is then `face_fillet`; DEC-122, DEC-124) |
@@ -248,7 +249,7 @@ shows until a feature uses it and a work feature shows.
 | `pattern_rect` | `features`, `dir1`, `count1`, `spacing1`, `reverse1`, optional `dir2`, `count2`, `spacing2`, `reverse2` |
 | `pattern_circular` | `features`, `axis`, `count`, `angle`, `reverse` |
 | `mirror` | `features`, `plane` |
-| `work_plane` | `by`: `offset` (`base` plane, `distance`), `angle` (`base`, `axis`, `angle`), `midplane` (`a`, `b`) or `three_points` (`points`: three of `"origin"`, `{ work = <point id> }`, `{ center = <edge reference> }`, `{ sketch_point = { sketch, point } }`, `{ ucs = <UCS id> }` (its origin) or `{ vertex = { edge = <edge reference>, near = { x, y, z } } }` (the end of the edge on the side of its middle `near` is on, as it was when picked; DEC-116, DEC-133)) |
+| `work_plane` | `by`: `offset` (`base` plane, `distance`), `angle` (`base`, `axis`, `angle`), `midplane` (`a`, `b`) or `three_points` (`points`: three of `"origin"`, `{ work = <point id> }`, `{ center = <edge reference> }`, `{ sketch_point = { sketch, point } }`, `{ ucs = <UCS id> }` (its origin), `{ sketch3d_point = { sketch, point } }` or `{ vertex = { edge = <edge reference>, end = 0 or 1, towards = { x, y, z } } }` (an end of the edge; `towards` is the way from its other end to this one, as it was when picked, and says which end is meant whichever way the kernel names the edge; DEC-116, DEC-133, DEC-136)) |
 | `work_axis` | `by`: `along` (`axis`) or `planes` (`a`, `b`) |
 | `work_point` | `by`: `center` (`edge`) or `intersection` (`axis`, `plane`) |
 | `ucs` | A user coordinate system (DEC-133). `by`: `offset` (optional `base`: the id of the UCS it is measured from, else the part's origin; `x`, `y`, `z`: millimetres along that one's axes; `rx`, `ry`, `rz`: radians about its own X, then the Y that gives, then the Z that gives) or `three_points` (`points`: its origin, a point on its +X and a point on the +Y side of its XY plane, each as a work plane's) |
@@ -414,6 +415,73 @@ edge is seen square on.
 
 Point positions are where the solver left them; they are rounded on writing (see
 [Text files](#text-files)).
+
+### 3D sketches
+
+A feature of type `sketch3d` is a sketch on no plane (DEC-136). Its entities and constraints are lists
+of records with their ids, as a sketch's are, and its positions are in the part's own axes:
+
+```toml
+[[feature]]
+id = 3
+name = "3D Sketch1"
+suppressed = false
+type = "sketch3d"
+next_entity = 9
+next_constraint = 6
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0, z = 10.0 }, reference = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0, z = 50.0 } },
+  { id = 3, type = "line", start = 1, end = 2 },
+]
+constraints = [
+  { id = 1, type = "along", line = 3, axis = "z" },
+  { id = 2, type = "length", line = 3, value = 40.0 },
+]
+links = [
+  { entity = 1, to = { point = { vertex = { edge = { faces = [...], fingerprint = {...} }, end = 0 } } } },
+]
+```
+
+**Entity types:**
+
+| `type` | Fields |
+|---|---|
+| `point` | `pos` (solved position) |
+| `line` | `start`, `end` (point ids) |
+| `arc` | `center`, `start`, `end` (point ids): the short way round the centre, in the plane of the three. A bend is one of these |
+| `spline` | `points`: the 2 to 500 point ids it goes through, in order. It is the natural cubic through them, by chord length |
+| `edge` | `start`, `end` (point ids; one at both ends of a whole circle) and `curve`: `along` (the points it is drawn through), `length`, and for a circular edge `mid`, the point halfway. Always `reference = true` |
+
+An entity may have `construction = true` or `reference = true`; those left out are false.
+
+**Constraint types:** `coincident` (`a`, `b`: points), `fix` (`point`), `along` (`line`, `axis`: `x`, `y` or `z`),
+`parallel`, `perpendicular` (`a`, `b`: lines), `equal` (`a`, `b`: two lines or two arcs), `tangent` (`a`,
+`b`: curves that meet at an end, not two lines), `corner` (`point`, `arc`: where the tangents at the arc's
+ends meet, the corner a bend rounds), and the dimensions `length` (`line`, `value`), `distance` (`a`, `b`,
+`value`), `coordinate` (`point`, `axis`, `value`) and `radius` (`arc`, `value`). A dimension has a parameter
+name as a sketch's does: `target = { kind = "dimension", sketch = 3, constraint = 2 }`.
+
+**Links.** A 3D sketch whose reference geometry follows the part lists what each stands for, after its
+constraints. `entity` is a `reference = true` entity, listed once at most. `to` is `{ edge = <an edge
+reference> }`, or `{ point = ... }` with `"origin"`, `{ work = id }`, `{ center = <edge reference> }`, `{
+sketch_point = { sketch, point } }`, `{ sketch3d_point = { sketch, point } }` or `{ vertex = { edge = <edge
+reference>, end = 0 or 1, towards = { x, y, z } } }`: an end of a named edge, 0 where the edge starts when it was
+chosen. The optional `towards` is the way from the edge's other end to this one, as it was then, and it decides
+which end is meant when the kernel names the edge the other way round; without it, `end` decides. A vertex in a
+three-point plane or a work point has the same fields. What it refers to must come before the sketch. At every
+regeneration each is found again and its entity put there, and the sketch solved; the positions in the file are
+those of the last regeneration. What is not found leaves its entity where it is. A 3D sketch with no links has no
+`links` field.
+
+A sweep's `path` may name a `sketch3d` feature as its `sketch`, with any of its curves in `curves`; they join end
+to end by shared points, by a `coincident`, or by being reference points at one place. A work plane may be `{ by = "square_to_curve", sketch, curve, end }`, a work point `{ by = "at", point = ... }`, and
+an axis `{ sketch3d_line = { sketch, line } }`.
+
+An older build refuses a file with a `sketch3d` feature, naming the record ("line 41: feature 3 (3D
+Sketch1): unknown variant"), as for every new feature type, and it does the same for a work plane, a work
+point or an axis of the new kinds, and a vertex or a point of a 3D sketch in a three-point plane. Files
+without them are written and read as they were.
 
 ### References to faces and edges
 
@@ -962,8 +1030,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   a Smooth constraint; To, To Next or Between of an extrusion; To, To Next or two angles of a
   revolution, or one turned the other way; a spotface or To hole; a variable or face
   fillet; a work plane through three points; a Tangent or Symmetry relationship; a mirrored
-  occurrence; an auxiliary or overlay view; a baseline or ordinate set; or an emboss, a derived part
-  or a UCS. It opens the part the same and silently loses, on
+  occurrence; an auxiliary or overlay view; a baseline or ordinate set; an emboss, a derived part or
+  a UCS; or a 3D sketch or what is made from one. It opens the part the same and silently loses, on
   a save, a tapped hole's thread (`tapped`; the drawing's note and the Threads list lose it at
   once), which points are sketch points (`sketch_point`), which sketches are shown (`visible`),
   a study's `[study.optimize]`, an assembly's `[[pattern]]`s (each element a free component where it
@@ -988,7 +1056,9 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   `mirrored_placement` (DEC-130), a drawing view's `auxiliary` and `overlay` kinds and its `mods`
   (DEC-131), a drawing's `baseline` and `ordinate` annotations (DEC-132), and the feature types
   `emboss`, `derive` and `ucs` with the `ucs` forms of a plane, an axis and a direction and a
-  three-point plane's `ucs` and `vertex` points (DEC-133).
+  three-point plane's `ucs` and `vertex` points (DEC-133), and the `sketch3d` feature type with its
+  `links`, a sweep along one, the `square_to_curve` work plane, the `at` work point, the
+  `sketch3d_line` axis, and the `sketch3d_point` point (DEC-136).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

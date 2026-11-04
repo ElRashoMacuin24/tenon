@@ -32,6 +32,7 @@
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
+#include <BRepBuilderAPI_TransitionMode.hxx>
 #include <BRepOffsetAPI_MakePipeShell.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
@@ -2255,20 +2256,63 @@ TopoDS_Wire helix_wire(const HelixIn& h) {
   return wire.Wire();
 }
 
-/// The spine of a sweep: lines and arcs end to end, or a helix.
+/// A cubic B-spline of a path, from `count` of `p.points` from `at` and its whole knot vector.
+TopoDS_Edge path_spline(const PathIn& p, std::size_t at, std::size_t count, std::size_t first_knot) {
+  if (count < 4 || first_knot + count + 4 > p.knots.size()) {
+    throw std::invalid_argument("a path spline has too few knots");
+  }
+  NCollection_Array1<gp_Pnt> poles(1, static_cast<int>(count));
+  for (std::size_t i = 0; i < count; ++i) {
+    poles(static_cast<int>(i + 1)) = pnt(p.points[at + i]);
+  }
+  // The whole knot vector as OCCT has it: each knot once, and how many times it comes.
+  std::vector<double> knots;
+  std::vector<int> mults;
+  for (std::size_t i = first_knot; i < first_knot + count + 4; ++i) {
+    if (!knots.empty() && p.knots[i] - knots.back() <= Precision::PConfusion()) {
+      ++mults.back();
+    } else {
+      knots.push_back(p.knots[i]);
+      mults.push_back(1);
+    }
+  }
+  NCollection_Array1<double> occt_knots(1, static_cast<int>(knots.size()));
+  NCollection_Array1<int> occt_mults(1, static_cast<int>(mults.size()));
+  for (std::size_t i = 0; i < knots.size(); ++i) {
+    occt_knots(static_cast<int>(i + 1)) = knots[i];
+    occt_mults(static_cast<int>(i + 1)) = mults[i];
+  }
+  occ::handle<Geom_BSplineCurve> curve = new Geom_BSplineCurve(poles, occt_knots, occt_mults, 3);
+  BRepBuilderAPI_MakeEdge mk(curve);
+  if (!mk.IsDone()) {
+    throw std::runtime_error("could not build a path spline");
+  }
+  return mk.Edge();
+}
+
+/// The spine of a sweep: lines, arcs and splines end to end, or a helix.
 TopoDS_Wire path_wire(const PathIn& p) {
   if (p.kind == 1) {
     return helix_wire(p.helix);
   }
   BRepBuilderAPI_MakeWire mw;
   std::size_t k = 0;
+  std::size_t splines = 0;
+  std::size_t knots_used = 0;
   for (const std::uint8_t ck : p.curve_kinds) {
-    const std::size_t need = ck == 0 ? 2 : 3;
+    if (ck == 2 && splines >= p.spline_poles.size()) {
+      throw std::invalid_argument("the path has too few splines");
+    }
+    const std::size_t need = ck == 0 ? 2 : (ck == 1 ? 3 : static_cast<std::size_t>(p.spline_poles[splines]));
     if (k + need > p.points.size()) {
       throw std::invalid_argument("the path has too few points");
     }
     TopoDS_Edge e;
-    if (ck == 0) {
+    if (ck == 2) {
+      e = path_spline(p, k, need, knots_used);
+      knots_used += need + 4;
+      ++splines;
+    } else if (ck == 0) {
       const gp_Pnt a = pnt(p.points[k]);
       const gp_Pnt b = pnt(p.points[k + 1]);
       if (a.Distance(b) <= Precision::Confusion()) {
@@ -2325,11 +2369,17 @@ std::unique_ptr<Shape> sweep(const ProfileIn& profile, const PathIn& path, std::
     const TopoDS_Wire spine = path_wire(path);
     TopoDS_Shape result;
     std::unique_ptr<Shape> out;
-    if (mode == 2 || path.kind == 1) {
-      // A fixed binormal (springs, threads): the pipe shell, one region without holes.
-      const TopoDS_Wire section = single_outer_wire(base, "a sweep along a helix");
+    if (mode == 2 || mode == 3 || path.kind == 1) {
+      // A fixed binormal (springs, threads), or round sharp corners, mitred: the pipe shell, one
+      // region without holes.
+      const TopoDS_Wire section = single_outer_wire(base, mode == 3 ? "a sweep round a sharp corner" : "a sweep along a helix");
       BRepOffsetAPI_MakePipeShell mk(spine);
-      mk.SetMode(mode == 2 ? dir(binormal) : dir(path.helix.axis.z_dir));
+      if (mode == 3) {
+        mk.SetMode(false);
+        mk.SetTransitionMode(BRepBuilderAPI_RightCorner);
+      } else {
+        mk.SetMode(mode == 2 ? dir(binormal) : dir(path.helix.axis.z_dir));
+      }
       mk.Add(section, false, false);
       mk.Build();
       if (!mk.IsDone() || !mk.MakeSolid()) {

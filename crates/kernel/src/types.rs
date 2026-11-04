@@ -115,6 +115,12 @@ pub enum Curve3 {
         mid: Vec3,
         end: Vec3,
     },
+    /// A cubic B-spline with these poles and its whole knot vector (as long as the poles and four
+    /// more, starting and ending with four alike): the spline of a 3D sketch, exactly (DEC-136).
+    BSpline {
+        poles: Vec<Vec3>,
+        knots: Vec<f64>,
+    },
     /// A helix on a cylinder of `radius`: `frame` has its origin on the axis, X towards the start
     /// point and Z along the axis; `turns` turns of `pitch`, left-handed when `left`. A helix is
     /// a whole path by itself.
@@ -127,10 +133,90 @@ pub enum Curve3 {
     },
 }
 
+impl Curve3 {
+    /// Where it starts and ends. (Of a helix, which is a whole path by itself: not said.)
+    pub fn ends(&self) -> Option<(Vec3, Vec3)> {
+        match self {
+            Curve3::Line { start, end } | Curve3::Arc { start, end, .. } => Some((*start, *end)),
+            Curve3::BSpline { poles, .. } => Some((*poles.first()?, *poles.last()?)),
+            Curve3::Helix { .. } => None,
+        }
+    }
+
+    /// The unit directions it starts and ends in.
+    pub fn directions(&self) -> Option<(Vec3, Vec3)> {
+        let unit = |a: Vec3, b: Vec3| Some((b - a).normalized()).filter(|d| d.len() > 0.5);
+        match self {
+            Curve3::Line { start, end } => {
+                let d = unit(*start, *end)?;
+                Some((d, d))
+            }
+            Curve3::Arc { start, mid, end } => {
+                let (a, b) = (*mid - *start, *end - *start);
+                let n = a.cross(b);
+                if n.len2() <= 0.0 {
+                    return None;
+                }
+                let centre = *start + (b.cross(n) * a.dot(a) + n.cross(a) * b.dot(b)) * (0.5 / n.dot(n));
+                let (s, e) = (n.cross(*start - centre).normalized(), n.cross(*end - centre).normalized());
+                Some((if s.dot(a) < 0.0 { -s } else { s }, if e.dot(*end - *mid) < 0.0 { -e } else { e }))
+            }
+            Curve3::BSpline { poles, .. } => {
+                Some((unit(*poles.first()?, *poles.get(1)?)?, unit(*poles.get(poles.len().checked_sub(2)?)?, *poles.last()?)?))
+            }
+            Curve3::Helix { .. } => None,
+        }
+    }
+}
+
 /// An open or closed chain of 3D curves.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Path3 {
     pub curves: Vec<Curve3>,
+}
+
+impl Path3 {
+    /// Where one curve meets the next, and where the last meets the first if the path closes:
+    /// each pair, with whether it is the one where the path closes.
+    fn meetings(&self) -> impl Iterator<Item = (&Curve3, &Curve3, bool)> {
+        let closes = match (self.curves.first().and_then(Curve3::ends), self.curves.last().and_then(Curve3::ends)) {
+            (Some((head, _)), Some((_, tail))) => head.dist(tail) <= tenon_geom::tol::LINEAR,
+            _ => false,
+        };
+        let inside = self.curves.windows(2).map(|w| (&w[0], &w[1], false));
+        let round = self.curves.last().zip(self.curves.first()).filter(|_| closes).map(|(a, b)| (a, b, true));
+        inside.chain(round)
+    }
+
+    /// Whether it turns sharply where one curve meets the next, or where it closes on itself.
+    pub fn has_corner(&self) -> bool {
+        self.meetings().any(|(a, b, _)| sharp(a, b))
+    }
+
+    /// A sharp corner beside a curve, where the mitre of a sweep cannot be trusted (between two
+    /// straight lines it can): true when it is where the path closes on itself, false elsewhere,
+    /// None when there is none.
+    pub fn corner_at_curve(&self) -> Option<bool> {
+        let curved = |c: &Curve3| !matches!(c, Curve3::Line { .. });
+        self.meetings().find(|(a, b, _)| sharp(a, b) && (curved(a) || curved(b))).map(|(_, _, closes)| closes)
+    }
+
+    /// Whether it goes straight back the way it came, where one curve meets the next: no mitre
+    /// is to be had there.
+    pub fn turns_straight_back(&self) -> bool {
+        self.meetings().any(|(a, b, _)| match (a.directions(), b.directions()) {
+            (Some((_, out)), Some((into, _))) => out.cross(into).len() <= 1e-6 && out.dot(into) < 0.0,
+            _ => false,
+        })
+    }
+}
+
+/// Whether a path turns sharply going from one curve into the next.
+fn sharp(a: &Curve3, b: &Curve3) -> bool {
+    match (a.directions(), b.directions()) {
+        (Some((_, out)), Some((into, _))) => out.cross(into).len() > 1e-6 || out.dot(into) < 0.0,
+        _ => false,
+    }
 }
 
 /// How the profile is oriented along a sweep path.
@@ -248,4 +334,62 @@ pub enum Transform {
         center: Vec3,
         factor: f64,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use tenon_geom::Vec3;
+
+    use super::{Curve3, Path3};
+
+    fn v(x: f64, y: f64, z: f64) -> Vec3 {
+        Vec3::new(x, y, z)
+    }
+
+    fn line(a: Vec3, b: Vec3) -> Curve3 {
+        Curve3::Line { start: a, end: b }
+    }
+
+    #[test]
+    fn a_path_has_a_corner_where_one_curve_turns_from_the_next_and_where_it_closes() {
+        // Two lines on from one another: none. At a square turn: one.
+        let straight = Path3 { curves: vec![line(v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)), line(v(1.0, 0.0, 0.0), v(2.0, 0.0, 0.0))] };
+        assert!(!straight.has_corner());
+        let turn = Path3 { curves: vec![line(v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)), line(v(1.0, 0.0, 0.0), v(1.0, 1.0, 0.0))] };
+        assert!(turn.has_corner());
+        assert_eq!(turn.corner_at_curve(), None, "between lines the mitre is sound");
+        // A quarter circle and the line on from it, tangent: none; open.
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let arc = Curve3::Arc { start: v(1.0, 0.0, 0.0), mid: v(s, s, 0.0), end: v(0.0, 1.0, 0.0) };
+        let on = Path3 { curves: vec![arc.clone(), line(v(0.0, 1.0, 0.0), v(-5.0, 1.0, 0.0))] };
+        assert!(!on.has_corner());
+        // The same arc and a line that leaves it square: sharp, at a curve.
+        let off = Path3 { curves: vec![arc.clone(), line(v(0.0, 1.0, 0.0), v(0.0, 5.0, 0.0))] };
+        assert!(off.has_corner());
+        assert_eq!(off.corner_at_curve(), Some(false));
+        // A D, an arc and the line that closes it: sharp where they meet, and where it closes.
+        let half = Curve3::Arc { start: v(0.0, -1.0, 0.0), mid: v(1.0, 0.0, 0.0), end: v(0.0, 1.0, 0.0) };
+        let d = Path3 { curves: vec![half, line(v(0.0, 1.0, 0.0), v(0.0, -1.0, 0.0))] };
+        assert!(d.has_corner());
+        assert_eq!(d.corner_at_curve(), Some(false), "where the arc meets the line, first");
+        // A triangle closes sharp and between lines.
+        let (a, b, c) = (v(0.0, 0.0, 0.0), v(4.0, 0.0, 0.0), v(0.0, 3.0, 0.0));
+        let triangle = Path3 { curves: vec![line(a, b), line(b, c), line(c, a)] };
+        assert!(triangle.has_corner());
+        assert_eq!(triangle.corner_at_curve(), None);
+        assert!(!triangle.turns_straight_back());
+        // There and straight back.
+        let back = Path3 { curves: vec![line(a, b), line(b, v(1.0, 0.0, 0.0))] };
+        assert!(back.has_corner() && back.turns_straight_back());
+        // A spline that closes on itself has no meeting but that one.
+        let poles = vec![v(1.0, 0.0, 0.0), v(1.0, 1.0, 0.0), v(-1.0, 1.0, 0.0), v(1.0, 0.0, 0.0)];
+        let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        let closed = Path3 { curves: vec![Curve3::BSpline { poles, knots }] };
+        assert!(closed.has_corner());
+        assert_eq!(closed.corner_at_curve(), Some(true), "said to be where it closes");
+        // An open spline alone has none.
+        let poles = vec![v(0.0, 0.0, 0.0), v(1.0, 1.0, 0.0), v(2.0, 1.0, 0.0), v(3.0, 0.0, 0.0)];
+        let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        assert!(!Path3 { curves: vec![Curve3::BSpline { poles, knots }] }.has_corner());
+    }
 }

@@ -666,7 +666,7 @@ impl Workbench {
         if self.document().features().is_empty() || (built && self.scene.bodies.is_empty()) {
             return Err("Stress Analysis: there is no solid to study yet.".into());
         }
-        if self.is_sketching() {
+        if self.is_sketching() || self.is_sketching3d() {
             self.finish_sketch();
         }
         self.chrome.sheet.flat_view = false;

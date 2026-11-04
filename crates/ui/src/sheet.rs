@@ -730,13 +730,17 @@ impl Workbench {
             return std::iter::once(FLAT_TAB).chain(["Tools", "View"].iter().filter_map(|n| named(n))).collect();
         }
         let sheet = self.is_sheet_metal();
-        let rest = all.filter(|i| *i != SHEET_TAB && *i != FLAT_TAB && *i != crate::commands::ANALYSIS_TAB);
+        // (In a 3D sketch its own tab takes the place of the Sketch tab; otherwise it is not there.)
+        let in_3d = self.is_sketching3d();
+        let rest = all
+            .filter(|i| *i != SHEET_TAB && *i != FLAT_TAB && *i != crate::commands::ANALYSIS_TAB && *i != crate::commands::SKETCH3D_TAB)
+            .map(|i| if in_3d && i == crate::commands::SKETCH_TAB { crate::commands::SKETCH3D_TAB } else { i });
         if sheet { std::iter::once(SHEET_TAB).chain(rest).collect() } else { rest.collect() }
     }
 
     /// The flat pattern is what the window shows.
     pub(crate) fn flat_shown(&self) -> bool {
-        self.chrome.sheet.flat_view && self.is_sheet_metal() && !self.is_sketching()
+        self.chrome.sheet.flat_view && self.is_sheet_metal() && !self.is_sketching() && !self.is_sketching3d()
     }
 
     /// Keeps the open tab among those that show (a part that stopped being sheet metal by an
@@ -817,7 +821,7 @@ impl Workbench {
                 if self.document().sheet_metal().is_none() {
                     return Err(NOT_SHEET.into());
                 }
-                if self.is_sketching() {
+                if self.is_sketching() || self.is_sketching3d() {
                     self.finish_sketch();
                 }
                 if !self.document().sheet_metal().is_some_and(|r| r.flat) {

@@ -19,6 +19,12 @@ const AXIS: Ty = Either(&[Word(&["x", "y", "z"]), Edge, Face, Object]);
 const SIZE: Ty = Either(&[Length, Text]);
 /// A value or the equation that gives it.
 const EQUATION: Ty = Either(&[Text, Number]);
+/// A point of a 3D sketch: a point's id, `[x, y, z]`, or what of the part it stands for: "origin",
+/// `{"work": id}`, `{"vertex": edge reference, "end": 0 or 1, "towards": [x, y, z]}`, with `"at"`
+/// where there is no kernel.
+const POINT3: Ty = Either(&[Id, Vector(3), Word(&["origin"]), Object]);
+/// One of the three directions of space.
+const AXIS3: Ty = Word(&["x", "y", "z"]);
 
 const SKETCH: Param = req("sketch", Id, "the sketch: its feature id, as sketch.create returns it");
 const ENTITIES: Param = req("entities", IDS, "ids of the sketch's points and curves");
@@ -457,6 +463,50 @@ static SCHEMAS: &[C] = &[
         ],
     ),
     C::new("sketch.info", &[SKETCH]),
+    C::new("sketch.new_3d", &[]),
+    C::new("sketch3d.point", &[SKETCH, req("at", POINT3, "where it goes, or what of the part it stands for and follows")]),
+    C::new(
+        "sketch3d.line",
+        &[SKETCH, req("start", POINT3, "where it starts"), req("end", POINT3, "where it ends"), opt("along", AXIS3, "hold it parallel to this axis")],
+    ),
+    C::new("sketch3d.spline", &[SKETCH, req("points", List(&POINT3), "the points it goes through, in order: 2 or more")]),
+    C::with(
+        "sketch3d.bend",
+        &[
+            SKETCH,
+            opt("point", Id, "the corner, where two lines meet"),
+            opt("lines", IDS, "or the two lines"),
+            req("radius", Length, "the radius of the bend"),
+        ],
+        &[&[&["point"], &["lines"]]],
+    ),
+    C::new(
+        "sketch3d.include",
+        &[
+            SKETCH,
+            req("edge", Edge, "the edge, from model.edge_ref"),
+            opt(
+                "geometry",
+                Object,
+                "what the edge is ({type: line, start, end} or {type: curve, start, end, curve}), where the kernel is not to hand",
+            ),
+        ],
+    ),
+    C::new("sketch3d.constrain", &[SKETCH, req("constraint", Object, "the constraint, by its `type`: see the command's help")]),
+    C::with(
+        "sketch3d.set_dimension",
+        &[SKETCH, req("constraint", Id, "the dimension"), opt("value", Length, "its value"), opt("equation", EQUATION, "or an equation for it")],
+        &[&[&["value"], &["equation"]]],
+    ),
+    C::new("sketch3d.move", &[SKETCH, req("point", Id, "the point"), req("at", Vector(3), "where it goes, as near as the constraints let it")]),
+    C::new("sketch3d.delete", &[SKETCH, opt("entities", IDS, "points and curves"), opt("constraints", IDS, "constraints and dimensions")]),
+    C::new(
+        "sketch3d.construction",
+        &[SKETCH, req("entity", Id, "a point or curve"), opt("on", Bool, "construction (default true) or the sketch's own")],
+    ),
+    C::new("sketch3d.break_link", &[SKETCH, req("entities", IDS, "reference points and lines")]),
+    C::new("sketch3d.info", &[SKETCH]),
+    C::new("sketch3d.length", &[SKETCH, opt("curves", IDS, "which curves (default: what a sweep runs along by default)")]),
     C::new(
         "model.extrude",
         &[
@@ -574,8 +624,12 @@ static SCHEMAS: &[C] = &[
         &[
             req("sketch", Id, "the sketch of the profile"),
             REGIONS,
-            req("path_sketch", Id, "the sketch of the path"),
-            opt("path", IDS, "the path's lines and arcs, joined end to end (default: every line and arc of path_sketch that is not construction)"),
+            req("path_sketch", Id, "the sketch or 3D sketch of the path"),
+            opt(
+                "path",
+                IDS,
+                "the path's curves, joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not construction, with the edges brought in that join them, or with none of its own the edges brought in that join the first)",
+            ),
             opt("fixed", Bool, "keep the profile's orientation (default false: it turns with the path)"),
             OPERATION,
             EQUATIONS,
@@ -699,7 +753,11 @@ static SCHEMAS: &[C] = &[
         "model.pattern.circular",
         &[
             req("features", IDS, "the features to copy"),
-            req("axis", AXIS, "an origin axis, a straight or circular edge, a cylinder or cone, or a work axis as {\"work\": id}"),
+            req(
+                "axis",
+                AXIS,
+                "an origin axis, a straight or circular edge, a cylinder or cone, a work axis as {\"work\": id}, or a line of a 3D sketch as {\"sketch3d\": id, \"line\": id}",
+            ),
             req("count", Int, "how many, the original counted"),
             opt("angle", Angle, "over how much of a turn the copies spread evenly (default: all of it)"),
             opt("reverse", Bool, "the other way round (default false)"),
@@ -720,7 +778,7 @@ static SCHEMAS: &[C] = &[
     C::new(
         "work.plane",
         &[
-            opt("by", Word(&["offset", "angle", "midplane", "three_points"]), "how it is placed (default offset)"),
+            opt("by", Word(&["offset", "angle", "midplane", "three_points", "square_to_curve"]), "how it is placed (default offset)"),
             opt("base", PLANE, "offset, angle: the plane it starts from"),
             opt("distance", Length, "offset: how far from `base`"),
             opt("axis", AXIS, "angle: the axis in `base` it turns about"),
@@ -730,15 +788,22 @@ static SCHEMAS: &[C] = &[
             opt(
                 "points",
                 THREE_POINTS,
-                "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference}, {\"sketch_point\": {\"sketch\": id, \"point\": id}}, {\"ucs\": id} (its origin) or {\"vertex\": {\"edge\": edge reference, \"near\": {\"x\", \"y\", \"z\"}}} (the end of the edge nearer that place); from the first toward the second is its X",
+                "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference}, {\"sketch_point\": {\"sketch\": id, \"point\": id}}, {\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"ucs\": id} (its origin) or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1, \"towards\": {\"x\": .., \"y\": .., \"z\": ..}}}; from the first toward the second is its X",
             ),
+            opt("sketch", Id, "square_to_curve: the 3D sketch"),
+            opt("curve", Id, "square_to_curve: its curve"),
+            opt("end", Id, "square_to_curve: the end of the curve it goes through"),
             EQUATIONS,
         ],
     ),
     C::with(
         "work.axis",
         &[
-            opt("axis", AXIS, "an origin axis, an edge, a round face, or a work axis as {\"work\": id}"),
+            opt(
+                "axis",
+                AXIS,
+                "an origin axis, an edge, a round face, a work axis as {\"work\": id}, or a line of a 3D sketch as {\"sketch3d\": id, \"line\": id}",
+            ),
             opt("a", PLANE, "or one of two planes it lies on"),
             opt("b", PLANE, "and the other"),
             EQUATIONS,
@@ -754,6 +819,17 @@ static SCHEMAS: &[C] = &[
             EQUATIONS,
         ],
         &[&[&["edge"], &["axis", "plane"]]],
+    ),
+    C::new(
+        "work.point_at",
+        &[
+            req(
+                "point",
+                Either(&[Word(&["origin"]), Object]),
+                "{\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1, \"towards\": {\"x\": .., \"y\": .., \"z\": ..}}}",
+            ),
+            EQUATIONS,
+        ],
     ),
     C::new(
         "work.ucs",

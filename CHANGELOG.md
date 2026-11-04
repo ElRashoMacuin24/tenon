@@ -30,7 +30,7 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   revolution To, To Next, by two angles or Flipped; a spotface or To hole; a variable or face fillet;
   a work plane through three points; a Tangent or Symmetry relationship; a mirrored occurrence in an
   assembly; an auxiliary or overlay view; a baseline or ordinate set; an emboss, a derived part or a
-  UCS. Other new things it opens, and on a save it loses them: a
+  UCS; a 3D sketch or what is made from one. Other new things it opens, and on a save it loses them: a
   tapped hole's thread (the solid is the same), which points are sketch points, which sketches are
   shown, a study's Optimize Shape settings, an assembly's patterns (each element is then a free
   component where it stands, those of a suppressed pattern shown and counted), and a drawing view's
@@ -70,6 +70,16 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 
 ### Sketches
 
+- **3D sketches.** Start 3D Sketch now works: a sketch on no plane, a feature with its own tab. Lines through
+  vertices, work points, existing points or typed X, Y, Z, staying on an axis when near one; splines through
+  points; bends that round a corner by a radius and keep it; points; and Include Geometry, which brings model
+  edges in to follow the part. Coincident, fix, parallel to X, Y or Z, parallel, perpendicular, equal, tangent;
+  dimensions of a length, a distance, a coordinate and a radius, which are parameters; the degrees of freedom
+  shown, and over-constraining refused in words. A Sweep runs along its curves in any direction (a new
+  `Curve3::BSpline` for splines); work points, axes and planes come from its points and lines, among them
+  a plane square to a curve at its end; Measure takes its curves. A sweep goes on along a path that is bent, unbent
+  or drawn on from its end after it was made. New commands `sketch.new_3d`, `sketch3d.*` and `work.point_at`; a new
+  `sketch3d` feature type in part files.
 - **Text.** Sketch > Create > Text: click where it starts, type it in the Format Text box
   (several lines, the height of its capitals, an angle), OK. Its letters are profiles: a sketch
   of text alone extrudes or cuts at once, and in a feature's panel a click in a text's box adds
@@ -212,6 +222,12 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 
 ### Fixed
 
+- A sweep round a sharp corner used to stop at the first corner of its path, saying nothing, and made a
+  third of the tube it should. It is now mitred between two straight lines, for any path, where it closes on
+  itself too. A sharp corner at a curve (a spline, an arc, a spline closed on itself), a profile with holes, or
+  one that keeps its direction is refused there in words, saying what to do.
+- A profile from what is no sketch is refused when it is asked for. Extrude and the others took a work plane
+  or a 3D sketch without a word, and the file saved could not be opened.
 - Undo after deleting the last component of a part brought it back with nothing behind it, not drawn,
   and refused by mass and export until the file was opened again. It now comes back with its part.
 - OK with nothing touched changes nothing now, on any feature: a through cut stays through, and an

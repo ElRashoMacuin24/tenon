@@ -49,6 +49,8 @@ pub(crate) enum Geo {
 pub(crate) enum Mode {
     Model,
     Sketch(Box<SketchMode>),
+    /// A 3D sketch is being worked in (DEC-136).
+    Sketch3d(Box<crate::sketch3d::Sketch3dMode>),
 }
 
 /// Commands that replace the open document (or close the app), so ask to save it first.
@@ -349,10 +351,10 @@ impl Workbench {
             .document()
             .features()
             .iter()
-            .find(|f| f.name == name && matches!(f.kind, FeatureKind::Sketch { .. }))
+            .find(|f| f.name == name && matches!(f.kind, FeatureKind::Sketch { .. } | FeatureKind::Sketch3d { .. }))
             .map(|f| f.id)
             .ok_or_else(|| format!("the part has no sketch named `{name}`"))?;
-        self.enter_sketch(id)
+        self.edit_feature(id)
     }
 
     /// Shows the ribbon tab called `name` (the app's `--tab`).
@@ -417,6 +419,14 @@ impl Workbench {
         // A button whose milestone has not come says so, whatever environment it is pressed in.
         if let Some(c) = commands::find(id).filter(|c| !c.available()) {
             return Err(c.not_yet());
+        }
+        // Modelling from inside a 3D sketch leaves it first, as from inside a 2D sketch.
+        if self.is_sketching3d()
+            && id != "sketch.new_3d"
+            && ["sketch.", "model.", "work.", "sheet."].iter().any(|p| id.starts_with(p))
+            && id != "model.rebuild"
+        {
+            self.finish_sketch3d();
         }
         let export_2d = matches!(id, "export.pdf" | "export.svg" | "export.dxf");
         if id.starts_with("drw.") || id == "file.new_drawing" || id == "file.new_drawing_template" || export_2d {
@@ -608,6 +618,7 @@ impl Workbench {
                 self.set_status("Redone.");
             }
             "sketch.new" => self.new_sketch()?,
+            "sketch.new_3d" => self.new_sketch3d()?,
             "sketch.finish" => self.finish_sketch(),
             "model.box" | "model.cylinder" | "model.sphere" | "model.torus" => {
                 self.open_primitive(crate::primitive::Shape::of_command(id).ok_or("not a primitive")?)?
@@ -676,6 +687,8 @@ impl Workbench {
                     s.picks.clear();
                     s.tool = crate::sketcher::Tool::Select;
                     self.set_status("Ready");
+                } else if self.is_sketching3d() {
+                    self.sketch3d_escape();
                 }
             }
             "ui.repeat" => {
@@ -689,6 +702,7 @@ impl Workbench {
             "view.look_at" => self.look_at()?,
             "view.orbit" | "view.pan" | "view.zoom" => self.view.toggle_nav(id),
             _ if id.starts_with("sketch.") => self.sketch_tool(id)?,
+            _ if id.starts_with("sketch3d.") => self.sketch3d_tool(id)?,
             _ => {
                 return Err(match commands::find(id) {
                     Some(c) if !c.available() => c.not_yet(),
@@ -705,6 +719,17 @@ impl Workbench {
             && self.document().sketch(s.feature).is_none()
         {
             self.mode = Mode::Model;
+        }
+        if let Mode::Sketch3d(s) = &self.mode
+            && self.document().sketch3d(s.feature).is_none()
+        {
+            self.mode = Mode::Model;
+            self.chrome.tab = self.home_tab();
+        }
+        // (A chain of lines goes on from a point that may be gone.)
+        if let Mode::Sketch3d(s) = &mut self.mode {
+            s.clicks.clear();
+            s.picks.clear();
         }
         self.panel = None;
     }
@@ -881,6 +906,7 @@ impl Workbench {
         // Opening or finishing a sketch changes what is shown (see SketchMode::base).
         match &self.mode {
             Mode::Sketch(s) => Some(s.feature).hash(&mut h),
+            Mode::Sketch3d(s) => Some(s.feature).hash(&mut h),
             Mode::Model => None::<FeatureId>.hash(&mut h),
         }
         let key = h.finish();
@@ -893,6 +919,9 @@ impl Workbench {
                 && let (Some(base), Some(sk)) = (&s.base, d.sketch_mut(s.feature))
             {
                 *sk = base.clone();
+            }
+            if let Mode::Sketch3d(s) = &self.mode {
+                s.as_opened(&mut d);
             }
             Some(d)
         } else {
@@ -949,13 +978,16 @@ impl Workbench {
         // says so and the part is sent again.
         if !self.in_assembly() && !self.in_drawing() {
             self.session.follow_projections(&s.sketches);
+            self.session.follow_links(&s.sketches3d);
         }
         self.scene = s;
         self.scene_seq += 1;
         self.regen_note = None;
         // (Not while a primitive is being sized by the pointer: the view must stay where it is
         // under the clicks. The first solid is fitted once it is made.)
-        if !self.view.fitted && !self.scene.bodies.is_empty() && !matches!(self.panel, Some(Panel::Primitive(_))) {
+        // (Nor while a 3D sketch is being drawn by the pointer. One with no solid is fitted when it is left.)
+        let to_see = !self.scene.bodies.is_empty() || (!self.is_sketching3d() && self.sketch3d_box().is_some());
+        if !self.view.fitted && to_see && !matches!(self.panel, Some(Panel::Primitive(_))) {
             self.fit_view();
             self.view.fitted = true;
         }
@@ -1128,6 +1160,8 @@ impl Workbench {
                 commands::Env::Drawing
             } else if self.in_assembly() {
                 commands::Env::Assembly
+            } else if self.is_sketching3d() {
+                commands::Env::Sketch3d
             } else {
                 commands::Env::Part { sketching: self.is_sketching() }
             };
@@ -1143,6 +1177,7 @@ impl Workbench {
     pub(crate) fn edit_feature(&mut self, id: FeatureId) -> Result<(), String> {
         match self.document().feature(id).map(|f| &f.kind) {
             Some(FeatureKind::Sketch { .. }) => self.enter_sketch(id),
+            Some(FeatureKind::Sketch3d { .. }) => self.enter_sketch3d(id),
             Some(FeatureKind::Extrude(_)) => self.open_extrude(Some(id)),
             Some(FeatureKind::Revolve(_)) => self.open_revolve(Some(id)),
             Some(FeatureKind::Fillet(_)) => self.open_modify("fillet", Some(id)),

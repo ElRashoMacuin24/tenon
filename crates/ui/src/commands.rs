@@ -94,6 +94,8 @@ pub const SHEET_TAB: usize = 7;
 pub const FLAT_TAB: usize = 8;
 /// The tab of the Stress Analysis environment; shown only in it.
 pub const ANALYSIS_TAB: usize = 9;
+/// The tab of a 3D sketch; shown only in one, in the Sketch tab's place.
+pub const SKETCH3D_TAB: usize = 10;
 
 pub const RIBBON: &[RibbonTab] = &[
     RibbonTab {
@@ -674,6 +676,53 @@ pub const RIBBON: &[RibbonTab] = &[
             },
         ],
     },
+    RibbonTab {
+        name: "3D Sketch",
+        panels: &[
+            RibbonPanel {
+                title: "Draw",
+                commands: &[
+                    large("sketch3d.line", "Line", "Lines through points: click a vertex, a work point or a point of the sketch, or type X, Y, Z", Icon::Line, 0).key("L"),
+                    small("sketch3d.spline", "Spline", "A smooth curve through the points you click or type; Enter makes it", Icon::Spline, 0),
+                    small("sketch3d.bend", "Bend", "Round a corner between two lines: click the corner, then say the radius", Icon::Bend, 0),
+                    small("sketch3d.point", "Point", "A point: on a vertex or a work point it follows the part, or type X, Y, Z", Icon::Point, 0),
+                    large("sketch3d.include", "Include\nGeometry", "Bring edges of the part in as reference geometry that follows the part", Icon::Project, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Constrain",
+                commands: &[
+                    large("sketch3d.dimension", "Dimension", "Click a line for its length, a bend for its radius, or two points for how far apart they are", Icon::Dimension, 0).key("D"),
+                    glyph("sketch3d.coincident", "Coincident", "Two points", Icon::Coincident, 0),
+                    glyph("sketch3d.parallel", "Parallel", "Two lines", Icon::Parallel, 0),
+                    glyph("sketch3d.tangent", "Tangent", "Two curves that meet at an end", Icon::Tangent, 0),
+                    glyph("sketch3d.fix", "Fix", "A point that must not move", Icon::Fix, 0),
+                    glyph("sketch3d.perpendicular", "Perpendicular", "Two lines", Icon::Perpendicular, 0),
+                    glyph("sketch3d.equal", "Equal", "Two lines, or two bends", Icon::Equal, 0),
+                    glyph("sketch3d.along_x", "Parallel to X", "A line, held along the X axis", Icon::AlongX, 0),
+                    glyph("sketch3d.along_y", "Parallel to Y", "A line, held along the Y axis", Icon::AlongY, 0),
+                    glyph("sketch3d.along_z", "Parallel to Z", "A line, held along the Z axis", Icon::AlongZ, 0),
+                    small("sketch3d.coord_x", "X Coordinate", "Click a point, then say where it is along X", Icon::Dimension, 0),
+                    small("sketch3d.coord_y", "Y Coordinate", "Click a point, then say where it is along Y", Icon::Dimension, 0),
+                    small("sketch3d.coord_z", "Z Coordinate", "Click a point, then say where it is along Z", Icon::Dimension, 0),
+                ],
+            },
+            RibbonPanel {
+                title: "Format",
+                commands: &[
+                    small("sketch3d.construction", "Construction", "Make the selected geometry construction (or normal again)", Icon::Construction, 0),
+                    small(
+                        "sketch3d.break_link",
+                        "Break Link",
+                        "Make the selected reference geometry the sketch's own: it stays where it is and no longer follows the part",
+                        Icon::Project,
+                        0,
+                    ),
+                ],
+            },
+            RibbonPanel { title: "Exit", commands: &[large("sketch3d.finish", "Finish\n3D Sketch", "Leave the 3D sketch", Icon::FinishSketch, 0)] },
+        ],
+    },
 ];
 
 /// The ribbon of the assembly environment.
@@ -1023,7 +1072,13 @@ pub const EXTRA: &[UiCommand] = &[
     small("sketch.slot_center", "Slot Center Point", "Click the middle of the slot, the centre of one end, then how wide", Icon::Slot, 0),
     small("sketch.slot_arc_three", "Three Point Arc Slot", "Click the start of the arc, its end, a point on it, then how wide", Icon::SlotArc, 0),
     small("sketch.slot_arc_center", "Center Point Arc Slot", "Click the centre of the arc, its start, its end, then how wide", Icon::SlotArc, 0),
-    small("sketch.new_3d", "Start 3D Sketch", "A sketch of 3D curves", Icon::NewSketch, LATER),
+    small(
+        "sketch.new_3d",
+        "Start 3D Sketch",
+        "A sketch on no plane: lines, bends and splines through vertices, work points or typed coordinates, to sweep along",
+        Icon::Sketch3d,
+        0,
+    ),
     small("view.style.shaded_edges", "Shaded with Edges", "Shaded faces with their edges", Icon::VisualStyle, 0),
     small("view.style.shaded", "Shaded", "Shaded faces only", Icon::VisualStyle, 0),
     small("view.style.wireframe", "Wireframe", "Edges only", Icon::VisualStyle, 0),
@@ -1143,7 +1198,11 @@ pub fn location(id: &str) -> Option<String> {
 /// Which ribbon is showing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Env {
-    Part { sketching: bool },
+    Part {
+        sketching: bool,
+    },
+    /// In a 3D sketch.
+    Sketch3d,
     Assembly,
     Drawing,
 }
@@ -1184,6 +1243,7 @@ pub fn for_key(key: &str, env: Env) -> Option<&'static UiCommand> {
     let (ribbon, tabs): (&[RibbonTab], &[usize]) = match env {
         Env::Part { sketching: true } => (RIBBON, &[SKETCH_TAB, MODEL_TAB]),
         Env::Part { sketching: false } => (RIBBON, &[MODEL_TAB]),
+        Env::Sketch3d => (RIBBON, &[SKETCH3D_TAB]),
         Env::Assembly => (ASM_RIBBON, &[0]),
         Env::Drawing => (DRW_RIBBON, &[0, 1]),
     };
@@ -1219,8 +1279,12 @@ mod tests {
     #[test]
     fn ribbon_has_the_planned_tabs() {
         let names: Vec<_> = RIBBON.iter().map(|t| t.name).collect();
-        assert_eq!(names, ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View", "Environments", "Sheet Metal", "Flat Pattern", "Analysis"]);
+        assert_eq!(
+            names,
+            ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View", "Environments", "Sheet Metal", "Flat Pattern", "Analysis", "3D Sketch"]
+        );
         assert_eq!((RIBBON[SHEET_TAB].name, RIBBON[FLAT_TAB].name, RIBBON[ANALYSIS_TAB].name), ("Sheet Metal", "Flat Pattern", "Analysis"));
+        assert_eq!(RIBBON[SKETCH3D_TAB].name, "3D Sketch");
         assert_eq!(RIBBON[MODEL_TAB].name, "3D Model");
         assert_eq!(RIBBON[SKETCH_TAB].name, "Sketch");
         assert!(RIBBON.iter().all(|t| !t.panels.is_empty() && t.panels.iter().all(|p| !p.commands.is_empty())));

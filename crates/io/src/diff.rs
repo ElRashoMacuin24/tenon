@@ -506,10 +506,11 @@ fn feature_label(doc: &Value, id: u64) -> String {
 fn feature_summary(f: &Value) -> String {
     let k = &f["kind"];
     let ty = k["type"].as_str().unwrap_or("?").replace('_', " ");
-    if ty == "sketch" {
+    if ty == "sketch" || ty == "sketch3d" {
         let n = |v: &Value| v.as_array().map_or(0, Vec::len);
         return format!(
-            "sketch, {}, {}",
+            "{}, {}, {}",
+            if ty == "sketch" { "sketch" } else { "3D sketch" },
             count(n(&k["sketch"]["entities"]), "entity", "entities"),
             count(n(&k["sketch"]["constraints"]), "constraint", "constraints")
         );
@@ -547,6 +548,18 @@ fn feature_detail(a: &Value, b: &Value, params: &Value, changed: &BTreeSet<Strin
     }
     let id = b["id"].as_u64().unwrap_or(0);
     let from = |target: &Value| from_note(params, target, changed);
+    // (A 3D sketch has what its reference geometry follows, in place of a plane and projections.)
+    if kb["type"] == "sketch3d" {
+        let linked = |k: &Value| -> BTreeSet<u64> { k["links"].as_array().into_iter().flatten().filter_map(|l| l["entity"].as_u64()).collect() };
+        let (la, lb) = (linked(ka), linked(kb));
+        for (n, how) in [(lb.difference(&la).count(), "linked to the part"), (la.difference(&lb).count(), "no longer linked to the part")] {
+            if n > 0 {
+                out.push(format!("{} {how}", count(n, "entity", "entities")));
+            }
+        }
+        out.extend(sketch_detail(&ka["sketch"], &kb["sketch"], id, params, changed));
+        return out;
+    }
     if kb["type"] == "sketch" {
         let mut plane = Vec::new();
         leaves(&mut Vec::new(), &mut Vec::new(), &ka["plane"], &kb["plane"], &mut plane);

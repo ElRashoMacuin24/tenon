@@ -14,7 +14,7 @@ use crate::workbench::Mode;
 fn sketching(wb: &Workbench) -> FeatureId {
     match &wb.mode {
         Mode::Sketch(s) => s.feature,
-        Mode::Model => panic!("not in sketch mode"),
+        _ => panic!("not in sketch mode"),
     }
 }
 

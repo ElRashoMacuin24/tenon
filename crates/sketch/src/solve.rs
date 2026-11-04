@@ -544,7 +544,7 @@ impl<'s> System<'s> {
 /// Indices of parameters lying in the row space of `jac` (rows x cols), i.e. determined by the
 /// equations: modified Gram-Schmidt on the rows, then the squared projection of each unit
 /// vector onto the basis.
-fn determined_columns(jac: &[f64], rows: usize, cols: usize) -> Vec<bool> {
+pub(crate) fn determined_columns(jac: &[f64], rows: usize, cols: usize) -> Vec<bool> {
     let mut basis: Vec<Vec<f64>> = Vec::new();
     for i in 0..rows {
         let Some(row) = jac.get(i * cols..(i + 1) * cols) else { continue };

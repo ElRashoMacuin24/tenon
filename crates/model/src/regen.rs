@@ -104,6 +104,9 @@ pub struct Regen {
     /// Sketches with projected geometry, as this regeneration has them: the reference geometry
     /// where the part now is and the sketch solved again (DEC-055).
     pub sketches: BTreeMap<FeatureId, std::sync::Arc<Sketch>>,
+    /// 3D sketches as this regeneration has them (DEC-136): the reference geometry where the part
+    /// now is and the sketch solved again. A 3D sketch suppressed or past a failure has none.
+    pub sketches3d: BTreeMap<FeatureId, std::sync::Arc<tenon_sketch::Sketch3d>>,
     /// Projected geometry whose edge was not found again: per sketch, the entity and why. It
     /// stays where it was.
     pub lost: BTreeMap<FeatureId, Vec<(EntityId, String)>>,
@@ -644,6 +647,7 @@ impl<'a> Ctx<'a> {
                 }
                 Ok(())
             }
+            FeatureKind::Sketch3d { sketch, links } => self.link_into(f.id, sketch, links),
             FeatureKind::Extrude(e) => self.extrude(f.id, e),
             FeatureKind::Revolve(r) => self.revolve(f.id, r),
             FeatureKind::Fillet(fi) => {
@@ -842,6 +846,7 @@ impl<'a> Ctx<'a> {
                         }
                         a.origin() + a.dir() * ((pl.origin() - a.origin()).dot(pl.z()) / along)
                     }
+                    WorkPoint::At { point } => self.point_of(point)?,
                 };
                 self.regen.work.insert(f.id, WorkGeom::Point(p));
                 Ok(())
@@ -891,6 +896,56 @@ impl<'a> Ctx<'a> {
         Ok(ucs_axis(&self.ucs(id)?, axis).ok_or("the UCS has no such axis")?)
     }
 
+    /// A 3D sketch as this regeneration has it, or why there is none.
+    fn sketch3d_now(&self, id: FeatureId) -> Result<std::sync::Arc<tenon_sketch::Sketch3d>, Stop> {
+        self.regen.sketches3d.get(&id).cloned().ok_or_else(|| format!("{} is suppressed, failed or not a 3D sketch", label(self.doc, id)).into())
+    }
+
+    /// Puts a 3D sketch's reference geometry where the part now has what it stands for and solves
+    /// the sketch again; the features after it use that. What is not found stays where it was.
+    fn link_into(&mut self, id: FeatureId, sketch: &tenon_sketch::Sketch3d, links: &[crate::sketch3d::Link3]) -> Result<(), Stop> {
+        let mut out = sketch.clone();
+        let (mut moved, mut lost) = (false, Vec::new());
+        for l in links {
+            let found = match &l.to {
+                crate::sketch3d::LinkTo::Point(p) => match self.point_of(p) {
+                    Ok(at) => Ok(crate::sketch3d::Found3::Point { at }),
+                    Err(Stop::Cancelled) => return Err(Stop::Cancelled),
+                    Err(Stop::Failed(why)) => Err(why),
+                    Err(Stop::Kernel(e)) => Err(e.to_string()),
+                },
+                crate::sketch3d::LinkTo::Edge(e) => self.edge_found(e),
+            };
+            match found.and_then(|at| crate::sketch3d::place(&mut out, l.entity, &at)) {
+                Ok(m) => moved |= m,
+                Err(why) => lost.push((l.entity, why)),
+            }
+        }
+        if moved {
+            out.solve().map_err(|e| format!("its reference geometry moved with the part and the sketch cannot follow: {}", out.words(&e)))?;
+        }
+        if !lost.is_empty() {
+            self.regen.lost.insert(id, lost);
+        }
+        self.regen.sketches3d.insert(id, std::sync::Arc::new(out));
+        Ok(())
+    }
+
+    /// What an edge of the part is, as a 3D sketch has it. (The points of a curve that is neither
+    /// straight nor round come from its mesh.)
+    fn edge_found(&mut self, e: &EdgeRef) -> Result<crate::sketch3d::Found3, String> {
+        let views = self.regen.views();
+        let (b, i) = resolve_edge(e, &views, &*self.k)?;
+        let shape = self.regen.bodies.get(b).ok_or("no such body")?.shape;
+        let info = self.k.edge_info(shape.edge(i)).map_err(kerr)?;
+        let k = &mut *self.k;
+        crate::sketch3d::edge_found(&info, || {
+            let mesh = k.tessellate(shape, &MeshTol::default()).map_err(kerr)?;
+            let line = mesh.edges.iter().find(|m| m.edge == i).map_or(&[][..], |m| m.points.as_slice());
+            Ok(line.iter().map(|p| Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))).collect())
+        })
+    }
+
     fn work_plane(&mut self, w: &WorkPlane) -> Result<Frame, Stop> {
         match w {
             WorkPlane::Offset { base, distance } => {
@@ -925,6 +980,13 @@ impl<'a> Ctx<'a> {
                 }
                 Ok(Frame::new(a, n, x).ok_or("the plane is not valid")?)
             }
+            WorkPlane::SquareToCurve { sketch, curve, end } => {
+                let sk = self.sketch3d_now(*sketch)?;
+                let at = sk.point(*end).ok_or_else(|| format!("the point is no longer in {}", label(self.doc, *sketch)))?;
+                let d =
+                    sk.direction_at(*curve, *end).ok_or_else(|| format!("that is not a curve of {} with an end there", label(self.doc, *sketch)))?;
+                Ok(Frame::from_normal(at, d).ok_or("the plane is not valid")?)
+            }
         }
     }
 
@@ -950,12 +1012,12 @@ impl<'a> Ctx<'a> {
                 Ok(frame.plane_point(q))
             }
             PointSel::Ucs(id) => Ok(self.ucs(*id)?.origin()),
-            PointSel::Vertex { edge, near } => {
-                // Which end: the one on the side of the edge's middle it was picked on, so that it
-                // is the same corner when the edge has since moved or changed its length.
+            PointSel::Sketch3dPoint { sketch, point } => {
+                Ok(self.sketch3d_now(*sketch)?.point(*point).ok_or_else(|| format!("the point is no longer in {}", label(self.doc, *sketch)))?)
+            }
+            PointSel::Vertex { edge, end, towards } => {
                 let info = self.edge_geometry(edge)?;
-                let (side, middle) = (*near - edge.fingerprint.mid, (info.start + info.end) * 0.5);
-                Ok(if (info.start - middle).dot(side) >= (info.end - middle).dot(side) { info.start } else { info.end })
+                Ok(PointSel::end_of_edge(info.start, info.end, *end, *towards).0)
             }
         }
     }
@@ -1138,6 +1200,10 @@ impl<'a> Ctx<'a> {
             }
             AxisSel::Work(id) => self.work_axis(*id),
             AxisSel::Ucs { feature, axis } => self.ucs_line(*feature, *axis),
+            AxisSel::Sketch3dLine { sketch, line } => {
+                let (a, b) = self.sketch3d_now(*sketch)?.line(*line).ok_or_else(|| format!("that is not a line of {}", label(self.doc, *sketch)))?;
+                Ok(Axis::new(a, b - a).ok_or("the line has no length")?)
+            }
         }
     }
 
@@ -1878,15 +1944,43 @@ impl<'a> Ctx<'a> {
         let (held, frame) = self.sketch_and_frame(s.sketch)?;
         let sketch: &Sketch = &held;
         let profile = profile_of(sketch, frame, &s.regions)?;
-        let (held_path, path_frame) = self.sketch_and_frame(s.path.sketch)?;
-        let path_sketch: &Sketch = &held_path;
-        let path = path_of(path_sketch, &path_frame, &s.path.curves, profile_centre(&profile))?;
+        let path = if self.doc.sketch3d(s.path.sketch).is_some() {
+            self.sketch3d_now(s.path.sketch)?.path(&s.path.curves, profile_centre(&profile))?
+        } else {
+            let (held_path, path_frame) = self.sketch_and_frame(s.path.sketch)?;
+            let path_sketch: &Sketch = &held_path;
+            path_of(path_sketch, &path_frame, &s.path.curves, profile_centre(&profile))?
+        };
         // A profile whose plane holds the path's direction sweeps into a sheet with no thickness,
         // which a kernel may build without complaint.
         if let Some(t) = path.curves.first().and_then(start_direction)
             && profile.frame.z().dot(t).abs() < 1f64.to_radians().sin()
         {
             return Err("The profile lies along the path: its sketch plane holds the direction the path starts in, so the sweep would have no thickness. Draw the profile on a plane across the path, for example square to its first line.".into());
+        }
+        // Round a sharp corner the sweep is mitred (DEC-136), which has its limits.
+        if path.has_corner() {
+            if path.turns_straight_back() {
+                return Err(
+                    "The path goes straight back the way it came, and a sweep cannot go round that: move the end of a line, or choose fewer curves."
+                        .into(),
+                );
+            }
+            if s.fixed {
+                return Err("A profile that keeps its direction cannot go round a sharp corner of the path: let it follow the path (Orientation), or round the corner.".into());
+            }
+            if profile.regions.len() > 1 || profile.regions.iter().any(|r| !r.holes.is_empty()) {
+                return Err("A sweep round a sharp corner of the path takes one closed outline with no holes: round the corner with an arc or a bend, or sweep the outlines one at a time.".into());
+            }
+            match path.corner_at_curve() {
+                Some(true) => {
+                    return Err("The path closes on itself with a sharp corner at a curve, and a sweep goes round a sharp corner only between two straight lines: leave a gap where it closes, or close it with lines and bends.".into());
+                }
+                Some(false) => {
+                    return Err("A sharp corner of the path is at a curve, and a sweep goes round a sharp corner only between two straight lines: make the two tangent there (Tangent), or put a line and a bend between them.".into());
+                }
+                None => {}
+            }
         }
         let orientation = if s.fixed { SweepOrientation::Fixed } else { SweepOrientation::Frenet };
         let op = self.k.sweep(&profile, &path, &SweepOpts { orientation, solid: true })?;
@@ -2546,6 +2640,8 @@ pub struct Scene {
     /// Sketches whose projected geometry moved with the part, as regeneration left them: the
     /// document's sketches follow these (DEC-055).
     pub sketches: BTreeMap<FeatureId, std::sync::Arc<Sketch>>,
+    /// 3D sketches as regeneration left them (DEC-136): the document's follow these.
+    pub sketches3d: BTreeMap<FeatureId, std::sync::Arc<tenon_sketch::Sketch3d>>,
     /// Projected geometry whose edge was not found again, per sketch, with why.
     pub lost: BTreeMap<FeatureId, Vec<(EntityId, String)>>,
     /// Work planes, axes and points, to draw.
@@ -2567,6 +2663,7 @@ impl Scene {
             && self.status == other.status
             && self.sketch_frames == other.sketch_frames
             && self.sketches == other.sketches
+            && self.sketches3d == other.sketches3d
             && self.lost == other.lost
             && self.work == other.work
             && self.threads == other.threads
@@ -2625,6 +2722,7 @@ pub fn scene(regen: &Regen, k: &mut dyn Kernel, tol: &MeshTol) -> Result<Scene, 
         status: regen.status.clone(),
         sketch_frames: regen.sketch_frames.clone(),
         sketches: regen.sketches.clone(),
+        sketches3d: regen.sketches3d.clone(),
         lost: regen.lost.clone(),
         work: regen.work.iter().map(|(id, g)| (*id, *g)).collect(),
         threads: regen.threads.iter().map(|m| ThreadView { at: regen.resolve(&m.face, &*k).ok(), mark: m.clone() }).collect(),
@@ -2710,6 +2808,7 @@ fn start_direction(c: &Curve3) -> Option<Vec3> {
             let t = Some(n.cross(*start - centre).normalized()).filter(|d| d.len() > 0.0)?;
             Some(if t.dot(a) < 0.0 { -t } else { t })
         }
+        Curve3::BSpline { poles, .. } => Some((*poles.get(1)? - *poles.first()?).normalized()).filter(|d| d.len() > 0.0),
         Curve3::Helix { .. } => None,
     }
 }
@@ -2757,10 +2856,12 @@ fn path_of(sketch: &Sketch, frame: &Frame, curves: &[EntityId], near: Vec3) -> R
     // Begin at the end nearer the profile.
     let start_of = |c: &Curve3| match c {
         Curve3::Line { start, .. } | Curve3::Arc { start, .. } => *start,
+        Curve3::BSpline { poles, .. } => poles.first().copied().unwrap_or(Vec3::ZERO),
         Curve3::Helix { frame, .. } => frame.origin(),
     };
     let end_of = |c: &Curve3| match c {
         Curve3::Line { end, .. } | Curve3::Arc { end, .. } => *end,
+        Curve3::BSpline { poles, .. } => poles.last().copied().unwrap_or(Vec3::ZERO),
         Curve3::Helix { frame, .. } => frame.origin(),
     };
     let (Some(head), Some(tail)) = (out.first(), out.last()) else { return Err("the sweep path is empty".into()) };

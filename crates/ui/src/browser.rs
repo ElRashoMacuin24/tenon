@@ -108,6 +108,7 @@ fn header_button(ui: &Ui, at: Pos2, icon: Icon, tip: &str, t: &Tokens, key: &str
 fn feature_icon(kind: &FeatureKind) -> Icon {
     match kind {
         FeatureKind::Sketch { .. } => Icon::NewSketch,
+        FeatureKind::Sketch3d { .. } => Icon::Sketch3d,
         FeatureKind::Extrude(_) => Icon::Extrude,
         FeatureKind::Revolve(_) => Icon::Revolve,
         FeatureKind::Fillet(_) => Icon::Fillet,
@@ -308,6 +309,7 @@ impl Workbench {
             }
             let editing = match &self.mode {
                 Mode::Sketch(s) => Some(s.feature),
+                Mode::Sketch3d(s) => Some(s.feature),
                 Mode::Model => None,
             };
             // (A thread's row says its size, as the part has it now.)
@@ -324,13 +326,13 @@ impl Workbench {
                 .map(|f| (f.id, label(f), feature_icon(&f.kind), f.suppressed, matches!(f.kind, FeatureKind::Sketch { .. })))
                 .collect();
             // Whether each sketch and work feature shows now (its Visibility in the menu).
-            let sketches_shown: Vec<FeatureId> = self.shown_sketches().into_iter().map(|(id, _)| id).collect();
+            let sketches_shown: Vec<FeatureId> = self.shown_sketches().into_iter().chain(self.shown_sketches3d()).map(|(id, _)| id).collect();
             let shown: std::collections::BTreeMap<FeatureId, bool> = self
                 .document()
                 .features()
                 .iter()
                 .filter_map(|f| match f.kind {
-                    FeatureKind::Sketch { .. } => Some((f.id, sketches_shown.contains(&f.id))),
+                    FeatureKind::Sketch { .. } | FeatureKind::Sketch3d { .. } => Some((f.id, sketches_shown.contains(&f.id))),
                     FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_) | FeatureKind::Ucs(_) => {
                         Some((f.id, self.work_visible(f.id)))
                     }
@@ -520,6 +522,9 @@ impl Workbench {
             BrowserAction::Delete(id) => {
                 if matches!(&self.mode, Mode::Sketch(s) if s.feature == id) {
                     self.mode = Mode::Model;
+                }
+                if matches!(&self.mode, Mode::Sketch3d(s) if s.feature == id) {
+                    self.finish_sketch3d();
                 }
                 // With sketches it is made from, or features that use it, the Delete Features
                 // box says what goes with it (DEC-103); else it goes at once.
