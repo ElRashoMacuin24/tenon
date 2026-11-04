@@ -115,13 +115,8 @@ fn plate_view(wb: &mut Workbench, d: &mut Driver, path: &Path) {
     settle(d, wb, 2);
 }
 
-#[test]
-fn an_auxiliary_view_is_placed_by_clicking_and_changed_from_its_row() {
-    let _quiet = crate::tests::timing_lock();
-    let dir = scratch("aux");
-    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
-    let mut d = Driver::new(vec2(1400.0, 860.0));
-    // A 100 x 60 plate 25 thick with its corner cut from (100, 30) to (70, 60).
+/// A 100 x 60 plate 25 thick with its corner cut from (100, 30) to (70, 60), saved at `path`.
+fn wedge(wb: &mut Workbench, path: &Path) {
     let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
     let mut last = Value::Null;
     let first = wb.exec("sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 60, "x2": 0, "y2": 0 })).unwrap();
@@ -132,8 +127,59 @@ fn an_auxiliary_view_is_placed_by_clicking_and_changed_from_its_row() {
     }
     wb.exec("sketch.line", json!({ "sketch": sk, "start": last, "end": first["start"] })).unwrap();
     wb.exec("model.extrude", json!({ "sketch": sk, "distance": 25 })).unwrap();
+    wb.save(path).unwrap();
+}
+
+/// Its parent against the edge of the sheet, a click on the side with no room: it was slid back over
+/// its parent, and past it. It says so, nothing is placed, and the tool waits for a click elsewhere.
+#[test]
+fn an_auxiliary_view_with_no_room_but_over_its_parent_says_so_and_waits() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("aux-no-room");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
     let path = dir.join("wedge.tenon");
-    wb.save(&path).unwrap();
+    wedge(&mut wb, &path);
+    wb.run_ui("file.new_drawing").unwrap();
+    d.frame(&mut wb, vec![]);
+    let sheet = info(&mut wb)["sheets"][0].clone();
+    let (w, h) = (sheet["width"].as_f64().unwrap(), sheet["height"].as_f64().unwrap());
+    let (x, y) = (w / 2.0, h - 37.0);
+    wb.drw_exec("drw.view.base", json!({ "model": path.to_string_lossy(), "orientation": "top", "scale": 1, "at": [x, y], "hidden": false }))
+        .unwrap();
+    wb.drw.as_mut().unwrap().selected = None;
+    settle(&mut d, &mut wb, 2);
+    wb.run_ui("drw.auxiliary").unwrap();
+    let inside = in_view(&mut wb, 1, 30.0, 30.0);
+    d.click(&mut wb, inside);
+    let edge = in_view(&mut wb, 1, 85.0, 45.0);
+    d.click(&mut wb, edge);
+    assert!(matches!(tool(&wb), Some(DrwTool::Auxiliary { edge: Some(_), .. })), "{}", wb.status());
+
+    let up = wb.sheet_on_screen(Vec2::new(x + 60.0, y + 34.0));
+    d.click(&mut wb, up);
+    settle(&mut d, &mut wb, 2);
+    assert!(wb.status_error && wb.status().contains("no room on the sheet"), "{}", wb.status());
+    assert_eq!(info(&mut wb)["views"].as_array().unwrap().len(), 1);
+    assert!(matches!(tool(&wb), Some(DrwTool::Auxiliary { edge: Some(_), .. })), "{}", wb.status());
+
+    // The other side has room.
+    let down = wb.sheet_on_screen(Vec2::new(x - 100.0, y - 130.0));
+    d.click(&mut wb, down);
+    assert_eq!(tool(&wb), None, "{}", wb.status());
+    assert!(!wb.status_error, "{}", wb.status());
+    assert_eq!(info(&mut wb)["views"].as_array().unwrap().len(), 2);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn an_auxiliary_view_is_placed_by_clicking_and_changed_from_its_row() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("aux");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    let path = dir.join("wedge.tenon");
+    wedge(&mut wb, &path);
     wb.run_ui("file.new_drawing").unwrap();
     d.frame(&mut wb, vec![]);
     wb.place_base_view(&path, Orientation::Top, Some(1.0), true).unwrap();

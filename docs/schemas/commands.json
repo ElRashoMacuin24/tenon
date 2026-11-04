@@ -10404,7 +10404,7 @@
       "id": "drw.auxiliary",
       "label": "Auxiliary View",
       "undoable": true,
-      "description": "parent; edge: a pick of a straight edge of the parent (drw.pick); a new view seen square to that edge, following it as the model changes. at: a sheet point, which also says the side it goes on (it slides there square to the edge from its parent); flip: from the other side of the edge; scale",
+      "description": "parent; edge: a pick of a straight edge of the parent (drw.pick); a new view seen square to that edge, following it as the model changes. at: a sheet point, which also says the side it goes on (it slides there square to the edge from its parent, and stays on the sheet: refused if that leaves no room but over its parent; `slid` says it moved); flip: from the other side of the edge; scale",
       "params": {
         "type": "object",
         "properties": {

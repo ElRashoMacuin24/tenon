@@ -4803,6 +4803,10 @@ An audit by real pointer and keyboard, after DEC-139 had run every entry by its 
   layer the size of the window just under each of Tenon's menus catches it. So a menu gone takes one click, and
   the button under it a second. And so a click on what opened it is simply that press, with no need to remember
   what it closed.
+- **An auxiliary view is not slid onto its parent.** It stays on the paper where it can (DEC-131), which near the
+  sheet's edge could bring it back over its parent, and past it: the status line said it had moved, and the
+  view was where it showed nothing new. Off the paper is no better, so it is refused, and says what would make
+  room. Dragged there by hand, or asked for there, it goes: that is what was asked.
 - **A part that does not build fails what needs its solid** (`asm.mass`, interference, exports), as a part's own
   export does: a figure without the part reads as if all were well. A parts list goes on listing it, with
   `failing`. In the window the kernel is on its own thread and these are its jobs: they are refused before they

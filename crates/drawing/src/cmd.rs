@@ -20,7 +20,7 @@ use crate::model::{
     SetAxis, SheetId, Side, View, ViewId, ViewKind, ViewMod,
 };
 use crate::session::DrwSession;
-use crate::views::{project, seen_size};
+use crate::views::{project, seen_reach, seen_size};
 
 pub type DrwFn = fn(&mut DrwSession, Option<&mut dyn Kernel>, &Value) -> CmdResult;
 
@@ -584,15 +584,23 @@ pub fn auxiliary_flip(third_angle: bool, a: Vec2, b: Vec2, mid: Vec2, at: Vec2) 
     auxiliary_toward(third_angle, a, b, false).dot(at - mid) < 0.0
 }
 
+/// Half the size on the sheet of a view of `parent`'s model, seen in frame `f` at `scale`.
+fn half_seen(s: &DrwSession, parent: &View, f: &tenon_geom::Frame, scale: f64) -> Vec2 {
+    s.last_evaluation().and_then(|e| e.models.get(&parent.model)).and_then(|m| seen_size(m, f)).map_or(Vec2::new(30.0, 30.0), |z| z * (0.5 * scale))
+}
+
 /// How far from its parent an auxiliary view goes when not told: clear of it by [`VIEW_GAP`].
 fn auxiliary_distance(s: &DrwSession, parent: &View, f: &tenon_geom::Frame, scale: f64, toward: Vec2) -> f64 {
     let along = |half: Vec2| half.x * toward.x.abs() + half.y * toward.y.abs();
-    let own = s
-        .last_evaluation()
-        .and_then(|e| e.models.get(&parent.model))
-        .and_then(|m| seen_size(m, f))
-        .map_or(Vec2::new(30.0, 30.0), |z| z * (0.5 * scale));
-    along(half_size(s, parent)) + along(own) + VIEW_GAP
+    along(half_size(s, parent)) + along(half_seen(s, parent, f, scale)) + VIEW_GAP
+}
+
+/// How far from its parent, along `toward`, an auxiliary view of frame `f` has to be to lie over none of
+/// it. It is lined up with its parent across `toward`, so what each reaches along it is the whole question.
+fn clear_of_parent(s: &DrwSession, parent: &View, f: &tenon_geom::Frame, scale: f64, toward: Vec2) -> f64 {
+    let along = |half: Vec2| half.x * toward.x.abs() + half.y * toward.y.abs();
+    let own = s.last_evaluation().and_then(|e| e.models.get(&parent.model)).and_then(|m| seen_reach(m, f, toward)).map(|r| r * scale);
+    along(half_size(s, parent)) + own.unwrap_or_else(|| along(half_seen(s, parent, f, scale)))
 }
 
 /// How far from its parent, along `toward`, a view of frame `f` goes for it to be on the sheet with room
@@ -601,11 +609,7 @@ fn on_the_paper(s: &DrwSession, parent: &View, f: &tenon_geom::Frame, scale: f64
     /// What the sheet's edge and a view's label take up (sheet mm).
     const MARGIN: f64 = 10.0;
     let Some(size) = s.drawing().sheet(parent.sheet).map(|sheet| Vec2::new(sheet.size.width, sheet.size.height)) else { return asked };
-    let half = s
-        .last_evaluation()
-        .and_then(|e| e.models.get(&parent.model))
-        .and_then(|m| seen_size(m, f))
-        .map_or(Vec2::new(30.0, 30.0), |z| z * (0.5 * scale));
+    let half = half_seen(s, parent, f, scale);
     let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
     for (at, way, reach, room) in [(parent.center.x, toward.x, half.x, size.x), (parent.center.y, toward.y, half.y, size.y)] {
         let (low, high) = (MARGIN + reach - at, room - MARGIN - reach - at);
@@ -648,8 +652,21 @@ fn drw_auxiliary(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
         None => auxiliary_distance(s, &pv, &f, scale, toward),
     };
     // It slides along that line only: and stays on the paper, its label too, where it can.
-    let distance = on_the_paper(s, &pv, &f, scale, toward, asked);
+    let mut distance = on_the_paper(s, &pv, &f, scale, toward, asked);
     let slid = (distance - asked).abs() > tol::LINEAR;
+    // But not back over its parent, where it shows nothing new, or past it to the side it was not asked
+    // for: the paper is then no answer, and off it no better.
+    let clear = clear_of_parent(s, &pv, &f, scale, toward);
+    if slid && distance < clear {
+        distance = on_the_paper(s, &pv, &f, scale, toward, clear);
+        if distance < clear - tol::LINEAR {
+            let name = &pv.name;
+            return Err(format!(
+                "There is no room on the sheet for that view on that side of {name}: it would lie over {name}. Move {name} away from the edge of the sheet, or give the view a smaller scale."
+            )
+            .into());
+        }
+    }
     let vid = s.edit(|d| {
         let id = d.take_view_id();
         let name = d.next_view_name(true);
@@ -1711,7 +1728,7 @@ static COMMANDS: &[DrwCommand] = &[
     DrwCommand {
         id: "drw.auxiliary",
         label: "Auxiliary View",
-        help: "parent; edge: a pick of a straight edge of the parent (drw.pick); a new view seen square to that edge, following it as the model changes. at: a sheet point, which also says the side it goes on (it slides there square to the edge from its parent); flip: from the other side of the edge; scale",
+        help: "parent; edge: a pick of a straight edge of the parent (drw.pick); a new view seen square to that edge, following it as the model changes. at: a sheet point, which also says the side it goes on (it slides there square to the edge from its parent, and stays on the sheet: refused if that leaves no room but over its parent; `slid` says it moved); flip: from the other side of the edge; scale",
         mutates: true,
         views: true,
         run: drw_auxiliary,

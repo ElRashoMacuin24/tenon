@@ -117,14 +117,32 @@ pub fn project(f: &Frame, p: Vec3) -> Vec2 {
 /// A model's size seen in a view frame (model mm, from its bounding box): what a view of it at
 /// scale 1 takes on the sheet, at most.
 pub fn seen_size(m: &ModelGeometry, f: &Frame) -> Option<Vec2> {
-    let b = m.bbox?;
-    let (l, h) = (b.min, b.max);
-    let pts: Vec<Vec2> = (0..8)
-        .map(|i| project(f, Vec3::new(if i & 1 == 0 { l.x } else { h.x }, if i & 2 == 0 { l.y } else { h.y }, if i & 4 == 0 { l.z } else { h.z })))
-        .collect();
+    let pts = seen_corners(m, f)?;
     let lo = pts.iter().fold(Vec2::new(f64::MAX, f64::MAX), |a, p| a.min(*p));
     let hi = pts.iter().fold(Vec2::new(f64::MIN, f64::MIN), |a, p| a.max(*p));
     Some(hi - lo)
+}
+
+/// How far a model's box seen in a view frame reaches from its middle along `way`, a unit vector of
+/// the view (view coordinates). Across a slanted edge a box's corners stand out far less than its
+/// [`seen_size`] says.
+pub fn seen_reach(m: &ModelGeometry, f: &Frame, way: Vec2) -> Option<f64> {
+    let along: Vec<f64> = seen_corners(m, f)?.iter().map(|p| p.dot(way)).collect();
+    let (lo, hi) = along.iter().fold((f64::MAX, f64::MIN), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+    Some((hi - lo) * 0.5)
+}
+
+/// The corners of a model's box seen in a view frame.
+fn seen_corners(m: &ModelGeometry, f: &Frame) -> Option<Vec<Vec2>> {
+    let b = m.bbox?;
+    let (l, h) = (b.min, b.max);
+    Some(
+        (0..8)
+            .map(|i| {
+                project(f, Vec3::new(if i & 1 == 0 { l.x } else { h.x }, if i & 2 == 0 { l.y } else { h.y }, if i & 4 == 0 { l.z } else { h.z }))
+            })
+            .collect(),
+    )
 }
 
 /// The middle of a model's box seen in a view frame (view coordinates).

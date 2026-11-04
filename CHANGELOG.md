@@ -108,8 +108,9 @@ views and Baseline and Ordinate dimensions.
 ### Drawings
 
 - **Auxiliary**, **Crop**, **Break** (dimensions across it keep the true length), **Break Out** and **Overlay**
-  (an assembly's view again in another position, in phantom lines). `drw.auxiliary`, `drw.crop`, `drw.break`,
-  `drw.break_out`, `drw.overlay`.
+  (an assembly's view again in another position, in phantom lines). An auxiliary view stays on the sheet, and with
+  no room there but over its parent is refused in words. `drw.auxiliary`, `drw.crop`, `drw.break`, `drw.break_out`,
+  `drw.overlay`.
 - **Baseline and Ordinate** measure several places from one, as one record that follows the model. A set is
   refused on an isometric view, and on an auxiliary view of a slanted edge, which is drawn turned on the
   sheet. `drw.baseline`, `drw.ordinate`.

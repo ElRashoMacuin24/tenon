@@ -1542,4 +1542,40 @@ fn an_auxiliary_view_stays_on_the_paper() {
     let (_, aux) = wedge_drawing(&mut e2);
     let info = run(&mut e2, "drw.info", json!({}));
     assert!(info["views"].as_array().unwrap().iter().any(|v| v["id"] == aux));
+
+    // Its parent against the top of the sheet: the only place on the paper along its line is over its
+    // parent, on the far side of it. That is no place: it is refused in words, and the sheet is as it was.
+    run(&mut e, "drw.new", json!({ "name": "Wedge", "size": "C" }));
+    let high =
+        run(&mut e, "drw.view.base", json!({ "model": "wedge.tenon", "orientation": "top", "scale": 1, "at": [150, 395], "hidden": false }))["view"]
+            .as_u64()
+            .unwrap();
+    let edge = run(&mut e, "drw.pick", json!({ "view": high, "view_at": [85, 45] }));
+    let before = run(&mut e, "drw.info", json!({}));
+    let refused = e.exec("drw.auxiliary", &json!({ "parent": high, "edge": edge, "at": [200, 425] })).unwrap_err().to_string();
+    assert!(refused.contains("no room on the sheet"), "{refused}");
+    assert_eq!(run(&mut e, "drw.info", json!({}))["views"], before["views"]);
+    // The other way along its line there is room, and it goes there.
+    let made = run(&mut e, "drw.auxiliary", json!({ "parent": high, "edge": edge, "at": [50, 300] }));
+    let info = run(&mut e, "drw.info", json!({}));
+    let of = |id: &Value| info["views"].as_array().unwrap().iter().find(|v| v["id"] == *id).unwrap().clone();
+    let (p, v) = (of(&json!(high)), of(&made["view"]));
+    let apart = |i: usize| (num(&p["center"][i]) - num(&v["center"][i])).abs() - (num(&p["size"][i]) + num(&v["size"][i])) / 2.0;
+    assert!(apart(0) >= 0.0 || apart(1) >= 0.0, "{p} and {v}");
+
+    // Pushed back along its line, but with room clear of its parent: it is there.
+    run(&mut e, "drw.new", json!({ "name": "Wedge", "size": "C" }));
+    let low =
+        run(&mut e, "drw.view.base", json!({ "model": "wedge.tenon", "orientation": "top", "scale": 1, "at": [150, 250], "hidden": false }))["view"]
+            .as_u64()
+            .unwrap();
+    let edge = run(&mut e, "drw.pick", json!({ "view": low, "view_at": [85, 45] }));
+    let made = run(&mut e, "drw.auxiliary", json!({ "parent": low, "edge": edge, "at": [350, 450] }));
+    assert_eq!(made["slid"], true, "{made}");
+    let info = run(&mut e, "drw.info", json!({}));
+    let of = |id: &Value| info["views"].as_array().unwrap().iter().find(|v| v["id"] == *id).unwrap().clone();
+    let (p, v) = (of(&json!(low)), of(&made["view"]));
+    let apart = |i: usize| (num(&p["center"][i]) - num(&v["center"][i])).abs() - (num(&p["size"][i]) + num(&v["size"][i])) / 2.0;
+    assert!(apart(0) >= 0.0 || apart(1) >= 0.0, "{p} and {v}");
+    assert!(num(&v["center"][1]) + num(&v["size"][1]) / 2.0 <= num(&info["sheets"][0]["height"]), "{v}");
 }
