@@ -9592,7 +9592,7 @@
           },
           "precision": {
             "type": "integer",
-            "description": "a dimension's decimals"
+            "description": "a dimension's or a set's decimals"
           },
           "remove": {
             "type": "array",

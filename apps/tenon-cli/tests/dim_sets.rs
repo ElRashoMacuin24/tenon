@@ -172,6 +172,7 @@ fn baseline_sets_measure_from_their_datum_and_follow_the_model() {
     assert!(one_more(&mut e, json!({ "annotation": set, "remove": [0, 1, 2] })).contains("at least one place"));
     assert!(one_more(&mut e, json!({ "annotation": set, "remove": [7] })).contains("places are 0 to 2"));
     assert!(one_more(&mut e, json!({ "annotation": set, "text": "<> TYP" })).contains("no text"));
+    run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "text": null }));
     assert!(
         one_more(&mut e, json!({ "annotation": set, "axis": "vertical" })).contains("where the datum is"),
         "the right side is level with the left"

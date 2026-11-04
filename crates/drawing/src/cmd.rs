@@ -982,7 +982,7 @@ fn drw_annotation_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Valu
         }
         match &mut a.kind {
             AnnotKind::Baseline { axis, offset, precision: pr, .. } | AnnotKind::Ordinate { axis, offset, precision: pr, .. } => {
-                if text.is_some() {
+                if matches!(text, Some(Some(_))) {
                     return Err("the values of a baseline or ordinate set have no text of their own".into());
                 }
                 // Only across: along, each dimension stays with what it measures.

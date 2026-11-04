@@ -164,7 +164,7 @@ static SCHEMAS: &[C] = &[
             ANNOTATION,
             opt("by", POINT, "how far to move it, [dx, dy] (a baseline or ordinate set: only across what it measures)"),
             opt("text", Either(&[Text, Null]), "a dimension's text (\"<>\" is the value; null for the value alone), or a note's"),
-            opt("precision", Int, "a dimension's decimals"),
+            opt("precision", Int, "a dimension's or a set's decimals"),
             opt("remove", List(&Int), "of a baseline or ordinate set: places to take away, by number as drw.info gives them"),
             opt("add", List(&PICK), "of a baseline or ordinate set: picks to add"),
             opt("datum", PICK, "of a baseline or ordinate set: its datum or origin"),
