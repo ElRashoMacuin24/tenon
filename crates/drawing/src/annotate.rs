@@ -11,18 +11,57 @@ use tenon_kernel::{CurveKind, SurfaceKind};
 use tenon_model::{FeatureKind, FeatureStatus, HoleExtent, HoleType};
 
 use crate::graphics::{Align, EXT_GAP, EXT_OVER, Graphics, Owner, Pen, TEXT};
-use crate::model::{AnnotKind, Annotation, DimKind, Drawing, GeomPick, PickPoint, SheetId, Standard, View, ViewId, ViewKind};
+use crate::model::{AnnotKind, Annotation, BreakLines, DimKind, Drawing, GeomPick, ModKind, PickPoint, SheetId, Standard, View, ViewId, ViewKind};
+use crate::modify::{Clip, Folds, outline};
 use crate::sheets::{BORDER, projection_symbol};
 use crate::views::{Evaluation, ModelGeometry, ViewGeometry, project, section_frame};
 
-/// Where a point of a view (view coordinates) lands on the sheet.
+/// Where a point of a view (view coordinates) lands on the sheet: the bands of its breaks closed up.
 pub fn to_sheet(v: &View, g: &ViewGeometry, p: Vec2) -> Vec2 {
-    v.center + (p - g.center) * v.scale
+    let folds = Folds::of(v);
+    if folds.is_empty() {
+        return v.center + (p - g.center) * v.scale;
+    }
+    let (lo, hi) = g.bounds.unwrap_or((g.center, g.center));
+    v.center + (folds.close(p) - folds.anchor(g.center, lo, hi)) * v.scale
 }
 
 /// Where a point of the sheet is in a view (view coordinates).
 pub fn from_sheet(v: &View, g: &ViewGeometry, p: Vec2) -> Vec2 {
-    g.center + (p - v.center) * (1.0 / v.scale)
+    let folds = Folds::of(v);
+    if folds.is_empty() {
+        return g.center + (p - v.center) * (1.0 / v.scale);
+    }
+    let (lo, hi) = g.bounds.unwrap_or((g.center, g.center));
+    folds.open(folds.anchor(g.center, lo, hi) + (p - v.center) * (1.0 / v.scale))
+}
+
+/// Where what a view draws is on the sheet (of an overlay, what is drawn over its parent).
+pub fn drawn_bounds(v: &View, g: &ViewGeometry) -> Option<(Vec2, Vec2)> {
+    let clip = Clip::of(v);
+    let mut it = g.curves.iter().filter(|c| c.visible).flat_map(|c| clip.pieces(&c.points)).flatten().map(|p| to_sheet(v, g, p));
+    let first = it.next()?;
+    Some(it.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p))))
+}
+
+/// Whether a point of the model, as a view sees it, is drawn in that view: not cut away by a
+/// section or a break-out, inside a detail's circle and its crop, outside the bands of its breaks.
+pub(crate) fn shown_test(v: &View, ev: &Evaluation) -> impl Fn(Vec3) -> bool + use<> {
+    let frame = ev.view(v.id).map_or(Frame::WORLD, |g| g.frame);
+    let cut = section_cut(v, ev);
+    let circle = match &v.kind {
+        ViewKind::Detail { center, radius, .. } => Some((*center, *radius)),
+        _ => None,
+    };
+    let clip = Clip::of(v);
+    let outs = ev.models.get(&v.model).map_or_else(Vec::new, |m| crate::views::cut_outs(v, &frame, m));
+    move |p: Vec3| {
+        let q = project(&frame, p);
+        cut.is_none_or(|(point, look)| (p - point).dot(look) >= -1e-6)
+            && circle.is_none_or(|(c, r)| q.dist(c) <= r + 1e-6)
+            && clip.keeps(q)
+            && !outs.iter().any(|o| o.boundary.contains(q) && o.floor.is_none_or(|z| p.dot(frame.z()) > z + 1e-6))
+    }
 }
 
 /// A picked edge's geometry in the model (assembly or part coordinates).
@@ -67,6 +106,26 @@ pub fn resolve_pick(m: &ModelGeometry, pick: &GeomPick) -> Result<Resolved, Stri
     })
 }
 
+/// Whether the edge a pick means is a straight line as the model has it now. (A curve resolves to its
+/// chord, which measures, but has no direction of its own.)
+pub fn edge_is_straight(m: &ModelGeometry, pick: &GeomPick) -> Result<bool, String> {
+    let inst = m.instance(pick.component).ok_or("the component is not in the model")?;
+    let scene = m.scenes.get(&inst.part).ok_or("the part's geometry is not available")?;
+    let (b, e) = tenon_assembly::geometry::find_edge(scene, &pick.edge)?;
+    let body = scene.bodies.get(b).ok_or("no such body")?;
+    Ok(matches!(body.curves.get(e), Some(CurveKind::Line { .. })))
+}
+
+/// Whether any of the edge a pick means is drawn, by `shown`.
+fn pick_drawn(m: &ModelGeometry, pick: &GeomPick, shown: &dyn Fn(Vec3) -> bool) -> bool {
+    let Some(inst) = m.instance(pick.component) else { return true };
+    let Some(scene) = m.scenes.get(&inst.part) else { return true };
+    let Ok((b, e)) = tenon_assembly::geometry::find_edge(scene, &pick.edge) else { return true };
+    let Some(body) = scene.bodies.get(b) else { return true };
+    let on_it = |p: &[f32; 3]| shown(inst.frame.to_world(Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))));
+    body.mesh.edges.iter().filter(|l| l.edge as usize == e).any(|l| l.points.iter().any(on_it))
+}
+
 /// A section view's plane: a point on it and the direction it is seen in (model coordinates).
 /// What lies on the eye's side of it is cut away.
 pub(crate) fn section_cut(v: &View, ev: &Evaluation) -> Option<(Vec3, Vec3)> {
@@ -88,19 +147,15 @@ pub struct EdgeHit {
 
 /// The edge of a view's model drawn nearest a sheet point, within `reach` (sheet mm), as a
 /// clicked pick would find it. Of edges drawn on top of each other, the one nearest the eye.
-/// Edges cut away by a section, or outside a detail's circle, are not there to pick.
+/// Edges cut away by a section or a break-out, or outside a detail's circle or a crop, or in the
+/// band of a break, are not there to pick.
 pub fn edge_at(d: &Drawing, ev: &Evaluation, view: ViewId, at: Vec2, reach: f64) -> Option<EdgeHit> {
     let v = d.view(view)?;
     let g = ev.view(view)?;
     let m = ev.models.get(&v.model)?;
     let f = &g.frame;
-    let cut = section_cut(v, ev);
-    let circle = match &v.kind {
-        ViewKind::Detail { center, radius, .. } => Some((*center, *radius)),
-        _ => None,
-    };
-    let shown =
-        |p: Vec3| cut.is_none_or(|(point, look)| (p - point).dot(look) >= -1e-6) && circle.is_none_or(|(c, r)| project(f, p).dist(c) <= r + 1e-6);
+    let shown = shown_test(v, ev);
+    let clip = Clip::of(v);
     // (distance on the sheet, depth towards the eye, the hit)
     let mut best: Option<(f64, f64, EdgeHit)> = None;
     for inst in &m.instances {
@@ -113,17 +168,27 @@ pub fn edge_at(d: &Drawing, ev: &Evaluation, view: ViewId, at: Vec2, reach: f64)
                 // (distance, depth, point in part coordinates)
                 let mut near: Option<(f64, f64, Vec3)> = None;
                 for (i, s) in pts.windows(2).enumerate() {
-                    if !shown(s[0]) && !shown(s[1]) {
-                        continue;
-                    }
-                    let (a, b) = (to_sheet(v, g, project(f, s[0])), to_sheet(v, g, project(f, s[1])));
-                    let ab = b - a;
-                    let l2 = ab.dot(ab);
-                    let t = if l2 > 0.0 { ((at - a).dot(ab) / l2).clamp(0.0, 1.0) } else { 0.0 };
-                    let dist = at.dist(a + ab * t);
-                    let depth = (s[0] + (s[1] - s[0]) * t).dot(f.z());
-                    if near.is_none_or(|(nd, ..)| dist < nd) {
-                        near = Some((dist, depth, local[i] + (local[i + 1] - local[i]) * t));
+                    // What is drawn of this stretch of it: a band closed up draws it in pieces apart.
+                    let (qa, qb) = (project(f, s[0]), project(f, s[1]));
+                    let len2 = (qb - qa).dot(qb - qa);
+                    for run in clip.pieces(&[qa, qb]) {
+                        for w in run.windows(2) {
+                            let (a, b) = (to_sheet(v, g, w[0]), to_sheet(v, g, w[1]));
+                            let ab = b - a;
+                            let l2 = ab.dot(ab);
+                            let along_piece = if l2 > 0.0 { ((at - a).dot(ab) / l2).clamp(0.0, 1.0) } else { 0.0 };
+                            let dist = at.dist(a + ab * along_piece);
+                            // Along the edge as it truly is.
+                            let q = w[0] + (w[1] - w[0]) * along_piece;
+                            let t = if len2 > 0.0 { ((q - qa).dot(qb - qa) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                            let point = s[0] + (s[1] - s[0]) * t;
+                            if !shown(point) {
+                                continue;
+                            }
+                            if near.is_none_or(|(nd, ..)| dist < nd) {
+                                near = Some((dist, point.dot(f.z()), local[i] + (local[i + 1] - local[i]) * t));
+                            }
+                        }
                     }
                 }
                 let Some((dist, depth, point)) = near.filter(|(dist, ..)| *dist <= reach) else { continue };
@@ -571,11 +636,12 @@ pub fn scale_text(s: f64) -> String {
     if s >= 1.0 { format!("{}:1", format_number(s, 3)) } else { format!("1:{}", format_number(1.0 / s, 3)) }
 }
 
-/// Centre marks (circles seen end-on) and centrelines (cylinders seen side-on) of a view. In a
-/// section (`cut`: the plane's point and the direction it is seen in), only of what is left: no
-/// cylinder cut away, and side-on only those the plane cuts.
-fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &ModelGeometry, cut: Option<(Vec3, Vec3)>) {
+/// Centre marks (circles seen end-on) and centrelines (cylinders seen side-on) of a view. Only of
+/// what is left of it (`shown`): no cylinder cut away or outside a crop. In a section (`cut`: the
+/// plane's point and the direction it is seen in), side-on only those the plane cuts.
+fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &ModelGeometry, cut: Option<(Vec3, Vec3)>, shown: &dyn Fn(Vec3) -> bool) {
     let f = &g.frame;
+    let clip = Clip::of(v);
     let z = f.z();
     let mut marks: Vec<(Vec2, f64)> = Vec::new();
     let mut lines: Vec<(Vec2, Vec2)> = Vec::new();
@@ -592,15 +658,7 @@ fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &Mode
                 };
                 let (o3, d3) = (fr.to_world(axis.origin()), turn(axis.dir()));
                 // The face's extent along its axis, from its mesh.
-                let pts: Vec<Vec3> = b
-                    .mesh
-                    .faces
-                    .iter()
-                    .filter(|r| r.face as usize == fi)
-                    .flat_map(|r| b.mesh.indices.get(r.first as usize..(r.first + r.count) as usize).unwrap_or(&[]).iter())
-                    .filter_map(|i| b.mesh.positions.get(*i as usize))
-                    .map(|p| fr.to_world(Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))))
-                    .collect();
+                let pts = face_points(b, fi, fr);
                 if pts.is_empty() {
                     continue;
                 }
@@ -611,11 +669,14 @@ fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &Mode
                 if length <= 1e-9 || info.area / (radius * length) < std::f64::consts::PI * 0.98 {
                     continue;
                 }
-                if let Some((point, look)) = cut {
-                    let behind = |p: &Vec3| (*p - point).dot(look) >= -1e-6;
-                    if !pts.iter().any(behind) || (d3.dot(z).abs() < 1e-6 && (o3 - point).dot(look).abs() > radius + 1e-6) {
-                        continue;
-                    }
+                if !pts.iter().any(|p| shown(*p)) {
+                    continue;
+                }
+                if let Some((point, look)) = cut
+                    && d3.dot(z).abs() < 1e-6
+                    && (o3 - point).dot(look).abs() > radius + 1e-6
+                {
+                    continue;
                 }
                 if d3.dot(z).abs() > 1.0 - 1e-6 {
                     let c = project(f, o3);
@@ -632,38 +693,186 @@ fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &Mode
             }
         }
     }
+    let draw = |gr: &mut Graphics, a: Vec2, b: Vec2| {
+        for run in clip.pieces(&[a, b]) {
+            gr.polyline(o, Pen::Center, run.iter().map(|p| to_sheet(v, g, *p)).collect());
+        }
+    };
+    // An auxiliary view stands at the angle of its edge: its marks stand with it.
+    let (along, up) = match &v.kind {
+        ViewKind::Auxiliary { a, b, .. } => {
+            let u = (*b - *a).normalized();
+            (u, Vec2::new(-u.y, u.x))
+        }
+        _ => (Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)),
+    };
     for (c, r) in marks {
-        let c = to_sheet(v, g, c);
-        let arm = r * v.scale + CENTER_OVER;
-        gr.line(o, Pen::Center, c - Vec2::new(arm, 0.0), c + Vec2::new(arm, 0.0));
-        gr.line(o, Pen::Center, c - Vec2::new(0.0, arm), c + Vec2::new(0.0, arm));
+        let arm = r + CENTER_OVER / v.scale;
+        draw(gr, c - along * arm, c + along * arm);
+        draw(gr, c - up * arm, c + up * arm);
     }
     for (a, b) in lines {
-        gr.line(o, Pen::Center, to_sheet(v, g, a), to_sheet(v, g, b));
+        draw(gr, a, b);
+    }
+}
+
+/// The points of a face's mesh, placed.
+fn face_points(b: &tenon_model::BodyView, face: usize, at: &Frame) -> Vec<Vec3> {
+    b.mesh
+        .faces
+        .iter()
+        .filter(|r| r.face as usize == face)
+        .flat_map(|r| b.mesh.indices.get(r.first as usize..(r.first + r.count) as usize).unwrap_or(&[]).iter())
+        .filter_map(|i| b.mesh.positions.get(*i as usize))
+        .map(|p| at.to_world(Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))))
+        .collect()
+}
+
+/// Whether anything is left of the cylinders seen end-on about a place in a view (view coordinates):
+/// a hole whose top a shallow cut took off goes on below it. None if there are no such cylinders.
+fn cylinder_drawn(g: &ViewGeometry, m: &ModelGeometry, at: Vec2, shown: &dyn Fn(Vec3) -> bool) -> Option<bool> {
+    let f = &g.frame;
+    let mut found = None;
+    for inst in &m.instances {
+        let Some(scene) = m.scenes.get(&inst.part) else { continue };
+        let fr = &inst.frame;
+        for b in &scene.bodies {
+            for (fi, (_, info)) in b.faces.iter().enumerate() {
+                let SurfaceKind::Cylinder { axis, .. } = &info.surface else { continue };
+                let d = fr.x() * axis.dir().x + fr.y() * axis.dir().y + fr.z() * axis.dir().z;
+                if d.dot(f.z()).abs() < 1.0 - 1e-6 || project(f, fr.to_world(axis.origin())).dist(at) > 1e-6 {
+                    continue;
+                }
+                found = Some(false);
+                if face_points(b, fi, fr).into_iter().any(shown) {
+                    return Some(true);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// How far break lines run past what they break (sheet mm), and the half length of the zigzag in
+/// their middle.
+const BREAK_OVER: f64 = 4.0;
+const BREAK_ZIG: f64 = 3.0;
+
+/// A break line from `a` to `b`: straight, with a zigzag in its middle.
+fn break_line(gr: &mut Graphics, o: Owner, a: Vec2, b: Vec2) {
+    let u = (b - a).normalized();
+    let n = Vec2::new(-u.y, u.x);
+    let m = (a + b) * 0.5;
+    let z = BREAK_ZIG;
+    gr.polyline(o, Pen::Thin, vec![a, m - u * z, m - u * (z / 3.0) + n * z, m + u * (z / 3.0) - n * z, m + u * z, b]);
+}
+
+/// Whether a band has anything of a view's lines in it, or them on both sides of it.
+fn crosses(g: &ViewGeometry, lines: BreakLines, from: f64, to: f64) -> bool {
+    let Some((lo, hi)) = g.bounds else { return true };
+    let (l, h) = if lines == BreakLines::Vertical { (lo.x, hi.x) } else { (lo.y, hi.y) };
+    to > l && from < h
+}
+
+/// What is wrong with a view as it stands, in words: what computing it found, or a modifier the
+/// model has since left with nothing to do. It is worked out on asking, since a crop or a break is
+/// changed without computing the view again.
+pub fn view_problem(v: &View, g: &ViewGeometry) -> Option<String> {
+    if let Some(e) = &g.error {
+        return Some(e.clone());
+    }
+    v.active_mods().find_map(|m| match &m.kind {
+        ModKind::Break { lines, from, to, .. } if !crosses(g, *lines, *from, *to) => {
+            Some(format!("Break {} no longer crosses the view: move its lines, or delete it", m.id))
+        }
+        ModKind::Crop { boundary, .. } => {
+            let (lo, hi) = g.bounds?;
+            let (a, c) = boundary.bounds();
+            (c.x < lo.x || a.x > hi.x || c.y < lo.y || a.y > hi.y).then(|| "the crop no longer covers the view: move it, or delete it".to_owned())
+        }
+        _ => None,
+    })
+}
+
+/// Draws a view's crop outline and the lines of its breaks, each its own to click.
+fn draw_mods(gr: &mut Graphics, v: &View, g: &ViewGeometry) {
+    if v.mods.is_empty() {
+        return;
+    }
+    let lines_drawn = gr.bounds_of(Owner::View(v.id));
+    for m in v.active_mods() {
+        let o = Owner::Mod(v.id, m.id);
+        match &m.kind {
+            ModKind::Crop { boundary, outline: true } => {
+                gr.polyline(o, Pen::Thin, outline(boundary).into_iter().map(|p| to_sheet(v, g, p)).collect());
+            }
+            ModKind::Break { lines, from, to, .. } => {
+                let Some((lo, hi)) = lines_drawn else { continue };
+                // The model may have left it behind: nothing to break, nothing to draw.
+                if !crosses(g, *lines, *from, *to) {
+                    continue;
+                }
+                for t in [*from, *to] {
+                    match lines {
+                        BreakLines::Vertical => {
+                            let x = to_sheet(v, g, Vec2::new(t, g.center.y)).x;
+                            break_line(gr, o, Vec2::new(x, lo.y - BREAK_OVER), Vec2::new(x, hi.y + BREAK_OVER));
+                        }
+                        BreakLines::Horizontal => {
+                            let y = to_sheet(v, g, Vec2::new(g.center.x, t)).y;
+                            break_line(gr, o, Vec2::new(lo.x - BREAK_OVER, y), Vec2::new(hi.x + BREAK_OVER, y));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
 /// Draws a view: its lines, hatching, centrelines, the markings of its sections and details, its
-/// label.
+/// label. An overlay's lines go where its parent's go, in phantom.
 fn draw_view(gr: &mut Graphics, d: &Drawing, v: &View, ev: &Evaluation) {
     let o = Owner::View(v.id);
     let Some(g) = ev.view(v.id) else { return };
+    let overlaid = match &v.kind {
+        ViewKind::Overlay { parent, .. } => d.view(*parent).zip(ev.view(*parent)),
+        _ => None,
+    };
+    let (on, on_g) = overlaid.unwrap_or((v, g));
+    let clip = Clip::of(on);
     for c in &g.curves {
-        let pen = if c.visible { Pen::Visible } else { Pen::Hidden };
-        gr.polyline(o, pen, c.points.iter().map(|p| to_sheet(v, g, *p)).collect());
+        let pen = match (&v.kind, c.visible) {
+            (ViewKind::Overlay { .. }, _) => Pen::Phantom,
+            (_, true) => Pen::Visible,
+            (_, false) => Pen::Hidden,
+        };
+        for run in clip.pieces(&c.points) {
+            gr.polyline(o, pen, run.iter().map(|p| to_sheet(on, on_g, *p)).collect());
+        }
     }
     for h in &g.hatch {
-        gr.line(o, Pen::Hatch, to_sheet(v, g, h[0]), to_sheet(v, g, h[1]));
+        for run in clip.pieces(h) {
+            gr.polyline(o, Pen::Hatch, run.iter().map(|p| to_sheet(on, on_g, *p)).collect());
+        }
     }
     if v.centerlines
-        && !matches!(v.kind, ViewKind::Detail { .. })
+        && !matches!(v.kind, ViewKind::Detail { .. } | ViewKind::Overlay { .. })
         && let Some(m) = ev.models.get(&v.model)
     {
-        centerlines(gr, o, v, g, m, section_cut(v, ev));
+        let shown = shown_test(v, ev);
+        centerlines(gr, o, v, g, m, section_cut(v, ev), &shown);
     }
-    if let ViewKind::Detail { radius, .. } = &v.kind {
-        gr.circle(o, Pen::Thin, v.center, radius * v.scale);
+    if let ViewKind::Detail { center, radius, .. } = &v.kind {
+        if clip.is_empty() {
+            gr.circle(o, Pen::Thin, v.center, radius * v.scale);
+        } else {
+            for run in clip.pieces(&outline(&crate::model::Boundary::Circle { center: *center, radius: *radius })) {
+                gr.polyline(o, Pen::Thin, run.iter().map(|p| to_sheet(v, g, *p)).collect());
+            }
+        }
     }
+    draw_mods(gr, v, g);
     // Section lines and detail circles drawn on this view for its children.
     for child in d.views.iter().filter(|c| c.kind.parent() == Some(v.id)) {
         match &child.kind {
@@ -688,18 +897,38 @@ fn draw_view(gr: &mut Graphics, d: &Drawing, v: &View, ev: &Evaluation) {
                 gr.circle(o, Pen::Thin, c, r);
                 gr.text(o, c + Vec2::new(r * 0.75 + 1.0, r * 0.75 + 1.0), 5.0, child.name.clone(), Align::Left);
             }
+            // An arrow to the edge the view looks square to, from the side it is seen from.
+            ViewKind::Auxiliary { edge, a, b, flip, .. } => {
+                let line = ev.models.get(&v.model).and_then(|m| crate::views::auxiliary_line(m, &g.frame, edge, *a, *b).ok()).unwrap_or((*a, *b));
+                let (_, _, look) = section_frame(&g.frame, line.0, line.1, *flip);
+                let look2 = project(&g.frame, look).normalized();
+                let tip = to_sheet(v, g, (line.0 + line.1) * 0.5) - look2 * 2.0;
+                gr.line(o, Pen::Thin, tip - look2 * 14.0, tip);
+                gr.arrow(o, tip, look2);
+                gr.text(o, tip - look2 * 18.0 + Vec2::new(0.0, -TEXT / 2.0), 5.0, child.name.clone(), Align::Center);
+            }
             _ => {}
         }
     }
-    if v.label {
-        let low = gr.bounds_of(o).map_or(v.center.y - 10.0, |b| b.0.y);
+    if v.label && !matches!(v.kind, ViewKind::Overlay { .. }) {
+        // (What modifies it, too: the label goes clear of a crop's outline and of break lines.)
+        let bounds = v.mods.iter().filter_map(|m| gr.bounds_of(Owner::Mod(v.id, m.id))).fold(gr.bounds_of(o), |all, b| match all {
+            Some(a) => Some((a.0.min(b.0), a.1.max(b.1))),
+            None => Some(b),
+        });
+        let low = bounds.map_or(v.center.y - 10.0, |b| b.0.y);
+        // Under what is drawn: a crop may have left that well to one side of the view's middle, and
+        // an auxiliary view's middle is where it lines up with its parent.
+        let under = Clip::of(v) != Clip::default() || matches!(v.kind, ViewKind::Auxiliary { .. });
+        let x = if under { bounds.map_or(v.center.x, |b| (b.0.x + b.1.x) * 0.5) } else { v.center.x };
         let title = match &v.kind {
             ViewKind::Section { .. } => format!("SECTION {0}-{0}", v.name),
             ViewKind::Detail { .. } => format!("DETAIL {}", v.name),
+            ViewKind::Auxiliary { .. } => format!("VIEW {}", v.name),
             _ => v.name.clone(),
         };
-        gr.text(o, Vec2::new(v.center.x, low - 8.0), 4.0, title, Align::Center);
-        gr.text(o, Vec2::new(v.center.x, low - 13.5), 3.0, format!("SCALE {}", scale_text(v.scale)), Align::Center);
+        gr.text(o, Vec2::new(x, low - 8.0), 4.0, title, Align::Center);
+        gr.text(o, Vec2::new(x, low - 13.5), 3.0, format!("SCALE {}", scale_text(v.scale)), Align::Center);
     }
 }
 
@@ -719,12 +948,18 @@ fn draw_annotation(gr: &mut Graphics, d: &Drawing, ev: &Evaluation, a: &Annotati
             let v = d.view(*view).ok_or("the view is gone")?;
             let g = ev.view(*view).ok_or("the view is not computed")?;
             let mut cells = vec![vec!["HOLE".to_string(), "XDIM".into(), "YDIM".into(), "DESCRIPTION".into()]];
+            let clip = Clip::of(v);
+            let shown = shown_test(v, ev);
+            let m = ev.models.get(&v.model).ok_or("the model is not loaded")?;
             for r in &rows {
                 cells.push(vec![r.tag.clone(), format_number(r.x, 2), format_number(r.y, 2), r.description.clone()]);
-                // Up and right of the hole, clear of its edge and centre mark.
-                let p = to_sheet(v, g, r.at);
-                let off = r.radius * v.scale * std::f64::consts::FRAC_1_SQRT_2 + 1.5;
-                gr.text(o, p + Vec2::new(off, off), 2.5, r.tag.clone(), Align::Left);
+                // Up and right of the hole, clear of its edge and centre mark; none on a hole that
+                // is not drawn.
+                if clip.keeps(r.at) && cylinder_drawn(g, m, r.at, &shown) != Some(false) {
+                    let p = to_sheet(v, g, r.at);
+                    let off = r.radius * v.scale * std::f64::consts::FRAC_1_SQRT_2 + 1.5;
+                    gr.text(o, p + Vec2::new(off, off), 2.5, r.tag.clone(), Align::Left);
+                }
             }
             table(gr, o, *at, &[16.0, 22.0, 22.0, 70.0], &cells);
             Ok(())
@@ -786,9 +1021,66 @@ fn pick_point(f: &Frame, r: &Resolved) -> Vec2 {
     }
 }
 
-/// The segments (sheet) of a centre mark or centre line placed by hand, from the model as it
-/// is now.
+/// What of a line on the sheet lies over what a view draws: inside its crop, outside the gaps of its
+/// breaks. (From the sheet to the view is straight between the gaps' edges.)
+fn kept_on_sheet(v: &View, g: &ViewGeometry, p: Vec2, q: Vec2) -> Vec<[Vec2; 2]> {
+    let clip = Clip::of(v);
+    if clip.is_empty() {
+        return vec![[p, q]];
+    }
+    let d = q - p;
+    let (xs, ys) = Folds::of(v).edges();
+    let mut cuts = vec![0.0, 1.0];
+    if d.x != 0.0 {
+        cuts.extend(xs.iter().map(|x| (to_sheet(v, g, Vec2::new(*x, g.center.y)).x - p.x) / d.x));
+    }
+    if d.y != 0.0 {
+        cuts.extend(ys.iter().map(|y| (to_sheet(v, g, Vec2::new(g.center.x, *y)).y - p.y) / d.y));
+    }
+    cuts.retain(|t| (0.0..=1.0).contains(t));
+    cuts.sort_by(f64::total_cmp);
+    let mut out = Vec::new();
+    for s in cuts.windows(2) {
+        let (a, b) = (from_sheet(v, g, p + d * s[0]), from_sheet(v, g, p + d * s[1]));
+        for run in clip.pieces(&[a, b]) {
+            out.extend(run.windows(2).map(|w| [to_sheet(v, g, w[0]), to_sheet(v, g, w[1])]));
+        }
+    }
+    out
+}
+
+/// The segments (sheet) of a centre mark or centre line placed by hand, from the model as it is now,
+/// as far as they are drawn: none when what they mark is cropped away, cut away or in the band of a
+/// break, and only what lies inside a crop and outside the bands.
 pub fn center_segments(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<Vec<[Vec2; 2]>, String> {
+    let (view, pa, pb) = match &a.kind {
+        AnnotKind::CenterMark { view, a } => (*view, a, None),
+        AnnotKind::Centerline { view, a, b } | AnnotKind::CenterlineBisector { view, a, b } => (*view, a, Some(b)),
+        _ => return Err("not a centre mark or line".into()),
+    };
+    let whole = whole_center_segments(d, ev, a)?;
+    let v = d.view(view).ok_or("the view is gone")?;
+    if v.mods.is_empty() {
+        return Ok(whole);
+    }
+    let g = ev.view(view).ok_or("the view is not computed")?;
+    let m = ev.models.get(&v.model).ok_or("the model is not loaded")?;
+    let shown = shown_test(v, ev);
+    let drawn = |p: &GeomPick| {
+        pick_drawn(m, p, &shown)
+            || match resolve_pick(m, &GeomPick { point: PickPoint::Whole, ..p.clone() }) {
+                Ok(Resolved::Circle { center, .. }) => cylinder_drawn(g, m, project(&g.frame, center), &shown) == Some(true),
+                _ => false,
+            }
+    };
+    if !drawn(pa) && pb.is_none_or(|b| !drawn(b)) {
+        return Ok(Vec::new());
+    }
+    Ok(whole.into_iter().flat_map(|[p, q]| kept_on_sheet(v, g, p, q)).collect())
+}
+
+/// The segments (sheet) of a centre mark or centre line placed by hand, all of them.
+fn whole_center_segments(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<Vec<[Vec2; 2]>, String> {
     let (view, pa, pb) = match &a.kind {
         AnnotKind::CenterMark { view, a } => (*view, a, None),
         AnnotKind::Centerline { view, a, b } | AnnotKind::CenterlineBisector { view, a, b } => (*view, a, Some(b)),

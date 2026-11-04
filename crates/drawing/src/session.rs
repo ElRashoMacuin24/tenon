@@ -221,6 +221,10 @@ impl DrwSession {
         format!("{:?}", self.drawing.standard).hash(&mut h);
         for v in &self.drawing.views {
             (v.id, &v.model, serde_json::to_string(&v.kind).unwrap_or_default(), v.scale.to_bits(), v.hidden, v.tangent).hash(&mut h);
+            // A crop or a break changes what is drawn of the lines, not the lines: a break-out does.
+            for m in v.active_mods().filter(|m| matches!(m.kind, crate::model::ModKind::BreakOut { .. })) {
+                serde_json::to_string(m).unwrap_or_default().hash(&mut h);
+            }
         }
         for (k, m) in &self.models {
             (k, m.revision()).hash(&mut h);

@@ -18,6 +18,11 @@ const PARENT: Param = req("parent", Id, "the view it is made from");
 const ANNOTATION: Param = req("annotation", Id, "the annotation's id, as drw.info lists it");
 pub const AT: Param = opt("at", POINT, "where it goes on the sheet, [x, y] in mm from the sheet's lower left");
 pub const VIEW_SCALE: Param = opt("scale", SCALE, "a number or \"1:2\" (default: its parent's, or what fits the sheet)");
+const RECT: Param = opt("rect", List(&POINT), "the boundary as a rectangle: two opposite corners (view coordinates, model mm; see drw.to_view)");
+const CENTER: Param = opt("center", POINT, "or as a circle: its middle");
+const RADIUS: Param = opt("radius", Length, "and its radius (model mm)");
+const MODIFIER: Param = opt("modifier", Id, "change this one instead of adding one: its number, as drw.info lists it");
+const SUPPRESSED: Param = opt("suppressed", Bool, "keep it, not at work");
 
 static SCHEMAS: &[C] = &[
     C::new("drw.info", &[]),
@@ -72,6 +77,63 @@ static SCHEMAS: &[C] = &[
         ],
     ),
     C::new(
+        "drw.auxiliary",
+        &[
+            PARENT,
+            req("edge", PICK, "a pick of a straight edge of the parent, from drw.pick: the view looks square to it"),
+            AT,
+            opt("flip", Bool, "see it from the other side of the edge (default: by the side `at` is on)"),
+            VIEW_SCALE,
+        ],
+    ),
+    C::new(
+        "drw.overlay",
+        &[
+            opt("parent", Id, "the base, projected or auxiliary view of an assembly it goes over"),
+            opt("view", Id, "or an overlay, to give it other values"),
+            req("values", List(&Object), "the position: { relationship (its id), offset (mm), angle (radians) }, see drw.overlay.values"),
+        ],
+    ),
+    C::new("drw.overlay.values", &[VIEW]),
+    C::new(
+        "drw.crop",
+        &[
+            VIEW,
+            RECT,
+            CENTER,
+            RADIUS,
+            opt("modifier", Id, "the crop's number, as drw.info lists it (a view has one crop)"),
+            opt("outline", Bool, "draw the boundary (default true)"),
+            SUPPRESSED,
+        ],
+    ),
+    C::new(
+        "drw.break",
+        &[
+            VIEW,
+            opt("lines", Word(&["horizontal", "vertical"]), "which way the two lines run on the sheet (needed for a new break)"),
+            opt("from", Number, "where one line goes, along the axis across it (view coordinates, model mm; needed for a new break)"),
+            opt("to", Number, "where the other goes (needed for a new break)"),
+            opt("gap", Length, "what is left between the two sides (mm of paper, default 6)"),
+            MODIFIER,
+            SUPPRESSED,
+        ],
+    ),
+    C::new(
+        "drw.break_out",
+        &[
+            VIEW,
+            RECT,
+            CENTER,
+            RADIUS,
+            opt("depth", Length, "how far down from what is nearest the eye (model mm)"),
+            opt("through", Bool, "or true: through the whole model (false: not through, with the depth it has or is given)"),
+            MODIFIER,
+            SUPPRESSED,
+        ],
+    ),
+    C::new("drw.modifier.delete", &[VIEW, req("modifier", Id, "the number of a crop, break or break out, as drw.info lists it")]),
+    C::new(
         "drw.view.edit",
         &[
             VIEW,
@@ -82,6 +144,8 @@ static SCHEMAS: &[C] = &[
             opt("tangent", Bool, "draw the edges where faces meet smoothly"),
             opt("centerlines", Bool, "draw centre lines and marks"),
             opt("label", Bool, "show the view's label"),
+            opt("flip", Bool, "an auxiliary view: from which side of its edge"),
+            opt("edge", PICK, "an auxiliary view: another straight edge to look square to"),
         ],
     ),
     C::new("drw.view.delete", &[VIEW]),

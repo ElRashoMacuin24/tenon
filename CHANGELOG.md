@@ -29,10 +29,11 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   damaged", though it is not: text, ellipses or Smooth; an extrusion To, To Next or Between; a
   revolution To, To Next, by two angles or Flipped; a spotface or To hole; a variable or face fillet;
   a work plane through three points; a Tangent or Symmetry relationship; a mirrored occurrence in an
-  assembly. Other new things it opens, and on a save it loses them: a tapped hole's thread (the solid
-  is the same), which points are sketch points, which sketches are shown, a study's Optimize Shape
-  settings, and an assembly's patterns (each element is then a free component where it stands, those
-  of a suppressed pattern shown and counted).
+  assembly; an auxiliary or overlay view. Other new things it opens, and on a save it loses them: a
+  tapped hole's thread (the solid is the same), which points are sketch points, which sketches are
+  shown, a study's Optimize Shape settings, an assembly's patterns (each element is then a free
+  component where it stands, those of a suppressed pattern shown and counted), and a drawing view's
+  crops, breaks and break outs (the view is drawn whole).
 
 ### Stress checks
 
@@ -150,6 +151,28 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   the part. `feature.visibility`.
 - **Constrain** offers Mate, Angle and Insert, with Flush as Mate's second solution; offsets and
   angles are typed.
+
+### Drawings
+
+- **Auxiliary, Crop, Break, Break Out and Overlay** are no longer greyed. Auxiliary is a
+  view square to a straight edge of its parent, which turns with the edge. Crop draws only
+  what lies inside a rectangle or a circle on a view. Break takes a band out of a base
+  or projected view, one or more of them, up the sheet or across, with break lines drawn;
+  dimensions across it keep the true length. Break Out cuts a rectangle or circle of a view
+  down to a depth from the nearest of the model, or through, draws what is then seen, hatches
+  what it cut, and says so when it takes nothing away. Overlay draws
+  an assembly's view again in another position, in phantom lines, from values of its joints
+  and offsets typed in a panel and solved by the assembly solver; what they come to shows
+  on the sheet as they are typed. All of them follow the model, have a row in the browser
+  whose double-click reopens them, come through undo, save and open, and go to PDF, SVG
+  and DXF (a `PHANTOM` layer and line type). New commands `drw.auxiliary`, `drw.overlay`,
+  `drw.overlay.values`, `drw.crop`, `drw.break`, `drw.break_out`, `drw.modifier.delete`;
+  `flip` and `edge` of `drw.view.edit`. In the file, the view kinds `auxiliary` and `overlay`
+  and a view's `mods`.
+- **`drw.pick` calls a curved edge a curve.** It said `line`, with its chord for a length, and
+  so an edge that curves could pass for a straight one. The length is still the chord.
+- **An edge across a detail's circle** can be picked where it crosses, and not only when one of its
+  ends is inside.
 
 ### Getting it
 

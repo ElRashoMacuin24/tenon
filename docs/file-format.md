@@ -751,10 +751,32 @@ Implemented in `crates/io/src/drw.rs` and `crates/drawing/src/model.rs`; tested 
     as `above_right` for an isometric view);
   - `section`, with `parent`, the cutting line `a`-`b`, and `flip` (seen towards the left of
     `a`-`b` instead of the right);
-  - `detail`, with `parent`, `center` and `radius`.
+  - `detail`, with `parent`, `center` and `radius`;
+  - `auxiliary` (DEC-131), with `parent`, `edge` (a geometry pick of a straight edge of the
+    parent), `a`-`b` (that edge's line in the parent view when it was last placed: its way round,
+    and the line used if the edge cannot be found in the model any more) and `flip` (seen from the
+    left of `a`-`b` instead of the right);
+  - `overlay` (DEC-131), with `parent` and `values`, what the position sets: a list of
+    `{ relationship, offset, angle }` (the relationship's id in the assembly, mm, radians; what is
+    left out stays as the relationship has it).
 
   Parents come before their children, so there are no cycles. A view shows the same model as
-  its parent.
+  its parent. An overlay's parent is a base, projected or auxiliary view.
+- **`mods`** (DEC-131, optional, left out when empty) is what modifies the view: a list of
+  `{ id, type, ... }`, `id` unique among the view's, with `suppressed = true` when it is kept but
+  not at work. In view coordinates, model mm, except a gap:
+  - `crop`: `boundary`, `outline` (the boundary drawn too). One to a view.
+  - `break`: `lines` (`vertical` lines take out a band of `x`, `horizontal` ones a band of `y`),
+    `from` < `to`, and `gap`, what is left between the two sides (mm of paper; when the view's
+    scale makes the band narrower than that on paper, the band stays as wide as it is, and `gap`
+    is kept for when it is not). Bands of the same way may not overlap, suppressed or not. On base
+    and projected views.
+  - `break_out`: `boundary`, and `depth` (from the nearest point of the whole model as the view sees
+    it, read from its geometry; left out, through the whole model). On base, projected and auxiliary
+    views.
+
+  A `boundary` is `{ shape = "rect", lo, hi }` or `{ shape = "circle", center, radius }`.
+  An overlay has no `mods`: it is drawn as its parent is.
 - **A geometry pick** (`a`, `b`) is `{ edge = <edge reference>, point, component }`:
   - `edge` is a persistent edge reference into the part, as in part files;
   - `point` says which point of the edge is meant: `"whole"`, `"start"`, `"end"`, `"mid"` or
@@ -902,11 +924,12 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   A 0.1.0 build refuses, in the words "the project is damaged", a file using text, an ellipse or
   a Smooth constraint; To, To Next or Between of an extrusion; To, To Next or two angles of a
   revolution, or one turned the other way; a spotface or To hole; a variable or face
-  fillet; a work plane through three points; a Tangent or Symmetry relationship; or a mirrored
-  occurrence. It opens the part the same and silently loses, on
+  fillet; a work plane through three points; a Tangent or Symmetry relationship; a mirrored
+  occurrence; or an auxiliary or overlay view. It opens the part the same and silently loses, on
   a save, a tapped hole's thread (`tapped`; the drawing's note and the Threads list lose it at
-  once), which points are sketch points (`sketch_point`), which sketches are shown (`visible`)
-  and a study's `[study.optimize]`.
+  once), which points are sketch points (`sketch_point`), which sketches are shown (`visible`),
+  a study's `[study.optimize]`, an assembly's `[[pattern]]`s (each element a free component where it
+  stands) and a drawing view's `mods` (the view whole).
   Version 2 has gained the M6 feature types
   this way (`sweep`, `coil`, `loft`, `draft`, `split`, `combine`, `thread`), the optional
   `taper` of an extrusion, the optional `at` and `driven` of a sketch dimension, region keys by
@@ -923,8 +946,9 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   `pin` and `frictionless` supports, the `gravity` load and `suppressed` (DEC-097), then
   `edges` and the `moment`, `bearing`, `remote_force` and `body` loads (DEC-100), then a
   part's `part_number` and `description` (DEC-101), and after 0.1.0, among others, a study's
-  `[study.optimize]` (DEC-123), and an assembly's `[[pattern]]` and `next_pattern` and a
-  component's `mirrored_placement` (DEC-130).
+  `[study.optimize]` (DEC-123), an assembly's `[[pattern]]` and `next_pattern` and a component's
+  `mirrored_placement` (DEC-130), and a drawing view's `auxiliary` and `overlay` kinds and its
+  `mods` (DEC-131).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

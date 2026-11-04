@@ -348,6 +348,7 @@ pub fn probe(s: &DrwSession, key: &str) -> (BTreeMap<String, tenon_drawing::Mode
         tangent: false,
         centerlines: false,
         label: false,
+        mods: Vec::new(),
     });
     let sources = s.sources().into_iter().filter(|(k, _)| k == key).collect();
     (sources, probe)

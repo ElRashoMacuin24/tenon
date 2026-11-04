@@ -7,13 +7,17 @@
 
 use serde_json::{Value, json};
 use tenon_assembly::ComponentId;
+use tenon_assembly::position::JointValue;
 use tenon_geom::{Vec2, tol};
 use tenon_kernel::Kernel;
 use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult, EdgeFingerprint, EdgeRef, FaceOrigin};
 
 use crate::annotate::{self, format_number, from_sheet, hole_rows, parts_rows, to_sheet};
-use crate::model::{AnnotId, AnnotKind, Annotation, DimKind, Drawing, GeomPick, Orientation, PickPoint, SheetId, Side, View, ViewId, ViewKind};
+use crate::model::{
+    AnnotId, AnnotKind, Annotation, Boundary, BreakLines, DimKind, Drawing, GeomPick, ModKind, Orientation, PickPoint, SheetId, Side, View, ViewId,
+    ViewKind, ViewMod,
+};
 use crate::session::DrwSession;
 use crate::views::{project, seen_size};
 
@@ -125,6 +129,15 @@ fn view(d: &Drawing, id: ViewId) -> Result<&View, CmdError> {
     d.view(id).ok_or_else(|| CmdError(format!("{id} does not exist")))
 }
 
+/// A view that has lines of its own to pick, or to make another view from: not an overlay.
+fn drawn_view(d: &Drawing, id: ViewId) -> Result<&View, CmdError> {
+    let v = view(d, id)?;
+    if matches!(v.kind, ViewKind::Overlay { .. }) {
+        return Err("an overlay is drawn over its parent and has nothing of its own to pick or make a view from: use the parent view".into());
+    }
+    Ok(v)
+}
+
 // ---- reading ----------------------------------------------------------------------------------
 
 /// Everything about the drawing, with dimension values and hole table rows as they are now.
@@ -142,14 +155,18 @@ fn drw_info(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
         .map(|v| {
             let g = ev.and_then(|e| e.view(v.id));
             let count = |vis: bool| g.map_or(0, |g| g.curves.iter().filter(|c| c.visible == vis).count());
-            let size = g.and_then(|g| g.bounds).map(|(a, b)| v2((b - a) * v.scale));
+            let size = match (g, v.mods.is_empty()) {
+                (Some(g), false) => annotate::drawn_bounds(v, g).map(|(a, b)| v2(b - a)),
+                _ => g.and_then(|g| g.bounds).map(|(a, b)| v2((b - a) * v.scale)),
+            };
             json!({
                 "id": v.id.0, "name": v.name, "sheet": v.sheet.0, "model": v.model,
                 "kind": serde_json::to_value(&v.kind).unwrap_or(Value::Null),
+                "modifiers": serde_json::to_value(&v.mods).unwrap_or(Value::Null),
                 "scale": v.scale, "center": v2(v.center), "size": size,
                 "direction": g.map(|g| { let z = g.frame.z(); json!([z.x, z.y, z.z]) }),
                 "visible_curves": count(true), "hidden_curves": count(false), "hatch": g.map_or(0, |g| g.hatch.len()),
-                "error": g.and_then(|g| g.error.clone()),
+                "error": g.and_then(|g| annotate::view_problem(v, g)),
             })
         })
         .collect();
@@ -226,7 +243,7 @@ pub const PICK_REACH: f64 = 2.5;
 fn drw_pick(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
     let d = s.drawing();
-    let v = view(d, vid)?;
+    let v = drawn_view(d, vid)?;
     let ev = s.current()?;
     let m = ev.models.get(&v.model).ok_or("the model is not loaded")?;
     let point = match arg(p, "point").and_then(Value::as_str) {
@@ -299,7 +316,9 @@ fn pick_result(d: &Drawing, ev: &crate::views::Evaluation, vid: ViewId, gp: Geom
                 project(f, center)
             }
             annotate::Resolved::Line(a, b) => {
-                o.insert("kind".into(), json!("line"));
+                // A curve: its chord, as far as a length goes.
+                let straight = annotate::edge_is_straight(m, &gp).unwrap_or(true);
+                o.insert("kind".into(), json!(if straight { "line" } else { "curve" }));
                 o.insert("length".into(), json!(project(f, a).dist(project(f, b))));
                 (project(f, a) + project(f, b)) * 0.5
             }
@@ -356,6 +375,7 @@ pub fn add_base_view(s: &mut DrwSession, model: &str, p: &Value) -> CmdResult {
             tangent: false,
             centerlines: true,
             label: false,
+            mods: Vec::new(),
         });
         Ok(id)
     })?;
@@ -368,7 +388,13 @@ const VIEW_GAP: f64 = 20.0;
 
 /// Half a view's size on the sheet.
 fn half_size(s: &DrwSession, v: &View) -> Vec2 {
-    s.last_evaluation().and_then(|e| e.view(v.id)).and_then(|g| g.bounds).map_or(Vec2::new(30.0, 30.0), |(a, b)| (b - a) * (0.5 * v.scale))
+    let g = s.last_evaluation().and_then(|e| e.view(v.id));
+    if !v.mods.is_empty()
+        && let Some((a, b)) = g.and_then(|g| annotate::drawn_bounds(v, g))
+    {
+        return (b - a) * 0.5;
+    }
+    g.and_then(|g| g.bounds).map_or(Vec2::new(30.0, 30.0), |(a, b)| (b - a) * (0.5 * v.scale))
 }
 
 /// Where a new view of the parent's model, seen in frame `f` at `scale`, goes on the sheet: off
@@ -384,12 +410,15 @@ fn beside(s: &DrwSession, parent: &View, f: &tenon_geom::Frame, scale: f64, dir:
 }
 
 fn frame_of(s: &DrwSession, v: ViewId) -> tenon_geom::Frame {
+    if let Some(g) = s.evaluation().and_then(|e| e.view(v)) {
+        return g.frame;
+    }
     crate::views::frames(s.drawing()).get(&v).copied().unwrap_or(tenon_geom::Frame::WORLD)
 }
 
 fn drw_projected(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let parent = view_id(p, "parent")?;
-    let pv = view(s.drawing(), parent)?.clone();
+    let pv = drawn_view(s.drawing(), parent)?.clone();
     let side =
         Side::from_id(field(p, "side")?.as_str().unwrap_or("")).ok_or("`side` must be right, left, above, below or a diagonal like above_right")?;
     let scale = scale_param(p)?.unwrap_or(pv.scale);
@@ -416,6 +445,7 @@ fn drw_projected(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
             tangent: false,
             centerlines: !side.diagonal(),
             label: false,
+            mods: Vec::new(),
         });
         Ok(id)
     })?;
@@ -425,7 +455,7 @@ fn drw_projected(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
 
 fn drw_section(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let parent = view_id(p, "parent")?;
-    let pv = view(s.drawing(), parent)?.clone();
+    let pv = drawn_view(s.drawing(), parent)?.clone();
     let (a, b) = (vec2(field(p, "a")?, "a")?, vec2(field(p, "b")?, "b")?);
     if a.dist(b) < tol::LINEAR {
         return Err("the section line needs two different points".into());
@@ -458,6 +488,7 @@ fn drw_section(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cm
             tangent: false,
             centerlines: true,
             label: true,
+            mods: Vec::new(),
         });
         Ok(id)
     })?;
@@ -467,7 +498,7 @@ fn drw_section(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cm
 
 fn drw_detail(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let parent = view_id(p, "parent")?;
-    let pv = view(s.drawing(), parent)?.clone();
+    let pv = drawn_view(s.drawing(), parent)?.clone();
     let center = vec2(field(p, "center")?, "center")?;
     let radius = num(p, "radius")?;
     if radius.is_nan() || radius <= tol::LINEAR {
@@ -493,6 +524,7 @@ fn drw_detail(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
             tangent: false,
             centerlines: false,
             label: true,
+            mods: Vec::new(),
         });
         Ok(id)
     })?;
@@ -500,11 +532,473 @@ fn drw_detail(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
     Ok(json!({ "view": vid.0, "name": name }))
 }
 
+/// The line a straight edge makes in a view: an auxiliary view looks square to it.
+fn edge_line(s: &DrwSession, parent: &View, edge: &GeomPick) -> Result<(Vec2, Vec2), CmdError> {
+    let ev = s.current()?;
+    let pg = ev.view(parent.id).ok_or("the view is not computed")?;
+    let m = ev.models.get(&parent.model).ok_or("the model is not loaded")?;
+    let whole = GeomPick { point: PickPoint::Whole, ..edge.clone() };
+    let annotate::Resolved::Line(a, b) = annotate::resolve_pick(m, &whole).map_err(CmdError)? else {
+        return Err("an auxiliary view looks square to a straight edge: pick a line, not a circle or an arc".into());
+    };
+    if !annotate::edge_is_straight(m, &whole).map_err(CmdError)? {
+        return Err("an auxiliary view looks square to a straight edge: that one is a curve, and has no one direction: pick a line".into());
+    }
+    let (a, b) = (project(&pg.frame, a), project(&pg.frame, b));
+    if a.dist(b) < tol::LINEAR {
+        return Err("that edge is seen end-on in this view: pick one that shows as a line".into());
+    }
+    Ok((a, b))
+}
+
+/// Which way on the sheet an auxiliary view of the line `a`-`b` lies from its parent: it is on the
+/// side it is seen from by third-angle projection, on the far side by first-angle, as a section is.
+pub fn auxiliary_toward(third_angle: bool, a: Vec2, b: Vec2, flip: bool) -> Vec2 {
+    let d = (b - a).normalized();
+    let look = if flip { Vec2::new(-d.y, d.x) } else { Vec2::new(d.y, -d.x) };
+    if third_angle { -look } else { look }
+}
+
+/// How an auxiliary view placed near a sheet point looks: whether it is flipped, for the line
+/// `a`-`b` of a parent whose middle of that line is at `mid` on the sheet.
+pub fn auxiliary_flip(third_angle: bool, a: Vec2, b: Vec2, mid: Vec2, at: Vec2) -> bool {
+    auxiliary_toward(third_angle, a, b, false).dot(at - mid) < 0.0
+}
+
+/// How far from its parent an auxiliary view goes when not told: clear of it by [`VIEW_GAP`].
+fn auxiliary_distance(s: &DrwSession, parent: &View, f: &tenon_geom::Frame, scale: f64, toward: Vec2) -> f64 {
+    let along = |half: Vec2| half.x * toward.x.abs() + half.y * toward.y.abs();
+    let own = s
+        .last_evaluation()
+        .and_then(|e| e.models.get(&parent.model))
+        .and_then(|m| seen_size(m, f))
+        .map_or(Vec2::new(30.0, 30.0), |z| z * (0.5 * scale));
+    along(half_size(s, parent)) + along(own) + VIEW_GAP
+}
+
+fn drw_auxiliary(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let parent = view_id(p, "parent")?;
+    let pv = drawn_view(s.drawing(), parent)?.clone();
+    let edge = GeomPick { point: PickPoint::Whole, ..pick(p, "edge")? };
+    let (a, b) = edge_line(s, &pv, &edge)?;
+    let third = s.drawing().standard == crate::model::Standard::Ansi;
+    let scale = scale_param(p)?.unwrap_or(pv.scale);
+    let at = opt_vec2(p, "at")?;
+    let mid = {
+        let ev = s.current()?;
+        to_sheet(&pv, ev.view(parent).ok_or("the view is not computed")?, (a + b) * 0.5)
+    };
+    let flip = match (opt_bool(p, "flip")?, at) {
+        (Some(f), _) => f,
+        (None, Some(at)) => auxiliary_flip(third, a, b, mid, at),
+        (None, None) => false,
+    };
+    let toward = auxiliary_toward(third, a, b, flip);
+    // Square to the edge from its parent, however near the point it was told.
+    let distance = match at {
+        Some(at) => (at - pv.center).dot(toward),
+        None => {
+            let (f, _, _) = crate::views::section_frame(&frame_of(s, parent), a, b, flip);
+            auxiliary_distance(s, &pv, &f, scale, toward)
+        }
+    };
+    let vid = s.edit(|d| {
+        let id = d.take_view_id();
+        let name = d.next_view_name(true);
+        d.views.push(View {
+            id,
+            sheet: pv.sheet,
+            name,
+            model: pv.model.clone(),
+            kind: ViewKind::Auxiliary { parent, edge, a, b, flip },
+            scale,
+            center: pv.center + toward * distance,
+            hidden: pv.hidden,
+            tangent: false,
+            centerlines: true,
+            label: true,
+            mods: Vec::new(),
+        });
+        Ok(id)
+    })?;
+    let name = view(s.drawing(), vid)?.name.clone();
+    Ok(json!({ "view": vid.0, "name": name, "flip": flip, "length": a.dist(b) }))
+}
+
+/// A position's values from a command's parameters.
+fn values_param(p: &Value) -> Result<Vec<JointValue>, CmdError> {
+    let list = field(p, "values")?.as_array().ok_or("`values` must be a list of { relationship, offset, angle }")?;
+    let mut out: Vec<JointValue> = Vec::with_capacity(list.len());
+    for x in list {
+        let v: JointValue = serde_json::from_value(x.clone())
+            .map_err(|e| CmdError(format!("`values` holds {x}, which is not {{ relationship, offset, angle }}: {e}")))?;
+        if !v.is_valid() {
+            return Err(CmdError(format!("{} needs an offset or an angle, in range", v.relationship)));
+        }
+        if out.iter().any(|o| o.relationship == v.relationship) {
+            return Err(CmdError(format!("{} is given twice", v.relationship)));
+        }
+        out.push(v);
+    }
+    if out.is_empty() {
+        return Err("a position is what it changes: give at least one value".into());
+    }
+    Ok(out)
+}
+
+/// Whether the assembly can go to a position, for a view of it; if not, what to do.
+fn check_position(s: &DrwSession, v: &View, values: &[JointValue]) -> Result<(), CmdError> {
+    let m = s.current()?.models.get(&v.model).ok_or("the model is not loaded")?;
+    if m.assembly.is_none() {
+        return Err("an overlay shows an assembly in another position: pick a view of an assembly".into());
+    }
+    m.position_frames(values).map(|_| ()).map_err(CmdError)
+}
+
+/// An overlay over a view of an assembly, or another position for one that is there.
+fn drw_overlay(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let values = values_param(p)?;
+    if arg(p, "view").is_some_and(|v| !v.is_null()) {
+        let vid = view_id(p, "view")?;
+        let v = view(s.drawing(), vid)?.clone();
+        if !matches!(v.kind, ViewKind::Overlay { .. }) {
+            return Err(CmdError(format!("{} is not an overlay", v.name)));
+        }
+        check_position(s, &v, &values)?;
+        s.edit(|d| {
+            if let Some(ViewKind::Overlay { values: to, .. }) = d.view_mut(vid).map(|x| &mut x.kind) {
+                *to = values;
+            }
+            Ok(())
+        })?;
+        return Ok(json!({ "view": vid.0, "name": v.name }));
+    }
+    let parent = view_id(p, "parent").map_err(|_| CmdError("give `parent` (the view of an assembly) or `view` (an overlay)".into()))?;
+    let pv = drawn_view(s.drawing(), parent)?.clone();
+    if !matches!(pv.kind, ViewKind::Base { .. } | ViewKind::Projected { .. } | ViewKind::Auxiliary { .. }) {
+        return Err("an overlay goes over a base, projected or auxiliary view".into());
+    }
+    check_position(s, &pv, &values)?;
+    let vid = s.edit(|d| {
+        let id = d.take_view_id();
+        let name = d.next_view_name(false);
+        d.views.push(View {
+            id,
+            sheet: pv.sheet,
+            name,
+            model: pv.model.clone(),
+            kind: ViewKind::Overlay { parent, values },
+            scale: pv.scale,
+            center: pv.center,
+            hidden: false,
+            tangent: false,
+            centerlines: false,
+            label: false,
+            mods: Vec::new(),
+        });
+        Ok(id)
+    })?;
+    let name = view(s.drawing(), vid)?.name.clone();
+    Ok(json!({ "view": vid.0, "name": name }))
+}
+
+/// What a position of a view's assembly can set, and each value now.
+fn drw_overlay_values(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    let v = view(s.drawing(), vid)?;
+    let m = s.current()?.models.get(&v.model).ok_or("the model is not loaded")?;
+    let asm = m.assembly.as_ref().ok_or("an overlay shows an assembly in another position: pick a view of an assembly")?;
+    let list: Vec<Value> = tenon_assembly::position::readings(asm, &m.parts())
+        .into_iter()
+        .map(|r| json!({ "relationship": r.relationship.0, "name": r.name, "offset": r.offset, "angle": r.angle }))
+        .collect();
+    Ok(json!({ "view": vid.0, "values": list }))
+}
+
+// ---- modifiers ----------------------------------------------------------------------------------
+
+/// The gap a break leaves between its two sides, unless told (sheet mm).
+pub const BREAK_GAP: f64 = 6.0;
+
+/// A boundary from a command's parameters, if one is given.
+fn boundary_param(p: &Value) -> Result<Option<Boundary>, CmdError> {
+    let rect = arg(p, "rect").filter(|r| !r.is_null());
+    let (center, radius) = (opt_vec2(p, "center")?, opt_num(p, "radius")?);
+    let bad = || CmdError("give `rect` ([[x, y], [x, y]], two opposite corners) or `center` and `radius`".into());
+    let b = match (rect, center, radius) {
+        (None, None, None) => return Ok(None),
+        (Some(r), None, None) => {
+            let [a, b] = r.as_array().map(Vec::as_slice).ok_or_else(bad)? else { return Err(bad()) };
+            let (a, b) = (vec2(a, "rect")?, vec2(b, "rect")?);
+            if (a.x - b.x).abs() < tol::LINEAR || (a.y - b.y).abs() < tol::LINEAR {
+                return Err("the rectangle has no size: give two opposite corners".into());
+            }
+            Boundary::rect(a, b)
+        }
+        (None, Some(center), Some(radius)) => {
+            if radius <= tol::LINEAR {
+                return Err("`radius` must be positive".into());
+            }
+            Boundary::Circle { center, radius }
+        }
+        _ => return Err(bad()),
+    };
+    Ok(Some(b))
+}
+
+fn modifier_param(p: &Value) -> Result<Option<u32>, CmdError> {
+    match arg(p, "modifier") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => id(v, "modifier").map(Some),
+    }
+}
+
+/// Puts a modifier on a view, or changes the one numbered `which`, as one undo step. `make` is
+/// given what it was.
+fn put_modifier(
+    s: &mut DrwSession,
+    vid: ViewId,
+    which: Option<u32>,
+    suppressed: Option<bool>,
+    make: impl FnOnce(Option<&ModKind>) -> Result<ModKind, CmdError>,
+) -> CmdResult {
+    let v = view(s.drawing(), vid)?;
+    let old = match which {
+        Some(w) => Some(v.mods.iter().find(|m| m.id == w).ok_or_else(|| CmdError(format!("{} has no modifier {w}", v.name)))?),
+        None => None,
+    };
+    let kind = make(old.map(|m| &m.kind))?;
+    v.may_have(&kind).map_err(CmdError)?;
+    if old.is_some_and(|m| std::mem::discriminant(&m.kind) != std::mem::discriminant(&kind)) {
+        return Err("that modifier is of another kind".into());
+    }
+    let label = kind.label();
+    let was_suppressed = old.is_some_and(|m| m.suppressed);
+    let added = s.edit(|d| {
+        let v = d.view_mut(vid).ok_or("gone")?;
+        let number = which.unwrap_or_else(|| v.next_mod());
+        let record = ViewMod { id: number, suppressed: suppressed.unwrap_or(was_suppressed), kind };
+        match v.mods.iter_mut().find(|m| m.id == number) {
+            Some(m) => *m = record,
+            None => v.mods.push(record),
+        }
+        Ok(number)
+    })?;
+    Ok(json!({ "view": vid.0, "modifier": added, "type": label }))
+}
+
+/// The bounds of a view's lines, if it is computed.
+fn view_bounds(s: &DrwSession, vid: ViewId) -> Option<(Vec2, Vec2)> {
+    s.evaluation().and_then(|e| e.view(vid)).and_then(|g| g.bounds)
+}
+
+/// Whether a boundary lies wholly outside two corners.
+fn off(b: &Boundary, lo: Vec2, hi: Vec2) -> bool {
+    let (a, c) = b.bounds();
+    c.x < lo.x || a.x > hi.x || c.y < lo.y || a.y > hi.y
+}
+
+/// Whether a boundary lies wholly off the model as a view sees it (if it is computed): by its box and
+/// not by the view's lines, which a break-out moved elsewhere has cut away already.
+fn off_the_model(s: &DrwSession, vid: ViewId, b: &Boundary) -> bool {
+    let Some(ev) = s.evaluation() else { return false };
+    let (Some(v), Some(g)) = (s.drawing().view(vid), ev.view(vid)) else { return false };
+    let Some(m) = ev.models.get(&v.model) else { return false };
+    let (Some(size), Some(mid)) = (seen_size(m, &g.frame), crate::views::seen_middle(m, &g.frame)) else { return false };
+    off(b, mid - size * 0.5, mid + size * 0.5)
+}
+
+fn drw_crop(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    let (boundary, outline) = (boundary_param(p)?, opt_bool(p, "outline")?);
+    let v = view(s.drawing(), vid)?;
+    let existing = v.mods.iter().find(|m| matches!(m.kind, ModKind::Crop { .. })).map(|m| m.id);
+    v.may_have(&ModKind::Crop { boundary: Boundary::rect(Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0)), outline: true }).map_err(CmdError)?;
+    if let (Some(b), Some((lo, hi))) = (&boundary, view_bounds(s, vid))
+        && off(b, lo, hi)
+    {
+        return Err("the crop lies outside the view and nothing would be drawn: put it over the view".into());
+    }
+    let which = modifier_param(p)?.or(existing);
+    let suppressed = opt_bool(p, "suppressed")?;
+    put_modifier(s, vid, which, suppressed, |old| {
+        let (was, was_outline) = match old {
+            Some(ModKind::Crop { boundary, outline }) => (Some(*boundary), *outline),
+            _ => (None, true),
+        };
+        let boundary = boundary.or(was).ok_or("give the crop: `rect` ([[x, y], [x, y]]) or `center` and `radius`")?;
+        Ok(ModKind::Crop { boundary, outline: outline.unwrap_or(was_outline) })
+    })
+}
+
+fn drw_break(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    let lines = match arg(p, "lines").and_then(Value::as_str) {
+        Some(t) => Some(BreakLines::from_id(t).ok_or("`lines` must be horizontal or vertical")?),
+        None => None,
+    };
+    let (from, to, gap) = (opt_num(p, "from")?, opt_num(p, "to")?, opt_num(p, "gap")?);
+    let which = modifier_param(p)?;
+    let suppressed = opt_bool(p, "suppressed")?;
+    let v = view(s.drawing(), vid)?;
+    v.may_have(&ModKind::Break { lines: BreakLines::Vertical, from: 0.0, to: 1.0, gap: 0.0 }).map_err(CmdError)?;
+    let scale = v.scale;
+    let bounds = view_bounds(s, vid);
+    let others: Vec<ViewMod> = v.mods.iter().filter(|m| Some(m.id) != which).cloned().collect();
+    put_modifier(s, vid, which, suppressed, |old| {
+        let (was_lines, was_from, was_to, was_gap) = match old {
+            Some(ModKind::Break { lines, from, to, gap }) => (Some(*lines), Some(*from), Some(*to), Some(*gap)),
+            _ => (None, None, None, None),
+        };
+        // Only suppressed or used again: as it stands, whatever the scale or the model have done since.
+        if let (Some(kept @ ModKind::Break { .. }), None, None, None, None) = (old, lines, from, to, gap) {
+            return Ok(kept.clone());
+        }
+        let lines = lines.or(was_lines).ok_or("give `lines`: horizontal or vertical")?;
+        let (a, b) = (from.or(was_from).ok_or("give `from`: where the first line goes")?, to.or(was_to).ok_or("give `to`: where the second goes")?);
+        let (from, to) = (a.min(b), a.max(b));
+        let gap = gap.or(was_gap).unwrap_or(BREAK_GAP);
+        if !(0.0..=1000.0).contains(&gap) {
+            return Err("`gap` must be 0 to 1000 (mm of paper)".into());
+        }
+        if (to - from) * scale <= gap {
+            return Err("the break lines are closer together than their gap and nothing would be shortened: put them farther apart".into());
+        }
+        if let Some((lo, hi)) = bounds {
+            let (l, h) = if lines == BreakLines::Vertical { (lo.x, hi.x) } else { (lo.y, hi.y) };
+            if to <= l || from >= h {
+                return Err("the break lines do not cross the view: put them across it".into());
+            }
+            if from <= l && to >= h {
+                return Err("the break lines take out the whole view: put them inside it".into());
+            }
+        }
+        // Two bands the same way cannot overlap: say which is in the way, even if it is at rest.
+        for m in &others {
+            if let ModKind::Break { lines: l, from: a, to: b, .. } = &m.kind
+                && *l == lines
+                && from < *b
+                && *a < to
+            {
+                let rest = if m.suppressed { ", suppressed," } else { "" };
+                return Err(CmdError(format!(
+                    "the break lines overlap Break {}{rest} from {} to {}: put them elsewhere, or change or delete that one",
+                    m.id,
+                    format_number(*a, 3),
+                    format_number(*b, 3)
+                )));
+            }
+        }
+        Ok(ModKind::Break { lines, from, to, gap })
+    })
+}
+
+fn drw_break_out(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    let boundary = boundary_param(p)?;
+    let (depth, through) = (opt_num(p, "depth")?, opt_bool(p, "through")?);
+    if depth.is_some_and(|d| d <= tol::LINEAR) {
+        return Err("`depth` must be positive".into());
+    }
+    if depth.is_some() && through == Some(true) {
+        return Err("give `depth` or `through`, not both".into());
+    }
+    let which = modifier_param(p)?;
+    let suppressed = opt_bool(p, "suppressed")?;
+    view(s.drawing(), vid)?
+        .may_have(&ModKind::BreakOut { boundary: Boundary::rect(Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0)), depth: None })
+        .map_err(CmdError)?;
+    if boundary.is_some_and(|b| off_the_model(s, vid, &b)) {
+        return Err("the break out lies outside the view and would cut nothing: put it over the view".into());
+    }
+    put_modifier(s, vid, which, suppressed, |old| {
+        let (was, was_depth) = match old {
+            Some(ModKind::BreakOut { boundary, depth }) => (Some(*boundary), Some(*depth)),
+            _ => (None, None),
+        };
+        let boundary = boundary.or(was).ok_or("give the boundary: `rect` ([[x, y], [x, y]]) or `center` and `radius`")?;
+        let depth = match (depth, through) {
+            (Some(d), _) => Some(d),
+            (None, Some(true)) => None,
+            // Not through, and no depth said: the one it has, if it has one.
+            (None, Some(false)) => Some(was_depth.flatten().ok_or("not through: give `depth` (mm from what is nearest the eye)")?),
+            (None, None) => was_depth.ok_or("give `depth` (mm from what is nearest the eye) or `through`")?,
+        };
+        Ok(ModKind::BreakOut { boundary, depth })
+    })
+}
+
+fn drw_modifier_delete(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let vid = view_id(p, "view")?;
+    let which = modifier_param(p)?.ok_or("give `modifier`: its number, as drw.info lists it")?;
+    s.edit(|d| {
+        let v = d.view_mut(vid).ok_or_else(|| CmdError(format!("{vid} does not exist")))?;
+        let before = v.mods.len();
+        v.mods.retain(|m| m.id != which);
+        if v.mods.len() == before { Err(CmdError(format!("{} has no modifier {which}", v.name))) } else { Ok(()) }
+    })?;
+    Ok(json!({ "view": vid.0, "deleted": which }))
+}
+
 fn drw_view_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
     let (scale, at, by) = (scale_param(p)?, opt_vec2(p, "at")?, opt_vec2(p, "by")?);
     let (hidden, tangent, centerlines, label) = (opt_bool(p, "hidden")?, opt_bool(p, "tangent")?, opt_bool(p, "centerlines")?, opt_bool(p, "label")?);
+    let flip = opt_bool(p, "flip")?;
+    let edge = opt_pick(p, "edge")?.map(|e| GeomPick { point: PickPoint::Whole, ..e });
+    if matches!(view(s.drawing(), vid)?.kind, ViewKind::Overlay { .. })
+        && (scale.is_some() || hidden.is_some() || tangent.is_some() || centerlines.is_some() || label.is_some())
+    {
+        return Err("an overlay is drawn at its parent's scale, in phantom lines and with no label of its own: change the parent view".into());
+    }
+    let third = s.drawing().standard == crate::model::Standard::Ansi;
+    // Another edge, or the other side, for an auxiliary view, or moving it: it stays as far from its
+    // parent, square to the edge as it is now.
+    let moves = at.is_some() || by.is_some() || flip.is_some() || edge.is_some();
+    let turned = match (&view(s.drawing(), vid)?.kind, &edge, flip) {
+        (ViewKind::Auxiliary { parent, edge: was, a, b, flip: was_flip }, _, _) if moves => {
+            let new_flip = flip.unwrap_or(*was_flip);
+            let pv = view(s.drawing(), *parent)?.clone();
+            let chosen = edge.as_ref().unwrap_or(was);
+            let (na, nb) = match (&edge, edge_line(s, &pv, chosen)) {
+                (Some(_), line) => line?,
+                (None, Ok(line)) => {
+                    let (x, y) = line;
+                    if (y - x).dot(*b - *a) < 0.0 { (y, x) } else { (x, y) }
+                }
+                (None, Err(_)) => (*a, *b),
+            };
+            let c = view(s.drawing(), vid)?.center;
+            let away = (c - pv.center).dot(auxiliary_toward(third, *a, *b, *was_flip));
+            Some((chosen.clone(), na, nb, new_flip, pv.center + auxiliary_toward(third, na, nb, new_flip) * away))
+        }
+        (ViewKind::Auxiliary { .. }, _, _) => None,
+        (_, Some(_), _) => return Err("only an auxiliary view looks square to an edge".into()),
+        (_, _, Some(_)) => return Err("only an auxiliary view flips this way".into()),
+        _ => None,
+    };
     s.edit(|d| {
+        // Projected views move with their parent (they stay lined up with it).
+        let family: Vec<ViewId> = d.family(vid).into_iter().filter(|f| *f == vid || d.view(*f).is_some_and(|v| v.kind.follows_parent())).collect();
+        let move_by = |d: &mut Drawing, shift: Vec2| {
+            for f in &family {
+                if let Some(v) = d.view_mut(*f) {
+                    v.center += shift;
+                }
+            }
+        };
+        if let Some((e, na, nb, nf, c)) = turned
+            && let Some(v) = d.view_mut(vid)
+        {
+            let shift = c - v.center;
+            if let ViewKind::Auxiliary { edge, a, b, flip, .. } = &mut v.kind {
+                *edge = e;
+                *a = na;
+                *b = nb;
+                *flip = nf;
+            }
+            move_by(d, shift);
+        }
         let v = d.view(vid).ok_or_else(|| CmdError(format!("{vid} does not exist")))?;
         let old = v.center;
         let target = match (at, by) {
@@ -512,21 +1006,8 @@ fn drw_view_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
             (None, Some(b)) => old + b,
             (None, None) => old,
         };
-        let mut shift = target - old;
-        // A view projected beside its parent stays lined up with it: it only slides along.
-        match &v.kind {
-            ViewKind::Projected { side: Side::Right | Side::Left, .. } => shift.y = 0.0,
-            ViewKind::Projected { side: Side::Above | Side::Below, .. } => shift.x = 0.0,
-            _ => {}
-        }
-        // Projected views move with their parent (they stay lined up with it).
-        let family: Vec<ViewId> =
-            d.family(vid).into_iter().filter(|f| *f == vid || matches!(d.view(*f).map(|v| &v.kind), Some(ViewKind::Projected { .. }))).collect();
-        for f in family {
-            if let Some(v) = d.view_mut(f) {
-                v.center += shift;
-            }
-        }
+        let shift = lined_up(&v.kind, target - old);
+        move_by(d, shift);
         let v = d.view_mut(vid).ok_or("gone")?;
         if let Some(sc) = scale {
             v.scale = sc;
@@ -535,10 +1016,32 @@ fn drw_view_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
         v.tangent = tangent.unwrap_or(v.tangent);
         v.centerlines = centerlines.unwrap_or(v.centerlines);
         v.label = label.unwrap_or(v.label);
+        // What is drawn over a view is drawn to its scale.
+        if let Some(sc) = scale {
+            for v in d.views.iter_mut().filter(|v| v.kind.parent() == Some(vid) && matches!(v.kind, ViewKind::Overlay { .. })) {
+                v.scale = sc;
+            }
+        }
         Ok(())
     })?;
     let v = view(s.drawing(), vid)?;
     Ok(json!({ "view": vid.0, "center": v2(v.center), "scale": v.scale }))
+}
+
+/// How far a view moves when told to move `by`: a view projected beside its parent stays lined up
+/// with it and only slides along; an auxiliary view only slides square to its edge; an overlay
+/// stays over its parent.
+pub fn lined_up(kind: &ViewKind, by: Vec2) -> Vec2 {
+    match kind {
+        ViewKind::Projected { side: Side::Right | Side::Left, .. } => Vec2::new(by.x, 0.0),
+        ViewKind::Projected { side: Side::Above | Side::Below, .. } => Vec2::new(0.0, by.y),
+        ViewKind::Auxiliary { a, b, .. } => {
+            let u = (*b - *a).normalized();
+            by - u * by.dot(u)
+        }
+        ViewKind::Overlay { .. } => Vec2::new(0.0, 0.0),
+        _ => by,
+    }
 }
 
 fn drw_view_delete(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
@@ -559,7 +1062,7 @@ fn add_annotation(s: &mut DrwSession, kind: AnnotKind) -> Result<AnnotId, CmdErr
 
 fn drw_dimension(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
-    let v = view(s.drawing(), vid)?.clone();
+    let v = drawn_view(s.drawing(), vid)?.clone();
     let dim = DimKind::from_id(field(p, "type")?.as_str().unwrap_or(""))
         .ok_or("`type` must be horizontal, vertical, aligned, diameter, radius or angle")?;
     let a = pick(p, "a")?;
@@ -645,24 +1148,25 @@ fn add_center(s: &mut DrwSession, kind: AnnotKind) -> CmdResult {
 
 fn drw_center_mark(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
-    view(s.drawing(), vid)?;
+    drawn_view(s.drawing(), vid)?;
     add_center(s, AnnotKind::CenterMark { view: vid, a: pick(p, "a")? })
 }
 
 fn drw_centerline(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
-    view(s.drawing(), vid)?;
+    drawn_view(s.drawing(), vid)?;
     add_center(s, AnnotKind::Centerline { view: vid, a: pick(p, "a")?, b: pick(p, "b")? })
 }
 
 fn drw_centerline_bisector(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
-    view(s.drawing(), vid)?;
+    drawn_view(s.drawing(), vid)?;
     add_center(s, AnnotKind::CenterlineBisector { view: vid, a: pick(p, "a")?, b: pick(p, "b")? })
 }
 
 fn drw_hole_table(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
+    drawn_view(s.drawing(), vid)?;
     let origin = opt_pick(p, "origin")?;
     let rows = hole_rows(s.drawing(), s.current()?, vid, origin.as_ref()).map_err(CmdError)?;
     if rows.is_empty() {
@@ -729,7 +1233,7 @@ fn balloon_place(s: &DrwSession, v: &View, component: ComponentId) -> Result<(te
 
 fn drw_balloon(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
-    let v = view(s.drawing(), vid)?.clone();
+    let v = drawn_view(s.drawing(), vid)?.clone();
     // Attached where an edge of the component was clicked, or on its own.
     let hit = match opt_vec2(p, "attach_at")? {
         Some(q) => Some(annotate::edge_at(s.drawing(), s.current()?, vid, q, PICK_REACH).ok_or("no edge is drawn where the balloon attaches")?),
@@ -755,7 +1259,7 @@ fn drw_balloon(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cm
 /// A balloon for each part of an assembly view (on its first component), around the view.
 fn drw_balloon_auto(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let vid = view_id(p, "view")?;
-    let v = view(s.drawing(), vid)?.clone();
+    let v = drawn_view(s.drawing(), vid)?.clone();
     let m = s.current()?.models.get(&v.model).ok_or("the model is not loaded")?.clone();
     let asm = m.assembly.as_ref().ok_or("balloons need an assembly view")?;
     let have: Vec<ComponentId> = s
@@ -981,9 +1485,65 @@ static COMMANDS: &[DrwCommand] = &[
         run: drw_detail,
     },
     DrwCommand {
+        id: "drw.auxiliary",
+        label: "Auxiliary View",
+        help: "parent; edge: a pick of a straight edge of the parent (drw.pick); a new view seen square to that edge, following it as the model changes. at: a sheet point, which also says the side it goes on (it slides there square to the edge from its parent); flip: from the other side of the edge; scale",
+        mutates: true,
+        views: true,
+        run: drw_auxiliary,
+    },
+    DrwCommand {
+        id: "drw.overlay",
+        label: "Overlay View",
+        help: "parent (a base, projected or auxiliary view of an assembly), or view (an overlay, to change it); values: [{ relationship, offset (mm), angle (rad) }]: the assembly solved with these, drawn in phantom lines over the parent. See drw.overlay.values",
+        mutates: true,
+        views: true,
+        run: drw_overlay,
+    },
+    DrwCommand {
+        id: "drw.overlay.values",
+        label: "Overlay Values",
+        help: "view (of an assembly): each relationship a position can set, with its offset (mm) and angle (rad) as they are now",
+        mutates: false,
+        views: true,
+        run: drw_overlay_values,
+    },
+    DrwCommand {
+        id: "drw.crop",
+        label: "Crop",
+        help: "view; rect: [[x, y], [x, y]] (opposite corners, view coordinates, model mm; see drw.to_view) or center, radius; outline: draw the boundary (default true); suppressed. Only what lies inside is drawn; dimensions keep their true values. A view has one crop: this changes it if it has one (modifier: its number, not needed)",
+        mutates: true,
+        views: false,
+        run: drw_crop,
+    },
+    DrwCommand {
+        id: "drw.break",
+        label: "Break",
+        help: "view (base or projected); lines: horizontal | vertical; from, to: where the two lines go along the other axis (view coordinates, model mm); gap: what is left between the two sides (mm of paper, default 6); modifier: change that one instead of adding one; suppressed. Dimensions across it keep the true length",
+        mutates: true,
+        views: false,
+        run: drw_break,
+    },
+    DrwCommand {
+        id: "drw.break_out",
+        label: "Break Out",
+        help: "view (base, projected or auxiliary); rect: [[x, y], [x, y]] or center, radius (view coordinates, model mm); depth: how far down from what is nearest the eye (model mm), or through: true; modifier: change that one instead of adding one; suppressed. Inside it the model is cut away; what is then seen is drawn, the floor of the cut hatched. If that takes nothing away, the view's error in drw.info says so",
+        mutates: true,
+        views: false,
+        run: drw_break_out,
+    },
+    DrwCommand {
+        id: "drw.modifier.delete",
+        label: "Delete Modifier",
+        help: "view; modifier: the number of a crop, break or break out, as drw.info lists it",
+        mutates: true,
+        views: false,
+        run: drw_modifier_delete,
+    },
+    DrwCommand {
         id: "drw.view.edit",
         label: "Edit View",
-        help: "view; at: [x, y] or by: [dx, dy] (the views projected from it move along; a view projected beside, above or below its parent only slides in line with it); scale; hidden, tangent, centerlines, label: true or false",
+        help: "view; at: [x, y] or by: [dx, dy] (the views projected from it move along; a view projected beside, above or below its parent only slides in line with it, an auxiliary view square to its edge); scale; hidden, tangent, centerlines, label: true or false; flip, edge: another side or another edge (a pick) for an auxiliary view",
         mutates: true,
         views: false,
         run: drw_view_edit,

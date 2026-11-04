@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use tenon_assembly::ComponentId;
+use tenon_assembly::position::JointValue;
 use tenon_geom::{Vec2, Vec3, tol};
 use tenon_model::EdgeRef;
 
@@ -11,6 +12,9 @@ use tenon_model::EdgeRef;
 pub const MAX_SHEETS: usize = 500;
 pub const MAX_VIEWS: usize = 5_000;
 pub const MAX_ANNOTATIONS: usize = 50_000;
+/// Most modifiers one view may have, and values one position may have.
+const MAX_MODS: usize = 1_000;
+const MAX_VALUES: usize = 1_000;
 
 macro_rules! id_type {
     ($name:ident, $what:literal) => {
@@ -243,15 +247,148 @@ pub enum ViewKind {
     /// A circle of the parent view (`center`, `radius` in parent view coordinates) drawn at its
     /// own scale.
     Detail { parent: ViewId, center: Vec2, radius: f64 },
+    /// The model seen square to a straight edge of the parent view (DEC-131): from the right of
+    /// the edge's direction, as a section is (`flip`: from the left). `a`-`b` is the edge in the
+    /// parent view when it was last placed: its way round, and the line used when the edge cannot
+    /// be found in the model any more.
+    Auxiliary {
+        parent: ViewId,
+        edge: GeomPick,
+        a: Vec2,
+        b: Vec2,
+        #[serde(default)]
+        flip: bool,
+    },
+    /// An assembly's view drawn again in another position, in phantom lines over its parent
+    /// (DEC-131). The position is what the relationships are set to; the solver finds the rest.
+    Overlay { parent: ViewId, values: Vec<JointValue> },
 }
 
 impl ViewKind {
     pub fn parent(&self) -> Option<ViewId> {
         match self {
             ViewKind::Base { .. } => None,
-            ViewKind::Projected { parent, .. } | ViewKind::Section { parent, .. } | ViewKind::Detail { parent, .. } => Some(*parent),
+            ViewKind::Projected { parent, .. }
+            | ViewKind::Section { parent, .. }
+            | ViewKind::Detail { parent, .. }
+            | ViewKind::Auxiliary { parent, .. }
+            | ViewKind::Overlay { parent, .. } => Some(*parent),
         }
     }
+
+    /// Whether it stays lined up with its parent and moves with it.
+    pub fn follows_parent(&self) -> bool {
+        matches!(self, ViewKind::Projected { .. } | ViewKind::Auxiliary { .. } | ViewKind::Overlay { .. })
+    }
+}
+
+/// A closed boundary on a view, in the view's own coordinates (model mm).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "shape", rename_all = "snake_case")]
+pub enum Boundary {
+    Rect { lo: Vec2, hi: Vec2 },
+    Circle { center: Vec2, radius: f64 },
+}
+
+impl Boundary {
+    /// A rectangle from any two opposite corners.
+    pub fn rect(a: Vec2, b: Vec2) -> Boundary {
+        Boundary::Rect { lo: a.min(b), hi: a.max(b) }
+    }
+
+    /// Whether a point is inside or on it.
+    pub fn contains(&self, p: Vec2) -> bool {
+        match self {
+            Boundary::Rect { lo, hi } => p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y,
+            Boundary::Circle { center, radius } => p.dist(*center) <= *radius,
+        }
+    }
+
+    /// Its box.
+    pub fn bounds(&self) -> (Vec2, Vec2) {
+        match self {
+            Boundary::Rect { lo, hi } => (*lo, *hi),
+            Boundary::Circle { center, radius } => (*center - Vec2::new(*radius, *radius), *center + Vec2::new(*radius, *radius)),
+        }
+    }
+
+    /// Finite, with a size.
+    fn is_valid(&self) -> bool {
+        match self {
+            Boundary::Rect { lo, hi } => finite2(*lo) && finite2(*hi) && hi.x - lo.x > tol::LINEAR && hi.y - lo.y > tol::LINEAR,
+            Boundary::Circle { center, radius } => finite2(*center) && radius.is_finite() && *radius > tol::LINEAR && *radius < tol::MAX_SIZE,
+        }
+    }
+}
+
+/// Which way a pair of break lines runs on the sheet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BreakLines {
+    /// Lines across the sheet: what lies between two heights is taken out.
+    Horizontal,
+    /// Lines up the sheet: what lies between two places along it is taken out.
+    Vertical,
+}
+
+impl BreakLines {
+    pub fn id(self) -> &'static str {
+        match self {
+            BreakLines::Horizontal => "horizontal",
+            BreakLines::Vertical => "vertical",
+        }
+    }
+    pub fn from_id(s: &str) -> Option<BreakLines> {
+        match s {
+            "horizontal" => Some(BreakLines::Horizontal),
+            "vertical" => Some(BreakLines::Vertical),
+            _ => None,
+        }
+    }
+}
+
+/// What a modifier does to its view (DEC-131).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ModKind {
+    /// Only what lies inside `boundary` is drawn. `outline`: the boundary is drawn too.
+    Crop {
+        boundary: Boundary,
+        #[serde(default = "yes")]
+        outline: bool,
+    },
+    /// The band between `from` and `to` (view coordinates: `x` for vertical lines, `y` for
+    /// horizontal) is taken out and the two sides drawn `gap` apart (mm of paper).
+    Break { lines: BreakLines, from: f64, to: f64, gap: f64 },
+    /// Inside `boundary` the model is cut away down to `depth` from its nearest point as the view
+    /// sees it (model mm), or through it all when there is no depth; the floor of the cut is hatched.
+    BreakOut {
+        boundary: Boundary,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        depth: Option<f64>,
+    },
+}
+
+impl ModKind {
+    /// The words the browser and messages use.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ModKind::Crop { .. } => "Crop",
+            ModKind::Break { .. } => "Break",
+            ModKind::BreakOut { .. } => "Break Out",
+        }
+    }
+}
+
+/// A modifier of a view: it changes what the view draws, and is kept with it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ViewMod {
+    /// Among its view's modifiers.
+    pub id: u32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppressed: bool,
+    #[serde(flatten)]
+    pub kind: ModKind,
 }
 
 /// A view of a model on a sheet.
@@ -280,6 +417,33 @@ pub struct View {
     /// The name and scale written under the view.
     #[serde(default = "yes")]
     pub label: bool,
+    /// Crops, breaks and break-outs, in the order they were made.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mods: Vec<ViewMod>,
+}
+
+impl View {
+    /// The modifiers at work.
+    pub fn active_mods(&self) -> impl Iterator<Item = &ViewMod> {
+        self.mods.iter().filter(|m| !m.suppressed)
+    }
+
+    /// A new modifier's id.
+    pub fn next_mod(&self) -> u32 {
+        self.mods.iter().map(|m| m.id).max().unwrap_or(0) + 1
+    }
+
+    /// Whether a modifier of this kind may be put on this view; if not, what to do instead.
+    pub fn may_have(&self, kind: &ModKind) -> Result<(), String> {
+        match (kind, &self.kind) {
+            (_, ViewKind::Overlay { .. }) => Err("an overlay is drawn as its parent is: modify the parent view".into()),
+            (ModKind::Crop { .. }, _) => Ok(()),
+            (ModKind::Break { .. }, ViewKind::Base { .. } | ViewKind::Projected { .. }) => Ok(()),
+            (ModKind::Break { .. }, _) => Err("a break is for a base or projected view: break the view this one is made from".into()),
+            (ModKind::BreakOut { .. }, ViewKind::Base { .. } | ViewKind::Projected { .. } | ViewKind::Auxiliary { .. }) => Ok(()),
+            (ModKind::BreakOut { .. }, _) => Err("a break out is for a base, projected or auxiliary view".into()),
+        }
+    }
 }
 
 /// A point of the model a dimension or balloon is attached to: an edge (by persistent name) of a
@@ -466,6 +630,52 @@ fn finite2(v: Vec2) -> bool {
     v.x.is_finite() && v.y.is_finite() && v.x.abs() <= tol::MAX_SIZE && v.y.abs() <= tol::MAX_SIZE
 }
 
+/// Checks a view's modifiers: ids, numbers, what the view may have, no two crops, no two bands of
+/// the same way that overlap.
+fn validate_mods(v: &View) -> Result<(), String> {
+    if v.mods.len() > MAX_MODS {
+        return Err(format!("{} has too many modifiers", v.name));
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    let mut bands: Vec<(BreakLines, f64, f64)> = Vec::new();
+    let mut crops = 0;
+    for m in &v.mods {
+        if m.id == 0 || !ids.insert(m.id) {
+            return Err(format!("{} has a modifier with a bad or repeated id", v.name));
+        }
+        v.may_have(&m.kind).map_err(|e| format!("{}: {e}", v.name))?;
+        let ok = match &m.kind {
+            ModKind::Crop { boundary, .. } => {
+                crops += 1;
+                boundary.is_valid()
+            }
+            ModKind::Break { lines, from, to, gap } => {
+                if bands.iter().any(|(l, a, b)| l == lines && from < b && a < to) {
+                    return Err(format!("{} has two breaks that overlap", v.name));
+                }
+                bands.push((*lines, *from, *to));
+                from.is_finite()
+                    && to.is_finite()
+                    && from.abs() <= tol::MAX_SIZE
+                    && to.abs() <= tol::MAX_SIZE
+                    && to - from > tol::LINEAR
+                    && gap.is_finite()
+                    && (0.0..=1000.0).contains(gap)
+            }
+            ModKind::BreakOut { boundary, depth } => {
+                boundary.is_valid() && depth.is_none_or(|d| d.is_finite() && d > tol::LINEAR && d < tol::MAX_SIZE)
+            }
+        };
+        if !ok {
+            return Err(format!("{} has a {} with a value out of range", v.name, m.kind.label()));
+        }
+    }
+    if crops > 1 {
+        return Err(format!("{} has more than one crop", v.name));
+    }
+    Ok(())
+}
+
 impl Drawing {
     /// An empty drawing with one sheet of the standard's middle size.
     pub fn new(name: &str, standard: Standard) -> Drawing {
@@ -647,12 +857,29 @@ impl Drawing {
                         return Err(format!("{} has a bad detail circle", v.name));
                     }
                 }
+                ViewKind::Auxiliary { parent, a, b, .. } => {
+                    if !views.contains(parent) || !finite2(*a) || !finite2(*b) || a.dist(*b) < tol::LINEAR {
+                        return Err(format!("{} has a bad auxiliary edge", v.name));
+                    }
+                }
+                ViewKind::Overlay { parent, values } => {
+                    if !views.contains(parent) || values.len() > MAX_VALUES || !values.iter().all(JointValue::is_valid) {
+                        return Err(format!("{} has a bad position", v.name));
+                    }
+                    if self
+                        .view(*parent)
+                        .is_none_or(|p| !matches!(p.kind, ViewKind::Base { .. } | ViewKind::Projected { .. } | ViewKind::Auxiliary { .. }))
+                    {
+                        return Err(format!("{} is an overlay of a view that cannot have one", v.name));
+                    }
+                }
             }
             if let Some(p) = v.kind.parent().and_then(|p| self.view(p))
                 && p.model != v.model
             {
                 return Err(format!("{} shows another model than its parent", v.name));
             }
+            validate_mods(v)?;
         }
         let mut ids = std::collections::BTreeSet::new();
         for a in &self.annotations {
@@ -706,6 +933,7 @@ mod tests {
                 tangent: false,
                 centerlines: true,
                 label: true,
+                mods: Vec::new(),
             });
             id
         };

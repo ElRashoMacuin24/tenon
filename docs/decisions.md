@@ -3758,3 +3758,125 @@ memory it is a `placement` as any other, in `crates/io/src/layout.rs`. Elements 
 components to it, where they stand, so a file of patterns goes on opening there.
 
 **Not done.** Said row by row in ROADMAP.md.
+
+## DEC-131 Auxiliary, crop, break, break out and overlay views (2026-11-03)
+
+The owner asked: "Make sure all the features on the menu are available not grayed out". These
+five of a drawing's view commands, greyed since M4, are made real here (other commands under
+this number are in their own entries). How they stand against the program Tenon's UI follows
+is in docs/inventor-fidelity.md.
+
+**Two kinds of thing.** An auxiliary view and an overlay are views: a kind of `ViewKind`, each
+with a parent, a row and a place of its own. A crop, a break and a break out change a view
+that is there, so they are records on it (`View.mods`), each with a number among that view's,
+suppressible and with a row under the view. They were tried as annotations first, on paper,
+for the ids and the deleting that come free; but a view's lines then depend on annotations,
+and `drw.info`, templates and every new kind of annotation would have to step round them.
+
+**A view's curves stay true.** `ViewGeometry::curves` stays in true view coordinates whatever
+a crop or a break does: measuring, picking, a detail or section of the view go on as they
+were, and a dimension keeps its true value without being told to, since it is measured from
+the model. What changes is the drawing: `annotate::draw_view` clips with `modify::Clip`, and
+`to_sheet` closes the bands with `modify::Folds`. Closing a band is a continuous rising map
+(the band shrinks to its gap, what is beyond it moves up), so `from_sheet` undoes it and a click
+anywhere on the sheet has a true place. So a crop or a break computes nothing again (`eval_key`
+leaves them out; a test holds it), and neither needs a kernel.  What a view takes along an axis
+with a band stays centred on `View::center`; along the other it is as it was.
+
+**Auxiliary.** Its frame is a section's (`section_frame`): the parent turned a quarter turn
+about the line, so a point of the model is as far along the edge in both views, and the two
+line up. It keeps the edge as a pick, and finds its line in the model each time (`frames_in`,
+used when the views are computed), so it turns with the edge; `a`-`b` is kept as the way round
+and for when the edge is gone (the view then stays and says so). `ViewGeometry::center` is moved
+along the edge so that the two middles are as far along it, and so a view whose centre is square
+to the edge from its parent's is lined up, whatever the boxes of the two come to. Tried first:
+the centre of its own box, which is not as far along an oblique edge as its parent's, so the
+same corner stood off by a few mm. It moves square to the edge only. When the model turns the
+edge, the view turns at once but keeps its place on the sheet until it is next moved, when it
+lines up again: a view's place is not worked out from the model anywhere in the drawing, and
+doing so for this one kind (or writing to the document when views are computed) was not worth it.
+
+**Break out** cuts with what sections cut with (a prism from the boundary, a kernel boolean),
+projects what is left, and hatches the faces on the floor (`faces_on`, taken out of the section's
+code) within the boundary. Depth is from the model's nearest point as the view sees it, so it
+follows the model; none is through it all. Through a whole solid leaves nothing of it, which is
+not a failure. An edge of the model cut away is not there to pick; the new edges a cut makes have
+no persistent name, so as in a section they cannot be picked or dimensioned.
+
+*The nearest point is the model's, not its box's.* It was first taken from the corner of the
+bounding box. On a view from straight on the two agree; on an auxiliary view, the case those views
+exist for, the corner stands well clear of the part (21 mm on the test's block, whose face is at
+91.92 and the box's corner at 113.14), and a cut 5 deep was in the air: nothing cut, and "done".
+It now comes from the geometry (`views::nearest`): the ends of the edges in double precision, the
+mesh only where a curved face stands beyond them, so a cut can come exactly level with a face and
+a curved nearest point is good to the mesh's tolerance. The box still sizes the tool: it only has
+to be clear of everything.
+
+*A cut that takes nothing away says so*, on the view (`g.error`, so the row goes red with the
+words on its tip) and, when it was just made, in the status bar. Volumes before and after settle
+most cases at no cost; when they come to much the same (within `tol::MEASURE_REL`, which is also a
+small cut in a big part) the tool and the solid are intersected, since a volume alone cannot tell
+a tool that takes 1000 mm3 from a metre cube from one that takes nothing.
+
+*Only what was cut is hatched.* A floor that comes level with a face that was there (a step's top, a
+pocket's floor) lies on the same plane, and the boolean leaves a part of that face inside the
+boundary as a face of its own. Asking the boolean's history which faces came from the tool was
+thought of and not tried, as a face where the tool's bottom lies on an old one comes from both. So
+the old solid's faces on that plane are taken away from the hatch lines, on the lines themselves
+rather than by the triangles (`hatch_less`), since a triangle may run over both; and the lines are
+clipped to the boundary the same way, not by each triangle's middle. The split also leaves a line
+across the one flat face, which is no edge of anything and would be drawn, so the faces on a floor's
+plane are joined (`Kernel::unify`) after each cut.
+
+**Overlay.** A position is values for relationships (`tenon_assembly::position`): offsets of
+constraints and of joints, angles of angle constraints and of joints. A joint's free motion is
+held at its value by the kind that holds it: a rotational joint at an angle solves as a rigid
+one, a slider at a distance too, a cylindrical one as what is left free. So the solver is the
+assembly's own and no new law was needed. It runs where solving always runs, without a kernel,
+each time the views are computed, so the position follows the model; and each time the panel
+changes, so what the values come to shows as wireframes of what moves, and what cannot be reached
+says so in the panel, before OK. The whole assembly is projected at the position with its hidden
+lines removed by itself, and what lies along the parent's visible lines is dropped (`drop_seen`),
+so what has not moved is not drawn twice and what a moved part uncovers is. It draws through its
+parent's `to_sheet` and `Clip`, so a crop or a break of the parent applies. Its pen, `Phantom`,
+is a layer and a line type of its own in DXF. A relationship must be there and at work; a value
+on one suppressed says to take it out. The values live in the drawing, not the assembly: the
+assembly file has no positions of its own to name.
+
+**What a modifier leaves out goes with it.** A centre mark or a centre line by hand is drawn as
+far as what it marks is: none when its edges are cropped away, cut away or in a band, unless what
+it marks is a hole that goes on below a cut (a shallow cut takes off the circle it was placed on),
+and clipped at a crop's edge and at a break's gap otherwise. `center_segments` does it, so
+`drw.info` says what the sheet shows. Tags of a hole table go by the same test. Dimensions and
+balloons do not: they say what the model is, and stay whole by choice, even on what is cropped away.
+A detail's circle is clipped by its crop. Break lines the model has left behind are not drawn, and
+`annotate::view_problem` says so: a crop or a break is changed without computing the view, so what
+it finds is worked out on asking, not kept on the view.
+
+**A gap is at most its band.** The gap is paper and the band is model, so a smaller scale can make
+the one wider than the other, and a break would spread the view apart. Refusing the scale would
+make `drw.view.edit` depend on what is on the view, so `modify::bands` takes the smaller of the
+two and the band then stays as it is; `gap` is kept, for when the scale goes back.
+
+**Hidden parts.** A part all of whose components are hidden is still built when the views are
+computed, without being placed: the solver needs its geometry to place what is shown, and a
+position set while it is hidden must be solved as any other. Building it only when the drawing has
+an overlay would not do: the first overlay is asked about before there is one.
+The cost is that of the part being shown. What is wrong with it is not said on the views, which do
+not draw it; if the solver comes to want it, that is said there.
+
+**Panels.** A modifier's panel is filled by a tool and is about one view on one sheet, so it ends
+when another tool takes over or that sheet is left (checked each frame, so every way there is
+covered), rather than each of those ways closing it.
+
+**Old files, old builds.** Additive within version 2: `mods` is left out when empty, so a drawing
+without them is written as it was. The file format says what an old build does with a new file.
+
+**Words.** Registry ids are the ribbon's (`drw.auxiliary`, `drw.crop`, `drw.break`,
+`drw.break_out`, `drw.overlay`), with `drw.overlay.values` to read what a position can set and
+`drw.modifier.delete`. "Modifier" is Tenon's word.
+
+**Left out.** See the rows under "Everything on the menu" in ROADMAP.md: a closed sketch as a
+boundary (drawings have no sketches), a depth to a point or a hole, a break on a view passing
+to its projected views, an auxiliary view from a line that is no edge, an overlay with a label
+or positions kept in the assembly.
