@@ -770,6 +770,8 @@ impl Workbench {
                     }
                 }
             }
+            // (As wide as its title, when that is wider than its buttons.)
+            x = x.max(start + text_width(ui, panel.title, theme::small()) + 4.0);
             let title = Rect::from_min_max(pos2(start, r.bottom() - title_h - 1.0), pos2(x, r.bottom() - 1.0));
             ui.painter().text(title.center(), Align2::CENTER_CENTER, panel.title, theme::small(), t.text_dim);
             x += 5.0;

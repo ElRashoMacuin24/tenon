@@ -1009,6 +1009,52 @@ fn esc_in_the_search_box_is_for_the_box() {
     assert_eq!(wb.chrome.search, "");
 }
 
+/// A panel is as wide as its title: "Bill of Materials" was cut off at the window's edge and ran across
+/// the line after it.
+#[test]
+fn a_ribbon_panel_is_as_wide_as_its_title() {
+    let mut wb = Workbench::without_kernel();
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("file.new_assembly").unwrap();
+    wb.chrome.tab = 3;
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let title = d.text_rect("Bill of Materials").expect("the panel's title");
+    assert!(title.left() >= 6.0, "it starts where the ribbon does: {title:?}");
+    let update = drawn_at(&d, "ribbon asm.update").unwrap();
+    assert!(title.right() < update.left(), "it ends before the next panel: {title:?} {update:?}");
+}
+
+/// What reads wrong on an empty document.
+#[test]
+fn words_on_an_empty_document_read_right() {
+    let dir = scratch("empty-words");
+    let (part, assembly) = (dir.join("part.tenon"), dir.join("pair.tenonasm"));
+    part_file(&part);
+    assembly_file(&assembly, &part);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.run_ui("file.new_assembly").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("asm.explode.auto").unwrap();
+    assert!(wb.status().starts_with("Nothing to explode"), "{}", wb.status());
+    assert!(!wb.asm.as_ref().unwrap().exploded, "and it is not made exploded with nothing exploded");
+    // One step, in the singular.
+    wb.open(&assembly).unwrap();
+    d.settle(&mut wb);
+    let a = wb.asm_exec("asm.geom", json!({ "component": 1, "plane": "xy" })).unwrap();
+    let b = wb.asm_exec("asm.geom", json!({ "component": 2, "plane": "xy" })).unwrap();
+    wb.asm_exec("asm.constrain", json!({ "type": "flush", "a": a, "b": b })).unwrap();
+    wb.run_ui("asm.explode.auto").unwrap();
+    assert_eq!(wb.status(), "Exploded in 1 step.");
+    // A drawing with no views has nothing to read.
+    wb.run_unprompted("file.new_drawing").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("drw.update").unwrap();
+    assert!(wb.status().starts_with("There are no model files"), "{}", wb.status());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

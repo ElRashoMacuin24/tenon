@@ -842,10 +842,12 @@ impl Workbench {
             }
             "drw.update" => {
                 let r = self.drw_exec("drw.update", json!({}))?;
-                self.set_status(format!(
-                    "Read again: {}",
-                    r["models"].as_array().map(|m| m.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")).unwrap_or_default()
-                ));
+                let read = r["models"].as_array().map(|m| m.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+                self.set_status(if read.is_empty() {
+                    "There are no model files to read: this drawing has no views yet.".to_owned()
+                } else {
+                    format!("Read again: {read}")
+                });
             }
             "drw.edit_view" => {
                 let v = selected.ok_or("select a view first")?;

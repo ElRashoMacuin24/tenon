@@ -268,6 +268,9 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- Words that read wrong: Auto Explode of nothing said "Exploded in 0 steps" and went into the exploded
+  state, and of two parts "1 steps"; Update on a drawing with no views said "Read again: "; and the title
+  "Bill of Materials" was cut off at the window's edge.
 - The search box: Esc there also cancelled an open panel, and left the words typed to come back on the
   next click. It now takes Esc for itself and clears them. A name that matches nothing says so, and what is
   under an arrow says where.

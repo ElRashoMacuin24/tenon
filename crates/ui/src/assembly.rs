@@ -1062,10 +1062,15 @@ impl Workbench {
             }
             "asm.explode.auto" => {
                 let r = self.asm_exec("asm.explode.auto", json!({}))?;
+                let steps = r["steps"].as_u64().unwrap_or(0);
+                if steps == 0 {
+                    self.set_status("Nothing to explode: an exploded view is made from what the relationships hold together.");
+                    return Ok(());
+                }
                 if let Some(a) = self.asm.as_mut() {
                     a.exploded = true;
                 }
-                self.set_status(format!("Exploded in {} steps.", r["steps"]));
+                self.set_status(format!("Exploded in {steps} step{}.", if steps == 1 { "" } else { "s" }));
             }
             "asm.explode.clear" => {
                 let steps = self.asm.as_ref().map_or(0, |a| a.session.assembly().explode.len());
