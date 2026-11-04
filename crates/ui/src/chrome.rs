@@ -1110,7 +1110,7 @@ impl Workbench {
                 ui.hyperlink_to("Report a problem", crate::crash::ISSUES);
             });
             ui.add_space(6.0);
-            ui.small("Tenon is not affiliated with Autodesk, Inc. or any other CAD vendor.");
+            ui.small("Tenon is not affiliated with any CAD vendor.");
         });
         self.chrome.about = about;
 

@@ -122,7 +122,7 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::WorkAxis(_) => Icon::Axis,
         FeatureKind::WorkPoint(_) => Icon::Point,
         FeatureKind::Ucs(_) => Icon::Ucs,
-        FeatureKind::Emboss(_) => Icon::Text,
+        FeatureKind::Emboss(_) => Icon::Emboss,
         FeatureKind::Derive(_) => Icon::Copy,
         FeatureKind::Rib(_) => Icon::Rib,
         FeatureKind::Sweep(_) => Icon::Sweep,

@@ -1912,7 +1912,7 @@ impl Workbench {
                         ViewKind::Section { .. } => (Icon::SectionView, format!("Section {0}-{0}", v.name)),
                         ViewKind::Detail { .. } => (Icon::DetailView, format!("Detail {}", v.name)),
                         ViewKind::Auxiliary { .. } => (Icon::ProjectedView, format!("Auxiliary {}", v.name)),
-                        ViewKind::Overlay { .. } => (Icon::Explode, format!("Overlay {}", v.name)),
+                        ViewKind::Overlay { .. } => (Icon::Overlay, format!("Overlay {}", v.name)),
                     };
                     let resp = browser_row(ui, t, depth, icon, &label, selected == Some(Owner::View(id)), errors.contains_key(&id));
                     let resp = match errors.get(&id) {
@@ -1940,7 +1940,7 @@ impl Workbench {
                         let (icon, what) = match &m.kind {
                             tenon_drawing::ModKind::Crop { .. } => (Icon::Rectangle, ModWhat::Crop),
                             tenon_drawing::ModKind::Break { .. } => (Icon::Split, ModWhat::Break),
-                            tenon_drawing::ModKind::BreakOut { .. } => (Icon::Trim, ModWhat::BreakOut),
+                            tenon_drawing::ModKind::BreakOut { .. } => (Icon::BreakOut, ModWhat::BreakOut),
                         };
                         // Numbered among those of its kind on the view.
                         let nth = v.mods.iter().take_while(|x| x.id != m.id).filter(|x| x.kind.label() == m.kind.label()).count() + 1;
