@@ -974,6 +974,64 @@ fn the_radial_menu_reads_on_one_line_and_repeats_what_applies() {
     assert!(labels(&wb.radial_entries(at)).contains(&"Repeat Place".to_owned()));
 }
 
+/// Stress Analysis refuses what changes the part, so Repeat does not offer it there: it was the one thing
+/// the first slot could do, and all it could do was say no. What can be done there it does offer.
+#[test]
+fn repeat_in_stress_analysis_offers_what_it_does_not_refuse() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.exec("model.box", json!({ "width": 40, "depth": 40, "height": 40 })).unwrap();
+    d.settle(&mut wb);
+    let right_click = |wb: &mut Workbench, d: &mut Driver| {
+        let at = wb.view.rect.center() + vec2(100.0, 50.0);
+        d.frame(wb, vec![egui::Event::PointerMoved(at)]);
+        d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, true)]);
+        d.frame(wb, vec![Driver::button(at, egui::PointerButton::Secondary, false)]);
+        d.frame(wb, vec![]);
+        let menu = wb.chrome.radial.clone().expect("the radial menu opens");
+        menu.slots[0].as_ref().map(|e| e.label.clone())
+    };
+
+    // Fillet by its key, left, and into the environment.
+    d.tap(&mut wb, egui::Key::F);
+    d.frame(&mut wb, vec![]);
+    wb.command("ui.cancel");
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.last_command, Some("model.fillet"));
+    assert_eq!(right_click(&mut wb, &mut d).as_deref(), Some("Repeat Fillet"));
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    wb.command("analysis.begin");
+    d.frame(&mut wb, vec![]);
+    assert!(wb.in_analysis(), "{}", wb.status());
+    assert_eq!(right_click(&mut wb, &mut d), None, "Fillet can only be refused here");
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    for refused in ["sketch.line", "work.plane", "sheet.flange", "model.extrude"] {
+        wb.last_command = Some(refused);
+        assert!(wb.radial_entries(egui::pos2(500.0, 400.0)).slots[0].is_none(), "{refused}");
+        assert!(wb.run_ui(refused).is_err_and(|e| e.contains("Finish Analysis")), "{refused}");
+    }
+
+    // Measure can be done here, so it stays on offer, and does what it says.
+    wb.command("inspect.measure");
+    assert!(!wb.status_error, "{}", wb.status());
+    wb.panel = None;
+    assert_eq!(right_click(&mut wb, &mut d).as_deref(), Some("Repeat Measure"));
+    let at = d.text_pos("Repeat Measure").expect("its words");
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(at)]);
+    d.click(&mut wb, at);
+    d.frame(&mut wb, vec![]);
+    assert!(matches!(wb.panel, Some(crate::panels::Panel::Measure(_))) && !wb.status_error, "{}", wb.status());
+    wb.panel = None;
+
+    // Out of the environment, what it did not offer is on offer again.
+    wb.command("analysis.finish");
+    wb.last_command = Some("model.fillet");
+    assert_eq!(right_click(&mut wb, &mut d).as_deref(), Some("Repeat Fillet"));
+}
+
 /// Esc in the search box is the box's: a panel that is open stays, with what was set in it, and what
 /// was typed goes. A name that matches nothing says so.
 #[test]

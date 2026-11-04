@@ -58,8 +58,10 @@ impl Workbench {
     /// The menu for the current situation.
     pub(crate) fn radial_entries(&self, center: Pos2) -> Radial {
         // (What was last done is offered again where it can be: an assembly's commands in an assembly,
-        // a part's on a part.)
-        let last = self.last_command.filter(|id| id.starts_with("asm.") == self.in_assembly());
+        // a part's on a part, and in Stress Analysis what does not change the part.)
+        let last = self
+            .last_command
+            .filter(|id| id.starts_with("asm.") == self.in_assembly() && !(self.in_analysis() && crate::analysis::changes_the_part(id)));
         let repeat = last.and_then(|id| entry(id).map(|e| RadialEntry { label: format!("Repeat {}", e.label), id: "ui.repeat" }));
         let (slots, more): ([Option<RadialEntry>; 8], Vec<&'static str>) = if self.panel.is_some() {
             (

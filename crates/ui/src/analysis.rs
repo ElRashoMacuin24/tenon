@@ -597,6 +597,11 @@ enum StudyAction {
     OptimizeAgain,
 }
 
+/// What the environment refuses, for the part is changed in the part environment.
+pub(crate) fn changes_the_part(id: &str) -> bool {
+    ["sketch.", "work.", "sheet."].iter().any(|p| id.starts_with(p)) || (id.starts_with("model.") && id != "model.rebuild")
+}
+
 impl Workbench {
     pub(crate) fn in_analysis(&self) -> bool {
         self.analysis.is_some() && !self.in_assembly() && !self.in_drawing()
@@ -617,8 +622,7 @@ impl Workbench {
             return Some(Ok(()));
         }
         if !id.starts_with("analysis.") && !id.starts_with("study.") {
-            let changes = ["sketch.", "work.", "sheet."].iter().any(|p| id.starts_with(p)) || (id.starts_with("model.") && id != "model.rebuild");
-            return (self.in_analysis() && changes).then(|| Err("That changes the part: Finish Analysis first.".into()));
+            return (self.in_analysis() && changes_the_part(id)).then(|| Err("That changes the part: Finish Analysis first.".into()));
         }
         if self.in_assembly() || self.in_drawing() {
             return Some(Err("Stress Analysis is of a part: open the part, or edit it in place.".into()));
