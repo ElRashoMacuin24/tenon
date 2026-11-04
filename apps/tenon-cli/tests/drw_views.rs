@@ -279,6 +279,17 @@ fn a_crop_draws_only_what_is_inside_and_dimensions_keep_their_true_values() {
     assert_eq!(info["views"][0]["modifiers"][0]["type"], "crop", "{info}");
     let size = pt(&info["views"][0]["size"]);
     assert!(size.near(Vec2::new(50.0, 30.0), 1e-9), "{size:?}");
+    // A hole table lists both holes, as they are; only the hole drawn has its tag on the view.
+    let rows = run(&mut e, "drw.hole_table", json!({ "view": v, "at": [260, 250] }));
+    assert_eq!(rows["rows"].as_array().unwrap().len(), 2, "{rows}");
+    let tags = |g: &Graphics, t: &str| g.texts.iter().filter(|(_, x)| x.text == t).count();
+    let g = sheet(&e);
+    assert_eq!((tags(&g, "A1"), tags(&g, "A2")), (2, 1), "A1 in the table and on the hole; A2 in the table");
+    run(&mut e, "drw.undo", json!({}));
+    // Suggested dimensions are of what is drawn: the one hole's size, once, no overall sizes.
+    let suggested = run(&mut e, "drw.dimension.suggest", json!({ "view": v }));
+    let shown: Vec<&str> = suggested["suggestions"].as_array().unwrap().iter().map(|s| s["shown"].as_str().unwrap()).collect();
+    assert_eq!(shown, ["Ø10"], "{suggested}");
     // An edge is there to pick where it is drawn; beyond the crop there is nothing.
     assert!(e.exec("drw.pick", &json!({ "view": v, "view_at": [20, 0] })).is_ok());
     assert!(e.exec("drw.pick", &json!({ "view": v, "view_at": [90, 0] })).unwrap_err().contains("no edge"));
