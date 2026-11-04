@@ -29,7 +29,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use serde_json::{Value, json};
@@ -47,6 +47,12 @@ use crate::workbench::{Geo, Workbench};
 
 /// Longest request line taken (hostile-input cap).
 pub const MAX_LINE: u64 = 16 * 1024 * 1024;
+/// The first line of a connection, before it has given the token.
+const MAX_FIRST_LINE: u64 = 64 * 1024;
+/// How long a connection has to give the token.
+const FIRST_LINE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// How many connections are served at once.
+const MAX_CONNECTIONS: usize = 32;
 /// Largest image side `render.png` makes.
 pub const MAX_RENDER_SIDE: u32 = 4096;
 
@@ -204,18 +210,24 @@ fn refused(id: &Value, why: impl Into<String>) -> Value {
 /// One connection: requests in, answers out, until it closes or the app has gone.
 fn serve(stream: TcpStream, tx: &Sender<Incoming>, token: &str, waker: Option<&Waker>) {
     let Ok(mut out) = stream.try_clone() else { return };
+    // Until it has given the token a connection is short of everything: the first line to say so
+    // in, and the time to say it. (Any process on the machine can connect.)
+    let _ = stream.set_read_timeout(Some(FIRST_LINE_WAIT));
+    let holder = stream.try_clone();
     let mut reader = BufReader::new(stream);
     let mut line = Vec::new();
+    let mut known = false;
     loop {
         line.clear();
-        match reader.by_ref().take(MAX_LINE + 1).read_until(b'\n', &mut line) {
+        let most = if known { MAX_LINE } else { MAX_FIRST_LINE };
+        match reader.by_ref().take(most + 1).read_until(b'\n', &mut line) {
             Ok(0) | Err(_) => return,
             Ok(_) => {}
         }
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let answer = if line.len() as u64 > MAX_LINE {
+        let answer = if line.len() as u64 > most {
             // (What is left of the line is not read: the connection is closed.)
             let _ = writeln!(out, "{}", refused(&Value::Null, "request too long"));
             return;
@@ -230,6 +242,12 @@ fn serve(stream: TcpStream, tx: &Sender<Incoming>, token: &str, waker: Option<&W
                         }
                         (_, None) => refused(&id, "a request needs `run`: a command id"),
                         (_, Some(run)) => {
+                            if !known {
+                                known = true;
+                                if let Ok(s) = &holder {
+                                    let _ = s.set_read_timeout(None);
+                                }
+                            }
                             let (reply, answered) = channel();
                             let with = msg.get("with").cloned().unwrap_or(Value::Null);
                             if tx.send(Incoming { id, run: run.to_owned(), with, reply }).is_err() {
@@ -262,18 +280,36 @@ impl Control {
         let (tx, rx) = channel();
         let stop = Arc::new(AtomicBool::new(false));
         let (stopped, secret) = (Arc::clone(&stop), token.clone());
+        let open = Arc::new(AtomicUsize::new(0));
+        let counting = Arc::clone(&open);
         std::thread::Builder::new().name("tenon-control".into()).spawn(move || {
             for stream in listener.incoming() {
                 if stopped.load(Ordering::SeqCst) {
                     break;
                 }
                 let Ok(stream) = stream else { continue };
-                let (tx, secret, waker) = (tx.clone(), secret.clone(), waker.clone());
-                let _ = std::thread::Builder::new().name("tenon-control-client".into()).spawn(move || serve(stream, &tx, &secret, waker.as_ref()));
+                // (More than anyone can need is someone wearing the program down: closed.)
+                if open.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
+                    continue;
+                }
+                open.fetch_add(1, Ordering::SeqCst);
+                let (tx, secret, waker, open) = (tx.clone(), secret.clone(), waker.clone(), Arc::clone(&open));
+                let serving = std::thread::Builder::new().name("tenon-control-client".into()).spawn(move || {
+                    serve(stream, &tx, &secret, waker.as_ref());
+                    open.fetch_sub(1, Ordering::SeqCst);
+                });
+                if serving.is_err() {
+                    counted_off(&counting);
+                }
             }
         })?;
         Ok(Control { port, token, rx, stop, frames: 0, queue: VecDeque::new() })
     }
+}
+
+/// A connection that could not be given its thread is no longer one to count.
+fn counted_off(open: &AtomicUsize) {
+    open.fetch_sub(1, Ordering::SeqCst);
 }
 
 /// How a step began.
@@ -626,12 +662,17 @@ impl Workbench {
         } else {
             ("part", self.session.document().name.clone())
         };
+        let path = match (&self.drw, &self.asm) {
+            (Some(d), _) => d.path.as_ref(),
+            (None, Some(a)) => a.path.as_ref(),
+            (None, None) => self.path.as_ref(),
+        };
         json!({
             "tenon": env!("CARGO_PKG_VERSION"),
             "schema_version": tenon_model::schema::VERSION,
             "document": kind,
             "name": name,
-            "path": self.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            "path": path.map(|p| p.to_string_lossy().into_owned()),
             "revision": self.control_revision(),
             "unsaved": self.unsaved_files(),
             "busy": self.is_busy(),

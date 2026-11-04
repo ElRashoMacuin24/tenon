@@ -610,3 +610,30 @@ fn an_assembly_and_a_drawing_are_driven_once_their_geometry_has_come_back() {
     let told = c.ask(&mut wb, &mut d, "drw.view.base", json!({ "model": model, "orientation": "sideways" })).unwrap_err();
     assert!(told.contains("`orientation` must be"), "{told}");
 }
+
+#[test]
+fn a_connection_is_short_of_everything_until_it_gives_the_token() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let (port, _) = wb.listen(0, None).unwrap();
+    // A first line longer than any first request needs is refused, without the rest being read.
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(20))).unwrap();
+    let _ = stream.write_all(&vec![b'x'; 100 * 1024]);
+    let mut answer = String::new();
+    let _ = std::io::BufRead::read_line(&mut std::io::BufReader::new(&stream), &mut answer);
+    assert!(answer.contains("request too long"), "{answer}");
+}
+
+#[test]
+fn a_saved_assembly_says_where_it_is_over_the_port() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.listen(0, None).unwrap();
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m3-pivot/pivot.tenonasm");
+    wb.open(&file).unwrap();
+    d.settle(&mut wb);
+    let mut c = Client::to(&wb);
+    let state = c.ok(&mut wb, &mut d, "control.state", json!({}));
+    assert_eq!(state["document"], "assembly");
+    assert!(state["path"].as_str().is_some_and(|p| p.ends_with("pivot.tenonasm")), "{state}");
+}
