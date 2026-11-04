@@ -47,6 +47,27 @@ either program on to others does so under that program's licence. Nothing in Ten
 from their source: the readers and writers of their file formats in crates/fea are original
 Tenon code.
 
+Libraries in a release package
+------------------------------
+A release package of Tenon carries shared libraries from conda-forge that OCCT needs. Each is listed
+with its version, and its licence text, in licenses/THIRD-PARTY.txt. Tenon does not change them.
+Their licences ask for the following to be said.
+
+- libjpeg-turbo: This software is based in part on the work of the Independent JPEG Group.
+- FreeType: This software is based in part on the work of the FreeType Team
+  (https://freetype.org). It is used under the FreeType License (FTL), not under the GPL it also
+  offers.
+- FreeImage: used under the FreeImage Public License, Version 1.0, not under the GPL it also
+  offers. The source code of FreeImage is available under the terms of that licence, at the version
+  listed, from https://freeimage.sourceforge.io and, with the changes conda-forge builds it with,
+  from the feedstock https://github.com/conda-forge/freeimage-feedstock.
+- LibRaw (raw.dll on Windows, libraw on Linux and macOS): used under the GNU Lesser General Public
+  License version 2.1. Its source code is available, at the version listed, from
+  https://github.com/LibRaw/LibRaw and from the feedstock
+  https://github.com/conda-forge/libraw-feedstock. It is a separate file, which you may replace with
+  your own build of a compatible version, as you may OCCT's: put it in place of the one beside the
+  program. No relinking of Tenon is needed.
+
 Other third-party material
 --------------------------
 Rust dependencies are listed in Cargo.lock with their own licences. Bundled assets (if any) are
