@@ -26,7 +26,7 @@ use crate::viewport::{HOVER, Nav, SELECTED};
 use crate::workbench::{Geo, Mode, Workbench};
 
 /// How near the pointer something must be drawn to be under it (pixels).
-const PICK_PX: f64 = 6.0;
+pub(crate) const PICK_PX: f64 = 6.0;
 /// How often the model files are checked for changes made outside the drawing (seconds).
 const MODEL_CHECK_SECONDS: f64 = 1.0;
 /// Ink on the paper.
@@ -298,12 +298,14 @@ impl DrwDoc {
     /// The view drawn under a sheet point (its outline, with a margin), the most recent on top.
     fn view_at(&self, g: &Graphics, at: Vec2) -> Option<ViewId> {
         let d = self.session.drawing();
-        d.views.iter().rev().filter(|v| v.sheet == self.sheet).find_map(|v| {
-            let (lo, hi) = g.bounds_of(Owner::View(v.id))?;
-            let m = 3.0;
-            (at.x >= lo.x - m && at.x <= hi.x + m && at.y >= lo.y - m && at.y <= hi.y + m).then_some(v.id)
-        })
+        d.views.iter().rev().filter(|v| v.sheet == self.sheet).map(|v| v.id).find(|v| over_view(g, *v, at))
     }
+}
+
+/// Whether a sheet point is over a view: inside its outline, with a margin.
+pub(crate) fn over_view(g: &Graphics, v: ViewId, at: Vec2) -> bool {
+    let m = 3.0;
+    g.bounds_of(Owner::View(v)).is_some_and(|(lo, hi)| at.x >= lo.x - m && at.x <= hi.x + m && at.y >= lo.y - m && at.y <= hi.y + m)
 }
 
 /// The side of a parent view a point is on, and where a view projected there lines up with it.
@@ -1411,7 +1413,7 @@ impl Workbench {
                 self.drw_exec("drw.center_mark", json!({ "view": v.0, "a": pick }))?;
                 self.set_status("Centre mark placed. Click the next circle or arc, or Esc to end.");
             }
-            DrwTool::Set(panel) => return self.set_click(*panel, at, over),
+            DrwTool::Set(panel) => return self.set_click(*panel, at, over, g),
             DrwTool::Centerline { bisector, view, a } => {
                 let v = need_view()?;
                 if view.is_some_and(|w| w != v) {

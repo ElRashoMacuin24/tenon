@@ -7,10 +7,10 @@ use egui::{Color32, Pos2, Rect};
 use serde_json::json;
 use tenon_drawing::dimsets;
 use tenon_drawing::views::Evaluation;
-use tenon_drawing::{AnnotId, AnnotKind, Annotation, Drawing, GeomPick, Owner, SET_SPACING, SetAxis, ViewId};
+use tenon_drawing::{AnnotId, AnnotKind, Annotation, Drawing, GeomPick, Graphics, Owner, SET_SPACING, SetAxis, ViewId};
 use tenon_geom::Vec2;
 
-use crate::drawing::{DrwDoc, DrwTool, SheetCam, button, paint_plain, remember};
+use crate::drawing::{DrwDoc, DrwTool, PICK_PX, SheetCam, button, over_view, paint_plain, remember};
 use crate::workbench::Workbench;
 
 /// What the panel holds: a set being made, or a set being changed.
@@ -129,6 +129,10 @@ pub(crate) fn is_set(d: &Drawing, a: AnnotId) -> bool {
 pub(crate) fn paint_tool(p: &egui::Painter, rect: Rect, cam: &SheetCam, d: &DrwDoc, panel: &SetPanel, at: Option<Vec2>, ghost: Color32) {
     let (dr, Some(ev)) = (d.session.drawing(), d.shown_evaluation()) else { return };
     let Some(view) = panel.view else { return };
+    // (With another sheet showing, none of it is on this one.)
+    if dr.view(view).is_none_or(|v| v.sheet != d.sheet) {
+        return;
+    }
     if let Some(a) = panel.annotation_at(dr, ev, at) {
         paint_plain(p, rect, cam, &tenon_drawing::annotate::one(dr, ev, &a), ghost);
     }
@@ -161,31 +165,51 @@ impl Workbench {
         Ok(())
     }
 
-    /// A click on the sheet with the panel open (`over`: the view under it).
-    pub(crate) fn set_click(&mut self, mut panel: SetPanel, at: Vec2, over: Option<ViewId>) -> Result<(), String> {
-        // Nothing is taken in an isometric view, so that the next click can be in a square one.
-        if panel.view.is_none()
-            && let Some(v) = over
-            && self.drw.as_ref().is_some_and(|d| d.session.drawing().is_isometric(v))
-        {
-            return Err(dimsets::ISOMETRIC.into());
-        }
-        // An edge where the click is: picked; elsewhere, the set goes there.
-        let picked = match panel.view.or(over) {
-            Some(v) if panel.view.is_none() || over == panel.view => match self.drw_exec("drw.pick", json!({ "view": v.0, "at": [at.x, at.y] })) {
-                Ok(pick) => {
-                    let pick = self.near_a_line_end(v, at, pick)?;
-                    Some((v, serde_json::from_value::<GeomPick>(pick).map_err(|e| e.to_string())?))
+    /// A click on the sheet with the panel open (`over`: the view under it). One that is refused
+    /// leaves the panel as it was, with what has been picked.
+    pub(crate) fn set_click(&mut self, mut panel: SetPanel, at: Vec2, over: Option<ViewId>, g: &Graphics) -> Result<(), String> {
+        let d = self.drw.as_ref().ok_or("no drawing")?;
+        let dr = d.session.drawing();
+        let looking_at = match panel.view {
+            Some(v) => {
+                let sheet = dr.view(v).ok_or("the view is gone")?.sheet;
+                if sheet != d.sheet {
+                    return Err(format!("this set is measured in a view on Sheet:{}: go back to that sheet to carry on, or Cancel", sheet.0));
                 }
-                Err(_) => None,
-            },
-            _ => None,
+                let on_it = over_view(g, v, at);
+                if !on_it && over.is_some() {
+                    return Err("that is another view: click in the same view for what to measure, or clear of the views to put the set".into());
+                }
+                on_it.then_some(v)
+            }
+            None => {
+                // Nothing is taken in an isometric view, so that the next click can be in a square one.
+                if over.is_some_and(|v| dr.is_isometric(v)) {
+                    return Err(dimsets::ISOMETRIC.into());
+                }
+                over
+            }
         };
-        if let Some((v, pick)) = picked {
+        let tol = PICK_PX / d.cam.px;
+        // An edge where the click is: picked.
+        if let Some(v) = looking_at
+            && let Ok(pick) = self.drw_exec("drw.pick", json!({ "view": v.0, "at": [at.x, at.y] }))
+        {
+            let pick = self.near_a_line_end(v, at, pick)?;
+            let pick = serde_json::from_value::<GeomPick>(pick).map_err(|e| e.to_string())?;
             panel.view = Some(v);
             self.set_pick(&mut panel, pick)?;
             return self.keep_panel(panel);
         }
+        if panel.choosing_from {
+            return Err(format!("click an edge or a point for the new {}", panel.datum_word().to_lowercase()));
+        }
+        // A line the view draws that is no edge (the side of a hole seen from the side) was meant
+        // to be measured, and cannot be.
+        if looking_at.is_some_and(|v| g.pick(at, tol) == Some(Owner::View(v))) {
+            return Err("that line of the view is not an edge of the model, so it cannot be measured: click an edge, or clear of the lines to put the set".into());
+        }
+        // Elsewhere, the set goes there.
         if panel.annotation.is_some() {
             panel.at = Some(at);
             return self.keep_panel(panel);

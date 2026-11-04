@@ -495,8 +495,144 @@ fn an_isometric_view_is_refused_at_the_first_click_and_the_next_can_be_square() 
     d.click(&mut wb, hole);
     let p = panel(&wb).unwrap();
     assert_eq!((p.view, p.targets.len()), (Some(ViewId(1)), 1), "{}", wb.status());
-    let place = in_view(&mut wb, 60.0, 110.0);
+    // (Below it: above is the isometric view's box.)
+    let place = in_view(&mut wb, 60.0, -30.0);
     d.click(&mut wb, place);
     assert!(panel(&wb).is_none(), "{}", wb.status());
     assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["15"]);
+}
+
+fn no_annotations(wb: &mut Workbench) -> bool {
+    info(wb)["annotations"].as_array().unwrap().is_empty()
+}
+
+#[test]
+fn a_click_in_another_view_or_on_another_sheet_is_refused_and_the_picks_stay() {
+    let _quiet = crate::tests::timing_lock();
+    let (mut wb, mut d) = drawing_of_plate("others", Orientation::Top, 0.5);
+    let c = center_of_view_1(&mut wb);
+    wb.drw_exec("drw.view.projected", json!({ "parent": 1, "side": "right", "at": [c.x + 130.0, c.y] })).unwrap();
+    wb.drw_exec("drw.sheet.add", json!({})).unwrap();
+    settle(&mut d, &mut wb, 2);
+    press(&mut d, &mut wb, "ribbon drw.baseline");
+    let (datum, hole) = (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0));
+    d.click(&mut wb, datum);
+    d.click(&mut wb, hole);
+    let picked = panel(&wb).unwrap();
+    assert_eq!((picked.view, picked.targets.len()), (Some(ViewId(1)), 1), "{}", wb.status());
+
+    // On an edge of the other view, or anywhere over it: said, with nothing lost and nothing made.
+    let edge = edge_of(&mut wb, 2, 0);
+    let over = wb.sheet_on_screen(Vec2::new(c.x + 130.0, c.y));
+    for at in [edge, over] {
+        d.click(&mut wb, at);
+        assert!(wb.status().contains("same view"), "{}", wb.status());
+        assert_eq!(panel(&wb).as_ref(), Some(&picked));
+        assert!(no_annotations(&mut wb));
+    }
+
+    // While another sheet shows: what is picked is not marked on it, and a click there is refused.
+    settle(&mut d, &mut wb, 2);
+    let target = {
+        let dr = wb.drawing().unwrap();
+        tenon_drawing::dimsets::pick_on_sheet(dr.drawing(), dr.evaluation().unwrap(), ViewId(1), &picked.targets[0]).unwrap()
+    };
+    let mark = wb.sheet_on_screen(target);
+    assert!(d.marks_at(mark).1 >= 1, "marked on its own sheet");
+    let row = browser_row(&d, "Sheet:2").center();
+    d.click(&mut wb, row);
+    settle(&mut d, &mut wb, 3);
+    assert_eq!(wb.drw.as_ref().unwrap().sheet, tenon_drawing::SheetId(2));
+    assert_eq!(d.marks_at(mark).1, 0, "not on another sheet");
+    let anywhere = wb.sheet_on_screen(Vec2::new(200.0, 200.0));
+    d.click(&mut wb, anywhere);
+    assert!(wb.status().contains("Sheet:1"), "{}", wb.status());
+    assert_eq!(panel(&wb).as_ref(), Some(&picked));
+    assert!(no_annotations(&mut wb));
+
+    // Back on its sheet it goes on where it left off, and goes where it is clicked.
+    let row = browser_row(&d, "Sheet:1").center();
+    d.click(&mut wb, row);
+    settle(&mut d, &mut wb, 3);
+    let place = in_view(&mut wb, 60.0, 110.0);
+    d.click(&mut wb, place);
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    let i = info(&mut wb);
+    assert_eq!(i["annotations"][0]["view"], 1, "{i}");
+    let level = sheet(&mut wb, 0.0, 110.0).y;
+    rows_are(&i["annotations"][0], level, &[("15", 0.0)]);
+}
+
+#[test]
+fn a_set_being_changed_stays_on_its_own_view_too() {
+    let _quiet = crate::tests::timing_lock();
+    let (mut wb, mut d) = drawing_of_plate("changing", Orientation::Top, 0.5);
+    let c = center_of_view_1(&mut wb);
+    wb.drw_exec("drw.view.projected", json!({ "parent": 1, "side": "right", "at": [c.x + 130.0, c.y] })).unwrap();
+    settle(&mut d, &mut wb, 2);
+    press(&mut d, &mut wb, "ribbon drw.baseline");
+    let (datum, hole, place) = (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0), in_view(&mut wb, 60.0, 110.0));
+    d.click(&mut wb, datum);
+    d.click(&mut wb, hole);
+    d.click(&mut wb, place);
+    settle(&mut d, &mut wb, 2);
+    let kept = info(&mut wb)["annotations"][0].clone();
+    let row = browser_row(&d, "Baseline 1: 1 dimension(s)").center();
+    double_click(&mut d, &mut wb, row);
+    let open = panel(&wb).expect("the panel is open");
+    let over = edge_of(&mut wb, 2, 0);
+    d.click(&mut wb, over);
+    assert!(wb.status().contains("same view"), "{}", wb.status());
+    assert_eq!(panel(&wb).as_ref(), Some(&open));
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert_eq!(info(&mut wb)["annotations"][0], kept);
+}
+
+#[test]
+fn asked_for_a_new_datum_a_click_clear_of_the_edges_does_not_put_the_set() {
+    let _quiet = crate::tests::timing_lock();
+    let (mut wb, mut d) = drawing_of_plate("change", Orientation::Top, 1.0);
+    press(&mut d, &mut wb, "ribbon drw.ordinate");
+    let (datum, hole, clear) = (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0), in_view(&mut wb, 60.0, 110.0));
+    d.click(&mut wb, datum);
+    d.click(&mut wb, hole);
+    press(&mut d, &mut wb, "tn_set_change");
+    assert!(wb.status().contains("new origin"), "{}", wb.status());
+    d.click(&mut wb, clear);
+    let p = panel(&wb).expect("still open");
+    assert!(p.choosing_from && p.targets.len() == 1, "{p:?}");
+    assert!(wb.status().contains("new origin") && wb.status().contains("edge"), "{}", wb.status());
+    assert!(no_annotations(&mut wb));
+    // The edge it asks for; then the same click puts it.
+    let right = in_view(&mut wb, 120.0, 40.0);
+    d.click(&mut wb, right);
+    assert!(!panel(&wb).unwrap().choosing_from);
+    d.click(&mut wb, clear);
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["-105", "0"]);
+}
+
+#[test]
+fn a_line_of_the_view_that_is_no_edge_is_said_to_be_so() {
+    let _quiet = crate::tests::timing_lock();
+    let (mut wb, mut d) = drawing_of_plate("dashed", Orientation::Front, 1.0);
+    press(&mut d, &mut wb, "ribbon drw.baseline");
+    let (a, b) = (in_view(&mut wb, 0.0, 8.0), in_view(&mut wb, 120.0, 8.0));
+    d.click(&mut wb, a);
+    d.click(&mut wb, b);
+    // The dashed outline of the hole at x = 15, on its far side: the view draws it and the model has
+    // no edge there.
+    let s = sheet(&mut wb, 11.0, 8.0);
+    assert!(wb.drw_exec("drw.pick", json!({ "view": 1, "at": [s.x, s.y] })).is_err(), "no edge there");
+    let dashed = wb.sheet_on_screen(s);
+    d.click(&mut wb, dashed);
+    assert!(wb.status().contains("not an edge"), "{}", wb.status());
+    assert_eq!(panel(&wb).expect("still open").targets.len(), 1);
+    assert!(no_annotations(&mut wb));
+    // Clear of every line in the view, it still goes where it is clicked: inside the view if so told.
+    let s = sheet(&mut wb, 60.0, -30.0);
+    let clear = wb.sheet_on_screen(s);
+    d.click(&mut wb, clear);
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["120"]);
 }
