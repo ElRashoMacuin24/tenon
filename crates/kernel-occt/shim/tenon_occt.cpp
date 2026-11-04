@@ -2164,12 +2164,16 @@ void mass_properties(const Shape& s, MassOut& out) {
           BRepGProp_Face on(face);
           // A flat face needs no such care: seen from any point its share is a cone, which the
           // plain sum has to the last figure, for a fraction of the work.
-          const GeomAbs_SurfaceType kind = BRepAdaptor_Surface(face, false).GetType();
+          const BRepAdaptor_Surface adaptor(face, false);
+          const GeomAbs_SurfaceType kind = adaptor.GetType();
           const bool flat = kind == GeomAbs_Plane;
           // A wall pushed out of a free curve (a profile with a spline in it): the adaptive sum
           // settles too soon on these, some parts in a hundred thousand out; the slower sum
           // span by span along the curve does not.
-          if (kind == GeomAbs_SurfaceOfExtrusion && face.NbChildren() != 0) {
+          // (An ellipse is one smooth curve, with no spans to go by: the adaptive sum has that to
+          // its precision, in a thousandth of the time.)
+          const bool free_wall = kind == GeomAbs_SurfaceOfExtrusion && adaptor.BasisCurve()->GetType() != GeomAbs_Ellipse;
+          if (free_wall && face.NbChildren() != 0) {
             BRepGProp_Face spans(face, true);
             BRepGProp_Domain within;
             within.Init(face);

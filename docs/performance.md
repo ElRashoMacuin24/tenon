@@ -15,8 +15,9 @@ under [Where OCCT is the limit](#where-occt-is-the-limit) and
 
 ## How it is measured
 
-`tenon-cli bench` times, on the example models and three made for the purpose (a plate with
-40 holes as 42 features, a tray with four mitred lips, a grid of 100 bolts and nozzles):
+`tenon-cli bench` times, on the example models and four made for the purpose (a plate with
+40 holes as 42 features, a plate with an elliptical window, a tray with four mitred lips, a grid
+of 100 bolts and nozzles):
 
 - a part rebuilt from nothing on a new kernel; meshed and measured for the screen; rebuilt
   after an edit of its last feature and of one half way up its history, as the app rebuilds
@@ -241,7 +242,8 @@ These are the kernel's own costs, measured above, that Tenon can only avoid aski
 - **The volume of faces on free surfaces**: a helical thread (81 ms in 5 sums), rolled faces
   with a mitre or a profile cut across them (196 ms in 68 for the tray with lips). On a
   wall pushed out of a free curve the kernel's quick sum settles some parts in a hundred
-  thousand out, so the slower one is used there (DEC-078).
+  thousand out, so the slower one is used there (DEC-078), though not on an elliptical wall, one
+  smooth curve, where that took two seconds a part and the quick sum has it to its precision.
 - **A face that changes is meshed whole again.** A plate's top and bottom with 40 holes:
   about 70 ms each time a hole is added or changed.
 - **A coil or any long sweep** is one face: 104 ms to mesh on 32 processors, 387 on one, and

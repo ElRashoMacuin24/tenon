@@ -151,6 +151,18 @@ pub fn part(rows: &mut Vec<Row>, make: Make, model: &str, doc: &Document, budget
 }
 
 /// A plate with twenty pairs of holes and a boss: 42 features, each hole a feature of its own.
+pub fn elliptical_window(make: Make, work: &Path) -> Result<Document, String> {
+    let mut e = Engine::new(make(), work);
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).map_err(|err| format!("{id}: {err}"));
+    let sk = run(&mut e, "sketch.create", json!({ "plane": "xy" }))?["feature"].clone();
+    run(&mut e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 100, "y2": 100 }))?;
+    run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": 10 }))?;
+    let sk = run(&mut e, "sketch.create", json!({ "plane": "xy" }))?["feature"].clone();
+    run(&mut e, "sketch.ellipse", json!({ "sketch": sk, "cx": 50, "cy": 50, "x": 80, "y": 50, "minor": 15 }))?;
+    run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": 10, "operation": "cut" }))?;
+    Ok(e.session.document().clone())
+}
+
 pub fn many_holes(make: Make, work: &Path) -> Result<Document, String> {
     let mut e = Engine::new(make(), work);
     let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).map_err(|err| format!("{id}: {err}"));
@@ -452,6 +464,8 @@ pub fn run(make: Make, examples: &Path, work: &Path) -> Result<Vec<Row>, String>
         &holes,
         PartBudget { rebuild: 1100.0, mesh: 480.0, edit_last: 100.0, edit_middle: 700.0 },
     )?;
+    let window = elliptical_window(make, work)?;
+    part(&mut rows, make, "a plate with an elliptical window", &window, PartBudget { rebuild: 100.0, mesh: 100.0, edit_last: 100.0, edit_middle: 100.0 })?;
     let lipped = lipped_tray(make, work)?;
     part(
         &mut rows,
@@ -527,6 +541,7 @@ pub fn profile(make: Make, examples: &Path, work: &Path) -> Result<Report, Strin
         docs.push((format!("{dir}/{file}"), doc));
     }
     docs.push(("a plate with 40 holes (42 features)".into(), many_holes(make, work)?));
+    docs.push(("a plate with an elliptical window".into(), elliptical_window(make, work)?));
     docs.push(("a tray with four mitred lips".into(), lipped_tray(make, work)?));
     let shares = |tally: &Tally, total: f64| -> (String, Value) {
         let mut calls: Vec<(&str, u64, f64)> = tally.iter().map(|(what, (n, ms))| (*what, *n, *ms)).collect();

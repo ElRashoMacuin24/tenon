@@ -116,6 +116,8 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- A part with an elliptical wall took about two seconds longer to rebuild, at every change above
+  it and every preview. It is now as quick as a round one.
 - OK with To or Between chosen and nothing picked made a feature of another kind, and said so. It
   now asks for the face or plane. OK on a panel whose preview has failed closed it and said "Made":
   it now says why again, and the panel stays. A Cut on a sketch on a face went out of the part by

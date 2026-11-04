@@ -779,6 +779,26 @@ fn a_rib_fills_the_corner_of_an_l_bracket() {
 }
 
 #[test]
+fn the_volume_of_an_elliptical_wall_is_right_cut_square_and_at_a_slant() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.ellipse", json!({ "sketch": sk, "cx": 0, "cy": 0, "x": 30, "y": 0, "minor": 15 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 40 }));
+    regenerates(&mut s, &mut k);
+    let whole = PI * 30.0 * 15.0 * 40.0;
+    assert!((volume(&mut s, &mut k) / whole - 1.0).abs() < 1e-9, "{} against {whole}", volume(&mut s, &mut k));
+    // Cut along a plane through its middle, leaning: the two halves come to half each.
+    let plane = run(&mut s, &mut k, "work.plane", json!({ "by": "angle", "base": "xy", "axis": "x", "angle": 0.3 }));
+    assert!(plane["feature"].is_u64(), "{plane}");
+    let lifted = run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 20 }));
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "work_plane": lifted["feature"], "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": -40, "y1": 0, "x2": 40, "y2": 40 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "symmetric": 100, "operation": "cut" }));
+    regenerates(&mut s, &mut k);
+    assert!((volume(&mut s, &mut k) / (whole / 2.0) - 1.0).abs() < 1e-9, "{} against {}", volume(&mut s, &mut k), whole / 2.0);
+}
+
+#[test]
 fn a_cut_to_next_from_outside_the_part_says_what_the_rule_is() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     block(&mut s, &mut k, 40.0, 20.0, 10.0);
