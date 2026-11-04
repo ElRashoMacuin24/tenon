@@ -333,7 +333,7 @@ impl Workbench {
                         egui::RichText::new(if p.new_solid {
                             "It stays a solid of its own."
                         } else {
-                            "It is joined to the part's last solid; with none, it is the part's first."
+                            "Joined to the part's last solid, if it has one."
                         })
                         .small()
                         .color(t.text_dim),
