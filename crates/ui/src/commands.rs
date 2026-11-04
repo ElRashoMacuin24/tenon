@@ -80,6 +80,8 @@ pub const FLAT_TAB: usize = 8;
 pub const ANALYSIS_TAB: usize = 9;
 /// The tab of a 3D sketch; shown only in one, in the Sketch tab's place.
 pub const SKETCH3D_TAB: usize = 10;
+/// The View tab of the flat pattern, which has no camera, style, cube or navigation bar to change.
+pub const FLAT_VIEW_TAB: usize = 11;
 
 pub const RIBBON: &[RibbonTab] = &[
     RibbonTab {
@@ -649,6 +651,13 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel { title: "Exit", commands: &[large("sketch3d.finish", "Finish\n3D Sketch", "Leave the 3D sketch", Icon::FinishSketch)] },
         ],
     },
+    RibbonTab {
+        name: "View",
+        panels: &[
+            RibbonPanel { title: "Windows", commands: &[small("view.browser", "Browser", "Show or hide the model browser", Icon::Browser)] },
+            RibbonPanel { title: "Navigate", commands: &[small("view.fit", "Zoom All", "Fit the model in the window", Icon::ZoomFit)] },
+        ],
+    },
 ];
 
 /// The ribbon of the assembly environment.
@@ -1195,7 +1204,20 @@ mod tests {
         let names: Vec<_> = RIBBON.iter().map(|t| t.name).collect();
         assert_eq!(
             names,
-            ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View", "Environments", "Sheet Metal", "Flat Pattern", "Analysis", "3D Sketch"]
+            [
+                "3D Model",
+                "Sketch",
+                "Inspect",
+                "Tools",
+                "Manage",
+                "View",
+                "Environments",
+                "Sheet Metal",
+                "Flat Pattern",
+                "Analysis",
+                "3D Sketch",
+                "View"
+            ]
         );
         assert_eq!((RIBBON[SHEET_TAB].name, RIBBON[FLAT_TAB].name, RIBBON[ANALYSIS_TAB].name), ("Sheet Metal", "Flat Pattern", "Analysis"));
         assert_eq!(RIBBON[SKETCH3D_TAB].name, "3D Sketch");

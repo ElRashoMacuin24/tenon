@@ -1054,10 +1054,16 @@ impl Workbench {
                 self.set_status(format!("Exploded in {} steps.", r["steps"]));
             }
             "asm.explode.clear" => {
+                let steps = self.asm.as_ref().map_or(0, |a| a.session.assembly().explode.len());
+                if steps == 0 {
+                    self.set_status("There is no exploded view to clear.");
+                    return Ok(());
+                }
                 self.asm_exec("asm.explode.clear", json!({}))?;
                 if let Some(a) = self.asm.as_mut() {
                     a.exploded = false;
                 }
+                self.set_status("Exploded view cleared.");
             }
             "asm.dof" => {
                 if let Some(a) = self.asm.as_mut() {

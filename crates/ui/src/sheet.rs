@@ -814,7 +814,24 @@ pub(crate) fn on_the_folded_part(id: &str) -> bool {
         "sheet.defaults",
         "sheet.a_side",
     ];
+    // (The pattern is flat on the sheet: these change how the part is seen, and nothing of it.)
+    const THE_PART_S_VIEW: &[&str] = &[
+        "view.style",
+        "view.style.shaded_edges",
+        "view.style.shaded",
+        "view.style.wireframe",
+        "view.orthographic",
+        "view.perspective",
+        "view.cube",
+        "view.navbar",
+        "view.look_at",
+        "view.previous",
+        "view.orbit",
+        "view.pan",
+        "view.zoom",
+    ];
     id == "inspect.measure"
+        || THE_PART_S_VIEW.contains(&id)
         || ["sketch.", "sketch3d.", "work."].iter().any(|p| id.starts_with(p))
         || (id.starts_with("model.") && id != "model.rebuild")
         || (id.starts_with("sheet.") && !THE_PATTERN_S_OWN.contains(&id))
@@ -856,13 +873,19 @@ impl Workbench {
             return std::iter::once(crate::commands::ANALYSIS_TAB).chain(["Inspect", "Tools", "View"].iter().filter_map(|n| named(n))).collect();
         }
         if self.flat_shown() {
-            return std::iter::once(FLAT_TAB).chain(["Tools", "View"].iter().filter_map(|n| named(n))).collect();
+            return vec![FLAT_TAB, named("Tools").unwrap_or(FLAT_TAB), crate::commands::FLAT_VIEW_TAB];
         }
         let sheet = self.is_sheet_metal();
         // (In a 3D sketch its own tab takes the place of the Sketch tab; otherwise it is not there.)
         let in_3d = self.is_sketching3d();
         let rest = all
-            .filter(|i| *i != SHEET_TAB && *i != FLAT_TAB && *i != crate::commands::ANALYSIS_TAB && *i != crate::commands::SKETCH3D_TAB)
+            .filter(|i| {
+                *i != SHEET_TAB
+                    && *i != FLAT_TAB
+                    && *i != crate::commands::ANALYSIS_TAB
+                    && *i != crate::commands::SKETCH3D_TAB
+                    && *i != crate::commands::FLAT_VIEW_TAB
+            })
             .map(|i| if in_3d && i == crate::commands::SKETCH_TAB { crate::commands::SKETCH3D_TAB } else { i });
         if sheet { std::iter::once(SHEET_TAB).chain(rest).collect() } else { rest.collect() }
     }

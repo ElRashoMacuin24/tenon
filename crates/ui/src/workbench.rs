@@ -410,9 +410,14 @@ impl Workbench {
         } else {
             commands::RIBBON
         };
-        self.chrome.tab = tabs
+        // (Of a part, those that show come first: two are called View.)
+        let shown = if self.in_drawing() || self.in_assembly() { Vec::new() } else { self.part_tabs() };
+        let named = |i: &&usize| tabs.get(**i).is_some_and(|t| t.name.eq_ignore_ascii_case(name));
+        self.chrome.tab = shown
             .iter()
-            .position(|t| t.name.eq_ignore_ascii_case(name))
+            .find(named)
+            .copied()
+            .or_else(|| tabs.iter().position(|t| t.name.eq_ignore_ascii_case(name)))
             .ok_or_else(|| format!("there is no ribbon tab `{name}` here: {}", tabs.iter().map(|t| t.name).collect::<Vec<_>>().join(", ")))?;
         Ok(())
     }
@@ -685,6 +690,7 @@ impl Workbench {
             }
             "sketch.new" => self.new_sketch()?,
             "sketch.new_3d" => self.new_sketch3d()?,
+            "sketch.finish" if !self.is_sketching() && !self.is_sketching3d() => self.set_status("No sketch is open."),
             "sketch.finish" => self.finish_sketch(),
             "model.box" | "model.cylinder" | "model.sphere" | "model.torus" => {
                 self.open_primitive(crate::primitive::Shape::of_command(id).ok_or("not a primitive")?)?

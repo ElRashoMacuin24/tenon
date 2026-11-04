@@ -4705,6 +4705,14 @@ ribbon or in the strips at the foot of the window has a disabled colour, in eith
 assembly or a drawing. What is rightly out of use for a moment stays as it was: a choice in a panel
 that does not apply (a taper with To Next), and a row of a feature past End of Part.
 
+**What the audit after it found.** "Changes the window" was tested with what each command works on
+given first, so it did not see two that did nothing and said nothing with nothing to work on (Finish
+Sketch with no sketch open; Clear Explode with no exploded view): they say so now, and
+`an_entry_with_nothing_to_do_says_so` holds it. Nor, running the command and not the pointer, did it
+see a list that took no click on its rows: `every_row_of_every_list_takes_a_click_at_any_width` holds
+that. The Flat Pattern's View tab offered what has no effect on a flat pattern: it now has Browser and
+Zoom All, as a drawing's has, in a tab of its own.
+
 ## DEC-140 What 0.1.0 made on a left-handed face stays as it was made (2026-11-04)
 
 The audit before 0.2.0 found the first line of the release notes false. DEC-130 gave a flat face on a

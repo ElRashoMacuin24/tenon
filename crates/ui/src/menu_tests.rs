@@ -10,7 +10,7 @@ use serde_json::json;
 use tenon_geom::Vec3;
 use tenon_kernel_occt::OcctKernel;
 
-use crate::commands::{ANALYSIS_TAB, ASM_RIBBON, DRW_RIBBON, FLAT_TAB, RIBBON, RibbonTab, SHEET_TAB, SKETCH_TAB, SKETCH3D_TAB};
+use crate::commands::{ANALYSIS_TAB, ASM_RIBBON, DRW_RIBBON, FLAT_TAB, FLAT_VIEW_TAB, RIBBON, RibbonTab, SHEET_TAB, SKETCH_TAB, SKETCH3D_TAB};
 use crate::tests::Driver;
 use crate::workbench::Mode;
 use crate::{Services, Workbench};
@@ -180,7 +180,7 @@ fn every_command_on_the_menu_does_something() {
     assembly_file(&assembly, &part);
     drawing_file(&drawing, &part);
 
-    let special = [SKETCH_TAB, SHEET_TAB, FLAT_TAB, ANALYSIS_TAB, SKETCH3D_TAB];
+    let special = [SKETCH_TAB, SHEET_TAB, FLAT_TAB, ANALYSIS_TAB, SKETCH3D_TAB, FLAT_VIEW_TAB];
     let stages = [
         Stage {
             name: "a part",
@@ -216,7 +216,7 @@ fn every_command_on_the_menu_does_something() {
             file: sheet.clone(),
             enter: |wb, _| wb.run_ui("sheet.flat_view").unwrap(),
             ribbon: RIBBON,
-            tabs: vec![FLAT_TAB],
+            tabs: vec![FLAT_TAB, FLAT_VIEW_TAB],
         },
         Stage { name: "a study", file: part.clone(), enter: |wb, _| wb.run_ui("analysis.begin").unwrap(), ribbon: RIBBON, tabs: vec![ANALYSIS_TAB] },
         Stage {
@@ -701,6 +701,66 @@ fn a_name_typed_into_search_runs_the_command_of_where_you_are() {
     wb.run_ui("model.extrude").unwrap();
     assert!(!wb.is_sketching3d());
     assert!(wb.status().starts_with("Extrude"), "what it asks for stays said: {}", wb.status());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// What has nothing to do says so: the entries that changed nothing and said nothing, with a
+/// document that has nothing for them. (The test above gives each what it works on first.)
+#[test]
+fn an_entry_with_nothing_to_do_says_so() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.chrome.tab = SKETCH_TAB;
+    d.frame(&mut wb, vec![]);
+    wb.set_status("Before");
+    let on = drawn_at(&d, "ribbon sketch.finish").unwrap();
+    d.click(&mut wb, on.center());
+    assert_eq!(wb.status(), "No sketch is open.");
+    // Clear Explode, with no exploded view and with one.
+    wb.run_ui("file.new_assembly").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.set_status("Before");
+    let on = drawn_at(&d, "ribbon asm.explode.clear").unwrap();
+    d.click(&mut wb, on.center());
+    assert_eq!(wb.status(), "There is no exploded view to clear.");
+    let dir = scratch("nothing-to-do");
+    let (part, assembly) = (dir.join("part.tenon"), dir.join("pair.tenonasm"));
+    part_file(&part);
+    assembly_file(&assembly, &part);
+    wb.open(&assembly).unwrap();
+    d.settle(&mut wb);
+    wb.asm_exec("asm.explode.add", json!({ "components": [2], "direction": "x", "distance": 10 })).unwrap();
+    wb.set_status("Before");
+    wb.run_ui("asm.explode.clear").unwrap();
+    assert_eq!(wb.status(), "Exploded view cleared.");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The flat pattern has no style, camera, cube or bar: its View tab is what it has, as a drawing's is.
+#[test]
+fn the_flat_pattern_s_view_tab_is_what_it_has() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("flat-view");
+    let sheet = dir.join("sheet.tenon");
+    sheet_file(&sheet);
+    let mut wb = window(&dir);
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.open(&sheet).unwrap();
+    idle(&mut d, &mut wb);
+    wb.run_ui("sheet.flat_view").unwrap();
+    idle(&mut d, &mut wb);
+    wb.show_tab("View").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.chrome.tab, FLAT_VIEW_TAB, "and this is the tab shown");
+    assert!(d.text_pos("Browser").is_some() && d.text_pos("Zoom All").is_some());
+    for gone in ["Orthographic", "Perspective", "Orientation Cube", "Navigation Bar", "Look At"] {
+        assert!(d.text_pos(gone).is_none(), "{gone}");
+    }
+    // By search they say what they are for.
+    for id in ["view.style.wireframe", "view.perspective", "view.cube", "view.look_at"] {
+        assert!(wb.run_ui(id).unwrap_err().contains("Go to Folded Part"), "{id}");
+    }
     let _ = std::fs::remove_dir_all(dir);
 }
 

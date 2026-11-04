@@ -267,6 +267,10 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- Entries that did nothing and said nothing: Finish Sketch with no sketch open and Clear Explode with no
+  exploded view now say so, and Clear Explode says when it has. The Flat Pattern's View tab offered Visual
+  Style, the projections, the Orientation Cube and the Navigation Bar, none of which it has: it now has
+  Browser and Zoom All, as a drawing's has.
 - Command search ranks what works where you are first. Enter on a name that several commands have ran
   the first in the list, whichever environment it was for: Mirror and Copy in an assembly said "that
   works on a part", Text and Dimension in a drawing were refused, and Line in a 3D sketch closed it to
