@@ -1,6 +1,6 @@
-//! Measuring the part: the size of one face or edge, and the distance and angle between two. Work
-//! planes, axes and points and the planes, axes and origin of a user coordinate system are
-//! measured to as well (DEC-133).
+//! Measuring the part: the size of one face or edge, where one work plane, axis or point is, and the
+//! distance and angle between two. The planes, axes and origin of a user coordinate system are
+//! measured as work features are (DEC-133).
 
 use serde::{Deserialize, Serialize};
 use tenon_geom::{Axis, Frame, Vec3};
@@ -269,6 +269,18 @@ pub fn measure(k: &mut dyn Kernel, regen: &Regen, a: Entity, b: Option<Entity>) 
     let a = place_of(regen, a)?;
     let Some(b) = b else {
         describe(k, a, &mut m, "")?;
+        // A plane or an axis has no size: where it is, and the way it goes.
+        let (at, way, name) = match a {
+            Place::Plane(f) => (f.origin(), f.z(), "Normal"),
+            Place::Line(l) => (l.origin(), l.dir(), "Along"),
+            _ => return Ok(m),
+        };
+        for (label, v) in [("X", at.x), ("Y", at.y), ("Z", at.z)] {
+            m.push(label, v, "mm");
+        }
+        for (label, v) in [("X", way.x), ("Y", way.y), ("Z", way.z)] {
+            m.push(&format!("{name} {label}"), v, "");
+        }
         return Ok(m);
     };
     let b = place_of(regen, b)?;

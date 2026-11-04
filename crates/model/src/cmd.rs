@@ -4373,7 +4373,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.emboss",
         "Emboss",
-        "A closed profile (text included) on the part. sketch; regions; style: raise (default) | recess: from the faces it is seen on along the sketch's normal, by depth along their normals, following them where they curve; from_plane: material added on one side of the sketch plane and taken away on the other, each as far as depth. reverse: the faces that look against the sketch's normal; from the plane, the sides changed over. taper: rad its sides lean, what is raised narrowing going up and what is recessed going down. wrap: a cylinder's or cone's face reference (Wrap to Face): raised or recessed, the profile laid round it with its lengths kept",
+        "A closed profile (text included) on the last solid it falls on. sketch; regions; style: raise (default) | recess: from the faces it is seen on along the sketch's normal, as far as they look that way and nothing lies over them, by depth along their normals, following them where they curve; from_plane: material added on one side of the sketch plane and taken away on the other, each as far as depth, refused when what is added would come loose or shut a hollow in. reverse: the faces that look against the sketch's normal; from the plane, the sides changed over. taper: rad its sides lean, hinged at the sketch plane, what is raised narrowing going up and what is recessed going down. wrap: a cylinder's or cone's face reference (Wrap to Face): raised or recessed, the profile laid round it with its lengths kept, stopping at the face's edge and refused when it lies off the face",
         true,
         model_emboss
     ),
@@ -4504,7 +4504,7 @@ static COMMANDS: &[CommandSpec] = &[
     geo_cmd!(
         "model.measure",
         "Measure",
-        "a, and optionally b: {\"face\": face reference} | {\"edge\": edge reference} | {\"body\": n, \"face\" or \"edge\": index} | {\"work\": id} | {\"ucs\": id} (its origin) | {\"ucs\": id, \"plane\": \"xy\"} | {\"ucs\": id, \"axis\": \"x\"}; one gives its area, length or diameter (a point, where it is), two give the distance (with the nearest points) and the angle",
+        "a, and optionally b: {\"face\": face reference} | {\"edge\": edge reference} | {\"body\": n, \"face\" or \"edge\": index} | {\"work\": id} | {\"ucs\": id} (its origin) | {\"ucs\": id, \"plane\": \"xy\"} | {\"ucs\": id, \"axis\": \"x\"}; one gives its area, length or diameter (a point, where it is; a plane or an axis, a point of it and the way it goes: Normal X, Y, Z or Along X, Y, Z), two give the distance (with the nearest points) and the angle",
         model_measure
     ),
     geo_cmd!(

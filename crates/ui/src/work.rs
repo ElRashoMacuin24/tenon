@@ -383,22 +383,59 @@ impl Workbench {
         best
     }
 
+    /// How long the axes of a UCS are drawn: a share of the part, kept between so many pixels of the
+    /// view, so that it can be seen and clicked on a part of a millimetre and does not fill the view
+    /// on one of two.
+    pub(crate) fn ucs_size(&self, f: &Frame, rect: Rect) -> f64 {
+        const PIXELS: (f64, f64) = (56.0, 130.0);
+        let wanted = self.scene.bbox().map_or(13.5, |b| b.diagonal() * 0.16).max(1e-6);
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        let camera = &self.view.camera;
+        match (camera.project(f.origin(), w, h), camera.project(f.origin() + camera.right() * wanted, w, h)) {
+            (Some(a), Some(b)) => {
+                let per_mm = ((b.0 - a.0).hypot(b.1 - a.1) / wanted).max(1e-9);
+                wanted.clamp(PIXELS.0 / per_mm, PIXELS.1 / per_mm)
+            }
+            _ => wanted,
+        }
+    }
+
     /// What of a UCS is drawn where, each as it stands on the screen: its origin, the end of each
-    /// axis, and the square of each plane at the corner of the triad.
-    fn ucs_marks(&self, f: &Frame, rect: Rect) -> Option<(Pos2, [Pos2; 3], [[Pos2; 4]; 3])> {
-        let size = (self.work_half() * 0.45).max(1.0);
+    /// axis, and the square of each plane at the corner of the triad. None when its origin is behind
+    /// the camera; of an axis or a square that reaches behind it, as much as lies in front.
+    pub(crate) fn ucs_marks(&self, f: &Frame, rect: Rect) -> Option<(Pos2, [Pos2; 3], [[Pos2; 4]; 3])> {
+        let size = self.ucs_size(f, rect);
         let o = self.to_screen(f.origin(), rect)?;
-        let tip = |a: Vec3| self.to_screen(f.origin() + a * size, rect);
-        let square = |u: Vec3, v: Vec3| -> Option<[Pos2; 4]> {
-            let s = size * 0.4;
-            Some([
-                o,
-                self.to_screen(f.origin() + u * s, rect)?,
-                self.to_screen(f.origin() + u * s + v * s, rect)?,
-                self.to_screen(f.origin() + v * s, rect)?,
-            ])
+        // What lies in front, halving the way from the origin until it does.
+        let seen = |at: Vec3| {
+            let mut part = 1.0;
+            for _ in 0..12 {
+                if let Some(s) = self.to_screen(f.origin() + at * part, rect) {
+                    return s;
+                }
+                part *= 0.5;
+            }
+            o
         };
-        Some((o, [tip(f.x())?, tip(f.y())?, tip(f.z())?], [square(f.x(), f.y())?, square(f.y(), f.z())?, square(f.x(), f.z())?]))
+        let s = size * 0.4;
+        let square = |u: Vec3, v: Vec3| [o, seen(u * s), seen((u + v) * s), seen(v * s)];
+        Some((o, [seen(f.x() * size), seen(f.y() * size), seen(f.z() * size)], [square(f.x(), f.y()), square(f.y(), f.z()), square(f.x(), f.z())]))
+    }
+
+    /// What a work feature is called in the view. One a panel shows as it would be has no name yet.
+    fn work_label(&self, id: FeatureId, g: &WorkGeom) -> String {
+        self.document().feature(id).map_or_else(
+            || {
+                match g {
+                    WorkGeom::Plane(_) => "New plane",
+                    WorkGeom::Axis(_) => "New axis",
+                    WorkGeom::Point(_) => "New point",
+                    WorkGeom::Ucs(_) => "New UCS",
+                }
+                .to_owned()
+            },
+            |f| f.name.clone(),
+        )
     }
 
     /// The part of a UCS under a screen point among planes, axes and origins.
@@ -459,7 +496,7 @@ impl Workbench {
 
     /// Draws a UCS: three axes in their colours with their letters, the corner of each plane, and
     /// its name at its origin. The part under the pointer stands out.
-    fn draw_ucs(&self, painter: &egui::Painter, id: FeatureId, f: &Frame, hot: bool, rect: Rect, t: &Tokens) {
+    fn draw_ucs(&self, painter: &egui::Painter, id: FeatureId, name: String, f: &Frame, hot: bool, rect: Rect, t: &Tokens) {
         const COLORS: [egui::Color32; 3] =
             [egui::Color32::from_rgb(0xe0, 0x50, 0x50), egui::Color32::from_rgb(0x50, 0xb8, 0x60), egui::Color32::from_rgb(0x50, 0x80, 0xe8)];
         const LETTERS: [&str; 3] = ["X", "Y", "Z"];
@@ -492,7 +529,11 @@ impl Workbench {
         }
         let on = lit == Some(Reference::UcsOrigin(id));
         painter.circle_filled(o, if on { 6.0 } else { 3.5 }, t.tint_work);
-        painter.text(o + vec2(6.0, 6.0), Align2::LEFT_TOP, self.feature_name(id), theme::small(), if hot || on { t.text } else { t.viewport_text });
+        // (On a backing: it may lie over a lit face.)
+        let at = o + vec2(7.0, 7.0);
+        let galley = painter.layout_no_wrap(name, theme::small(), t.text);
+        painter.rect_filled(Rect::from_min_size(at - vec2(3.0, 1.0), galley.size() + vec2(6.0, 2.0)), 3.0, t.panel.gamma_multiply(0.85));
+        painter.galley(at, galley, t.text);
     }
 
     /// Draws the work features; the one under the pointer, and those picked in a panel, stand out.
@@ -509,7 +550,7 @@ impl Workbench {
             if !hot && !self.work_visible(*id) {
                 continue;
             }
-            let name = self.feature_name(*id);
+            let name = self.work_label(*id, g);
             match g {
                 WorkGeom::Plane(f) => {
                     let pts: Option<Vec<Pos2>> = self.plane_corners(f).iter().map(|q| self.to_screen(*q, rect)).collect();
@@ -531,7 +572,7 @@ impl Workbench {
                         painter.text(s + vec2(6.0, -6.0), Align2::LEFT_BOTTOM, name, theme::small(), if hot { t.text } else { t.viewport_text });
                     }
                 }
-                WorkGeom::Ucs(f) => self.draw_ucs(&painter, *id, f, hot, rect, t),
+                WorkGeom::Ucs(f) => self.draw_ucs(&painter, *id, name, f, hot, rect, t),
             }
         }
     }

@@ -12,6 +12,7 @@ use crate::properties::{Equations, WorkNames, eq_value_field, flip_button, plane
 use crate::sweeps::has_profile;
 use crate::theme::Tokens;
 use crate::viewport::Pick;
+use crate::workbench::Mode;
 
 /// An emboss being made or edited.
 #[derive(Clone, Debug)]
@@ -104,7 +105,7 @@ impl Workbench {
                 if !self.has_solid() {
                     return Err("there is nothing to emboss yet: make a solid first".into());
                 }
-                let sketch = self.profile_sketch()?;
+                let sketch = self.emboss_sketch()?;
                 // A round face selected beforehand is the one to wrap round.
                 let face = self.view.selection.iter().find_map(|p| match p {
                     Pick::Face { body, face } if self.round_for_wrap(*body, *face) => self.face_ref_of(*body, *face),
@@ -129,6 +130,27 @@ impl Workbench {
         self.view.selection.clear();
         self.set_status("Emboss: choose raise, recess or from the sketch plane, set the depth, then OK. Tick Wrap to Face to lay the profile round a cylinder or cone.");
         Ok(())
+    }
+
+    /// The sketch a new emboss takes its profile from: the one being edited when it has a closed
+    /// profile, otherwise the last that has one and is not made into anything yet. The sketch of
+    /// the solid itself would raise the solid's whole top, which is never what is meant.
+    fn emboss_sketch(&mut self) -> Result<FeatureId, String> {
+        if let Mode::Sketch(s) = &self.mode {
+            let id = s.feature;
+            self.finish_sketch();
+            if has_profile(self.document(), id) {
+                return Ok(id);
+            }
+        }
+        let doc = self.document();
+        let unused = |id: FeatureId| !doc.features().iter().any(|f| f.kind.depends_on().contains(&id));
+        self.sketches()
+            .iter()
+            .rev()
+            .map(|s| s.0)
+            .find(|id| has_profile(doc, *id) && unused(*id))
+            .ok_or_else(|| "draw the profile or text to emboss in a sketch first: one that nothing has been made from yet".into())
     }
 
     pub(crate) fn open_derive(&mut self, editing: Option<FeatureId>) -> Result<(), String> {
@@ -258,7 +280,7 @@ impl Workbench {
                                 .entered;
                         ui.end_row();
                         ui.label("Direction").on_hover_text(if p.style == EmbossStyle::FromPlane {
-                            "Which side of the sketch plane is taken away and which is added"
+                            "Which side of the sketch plane is taken away and which is added: flipped, they change over"
                         } else {
                             "Which way the faces it goes on look"
                         });
@@ -288,6 +310,13 @@ impl Workbench {
                         }
                     } else {
                         p.wrapping = false;
+                        ui.label(
+                            egui::RichText::new(
+                                "Cut down to the sketch plane on the side the direction points, built up to it on the other. Keep the plane off the part's surface: on it, one way changes nothing and the other leaves what is added loose.",
+                            )
+                            .small()
+                            .color(t.text_dim),
+                        );
                     }
                 });
             }

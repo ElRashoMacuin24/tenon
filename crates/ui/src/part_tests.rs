@@ -355,7 +355,7 @@ fn a_ucs_is_typed_shown_and_its_planes_and_axes_picked_in_the_view() {
     frames(&mut d, &mut wb);
     wb.run_ui("sketch.new").unwrap();
     frames(&mut d, &mut wb);
-    let size = wb.scene().bbox().map_or(30.0, |b| (b.diagonal() * 0.35).max(15.0)) * 0.45 * 0.4;
+    let size = wb.ucs_size(&f, wb.view.rect) * 0.4;
     let corner = on_screen(&wb, f.origin() + f.x() * (size * 0.5) + f.y() * (size * 0.5));
     click_at(&mut d, &mut wb, corner);
     assert!(wb.is_sketching(), "{}", wb.status());
@@ -508,4 +508,277 @@ fn a_ucs_goes_through_three_corners_clicked_and_is_measured_to() {
     let r = m.result.as_ref().unwrap().as_ref().unwrap();
     near(r.get("Distance").unwrap(), 10.0);
     near(r.get("Angle").unwrap(), 0.0);
+}
+
+/// A shaft along X from x = 0, radius `r`, `len` long.
+fn shaft(wb: &mut Workbench, r: f64, len: f64) {
+    let sk = wb.exec("sketch.create", json!({ "plane": "yz" })).unwrap()["feature"].as_u64().unwrap();
+    wb.exec("sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": r })).unwrap();
+    wb.exec("model.extrude", json!({ "sketch": sk, "distance": len })).unwrap();
+}
+
+#[test]
+fn a_profile_nearly_as_wide_as_a_shaft_is_seen_on_it_and_one_wider_stops_at_its_sides() {
+    let under = |r: f64, a: f64| a * (r * r - a * a).sqrt() + r * r * (a / r).asin();
+    // 16 wide on a shaft of 20, whose box runs past the shaft's sides.
+    let (mut wb, mut d) = setup();
+    shaft(&mut wb, 10.0, 50.0);
+    rect_above(&mut wb, 15.0, [10.0, -8.0, 22.0, 8.0]);
+    frames(&mut d, &mut wb);
+    let v0 = PI * 100.0 * 50.0;
+    ribbon(&mut d, &mut wb, "model.emboss");
+    frames(&mut d, &mut wb);
+    assert!(!wb.status_error, "{}", wb.status());
+    let hand = v0 + 12.0 * (under(11.0, 8.0) - under(10.0, 8.0));
+    assert!((volume(&wb) - hand).abs() < 1e-2, "{} against {hand}", volume(&wb));
+    enter(&mut d, &mut wb);
+    frames(&mut d, &mut wb);
+    assert_eq!(wb.status(), "Made Emboss1.");
+    assert!((volume(&wb) - hand).abs() < 1e-2, "{} against {hand}", volume(&wb));
+    assert!(wb.scene().status.iter().all(|(_, s)| matches!(s, tenon_model::FeatureStatus::Ok)), "{:?}", wb.scene().status);
+
+    // 30 wide: half the ring, from one side of the shaft to the other, and nothing under it.
+    let (mut wb, mut d) = setup();
+    shaft(&mut wb, 10.0, 50.0);
+    rect_above(&mut wb, 15.0, [10.0, -15.0, 22.0, 15.0]);
+    frames(&mut d, &mut wb);
+    ribbon(&mut d, &mut wb, "model.emboss");
+    frames(&mut d, &mut wb);
+    assert!((volume(&wb) - (v0 + 12.0 * PI * 21.0 / 2.0)).abs() < 1e-2, "{}", volume(&wb));
+    let b = wb.scene().bbox().unwrap();
+    assert!((b.min.z + 10.0).abs() < 1e-6 && (b.max.z - 11.0).abs() < 1e-6, "{b:?}");
+}
+
+#[test]
+fn with_only_the_solids_own_sketch_emboss_asks_for_a_profile() {
+    let (mut wb, mut d) = setup();
+    block(&mut wb);
+    frames(&mut d, &mut wb);
+    ribbon(&mut d, &mut wb, "model.emboss");
+    assert!(wb.panel.is_none(), "it does not start by raising the block's whole top");
+    assert!(wb.status_error && wb.status().contains("draw the profile"), "{}", wb.status());
+    near(volume(&wb), 16000.0);
+    // Its own sketch is still among those that can be chosen, once a panel is open.
+    rect_above(&mut wb, 10.0, [5.0, 5.0, 15.0, 11.0]);
+    frames(&mut d, &mut wb);
+    ribbon(&mut d, &mut wb, "model.emboss");
+    assert!(matches!(wb.panel, Some(Panel::Emboss(_))), "{}", wb.status());
+    near(volume(&wb), 16060.0);
+}
+
+#[test]
+fn from_a_plane_on_the_surface_it_is_refused_both_ways_and_the_panel_says_why() {
+    let (mut wb, mut d) = setup();
+    block(&mut wb);
+    rect_above(&mut wb, 10.0, [5.0, 5.0, 15.0, 11.0]);
+    frames(&mut d, &mut wb);
+    ribbon(&mut d, &mut wb, "model.emboss");
+    type_into(&mut d, &mut wb, "tn_props_emboss_depth", "5");
+    frames(&mut d, &mut wb);
+    let style = pressable(&d, "tn_emboss_style");
+    d.click(&mut wb, style);
+    frames(&mut d, &mut wb);
+    let plane = pressable(&d, "tn_emboss_style_FromPlane");
+    d.click(&mut wb, plane);
+    frames(&mut d, &mut wb);
+    assert!(d.texts().iter().any(|t| t.contains("Keep the plane off the part's surface")), "{:?}", d.texts());
+    // One way nothing changes.
+    let said = |wb: &Workbench| -> Vec<String> {
+        wb.scene()
+            .status
+            .iter()
+            .filter_map(|(_, s)| if let tenon_model::FeatureStatus::Error { message } = s { Some(message.clone()) } else { None })
+            .collect()
+    };
+    assert!(said(&wb).iter().any(|m| m.contains("Nothing is added")), "{:?}", said(&wb));
+    near(volume(&wb), 16000.0);
+    // Flipped, what is added would stand on the rim of what is taken away.
+    if let Some(Panel::Emboss(p)) = &mut wb.panel {
+        p.reverse = true;
+    }
+    frames(&mut d, &mut wb);
+    assert!(said(&wb).iter().any(|m| m.contains("comes loose") && m.contains("Flip")), "{:?}", said(&wb));
+    assert!(wb.status_error, "{}", wb.status());
+    near(volume(&wb), 16000.0);
+    assert_eq!(wb.scene().bodies.len(), 1);
+}
+
+#[test]
+fn a_wrapped_profile_stops_at_the_face_and_says_so_when_it_lies_off_it() {
+    let (r, depth) = (10.0, 2.0);
+    let (mut wb, mut d) = setup();
+    shaft(&mut wb, r, 50.0);
+    rect_above(&mut wb, 15.0, [40.0, -5.0, 60.0, 5.0]);
+    frames(&mut d, &mut wb);
+    let v0 = PI * r * r * 50.0;
+    ribbon(&mut d, &mut wb, "model.emboss");
+    type_into(&mut d, &mut wb, "tn_props_emboss_depth", "2");
+    frames(&mut d, &mut wb);
+    let tick = pressable(&d, "tn_emboss_wrap");
+    d.click(&mut wb, tick);
+    frames(&mut d, &mut wb);
+    d.settle(&mut wb);
+    let round = on_screen(&wb, Vec3::new(30.0, r * 0.6, r * 0.8));
+    click_at(&mut d, &mut wb, round);
+    frames(&mut d, &mut wb);
+    // 10 of its 20 lie on the shaft.
+    let raised = 10.0 * (10.0 / r) * ((r + depth) * (r + depth) - r * r) / 2.0;
+    assert!((volume(&wb) - (v0 + raised)).abs() < 1e-2, "{} against {}", volume(&wb), v0 + raised);
+    assert!((wb.scene().bbox().unwrap().max.x - 50.0).abs() < 1e-6);
+    d.tap(&mut wb, egui::Key::Escape);
+    frames(&mut d, &mut wb);
+
+    // Wholly past the end, the status bar says what to do.
+    let (mut wb, mut d) = setup();
+    shaft(&mut wb, r, 50.0);
+    rect_above(&mut wb, 15.0, [60.0, -5.0, 80.0, 5.0]);
+    frames(&mut d, &mut wb);
+    ribbon(&mut d, &mut wb, "model.emboss");
+    let tick = pressable(&d, "tn_emboss_wrap");
+    d.click(&mut wb, tick);
+    frames(&mut d, &mut wb);
+    d.settle(&mut wb);
+    let round = on_screen(&wb, Vec3::new(30.0, r * 0.6, r * 0.8));
+    click_at(&mut d, &mut wb, round);
+    frames(&mut d, &mut wb);
+    assert!(wb.status_error && wb.status().contains("lies off the face"), "{}", wb.status());
+    near(volume(&wb), v0);
+}
+
+#[test]
+fn a_ucs_is_drawn_and_can_be_clicked_on_a_part_of_any_size() {
+    for size in [1.0f64, 2.0, 40.0, 2000.0] {
+        let (mut wb, _) = setup();
+        let mut d = Driver::new(vec2(1400.0, 860.0));
+        let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].as_u64().unwrap();
+        wb.exec("sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": size, "y2": size })).unwrap();
+        wb.exec("model.extrude", json!({ "sketch": sk, "distance": size * 0.5 })).unwrap();
+        let (x, y, z) = (size * 0.5, size * 0.5, size * 0.5);
+        wb.exec("work.ucs", json!({ "x": x, "y": y, "z": z })).unwrap();
+        frames(&mut d, &mut wb);
+        wb.run_ui("view.fit").unwrap();
+        d.settle(&mut wb);
+        frames(&mut d, &mut wb);
+        let texts = d.texts();
+        assert!(["UCS1", "X", "Y", "Z"].iter().all(|l| texts.iter().any(|t| t == l)), "on a part of {size}: {texts:?}");
+        // Neither lost nor filling the view.
+        let f = ucs_frame(&wb, "UCS1");
+        let (o, tips, _) = wb.ucs_marks(&f, wb.view.rect).unwrap();
+        let longest = tips.iter().map(|t| t.distance(o)).fold(0.0, f32::max);
+        assert!((30.0..=140.0).contains(&longest), "{longest} pixels on a part of {size}");
+
+        // Measure takes its X axis, clicked near the tip, whatever the part's size.
+        wb.run_ui("inspect.measure").unwrap();
+        frames(&mut d, &mut wb);
+        let mid = o + (tips[0] - o) * 0.7;
+        click_at(&mut d, &mut wb, mid);
+        let Some(Panel::Measure(m)) = wb.panel.clone() else { panic!("no measure panel") };
+        assert!(m.work_a.as_ref().is_some_and(|w| w.1.contains("X Axis")), "{:?} on a part of {size}", m.work_a);
+        let r = m.result.as_ref().unwrap().as_ref().unwrap();
+        near(r.get("X").unwrap(), x);
+        near(r.get("Along X").unwrap(), 1.0);
+    }
+
+    // Close up, with the camera nearly at it, as much is drawn as lies in front.
+    let (mut wb, mut d) = setup();
+    block(&mut wb);
+    wb.exec("work.ucs", json!({ "x": 20, "y": 20, "z": 10 })).unwrap();
+    frames(&mut d, &mut wb);
+    wb.view.camera.target = tenon_geom::Vec3::new(20.0, 20.0, 10.0);
+    wb.view.camera.distance = 0.05;
+    frames(&mut d, &mut wb);
+    let f = ucs_frame(&wb, "UCS1");
+    let (o, tips, _) = wb.ucs_marks(&f, wb.view.rect).unwrap();
+    assert!(tips.iter().any(|t| t.distance(o) > 10.0), "{o:?} {tips:?}");
+}
+
+#[test]
+fn one_being_set_up_is_called_new_in_the_view() {
+    let (mut wb, mut d) = setup();
+    block(&mut wb);
+    frames(&mut d, &mut wb);
+    ribbon(&mut d, &mut wb, "work.ucs");
+    frames(&mut d, &mut wb);
+    let texts = d.texts();
+    assert!(texts.iter().any(|t| t == "New UCS"), "{texts:?}");
+    assert!(!texts.iter().any(|t| t.contains("being set up")), "{texts:?}");
+}
+
+#[test]
+fn one_plane_or_axis_measured_says_where_it_is_and_which_way_it_goes() {
+    let (mut wb, mut d) = setup();
+    block(&mut wb);
+    wb.exec("work.ucs", json!({ "x": 60, "y": 20, "z": 20, "rz": FRAC_PI_2 })).unwrap();
+    frames(&mut d, &mut wb);
+    wb.run_ui("inspect.measure").unwrap();
+    frames(&mut d, &mut wb);
+    d.settle(&mut wb);
+    let f = ucs_frame(&wb, "UCS1");
+    let (o, tips, squares) = wb.ucs_marks(&f, wb.view.rect).unwrap();
+    // Its X axis, which runs along world Y.
+    click_at(&mut d, &mut wb, o + (tips[0] - o) * 0.8);
+    let Some(Panel::Measure(m)) = wb.panel.clone() else { panic!("no panel") };
+    let r = m.result.as_ref().unwrap().as_ref().unwrap();
+    near(r.get("X").unwrap(), 60.0);
+    near(r.get("Y").unwrap(), 20.0);
+    near(r.get("Z").unwrap(), 20.0);
+    near(r.get("Along Y").unwrap(), 1.0);
+    frames(&mut d, &mut wb);
+    assert!(d.texts().iter().any(|t| t == "Along Y"), "{:?}", d.texts());
+    // Afresh, and its XY plane.
+    d.tap(&mut wb, egui::Key::Escape);
+    frames(&mut d, &mut wb);
+    wb.run_ui("inspect.measure").unwrap();
+    frames(&mut d, &mut wb);
+    let c = squares[0];
+    let mid = Pos2::new((c[0].x + c[2].x) * 0.5, (c[0].y + c[2].y) * 0.5);
+    click_at(&mut d, &mut wb, mid);
+    let Some(Panel::Measure(m)) = wb.panel.clone() else { panic!("no panel") };
+    let r = m.result.as_ref().unwrap().as_ref().unwrap();
+    near(r.get("Z").unwrap(), 20.0);
+    near(r.get("Normal Z").unwrap(), 1.0);
+}
+
+#[test]
+fn saving_leaves_a_derived_solid_as_it_was_until_it_is_rebuilt() {
+    let dir = std::env::temp_dir().join(format!("tenon-ui-derive-save-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let other = dir.join("other.tenon");
+    let write = |h: f64| {
+        let mut s = tenon_model::Session::default();
+        let run = |s: &mut tenon_model::Session, id: &str, p: serde_json::Value| tenon_io::cmd::run(s, id, &p, None).unwrap();
+        let sk = run(&mut s, "sketch.create", json!({ "plane": "xy" }))["feature"].as_u64().unwrap();
+        run(&mut s, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 10, "y2": 10 }));
+        run(&mut s, "model.extrude", json!({ "sketch": sk, "distance": h }));
+        tenon_io::project::save(&other, s.document(), &serde_json::Map::new()).unwrap();
+    };
+    write(5.0);
+    let (mut wb, mut d) = setup();
+    wb.exec("model.derive", json!({ "path": other.to_string_lossy() })).unwrap();
+    frames(&mut d, &mut wb);
+    near(volume(&wb), 500.0);
+    let mine = dir.join("mine.tenon");
+    wb.save(&mine).unwrap();
+    frames(&mut d, &mut wb);
+    near(volume(&wb), 500.0);
+    // The other file changes. An edit elsewhere in the part takes no notice; nor does a save.
+    write(50.0);
+    wb.exec("document.rename", json!({ "name": "Mine" })).unwrap();
+    frames(&mut d, &mut wb);
+    near(volume(&wb), 500.0);
+    wb.save(&mine).unwrap();
+    frames(&mut d, &mut wb);
+    near(volume(&wb), 500.0);
+    assert!(!wb.session.is_dirty());
+    // Nor saved in a new place: what it was read as stands, and the path follows the file.
+    let elsewhere = dir.join("mine2.tenon");
+    wb.save(&elsewhere).unwrap();
+    frames(&mut d, &mut wb);
+    near(volume(&wb), 500.0);
+    // Rebuild All takes it.
+    wb.run_ui("model.rebuild").unwrap();
+    frames(&mut d, &mut wb);
+    near(volume(&wb), 5000.0);
+    let _ = std::fs::remove_dir_all(&dir);
 }
