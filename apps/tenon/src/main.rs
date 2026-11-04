@@ -240,7 +240,8 @@ fn main() -> eframe::Result {
                 return Ok(());
             }
             "--help" | "-h" => {
-                print!("{USAGE}");
+                // (Not `print!`: what reads it may have gone, and that is no fault.)
+                let _ = std::io::Write::write_all(&mut std::io::stdout(), USAGE.as_bytes());
                 return Ok(());
             }
             "--screenshot" => screenshot = args.next().map(PathBuf::from),

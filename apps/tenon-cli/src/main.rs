@@ -181,13 +181,13 @@ fn read_step_apart() -> ExitCode {
     }
 }
 
-/// The example models: in a release package, near this program (beside it on Windows, a folder up
-/// on Linux, three up from inside Tenon.app on macOS); else in the sources it was built from.
+/// The example models, near this program: beside it in a release package on Windows, a folder up
+/// on Linux, three up from inside Tenon.app on macOS; two up in the sources it was built from.
 fn examples_folder() -> PathBuf {
     let near = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.ancestors().skip(1).take(5).map(|d| d.join("examples")).find(|d| d.join("m1-bracket").is_dir()));
-    near.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples"))
+    near.unwrap_or_else(|| PathBuf::from("examples"))
 }
 
 /// `tenon-cli bench`: the measurements, and with `--check` exit code 1 when one is over its
