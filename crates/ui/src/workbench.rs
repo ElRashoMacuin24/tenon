@@ -635,7 +635,7 @@ impl Workbench {
             }
             "inspect.measure" => {
                 self.panel = Some(Panel::Measure(Box::default()));
-                self.set_status("Measure: click a face or edge, then another for the distance and angle.");
+                self.set_status("Measure: click a face, edge or work feature, then another for the distance and angle.");
             }
             "work.plane" => self.open_work(crate::work::WorkMethod::Offset, None)?,
             "work.axis" => self.open_work(crate::work::WorkMethod::Along, None)?,

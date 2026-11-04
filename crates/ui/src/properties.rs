@@ -1710,7 +1710,7 @@ impl Workbench {
                         section(ui, "Selection", true, |ui| {
                             egui::Grid::new("tn_props_measure_sel").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                                 ui.label("First");
-                                ui.label(m.work_a.as_ref().map(|w| w.1.clone()).or_else(|| m.a.as_ref().map(label)).unwrap_or_else(|| "click a face or edge".to_string()));
+                                ui.label(m.work_a.as_ref().map(|w| w.1.clone()).or_else(|| m.a.as_ref().map(label)).unwrap_or_else(|| "click a face, edge or work feature".to_string()));
                                 ui.end_row();
                                 ui.label("Second");
                                 ui.label(

@@ -166,7 +166,9 @@ impl WorkPanel {
                 turns: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
                 ..WorkPanel::new(WorkMethod::UcsOffset)
             },
-            FeatureKind::Ucs(Ucs::ThreePoints { points }) => WorkPanel { points: points.clone().map(Some), ..WorkPanel::new(WorkMethod::UcsPoints) },
+            FeatureKind::Ucs(Ucs::ThreePoints { points }) => {
+                WorkPanel { points: (**points).clone().map(Some), ..WorkPanel::new(WorkMethod::UcsPoints) }
+            }
             _ => return None,
         };
         p.editing = editing;
@@ -218,7 +220,7 @@ impl WorkPanel {
             }),
             WorkMethod::UcsPoints => {
                 let [a, b, c] = &self.points;
-                FeatureKind::Ucs(Ucs::ThreePoints { points: [a.clone()?, b.clone()?, c.clone()?] })
+                FeatureKind::Ucs(Ucs::ThreePoints { points: Box::new([a.clone()?, b.clone()?, c.clone()?]) })
             }
         })
     }

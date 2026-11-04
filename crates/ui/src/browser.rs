@@ -314,6 +314,8 @@ impl Workbench {
             // (A thread's row says its size, as the part has it now.)
             let label = |f: &tenon_model::Feature| match (&f.kind, self.scene.threads.iter().find(|t| t.mark.feature == f.id)) {
                 (FeatureKind::Thread(_), Some(t)) => format!("{} ({})", f.name, t.mark.designation),
+                // (A derived part's row says which file.)
+                (FeatureKind::Derive(d), _) => format!("{} ({})", f.name, d.file_name()),
                 _ => f.name.clone(),
             };
             let features: Vec<(FeatureId, String, Icon, bool, bool)> = self

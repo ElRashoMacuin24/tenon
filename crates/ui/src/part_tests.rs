@@ -253,7 +253,7 @@ fn derive_takes_a_file_a_scale_and_a_mirror_and_follows_the_file_on_rebuild() {
     assert!(!wb.session.is_dirty());
 
     // A double-click on the row reopens the panel, with what it had.
-    let row = browser_row(&d, "Derive1").center();
+    let row = browser_row(&d, "Derive1 (other.tenon)").center();
     double_click(&mut d, &mut wb, row);
     let Some(Panel::Derive(p)) = wb.panel.clone() else { panic!("no panel: {}", wb.status()) };
     assert_eq!((p.scale, p.mirrored, p.new_solid), (2.0, true, false));

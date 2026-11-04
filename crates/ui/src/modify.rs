@@ -641,7 +641,7 @@ impl Workbench {
                 return true;
             }
             if let Some(pos) = resp.hover_pos()
-                && let Some(id) = self.work_point_at(pos, rect).or_else(|| self.work_at(pos, rect, true, true).map(|w| w.0))
+                && let Some(id) = self.work_point_at(pos, rect).or_else(|| self.work_at(pos, rect, false, true).map(|w| w.0))
             {
                 self.view.hover = None;
                 self.view.work_hover = Some(id);
@@ -661,6 +661,7 @@ impl Workbench {
                 let (o, d) = self.view.camera.ray(x, y, w, h);
                 pick_face_in(tree.as_deref(), &meshes, o, d).map(|f| Pick::Face { body: f.body, face: f.face })
             });
+            drop(meshes);
             self.view.hover = hover;
             if resp.clicked()
                 && let Some(p) = hover
@@ -669,6 +670,16 @@ impl Workbench {
                     m.take(Some(p), None);
                 }
                 self.request_measure();
+            }
+            // (A work plane is wide, and is taken only where there is none of the part to take.)
+            if hover.is_none()
+                && let Some(pos) = resp.hover_pos()
+                && let Some((id, _)) = self.work_at(pos, rect, true, false)
+            {
+                self.view.work_hover = Some(id);
+                if resp.clicked() {
+                    self.pick_reference(Reference::Work(id));
+                }
             }
             return true;
         }
