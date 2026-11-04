@@ -133,7 +133,8 @@ fn a_path_typed_and_bent_makes_a_tube_of_the_volume_of_its_length() {
     wb.run_ui("view.home").unwrap();
     wb.view.camera.fit(&tenon_geom::Aabb3::from_points(s.extent()).unwrap());
     settle(&mut d, &mut wb);
-    assert!(d.texts().iter().any(|t| t.contains("12 degrees of freedom")), "the status bar says: {:?}", d.texts());
+    // (Twelve for the four points, less two for each line typed along an axis.)
+    assert!(d.texts().iter().any(|t| t.contains("6 degrees of freedom")), "the status bar says: {:?}", d.texts());
     // Bend both corners: click each, say the radius.
     wb.run_ui("sketch3d.bend").unwrap();
     d.frame(&mut wb, vec![]);
@@ -1181,4 +1182,43 @@ fn the_status_bar_says_nothing_of_constraints_until_there_is_something_and_why_a
     d.frame(&mut wb, vec![]);
     assert_eq!(sk(&wb), before);
     assert!(wb.status().contains("follows the part"), "{}", wb.status());
+}
+
+/// A path typed axis by axis was not held to its axes, though one clicked near them is: one length
+/// then tilted every line and changed the others' lengths, and a tube swept along it was no longer
+/// round.
+#[test]
+fn a_path_typed_axis_by_axis_is_held_to_its_axes() {
+    let (mut wb, mut d) = app();
+    wb.run_ui("sketch.new_3d").unwrap();
+    settle(&mut d, &mut wb);
+    wb.run_ui("sketch3d.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    for p in [[0.0, 0.0, 0.0], [0.0, 0.0, 50.0], [50.0, 0.0, 50.0], [50.0, 50.0, 50.0]] {
+        add_xyz(&mut d, &mut wb, p[0], p[1], p[2]);
+    }
+    let f = sketch_open(&wb);
+    let info = wb.exec("sketch3d.info", json!({ "sketch": f.0 })).unwrap();
+    let held: Vec<&str> = info["constraints"].as_array().unwrap().iter().filter_map(|c| c["axis"].as_str()).collect();
+    assert_eq!(held, ["z", "x", "y"], "{info}");
+    assert_eq!(info["dof"], 6, "twelve for the four points, less two for each line held: {info}");
+    // A length on the middle line. The others stay on their axes, at their lengths.
+    let lines: Vec<EntityId> = sk(&wb).entities().filter(|(_, e)| matches!(e.geometry, Geometry3::Line { .. })).map(|(id, _)| id).collect();
+    wb.exec("sketch3d.constrain", json!({ "sketch": f.0, "constraint": { "type": "length", "line": lines[1].0, "value": 60.0 } })).unwrap();
+    let s = sk(&wb);
+    let way = |i: usize| {
+        let (a, b) = s.line(lines[i]).unwrap();
+        b - a
+    };
+    assert!(way(0).near(Vec3::new(0.0, 0.0, 50.0), 1e-6), "{:?}", way(0));
+    assert!((way(1).len() - 60.0).abs() < 1e-6 && way(1).y.abs() < 1e-6 && way(1).z.abs() < 1e-6, "{:?}", way(1));
+    assert!(way(2).near(Vec3::new(0.0, 50.0, 0.0), 1e-6), "{:?}", way(2));
+    // Off an axis it is not held; nor is a point typed for a spline.
+    wb.run_ui("sketch3d.line").unwrap();
+    wb.run_ui("sketch3d.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    add_xyz(&mut d, &mut wb, 100.0, 0.0, 0.0);
+    add_xyz(&mut d, &mut wb, 110.0, 5.0, 0.0);
+    let info = wb.exec("sketch3d.info", json!({ "sketch": f.0 })).unwrap();
+    assert_eq!(info["constraints"].as_array().unwrap().iter().filter(|c| c["axis"].is_string()).count(), 3, "{info}");
 }

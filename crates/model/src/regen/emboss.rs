@@ -16,9 +16,9 @@ use tenon_kernel::{BoolOp, Curve2, Extent, Loop, Profile, Region, ShapeHandle, S
 use tenon_sketch::Sketch;
 
 use super::{Ctx, Stop, corners, label, profile_centre, profile_of, profile_points, regenerate};
-use crate::FeatureId;
 use crate::document::{Derive, Emboss, EmbossStyle, Operation};
 use crate::naming::{CapEnd, FaceOrigin, FaceRef, names_of_boolean, names_of_modify, names_of_sweep};
+use crate::{FeatureId, FeatureKind};
 
 /// A solid on its way into the part, and the names of its faces.
 type Named = (ShapeHandle, Vec<Option<FaceOrigin>>);
@@ -714,6 +714,10 @@ impl<'a> Ctx<'a> {
                 let laid = Laid { from: sketch_at(apex) - y * (from_apex - middle), x: sketch_way(across), y };
                 let f = Frame::new(apex, up, out).ok_or("the cone's axis has no direction")?;
                 (f, Round::Cone { half_angle: alpha, inner: inner - over, outer: outer + over }, laid)
+            }
+            // (It looks round: one made by a Sweep with its profile not square to its path is not.)
+            _ if matches!(self.doc.feature(face.origin.feature()).map(|f| &f.kind), Some(FeatureKind::Sweep(_))) => {
+                return Err("Wrap to Face lays the profile round a cylinder or a cone, and this side of a sweep is neither: its profile is not square to its path there, so it is not truly round. Hold the path's lines to their axes, or start the sweep's profile on a plane square to the path.".into());
             }
             _ => return Err("Wrap to Face lays the profile round a cylinder or a cone: pick one of those.".into()),
         };

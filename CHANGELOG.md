@@ -83,7 +83,7 @@ views and Baseline and Ordinate dimensions.
 ### Sketches
 
 - **3D sketches.** Start 3D Sketch now works: a sketch on no plane, a feature with its own tab. Lines through
-  vertices, work points, existing points or typed X, Y, Z, staying on an axis when near one; splines through
+  vertices, work points, existing points or typed X, Y, Z, staying on an axis when near one or typed along one; splines through
   points; bends that round a corner by a radius and keep it; points; and Include Geometry, which brings model
   edges in to follow the part. Coincident, fix, parallel to X, Y or Z, parallel, perpendicular, equal, tangent;
   dimensions of a length, a distance, a coordinate and a radius, which are parameters; the degrees of freedom

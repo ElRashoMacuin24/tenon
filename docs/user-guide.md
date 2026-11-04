@@ -125,7 +125,7 @@ place of the Sketch tab. It is a feature in the browser; double-click its row to
   changes, it goes along. A click on a point of the sketch joins the lines there. A click on a face is on
   the face. A click on nothing is in the plane through the last point that faces you, so orbit first to
   choose how a line leaves. Near an axis through the last point, the line stays on that axis and is held to it
-  (the rubber band takes the axis's colour). Esc ends the chain.
+  (the rubber band takes the axis's colour), and so is a line typed exactly along one. Esc ends the chain.
 - **Spline**. Click or type the points it goes through. Enter in the box puts the point typed; Enter after that,
   or Make Spline, makes the spline.
 - **Bend**. Click the corner where two lines meet and say the radius. The corner stays as a faint point: what

@@ -730,6 +730,23 @@ impl Workbench {
         }
     }
 
+    /// The axis a line typed to `at` goes along from the last point, as one clicked near an axis is
+    /// held to it: a path typed axis by axis stays so when it is dimensioned.
+    fn typed_along(&self, at: Vec3) -> Option<Axis3> {
+        let Mode::Sketch3d(sm) = &self.mode else { return None };
+        if sm.tool != Tool3::Line {
+            return None;
+        }
+        let way = at - sm.clicks.last()?.at;
+        let off = |v: f64| v.abs() > tenon_geom::tol::LINEAR;
+        match (off(way.x), off(way.y), off(way.z)) {
+            (true, false, false) => Some(Axis3::X),
+            (false, true, false) => Some(Axis3::Y),
+            (false, false, true) => Some(Axis3::Z),
+            _ => None,
+        }
+    }
+
     /// Makes the spline clicked out so far.
     fn finish_spline3(&mut self, feature: FeatureId) {
         let Mode::Sketch3d(sm) = &mut self.mode else { return };
@@ -885,7 +902,8 @@ impl Workbench {
         let feature = sm.feature;
         if let Some([x, y, z]) = typed {
             let at = Vec3::new(x, y, z);
-            self.place3(feature, Click3 { at, target: Target::Free, axis: None });
+            let axis = self.typed_along(at);
+            self.place3(feature, Click3 { at, target: Target::Free, axis });
             if !self.screen3(at, rect).is_some_and(|q| rect.contains(q)) {
                 self.frame_with(at);
             }

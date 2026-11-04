@@ -1264,3 +1264,23 @@ fn what_falls_short_of_the_part_says_so_and_changes_nothing() {
     run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 1 }));
     near(volume(&mut s, &mut k), v0 + 100.0, 1e-6);
 }
+
+/// A sweep whose profile is not square to its path looks round and is not: Wrap to Face says why, in
+/// place of "pick a cylinder" to someone looking at a tube.
+#[test]
+fn wrap_to_face_says_why_the_side_of_a_slanted_sweep_is_not_round() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let profile = feature(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })));
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": profile, "cx": 0, "cy": 0, "r": 5 }));
+    let path = feature(&run(&mut s, &mut k, "sketch.new_3d", json!({})));
+    run(&mut s, &mut k, "sketch3d.line", json!({ "sketch": path, "start": [0, 0, 0], "end": [20, 0, 50] }));
+    run(&mut s, &mut k, "model.sweep", json!({ "sketch": profile, "path_sketch": path }));
+    let found = run(&mut s, &mut k, "model.find", json!({ "what": "faces", "kind": "other" }));
+    let side = found["found"][0]["reference"].clone();
+    assert!(!side.is_null(), "the side is no cylinder: {found}");
+    let on = feature(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" })));
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": on, "x1": 5, "y1": 20, "x2": 9, "y2": 24 }));
+    run(&mut s, &mut k, "model.emboss", json!({ "sketch": on, "depth": 1, "wrap": side }));
+    let why = fails(&mut s, &mut k);
+    assert!(why.contains("not square to its path"), "{why}");
+}
