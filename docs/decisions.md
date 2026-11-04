@@ -3512,3 +3512,78 @@ against the code as it was before it:
   way to one they all lie on to within the chords. Only then, so as not to move a surface off a flat
   face whose edges the kernel holds loosely. Below about a millionth of the plate's width the two
   heights cannot be told from the drawing's rounding, and it is as it was.
+
+## DEC-132 Baseline and ordinate dimensions (2026-11-03, asked for by the owner)
+
+"Make sure all the features on the menu are available not grayed out." Annotate's Baseline and
+Ordinate were greyed, with no code behind them.
+
+**One record each, not several dimensions with a tag.** `AnnotKind::Baseline` and
+`AnnotKind::Ordinate`, in `.tenondrw` as the annotation types `baseline` and `ordinate`. Several
+ordinary dimensions, as Suggest Dimensions makes, was the first thought and was set aside: moving
+a set, adding to it or spacing it would mean changing every member, and each member's position
+would have to be kept true by hand when the order changed. The record holds a datum or origin,
+a list of targets, a direction and where it goes; everything else is worked out when it is drawn
+(`tenon_drawing::dimsets`), like every annotation: picks and never values (DEC-029), so the values
+follow the model.
+
+**What a pick stands for** is what it does for a centre line: a circle's centre, a line's middle,
+or the point picked; near a line's end, the tool picks that end. An edge square to what is measured
+starts its extension line at its end nearest the dimension line, not in its middle.
+
+**The stack goes by the distances as they are now**, the shortest nearest the view. Kept in the
+order given, no dimension could be sure of not crossing the extension line of a shorter one; and
+when a hole passes another, the order has to change with it. So `place` is the number in the list
+and the row is worked out. Placed below the view it stacks downwards: away from the view's middle.
+
+**Spacing is asked for, and never less than the text takes.** Tenon writes all text level
+(DEC-041 kept dimension text level in sketches; `Graphics` has no turned text, nor do the PDF and
+DXF writers). A vertical set's text is therefore as wide as it is across, and 8 mm is too little
+for "120.25": the columns stand as far apart as their widest text and 2 more, evenly. A text that
+does not fit between its extension lines and two arrows goes beside them, on the nearer side clear
+of every extension line that crosses its level; its arrows go outside when they do not fit either.
+Turning text along its line would have needed it in the screen, PNG, SVG, PDF and DXF: not done,
+and a true gap against what such sets commonly look like.
+
+**Ordinate values are moved as little as can be.** They line up at one level and, where they would
+touch, spread by least squares: taken in order along the line, less the room each needs, the
+nearest values in order are found by pooling adjacent violators. Staggering them on two levels was
+considered: it reads worse, is no smaller past a few values, and two levels do not always do. The
+lines jog in the last 4 mm, in order, so they do not cross.
+
+**Signed.** An ordinate reads its position: negative left of the origin or below it. A baseline
+dimension is a distance. The origin is marked 0.
+
+**What is lost is said, the rest is drawn.** With a hole deleted, the places still there are drawn
+and the sheet says what is not (`drw.info` as `problem`), and the browser row shows it. Without its
+datum or origin nothing can be measured and it is not drawn, and says so.
+
+**What cannot be measured is refused when it is made or changed, in words:** a place where the
+datum or origin is along that direction, two places in one along it, an isometric view (as Suggest
+Dimensions refuses one). When the model later brings two together they are drawn as they stand.
+
+**The direction goes by where it is put** when not told: above or below the view, horizontal; to
+its left or right, vertical; at a corner or inside it, the way the places are most spread. In the
+panel "By where it goes", Horizontal or Vertical. A set being changed has one or the other.
+
+**Only across moves it.** `by` and dragging keep what is across what it measures; along, each
+dimension stays with what it measures, so the along part is dropped and is not stored.
+
+**The panel stays while clicks go to the view.** A click on an edge picks it, a second takes it
+away, a click clear of the edges puts the set there and ends (as the Dimension tool places a
+dimension); with the set already made, it only moves it until OK. Its state lives in the tool
+(`DrwTool::Set`), so Esc, right-click and undo end it with the tool. It stands at the canvas's top
+right, so that the view stays in reach; a dialog in the middle would cover what is to be clicked.
+The browser lists a view's sets (only sets: the sheet shows the rest), because a set has places to
+add to as a feature has inputs, and double-clicking the row opens the panel as it does a feature's.
+
+**The sheet's dimension style.** Tenon has one: the constants in `graphics.rs` (text, arrows,
+extension gap and overshoot) and the thin pen. Sets use them and nothing of their own, so they go
+with the dimensions beside them and to PDF, SVG and DXF the same way. A choice of styles is not
+there to take from.
+
+**Suggest Dimensions** counts what a set reads as what the view already gives.
+
+**Old builds.** A closed list of annotation types meant a build from before this refuses such a
+file whole, with the line and the type's name, and changes nothing. That cannot be changed from
+here, and it is the safer way: it does not drop what it does not know and save over it.

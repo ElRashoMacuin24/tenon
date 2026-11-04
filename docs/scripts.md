@@ -141,6 +141,11 @@ it measures. `drw.info` reports every view and every dimension's value and hole 
 they are now; after a model file changes, `drw.update` reads it again and the values follow.
 `examples/m4-plate/plate.json` uses all of this.
 
+`drw.baseline` (`datum`) and `drw.ordinate` (`origin`) measure a list of picks (`targets`) from one
+pick, as one record: `drw.info` gives its `rows` as they are now, each with its `place` in the
+list, what it reads and where its text is. `drw.annotation.edit` takes places away (`remove`, by
+those numbers) and adds them (`add`), and moves it (`by`, only across what it measures).
+
 ## Materials and design tables
 
 `document.material` gives the part a material of the library by name (`document.materials`

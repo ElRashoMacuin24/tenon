@@ -161,6 +161,21 @@ part or an assembly; then projected, section, detail and isometric views. Dimens
 the model; hole tables, parts lists, balloons and text are on Annotate. **Export PDF, SVG or
 DXF** from the File menu.
 
+**Baseline** and **Ordinate** (Annotate > Dimension) measure several places from one. Click the
+datum or origin (an edge, a circle for its centre; near a line's end, that end), then what to
+measure. A second click on one takes it away. The set shows where it would go; click clear of
+the edges to put it there: above or below the view it measures across the sheet, to the left or
+right it measures up the sheet, unless the panel says otherwise.
+
+- A baseline set has a dimension from the datum to each place, the shortest nearest the view
+  and the rest evenly beyond it (Spacing in the panel; wider where text needs it).
+- An ordinate set marks the origin 0 and each place with its position from it, on its own line
+  with no arrows, negative to the left of the origin or below it. Values that would touch are
+  moved apart and their lines jog to reach them.
+
+A set is one thing: drag it to move it, Delete to delete it, double-click it or its row in the
+browser to add to it, take from it or change it. Its values follow the model.
+
 ## 3D printing
 
 **Environments > 3D Print Check** checks the part for a printer: a closed surface, walls
@@ -223,7 +238,7 @@ Protocol ([mcp.md](mcp.md)). Every command the ribbon runs is listed in
 ## What Tenon does not do yet
 
 Tenon 0.1 is a first release. Among what it does not do: sub-assemblies, motion studies and
-parts that adapt to one another; shaded drawing views, tolerances and ordinate dimensions;
+parts that adapt to one another; shaded drawing views and tolerances;
 ellipses in sketches, a choice of fonts for sketch text; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
 stress studies of assemblies or of more than one material. [ROADMAP.md](../ROADMAP.md)
 lists everything that works, with the test that shows it, and what is missing.

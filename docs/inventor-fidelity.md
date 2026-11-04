@@ -321,7 +321,7 @@ on inventor and make ours feel 1-1"). The rows marked closed then were done in t
 | Inventor | Tenon | Proof / gap |
 |---|---|---|
 | Base, Projected, Section, Detail, Auxiliary, Break Out, Break, Crop, Overlay views | partial | base, projected, isometric, section and detail (M4). Gap: Auxiliary, Break Out, Break, Crop, Overlay; sections with offset lines; detail boundaries other than a circle |
-| Dimensions picked from views, Retrieve Model Annotations, baseline and ordinate dimensions | partial | associative dimensions of every common kind and suggestions (M4). Gap: retrieving the sketch's own dimensions, baseline and ordinate sets, tolerances |
+| Dimensions picked from views, Retrieve Model Annotations, baseline and ordinate dimensions | partial | associative dimensions of every common kind and suggestions (M4); baseline and ordinate sets, one record each, horizontal or vertical, that follow the model and can be added to, taken from and moved (DEC-132). Gap: retrieving the sketch's own dimensions, tolerances, chain dimensions, baseline and ordinate sets along an inclined edge or a chosen axis, ordinate values turned along their lines, dimension styles (the program modelled on has styles to choose from; Tenon has one) |
 | Centre marks and centre lines, automatic and by hand; hole tables; balloons and parts lists; title blocks and borders; revision tables | partial | all but revision tables (M4) |
 | Export to PDF, DWG and DXF | partial | PDF, SVG, DXF R12. Gap: DWG (a proprietary format) |
 

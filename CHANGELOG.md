@@ -5,6 +5,18 @@ shows it in [ROADMAP.md](ROADMAP.md).
 
 ## Unreleased
 
+### Drawings
+
+- **Baseline and Ordinate** (Annotate > Dimension) measure several places from one, as one
+  record. Click a datum or origin in a view, then the edges or points to measure, then where the
+  set goes; a panel says what has been picked and the set shows where it would go. A baseline
+  set stacks a dimension to each place, evenly and never overlapping; an ordinate set gives each
+  place its position on its own line with no arrows, moving values apart where they would touch.
+  Values follow the model. Sets are saved in the drawing, can be added to, taken from, moved,
+  changed and deleted, have a row in the browser, and go to PDF, SVG and DXF. New commands
+  `drw.baseline` and `drw.ordinate`; `drw.annotation.edit` gains `remove`, `add`, `datum`, `axis`
+  and `spacing`. Suggest Dimensions leaves out what a set already gives.
+
 ### Stress checks
 
 - **Optimize Shape** (topology optimization): in Stress Analysis, the Optimize panel works out

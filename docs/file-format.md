@@ -731,12 +731,43 @@ Implemented in `crates/io/src/drw.rs` and `crates/drawing/src/model.rs`; tested 
     - `center_mark` (`a`: a circle or arc);
     - `centerline` (through the points of `a` and `b`);
     - `centerline_bisector` (midway between the lines `a` and `b`).
+  - Sets of dimensions measured from one place (DEC-132), each one record. They keep picks and
+    never values, and how they lie is worked out from the model each time:
+    - `baseline`: `axis` (`horizontal` or `vertical`: which way it measures), `datum` (a pick),
+      `targets` (a list of picks, at least one and at most 500), `offset` from the view's centre
+      (only how far across what is measured counts: it says where the first dimension line goes),
+      `spacing` (between dimension lines, sheet millimetres; left out, 8) and `precision` (left
+      out, 2);
+    - `ordinate`: the same, with `origin` in place of `datum` and no `spacing`; `offset` says
+      where the values line up.
+
+    ```toml
+    [[annotation]]
+    id = 7
+    type = "baseline"
+    view = 1
+    axis = "horizontal"
+    datum = { edge = { faces = [...], fingerprint = { ... } }, point = "whole" }
+    targets = [
+      { edge = { faces = [...], fingerprint = { ... } }, point = "whole" },
+      { edge = { faces = [...], fingerprint = { ... } }, point = "center" },
+    ]
+    offset = { x = 0.0, y = 55.0 }
+    spacing = 8.0
+    precision = 2
+    ```
+
+    A file without these types reads as it always did. A build from before them refuses a file
+    that has one, as it does any annotation type it does not know, whole and changing nothing:
+    `line 69: annotation 1: unknown variant `baseline`, expected one of ...`. Tenon's own builds
+    read such a file from this version on, with no change to the format's version.
 - **Validation:**
   - ids are positive, unique and below their counter;
   - views sit on existing sheets and refer to earlier views;
   - annotations refer to existing views or sheets;
   - scales are between 1e-4 and 1e4;
-  - sizes, positions and text lengths are bounded.
+  - sizes, positions and text lengths are bounded;
+  - a set has 1 to 500 places, a spacing above 0 and up to 1000, and at most 6 decimals.
 
 ## Drawing templates
 
