@@ -151,7 +151,9 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   in a package; `tenon-cli upgrade` no longer calls what is no document current; `tenon-cli diff`
   sees a sketch shown or hidden, and does not call a marked point moved. Fields a later build put at
   the top of a file are kept by the window and by scripts, as the format's page said they were.
-- The control port limits what a connection may do before it gives its token.
+- The control port limits what a connection may do before it gives its token: 64 KiB in its first
+  request and 10 seconds to send it. After that it may be quiet as long as it likes. See
+  [docs/mcp.md](https://github.com/ElRashoMacuin24/tenon/blob/main/docs/mcp.md).
 - A change while Simulate runs now stops it, as it does Optimize Shape. Define A-Side gives up on
   Esc, as it says. Finish Analysis closes Mesh Settings. A long status is cut at the counts, with all
   of it under the pointer.

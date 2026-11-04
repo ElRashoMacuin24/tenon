@@ -212,6 +212,12 @@ or a drawing, each command waits until the app has rebuilt the parts and drawn t
 the one before it changed, so it sees what a person at the window would see. A request line
 over 16 MiB is refused and its connection closed.
 
+A connection is held to less until it has given the token, in a request with a `run`: that line
+may be 64 KiB at most, so a client with more to say first sends something short such as
+`control.state`, as `--attach` does; and a connection that sends nothing for 10 seconds is closed.
+After that it can be quiet as long as it likes. At most 32 connections are served at once; one more
+is closed without a word, and can try again when another has gone.
+
 `study.solve` and `study.optimize` are runs, as Simulate and Optimize Shape are in the window: one
 goes on at a time, whichever side began it, and the other is refused in words; the window says one
 is going on; and Esc, File New, opening another document, leaving the Stress Analysis environment
