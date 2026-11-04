@@ -146,6 +146,22 @@ impl WorkPanel {
         Some(p)
     }
 
+    /// What to do next, in the status bar: for the method chosen.
+    pub(crate) fn instruction(&self) -> &'static str {
+        match (self.method, self.title()) {
+            (WorkMethod::ThreePoints, _) => "Work Plane: click three points (work points, sketch points, the centre of a circle, the origin), then OK.",
+            (_, "Work Plane") => "Work Plane: click a face or plane (origin planes are in the browser), set the offset, then OK.",
+            (_, "Work Axis") => "Work Axis: click an edge, a cylinder or an axis, then OK.",
+            _ => "Work Point: click a circular edge, then OK.",
+        }
+    }
+
+    /// What the panel has of what it asks for, to tell when it changes.
+    pub(crate) fn progress(&self) -> (WorkMethod, usize) {
+        let picks = [self.a.is_some(), self.b.is_some(), self.axis.is_some(), self.edge.is_some()];
+        (self.method, picks.iter().filter(|p| **p).count() + self.points.iter().flatten().count())
+    }
+
     pub(crate) fn title(&self) -> &'static str {
         match self.method {
             WorkMethod::Offset | WorkMethod::Angle | WorkMethod::Midplane | WorkMethod::ThreePoints => "Work Plane",
@@ -518,11 +534,8 @@ impl Workbench {
             }
             panel.advance();
         }
-        self.set_status(match panel.title() {
-            "Work Plane" => "Work Plane: click a face or plane (origin planes are in the browser), set the offset, then OK.",
-            "Work Axis" => "Work Axis: click an edge, a cylinder or an axis, then OK.",
-            _ => "Work Point: click a circular edge, then OK.",
-        });
+        self.set_status(panel.instruction());
+        self.work_said = Some(panel.progress());
         self.panel = Some(Panel::Work(Box::new(panel)));
         self.start_equations();
         Ok(())

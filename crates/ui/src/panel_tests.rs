@@ -622,3 +622,48 @@ fn nothing_to_undo_is_no_fault_in_an_assembly_or_a_drawing() {
         assert_eq!(wb.status(), "Nothing to undo.", "{example}");
     }
 }
+
+#[test]
+fn a_work_planes_status_goes_with_its_method_and_its_picks() {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.exec("model.box", json!({ "width": 40, "depth": 20, "height": 10 })).unwrap();
+    d.settle(&mut wb);
+    wb.run_ui("work.plane").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("set the offset"), "{}", wb.status());
+    let Some(Panel::Work(w)) = &mut wb.panel else { panic!("no work panel") };
+    w.method = crate::work::WorkMethod::ThreePoints;
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("click three points"), "{}", wb.status());
+
+    // OK too soon is an error; the first pick takes it away.
+    d.tap(&mut wb, egui::Key::Enter);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status_error, "{}", wb.status());
+    let Some(Panel::Work(w)) = &mut wb.panel else { panic!("no work panel") };
+    w.points[0] = Some(tenon_model::PointSel::Origin);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.status_error && wb.status().contains("click three points"), "{}", wb.status());
+}
+
+#[test]
+fn the_hole_panel_says_where_holes_on_a_face_are() {
+    use tenon_geom::Vec3;
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.exec("model.box", json!({ "width": 40, "depth": 20, "height": 10 })).unwrap();
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::H);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(d.text_pos("click a flat face").is_some(), "{:?}", d.texts());
+    assert!(d.text_pos("click sketch points").is_none(), "{:?}", d.texts());
+    let top = wb.scene().bodies[0].bbox.unwrap();
+    click_on_part(&mut d, &mut wb, Vec3::new(top.min.x + 10.0, top.min.y + 10.0, top.max.z));
+    d.frame(&mut wb, vec![]);
+    assert!(d.text_pos("1 on the face").is_some(), "{}: {:?}", wb.status(), d.texts());
+    d.tap(&mut wb, egui::Key::Escape);
+}

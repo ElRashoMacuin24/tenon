@@ -1102,11 +1102,20 @@ impl Workbench {
                         section(ui, "Input Geometry", true, |ui| {
                             egui::Grid::new("tn_props_hole_input").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                                 ui.label("Positions");
-                                clear |= picked_row(ui, p.points.len(), "click sketch points");
-                                ui.end_row();
-                                ui.label("Sketch");
-                                ui.label(sketches.iter().find(|s| s.0 == p.sketch).map_or("?".into(), |s| s.1.clone()));
-                                ui.end_row();
+                                // (Placed on a face, there is no sketch yet: OK makes it.)
+                                if p.on_face() {
+                                    ui.label(match p.face_points.len() {
+                                        0 => "click a flat face".to_owned(),
+                                        n => format!("{n} on the face"),
+                                    });
+                                    ui.end_row();
+                                } else {
+                                    clear |= picked_row(ui, p.points.len(), "click sketch points");
+                                    ui.end_row();
+                                    ui.label("Sketch");
+                                    ui.label(sketches.iter().find(|s| s.0 == p.sketch).map_or("?".into(), |s| s.1.clone()));
+                                    ui.end_row();
+                                }
                             });
                         });
                         section(ui, "Type", true, |ui| {

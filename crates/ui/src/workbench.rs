@@ -104,6 +104,8 @@ pub struct Workbench {
     pub(crate) status: String,
     pub(crate) status_error: bool,
     pub(crate) path: Option<PathBuf>,
+    /// How far the work feature's panel had got when the status bar last said what to do.
+    pub(crate) work_said: Option<(crate::work::WorkMethod, usize)>,
     pub(crate) services: Services,
     exit: bool,
     pub(crate) step_seq: u64,
@@ -180,6 +182,7 @@ impl Workbench {
             status: "Ready. Start 2D Sketch (S) to begin a part.".into(),
             status_error: false,
             path: None,
+            work_said: None,
             services,
             exit: false,
             step_seq: 0,

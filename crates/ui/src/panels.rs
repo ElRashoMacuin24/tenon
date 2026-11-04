@@ -2066,6 +2066,12 @@ impl Workbench {
                 }
             }
             Panel::Work(w) => {
+                // Another method, or a pick: what to do now is said, in place of what was asked
+                // for before, or the error of an OK too soon.
+                if self.work_said != Some(w.progress()) {
+                    self.work_said = Some(w.progress());
+                    self.set_status(w.instruction());
+                }
                 if commit {
                     match w.kind() {
                         None => self.set_error(format!("{}: fill in every selection first", w.title())),
