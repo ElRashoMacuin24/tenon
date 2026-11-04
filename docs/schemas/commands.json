@@ -7498,7 +7498,7 @@
       "id": "sheet.export_svg",
       "label": "Export Flat Pattern SVG",
       "undoable": false,
-      "description": "path (.svg): the flat pattern as a picture at full size; bends, extents, face, body as for sheet.export_dxf",
+      "description": "path (.svg): the flat pattern as a picture at full size; bends, extents, punches, face, body as for sheet.export_dxf",
       "params": {
         "type": "object",
         "properties": {

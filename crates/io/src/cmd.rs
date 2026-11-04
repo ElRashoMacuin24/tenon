@@ -322,7 +322,7 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "sheet.export_svg",
         label: "Export Flat Pattern SVG",
-        help: "path (.svg): the flat pattern as a picture at full size; bends, extents, face, body as for sheet.export_dxf",
+        help: "path (.svg): the flat pattern as a picture at full size; bends, extents, punches, face, body as for sheet.export_dxf",
         mutates: false,
         run: Run::Geo(crate::flat::export_svg),
     },
