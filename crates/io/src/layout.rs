@@ -90,6 +90,8 @@ const HEAD: &[&str] = &["format", "version", "generator"];
 const ENTITY_OWN: &[&str] = &["construction", "centerline", "reference", "sketch_point"];
 /// A sketch's fields, in file order.
 const SKETCH: &[&str] = &["next_entity", "next_constraint", "entities", "constraints", "places", "driven"];
+/// The types of feature that are sketches: a sketch on a plane, and a 3D sketch.
+const SKETCHES: &[&str] = &["sketch", "sketch3d"];
 
 impl Shape {
     /// The file's name for a list (`"features"` gives `"feature"`).
@@ -214,7 +216,7 @@ fn unflatten(r: &Value, own: &[&str]) -> Value {
 /// constraints as records with their ids.
 fn sketch_out(r: &mut Value) -> Result<(), String> {
     let Some(o) = r.as_object() else { return Ok(()) };
-    if o.get("type").and_then(Value::as_str) != Some("sketch") {
+    if !o.get("type").and_then(Value::as_str).is_some_and(|t| SKETCHES.contains(&t)) {
         return Ok(());
     }
     let mut out = Map::new();
@@ -279,7 +281,7 @@ fn sketch_out(r: &mut Value) -> Result<(), String> {
 /// The reverse of [`sketch_out`]. Anything malformed is left for the reader to refuse.
 fn sketch_in(r: &mut Value) {
     let Some(o) = r.as_object() else { return };
-    if o.get("type").and_then(Value::as_str) != Some("sketch") {
+    if !o.get("type").and_then(Value::as_str).is_some_and(|t| SKETCHES.contains(&t)) {
         return;
     }
     let (mut out, mut sketch) = (Map::new(), Map::new());

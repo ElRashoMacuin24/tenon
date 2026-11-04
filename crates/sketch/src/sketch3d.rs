@@ -654,6 +654,37 @@ impl Sketch3d {
         }
     }
 
+    /// The unit direction of curve `id` at its end `at`, from its start towards its end.
+    pub fn direction_at(&self, id: EntityId, at: EntityId) -> Option<Vec3> {
+        let (start, end) = self.geometry(id)?.ends()?;
+        if at != start && at != end {
+            return None;
+        }
+        match self.geometry(id)? {
+            Geometry3::Point { .. } => None,
+            Geometry3::Line { .. } => self.line(id).map(|(a, b)| dir_n(a, b)),
+            Geometry3::Arc { .. } => {
+                let a = self.arc(id)?;
+                let k = if at == start { 0.0 } else { a.sweep };
+                let (s, c) = f64::sin_cos(k);
+                Some(a.v * c - a.u * s)
+            }
+            Geometry3::Spline { .. } => {
+                let s = self.spline(id)?;
+                Some(if at == start { s.start_tangent() } else { s.end_tangent() })
+            }
+            Geometry3::Edge { curve, .. } => {
+                let n = curve.along.len();
+                let (p, q) = if at == start {
+                    (*curve.along.first()?, *curve.along.get(1)?)
+                } else {
+                    (*curve.along.get(n.checked_sub(2)?)?, *curve.along.last()?)
+                };
+                Some(dir_n(p, q))
+            }
+        }
+    }
+
     /// Where two curves join, end to end: an end of `a` and an end of `b` that are one point or
     /// are held together (coincident).
     pub fn joined_ends(&self, a: EntityId, b: EntityId) -> Option<(EntityId, EntityId)> {

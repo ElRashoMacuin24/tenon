@@ -148,6 +148,7 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         FeatureKind::Bend(_) | FeatureKind::SharpBend(_) => &[("/radius", Mm)],
         FeatureKind::Fold(_) => &[("/angle", Deg), ("/radius", Mm)],
         FeatureKind::Sketch { .. }
+        | FeatureKind::Sketch3d { .. }
         | FeatureKind::Mirror(_)
         | FeatureKind::WorkAxis(_)
         | FeatureKind::WorkPoint(_)
@@ -211,6 +212,13 @@ impl Document {
                         }
                     }
                 }
+                FeatureKind::Sketch3d { sketch, .. } => {
+                    for (cid, c) in sketch.constraints() {
+                        if c.is_dimensional() {
+                            out.push((ValuePath::Dimension { sketch: f.id, constraint: cid }, ParamUnit::Mm));
+                        }
+                    }
+                }
                 k => {
                     let json = serde_json::to_value(k).unwrap_or(Value::Null);
                     for (ptr, unit) in fields(k) {
@@ -228,6 +236,9 @@ impl Document {
     pub fn value_at(&self, path: &ValuePath) -> Option<(f64, ParamUnit)> {
         match path {
             ValuePath::Dimension { sketch, constraint } => {
+                if let Some(sk) = self.sketch3d(*sketch) {
+                    return Some((sk.constraint(*constraint)?.value()?, ParamUnit::Mm));
+                }
                 let c = self.sketch(*sketch)?.constraint(*constraint)?;
                 let unit = if c.is_angular() { ParamUnit::Deg } else { ParamUnit::Mm };
                 Some((shown(c.value()?, unit), unit))
@@ -245,6 +256,9 @@ impl Document {
     pub fn set_value_at(&mut self, path: &ValuePath, v: f64) -> Result<(), String> {
         match path {
             ValuePath::Dimension { sketch, constraint } => {
+                if let Some(sk) = self.sketch3d_mut(*sketch) {
+                    return sk.set_dimension(*constraint, v).map_err(|e| e.to_string());
+                }
                 let sk = self.sketch_mut(*sketch).ok_or("the sketch no longer exists")?;
                 let angular = sk.constraint(*constraint).is_some_and(|c| c.is_angular());
                 sk.set_dimension(*constraint, if angular { v.to_radians() } else { v }).map_err(|e| e.to_string())
@@ -287,6 +301,12 @@ impl Document {
             }
         }
         for (sketch, dims) in by_sketch {
+            if let Some(sk) = self.sketch3d_mut(sketch) {
+                let stored: Vec<(ConstraintId, f64)> = dims.iter().map(|(_, c, v)| (*c, *v)).collect();
+                sk.set_dimensions(&stored)
+                    .map_err(|e| format!("{}: {e}", dims.iter().map(|(i, _, v)| label(*i, *v)).collect::<Vec<_>>().join(", ")))?;
+                continue;
+            }
             let sk = self.sketch_mut(sketch).ok_or("the sketch no longer exists")?;
             let stored: Vec<(ConstraintId, f64)> =
                 dims.iter().map(|(_, c, v)| (*c, if sk.constraint(*c).is_some_and(|x| x.is_angular()) { v.to_radians() } else { *v })).collect();
@@ -585,7 +605,12 @@ impl Document {
         match path {
             ValuePath::Dimension { sketch, constraint } => {
                 let s = self.feature(*sketch).map_or("?", |f| f.name.as_str());
-                let what = self.sketch(*sketch).and_then(|sk| sk.constraint(*constraint)).map_or("dimension", |c| c.name());
+                let what = self
+                    .sketch3d(*sketch)
+                    .and_then(|sk| sk.constraint(*constraint))
+                    .map(tenon_sketch::Constraint3::name)
+                    .or_else(|| self.sketch(*sketch).and_then(|sk| sk.constraint(*constraint)).map(|c| c.name()))
+                    .unwrap_or("dimension");
                 format!("{s} {what}")
             }
             ValuePath::Feature { feature, field } => {

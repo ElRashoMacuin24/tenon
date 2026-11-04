@@ -6,9 +6,9 @@
 
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use tenon_geom::{Vec2, tol};
+use tenon_geom::{Vec2, Vec3, tol};
 use tenon_kernel::{Kernel, ShapeHandle};
-use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions};
+use tenon_sketch::{Axis3, Constraint, Constraint3, ConstraintId, EntityId, Geometry3, PointRef, PointRef3, Sketch, Sketch3d, regions};
 
 use crate::document::{
     AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Extrude, ExtrudeExtent, FeatureKind,
@@ -257,7 +257,8 @@ impl Session {
             // Projected geometry follows the part; when that moves something else (an equation
             // reading a dimension to a projected edge), the part is rebuilt with it.
             for _ in 0..MAX_FOLLOW {
-                if !self.follow_projections(&r.sketches) {
+                let more = self.follow_projections(&r.sketches);
+                if !(self.follow_links(&r.sketches3d) || more) {
                     break;
                 }
                 r.release(k);
@@ -281,6 +282,31 @@ impl Session {
         for (id, resolved) in sketches {
             if let Some(sk) = self.doc.sketch_mut(*id) {
                 moved |= crate::project::follow(sk, resolved).unwrap_or(false);
+            }
+        }
+        if !moved {
+            return false;
+        }
+        let followed = self.doc.clone();
+        if self.doc.sync_parameters().is_err() {
+            self.doc = followed;
+            return false;
+        }
+        let more = self.doc != followed;
+        if more {
+            self.revision += 1;
+        }
+        more
+    }
+
+    /// The document's 3D sketches take up where a regeneration found their reference geometry
+    /// (`Regen::sketches3d`, `Scene::sketches3d`), as [`Session::follow_projections`] has it of
+    /// projected geometry.
+    pub fn follow_links(&mut self, sketches: &std::collections::BTreeMap<FeatureId, std::sync::Arc<Sketch3d>>) -> bool {
+        let mut moved = false;
+        for (id, resolved) in sketches {
+            if let Some(sk) = self.doc.sketch3d_mut(*id) {
+                moved |= crate::sketch3d::follow(sk, resolved).unwrap_or(false);
             }
         }
         if !moved {
@@ -1241,6 +1267,10 @@ fn axis_param(p: &Value, key: &str) -> Result<AxisSel, CmdError> {
     if let Some(id) = work_id(v) {
         return Ok(AxisSel::Work(id));
     }
+    if let (Some(sketch), Some(line)) = (v.get("sketch3d").and_then(Value::as_u64), v.get("line").and_then(Value::as_u64)) {
+        let id = |n: u64| u32::try_from(n).map_err(|_| CmdError(format!("`{key}`: that is no id")));
+        return Ok(AxisSel::Sketch3dLine { sketch: FeatureId(id(sketch)?), line: EntityId(id(line)?) });
+    }
     match v {
         Value::String(a) => Ok(AxisSel::Origin(origin_axis(a)?)),
         Value::Object(o) if o.contains_key("faces") => Ok(AxisSel::Edge(parse(p, key)?)),
@@ -1282,21 +1312,38 @@ fn check_work_refs(s: &Session, kind: &FeatureKind) -> Result<(), CmdError> {
     };
     let axis = |a: &AxisSel| match a {
         AxisSel::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkAxis(_)), "work axis"),
+        AxisSel::Sketch3dLine { sketch, line } => match doc.sketch3d(*sketch) {
+            Some(sk) if sk.is_line(*line) => Ok(()),
+            Some(_) => Err(CmdError(format!("{} is no line of {sketch}", line.0))),
+            None => Err(CmdError(format!("{sketch} is not a 3D sketch"))),
+        },
+        _ => Ok(()),
+    };
+    let point = |q: &PointSel| match q {
+        PointSel::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkPoint(_)), "work point"),
+        PointSel::SketchPoint { sketch, point } => match doc.sketch(*sketch) {
+            Some(sk) if sk.point(*point).is_some() => Ok(()),
+            Some(_) => Err(CmdError(format!("{} is no point of {sketch}", point.0))),
+            None => Err(CmdError(format!("{sketch} is not a sketch"))),
+        },
+        PointSel::Sketch3dPoint { sketch, point } => match doc.sketch3d(*sketch) {
+            Some(sk) if sk.point(*point).is_some() => Ok(()),
+            Some(_) => Err(CmdError(format!("{} is no point of {sketch}", point.0))),
+            None => Err(CmdError(format!("{sketch} is not a 3D sketch"))),
+        },
         _ => Ok(()),
     };
     match kind {
         FeatureKind::WorkPlane(WorkPlane::Offset { base, .. }) => plane(base),
         FeatureKind::WorkPlane(WorkPlane::Angle { base, axis: a, .. }) => plane(base).and(axis(a)),
         FeatureKind::WorkPlane(WorkPlane::Midplane { a, b }) => plane(a).and(plane(b)),
-        FeatureKind::WorkPlane(WorkPlane::ThreePoints { points }) => points.iter().try_for_each(|q| match q {
-            PointSel::Work(id) => is(*id, |k| matches!(k, FeatureKind::WorkPoint(_)), "work point"),
-            PointSel::SketchPoint { sketch, point } => match doc.sketch(*sketch) {
-                Some(sk) if sk.point(*point).is_some() => Ok(()),
-                Some(_) => Err(CmdError(format!("{} is no point of {sketch}", point.0))),
-                None => Err(CmdError(format!("{sketch} is not a sketch"))),
-            },
-            _ => Ok(()),
-        }),
+        FeatureKind::WorkPlane(WorkPlane::ThreePoints { points }) => points.iter().try_for_each(point),
+        FeatureKind::WorkPlane(WorkPlane::SquareToCurve { sketch, curve, end }) => match doc.sketch3d(*sketch) {
+            Some(sk) if sk.direction_at(*curve, *end).is_some() => Ok(()),
+            Some(_) => Err(CmdError(format!("{} is no end of a curve {} of {sketch}", end.0, curve.0))),
+            None => Err(CmdError(format!("{sketch} is not a 3D sketch"))),
+        },
+        FeatureKind::WorkPoint(WorkPoint::At { point: q }) => point(q),
         FeatureKind::WorkAxis(WorkAxis::Along { axis: a }) => axis(a),
         FeatureKind::WorkAxis(WorkAxis::Planes { a, b }) => plane(a).and(plane(b)),
         FeatureKind::WorkPoint(WorkPoint::Intersection { axis: a, plane: p }) => axis(a).and(plane(p)),
@@ -1317,7 +1364,10 @@ fn work_plane(s: &mut Session, p: &Value) -> CmdResult {
         "angle" => WorkPlane::Angle { base: plane_value(p, "base")?, axis: axis_param(p, "axis")?, angle: num(p, "angle")? },
         "midplane" => WorkPlane::Midplane { a: plane_value(p, "a")?, b: plane_value(p, "b")? },
         "three_points" => WorkPlane::ThreePoints { points: parse(p, "points")? },
-        other => return Err(format!("unknown work plane `{other}` (offset, angle, midplane, three_points)").into()),
+        "square_to_curve" => {
+            WorkPlane::SquareToCurve { sketch: sketch_id(p)?, curve: EntityId(id_u32(p, "curve")?), end: EntityId(id_u32(p, "end")?) }
+        }
+        other => return Err(format!("unknown work plane `{other}` (offset, angle, midplane, three_points, square_to_curve)").into()),
     };
     let kind = FeatureKind::WorkPlane(def);
     check_work_refs(s, &kind)?;
@@ -1338,6 +1388,8 @@ fn work_axis(s: &mut Session, p: &Value) -> CmdResult {
 fn work_point(s: &mut Session, p: &Value) -> CmdResult {
     let def = if arg(p, "edge").is_some() {
         WorkPoint::Center { edge: parse(p, "edge")? }
+    } else if arg(p, "point").is_some() {
+        WorkPoint::At { point: parse(p, "point")? }
     } else {
         WorkPoint::Intersection { axis: axis_param(p, "axis")?, plane: plane_value(p, "plane")? }
     };
@@ -2068,6 +2120,413 @@ fn sketch_centerline(s: &mut Session, p: &Value) -> CmdResult {
     Ok(json!({}))
 }
 
+// ---- 3D sketches (DEC-136) ---------------------------------------------------------------------
+
+/// Edits the 3D sketch of feature `sketch`.
+fn on_sketch3d<T>(s: &mut Session, p: &Value, f: impl FnOnce(&mut Document, FeatureId) -> Result<T, CmdError>) -> Result<T, CmdError> {
+    let id = sketch_id(p)?;
+    s.edit(|doc| {
+        if doc.sketch3d(id).is_none() {
+            return Err(CmdError(format!("{id} is not a 3D sketch")));
+        }
+        f(doc, id)
+    })
+}
+
+/// A 3D sketch's own, mutably.
+fn sketch3d_of(doc: &mut Document, id: FeatureId) -> Result<&mut Sketch3d, CmdError> {
+    doc.sketch3d_mut(id).ok_or_else(|| CmdError(format!("{id} is not a 3D sketch")))
+}
+
+/// `[x, y, z]`, in range.
+fn vec3_value(v: &Value) -> Option<Vec3> {
+    let [x, y, z] = v.as_array()?.as_slice() else { return None };
+    let (x, y, z) = (x.as_f64()?, y.as_f64()?, z.as_f64()?);
+    (tol::is_valid_coord(x) && tol::is_valid_coord(y) && tol::is_valid_coord(z)).then_some(Vec3::new(x, y, z))
+}
+
+/// Where a point of a 3D sketch comes from, as a command says it.
+enum Point3 {
+    Existing(EntityId),
+    At(Vec3),
+    /// Reference geometry that follows the part, and where it now is.
+    Linked(PointSel, Vec3),
+}
+
+/// A point parameter: a point's id, `[x, y, z]`, or what of the part it stands for: `"origin"`,
+/// `{"work": id}`, `{"vertex": edge reference, "end": 0 or 1}`, `{"sketch_point": ...}`, each with
+/// `"at": [x, y, z]` where the kernel is not to hand to say where that is.
+fn point3_value<'k>(s: &mut Session, k: Option<&mut (dyn Kernel + 'k)>, v: &Value) -> Result<Point3, CmdError> {
+    if let Some(id) = v.as_u64().and_then(|n| u32::try_from(n).ok()) {
+        return Ok(Point3::Existing(EntityId(id)));
+    }
+    if v.is_array() {
+        return vec3_value(v).map(Point3::At).ok_or_else(|| CmdError("a point is [x, y, z], each in range".into()));
+    }
+    let at = match v.get("at") {
+        Some(a) => Some(vec3_value(a).ok_or("`at` is [x, y, z], each in range")?),
+        None => None,
+    };
+    let sel: PointSel = match v.as_object() {
+        Some(o) if o.contains_key("vertex") => {
+            let edge = serde_json::from_value(o.get("vertex").cloned().unwrap_or(Value::Null)).map_err(|e| CmdError(format!("`vertex`: {e}")))?;
+            let end = o.get("end").and_then(Value::as_u64).unwrap_or(0);
+            PointSel::Vertex { edge, end: u8::from(end != 0) }
+        }
+        Some(o) => {
+            let mut bare = o.clone();
+            bare.shift_remove("at");
+            serde_json::from_value(Value::Object(bare)).map_err(|e| CmdError(format!("that is no point: {e}")))?
+        }
+        None => serde_json::from_value(v.clone()).map_err(|e| CmdError(format!("that is no point: {e}")))?,
+    };
+    let at = match at {
+        Some(a) => a,
+        None => point_sel_at(s, k, &sel)?,
+    };
+    Ok(Point3::Linked(sel, at))
+}
+
+/// Where `sel` is in the part as it is now.
+fn point_sel_at<'k>(s: &mut Session, k: Option<&mut (dyn Kernel + 'k)>, sel: &PointSel) -> Result<Vec3, CmdError> {
+    if matches!(sel, PointSel::Origin) {
+        return Ok(Vec3::ZERO);
+    }
+    let Some(k) = k else {
+        return Err("that needs the geometry kernel to say where the point is, or `at`: [x, y, z]".into());
+    };
+    let r = s.regen(k).clone();
+    let edge_at = |edge: &EdgeRef, k: &dyn Kernel| -> Result<tenon_kernel::EdgeInfo, CmdError> {
+        let (b, e) = r.resolve_edge(edge, k).map_err(CmdError)?;
+        let shape = r.bodies.get(b).ok_or("no such body")?.shape;
+        k.edge_info(shape.edge(e)).map_err(|e| CmdError(e.to_string()))
+    };
+    match sel {
+        PointSel::Origin => Ok(Vec3::ZERO),
+        PointSel::Work(id) => match r.work.get(id) {
+            Some(WorkGeom::Point(q)) => Ok(*q),
+            _ => Err(format!("{id} is no work point of the part as it is").into()),
+        },
+        PointSel::Vertex { edge, end } => {
+            let info = edge_at(edge, k)?;
+            Ok(if *end == 0 { info.start } else { info.end })
+        }
+        PointSel::Center(edge) => match edge_at(edge, k)?.curve {
+            tenon_kernel::CurveKind::Circle { axis, .. } => Ok(axis.origin()),
+            _ => Err("the edge is not circular: it has no centre".into()),
+        },
+        PointSel::Sketch3dPoint { sketch, point } => {
+            r.sketches3d.get(sketch).and_then(|sk| sk.point(*point)).ok_or_else(|| CmdError(format!("{} is no point of {sketch}", point.0)))
+        }
+        PointSel::SketchPoint { sketch, point } => {
+            let frame = r.sketch_frames.get(sketch).ok_or_else(|| CmdError(format!("{sketch} is suppressed or failed")))?;
+            let q = s
+                .document()
+                .sketch(*sketch)
+                .and_then(|sk| sk.point(*point))
+                .ok_or_else(|| CmdError(format!("{} is no point of {sketch}", point.0)))?;
+            Ok(frame.plane_point(q))
+        }
+    }
+}
+
+/// Refused unless what a 3D sketch would stand on comes before it.
+fn links_before(doc: &Document, id: FeatureId, to: &crate::sketch3d::LinkTo) -> Result<(), CmdError> {
+    let index = doc.index_of(id).unwrap_or(usize::MAX);
+    if let Some(later) = to.features().into_iter().find(|f| doc.index_of(*f).is_none_or(|i| i >= index)) {
+        let name = doc.feature(later).map_or_else(|| later.to_string(), |f| f.name.clone());
+        return Err(CmdError(format!(
+            "that is made by {name}, which comes after the 3D sketch: only what is there before a sketch can be brought into it"
+        )));
+    }
+    Ok(())
+}
+
+/// The reference geometry standing for `to`, new or there already.
+fn linked_entity(doc: &mut Document, id: FeatureId, to: crate::sketch3d::LinkTo, at: &crate::sketch3d::Found3) -> Result<EntityId, CmdError> {
+    links_before(doc, id, &to)?;
+    use crate::sketch3d::LinkTo;
+    let same = |a: &LinkTo, b: &LinkTo| match (a, b) {
+        (LinkTo::Edge(x), LinkTo::Edge(y)) => x.faces == y.faces && x.fingerprint.distance(&y.fingerprint) < 1e-6,
+        (a, b) => a == b,
+    };
+    if let Some(there) = doc.links3(id).iter().find(|l| same(&l.to, &to)) {
+        return Ok(there.entity);
+    }
+    let entity = crate::sketch3d::add(sketch3d_of(doc, id)?, at).map_err(CmdError)?;
+    if let Some(FeatureKind::Sketch3d { links, .. }) = doc.feature_mut(id).map(|f| &mut f.kind) {
+        links.push(crate::sketch3d::Link3 { entity, to });
+    }
+    Ok(entity)
+}
+
+/// What a command's point comes to in the sketch.
+fn point3_ref(doc: &mut Document, id: FeatureId, p: &Point3) -> Result<PointRef3, CmdError> {
+    Ok(match p {
+        Point3::Existing(e) => PointRef3::Existing(*e),
+        Point3::At(v) => PointRef3::New(*v),
+        Point3::Linked(sel, at) => {
+            let found = crate::sketch3d::Found3::Point { at: *at };
+            PointRef3::Existing(linked_entity(doc, id, crate::sketch3d::LinkTo::Point(sel.clone()), &found)?)
+        }
+    })
+}
+
+fn sketch_new_3d(s: &mut Session, _p: &Value) -> CmdResult {
+    let id = s.edit(|d| d.add(FeatureKind::Sketch3d { sketch: Sketch3d::new(), links: Vec::new() }).map_err(CmdError))?;
+    let name = s.document().feature(id).map(|f| f.name.clone()).unwrap_or_default();
+    Ok(json!({ "feature": id.0, "name": name }))
+}
+
+fn sketch3d_point(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let at = point3_value(s, k, field(p, "at")?)?;
+    if let Point3::Existing(e) = at {
+        return Err(format!("{e} is a point already: give where the new one goes").into());
+    }
+    let id = on_sketch3d(s, p, |d, id| match point3_ref(d, id, &at)? {
+        PointRef3::Existing(e) => Ok(e),
+        new => Ok(sketch3d_of(d, id)?.resolve(new)?),
+    })?;
+    Ok(json!({ "point": id.0 }))
+}
+
+fn axis3_value(v: &Value) -> Result<Axis3, CmdError> {
+    match v.as_str().map(str::to_ascii_lowercase).as_deref() {
+        Some("x") => Ok(Axis3::X),
+        Some("y") => Ok(Axis3::Y),
+        Some("z") => Ok(Axis3::Z),
+        _ => Err("an axis is x, y or z".into()),
+    }
+}
+
+fn sketch3d_line(s: &mut Session, mut k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let a = point3_value(s, k.as_deref_mut(), field(p, "start")?)?;
+    let b = point3_value(s, k.as_deref_mut(), field(p, "end")?)?;
+    let along = arg(p, "along").filter(|v| !v.is_null()).map(axis3_value).transpose()?;
+    let (line, start, end) = on_sketch3d(s, p, |d, id| {
+        let (a, b) = (point3_ref(d, id, &a)?, point3_ref(d, id, &b)?);
+        let sk = sketch3d_of(d, id)?;
+        let line = sk.add_line(a, b)?;
+        if let Some(axis) = along {
+            sk.add_constraint(Constraint3::Along { line, axis })?;
+        }
+        let (start, end) = sk.geometry(line).and_then(Geometry3::ends).ok_or("internal: a line without ends")?;
+        Ok((line, start, end))
+    })?;
+    Ok(json!({ "line": line.0, "start": start.0, "end": end.0 }))
+}
+
+fn sketch3d_spline(s: &mut Session, mut k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let list = field(p, "points")?.as_array().ok_or("`points` must be a list")?;
+    if list.len() > tenon_sketch::sketch3d::MAX_SPLINE_POINTS {
+        return Err("`points` is too long".into());
+    }
+    let mut points = Vec::with_capacity(list.len());
+    for v in list {
+        points.push(point3_value(s, k.as_deref_mut(), v)?);
+    }
+    let (spline, ids) = on_sketch3d(s, p, |d, id| {
+        let refs = points.iter().map(|q| point3_ref(d, id, q)).collect::<Result<Vec<_>, _>>()?;
+        let sk = sketch3d_of(d, id)?;
+        let spline = sk.add_spline(&refs)?;
+        Ok((spline, sk.geometry(spline).map(Geometry3::points).unwrap_or_default()))
+    })?;
+    Ok(json!({ "spline": spline.0, "points": ids.iter().map(|e| e.0).collect::<Vec<_>>() }))
+}
+
+fn sketch3d_bend(s: &mut Session, p: &Value) -> CmdResult {
+    let radius = num(p, "radius")?;
+    let point = opt_id(p, "point")?.map(EntityId);
+    let lines = if arg(p, "lines").is_some() { ids(p, "lines")? } else { Vec::new() };
+    let b = on_sketch3d(s, p, |d, id| {
+        let sk = sketch3d_of(d, id)?;
+        let corner = match (point, lines.as_slice()) {
+            (Some(c), _) => c,
+            (None, [a, b]) => {
+                sk.joined_ends(*a, *b).map(|e| e.0).ok_or("those two lines do not meet at an end: a bend rounds the corner where they do")?
+            }
+            _ => return Err("give the corner as `point`, or its two lines as `lines`".into()),
+        };
+        Ok(sk.add_bend(corner, radius)?)
+    })?;
+    Ok(json!({ "arc": b.arc.0, "center": b.center.0, "start": b.start.0, "end": b.end.0, "corner": b.corner.0, "radius": b.radius.0 }))
+}
+
+fn sketch3d_include(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let edge: EdgeRef = parse(p, "edge")?;
+    let found: crate::sketch3d::Found3 = if arg(p, "geometry").is_some() {
+        parse(p, "geometry")?
+    } else {
+        let Some(k) = k else {
+            return Err("sketch3d.include needs the geometry kernel, or `geometry`: what the edge is".into());
+        };
+        let r = s.regen(k).clone();
+        let (b, e) = r.resolve_edge(&edge, k).map_err(CmdError)?;
+        let shape = r.bodies.get(b).ok_or("no such body")?.shape;
+        let info = k.edge_info(shape.edge(e)).map_err(|err| CmdError(err.to_string()))?;
+        crate::sketch3d::edge_found(&info, || {
+            let mesh = k.tessellate(shape, &tenon_kernel::MeshTol::default()).map_err(|err| err.to_string())?;
+            let line = mesh.edges.iter().find(|m| m.edge == e).map_or(&[][..], |m| m.points.as_slice());
+            Ok(line.iter().map(|q| Vec3::new(f64::from(q[0]), f64::from(q[1]), f64::from(q[2]))).collect())
+        })
+        .map_err(CmdError)?
+    };
+    let (entity, ends) = on_sketch3d(s, p, |d, id| {
+        let entity = linked_entity(d, id, crate::sketch3d::LinkTo::Edge(edge), &found)?;
+        Ok((entity, sketch3d_of(d, id)?.geometry(entity).and_then(Geometry3::ends)))
+    })?;
+    Ok(json!({ "entity": entity.0, "start": ends.map(|e| e.0.0), "end": ends.map(|e| e.1.0) }))
+}
+
+fn sketch3d_constrain(s: &mut Session, p: &Value) -> CmdResult {
+    let c: Constraint3 = parse(p, "constraint")?;
+    let id = on_sketch3d(s, p, |d, id| Ok(sketch3d_of(d, id)?.add_constraint(c)?))?;
+    Ok(json!({ "constraint": id.0 }))
+}
+
+fn sketch3d_set_dimension(s: &mut Session, p: &Value) -> CmdResult {
+    let (sketch, c) = (sketch_id(p)?, ConstraintId(id_u32(p, "constraint")?));
+    let path = ValuePath::Dimension { sketch, constraint: c };
+    match param_value(p, "equation")? {
+        Some(eq) if eq.trim().parse::<f64>().is_err() => s.edit(|d| {
+            d.sketch3d(sketch)
+                .and_then(|sk| sk.constraint(c))
+                .filter(|x| x.is_dimensional())
+                .ok_or_else(|| CmdError(format!("{c} is not a dimension of {sketch}")))?;
+            d.name_values();
+            let name = d.name_of(&path).ok_or("the dimension has no name")?.to_owned();
+            d.set_equation(&name, Some(&eq)).map_err(CmdError)
+        })?,
+        given => {
+            let v = match given {
+                Some(eq) => eq.trim().parse::<f64>().map_err(|_| CmdError("not a number".into()))?,
+                None => num(p, "value")?,
+            };
+            s.edit(|d| {
+                sketch3d_of(d, sketch)?.set_dimension(c, v)?;
+                d.clear_equation_at(&path);
+                Ok(())
+            })?;
+        }
+    }
+    let name = s.document().name_of(&path).map(str::to_owned);
+    Ok(json!({ "name": name }))
+}
+
+fn sketch3d_move(s: &mut Session, p: &Value) -> CmdResult {
+    let point = EntityId(id_u32(p, "point")?);
+    let to = vec3_value(field(p, "at")?).ok_or("`at` is [x, y, z], each in range")?;
+    on_sketch3d(s, p, |d, id| {
+        let sk = sketch3d_of(d, id)?;
+        if !sk.is_point(point) {
+            return Err(CmdError(format!("{point} is not a point of {id}")));
+        }
+        Ok(sk.drag(point, to)?)
+    })?;
+    Ok(json!({}))
+}
+
+fn sketch3d_delete(s: &mut Session, p: &Value) -> CmdResult {
+    let entities = if arg(p, "entities").is_some() { ids(p, "entities")? } else { Vec::new() };
+    let constraints = if arg(p, "constraints").is_some() { ids(p, "constraints")? } else { Vec::new() };
+    let gone = on_sketch3d(s, p, |d, id| {
+        let sk = sketch3d_of(d, id)?;
+        for c in &constraints {
+            sk.remove_constraint(ConstraintId(c.0))?;
+        }
+        Ok(sk.delete(&entities))
+    })?;
+    Ok(json!({ "deleted": gone.iter().map(|e| e.0).collect::<Vec<_>>() }))
+}
+
+fn sketch3d_construction(s: &mut Session, p: &Value) -> CmdResult {
+    let e = EntityId(id_u32(p, "entity")?);
+    let on = arg(p, "on").and_then(Value::as_bool).unwrap_or(true);
+    on_sketch3d(s, p, |d, id| Ok(sketch3d_of(d, id)?.set_construction(e, on)?))?;
+    Ok(json!({}))
+}
+
+/// Makes reference geometry the sketch's own: it stays where it is and no longer follows the part.
+fn sketch3d_break_link(s: &mut Session, p: &Value) -> CmdResult {
+    let list = ids(p, "entities")?;
+    on_sketch3d(s, p, |d, id| {
+        let sk = sketch3d_of(d, id)?;
+        for e in &list {
+            if !sk.is_reference(*e) {
+                return Err(CmdError(format!("{e} does not follow the part")));
+            }
+            match sk.geometry(*e) {
+                Some(Geometry3::Edge { .. }) => {
+                    return Err(CmdError(format!(
+                        "{e} is a curved edge of the part: a sketch has no such curve of its own, so it can only be deleted"
+                    )));
+                }
+                Some(g) => {
+                    for q in g.points().into_iter().chain([*e]) {
+                        sk.set_reference(q, false)?;
+                    }
+                }
+                None => return Err(tenon_sketch::SketchError::NoEntity(*e).into()),
+            }
+        }
+        Ok(())
+    })?;
+    Ok(json!({}))
+}
+
+fn sketch3d_info(s: &mut Session, p: &Value) -> CmdResult {
+    let id = sketch_id(p)?;
+    let sk = s.document().sketch3d(id).ok_or_else(|| CmdError(format!("{id} is not a 3D sketch")))?;
+    let dof = sk.dof();
+    let entities: Vec<Value> = sk
+        .entities()
+        .map(|(e, x)| {
+            let mut v = serde_json::to_value(&x.geometry).unwrap_or(Value::Null);
+            if let Some(o) = v.as_object_mut() {
+                o.insert("id".into(), json!(e.0));
+                if x.construction {
+                    o.insert("construction".into(), json!(true));
+                }
+                if x.reference {
+                    o.insert("reference".into(), json!(true));
+                }
+                if let Some(l) = sk.length(e) {
+                    o.insert("length".into(), json!(l));
+                }
+                o.insert("fully_constrained".into(), json!(dof.as_ref().is_ok_and(|d| d.fully_constrained.contains(&e))));
+            }
+            v
+        })
+        .collect();
+    let constraints: Vec<Value> = sk
+        .constraints()
+        .map(|(c, x)| {
+            let mut v = serde_json::to_value(x).unwrap_or(Value::Null);
+            if let Some(o) = v.as_object_mut() {
+                o.insert("id".into(), json!(c.0));
+            }
+            v
+        })
+        .collect();
+    let links: Vec<u32> = s.document().links3(id).iter().map(|l| l.entity.0).collect();
+    Ok(json!({ "entities": entities, "constraints": constraints, "dof": dof.as_ref().ok().map(|d| d.dof), "links": links }))
+}
+
+/// The length of curves of a 3D sketch.
+fn sketch3d_length(s: &mut Session, p: &Value) -> CmdResult {
+    let id = sketch_id(p)?;
+    let sk = s.document().sketch3d(id).ok_or_else(|| CmdError(format!("{id} is not a 3D sketch")))?;
+    let curves = if arg(p, "curves").is_some() { ids(p, "curves")? } else { crate::sketch3d::path_curves(sk) };
+    let mut each = Vec::with_capacity(curves.len());
+    let mut total = 0.0;
+    for c in curves {
+        let l = sk.length(c).ok_or_else(|| CmdError(format!("{c} is no curve of {id}")))?;
+        total += l;
+        each.push(json!({ "curve": c.0, "length": l }));
+    }
+    Ok(json!({ "length": total, "curves": each }))
+}
+
 /// Entities, constraints, degrees of freedom and closed regions of a sketch.
 pub fn sketch_info_value(sk: &Sketch) -> Value {
     let dof = sk.dof();
@@ -2425,8 +2884,8 @@ fn feature_values(d: &Document, id: FeatureId) -> Vec<(ValuePath, f64)> {
 /// Adds a feature from its definition, with equations for its values, in one step.
 fn feature_add(s: &mut Session, p: &Value) -> CmdResult {
     let kind: FeatureKind = parse(p, "kind")?;
-    if matches!(kind, FeatureKind::Sketch { .. }) {
-        return Err("use sketch.create for sketches".into());
+    if matches!(kind, FeatureKind::Sketch { .. } | FeatureKind::Sketch3d { .. }) {
+        return Err("use sketch.create or sketch.new_3d for sketches".into());
     }
     let equations = equations_param(p)?;
     s.document().check_copies(&kind).map_err(CmdError)?;
@@ -2478,11 +2937,13 @@ fn axis_ref(s: &Session, p: &Value) -> Result<AxisRef, CmdError> {
 fn model_sweep(s: &mut Session, p: &Value) -> CmdResult {
     let sketch = sketch_id(p)?;
     let path_sketch = FeatureId(id_u32(p, "path_sketch")?);
-    let sk = s.document().sketch(path_sketch).ok_or_else(|| CmdError(format!("{path_sketch} is not a sketch")))?;
     // By default, every line and arc of the path's sketch that is not construction.
     let curves = if arg(p, "path").is_some() {
         ids(p, "path")?
+    } else if let Some(sk) = s.document().sketch3d(path_sketch) {
+        crate::sketch3d::path_curves(sk)
     } else {
+        let sk = s.document().sketch(path_sketch).ok_or_else(|| CmdError(format!("{path_sketch} is not a sketch")))?;
         sk.entities()
             .filter(|(_, e)| !e.construction && matches!(e.geometry, tenon_sketch::Geometry::Line { .. } | tenon_sketch::Geometry::Arc { .. }))
             .map(|(id, _)| id)
@@ -2746,7 +3207,14 @@ fn feature_visibility(s: &mut Session, p: &Value) -> CmdResult {
     let visible = field(p, "visible")?.as_bool().ok_or("`visible` must be true or false")?;
     s.edit(|d| {
         let f = d.feature_mut(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?;
-        if !matches!(f.kind, FeatureKind::Sketch { .. } | FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_)) {
+        if !matches!(
+            f.kind,
+            FeatureKind::Sketch { .. }
+                | FeatureKind::Sketch3d { .. }
+                | FeatureKind::WorkPlane(_)
+                | FeatureKind::WorkAxis(_)
+                | FeatureKind::WorkPoint(_)
+        ) {
             return Err(CmdError(format!("{} is no sketch or work feature: its visibility is the part's", f.name)));
         }
         f.visible = Some(visible);
@@ -4129,6 +4597,80 @@ static COMMANDS: &[CommandSpec] = &[
     ),
     doc_cmd!("sketch.edit_text", "Edit Text", "sketch, entity (the text's id); text, height, angle: what changes", true, sketch_edit_text),
     doc_cmd!("sketch.info", "Sketch Info", "sketch", false, sketch_info),
+    doc_cmd!("sketch.new_3d", "Start 3D Sketch", "A sketch on no plane, empty. Returns the feature and its name", true, sketch_new_3d),
+    CommandSpec {
+        id: "sketch3d.point",
+        label: "3D Point",
+        help: "sketch; at: [x, y, z], or what of the part it stands for and follows: \"origin\", {\"work\": id} or {\"vertex\": edge reference, \"end\": 0 or 1}. Returns the point",
+        mutates: true,
+        run: Run::Opt(sketch3d_point),
+    },
+    CommandSpec {
+        id: "sketch3d.line",
+        label: "3D Line",
+        help: "sketch; start, end: each a point's id, or as sketch3d.point's `at`; along: x | y | z holds it parallel to that axis. Returns the line and its two points",
+        mutates: true,
+        run: Run::Opt(sketch3d_line),
+    },
+    CommandSpec {
+        id: "sketch3d.spline",
+        label: "3D Spline",
+        help: "sketch; points: 2 or more, each as a line's start: it goes through them, in order. Returns the spline and its points",
+        mutates: true,
+        run: Run::Opt(sketch3d_spline),
+    },
+    doc_cmd!(
+        "sketch3d.bend",
+        "Bend",
+        "sketch; point: the corner where two lines meet, or lines: the two; radius. Returns the arc, its centre and ends, the corner (kept as a construction point) and the radius's dimension",
+        true,
+        sketch3d_bend
+    ),
+    CommandSpec {
+        id: "sketch3d.include",
+        label: "Include Geometry",
+        help: "sketch; edge: an edge reference from model.edge_ref, brought in as reference geometry that follows the part; geometry: what the edge is, where the kernel is not to hand. Returns the entity and its two end points",
+        mutates: true,
+        run: Run::Opt(sketch3d_include),
+    },
+    doc_cmd!(
+        "sketch3d.constrain",
+        "3D Constraint",
+        "sketch; constraint: {\"type\": coincident (a, b) | fix (point) | along (line, axis) | parallel (a, b) | perpendicular (a, b) | equal (a, b) | tangent (a, b) | length (line, value) | distance (a, b, value) | coordinate (point, axis, value) | radius (arc, value)}. Refused, in words, when it would over-constrain the sketch",
+        true,
+        sketch3d_constrain
+    ),
+    doc_cmd!("sketch3d.set_dimension", "Set 3D Dimension", "sketch, constraint; value, or equation", true, sketch3d_set_dimension),
+    doc_cmd!("sketch3d.move", "Move 3D Point", "sketch, point; at: [x, y, z] (it goes as near as the constraints let it)", true, sketch3d_move),
+    doc_cmd!(
+        "sketch3d.delete",
+        "Delete in 3D Sketch",
+        "sketch; entities: [ids], constraints: [ids]. A bend deleted gives its corner back. Returns what was deleted",
+        true,
+        sketch3d_delete
+    ),
+    doc_cmd!("sketch3d.construction", "3D Construction", "sketch, entity; on (default true)", true, sketch3d_construction),
+    doc_cmd!(
+        "sketch3d.break_link",
+        "Break 3D Link",
+        "sketch, entities: reference points and lines become the sketch's own, where they are",
+        true,
+        sketch3d_break_link
+    ),
+    doc_cmd!(
+        "sketch3d.info",
+        "3D Sketch Info",
+        "sketch. Its entities with their lengths, constraints, degrees of freedom and links",
+        false,
+        sketch3d_info
+    ),
+    doc_cmd!(
+        "sketch3d.length",
+        "3D Sketch Length",
+        "sketch; curves (default: its own curves that are not construction). Returns the length in all, and each",
+        false,
+        sketch3d_length
+    ),
     doc_cmd!(
         "model.extrude",
         "Extrude",
