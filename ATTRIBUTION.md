@@ -38,6 +38,9 @@ Standard sizes and physical constants held in code:
   screw are a choice of preferred lengths made for Tenon. The T-slot profile is Tenon's own
   simplified section and no maker's design. The parts are built from these numbers by Tenon's
   own commands, with the simplifications each family's description states.
+- the punch library (`crates/model/src/sheet/punch.rs`, DEC-138): seven shapes (round, square,
+  rectangle, obround, D-shape, dimple, louver) and their starting sizes, written for Tenon. No vendor's
+  or catalogue's punch data is copied.
 
 | Asset | Author | Source | Licence | Notes |
 |---|---|---|---|---|
