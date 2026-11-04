@@ -895,13 +895,20 @@ pub fn sync_variants(assemblies: &[&Assembly], parts: &mut Parts) -> bool {
 }
 
 /// An open assembly.
+/// What a step of undo takes back: the assembly as it was, and the parts changed from the assembly by
+/// that step (`asm.edit_part`), one step of each part's own history, in the order they were changed.
+struct Step {
+    asm: Assembly,
+    parts: Vec<String>,
+}
+
 pub struct AsmSession {
     asm: Assembly,
-    undo: Vec<Assembly>,
+    undo: Vec<Step>,
     /// How many steps have been put on `undo`, less those taken off: where a group of steps
     /// began is told by this even when the oldest steps have been dropped.
     steps: u64,
-    redo: Vec<Assembly>,
+    redo: Vec<Step>,
     revision: u64,
     saved_revision: u64,
     pub parts: Parts,
@@ -981,14 +988,7 @@ impl AsmSession {
         match f(&mut self.asm, &self.parts).and_then(|v| self.asm.check_reach().and_then(|()| self.asm.validate()).map(|()| v).map_err(CmdError)) {
             Ok(v) => {
                 if self.asm != before {
-                    self.undo.push(before);
-                    self.steps += 1;
-                    if self.undo.len() > MAX_UNDO {
-                        self.undo.remove(0);
-                    }
-                    self.redo.clear();
-                    self.revision += 1;
-                    self.sync_variants();
+                    self.add_step(Step { asm: before, parts: Vec::new() });
                 }
                 Ok(v)
             }
@@ -996,6 +996,28 @@ impl AsmSession {
                 self.asm = before;
                 Err(e)
             }
+        }
+    }
+
+    fn add_step(&mut self, step: Step) {
+        self.undo.push(step);
+        self.steps += 1;
+        if self.undo.len() > MAX_UNDO {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+        self.revision += 1;
+        self.sync_variants();
+    }
+
+    /// One change made to the part `key` from the assembly, since `mark` and with `before` the
+    /// assembly as it was then, becomes a step of the assembly's own, with whatever the assembly's
+    /// solving did about it.
+    pub fn part_edited(&mut self, mark: u64, before: Assembly, key: String) {
+        self.squash_since(mark);
+        match self.at_mark(mark).and_then(|first| self.undo.get_mut(first)) {
+            Some(step) => step.parts.push(key),
+            None => self.add_step(Step { asm: before, parts: vec![key] }),
         }
     }
 
@@ -1015,7 +1037,10 @@ impl AsmSession {
     /// the commands an agent ran as one request, is undone as a whole.
     pub fn squash_since(&mut self, mark: u64) {
         if let Some(first) = self.at_mark(mark) {
-            self.undo.truncate(first + 1);
+            let later: Vec<String> = self.undo.drain(first + 1..).flat_map(|s| s.parts).collect();
+            if let Some(step) = self.undo.get_mut(first) {
+                step.parts.extend(later);
+            }
             self.steps = mark + 1;
         }
     }
@@ -1024,10 +1049,16 @@ impl AsmSession {
     /// to redo): for a run of commands of which one failed.
     pub fn roll_back_to(&mut self, mark: u64) {
         if let Some(first) = self.at_mark(mark)
-            && let Some(before) = self.undo.get(first).cloned()
+            && let Some(before) = self.undo.get(first).map(|s| s.asm.clone())
         {
             self.asm = before;
-            self.undo.truncate(first);
+            // (What was done to a part from here goes too, the last first.)
+            for key in self.undo.split_off(first).iter().rev().flat_map(|s| s.parts.iter().rev()) {
+                if let Some(p) = self.parts.get_mut(key) {
+                    let last = p.session.mark().saturating_sub(1);
+                    p.session.roll_back_to(last);
+                }
+            }
             self.redo.clear();
             self.steps = mark;
             self.revision += 1;
@@ -1038,8 +1069,13 @@ impl AsmSession {
 
     pub fn undo(&mut self) -> bool {
         match self.undo.pop() {
-            Some(a) => {
-                self.redo.push(std::mem::replace(&mut self.asm, a));
+            Some(step) => {
+                for key in step.parts.iter().rev() {
+                    if let Some(p) = self.parts.get_mut(key) {
+                        p.session.undo();
+                    }
+                }
+                self.redo.push(Step { asm: std::mem::replace(&mut self.asm, step.asm), parts: step.parts });
                 self.steps = self.steps.saturating_sub(1);
                 self.revision += 1;
                 self.sync_variants();
@@ -1050,8 +1086,13 @@ impl AsmSession {
     }
     pub fn redo(&mut self) -> bool {
         match self.redo.pop() {
-            Some(a) => {
-                self.undo.push(std::mem::replace(&mut self.asm, a));
+            Some(step) => {
+                for key in &step.parts {
+                    if let Some(p) = self.parts.get_mut(key) {
+                        p.session.redo();
+                    }
+                }
+                self.undo.push(Step { asm: std::mem::replace(&mut self.asm, step.asm), parts: step.parts });
                 self.steps += 1;
                 self.revision += 1;
                 self.sync_variants();
@@ -1067,7 +1108,7 @@ impl AsmSession {
     pub fn close_unused(&mut self) {
         let shown = std::iter::once(&self.asm).chain(self.preview.as_deref());
         let named: std::collections::BTreeSet<&str> =
-            shown.chain(&self.undo).chain(&self.redo).flat_map(|a| a.components.iter()).map(|c| c.part.as_str()).collect();
+            shown.chain(self.undo.iter().map(|s| &s.asm)).chain(self.redo.iter().map(|s| &s.asm)).flat_map(|a| a.components.iter()).map(|c| c.part.as_str()).collect();
         self.parts.retain(|k, p| named.contains(crate::model::key_file(k)) || p.session.is_dirty());
     }
 

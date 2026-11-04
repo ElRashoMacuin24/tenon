@@ -6,7 +6,7 @@
 use std::f64::consts::PI;
 use std::path::PathBuf;
 
-use serde_json::json;
+use serde_json::{Value, json};
 use tenon_cli::Engine;
 use tenon_kernel::Kernel;
 use tenon_kernel_occt::OcctKernel;
@@ -197,4 +197,41 @@ fn a_block_is_held_as_the_mirror_image_of_another_in_a_plane() {
     let axis = run(&mut e, "asm.geom", json!({ "axis": "z" }));
     let err = e.exec("asm.constrain", &json!({ "type": "symmetry", "a": right, "b": axis, "plane": yz })).unwrap_err();
     assert!(err.contains("two of a kind"), "{err}");
+}
+
+/// asm.edit_part is an edit: asm.undo takes it back, and not the step before it, which it did, leaving
+/// the part as edited and the component gone.
+#[test]
+fn undo_takes_back_an_edit_of_a_part_from_the_assembly() {
+    let mut e = Engine::new(Box::new(OcctKernel::new()), scratch("undo-part"));
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    let volume = |e: &mut Engine| run(e, "asm.mass", json!({}))["volume"].as_f64().unwrap();
+    run(&mut e, "model.box", json!({ "width": 10, "depth": 10, "height": 10 }));
+    run(&mut e, "file.save", json!({ "path": "eu.tenon" }));
+    run(&mut e, "asm.new", json!({ "name": "E" }));
+    let c = run(&mut e, "asm.insert", json!({ "path": "eu.tenon", "grounded": true }))["component"].clone();
+    assert!((volume(&mut e) - 1000.0).abs() < 1e-6);
+    let edit = json!({ "component": c, "run": "model.box", "with": { "width": 5, "depth": 5, "height": 5, "x": 20, "operation": "new_body" } });
+    run(&mut e, "asm.edit_part", edit.clone());
+    assert!((volume(&mut e) - 1125.0).abs() < 1e-6);
+    run(&mut e, "asm.undo", json!({}));
+    assert!((volume(&mut e) - 1000.0).abs() < 1e-6, "the edit is taken back");
+    assert_eq!(run(&mut e, "asm.tree", json!({}))["components"].as_array().unwrap().len(), 1, "and only the edit");
+    run(&mut e, "asm.redo", json!({}));
+    assert!((volume(&mut e) - 1125.0).abs() < 1e-6, "and put back");
+    // A step before it comes next, and then the component goes.
+    run(&mut e, "asm.undo", json!({}));
+    run(&mut e, "asm.undo", json!({}));
+    assert_eq!(run(&mut e, "asm.tree", json!({}))["components"].as_array().unwrap().len(), 0);
+    run(&mut e, "asm.redo", json!({}));
+    run(&mut e, "asm.redo", json!({}));
+    assert!((volume(&mut e) - 1125.0).abs() < 1e-6);
+    // A question put to the part is no step: there is the edit still to take back.
+    run(&mut e, "asm.edit_part", json!({ "component": c, "run": "model.mass" }));
+    run(&mut e, "asm.undo", json!({}));
+    assert!((volume(&mut e) - 1000.0).abs() < 1e-6, "the question left no step");
+    // A batch that fails after such an edit takes it back too, with nothing left to redo.
+    let steps = json!({ "steps": [{ "run": "asm.edit_part", "with": edit }, { "run": "asm.undefined_thing" }] });
+    assert!(e.exec("batch.run", &steps).is_err());
+    assert!((volume(&mut e) - 1000.0).abs() < 1e-6, "the batch left nothing");
 }

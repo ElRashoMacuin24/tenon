@@ -935,6 +935,8 @@ fn asm_edit_part(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> C
         return Err("`run` must be a part command".into());
     }
     let params = arg(p, "with").cloned().unwrap_or_else(|| json!({}));
+    let (mark, before, key) = (s.mark(), s.assembly().clone(), s.component(cid)?.part.clone());
+    let part_mark = s.part_of(cid)?.session.mark();
     let result = match k {
         Some(k) => {
             let r = s.part_of(cid)?.session.exec(&run, &params, Some(&mut *k))?;
@@ -943,8 +945,16 @@ fn asm_edit_part(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> C
         }
         None => s.part_of(cid)?.session.exec(&run, &params, None)?,
     };
-    let solved = s.update()?;
-    after(s, json!({ "result": result, "converged": solved.converged }))
+    let solved = s.update();
+    // (One step of the assembly's history, and of the part's, however the solving went. A command
+    // that changed nothing of the part, as a question to it, is none.)
+    let session = &mut s.part_of(cid)?.session;
+    let changed = session.mark() != part_mark;
+    session.squash_since(part_mark);
+    if changed {
+        s.part_edited(mark, before, key);
+    }
+    after(s, json!({ "result": result, "converged": solved?.converged }))
 }
 
 static COMMANDS: &[AsmCommand] = &[

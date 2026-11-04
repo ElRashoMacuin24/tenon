@@ -268,6 +268,9 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- `asm.undo` did not take back `asm.edit_part`: it took back the assembly's step before it, placed
+  components included, and the part stayed as edited. It is now a step of the assembly's history. In the
+  window's control port, it said there was nothing to undo.
 - A part that does not build, as one whose Derive has lost its file, said nothing where it was used: the
   component was simply not there, with a mass of 0 and no interference. It is now red in the browser and
   on the status line, what cannot be worked out without it names it, and each drawing view of it says so.
