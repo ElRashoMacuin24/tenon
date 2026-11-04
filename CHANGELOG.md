@@ -30,7 +30,7 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   revolution To, To Next, by two angles or Flipped; a spotface or To hole; a variable or face fillet;
   a work plane through three points; a Tangent or Symmetry relationship; a mirrored occurrence in an
   assembly; an auxiliary or overlay view; a baseline or ordinate set; an emboss, a derived part or a
-  UCS; a 3D sketch or what is made from one. Other new things it opens, and on a save it loses them: a
+  UCS; a 3D sketch or what is made from one; a rip, an unfold or a refold. Other new things it opens, and on a save it loses them: a
   tapped hole's thread (the solid is the same), which points are sketch points, which sketches are
   shown, a study's Optimize Shape settings, an assembly's patterns (each element is then a free
   component where it stands, those of a suppressed pattern shown and counted), and a drawing view's
@@ -178,6 +178,18 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
   the part. `feature.visibility`.
 - **Constrain** offers Mate, Angle and Insert, with Flush as Mate's second solution; offsets and
   angles are typed.
+
+### Sheet metal
+
+- **Rip, Unfold and Refold** are on the Sheet Metal tab, no longer greyed. Rip opens a seam in a
+  face, flat or round, so that a closed shape can be laid flat: a slit through a point, a slit
+  between two points, or the whole face out. A tube that was ripped lays flat from its round side.
+  Unfold lays chosen bends flat from a face that stays where it is, so that cuts can go across
+  them; Refold folds them back, with what was cut going round the bend, and says in words what
+  cannot be folded back. New commands `sheet.rip`, `sheet.unfold`, `sheet.refold`, new feature types
+  `rip`, `unfold`, `refold` in the part file. A rip that would part the sheet is refused, as is an
+  unfold of a bend with a cut through it that is not square to the sheet: Cut Normal and Cut Across
+  Bend are, and a plain straight cut is not.
 
 ### Drawings
 

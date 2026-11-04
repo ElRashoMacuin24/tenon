@@ -6,7 +6,7 @@
 //! surface is long: angle x (inside radius + K x thickness).
 
 use std::collections::{BTreeMap, VecDeque};
-use std::f64::consts::TAU;
+use std::f64::consts::{PI, TAU};
 
 use tenon_geom::{Axis, Vec2, Vec3};
 use tenon_kernel::{CurveKind, EdgeId, EdgeInfo, FaceInfo, Kernel, KernelError, ShapeHandle, SurfaceKind, Topology};
@@ -45,6 +45,9 @@ pub(super) enum Chart {
         r0: Vec3,
         /// The angle of the middle of the face: angles are taken within half a turn of it.
         mid: f64,
+        /// The middle as it goes along the axis, where it is not one angle: (along, angle), in
+        /// order. A slit that runs round a tube at a slant has no one angle opposite it.
+        wander: Vec<(f64, f64)>,
         rho: f64,
         o2: Vec2,
         ea: Vec2,
@@ -57,7 +60,7 @@ pub(super) enum Chart {
 }
 
 /// The unit direction from an axis to `p`, unless `p` is on it.
-fn radial(axis: &Axis, p: Vec3) -> Option<Vec3> {
+pub(super) fn radial(axis: &Axis, p: Vec3) -> Option<Vec3> {
     let d = p - axis.origin();
     let r = d - axis.dir() * d.dot(axis.dir());
     (r.len() > 1e-9).then(|| r.normalized())
@@ -68,11 +71,13 @@ impl Chart {
     pub(super) fn round(&self, p: Vec3) -> (f64, f64) {
         match self {
             Chart::Plane { .. } => (0.0, 0.0),
-            Chart::Bend { q, axis, r0, mid, .. } => {
+            Chart::Bend { q, axis, r0, mid, wander, .. } => {
                 let a = axis.dir();
                 let rp = radial(axis, p).unwrap_or(*r0);
                 let raw = r0.cross(rp).dot(a).atan2(r0.dot(rp));
-                (raw + TAU * ((mid - raw) / TAU).round(), (p - *q).dot(a))
+                let along = (p - *q).dot(a);
+                let middle = middle_at(wander, along).unwrap_or(*mid);
+                (raw + TAU * ((middle - raw) / TAU).round(), along)
             }
         }
     }
@@ -177,10 +182,205 @@ pub(super) fn base_chart(face: &FaceInfo) -> Option<Chart> {
     Some(Chart::Plane { o3: face.centroid, u3, v3, o2: Vec2::ZERO, u2: Vec2::X, v2: Vec2::Y })
 }
 
+/// A gap in a round face less wide than this is none (radians).
+const ROUND_GAP: f64 = 1e-9;
+
+/// What stretches of angle leave of the way round, each given by its two ends in either order: the
+/// middle of the widest gap, and how wide it is. Nothing when they go all the way round.
+fn widest_gap(stretches: &[(f64, f64)]) -> Option<(f64, f64)> {
+    let mut covered: Vec<(f64, f64)> = Vec::with_capacity(stretches.len() + 1);
+    for &(a, b) in stretches {
+        let (lo, long) = (a.min(b), (a - b).abs());
+        if long >= TAU {
+            return None;
+        }
+        let from = lo.rem_euclid(TAU);
+        covered.push((from, from + long));
+        // (What runs past a turn comes round to the start again.)
+        covered.push((from - TAU, from + long - TAU));
+    }
+    covered.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let &(first, _) = covered.first()?;
+    let (mut reach, mut best) = (first, None::<(f64, f64)>);
+    for (lo, hi) in &covered {
+        if *lo > reach && best.is_none_or(|b| *lo - reach > b.1) {
+            best = Some(((reach + *lo) / 2.0, *lo - reach));
+        }
+        reach = reach.max(*hi);
+    }
+    // From the furthest reached round to where the first starts, a turn on.
+    if first + TAU > reach && best.is_none_or(|b| first + TAU - reach > b.1) {
+        best = Some(((reach + first + TAU) / 2.0, first + TAU - reach));
+    }
+    best.filter(|b| b.1 > ROUND_GAP)
+}
+
+/// Where along a path of (along, angle) points the angle is at `along`: at its ends beyond them.
+fn middle_at(path: &[(f64, f64)], along: f64) -> Option<f64> {
+    let (first, last) = (path.first()?, path.last()?);
+    if along <= first.0 {
+        return Some(first.1);
+    }
+    let inside = path.windows(2).find(|w| w[0].0 < w[1].0 && (w[0].0..=w[1].0).contains(&along));
+    Some(inside.map_or(last.1, |w| w[0].1 + (w[1].1 - w[0].1) * (along - w[0].0) / (w[1].0 - w[0].0)))
+}
+
+/// A straight stretch of a round face's rim as the angle round its axis and the distance along it
+/// see it: its two ends, (angle, along), the angle not brought within a turn.
+type Stretch = ((f64, f64), (f64, f64));
+
+/// Whether (angle, along) is within the rim made of `rim`: looking back along the axis from there,
+/// an odd number of stretches is passed.
+fn within_rim(rim: &[Stretch], angle: f64, along: f64) -> bool {
+    let mut odd = false;
+    for ((t0, z0), (t1, z1)) in rim {
+        let (lo, hi) = (t0.min(*t1), t0.max(*t1));
+        let at = angle + TAU * ((lo - angle) / TAU).ceil();
+        if at < hi && z0 + (z1 - z0) * (at - t0) / (t1 - t0) < along {
+            odd = !odd;
+        }
+    }
+    odd
+}
+
+/// The opening of a round face that covers every angle somewhere along its length: its middle, as
+/// the (along, angle) points of a path from the one end of the face to the other that keeps within
+/// the opening. None when there is no such path: the face closes round on itself somewhere.
+fn opening_along(rim: &[Stretch]) -> Option<Vec<(f64, f64)>> {
+    let mut stops: Vec<f64> = rim.iter().flat_map(|(a, b)| [a.1, b.1]).collect();
+    stops.sort_by(f64::total_cmp);
+    stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-9);
+    let angle_at = |s: &Stretch, along: f64| s.0.0 + (s.1.0 - s.0.0) * (along - s.0.1) / (s.1.1 - s.0.1);
+    // In each band of the axis between two stops, what is not the face, by the angles of its two
+    // sides at the band's two ends.
+    type Opening = [(f64, f64); 2];
+    let mut bands: Vec<Vec<Opening>> = Vec::with_capacity(stops.len());
+    for w in stops.windows(2) {
+        let (lo, hi) = (w[0], w[1]);
+        let z = (lo + hi) / 2.0;
+        let mut sides: Vec<&Stretch> = rim.iter().filter(|s| s.0.1.min(s.1.1) < z && z < s.0.1.max(s.1.1)).collect();
+        sides.sort_by(|p, q| angle_at(p, z).rem_euclid(TAU).total_cmp(&angle_at(q, z).rem_euclid(TAU)));
+        let mut here = Vec::new();
+        for (i, s) in sides.iter().enumerate() {
+            let Some(t) = sides.get((i + 1) % sides.len()) else { continue };
+            let (from, mut to) = (angle_at(s, z).rem_euclid(TAU), angle_at(t, z).rem_euclid(TAU));
+            if to <= from {
+                to += TAU;
+            }
+            if !within_rim(rim, (from + to) / 2.0, z) {
+                let near = |angle: f64, by: f64| angle + TAU * ((by - angle) / TAU).round();
+                let at = |along: f64| (near(angle_at(s, along), from), near(angle_at(t, along), to));
+                here.push([at(lo), at(hi)]);
+            }
+        }
+        bands.push(here);
+    }
+    // From the first band to the last, through openings that meet.
+    let meet = |a: (f64, f64), b: (f64, f64)| {
+        [-TAU, 0.0, TAU].iter().any(|k| a.0 <= b.1 + k + ROUND_GAP && b.0 + k <= a.1 + ROUND_GAP) && a.1 - a.0 < TAU && b.1 - b.0 < TAU
+    };
+    let mut came_from: Vec<Vec<Option<usize>>> = Vec::with_capacity(bands.len());
+    for (j, band) in bands.iter().enumerate() {
+        let row: Vec<Option<usize>> = band
+            .iter()
+            .enumerate()
+            .map(|(i, open)| match j.checked_sub(1) {
+                None => Some(i),
+                Some(before) => bands.get(before).and_then(|b| {
+                    b.iter()
+                        .enumerate()
+                        .position(|(p, was)| came_from.get(before).and_then(|r| r.get(p)).copied().flatten().is_some() && meet(was[1], open[0]))
+                }),
+            })
+            .collect();
+        came_from.push(row);
+    }
+    let mut at = came_from.last()?.iter().position(Option::is_some)?;
+    let mut chosen: Vec<&Opening> = Vec::with_capacity(bands.len());
+    for j in (0..bands.len()).rev() {
+        chosen.push(bands.get(j)?.get(at)?);
+        at = (*came_from.get(j)?.get(at)?)?;
+    }
+    chosen.reverse();
+    let mut path: Vec<(f64, f64)> = Vec::with_capacity(chosen.len() * 2);
+    for (open, w) in chosen.iter().zip(stops.windows(2)) {
+        for (side, along) in open.iter().zip([w[0], w[1]]) {
+            let middle = (side.0 + side.1) / 2.0;
+            let onward = path.last().map_or(middle, |p| middle + TAU * ((p.1 - middle) / TAU).round());
+            path.push((along, onward));
+        }
+    }
+    Some(path)
+}
+
+/// Which way round the axis a round face is opposite the opening in it, seen from `r0` at `q`: the
+/// angle the chart's middle is to have, or the path it takes along the axis. Angles are then taken
+/// within half a turn of that, so that its rim is in one piece in the flat wherever the sheet is
+/// opened and whatever is cut out of it. None for a face that closes round on itself.
+pub(super) fn opposite_opening(solid: &Read, f: u32, axis: &Axis, q: Vec3, r0: Vec3) -> Option<(f64, Vec<(f64, f64)>)> {
+    let a = axis.dir();
+    let angle = |p: Vec3| radial(axis, p).map(|rp| r0.cross(rp).dot(a).atan2(r0.dot(rp)));
+    let onward = |from: f64, to: f64| from + (to - from + PI).rem_euclid(TAU) - PI;
+    // Each edge of its rim, by where it starts, is half way and ends.
+    let mut rim: Vec<Stretch> = Vec::new();
+    for &e in solid.topo.face_edges.get(f as usize).map_or(&[][..], Vec::as_slice) {
+        let Some(info) = solid.edges.get(e as usize).filter(|i| !i.degenerate) else { continue };
+        let start = angle(info.start)?;
+        // (A whole circle about the axis goes half a turn twice, and which way each half goes could
+        // be told only by the last digits.)
+        let whole_circle =
+            info.start.dist(info.end) < JOIN && matches!(&info.curve, CurveKind::Circle { axis: about, .. } if about.dir().cross(a).len() < SMOOTH);
+        let mid = if whole_circle { start + PI } else { onward(start, angle(info.mid)?) };
+        let end = if whole_circle { start + TAU } else { onward(mid, angle(info.end)?) };
+        let along = |p: Vec3| (p - q).dot(a);
+        rim.push(((start, along(info.start)), (mid, along(info.mid))));
+        rim.push(((mid, along(info.mid)), (end, along(info.end))));
+    }
+    // (Within half a turn of where the chart starts, which is at angle 0, so that it stays at 0.)
+    let from_start = |angle: f64| (angle + PI).rem_euclid(TAU) - PI;
+    let stretches: Vec<(f64, f64)> = rim.iter().map(|(p, q)| (p.0, q.0)).collect();
+    if let Some((middle, _)) = widest_gap(&stretches) {
+        return Some((from_start(middle + PI), Vec::new()));
+    }
+    let opposite: Vec<(f64, f64)> = opening_along(&rim)?.into_iter().map(|(along, middle)| (along, middle + PI)).collect();
+    let here = middle_at(&opposite, 0.0)?;
+    let by = from_start(here) - here;
+    Some((0.0, opposite.into_iter().map(|(along, middle)| (along, middle + by)).collect()))
+}
+
+/// The chart of a round side of the sheet the pattern is laid out from, as a tube that was ripped
+/// open has no flat one: seen from outside, its axis up the page, opposite the opening in it.
+fn round_chart(solid: &Read, f: u32, inner: bool, opts: &Unfold) -> Option<Chart> {
+    let face = solid.faces.get(f as usize)?;
+    let SurfaceKind::Cylinder { axis, radius } = &face.surface else { return None };
+    let r0 = radial(axis, face.centroid)?;
+    let rho = if inner { radius + opts.k_factor * opts.thickness } else { radius - (1.0 - opts.k_factor) * opts.thickness };
+    let eg = if inner { -Vec2::X } else { Vec2::X };
+    let q = axis.origin() + r0 * *radius;
+    let (mid, wander) = opposite_opening(solid, f, axis, q, r0).unwrap_or((0.0, Vec::new()));
+    Some(Chart::Bend { q, axis: *axis, r0, mid, wander, rho, o2: Vec2::ZERO, ea: Vec2::Y, eg, inner, radius: *radius })
+}
+
+/// The face a pattern is laid out from when it is not told: the largest flat face, unless that
+/// is no side of the sheet and a round side is to be had (a tube that was ripped open, whose
+/// flat faces are its rims and the sides of the slit): then the largest round side.
+fn side_to_lay_out_from(solid: &Read, t: f64) -> Option<u32> {
+    let flat = largest_flat(&solid.faces);
+    if flat.is_some_and(|f| super::wrap::has_other_side(solid, f as usize, t)) {
+        return flat;
+    }
+    let round = (0..solid.faces.len())
+        .filter(|i| bend_side(*i, &solid.faces, t).is_some())
+        .max_by(|x, y| solid.faces[*x].area.total_cmp(&solid.faces[*y].area))
+        .and_then(|i| u32::try_from(i).ok());
+    round.or(flat)
+}
+
 /// The chart of a face tangent to `parent` at `q`.
-fn child_chart(parent: &Chart, q: Vec3, face: &FaceInfo, inner: Option<bool>, opts: &Unfold) -> Result<Chart, String> {
+fn child_chart(parent: &Chart, q: Vec3, solid: &Read, f: u32, inner: Option<bool>, opts: &Unfold) -> Result<Chart, String> {
     let (b3, b2) = parent.tangent(q);
     let o2 = parent.map(q);
+    let face = solid.faces.get(f as usize).ok_or("no such face")?;
     match (&face.surface, inner) {
         (SurfaceKind::Cylinder { axis, radius }, Some(inner)) => {
             let a = axis.dir();
@@ -192,9 +392,9 @@ fn child_chart(parent: &Chart, q: Vec3, face: &FaceInfo, inner: Option<bool>, op
             }
             let rc =
                 radial(axis, face.centroid).ok_or("A bend that goes all the way round (a tube) has no edge to lay it flat from: it needs a seam.")?;
-            let mid = r0.cross(rc).dot(a).atan2(r0.dot(rc));
+            let (mid, wander) = opposite_opening(solid, f, axis, q, r0).unwrap_or((r0.cross(rc).dot(a).atan2(r0.dot(rc)), Vec::new()));
             let rho = if inner { radius + opts.k_factor * opts.thickness } else { radius - (1.0 - opts.k_factor) * opts.thickness };
-            Ok(Chart::Bend { q, axis: *axis, r0, mid, rho, o2, ea, eg, inner, radius: *radius })
+            Ok(Chart::Bend { q, axis: *axis, r0, mid, wander, rho, o2, ea, eg, inner, radius: *radius })
         }
         _ => Ok(Chart::Plane { o3: q, u3: b3[0], v3: b3[1], o2, u2: b2[0], v2: b2[1] }),
     }
@@ -285,7 +485,7 @@ pub(super) fn follow(solid: &Read, base: u32, first: Chart, opts: &Unfold) -> Re
                         None => continue,
                     },
                 };
-                charts.insert(g, child_chart(&chart, info.start, next, inner, opts)?);
+                charts.insert(g, child_chart(&chart, info.start, solid, g, inner, opts)?);
                 queue.push_back(g);
             }
         }
@@ -316,10 +516,19 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
     }
     let base = match opts.base {
         Some(b) => b,
-        None => largest_flat(&solid.faces).ok_or("The part has no flat face to lay the pattern out from.")?,
+        None => side_to_lay_out_from(&solid, t).ok_or("The part has no flat face to lay the pattern out from.")?,
     };
     let base_info = solid.faces.get(base as usize).ok_or("the face to lay the pattern out from does not exist")?;
-    let first = base_chart(base_info).ok_or("The pattern is laid out from a flat face: the face chosen is not flat.")?;
+    if let SurfaceKind::Cylinder { axis, .. } = &base_info.surface
+        && radial(axis, base_info.centroid).is_none()
+    {
+        return Err(
+            "The sheet goes all the way round (a tube), so it cannot be laid flat: it needs an open seam somewhere. Open one with Rip.".into()
+        );
+    }
+    let first = base_chart(base_info)
+        .or_else(|| round_chart(&solid, base, bend_side(base as usize, &solid.faces, t)?, opts))
+        .ok_or("The pattern is laid out from a flat face or a side of a bend: the face chosen is neither.")?;
     let charts = follow(&solid, base, first, opts)?;
     let Read { topo, faces, edges } = solid;
 
@@ -354,11 +563,21 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
     // they are the bend's extent lines.
     let mut curves: Vec<FlatCurve> = Vec::new();
     let mut extents: BTreeMap<u32, Vec<[Vec2; 2]>> = BTreeMap::new();
+    // Round faces that run on from one another about one axis: one bend, that the kernel has in
+    // two where it has the seam of its cylinder (a tube opened elsewhere than there).
+    let mut one_bend: Vec<(u32, u32)> = Vec::new();
     for (e, info) in edges.iter().enumerate() {
         if info.degenerate {
             continue;
         }
-        let on: Vec<u32> = topo.edge_faces.get(e).map_or(&[][..], Vec::as_slice).iter().copied().filter(|f| charts.contains_key(f)).collect();
+        let around = topo.edge_faces.get(e).map_or(&[][..], Vec::as_slice);
+        let on: Vec<u32> = around.iter().copied().filter(|f| charts.contains_key(f)).collect();
+        // The line where a round face meets itself: it goes all the way round there.
+        if let ([_], [f]) = (around, on.as_slice())
+            && matches!(charts.get(f), Some(Chart::Bend { .. }))
+        {
+            return Err("The sheet closes on itself (a box section, or a tube), so it cannot be laid flat: it needs an open seam somewhere.".into());
+        }
         match on.as_slice() {
             [f] => {
                 let Some(chart) = charts.get(f) else { continue };
@@ -373,6 +592,14 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
                                 .into(),
                         );
                     }
+                }
+                if let (Chart::Bend { axis: a, radius: ra, .. }, Chart::Bend { axis: b, radius: rb, .. }) = (cf, cg)
+                    && a.dir().cross(b.dir()).len() < SMOOTH
+                    && (ra - rb).abs() < 1e-6 * (1.0 + t)
+                    && radial(a, b.origin()).is_none_or(|_| (b.origin() - a.origin()).cross(a.dir()).len() < 1e-6 * (1.0 + t))
+                {
+                    one_bend.push((*f, *g));
+                    continue;
                 }
                 if matches!(info.curve, CurveKind::Line { .. }) {
                     for (face, chart) in [(f, cf), (g, cg)] {
@@ -437,12 +664,35 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
         bends.push(Bend {
             lines,
             extents: extents.remove(f).unwrap_or_default(),
-            angle: hi - lo,
+            // (A slit at a slant has the sheet reach further round than a turn from end to end.)
+            angle: (hi - lo).min(TAU),
             radius: if *inner { *radius } else { radius - t },
             up: *inner,
             allowance: (hi - lo) * rho,
             face: *f,
         });
+    }
+
+    for (f, g) in one_bend {
+        let (Some(i), Some(j)) = (bends.iter().position(|b| b.face == f), bends.iter().position(|b| b.face == g)) else { continue };
+        if i == j {
+            continue;
+        }
+        let other = bends.remove(j);
+        let Some(first) = bends.iter_mut().find(|b| b.face == f) else { continue };
+        // The centre line of the whole: the longer's, moved to the middle of the two.
+        let middle = |b: &Bend| b.lines.first().map(|l| (l[0] + l[1]) / 2.0);
+        if let (Some(a), Some(b)) = (middle(first), middle(&other)) {
+            let (mine, theirs) = (first.allowance, other.allowance);
+            let at = (a * mine + b * theirs) / (mine + theirs);
+            let (from, base) = if mine >= theirs { (a, first.lines.clone()) } else { (b, other.lines.clone()) };
+            let across = (b - a).normalized();
+            let by = across * (at - from).dot(across);
+            first.lines = base.iter().map(|l| [l[0] + by, l[1] + by]).collect();
+        }
+        first.angle = (first.angle + other.angle).min(TAU);
+        first.allowance += other.allowance;
+        first.extents.extend(other.extents);
     }
 
     // With its lower left corner at the origin.

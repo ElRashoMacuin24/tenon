@@ -4136,6 +4136,60 @@ fn sheet_fold(s: &mut Session, p: &Value) -> CmdResult {
     add_feature(s, FeatureKind::Fold(fold), p)
 }
 
+fn sheet_rip(s: &mut Session, p: &Value) -> CmdResult {
+    use crate::sheet::RipWay;
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let point = |key: &str| -> Result<tenon_geom::Vec3, CmdError> {
+        let [x, y, z]: [f64; 3] =
+            serde_json::from_value(field(p, key)?.clone()).map_err(|_| CmdError(format!("`{key}` must be three numbers [x, y, z]")))?;
+        Ok(tenon_geom::Vec3::new(x, y, z))
+    };
+    let way = match arg(p, "way").and_then(Value::as_str).unwrap_or("point") {
+        "point" => {
+            let along = if arg(p, "along").is_some_and(|v| !v.is_null()) { Some(parse(p, "along")?) } else { None };
+            RipWay::Point { at: point("at")?, along }
+        }
+        "between" => RipWay::Between { from: point("from")?, to: point("to")? },
+        "face" => RipWay::Face,
+        other => return Err(CmdError(format!("unknown way `{other}` for a rip (point, between, face)"))),
+    };
+    let rip = crate::sheet::Rip { face: parse(p, "face")?, way, gap: opt_num(p, "gap")? };
+    rip.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Rip(rip), p)
+}
+
+fn sheet_unfold(s: &mut Session, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let bends = if arg(p, "bends").is_some_and(|v| !v.is_null()) { parse(p, "bends")? } else { Vec::new() };
+    let unfold = crate::sheet::UnfoldBends { face: parse(p, "face")?, bends };
+    unfold.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Unfold(unfold), p)
+}
+
+fn sheet_refold(s: &mut Session, k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    if s.document().sheet_metal().is_none() {
+        return Err("This is not a sheet metal part yet: run sheet.defaults first (Sheet Metal Defaults).".into());
+    }
+    let bends = if arg(p, "bends").is_some_and(|v| !v.is_null()) { parse(p, "bends")? } else { Vec::new() };
+    let unfold = match opt_id(p, "unfold")? {
+        Some(id) => FeatureId(id),
+        None => k
+            .and_then(|k| s.regen(k).unfold_still_flat())
+            .or_else(|| s.document().unfold_to_refold())
+            .ok_or_else(|| CmdError("The part has no unfold, so it has nothing to fold back: lay bends flat first with sheet.unfold.".into()))?,
+    };
+    if !s.document().feature(unfold).is_some_and(|f| matches!(f.kind, FeatureKind::Unfold(_))) {
+        return Err(CmdError(format!("{unfold} is not an unfold: a refold folds back the bends an unfold laid flat")));
+    }
+    let refold = crate::sheet::Refold { unfold, bends };
+    refold.check().map_err(CmdError)?;
+    add_feature(s, FeatureKind::Refold(refold), p)
+}
+
 fn sheet_a_side(s: &mut Session, p: &Value) -> CmdResult {
     let face: Option<FaceRef> = match arg(p, "face") {
         None | Some(Value::Null) => None,
@@ -5256,6 +5310,27 @@ static COMMANDS: &[CommandSpec] = &[
         true,
         sheet_fold
     ),
+    doc_cmd!(
+        "sheet.rip",
+        "Rip",
+        "face: a face reference: a flat side of the sheet, or one side of a bend or a tube. A seam is opened in it, so that a shape that closes on itself can be laid flat. way: \"point\" (default: a slit right across the face through at: [x, y, z]; on a bend or a tube along its axis, on a flat face alongside the bend beside it, else across its short way, or alongside the straight edge along: an edge reference, on a flat face only) | \"between\" (a slit from from: [x, y, z] to to: [x, y, z], both on the face; a point on the edge of the face takes the slit through that edge) | \"face\" (the whole face is taken out, and the sheet behind it). gap: how wide a slit is, as the flat pattern has it (default GapSize; a whole face has none). A point is on the face when it is within the face's outline and within 10 thicknesses square to it. A rip that would leave the sheet in more pieces than it was is refused: it opens a seam, and a cut takes a piece off",
+        true,
+        sheet_rip
+    ),
+    doc_cmd!(
+        "sheet.unfold",
+        "Unfold",
+        "face: a face reference, the flat side of the sheet that stays where it is. bends: [face references], a round face of each bend to lay flat (default: every bend). Each becomes a flat strip as wide as its allowance, in the plane of the sheet on the side towards the face, and the sheet beyond it comes round with it. The part after this is that partly flat sheet, for cuts and other work to follow on it; sheet.refold folds it back. A bend that is not all that joins the sheet on its two sides (a tube, a box) cannot be laid flat until it is ripped, and one with a cut through it that is not square to the sheet (a plain straight cut, not Cut Normal or Cut Across Bend) is refused",
+        true,
+        sheet_unfold
+    ),
+    CommandSpec {
+        id: "sheet.refold",
+        label: "Refold",
+        help: "unfold: the feature (default: the last unfold with a bend still flat). bends: [face references], a face of the flat strip of each bend to fold back (default: all of its bends still flat). Each strip is rolled up again as it now is, what was cut out of it going round the bend, and the sheet beyond turns back with it. Refused, in words, when what is in the strip is not sheet of one thickness cut straight through, when something is joined to the strip alone, when the sheet on its two sides is joined some other way, when a cut has left nothing of the strip to hold the two sides together, when a piece cut off beyond the strip would be left lying, and when what comes round would run into the sheet",
+        mutates: true,
+        run: Run::Opt(sheet_refold),
+    },
     doc_cmd!(
         "sheet.a_side",
         "Define A-Side",

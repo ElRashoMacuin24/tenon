@@ -239,6 +239,31 @@ Flange, Contour Flange, Hem, Fold, Bend, Corner Seam, Cut (also across bends) an
 Round/Chamfer. **Create Flat Pattern** lays it flat (**Go to Flat Pattern** afterwards); **File > Export Flat Pattern DXF**
 writes it for a cutter.
 
+A shape that closes on itself (a tube, a box section) cannot be laid flat until it is open.
+**Rip** opens a seam in a face: click a point of it for a slit right across it; in **Way**,
+Point to Point for a slit between two clicks (a click at an edge of the face goes through that
+edge), or Whole Face to take the face out. The **Gap** is how wide the slit is in the flat
+pattern. A slit through a point runs along a bend's axis, on a flat face alongside the bend beside
+it, or else across the short way: on a flat face, click a straight edge for it to run alongside that.
+A rip opens a seam and leaves the sheet in one piece. One that would cut it in two says so and is not
+made: run the slit along another edge, stop it short of an edge with Point to Point, or use **Cut** if
+a piece is to come off.
+
+**Unfold** lays bends flat so that you can work across them: click the flat face that stays where
+it is, then the round face of each bend (or tick **All Bends**), then OK. The part is now that
+partly flat sheet, and each bend a strip as wide as its allowance. Cut, drill or sketch on it as on
+any plate. **Refold** folds back what an unfold laid flat: all of it, or untick All Bends and click
+the strips you want. A hole cut across a strip comes back on both faces and round the bend.
+What is in a strip has to be sheet of one thickness, cut right through. A cut that does not go
+through, anything over or under the strip or joined to it alone, sheet added across it, a cut right
+across it that leaves nothing to carry what is beyond, or a piece cut off beyond it, cannot go round
+a bend: Refold says which, and does nothing.
+
+A bend with a cut through it has to be cut square to the sheet to be laid flat: use Cut with
+Cut Normal or Cut Across Bend. A plain straight cut meets a bend's inside and its outside in different
+places, and Unfold says so. If you unfold from two different faces, fold back the last first: the part
+then comes back where it was. Oldest first it comes to the same shape, moved as a whole.
+
 ## Assemblies
 
 **File > New Assembly**, then **Place** (P) part files: the first is grounded at the
@@ -382,14 +407,10 @@ Protocol ([mcp.md](mcp.md)). Every command the ribbon runs is listed in
 ## What Tenon does not do yet
 
 Among what Tenon does not do yet: sub-assemblies, motion studies and parts that adapt to one
-another; shaded drawing views, tolerances and ordinate dimensions; a choice of fonts for sketch
-text, and letters outside Latin, Greek and Cyrillic (in the window such a name shows as boxes,
-and in sketch text it is cut as boxes, though the file opens and works); a taper on an ellipse, a
-spline or a letter's curves; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
-stress studies of assemblies or of more than one material. A window holds one document: File >
-Open replaces it, and a second window is the way to have two open. [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROADMAP.md)
-Tenon 0.1 is a first release. Among what it does not do: sub-assemblies, motion studies and
-parts that adapt to one another; shaded drawing views and tolerances;
-ellipses in sketches, a choice of fonts for sketch text; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
-stress studies of assemblies or of more than one material. [ROADMAP.md](../ROADMAP.md)
+another; shaded drawing views and tolerances; a choice of fonts for sketch text, and letters outside
+Latin, Greek and Cyrillic (in the window such a name shows as boxes, and in sketch text it is cut as
+boxes, though the file opens and works); a taper on an ellipse, a spline or a letter's curves; Lofted
+Flange, Contour Roll and Punch in sheet metal; stress studies of assemblies or of more than one
+material. A window holds one document: File > Open replaces it, and a second window is the way to
+have two open. [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROADMAP.md)
 lists everything that works, with the test that shows it, and what is missing.

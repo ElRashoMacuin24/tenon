@@ -71,7 +71,7 @@ fn drawn(profile: &[Region], cut: [&str; 2]) -> Result<Vec<Vec<Vec<Piece>>>, Str
 
 /// The outer boundary of flat face `f` as its chart lays it out. (A hole in the face is no
 /// sheet to cut, and the floor of a pocket is sheet under the profile like any other.)
-fn outline_of(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, f: u32, chart: &Chart, opts: &Unfold) -> Result<Vec<Piece>, String> {
+pub(super) fn outline_of(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, f: u32, chart: &Chart, opts: &Unfold) -> Result<Vec<Piece>, String> {
     let mut curves = Vec::new();
     for &e in solid.topo.face_edges.get(f as usize).map_or(&[][..], Vec::as_slice) {
         let Some(info) = solid.edges.get(e as usize).filter(|i| !i.degenerate) else { continue };
@@ -105,7 +105,7 @@ fn shared(drawn: &[Vec<Vec<Piece>>], here: &[Vec<Piece>]) -> Result<Vec<Shape>, 
 
 /// Whether flat face `i` of the solid is a side of the sheet: the sheet's other side is one
 /// thickness behind it (the rim of the sheet has none).
-fn has_other_side(solid: &Read, i: usize, t: f64) -> bool {
+pub(super) fn has_other_side(solid: &Read, i: usize, t: f64) -> bool {
     let Some(face) = solid.faces.get(i) else { return false };
     let SurfaceKind::Plane { normal, .. } = &face.surface else { return false };
     let n = normal.normalized();

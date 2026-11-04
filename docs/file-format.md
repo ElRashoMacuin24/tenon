@@ -274,6 +274,9 @@ shows until a feature uses it and a work feature shows.
 | `bend` | `edges` (two edge references: a straight edge of the rim of each of two faces of the sheet that do not touch, running alongside one another); optional `radius` (the bend's inside radius; without it the part's `BendRadius`), `double` (how faces in parallel planes are joined: `"fix_edges"` when it is not written, `"45_degree"`, `"full_radius"` or `"90_degree"`) and `flip_fixed` (the second edge stays and the first face is trimmed or extended). The faces are trimmed or extended to the bend and joined by it (DEC-070) |
 | `sharp_bend` | `edges` (edge references: each the outside or the inside edge of a sharp corner where two faces of the sheet meet with no bend between them); optional `radius` (the bends' inside radius; without it the part's `BendRadius`). Each corner is cleared back to where a bend begins on either face, for the length of its edge, and the bend put in, tangent to both, as far along the edge as both faces still reach it: edges that meet at a corner of the sheet, given together, have their bends end where their bend lines cross (DEC-075) |
 | `fold` | `sketch` (on a side of the sheet, with a line from edge to edge of a face), optional `line` (the entity to fold along; without it, the sketch's one line), `angle` (radians the sheet turns, 1 to 179 degrees), optional `radius` (the bend's inside radius; without it the part's `BendRadius`), `location` (`"centerline"` when it is not written, `"start"` or `"end"`: where the line is in the bend's zone), `flip_side` (the sheet on the other side of the line folds) and `flip_direction` (it folds away from the side the sketch is on). The sheet beyond the line turns about a bend in the zone; nothing is added (DEC-071) |
+| `rip` | `face` (a face reference: a flat side of the sheet, or one side of a bend or a tube), `way`: `{ point = { at = <point>, along = <edge reference> } }` (a slit right across the face through `at`; `along`, optional, a straight edge it runs alongside, on a flat face only: on a round face the rip fails, and says so), `{ between = { from = <point>, to = <point> } }` (a slit from one point of the face to the other) or `"face"` (the whole face out); optional `gap` (how wide a slit is in the flat; without it the part's `GapSize`; a whole face has none, and a gap on one is refused). A point is `{ x = ..., y = ..., z = ... }` in the part's coordinates |
+| `unfold` | `face` (a face reference: the flat side of the sheet that stays where it is), optional `bends` (face references: a round face of each bend to lay flat; without them, every bend). Each becomes a strip of the sheet as wide as its allowance, with the sheet beyond it brought round. Nothing but this is written: the strips are worked out when the part is rebuilt |
+| `refold` | `unfold` (the id of the unfold whose bends these are), optional `bends` (face references: a face of the flat strip of each to fold back; without them, all of that unfold's that are still flat) |
 
 Field values:
 
@@ -1031,7 +1034,7 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   revolution, or one turned the other way; a spotface or To hole; a variable or face
   fillet; a work plane through three points; a Tangent or Symmetry relationship; a mirrored
   occurrence; an auxiliary or overlay view; a baseline or ordinate set; an emboss, a derived part or
-  a UCS; or a 3D sketch or what is made from one. It opens the part the same and silently loses, on
+  a UCS; a 3D sketch or what is made from one; or a rip, an unfold or a refold. It opens the part the same and silently loses, on
   a save, a tapped hole's thread (`tapped`; the drawing's note and the Threads list lose it at
   once), which points are sketch points (`sketch_point`), which sketches are shown (`visible`),
   a study's `[study.optimize]`, an assembly's `[[pattern]]`s (each element a free component where it
@@ -1058,7 +1061,8 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   `emboss`, `derive` and `ucs` with the `ucs` forms of a plane, an axis and a direction and a
   three-point plane's `ucs` and `vertex` points (DEC-133), and the `sketch3d` feature type with its
   `links`, a sweep along one, the `square_to_curve` work plane, the `at` work point, the
-  `sketch3d_line` axis, and the `sketch3d_point` point (DEC-136).
+  `sketch3d_line` axis, and the `sketch3d_point` point (DEC-136), and the feature types `rip`,
+  `unfold` and `refold` (DEC-137).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

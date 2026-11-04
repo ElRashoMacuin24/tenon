@@ -1042,6 +1042,39 @@ static SCHEMAS: &[C] = &[
             EQUATIONS,
         ],
     ),
+    C::new(
+        "sheet.rip",
+        &[
+            req("face", Face, "a flat side of the sheet, or one side of a bend or a tube"),
+            opt(
+                "way",
+                Word(&["point", "between", "face"]),
+                "a slit through a point, a slit between two points, or the whole face out (default point)",
+            ),
+            opt("at", Vector(3), "with way point: the point on the face [x, y, z]"),
+            opt("along", Edge, "with way point, on a flat face: the straight edge the slit runs alongside"),
+            opt("from", Vector(3), "with way between: where the slit starts [x, y, z]"),
+            opt("to", Vector(3), "with way between: where it ends [x, y, z]"),
+            opt("gap", Length, "how wide a slit is (default GapSize; a whole face has none)"),
+            EQUATIONS,
+        ],
+    ),
+    C::new(
+        "sheet.unfold",
+        &[
+            req("face", Face, "the flat side of the sheet that stays where it is"),
+            opt("bends", List(&Face), "a round face of each bend to lay flat (default: every bend)"),
+            EQUATIONS,
+        ],
+    ),
+    C::new(
+        "sheet.refold",
+        &[
+            opt("unfold", Id, "the unfold whose bends these are (default: the last with a bend still flat)"),
+            opt("bends", List(&Face), "a face of the flat strip of each bend to fold back (default: all still flat)"),
+            EQUATIONS,
+        ],
+    ),
     C::new("sheet.a_side", &[opt("face", Either(&[Face, Null]), "the face that lies up in the flat pattern; null for the part's own choice")]),
     C::new("sheet.flat_pattern", &[opt("on", Bool, "keep the flat pattern with the part (default true)")]),
     C::new(

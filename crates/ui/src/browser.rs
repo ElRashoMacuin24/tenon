@@ -139,6 +139,9 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::CornerSeam(_) | FeatureKind::CornerRip(_) => Icon::CornerSeam,
         FeatureKind::Bend(_) | FeatureKind::SharpBend(_) => Icon::Bend,
         FeatureKind::Fold(_) => Icon::Bend,
+        FeatureKind::Rip(_) => Icon::Split,
+        FeatureKind::Unfold(_) => Icon::FlatPattern,
+        FeatureKind::Refold(_) => Icon::FoldedPart,
         FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => Icon::SheetCut,
     }
 }

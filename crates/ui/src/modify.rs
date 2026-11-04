@@ -69,6 +69,7 @@ impl Workbench {
             Some(Panel::Shell(_) | Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_) | Panel::Keep(_)) => {
                 Some(Wants { edges: false, faces: true })
             }
+            Some(Panel::Unfold(_) | Panel::Refold(_)) => Some(Wants { edges: false, faces: true }),
             // A support is on faces. A fixed one may be on edges in their place: it is on
             // whichever was clicked first, until that is cleared.
             Some(Panel::Support(s)) => {
@@ -146,6 +147,15 @@ impl Workbench {
             Some(Panel::CornerSeam(p)) => edges(&p.edges),
             Some(Panel::Bend(p)) => edges(&p.edges),
             Some(Panel::ContourFlange(p)) => edges(&p.edges),
+            Some(Panel::Rip(p)) => {
+                let mut v: Vec<Pick> = p.face.as_ref().and_then(face).into_iter().collect();
+                if let Some(along) = &p.along {
+                    v.extend(edges(std::slice::from_ref(along)));
+                }
+                v
+            }
+            Some(Panel::Unfold(p)) => p.face.iter().chain(&p.bends).filter_map(face).collect(),
+            Some(Panel::Refold(p)) => p.bends.iter().filter_map(face).collect(),
             Some(Panel::Chamfer(p)) => {
                 let mut v = edges(&p.edges);
                 v.extend(p.reference.as_ref().and_then(face));
@@ -305,6 +315,17 @@ impl Workbench {
         Some(FaceRef { origin: (*name)?, fingerprint: Fingerprint::of(info) })
     }
 
+    /// Whether feature `made` comes before the one a panel is setting up: `editing`, or one that is
+    /// not in the part yet (a preview's faces of it have no feature to find).
+    pub(crate) fn made_before(&self, made: FeatureId, editing: Option<FeatureId>) -> bool {
+        let doc = self.document();
+        match (doc.index_of(made), editing.and_then(|id| doc.index_of(id))) {
+            (Some(made), Some(editing)) => made < editing,
+            (Some(_), None) => true,
+            (None, _) => false,
+        }
+    }
+
     /// True if the pick can go into the open panel.
     fn referable(&self, p: Pick, wants: Wants) -> bool {
         let surface = |body: usize, face: u32| self.scene.bodies.get(body).and_then(|b| b.faces.get(face as usize)).map(|f| &f.1.surface);
@@ -329,6 +350,14 @@ impl Workbench {
             (Pick::Face { body, face }, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) => {
                 self.bodies_referable(body, face)
             }
+            // A flat face stays where it is, a round one is a bend to lay flat: of the sheet before
+            // this unfold, not the strip the preview shows it making.
+            (Pick::Face { body, face }, Some(Panel::Unfold(u))) => {
+                self.face_ref_of(body, face).is_some_and(|f| self.made_before(f.origin.feature(), u.editing))
+                    && matches!(surface(body, face), Some(SurfaceKind::Plane { .. } | SurfaceKind::Cylinder { .. }))
+            }
+            // A face of a strip the unfold made.
+            (Pick::Face { body, face }, Some(Panel::Refold(r))) => self.face_ref_of(body, face).is_some_and(|f| f.origin.feature() == r.unfold),
             // A direction is read off the edge or face as it is: it needs no name.
             (pick, Some(Panel::Load(_))) if self.picking_direction() => self.direction_of(pick).is_some(),
             // A point is the middle of the face or edge clicked.
@@ -469,6 +498,19 @@ impl Workbench {
                 if !f.rip && f.edges.len() > 2 {
                     f.edges.remove(1);
                 }
+            }
+            (Some(Panel::Unfold(u)), None, Some(r)) => {
+                if r.fingerprint.surface == "plane" {
+                    // What stays where it is: one face.
+                    u.face = if present && toggle { None } else { Some(r) };
+                } else {
+                    u.all = false;
+                    edit_list(&mut u.bends, r, present, toggle, same_face);
+                }
+            }
+            (Some(Panel::Refold(u)), None, Some(r)) => {
+                u.all = false;
+                edit_list(&mut u.bends, r, present, toggle, same_face);
             }
             (Some(Panel::Chamfer(c)), Some(r), _) => edit_list(&mut c.edges, r, present, toggle, same_edge),
             (Some(Panel::Chamfer(c)), None, Some(r)) if c.method != ChamferMethod::Distance => {
@@ -718,6 +760,10 @@ impl Workbench {
             }
             return true;
         }
+        if matches!(self.panel, Some(Panel::Rip(_))) {
+            self.rip_pointer(resp, rect);
+            return true;
+        }
         if matches!(self.panel, Some(Panel::Hole(_))) {
             self.view.hover = None;
             let point = self.hole_point_at(resp.interact_pointer_pos(), rect);
@@ -957,8 +1003,26 @@ impl Workbench {
             && let Some(p) = hover
         {
             self.pick_into_panel(p, true);
+        } else if resp.clicked() && matches!(self.panel, Some(Panel::Unfold(_))) {
+            self.say_why_not_for_unfold(resp, rect);
         }
         true
+    }
+
+    /// A click on a face an unfold cannot take: it says why.
+    fn say_why_not_for_unfold(&mut self, resp: &egui::Response, rect: Rect) {
+        let Some(p) = resp.interact_pointer_pos() else { return };
+        let (x, y, w, h) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
+        let (meshes, tree) = (self.scene.placed(), self.body_tree());
+        let (o, d) = self.view.camera.ray(x, y, w, h);
+        let Some(hit) = pick_face_in(tree.as_deref(), &meshes, o, d) else { return };
+        let editing = self.panel.as_ref().and_then(Panel::editing);
+        let named = self.scene.bodies.get(hit.body).and_then(|b| b.faces.get(hit.face as usize)).and_then(|f| f.0);
+        if named.is_some_and(|n| self.made_before(n.feature(), editing)) {
+            self.set_error("Unfold: click a flat face of the sheet to stay where it is, or a round face of a bend to lay flat.");
+        } else {
+            self.set_error("Unfold: that face is what this unfold makes, so it cannot be what stays or a bend to lay flat. Click another face, or clear the bends to pick on the sheet as it was.");
+        }
     }
 
     /// Moves a box selection into the open panel. Returns false when no picking panel is open.
@@ -985,6 +1049,23 @@ impl Workbench {
             Some(Panel::CornerSeam(f)) => f.edges.clear(),
             Some(Panel::Bend(f)) => f.edges.clear(),
             Some(Panel::ContourFlange(f)) => f.edges.clear(),
+            Some(Panel::Rip(f)) => {
+                f.face = None;
+                f.points.clear();
+                f.along = None;
+            }
+            // The bends first: the view comes back to the part with them folded, to pick again.
+            Some(Panel::Unfold(f)) => {
+                if f.bends.is_empty() {
+                    f.face = None;
+                }
+                f.bends.clear();
+                f.all = false;
+            }
+            Some(Panel::Refold(f)) => {
+                f.bends.clear();
+                f.all = false;
+            }
             Some(Panel::Chamfer(c)) => c.edges.clear(),
             Some(Panel::Shell(s)) => s.faces.clear(),
             Some(Panel::Keep(p)) => p.faces.clear(),

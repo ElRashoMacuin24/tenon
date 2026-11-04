@@ -501,6 +501,9 @@ impl Workbench {
                     | Panel::Hem(_)
                     | Panel::ContourFlange(_)
                     | Panel::Fold(_)
+                    | Panel::Rip(_)
+                    | Panel::Unfold(_)
+                    | Panel::Refold(_)
                     | Panel::CornerSeam(_)
                     | Panel::Bend(_)
                     | Panel::Primitive(_)
@@ -575,6 +578,9 @@ impl Workbench {
             Panel::Hem(p) => ("Hem", p.editing.map(|f| self.feature_name(f))),
             Panel::ContourFlange(p) => ("Contour Flange", p.editing.map(|f| self.feature_name(f))),
             Panel::Fold(p) => ("Fold", p.editing.map(|f| self.feature_name(f))),
+            Panel::Rip(p) => ("Rip", p.editing.map(|f| self.feature_name(f))),
+            Panel::Unfold(p) => ("Unfold", p.editing.map(|f| self.feature_name(f))),
+            Panel::Refold(p) => ("Refold", p.editing.map(|f| self.feature_name(f))),
             Panel::CornerSeam(p) => (if p.rip { "Corner Rip" } else { "Corner Seam" }, p.editing.map(|f| self.feature_name(f))),
             Panel::Bend(p) => ("Bend", p.editing.map(|f| self.feature_name(f))),
             Panel::Primitive(p) => (p.shape.title(), None),
@@ -1711,6 +1717,9 @@ impl Workbench {
                     | Panel::Hem(_)
                     | Panel::ContourFlange(_)
                     | Panel::Fold(_)
+                    | Panel::Rip(_)
+                    | Panel::Unfold(_)
+                    | Panel::Refold(_)
                     | Panel::CornerSeam(_)
                     | Panel::Bend(_)) => {
                         let (entered, cleared) = self.sheet_properties(ui, p, &mut eqs, &sketches, t);
@@ -2018,6 +2027,9 @@ impl Workbench {
                 | Panel::Hem(_)
                 | Panel::ContourFlange(_)
                 | Panel::Fold(_)
+                | Panel::Rip(_)
+                | Panel::Unfold(_)
+                | Panel::Refold(_)
                 | Panel::CornerSeam(_)
                 | Panel::Bend(_)
                 | Panel::Support(_)

@@ -697,6 +697,12 @@ pub(crate) enum Panel {
     Bend(crate::sheet::BendPanel),
     /// A face of the sheet folded along a line drawn across it.
     Fold(crate::sheet::FoldPanel),
+    /// A seam opened in a face of the sheet.
+    Rip(crate::sheet::RipPanel),
+    /// Bends laid flat from a stationary face.
+    Unfold(crate::sheet::UnfoldPanel),
+    /// Bends an unfold laid flat folded back.
+    Refold(crate::sheet::RefoldPanel),
     /// A box, a cylinder, a sphere or a torus, set up by clicks on a plane.
     Primitive(crate::primitive::PrimitivePanel),
     /// Fixed, in the Stress Analysis environment: the faces that are held.
@@ -769,6 +775,9 @@ impl Panel {
             Panel::Fold(p) => p.editing,
             Panel::CornerSeam(p) => p.editing,
             Panel::Bend(p) => p.editing,
+            Panel::Rip(p) => p.editing,
+            Panel::Unfold(p) => p.editing,
+            Panel::Refold(p) => p.editing,
             _ => None,
         }
     }
@@ -842,6 +851,7 @@ impl Panel {
             Panel::Fold(p) => p.eq_pointers(),
             Panel::CornerSeam(p) => p.eq_pointers(),
             Panel::Bend(p) => p.eq_pointers(),
+            Panel::Rip(p) => p.eq_pointers(),
             Panel::Thread(p) => {
                 let mut v = Vec::new();
                 if p.custom_pitch {
@@ -1055,6 +1065,15 @@ fn with_feature(doc: &Document, editing: Option<FeatureId>, kind: FeatureKind) -
     Some(d)
 }
 
+/// The document as it stands just after feature `id`.
+fn up_to(doc: Document, id: Option<FeatureId>) -> Document {
+    let next = id.and_then(|id| doc.index_of(id)).and_then(|i| doc.features().get(i + 1)).map(|f| f.id);
+    match next {
+        Some(next) => doc.rolled_back_to(next),
+        None => doc,
+    }
+}
+
 impl Workbench {
     /// The document to show while a feature panel is open. Extrude and Revolve preview their
     /// result; Fillet, Chamfer and Shell show the part they act on (rolled back to before the
@@ -1121,6 +1140,22 @@ impl Workbench {
             // With both edges picked the corner shows as it will be.
             Some(Panel::CornerSeam(p)) => match p.kind() {
                 Some(kind) => with_feature(self.document(), p.editing, kind),
+                None => rolled(p.editing),
+            },
+            // Once it is all picked it shows as it will be; until then the part as it is before
+            // it, so that what is to be picked can be seen. Further bends are picked on that.
+            // (Edited, up to itself: an unfold further on would hide what a rip does, and a refold
+            // what an unfold does, and what is clicked is on the sheet as it then is.)
+            Some(Panel::Rip(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind).map(|d| up_to(d, p.editing)),
+                None => rolled(p.editing),
+            },
+            Some(Panel::Unfold(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind).map(|d| up_to(d, p.editing)),
+                None => rolled(p.editing),
+            },
+            Some(Panel::Refold(p)) => match p.kind() {
+                Some(kind) => with_feature(self.document(), p.editing, kind).map(|d| up_to(d, p.editing)),
                 None => rolled(p.editing),
             },
             Some(Panel::Fillet(p)) => rolled(p.editing),
@@ -1780,6 +1815,9 @@ impl Workbench {
                     | FeatureKind::Bend(_)
                     | FeatureKind::SharpBend(_)
                     | FeatureKind::Fold(_)
+                    | FeatureKind::Rip(_)
+                    | FeatureKind::Unfold(_)
+                    | FeatureKind::Refold(_)
                     | FeatureKind::CutAcrossBend(_)
                     | FeatureKind::CutNormal(_) => ("feature.add", json!({ "kind": kind_json })),
                     FeatureKind::Sketch { .. } | FeatureKind::Sketch3d { .. } => return false,
@@ -1998,6 +2036,45 @@ impl Workbench {
             Panel::Fold(p) => {
                 if commit {
                     keep = !self.commit_panel(&ptrs, p.editing, p.kind());
+                }
+            }
+            Panel::Rip(p) => {
+                if commit {
+                    match p.kind() {
+                        Some(kind) => {
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("sheet.rip");
+                            }
+                        }
+                        None => self.set_error(p.what_is_missing().to_string()),
+                    }
+                }
+            }
+            Panel::Unfold(p) => {
+                if commit {
+                    match p.kind() {
+                        Some(kind) => {
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("sheet.unfold");
+                            }
+                        }
+                        None => self.set_error(p.what_is_missing().to_string()),
+                    }
+                }
+            }
+            Panel::Refold(p) => {
+                if commit {
+                    match p.kind() {
+                        Some(kind) => {
+                            keep = !self.commit_panel(&ptrs, p.editing, kind);
+                            if !keep && again {
+                                reopen = Some("sheet.refold");
+                            }
+                        }
+                        None => self.set_error("Refold: click the flat strip of a bend to fold back, or tick All Bends".to_string()),
+                    }
                 }
             }
             Panel::ContourFlange(p) => {

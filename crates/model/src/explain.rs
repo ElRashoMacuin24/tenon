@@ -125,6 +125,15 @@ pub(crate) fn explain(kind: &FeatureKind, e: &KernelError) -> String {
         (FeatureKind::CornerRip(_), _) => {
             "The corner could not be opened. The edge picked may not be where two walls of the sheet meet squarely, or the gap may take more of a wall than there is: check the edge, or try a smaller gap.".into()
         }
+        (FeatureKind::Rip(_), _) => {
+            "The seam could not be opened in this face. The slit may just touch an edge of the sheet, or the gap may take more of the face than there is: move the point a little, or try a smaller gap.".into()
+        }
+        (FeatureKind::Unfold(_), _) => {
+            "The bend could not be laid flat. What comes round with it may run into the sheet, or a cut may have left it a shape that cannot be followed: try unfolding the bends one at a time to find which.".into()
+        }
+        (FeatureKind::Refold(_), _) => {
+            "The bend could not be folded back. A cut may just touch the edge of its flat strip, or what comes round with it may run into the sheet: move the cut a little, or refold the bends one at a time to find which.".into()
+        }
         (FeatureKind::Fold(_), _) => {
             "The face could not be folded along this line. The line may not reach from edge to edge of the face, or what folds may run into the rest: check the line, or try a smaller angle or radius.".into()
         }

@@ -131,6 +131,7 @@ taken away), without a check.
     of `drw.annotation.edit` (DEC-132). Then `model.emboss`, `model.derive` and `work.ucs`, `ucs_plane`
     on the commands that name a plane by `plane`, `face` and `work_plane`, a UCS's `{"ucs": id, ...}`
     among what a plane, an axis or a direction is, and among what `model.measure` measures to (DEC-133).
+    Then `sheet.rip`, `sheet.unfold` and `sheet.refold` (DEC-137).
   - `study.shape`'s `symmetry` still has the plane's type, so a face passes the schema and is
     refused by the command, in words: a schema that took less would break a program written
     against it, and its description says what is refused. `null` for `min_member`, `element_size`
