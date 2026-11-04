@@ -962,10 +962,9 @@ fn drw_annotation_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Valu
     let current = s.drawing().annotation(aid).ok_or_else(|| CmdError(format!("{aid} does not exist")))?;
     let set = set_changed(&current.kind, p)?;
     // A changed set must still be measurable, before anything is touched.
-    let checked = match &set {
-        Some(kind) => Some(dimsets::check(s.drawing(), s.current()?, &Annotation { id: aid, kind: kind.clone() }).map_err(CmdError)?),
-        None => None,
-    };
+    if let Some(kind) = &set {
+        dimsets::check(s.drawing(), s.current()?, &Annotation { id: aid, kind: kind.clone() }).map_err(CmdError)?;
+    }
     s.edit(|d| {
         let a = d.annotations.iter_mut().find(|a| a.id == aid).ok_or_else(|| CmdError(format!("{aid} does not exist")))?;
         if let Some(kind) = set {
@@ -1007,7 +1006,9 @@ fn drw_annotation_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Valu
         }
         Ok(())
     })?;
-    Ok(match checked {
+    // A set says what it comes to now, as it does when it is made.
+    let laid_out = s.evaluation().zip(s.drawing().annotation(aid)).and_then(|(ev, a)| dimsets::layout(s.drawing(), ev, a).ok());
+    Ok(match laid_out {
         Some(l) => json!({ "annotation": aid.0, "rows": set_rows(&l), "step": l.step }),
         None => json!({ "annotation": aid.0 }),
     })
