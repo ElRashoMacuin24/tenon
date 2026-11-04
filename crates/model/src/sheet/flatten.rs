@@ -383,24 +383,43 @@ pub(crate) fn strip_outlines(k: &dyn Kernel, strip: ShapeHandle, bend: &FlatBend
     let t = opts.thickness;
     let solid = read(k, strip)?;
     let chart = Chart::Plane { o3: bend.origin, u3: bend.across, v3: bend.along, o2: Vec2::ZERO, u2: Vec2::X, v2: Vec2::Y };
+    let not_sheet = "A bend cannot be folded back while what is in its flat strip is not sheet of one thickness cut straight through: a cut that does not go right through, a slanted or a chamfered edge, or anything raised on the strip, cannot go round a bend. Make the cut go through, or do that work where the sheet stays flat.";
+    let slack = 1e-6 * (1.0 + t);
     let mut outlines = Vec::new();
     let mut area = 0.0;
     for (i, f) in solid.faces.iter().enumerate() {
-        let SurfaceKind::Plane { normal, .. } = &f.surface else { continue };
-        if normal.normalized().dot(bend.up) > -1.0 + 1e-9 || (f.centroid - bend.origin).dot(bend.up).abs() > 1e-6 * (1.0 + t) {
-            continue;
+        match &f.surface {
+            SurfaceKind::Plane { normal, .. } => {
+                let (n, height) = (normal.normalized(), (f.centroid - bend.origin).dot(bend.up));
+                if n.cross(bend.up).len() > 1e-6 {
+                    if n.dot(bend.up).abs() > 1e-6 {
+                        return Err(not_sheet.into());
+                    }
+                    continue;
+                }
+                // A side of the sheet, or the floor of something that does not go through.
+                if height.abs() > slack && (height - t).abs() > slack {
+                    return Err(not_sheet.into());
+                }
+                if n.dot(bend.up) > 0.0 || height.abs() > slack {
+                    continue;
+                }
+                let Ok(i) = u32::try_from(i) else { continue };
+                area += f.area;
+                outlines.push(outline_of_face(k, strip, &solid, i, &chart, sub_key(tag, i), opts)?);
+            }
+            SurfaceKind::Cylinder { axis, .. } if axis.dir().cross(bend.up).len() <= 1e-6 => {}
+            // The wall of a cut whose outline came as points: a curve pushed straight.
+            SurfaceKind::Cylinder { .. } | SurfaceKind::Cone { .. } | SurfaceKind::Sphere { .. } | SurfaceKind::Torus { .. } => {
+                return Err(not_sheet.into());
+            }
+            _ => {}
         }
-        let Ok(i) = u32::try_from(i) else { continue };
-        area += f.area;
-        outlines.push(outline_of_face(k, strip, &solid, i, &chart, sub_key(tag, i), opts)?);
     }
+    // (What a face with such a wall says of its own area is only so close.)
     let volume = k.mass_properties(strip, 1.0).map_err(|e| e.to_string())?.volume;
-    if (area * t - volume).abs() > 1e-6 * (1.0 + volume) {
-        return Err(format!(
-            "A bend cannot be folded back while what is in its flat strip is not sheet of one thickness cut straight through: {} mm³ is there where its outline and the thickness make {} mm³. A cut that does not go right through, or anything raised on the strip, cannot go round a bend. Make the cut go through, or do that work where the sheet stays flat.",
-            crate::explain::mm(volume),
-            crate::explain::mm(area * t)
-        ));
+    if (area * t - volume).abs() > 2e-3 * (1.0 + volume) {
+        return Err(not_sheet.into());
     }
     Ok(outlines)
 }

@@ -1,5 +1,5 @@
 //! Sheet metal in the app (M8): the Sheet Metal tab's commands, the Face, Flange, Hem, Contour
-//! Flange, Bend, Corner Seam and Cut panels,
+//! Flange, Bend, Corner Seam, Cut, Rip, Unfold and Refold panels,
 //! Sheet Metal Defaults, and the flat pattern, shown in place of the folded part.
 //!
 //! The tab is a sheet metal part's home tab and shows only for one; any part becomes one with
@@ -2116,7 +2116,7 @@ impl Workbench {
                         if p.all {
                             ui.label(RichText::new("every bend of the sheet").color(t.text_dim));
                         } else {
-                            clear |= picked_row(ui, p.bends.len(), "click a round face of a bend");
+                            clear |= picked_row(ui, p.bends.len(), "click a round face");
                         }
                         ui.end_row();
                     });

@@ -213,6 +213,15 @@ fn an_unfold_and_a_refold_are_set_up_by_clicks_and_edited_from_the_browser() {
     assert_eq!((p.editing, p.all, p.unfold), (Some(refold), true, unfold));
     d.tap(&mut wb, egui::Key::Escape);
     frames(&mut d, &mut wb);
+    // The unfold's row, with the refold after it: the view is the part just after the unfold.
+    let row = browser_row(&d, "Unfold1");
+    double_click(&mut d, &mut wb, row.center());
+    frames(&mut d, &mut wb);
+    assert!(matches!(&wb.panel, Some(Panel::Unfold(p)) if p.editing == Some(unfold)), "{}", wb.status());
+    assert!(near(volume(&wb), flat_whole), "{} {flat_whole}", volume(&wb));
+    d.tap(&mut wb, egui::Key::Escape);
+    frames(&mut d, &mut wb);
+    assert!(near(volume(&wb), refolded));
     wb.run_ui("edit.undo").unwrap();
     frames(&mut d, &mut wb);
     assert!(near(volume(&wb), flat_whole - circle * T));

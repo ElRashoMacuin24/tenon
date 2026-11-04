@@ -388,6 +388,9 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
     // they are the bend's extent lines.
     let mut curves: Vec<FlatCurve> = Vec::new();
     let mut extents: BTreeMap<u32, Vec<[Vec2; 2]>> = BTreeMap::new();
+    // Round faces that run on from one another about one axis: one bend, that the kernel has in
+    // two where it has the seam of its cylinder (a tube opened elsewhere than there).
+    let mut one_bend: Vec<(u32, u32)> = Vec::new();
     for (e, info) in edges.iter().enumerate() {
         if info.degenerate {
             continue;
@@ -414,6 +417,14 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
                                 .into(),
                         );
                     }
+                }
+                if let (Chart::Bend { axis: a, radius: ra, .. }, Chart::Bend { axis: b, radius: rb, .. }) = (cf, cg)
+                    && a.dir().cross(b.dir()).len() < SMOOTH
+                    && (ra - rb).abs() < 1e-6 * (1.0 + t)
+                    && radial(a, b.origin()).is_none_or(|_| (b.origin() - a.origin()).cross(a.dir()).len() < 1e-6 * (1.0 + t))
+                {
+                    one_bend.push((*f, *g));
+                    continue;
                 }
                 if matches!(info.curve, CurveKind::Line { .. }) {
                     for (face, chart) in [(f, cf), (g, cg)] {
@@ -484,6 +495,28 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
             allowance: (hi - lo) * rho,
             face: *f,
         });
+    }
+
+    for (f, g) in one_bend {
+        let (Some(i), Some(j)) = (bends.iter().position(|b| b.face == f), bends.iter().position(|b| b.face == g)) else { continue };
+        if i == j {
+            continue;
+        }
+        let other = bends.remove(j);
+        let Some(first) = bends.iter_mut().find(|b| b.face == f) else { continue };
+        // The centre line of the whole: the longer's, moved to the middle of the two.
+        let middle = |b: &Bend| b.lines.first().map(|l| (l[0] + l[1]) / 2.0);
+        if let (Some(a), Some(b)) = (middle(first), middle(&other)) {
+            let (mine, theirs) = (first.allowance, other.allowance);
+            let at = (a * mine + b * theirs) / (mine + theirs);
+            let (from, base) = if mine >= theirs { (a, first.lines.clone()) } else { (b, other.lines.clone()) };
+            let across = (b - a).normalized();
+            let by = across * (at - from).dot(across);
+            first.lines = base.iter().map(|l| [l[0] + by, l[1] + by]).collect();
+        }
+        first.angle += other.angle;
+        first.allowance += other.allowance;
+        first.extents.extend(other.extents);
     }
 
     // With its lower left corner at the origin.

@@ -40,9 +40,9 @@ fn near(a: f64, b: f64) -> bool {
     (a - b).abs() <= 1e-7 * b.abs().max(1.0)
 }
 
-/// Close enough for what goes round a bend as points in the flat (every 0.005 mm of deflection).
+/// Close enough for what comes back as points in the flat, and is taken for the arc it lies on.
 fn close(a: f64, b: f64) -> bool {
-    (a - b).abs() <= 2e-3 * b.abs().max(1.0)
+    (a - b).abs() <= 1e-5 * b.abs().max(1.0)
 }
 
 /// The part regenerates without an error; its volume.
@@ -223,14 +223,13 @@ fn every_bend_of_a_channel_is_laid_flat_when_none_is_named_and_one_when_it_is() 
     let top = face_at(&mut s, &mut k, [30.0, 20.0, T]);
 
     let right = face_at(&mut s, &mut k, bracket_bend());
-    let one = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": top.clone(), "bends": [right] })), "feature");
+    run(&mut s, &mut k, "sheet.unfold", json!({ "face": top.clone(), "bends": [right] }));
     let half = 50.0 + ALLOWANCE + 15.0;
     let by_hand = half * 40.0 * T + folded_bend(FRAC_PI_2, 40.0) + 15.0 * 40.0 * T;
     assert!(near(volume(&mut s, &mut k), by_hand), "{} {by_hand}", volume(&mut s, &mut k));
     let (lo, hi) = bbox(&mut s, &mut k);
     assert!(lo.near(Vec3::ZERO, 1e-6) && hi.near(Vec3::new(5.0 + half, 40.0, 20.0), 1e-6), "{lo:?} {hi:?}");
     assert!(s.undo());
-    let _ = one;
 
     let all = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": top })), "feature");
     assert!(near(volume(&mut s, &mut k), long * 40.0 * T), "{} {}", volume(&mut s, &mut k), long * 40.0 * T);
@@ -368,8 +367,8 @@ fn a_hole_all_on_the_strip_is_a_hole_in_the_bend() {
 
 #[test]
 fn of_two_bends_flattened_either_can_be_folded_back_first_and_the_other_after() {
-    // A plate with a flange on each of two neighbouring ends of a strip: a U. Flattened one after
-    // the other from the plate, and folded back one at a time by a click on each strip.
+    // A plate with a flange on each of two opposite edges: a U. Flattened one after the other from
+    // the plate, and folded back one at a time, each told by a face of its strip.
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     let (face, lines) = plate(&mut s, &mut k, 60.0, 40.0);
     let edges = [rim(&mut s, &mut k, face, lines[1]), rim(&mut s, &mut k, face, lines[3])];
@@ -384,11 +383,10 @@ fn of_two_bends_flattened_either_can_be_folded_back_first_and_the_other_after() 
     let unfold = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": top, "bends": [right, left] })), "feature");
     let long = 50.0 + 2.0 * (ALLOWANCE + 15.0);
     assert!(near(volume(&mut s, &mut k), long * 40.0 * T));
-    // A slot across each strip, in one sketch: 8 by 30 round the middle of each.
     let strip_right = face_at(&mut s, &mut k, [55.0 + ALLOWANCE / 2.0, 20.0, T]);
     let strip_left = face_at(&mut s, &mut k, [5.0 - ALLOWANCE / 2.0, 20.0, T]);
     // The right one first, then the left.
-    let first = id(&run(&mut s, &mut k, "sheet.refold", json!({ "unfold": unfold, "bends": [strip_right] })), "feature");
+    run(&mut s, &mut k, "sheet.refold", json!({ "unfold": unfold, "bends": [strip_right] }));
     let half_right = folded_bend(FRAC_PI_2, 40.0) + 15.0 * 40.0 * T;
     let flat_left = (ALLOWANCE + 15.0) * 40.0 * T;
     assert!(near(volume(&mut s, &mut k), 50.0 * 40.0 * T + half_right + flat_left), "{}", volume(&mut s, &mut k));
@@ -399,12 +397,10 @@ fn of_two_bends_flattened_either_can_be_folded_back_first_and_the_other_after() 
     sound(&mut s, &mut k);
     let (lo, hi) = bbox(&mut s, &mut k);
     assert!(lo.near(Vec3::ZERO, 1e-6) && hi.near(Vec3::new(60.0, 40.0, 20.0), 1e-6), "{lo:?} {hi:?}");
-    let _ = first;
     // A second refold of a bend that is folded back has nothing to do, and says so.
-    let last = id(&run(&mut s, &mut k, "sheet.refold", json!({ "unfold": unfold })), "feature");
+    run(&mut s, &mut k, "sheet.refold", json!({ "unfold": unfold }));
     let e = failure(&mut s, &mut k);
     assert!(e.contains("no bend laid flat") && e.contains("folded back already"), "{e}");
-    let _ = last;
 }
 
 #[test]
@@ -438,10 +434,6 @@ fn a_bend_laid_flat_with_another_beyond_it_carries_the_other_round_and_back() {
     let z_top = face_at(&mut s, &mut k, [10.0, 20.0, T]);
     assert!(s.undo());
     let second = {
-        let c = FRAC_PI_2 / 2.0;
-        // The second bend turns the other way round its own axis, at the wall's top: its outside
-        // looks up and out from the corner.
-        let _ = c;
         let faces = run(&mut s, &mut k, "model.faces", json!({}));
         let second =
             faces["faces"].as_array().unwrap().iter().find(|f| f["surface"]["Cylinder"].is_object() && f["centroid"][2].as_f64().unwrap() > 10.0);
@@ -530,12 +522,11 @@ fn what_cannot_be_folded_back_is_said_in_words() {
     run(&mut s, &mut k, "feature.delete", json!({ "feature": added }));
 
     // With its unfold suppressed there is nothing flat.
-    let refold = id(&run(&mut s, &mut k, "sheet.refold", json!({ "unfold": unfold })), "feature");
+    run(&mut s, &mut k, "sheet.refold", json!({ "unfold": unfold }));
     assert!(volume(&mut s, &mut k) > 0.0);
     run(&mut s, &mut k, "feature.suppress", json!({ "feature": unfold }));
     let e = failure(&mut s, &mut k);
     assert!(e.contains("no bend laid flat") && e.contains("suppressed"), "{e}");
-    let _ = refold;
 }
 
 #[test]
@@ -546,7 +537,7 @@ fn a_tube_that_cannot_be_laid_flat_can_after_a_slit() {
     let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
     run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 10 }));
     run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 12 }));
-    let tube = id(&run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 50 })), "feature");
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 50 }));
     let whole = volume(&mut s, &mut k);
     assert!(near(whole, PI * (144.0 - 100.0) * 50.0), "{whole}");
     let e = refused(&mut s, &mut k, "sheet.flat", json!({}));
@@ -566,7 +557,9 @@ fn a_tube_that_cannot_be_laid_flat_can_after_a_slit() {
     let long = TAU * rho - 1.0;
     assert!(near(num(&f, "length"), long) && near(num(&f, "width"), 50.0) && near(num(&f, "area"), long * 50.0), "{f}");
     assert_eq!(f["holes"].as_u64(), Some(0));
-    let _ = tube;
+    // One bend, round almost all the way.
+    assert_eq!(f["bends"].as_array().unwrap().len(), 1, "{f}");
+    assert!(near(num(&f["bends"][0], "angle"), TAU - 1.0 / rho) && near(num(&f["bends"][0], "radius"), 10.0), "{f}");
 
     // It follows: a wider gap, a wider slit.
     run(&mut s, &mut k, "sheet.defaults", json!({ "gap": 3 }));
@@ -689,7 +682,7 @@ fn a_shelled_box_that_closes_on_itself_is_laid_flat_after_a_rip() {
     assert!(s.undo() && s.undo());
 
     // The whole of a bend taken out: one corner open, three bends left.
-    let rip_bend = id(&run(&mut s, &mut k, "sheet.rip", json!({ "face": corner, "way": "face" })), "feature");
+    run(&mut s, &mut k, "sheet.rip", json!({ "face": corner, "way": "face" }));
     let v = volume(&mut s, &mut k);
     assert!(near(v, whole - folded_bend(FRAC_PI_2, 30.0)), "{v}");
     sound(&mut s, &mut k);
@@ -698,7 +691,6 @@ fn a_shelled_box_that_closes_on_itself_is_laid_flat_after_a_rip() {
     assert!(near(num(&f, "length"), long) && near(num(&f, "area"), long * 30.0), "{f}");
     assert_eq!(f["bends"].as_array().unwrap().len(), 3);
     assert!(s.undo());
-    let _ = rip_bend;
 
     // A point-to-point slit, from one rim to the other at a slant: a slot across the strip, and
     // what it takes is its length by the gap.
@@ -770,7 +762,6 @@ fn a_rip_and_what_it_cannot_be() {
     assert!(e.contains("not a sheet metal part yet"), "{e}");
     assert!(refused(&mut p, &mut q, "sheet.unfold", json!({ "face": {} })).contains("not a sheet metal part yet"));
     assert!(refused(&mut p, &mut q, "sheet.refold", json!({})).contains("not a sheet metal part yet"));
-    let _ = k.live_shapes();
 }
 
 #[test]
@@ -811,7 +802,7 @@ fn a_tray_with_relieved_corners_is_laid_flat_whole_and_folded_back() {
 fn a_fold_a_rolled_hem_and_a_cut_across_a_bend_are_laid_flat_too() {
     // A fold: the two faces it made have one name between them, and only one of them is what stays.
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
-    let (face, _) = plate(&mut s, &mut k, 80.0, 40.0);
+    plate(&mut s, &mut k, 80.0, 40.0);
     let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false })), "feature");
     run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": 50, "y1": 0, "x2": 50, "y2": 40 }));
     run(&mut s, &mut k, "sheet.fold", json!({ "sketch": sk, "location": "start" }));
@@ -827,7 +818,6 @@ fn a_fold_a_rolled_hem_and_a_cut_across_a_bend_are_laid_flat_too() {
         .clone();
     let bend = run(&mut s, &mut k, "model.face_ref", json!({ "face": bend }));
     let top = run(&mut s, &mut k, "model.find", json!({ "what": "faces", "kind": "plane", "facing": "bottom" }))["found"][0]["reference"].clone();
-    let _ = face;
     let unfold = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": top, "bends": [bend] })), "feature");
     assert!(near(volume(&mut s, &mut k), 80.0 * 40.0 * T), "{}", volume(&mut s, &mut k));
     sound(&mut s, &mut k);
@@ -894,21 +884,148 @@ fn work_can_go_on_after_a_refold_and_refer_to_the_bend_as_it_was() {
 }
 
 #[test]
-fn the_kernel_keeps_no_shapes_of_a_failed_refold() {
+fn the_tray_a_shelled_box_makes_is_laid_flat_and_folded_back() {
+    // A shelled box, its corners ripped, bends on the sharp edges under its walls: walls that hang
+    // on past their bends.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 60, "y2": 40 }));
+    let block = id(&run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 20 })), "feature");
+    let top = run(&mut s, &mut k, "model.face_ref", json!({ "origin": { "type": "cap", "feature": block, "end": "end" } }));
+    run(&mut s, &mut k, "model.shell", json!({ "remove": [top], "thickness": T }));
+    run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": T, "bend_radius": R, "k_factor": K, "gap": 1 }));
+    let corners: Vec<Value> = [(0.0, 0.0), (60.0, 0.0), (60.0, 40.0), (0.0, 40.0)]
+        .iter()
+        .map(|(x, y)| run(&mut s, &mut k, "model.edge_ref", json!({ "at": [x, y, 10] })))
+        .collect();
+    run(&mut s, &mut k, "sheet.corner_rip", json!({ "edges": corners }));
+    let feet: Vec<Value> = [[30.0, 0.0, 0.0], [60.0, 20.0, 0.0], [30.0, 38.0, 2.0], [2.0, 20.0, 2.0]]
+        .iter()
+        .map(|at| run(&mut s, &mut k, "model.edge_ref", json!({ "at": at })))
+        .collect();
+    run(&mut s, &mut k, "sheet.sharp_bend", json!({ "edges": feet }));
+    let whole = volume(&mut s, &mut k);
+    let pattern = flat(&mut s, &mut k);
+    assert_eq!(pattern["bends"].as_array().unwrap().len(), 4);
+    let floor = face_at(&mut s, &mut k, [30.0, 20.0, T]);
+    let unfold = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": floor })), "feature");
+    let v = volume(&mut s, &mut k);
+    assert!(close(v, num(&pattern, "area") * T), "{v} {}", num(&pattern, "area") * T);
+    sound(&mut s, &mut k);
+    run(&mut s, &mut k, "sheet.refold", json!({ "unfold": unfold }));
+    let v = volume(&mut s, &mut k);
+    assert!(near(v, whole), "{v} {whole}");
+    sound(&mut s, &mut k);
+    let back = flat(&mut s, &mut k);
+    for key in ["length", "width", "area", "cut_length"] {
+        assert!(near(num(&back, key), num(&pattern, key)), "{key}: {} {}", back[key], pattern[key]);
+    }
+}
+
+#[test]
+fn what_it_depends_on_changing_brings_it_along_and_it_can_be_rolled_back() {
     let (mut s, mut k, _) = bracket();
     let top = face_at(&mut s, &mut k, [10.0, 20.0, T]);
     let inside = face_at(&mut s, &mut k, bracket_bend());
     let unfold = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": top, "bends": [inside] })), "feature");
-    hole(&mut s, &mut k, (55.0 + ALLOWANCE / 2.0, 20.0), 6.0);
+    let cut = hole(&mut s, &mut k, (55.0 + ALLOWANCE / 2.0, 20.0), 1.5);
+    let refold = id(&run(&mut s, &mut k, "sheet.refold", json!({ "unfold": unfold })), "feature");
+    // The flange 30 high in place of 20: 10 more of wall, all the way through.
+    let flange = tenon_model::FeatureId(3);
+    let mut kind = serde_json::to_value(&s.document().feature(flange).unwrap().kind).unwrap();
+    assert_eq!(kind["type"], "flange");
+    kind["height"] = json!(30);
+    let before = volume(&mut s, &mut k);
+    run(&mut s, &mut k, "feature.update", json!({ "feature": 3, "kind": kind }));
+    let v = volume(&mut s, &mut k);
+    assert!(near(v, before + 10.0 * 40.0 * T), "{v} {}", before + 10.0 * 40.0 * T);
+    sound(&mut s, &mut k);
+    let (_, hi) = bbox(&mut s, &mut k);
+    assert!(near(hi.z, 30.0), "{hi:?}");
+
+    // The End of Part marker put before the refold, before the cut and before the unfold.
+    let long = 55.0 + ALLOWANCE + 25.0;
+    let hole_v = PI * 1.5 * 1.5 * T;
+    run(&mut s, &mut k, "feature.end_of_part", json!({ "before": refold }));
+    assert!(near(volume(&mut s, &mut k), long * 40.0 * T - hole_v), "{}", volume(&mut s, &mut k));
+    run(&mut s, &mut k, "feature.end_of_part", json!({ "before": cut }));
+    assert!(near(volume(&mut s, &mut k), long * 40.0 * T), "{}", volume(&mut s, &mut k));
+    run(&mut s, &mut k, "feature.end_of_part", json!({ "before": unfold }));
+    let folded = 55.0 * 40.0 * T + folded_bend(FRAC_PI_2, 40.0) + 25.0 * 40.0 * T;
+    assert!(near(volume(&mut s, &mut k), folded), "{}", volume(&mut s, &mut k));
+    run(&mut s, &mut k, "feature.end_of_part", json!({}));
+    assert!(near(volume(&mut s, &mut k), v));
+}
+
+#[test]
+fn a_cut_seen_at_an_angle_across_a_bend_comes_through_as_the_curve_it_is() {
+    // A round cut looking straight down on the bend from above, whose walls on the bend are curves
+    // through points: what is cut off a bend while it is folded stays that shape laid flat.
+    let (mut s, mut k, _) = bracket();
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false })), "feature");
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 55, "cy": 20, "r": 4 }));
+    run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk }));
+    let cut = volume(&mut s, &mut k);
+    sound(&mut s, &mut k);
+    let pattern = flat(&mut s, &mut k);
+    let top = face_at(&mut s, &mut k, [10.0, 20.0, T]);
+    let unfold = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": top })), "feature");
+    let v = volume(&mut s, &mut k);
+    assert!((v - num(&pattern, "area") * T).abs() < 2e-3 * v, "{v} {}", num(&pattern, "area") * T);
+    sound(&mut s, &mut k);
     run(&mut s, &mut k, "sheet.refold", json!({ "unfold": unfold }));
     let v = volume(&mut s, &mut k);
-    let before = k.live_shapes();
-    for _ in 0..3 {
-        run(&mut s, &mut k, "feature.suppress", json!({ "feature": unfold + 3 }));
-        run(&mut s, &mut k, "model.regenerate", json!({}));
-        run(&mut s, &mut k, "feature.suppress", json!({ "feature": unfold + 3, "suppressed": false }));
-        assert!(near(volume(&mut s, &mut k), v));
+    assert!((v - cut).abs() < 2e-3 * cut, "{v} {cut}");
+    sound(&mut s, &mut k);
+}
+
+#[test]
+fn a_rip_s_gap_takes_an_equation_and_an_unfold_goes_with_what_uses_it() {
+    let (mut s, mut k, _) = bracket();
+    let whole = volume(&mut s, &mut k);
+    let top = face_at(&mut s, &mut k, [10.0, 20.0, T]);
+    let rip = id(
+        &run(&mut s, &mut k, "sheet.rip", json!({ "face": top, "at": [20, 20, 2], "gap": 1, "equations": { "/gap": "Thickness / 2" } })),
+        "feature",
+    );
+    assert!(near(volume(&mut s, &mut k), whole - 40.0 * 1.0 * T), "{}", volume(&mut s, &mut k));
+    run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": 1 }));
+    assert!(volume(&mut s, &mut k) > 0.0);
+    // A slit half a thickness wide, now.
+    let kind = serde_json::to_value(&s.document().feature(tenon_model::FeatureId(rip as u32)).unwrap().kind).unwrap();
+    assert_eq!(kind["gap"], 0.5, "{kind}");
+
+    // A refold uses its unfold: one is not deleted without the other unless it is asked to be.
+    let (mut s, mut k, _) = bracket();
+    let top = face_at(&mut s, &mut k, [10.0, 20.0, T]);
+    let inside = face_at(&mut s, &mut k, bracket_bend());
+    let unfold = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": top, "bends": [inside] })), "feature");
+    run(&mut s, &mut k, "sheet.refold", json!({}));
+    let e = refused(&mut s, &mut k, "feature.delete", json!({ "feature": unfold }));
+    assert!(e.contains("is used by") && e.contains("Refold1"), "{e}");
+    let gone = run(&mut s, &mut k, "feature.delete", json!({ "feature": unfold, "dependents": true }));
+    assert_eq!(gone["deleted"].as_array().unwrap().len(), 2, "{gone}");
+}
+
+#[test]
+fn the_kernel_keeps_no_shapes_of_what_failed() {
+    // A refold that works and then, with a pocket in the strip, fails, again and again.
+    let (mut s, mut k, _) = bracket();
+    let top = face_at(&mut s, &mut k, [10.0, 20.0, T]);
+    let inside = face_at(&mut s, &mut k, bracket_bend());
+    let unfold = id(&run(&mut s, &mut k, "sheet.unfold", json!({ "face": top, "bends": [inside] })), "feature");
+    let sk = sketch_on_top(&mut s, &mut k);
+    let (a, b) = (in_sketch(&mut s, &mut k, sk, (55.5, 25.0)), in_sketch(&mut s, &mut k, sk, (56.5, 30.0)));
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": a.0, "y1": a.1, "x2": b.0, "y2": b.1 }));
+    let pocket = id(&run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 1, "reverse": true, "operation": "cut" })), "feature");
+    run(&mut s, &mut k, "sheet.refold", json!({ "unfold": unfold }));
+    let mut counts = Vec::new();
+    for _ in 0..4 {
+        assert!(failure(&mut s, &mut k).contains("not sheet of one thickness"));
+        run(&mut s, &mut k, "feature.suppress", json!({ "feature": pocket }));
+        assert!(volume(&mut s, &mut k) > 0.0);
+        run(&mut s, &mut k, "feature.suppress", json!({ "feature": pocket, "suppressed": false }));
+        counts.push(k.live_shapes());
     }
-    let after = k.live_shapes();
-    assert!(after <= before + 8, "{before} {after}");
+    assert!(counts[3] <= counts[1], "{counts:?}");
 }

@@ -909,6 +909,15 @@ fn with_feature(doc: &Document, editing: Option<FeatureId>, kind: FeatureKind) -
     Some(d)
 }
 
+/// The document as it stands just after feature `id`.
+fn up_to(doc: Document, id: Option<FeatureId>) -> Document {
+    let next = id.and_then(|id| doc.index_of(id)).and_then(|i| doc.features().get(i + 1)).map(|f| f.id);
+    match next {
+        Some(next) => doc.rolled_back_to(next),
+        None => doc,
+    }
+}
+
 impl Workbench {
     /// The document to show while a feature panel is open. Extrude and Revolve preview their
     /// result; Fillet, Chamfer and Shell show the part they act on (rolled back to before the
@@ -978,12 +987,13 @@ impl Workbench {
                 Some(kind) => with_feature(self.document(), p.editing, kind),
                 None => rolled(p.editing),
             },
+            // (Edited, up to itself: a refold further on would hide what an unfold does.)
             Some(Panel::Unfold(p)) => match p.kind() {
-                Some(kind) => with_feature(self.document(), p.editing, kind),
+                Some(kind) => with_feature(self.document(), p.editing, kind).map(|d| up_to(d, p.editing)),
                 None => rolled(p.editing),
             },
             Some(Panel::Refold(p)) => match p.kind() {
-                Some(kind) => with_feature(self.document(), p.editing, kind),
+                Some(kind) => with_feature(self.document(), p.editing, kind).map(|d| up_to(d, p.editing)),
                 None => rolled(p.editing),
             },
             Some(Panel::Fillet(p)) => rolled(p.editing),
