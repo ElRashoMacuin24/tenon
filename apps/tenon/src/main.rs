@@ -27,8 +27,28 @@ use tenon_ui::{Services, ThemeName, Workbench};
 const SCREENSHOT_MAX_FRAMES: u32 = 600;
 const SCREENSHOT_MAX_SECONDS: f64 = 30.0;
 
+/// What `tenon --help` says.
+const USAGE: &str = "\
+tenon: Tenon, parametric 3D CAD
+
+  tenon [FILE] [OPTIONS]
+
+  FILE                  a part (.tenon), an assembly (.tenonasm) or a drawing (.tenondrw)
+  --theme light|dark    the window's theme
+  --edit-sketch NAME    open one of the part's sketches for editing first
+  --run COMMAND         run a ribbon command after it opens (e.g. model.extrude); may be repeated
+  --tab NAME            show a ribbon tab last (e.g. Inspect)
+  --screenshot OUT.png  save the window as a picture (after the model has regenerated), and exit
+  --size WIDTHxHEIGHT   the window's size
+  --control [PORT]      open the control port, for agents (docs/mcp.md)
+  --version, -V         the version
+  --help, -h            this
+";
+
 struct App {
     wb: Workbench,
+    /// The window's size when `--size` asked for one: kept settings must not win over it.
+    size_asked: Option<[f32; 2]>,
     screenshot: Option<PathBuf>,
     frames: u32,
     requested: bool,
@@ -73,6 +93,9 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if let Some([w, h]) = self.size_asked.take() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+        }
         // The window's close button asks before unsaved changes are lost; screenshot runs never ask.
         if self.screenshot.is_none() && ctx.input(|i| i.viewport().close_requested()) && !self.wb.close_requested() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -207,12 +230,17 @@ fn main() -> eframe::Result {
     let mut run: Vec<String> = Vec::new();
     let (mut edit_sketch, mut tab): (Option<String>, Option<String>) = (None, None);
     let mut size = [1440.0, 900.0];
+    let mut size_asked = None;
     let mut control: Option<u16> = None;
     let mut args = std::env::args().skip(1).peekable();
     while let Some(a) = args.next() {
         match a.as_str() {
             "--version" | "-V" => {
                 println!("tenon {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "--help" | "-h" => {
+                print!("{USAGE}");
                 return Ok(());
             }
             "--screenshot" => screenshot = args.next().map(PathBuf::from),
@@ -229,7 +257,7 @@ fn main() -> eframe::Result {
                 None => eprintln!("warning: --theme expects light or dark"),
             },
             "--size" => match args.next().as_deref().and_then(parse_size) {
-                Some(s) => size = s,
+                Some(s) => (size, size_asked) = (s, Some(s)),
                 None => eprintln!("warning: --size expects WIDTHxHEIGHT, e.g. 1440x900; using the default"),
             },
             other if !other.starts_with('-') && project.is_none() => project = Some(PathBuf::from(other)),
@@ -288,7 +316,8 @@ fn main() -> eframe::Result {
                 && let Some(base) = eframe::storage_dir("Tenon").map(|d| d.join("recovery"))
                 && let Err(e) = wb.enable_recovery(&base)
             {
-                eprintln!("warning: {e}");
+                // (A release build on Windows has no console: where the user will see it.)
+                wb.report_error(format!("Unsaved work cannot be kept against a crash: {e}"));
             }
             // What parts looked like when last rebuilt is kept in the user's cache folder, to
             // show them at once when they are opened again. (Not in a screenshot run, which
@@ -342,7 +371,7 @@ fn main() -> eframe::Result {
                 eprintln!("error: --tab: {e}");
                 wb.report_error(e);
             }
-            Ok(Box::new(App { wb, screenshot, frames: 0, requested: false, control: announced }))
+            Ok(Box::new(App { wb, size_asked, screenshot, frames: 0, requested: false, control: announced }))
         }),
     );
     // A window that could not be made says why, in a window of the system's own: on Windows the
