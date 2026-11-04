@@ -158,31 +158,36 @@ pub(crate) fn eq_field(
     if resp.lost_focus() {
         out.given_up = ui.input(|i| i.key_pressed(egui::Key::Escape));
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-        // What is left in the box is refused when it is no value the field takes: said, and
-        // never taken for OK with the value from before. (Enter leaves the box as it is, to be
-        // put right; a click elsewhere shows the value from before again.)
-        let typed = text.trim().trim_end_matches(unit).trim().to_owned();
-        let refused = match parse_entry(ui, &text, unit) {
-            Some((v, _)) if range.contains(&v) => None,
-            Some((v, _)) if v > *range.end() => {
-                let unit = if unit.is_empty() { String::new() } else { format!(" {unit}") };
-                Some(format!("{typed} is too large here: it must be at most {}{unit}.", fmt_value(*range.end())))
-            }
-            Some(_) => Some(format!("{typed} is not taken here: it must be {}.", range_words(&range, unit))),
-            None => Some(format!("{typed} is not a number, or an equation of the parameters.")),
-        };
-        match refused {
-            Some(said) => {
-                ui.data_mut(|d| d.insert_temp(egui::Id::new(FIELD_REFUSED), said));
-                if enter {
-                    resp.request_focus();
-                } else {
+        // (It is what was typed that is judged. A box goes on saying it lost the keyboard for a
+        // frame after, with nothing typed in it: what it shows then, "fx: d0 / 2", is no value.)
+        let left: Option<String> = if focused { Some(text.clone()) } else { ui.data(|d| d.get_temp::<String>(id)) };
+        if let Some(left) = left {
+            // What is left in the box is refused when it is no value the field takes: said, and
+            // never taken for OK with the value from before. (Enter leaves the box as it is, to be
+            // put right; a click elsewhere shows the value from before again.)
+            let typed = left.trim().trim_end_matches(unit).trim().to_owned();
+            let refused = match parse_entry(ui, &left, unit) {
+                Some((v, _)) if range.contains(&v) => None,
+                Some((v, _)) if v > *range.end() => {
+                    let unit = if unit.is_empty() { String::new() } else { format!(" {unit}") };
+                    Some(format!("{typed} is too large here: it must be at most {}{unit}.", fmt_value(*range.end())))
+                }
+                Some(_) => Some(format!("{typed} is not taken here: it must be {}.", range_words(&range, unit))),
+                None => Some(format!("{typed} is not a number, or an equation of the parameters.")),
+            };
+            match refused {
+                Some(said) => {
+                    ui.data_mut(|d| d.insert_temp(egui::Id::new(FIELD_REFUSED), said));
+                    if enter {
+                        resp.request_focus();
+                    } else {
+                        ui.data_mut(|d| d.remove::<String>(id));
+                    }
+                }
+                None => {
+                    out.entered = enter;
                     ui.data_mut(|d| d.remove::<String>(id));
                 }
-            }
-            None => {
-                out.entered = enter;
-                ui.data_mut(|d| d.remove::<String>(id));
             }
         }
     }

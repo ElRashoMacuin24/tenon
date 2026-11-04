@@ -766,3 +766,57 @@ fn command_search_finds_what_a_button_reads_and_keeps_enter_to_itself() {
     assert!(wb.panel.is_some(), "the panel took it: {}", wb.status());
     assert_eq!(wb.chrome.search, "", "the next search starts afresh");
 }
+
+/// An equation typed in a box is what was typed, not the "fx:" the box shows afterwards: whatever
+/// happens once it has let go of the keyboard, nobody is told that is no number.
+#[test]
+fn an_equation_in_a_box_is_not_taken_for_what_the_box_shows_after() {
+    let (mut wb, mut d, sk) = block_with_a_point();
+    wb.exec("param.add", json!({ "name": "big", "equation": "30 mm" })).unwrap();
+    let hole = json!({ "sketch": sk.0, "diameter": 6, "through_all": true, "reverse": true, "type": "counterbore", "counterbore_diameter": 12, "counterbore_depth": 3 });
+    wb.exec("model.hole", hole).unwrap();
+    d.settle(&mut wb);
+    let id = last(&wb).id;
+
+    // Enter, and the hole refuses the value: that is what goes on being said.
+    wb.edit_feature(id).unwrap();
+    type_into(&mut d, &mut wb, "tn_props_hole_dia", "big");
+    d.tap(&mut wb, egui::Key::Enter);
+    const WIDER: &str = "Hole1: the counterbore must be wider than the hole";
+    assert_eq!(wb.status(), WIDER);
+    for _ in 0..3 {
+        d.frame(&mut wb, vec![]);
+    }
+    assert_eq!(wb.status(), WIDER);
+    assert!(wb.panel.is_some());
+    wb.run_ui("ui.cancel").unwrap();
+    d.settle(&mut wb);
+
+    // On to the next box with the mouse: no word against it, and OK takes it.
+    wb.edit_feature(id).unwrap();
+    type_into(&mut d, &mut wb, "tn_props_hole_dia", "big / 10");
+    let said = wb.status().to_owned();
+    let next = d.ctx.read_response(egui::Id::new("tn_props_seat_dia")).expect("the bore's box").rect.center();
+    d.click(&mut wb, next);
+    for _ in 0..3 {
+        d.frame(&mut wb, vec![]);
+    }
+    assert_eq!(wb.status(), said);
+    assert!(!wb.status_error, "{}", wb.status());
+    wb.run_ui("ui.ok").unwrap();
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    let FeatureKind::Hole(h) = &last(&wb).kind else { panic!() };
+    assert!((h.diameter - 3.0).abs() < 1e-9, "{}", h.diameter);
+    let list = wb.exec("param.list", json!({})).unwrap();
+    assert!(list["model"].as_array().unwrap().iter().any(|m| m["equation"] == "big / 10"), "{list}");
+
+    // And what was typed is still judged, when the box is left with it wrong.
+    wb.edit_feature(id).unwrap();
+    type_into(&mut d, &mut wb, "tn_props_hole_dia", "nothing + 1");
+    let next = d.ctx.read_response(egui::Id::new("tn_props_seat_dia")).expect("the bore's box").rect.center();
+    d.click(&mut wb, next);
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.status(), "nothing + 1 is not a number, or an equation of the parameters.");
+    assert!(wb.status_error);
+}
