@@ -63,6 +63,20 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `sketch.text` | Text | sketch; at (point id) or x, y: where the first line's baseline starts; text (lines split by a new line); height (of capital letters, default 3.5 mm); angle (rad, default 0). Its letters are profiles an extrude takes as {text: id} in `regions`. Returns the text and its point (`at`) | yes |
 | `sketch.edit_text` | Edit Text | sketch, entity (the text's id); text, height, angle: what changes | yes |
 | `sketch.info` | Sketch Info | sketch | no |
+| `sketch.new_3d` | Start 3D Sketch | A sketch on no plane, empty. Returns the feature and its name | yes |
+| `sketch3d.point` | 3D Point | sketch; at: [x, y, z], or what of the part it stands for and follows: "origin", {"work": id} or {"vertex": edge reference, "end": 0 or 1}. Returns the point | yes |
+| `sketch3d.line` | 3D Line | sketch; start, end: each a point's id, or as sketch3d.point's `at`; along: x \| y \| z holds it parallel to that axis. Returns the line and its two points | yes |
+| `sketch3d.spline` | 3D Spline | sketch; points: 2 or more, each as a line's start: it goes through them, in order. Returns the spline and its points | yes |
+| `sketch3d.bend` | Bend | sketch; point: the corner where two lines meet, or lines: the two; radius. Returns the arc, its centre and ends, the corner (kept as a construction point) and the radius's dimension | yes |
+| `sketch3d.include` | Include Geometry | sketch; edge: an edge reference from model.edge_ref, brought in as reference geometry that follows the part; geometry: what the edge is, where the kernel is not to hand. Returns the entity and its two end points | yes |
+| `sketch3d.constrain` | 3D Constraint | sketch; constraint: {"type": coincident (a, b) \| fix (point) \| along (line, axis) \| parallel (a, b) \| perpendicular (a, b) \| equal (a, b) \| tangent (a, b) \| length (line, value) \| distance (a, b, value) \| coordinate (point, axis, value) \| radius (arc, value)}. Refused, in words, when it would over-constrain the sketch | yes |
+| `sketch3d.set_dimension` | Set 3D Dimension | sketch, constraint; value, or equation | yes |
+| `sketch3d.move` | Move 3D Point | sketch, point; at: [x, y, z] (it goes as near as the constraints let it) | yes |
+| `sketch3d.delete` | Delete in 3D Sketch | sketch; entities: [ids], constraints: [ids]. A bend deleted gives its corner back. Returns what was deleted | yes |
+| `sketch3d.construction` | 3D Construction | sketch, entity; on (default true) | yes |
+| `sketch3d.break_link` | Break 3D Link | sketch, entities: reference points and lines become the sketch's own, where they are | yes |
+| `sketch3d.info` | 3D Sketch Info | sketch. Its entities with their lengths, constraints, degrees of freedom and links | no |
+| `sketch3d.length` | 3D Sketch Length | sketch; curves (default: its own curves that are not construction). Returns the length in all, and each | no |
 | `model.extrude` | Extrude | sketch; distance (plus backward: a second distance the other way), or symmetric: total, or through_all: true; reverse; operation: join \| cut \| new_body \| intersect; regions: the closed regions to use (default: every outer one), each as sketch.info lists it under `select`: [curve ids] for what those curves enclose, or {left: [ids], right: [ids], nth} for one region of a divided sketch; taper (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through_all only) | yes |
 | `model.revolve` | Revolve | sketch; axis: line id or "x" \| "y" \| "z" (default: the sketch's centre line, when it has one); angle (rad, default full); symmetric; operation; regions | yes |
 | `model.fillet` | Fillet | edges: [edge references from model.edge_ref], radius. Variable radius: end_radius (the radius at the end of each edge, `radius` being the start's), or radii: [{ at (0 to 1 along the edge), radius }, ...] for more places. Face fillet: faces: [[face references], [face references]] in place of edges: every edge between a face of one set and a face of the other is rounded | yes |
@@ -83,6 +97,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `work.plane` | Work Plane | by: offset (base: plane, distance) \| angle (base: plane, axis: in the base plane, angle: rad) \| midplane (a, b: parallel planes); a plane is "xy" \| "yz" \| "xz", a face reference or {"work": plane id} | yes |
 | `work.axis` | Work Axis | axis: "x" \| "y" \| "z", an edge reference, a cylindrical face reference or {"work": id}; or a, b: two planes it lies on | yes |
 | `work.point` | Work Point | edge: a circular edge reference (its centre); or axis and plane (where they meet) | yes |
+| `work.point_at` | Work Point at a Point | point: {"sketch3d_point": {"sketch": id, "point": id}}, {"sketch_point": {"sketch": id, "point": id}} or {"vertex": {"edge": edge reference, "end": 0 or 1}} | yes |
 | `feature.add` | Add Feature | kind: a feature definition as in model.tree / the file format; equations: {value field: equation} | yes |
 | `param.list` | Parameters | every model parameter (named dimensions and feature values) and user parameter | no |
 | `param.add` | Add Parameter | name; equation (e.g. "40 mm", "width / 2"); unit: mm \| deg \| ul (default mm); comment | yes |

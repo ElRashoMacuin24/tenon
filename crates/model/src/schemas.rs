@@ -784,14 +784,20 @@ static SCHEMAS: &[C] = &[
             opt("edge", Edge, "a circular edge: the point is its centre"),
             opt("axis", AXIS, "or an axis"),
             opt("plane", PLANE, "and the plane it meets"),
-            opt(
+            EQUATIONS,
+        ],
+        &[&[&["edge"], &["axis", "plane"]]],
+    ),
+    C::new(
+        "work.point_at",
+        &[
+            req(
                 "point",
                 Either(&[Word(&["origin"]), Object]),
-                "or at a point: {\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}",
+                "{\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}",
             ),
             EQUATIONS,
         ],
-        &[&[&["edge"], &["axis", "plane"], &["point"]]],
     ),
     C::new("feature.add", &[req("kind", Object, "a feature's definition, as model.tree lists it and the file format has it"), EQUATIONS]),
     C::new("param.list", &[]),

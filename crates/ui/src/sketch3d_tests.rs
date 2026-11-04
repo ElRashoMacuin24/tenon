@@ -322,7 +322,8 @@ fn a_spline_by_clicks_and_keys_and_undo_as_a_sketch_has_it() {
     d.click(&mut wb, make);
     d.frame(&mut wb, vec![]);
     let s = sk(&wb);
-    let spline = s.entities().find(|(_, e)| matches!(e.geometry, Geometry3::Spline { .. })).map(|(id, _)| id).unwrap_or_else(|| panic!("{}", wb.status()));
+    let spline =
+        s.entities().find(|(_, e)| matches!(e.geometry, Geometry3::Spline { .. })).map(|(id, _)| id).unwrap_or_else(|| panic!("{}", wb.status()));
     assert!(s.length(spline).unwrap() > 30.0);
     // Ctrl+Z takes it back in the sketch, which stays open; Ctrl+Y puts it back.
     ctrl(&mut d, &mut wb, egui::Key::Z);
@@ -376,7 +377,8 @@ fn the_browser_opens_it_again_by_a_double_click_and_it_shows_in_its_colour_until
     d.click(&mut wb, q);
     d.frame(&mut wb, vec![]);
     let Some(Panel::Measure(m)) = &wb.panel else { panic!() };
-    let got = m.result.as_ref().and_then(|r| r.as_ref().ok()).and_then(|r| r.get("Length")).unwrap_or_else(|| panic!("nothing measured: {:?}", m.result));
+    let got =
+        m.result.as_ref().and_then(|r| r.as_ref().ok()).and_then(|r| r.get("Length")).unwrap_or_else(|| panic!("nothing measured: {:?}", m.result));
     assert!((got - 30.0).abs() < 1e-9, "{got}");
 }
 
@@ -394,7 +396,7 @@ fn a_work_plane_square_to_a_curve_and_a_work_point_at_its_end_by_clicks() {
     // A plane square to the line, through the end nearer the click.
     wb.run_ui("work.plane").unwrap();
     let Some(Panel::Work(w)) = &mut wb.panel else { panic!() };
-    *w = Box::new(crate::work::WorkPanel { slot: crate::work::WorkSlot::Curve, method: crate::work::WorkMethod::SquareToCurve, ..(**w).clone() });
+    **w = crate::work::WorkPanel { slot: crate::work::WorkSlot::Curve, method: crate::work::WorkMethod::SquareToCurve, ..(**w).clone() };
     d.frame(&mut wb, vec![]);
     let q = on_screen(&wb, Vec3::new(10.0, 55.0, 30.0));
     d.click(&mut wb, q);
@@ -416,7 +418,7 @@ fn a_work_plane_square_to_a_curve_and_a_work_point_at_its_end_by_clicks() {
     // A work point at the line's other end, picked in the view.
     wb.run_ui("work.point").unwrap();
     let Some(Panel::Work(w)) = &mut wb.panel else { panic!() };
-    *w = Box::new(crate::work::WorkPanel { slot: crate::work::WorkSlot::P1, method: crate::work::WorkMethod::PointAt, ..(**w).clone() });
+    **w = crate::work::WorkPanel { slot: crate::work::WorkSlot::P1, method: crate::work::WorkMethod::PointAt, ..(**w).clone() };
     d.frame(&mut wb, vec![]);
     let q = on_screen(&wb, Vec3::new(10.0, 20.0, 30.0));
     d.click(&mut wb, q);
@@ -463,4 +465,285 @@ fn dragging_a_point_moves_it_in_the_view_and_a_delete_takes_it_away() {
     assert!(sk(&wb).entity(line).is_none());
     wb.run_ui("edit.undo").unwrap();
     assert!(sk(&wb).entity(line).is_some());
+}
+
+#[test]
+fn start_3d_sketch_is_under_the_arrow_of_start_2d_sketch() {
+    let (mut wb, mut d) = app();
+    wb.chrome.dropdown = Some(("sketch.new", vec2(10.0, 150.0).to_pos2()));
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let row = d.text_pos("Start 3D Sketch").unwrap_or_else(|| panic!("no entry: {:?}", d.texts()));
+    d.click(&mut wb, row);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.is_sketching3d(), "{}", wb.status());
+}
+
+#[test]
+fn a_line_from_the_origin_to_a_work_point_by_clicks_follows_the_work_point() {
+    let (mut wb, mut d) = app();
+    let plane = wb.exec("work.plane", json!({ "by": "offset", "base": "xz", "distance": 40 })).unwrap();
+    wb.exec("work.point", json!({ "axis": "y", "plane": { "work": plane["feature"] } })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("sketch.new_3d").unwrap();
+    let f = sketch_open(&wb);
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("view.home").unwrap();
+    wb.view.camera.fit(&tenon_geom::Aabb3::from_points([Vec3::new(-30.0, -60.0, -30.0), Vec3::new(60.0, 60.0, 60.0)]).unwrap());
+    settle(&mut d, &mut wb);
+    let WorkAt(work_at) = work_at(&wb);
+    wb.run_ui("sketch3d.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    let o = at(&wb, 0.0, 0.0, 0.0);
+    d.click(&mut wb, o);
+    d.frame(&mut wb, vec![]);
+    let Mode::Sketch3d(sm) = &wb.mode else { panic!() };
+    assert_eq!(sm.clicks.first().map(|c| c.target.clone()), Some(crate::sketch3d::Target::Origin), "{}", wb.status());
+    let w = on_screen(&wb, work_at);
+    d.click(&mut wb, w);
+    d.frame(&mut wb, vec![]);
+    let s = sk(&wb);
+    let line = s.entities().find(|(id, _)| s.is_line(*id)).map(|(id, _)| id).unwrap_or_else(|| panic!("no line: {}", wb.status()));
+    let (a, b) = s.line(line).unwrap();
+    assert!(a.dist(Vec3::ZERO) < 1e-9 && b.dist(work_at) < 1e-9, "{a:?} {b:?}");
+    assert_eq!(wb.document().links3(f).len(), 2, "the origin and the work point");
+    // On a point of the sketch: the next line shares it.
+    add_xyz(&mut d, &mut wb, 30.0, 40.0, 0.0);
+    let s = sk(&wb);
+    let lines: Vec<EntityId> = s.entities().filter(|(id, _)| s.is_line(*id)).map(|(id, _)| id).collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(s.geometry(lines[0]).unwrap().ends().unwrap().1, s.geometry(lines[1]).unwrap().ends().unwrap().0, "a chain");
+    wb.run_ui("sketch3d.finish").unwrap();
+    d.frame(&mut wb, vec![]);
+    // The plane moved: the work point goes with it, and the line with that.
+    let id = FeatureId(plane["feature"].as_u64().unwrap() as u32);
+    let mut kind = serde_json::to_value(&wb.document().feature(id).unwrap().kind).unwrap();
+    kind["distance"] = json!(55.0);
+    wb.exec("feature.update", json!({ "feature": id.0, "kind": kind })).unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let now = wb.document().sketch3d(f).unwrap().line(line).unwrap();
+    assert!(now.1.dist(work_at) > 10.0 && (now.1.y.abs() - 55.0).abs() < 1e-7 && now.1.x.abs() < 1e-7, "{:?}", now.1);
+}
+
+/// Where the part's one work point is.
+struct WorkAt(Vec3);
+fn work_at(wb: &Workbench) -> WorkAt {
+    let q = wb.scene().work.iter().find_map(|w| match w.1 {
+        tenon_model::WorkGeom::Point(q) => Some(q),
+        _ => None,
+    });
+    WorkAt(q.unwrap_or_else(|| panic!("no work point: {}", wb.status())))
+}
+
+#[test]
+fn every_constraint_tool_works_by_clicks_and_a_symbol_clicked_can_be_deleted() {
+    let (mut wb, mut d) = app();
+    wb.run_ui("sketch.new_3d").unwrap();
+    let f = sketch_open(&wb);
+    let a = wb.exec("sketch3d.line", json!({ "sketch": f.0, "start": [0, 0, 0], "end": [40, 3, 0] })).unwrap();
+    let b = wb.exec("sketch3d.line", json!({ "sketch": f.0, "start": [50, 10, 0], "end": [60, 30, 25] })).unwrap();
+    let id = |v: &serde_json::Value| EntityId(v.as_u64().unwrap() as u32);
+    let (la, lb) = (id(&a["line"]), id(&b["line"]));
+    let (a0, a1, b0, b1) = (id(&a["start"]), id(&a["end"]), id(&b["start"]), id(&b["end"]));
+    wb.view.camera.fit(&tenon_geom::Aabb3::from_points(sk(&wb).extent()).unwrap());
+    settle(&mut d, &mut wb);
+    let on_line = |wb: &Workbench, l: EntityId| {
+        let (p, q) = sk(wb).line(l).unwrap();
+        on_screen(wb, p.lerp(q, 0.5))
+    };
+    let on_point = |wb: &Workbench, e: EntityId| on_screen(wb, sk(wb).point(e).unwrap());
+    let press = |d: &mut Driver, wb: &mut Workbench, tool: &str, clicks: Vec<Pos2>| {
+        wb.run_ui(tool).unwrap();
+        d.frame(wb, vec![]);
+        for q in clicks {
+            d.click(wb, q);
+            d.frame(wb, vec![]);
+        }
+        d.tap(wb, egui::Key::Escape);
+        d.tap(wb, egui::Key::Escape);
+        d.frame(wb, vec![]);
+    };
+    // Fix a point.
+    let q = on_point(&wb, a0);
+    press(&mut d, &mut wb, "sketch3d.fix", vec![q]);
+    assert!(sk(&wb).constraints().any(|(_, c)| matches!(c, Constraint3::Fix { point } if *point == a0)), "{}", wb.status());
+    // Coincident: the second line's start comes to the first's end.
+    let qs = vec![on_point(&wb, a1), on_point(&wb, b0)];
+    press(&mut d, &mut wb, "sketch3d.coincident", qs);
+    let s = sk(&wb);
+    assert!(s.point(a1).unwrap().dist(s.point(b0).unwrap()) < 1e-9, "{}", wb.status());
+    // Along X, by a click.
+    let q = on_line(&wb, la);
+    press(&mut d, &mut wb, "sketch3d.along_x", vec![q]);
+    let (p, r) = sk(&wb).line(la).unwrap();
+    assert!((p.y - r.y).abs() < 1e-9 && (p.z - r.z).abs() < 1e-9, "{p:?} {r:?}: {}", wb.status());
+    // Perpendicular.
+    let qs = vec![on_line(&wb, la), on_line(&wb, lb)];
+    press(&mut d, &mut wb, "sketch3d.perpendicular", qs);
+    let s = sk(&wb);
+    let (u, v) = (s.line(la).unwrap(), s.line(lb).unwrap());
+    assert!((u.1 - u.0).normalized().dot((v.1 - v.0).normalized()).abs() < 1e-9, "{}", wb.status());
+    // Equal.
+    let qs = vec![on_line(&wb, la), on_line(&wb, lb)];
+    press(&mut d, &mut wb, "sketch3d.equal", qs);
+    let s = sk(&wb);
+    assert!((s.length(la).unwrap() - s.length(lb).unwrap()).abs() < 1e-9, "{}", wb.status());
+    // A coordinate, through its box.
+    wb.run_ui("sketch3d.coord_z").unwrap();
+    d.frame(&mut wb, vec![]);
+    let q = on_point(&wb, b1);
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    value_box(&mut d, &mut wb, 12.5);
+    assert!((sk(&wb).point(b1).unwrap().z - 12.5).abs() < 1e-9, "{}", wb.status());
+    d.tap(&mut wb, egui::Key::Escape);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    // A distance by two points, through its box.
+    wb.run_ui("sketch3d.dimension").unwrap();
+    d.frame(&mut wb, vec![]);
+    for e in [a0, a1] {
+        let q = on_point(&wb, e);
+        d.click(&mut wb, q);
+        d.frame(&mut wb, vec![]);
+    }
+    value_box(&mut d, &mut wb, 33.0);
+    let s = sk(&wb);
+    assert!((s.point(a0).unwrap().dist(s.point(a1).unwrap()) - 33.0).abs() < 1e-8, "{}", wb.status());
+    assert!((s.length(lb).unwrap() - 33.0).abs() < 1e-8, "equal follows: {}", s.length(lb).unwrap());
+    d.tap(&mut wb, egui::Key::Escape);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    // The symbol of Along X is clicked and deleted.
+    assert!(d.texts().iter().any(|t| t == "X"), "{:?}", d.texts());
+    let Mode::Sketch3d(sm) = &wb.mode else { panic!() };
+    let along = sk(&wb).constraints().find(|(_, c)| matches!(c, Constraint3::Along { .. })).map(|(c, _)| c).unwrap();
+    let badge = sm.badges_of(along).unwrap();
+    d.click(&mut wb, badge);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().contains("parallel to X"), "{}", wb.status());
+    d.tap(&mut wb, egui::Key::Delete);
+    d.frame(&mut wb, vec![]);
+    assert!(sk(&wb).constraint(along).is_none());
+}
+
+#[test]
+fn a_tangent_between_a_line_and_a_spline_by_clicks() {
+    let (mut wb, mut d) = app();
+    wb.run_ui("sketch.new_3d").unwrap();
+    let f = sketch_open(&wb);
+    let a = wb.exec("sketch3d.line", json!({ "sketch": f.0, "start": [0, 0, 0], "end": [0, 0, 30] })).unwrap();
+    let sp = wb.exec("sketch3d.spline", json!({ "sketch": f.0, "points": [a["end"], [10, 0, 40], [25, 10, 45]] })).unwrap();
+    for e in ["start", "end"] {
+        wb.exec("sketch3d.constrain", json!({ "sketch": f.0, "constraint": { "type": "fix", "point": a[e] } })).unwrap();
+    }
+    wb.view.camera.fit(&tenon_geom::Aabb3::from_points(sk(&wb).extent()).unwrap());
+    settle(&mut d, &mut wb);
+    wb.run_ui("sketch3d.tangent").unwrap();
+    d.frame(&mut wb, vec![]);
+    let q = on_screen(&wb, Vec3::new(0.0, 0.0, 15.0));
+    d.click(&mut wb, q);
+    let spline = EntityId(sp["spline"].as_u64().unwrap() as u32);
+    let s = sk(&wb);
+    let line = s.polyline(spline);
+    let q = on_screen(&wb, line[line.len() * 3 / 4]);
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    let t = sk(&wb).spline(spline).unwrap().start_tangent();
+    assert!(t.cross(Vec3::Z).len() < 1e-8, "{t:?}: {}", wb.status());
+    // Two lines are parallel, not tangent: said so.
+    let b = wb.exec("sketch3d.line", json!({ "sketch": f.0, "start": a["end"], "end": [30, 0, 30] })).unwrap();
+    let e = wb.exec("sketch3d.constrain", json!({ "sketch": f.0, "constraint": { "type": "tangent", "a": a["line"], "b": b["line"] } })).unwrap_err();
+    assert!(e.contains("two lines are Parallel"), "{e}");
+}
+
+#[test]
+fn a_point_clicked_on_nothing_is_where_the_pointer_is_and_on_a_face_is_on_the_face() {
+    let (mut wb, mut d) = app();
+    block(&mut wb, &mut d);
+    wb.run_ui("sketch.new_3d").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("sketch3d.point").unwrap();
+    d.frame(&mut wb, vec![]);
+    // On the top of the block, away from its corners.
+    let q = at(&wb, 20.0, 10.0, 10.0);
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    let s = sk(&wb);
+    let p = s.entities().find_map(|(id, _)| s.point(id)).unwrap_or_else(|| panic!("no point: {}", wb.status()));
+    assert!((p.z - 10.0).abs() < 1e-6 && p.dist(Vec3::new(20.0, 10.0, 10.0)) < 0.5, "{p:?}");
+    // On nothing at all: where the pointer is on the screen.
+    let r = wb.view.rect;
+    let q = r.left_top() + vec2(120.0, 120.0);
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    let s = sk(&wb);
+    let points: Vec<Vec3> = s.entities().filter_map(|(id, _)| s.point(id)).collect();
+    assert_eq!(points.len(), 2, "{}", wb.status());
+    assert!(on_screen(&wb, points[1]).distance(q) < 0.5, "{:?} and {q:?}", on_screen(&wb, points[1]));
+}
+
+#[test]
+fn a_sweeps_path_is_picked_by_a_click_on_a_3d_sketch_and_a_measure_adds_up_curves() {
+    let (mut wb, mut d) = app();
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let Mode::Sketch(c) = &wb.mode else { panic!() };
+    let circle = c.feature;
+    wb.exec("sketch.circle", json!({ "sketch": circle.0, "cx": 0, "cy": 0, "r": 2 })).unwrap();
+    wb.finish_sketch();
+    let make = |wb: &mut Workbench, end: serde_json::Value| {
+        let r = wb.exec("sketch.new_3d", json!({})).unwrap();
+        let id = r["feature"].as_u64().unwrap();
+        wb.exec("sketch3d.line", json!({ "sketch": id, "start": [0, 0, 0], "end": end })).unwrap();
+        FeatureId(id as u32)
+    };
+    let tall = make(&mut wb, json!([0, 0, 60]));
+    let short = make(&mut wb, json!([0, 0, 20]));
+    d.frame(&mut wb, vec![]);
+    wb.view.camera.fit(&tenon_geom::Aabb3::from_points([Vec3::new(-30.0, -30.0, 0.0), Vec3::new(30.0, 30.0, 60.0)]).unwrap());
+    settle(&mut d, &mut wb);
+    // Sweep takes the last path drawn; a click on the taller, above the other, takes that.
+    wb.run_ui("model.sweep").unwrap();
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Sweep(p)) = &wb.panel else { panic!("{}", wb.status()) };
+    assert_eq!(p.path.as_ref().unwrap().sketch, short);
+    let q = on_screen(&wb, Vec3::new(0.0, 0.0, 45.0));
+    d.click(&mut wb, q);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Sweep(p)) = &wb.panel else { panic!("{}", wb.status()) };
+    assert_eq!(p.path.as_ref().unwrap().sketch, tall, "{}", wb.status());
+    // The preview is of it.
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    let v: f64 = wb.scene().bodies.iter().map(|b| b.volume).sum();
+    assert!((v - PI * 4.0 * 60.0).abs() < 1e-3, "{v}");
+    wb.panel = None;
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    // Measure: a curve; another, on its own; both, with Shift.
+    let side = wb.exec("sketch3d.line", json!({ "sketch": tall.0, "start": [0, 0, 60], "end": [30, 0, 60] })).unwrap();
+    assert!(side["line"].is_u64());
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("inspect.measure").unwrap();
+    d.frame(&mut wb, vec![]);
+    let got = |wb: &Workbench| {
+        let Some(Panel::Measure(m)) = &wb.panel else { panic!() };
+        m.result.as_ref().and_then(|r| r.as_ref().ok()).and_then(|r| r.get("Length")).unwrap_or(-1.0)
+    };
+    let (up, across) = (on_screen(&wb, Vec3::new(0.0, 0.0, 45.0)), on_screen(&wb, Vec3::new(15.0, 0.0, 60.0)));
+    d.click(&mut wb, up);
+    d.frame(&mut wb, vec![]);
+    assert!((got(&wb) - 60.0).abs() < 1e-9, "{}", got(&wb));
+    d.click(&mut wb, across);
+    d.frame(&mut wb, vec![]);
+    assert!((got(&wb) - 30.0).abs() < 1e-9, "{}", got(&wb));
+    d.modifiers(&mut wb, egui::Modifiers::SHIFT);
+    d.click(&mut wb, up);
+    d.frame(&mut wb, vec![]);
+    d.modifiers(&mut wb, egui::Modifiers::default());
+    assert!((got(&wb) - 90.0).abs() < 1e-9, "{}", got(&wb));
 }

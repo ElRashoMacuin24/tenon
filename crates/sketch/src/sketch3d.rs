@@ -1051,7 +1051,9 @@ impl Sketch3d {
     }
 
     pub fn remove_constraint(&mut self, id: ConstraintId) -> SketchResult<Constraint3> {
-        self.constraints.remove(&id).ok_or(SketchError::NoConstraint(id))
+        let c = self.constraints.remove(&id).ok_or(SketchError::NoConstraint(id))?;
+        self.drop_invalid();
+        Ok(c)
     }
 
     /// Changes a dimension and solves; unchanged on failure.
@@ -1152,9 +1154,7 @@ impl Sketch3d {
                 x0[o] = target.x;
                 x0[o + 1] = target.y;
                 x0[o + 2] = target.z;
-                for j in o..o + 3 {
-                    weights[j] = DRAG_WEIGHT;
-                }
+                weights[o..o + 3].fill(DRAG_WEIGHT);
                 // It goes exactly where the pointer is whenever the constraints allow: first
                 // solve with it pinned there, and only if that fails let it trail behind.
                 let mut held = sys.shallow();
@@ -1281,6 +1281,7 @@ impl Sketch3d {
             self.entities.remove(id);
         }
         self.constraints.retain(|_, c| c.refs().iter().all(|r| !now.contains(r)));
+        self.drop_invalid();
         gone.extend(now);
         gone
     }
@@ -1293,26 +1294,26 @@ impl Sketch3d {
             Constraint3::Corner { point, arc: a } if *a == arc => Some(*point),
             _ => None,
         })?;
-        let lines: Vec<(EntityId, EntityId)> =
-            [start, end].into_iter().flat_map(|p| self.curves_at(p).into_iter().filter(|c| *c != arc).map(move |c| (c, p))).collect();
-        for (line, at) in lines {
-            if let Some(Geometry3::Line { start: p, end: q }) = self.entities.get_mut(&line).map(|e| &mut e.geometry) {
-                if *p == at {
-                    *p = corner;
-                } else if *q == at {
-                    *q = corner;
-                }
-            }
-        }
         let gone: BTreeSet<EntityId> = [arc, center, start, end].into_iter().collect();
-        for id in &gone {
-            self.entities.remove(id);
-        }
         self.constraints.retain(|_, c| c.refs().iter().all(|r| !gone.contains(r)));
+        self.entities.remove(&arc);
+        self.entities.remove(&center);
+        // What ended where the arc did ends at the corner now.
+        self.merge_points(corner, start);
+        self.merge_points(corner, end);
         if let Some(e) = self.entities.get_mut(&corner) {
             e.construction = false;
         }
         Some(gone)
+    }
+
+    /// Forgets the constraints that no longer make sense: a tangent whose curves have stopped
+    /// meeting, when what held them together went.
+    fn drop_invalid(&mut self) {
+        let bad: Vec<ConstraintId> = self.constraints.iter().filter(|(_, c)| self.check_constraint(c).is_err()).map(|(id, _)| *id).collect();
+        for id in bad {
+            self.constraints.remove(&id);
+        }
     }
 
     // ---- a path -----------------------------------------------------------------------------
@@ -1963,6 +1964,31 @@ mod tests {
         assert!(!s.entity(b.corner).unwrap().construction);
         assert_eq!(s.dof().unwrap().dof, 8, "{:?}", s.constraints().collect::<Vec<_>>());
         s.validate().unwrap();
+    }
+
+    #[test]
+    fn a_tangent_goes_when_what_held_its_curves_together_goes() {
+        let mut s = Sketch3d::new();
+        let a = s.add_line(v(0.0, 0.0, 0.0), v(0.0, 0.0, 30.0)).unwrap();
+        let (_, ea) = s.geometry(a).unwrap().ends().unwrap();
+        let spline = s.add_spline(&[PointRef3::New(v(0.0, 0.0, 30.0)), PointRef3::New(v(0.0, 10.0, 40.0)), PointRef3::New(v(5.0, 20.0, 45.0))]).unwrap();
+        let (sb, _) = s.geometry(spline).unwrap().ends().unwrap();
+        let held = s.add_constraint(Constraint3::Coincident { a: ea, b: sb }).unwrap();
+        let tangent = s.add_constraint(Constraint3::Tangent { a, b: spline }).unwrap();
+        s.remove_constraint(held).unwrap();
+        assert!(s.constraint(tangent).is_none(), "it says nothing now that they need not meet");
+        s.solve().unwrap();
+        s.validate().unwrap();
+    }
+
+    #[test]
+    fn a_bend_deleted_takes_a_spline_that_ends_on_it_to_the_corner() {
+        let (mut s, _, p) = staircase();
+        let b = s.add_bend(p[1], 10.0).unwrap();
+        let spline = s.add_spline(&[PointRef3::Existing(b.end), PointRef3::New(v(60.0, 60.0, 0.0)), PointRef3::New(v(70.0, 60.0, 10.0))]).unwrap();
+        s.delete(&[b.arc]);
+        s.validate().unwrap();
+        assert_eq!(s.geometry(spline).unwrap().ends().unwrap().0, b.corner);
     }
 
     #[test]

@@ -2347,6 +2347,543 @@
       }
     },
     {
+      "id": "sketch.new_3d",
+      "label": "Start 3D Sketch",
+      "undoable": true,
+      "description": "A sketch on no plane, empty. Returns the feature and its name",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "sketch3d.point",
+      "label": "3D Point",
+      "undoable": true,
+      "description": "sketch; at: [x, y, z], or what of the part it stands for and follows: \"origin\", {\"work\": id} or {\"vertex\": edge reference, \"end\": 0 or 1}. Returns the point",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "origin"
+                ]
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "where it goes, or what of the part it stands for and follows"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "at"
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.line",
+      "label": "3D Line",
+      "undoable": true,
+      "description": "sketch; start, end: each a point's id, or as sketch3d.point's `at`; along: x | y | z holds it parallel to that axis. Returns the line and its two points",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "origin"
+                ]
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "where it starts"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "origin"
+                ]
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "where it ends"
+          },
+          "along": {
+            "type": "string",
+            "enum": [
+              "x",
+              "y",
+              "z"
+            ],
+            "description": "hold it parallel to this axis"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "start",
+          "end"
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.spline",
+      "label": "3D Spline",
+      "undoable": true,
+      "description": "sketch; points: 2 or more, each as a line's start: it goes through them, in order. Returns the spline and its points",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "origin"
+                  ]
+                },
+                {
+                  "type": "object"
+                }
+              ]
+            },
+            "description": "the points it goes through, in order: 2 or more"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "points"
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.bend",
+      "label": "Bend",
+      "undoable": true,
+      "description": "sketch; point: the corner where two lines meet, or lines: the two; radius. Returns the arc, its centre and ends, the corner (kept as a construction point) and the radius's dimension",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "point": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the corner, where two lines meet"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "or the two lines"
+          },
+          "radius": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "the radius of the bend"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "radius"
+        ],
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "point"
+                ]
+              },
+              {
+                "required": [
+                  "lines"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.include",
+      "label": "Include Geometry",
+      "undoable": true,
+      "description": "sketch; edge: an edge reference from model.edge_ref, brought in as reference geometry that follows the part; geometry: what the edge is, where the kernel is not to hand. Returns the entity and its two end points",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "edge": {
+            "$ref": "#/$defs/edge_ref",
+            "description": "the edge, from model.edge_ref"
+          },
+          "geometry": {
+            "type": "object",
+            "description": "what the edge is ({type: line, start, end} or {type: curve, start, end, curve}), where the kernel is not to hand"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "edge"
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.constrain",
+      "label": "3D Constraint",
+      "undoable": true,
+      "description": "sketch; constraint: {\"type\": coincident (a, b) | fix (point) | along (line, axis) | parallel (a, b) | perpendicular (a, b) | equal (a, b) | tangent (a, b) | length (line, value) | distance (a, b, value) | coordinate (point, axis, value) | radius (arc, value)}. Refused, in words, when it would over-constrain the sketch",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "constraint": {
+            "type": "object",
+            "description": "the constraint, by its `type`: see the command's help"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "constraint"
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.set_dimension",
+      "label": "Set 3D Dimension",
+      "undoable": true,
+      "description": "sketch, constraint; value, or equation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "constraint": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the dimension"
+          },
+          "value": {
+            "type": "number",
+            "x-unit": "mm",
+            "description": "its value"
+          },
+          "equation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "or an equation for it"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "constraint"
+        ],
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "value"
+                ]
+              },
+              {
+                "required": [
+                  "equation"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.move",
+      "label": "Move 3D Point",
+      "undoable": true,
+      "description": "sketch, point; at: [x, y, z] (it goes as near as the constraints let it)",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "point": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the point"
+          },
+          "at": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "where it goes, as near as the constraints let it"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "point",
+          "at"
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.delete",
+      "label": "Delete in 3D Sketch",
+      "undoable": true,
+      "description": "sketch; entities: [ids], constraints: [ids]. A bend deleted gives its corner back. Returns what was deleted",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "points and curves"
+          },
+          "constraints": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "constraints and dimensions"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch"
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.construction",
+      "label": "3D Construction",
+      "undoable": true,
+      "description": "sketch, entity; on (default true)",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "entity": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "a point or curve"
+          },
+          "on": {
+            "type": "boolean",
+            "description": "construction (default true) or the sketch's own"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "entity"
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.break_link",
+      "label": "Break 3D Link",
+      "undoable": true,
+      "description": "sketch, entities: reference points and lines become the sketch's own, where they are",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "reference points and lines"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch",
+          "entities"
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.info",
+      "label": "3D Sketch Info",
+      "undoable": false,
+      "description": "sketch. Its entities with their lengths, constraints, degrees of freedom and links",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch"
+        ]
+      }
+    },
+    {
+      "id": "sketch3d.length",
+      "label": "3D Sketch Length",
+      "undoable": false,
+      "description": "sketch; curves (default: its own curves that are not construction). Returns the length in all, and each",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the sketch: its feature id, as sketch.create returns it"
+          },
+          "curves": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "which curves (default: its own that are not construction)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sketch"
+        ]
+      }
+    },
+    {
       "id": "model.extrude",
       "label": "Extrude",
       "undoable": true,
@@ -2937,7 +3474,7 @@
           "path_sketch": {
             "type": "integer",
             "minimum": 0,
-            "description": "the sketch of the path"
+            "description": "the sketch or 3D sketch of the path"
           },
           "path": {
             "type": "array",
@@ -2945,7 +3482,7 @@
               "type": "integer",
               "minimum": 0
             },
-            "description": "the path's lines and arcs, joined end to end (default: every line and arc of path_sketch that is not construction)"
+            "description": "the path's curves, joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not construction)"
           },
           "fixed": {
             "type": "boolean",
@@ -3519,7 +4056,8 @@
               "offset",
               "angle",
               "midplane",
-              "three_points"
+              "three_points",
+              "square_to_curve"
             ],
             "description": "how it is placed (default offset)"
           },
@@ -3627,7 +4165,22 @@
                 }
               ]
             },
-            "description": "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference} or {\"sketch_point\": {\"sketch\": id, \"point\": id}}; from the first toward the second is its X"
+            "description": "three_points: three of \"origin\", {\"work\": point id}, {\"center\": edge reference}, {\"sketch_point\": {\"sketch\": id, \"point\": id}}, {\"sketch3d_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}; from the first toward the second is its X"
+          },
+          "sketch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "square_to_curve: the 3D sketch"
+          },
+          "curve": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "square_to_curve: its curve"
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "square_to_curve: the end of the curve it goes through"
           },
           "equations": {
             "type": "object",
@@ -3665,7 +4218,7 @@
                 "type": "object"
               }
             ],
-            "description": "an origin axis, an edge, a round face, or a work axis as {\"work\": id}"
+            "description": "an origin axis, an edge, a round face, a work axis as {\"work\": id}, or a line of a 3D sketch as {\"sketch3d\": id, \"line\": id}"
           },
           "a": {
             "anyOf": [
@@ -3805,6 +4358,39 @@
               }
             ]
           }
+        ]
+      }
+    },
+    {
+      "id": "work.point_at",
+      "label": "Work Point at a Point",
+      "undoable": true,
+      "description": "point: {\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}",
+      "params": {
+        "type": "object",
+        "properties": {
+          "point": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "origin"
+                ]
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "{\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}"
+          },
+          "equations": {
+            "type": "object",
+            "description": "equations for values of the feature, by where the value is in its definition: {\"/distance\": \"width / 2\"} (lengths in mm, angles in degrees)"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "point"
         ]
       }
     },

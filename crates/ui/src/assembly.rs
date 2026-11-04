@@ -881,7 +881,7 @@ impl Workbench {
 
     /// Back to the assembly from editing a part in place; the assembly follows the part's changes.
     pub(crate) fn return_to_assembly(&mut self) {
-        if matches!(self.mode, Mode::Sketch(_)) {
+        if matches!(self.mode, Mode::Sketch(_) | Mode::Sketch3d(_)) {
             self.finish_sketch();
         }
         let Some(a) = self.asm.as_mut() else { return };

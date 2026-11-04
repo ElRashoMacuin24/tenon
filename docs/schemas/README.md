@@ -126,3 +126,11 @@ taken away), without a check.
   - `batch.run` over the app's control port has `not_run` in what comes back, with `as_one: false`,
     when a step stopped from the window came back with a shape so far and the steps after it were not
     run. Run as one, such a step is a failure, and everything is taken back.
+  - The 3D sketch (DEC-136): `sketch.new_3d`, `sketch3d.point`, `.line`, `.spline`, `.bend`, `.include`,
+    `.constrain`, `.set_dimension`, `.move`, `.delete`, `.construction`, `.break_link`, `.info` and `.length`,
+    and `work.point_at`. New words and parameters within the version: `work.plane`'s `by: square_to_curve`
+    with `sketch`, `curve` and `end`; an `axis` may be a line of a 3D sketch as `{"sketch3d": id, "line": id}`;
+    `model.sweep`'s `path_sketch` may be a 3D sketch. A work point at a point is a command of its own because
+    `work.point` could not take it: which parameters must be given together is not a thing that changes
+    within a version. A point of a 3D sketch command is `Either`: a point's id, `[x, y, z]`, `"origin"` or an
+    object saying what of the part it stands for, with `at` where there is no kernel. 250 commands.

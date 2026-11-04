@@ -1156,7 +1156,9 @@ pub fn location(id: &str) -> Option<String> {
 /// Which ribbon is showing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Env {
-    Part { sketching: bool },
+    Part {
+        sketching: bool,
+    },
     /// In a 3D sketch.
     Sketch3d,
     Assembly,
@@ -1233,7 +1235,10 @@ mod tests {
     #[test]
     fn ribbon_has_the_planned_tabs() {
         let names: Vec<_> = RIBBON.iter().map(|t| t.name).collect();
-        assert_eq!(names, ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View", "Environments", "Sheet Metal", "Flat Pattern", "Analysis", "3D Sketch"]);
+        assert_eq!(
+            names,
+            ["3D Model", "Sketch", "Inspect", "Tools", "Manage", "View", "Environments", "Sheet Metal", "Flat Pattern", "Analysis", "3D Sketch"]
+        );
         assert_eq!((RIBBON[SHEET_TAB].name, RIBBON[FLAT_TAB].name, RIBBON[ANALYSIS_TAB].name), ("Sheet Metal", "Flat Pattern", "Analysis"));
         assert_eq!(RIBBON[SKETCH3D_TAB].name, "3D Sketch");
         assert_eq!(RIBBON[MODEL_TAB].name, "3D Model");

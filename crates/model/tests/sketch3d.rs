@@ -276,7 +276,7 @@ fn work_features_from_its_points_and_lines_are_where_they_should_be() {
     let mut k = OcctKernel::new();
     let (sk, l, p) = staircase(&mut s, &mut k);
     let point = |q: u64| json!({ "sketch3d_point": { "sketch": sk, "point": q } });
-    let at = run(&mut s, &mut k, "work.point", json!({ "point": point(p[2]) }))["feature"].as_u64().unwrap();
+    let at = run(&mut s, &mut k, "work.point_at", json!({ "point": point(p[2]) }))["feature"].as_u64().unwrap();
     let axis = run(&mut s, &mut k, "work.axis", json!({ "axis": { "sketch3d": sk, "line": l[1] } }))["feature"].as_u64().unwrap();
     let plane = run(&mut s, &mut k, "work.plane", json!({ "by": "three_points", "points": [point(p[0]), point(p[1]), point(p[2])] }))["feature"]
         .as_u64()

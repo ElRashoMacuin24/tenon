@@ -177,6 +177,20 @@ Construction, Centerline, Center Point (DEC-117) and Driven Dimension; Show Form
 | Each member is generated as a file of its own | not planned | Tenon works a size out from the one part file each time, so there is nothing to keep in step (DEC-048). A copy of one size can be had by saving the part at that row |
 | Key columns order how members are listed; the table can be edited as a spreadsheet | missing | |
 
+## 3D sketches
+
+| Inventor | Tenon | Proof / gap |
+|---|---|---|
+| Start 3D Sketch (under Start 2D Sketch): a sketch on no plane, with a 3D Sketch tab; a feature in the browser; Finish 3D Sketch | done | DEC-136. `start_3d_sketch_is_a_button_that_works_and_says_what_it_does`, `the_browser_opens_it_again_by_a_double_click_and_it_shows_in_its_colour_until_used` |
+| Line through vertices, work points, points of the sketch or typed coordinates | partial | `a_line_by_clicks_on_vertices_follows_the_part_and_stays_along_an_axis`, `a_line_from_the_origin_to_a_work_point_by_clicks_follows_the_work_point`, `a_path_typed_and_bent_makes_a_tube_of_the_volume_of_its_length`. Gap: no triad and no relative coordinates (Precise Input): X, Y, Z are absolute, and a free click is in the plane facing the viewer, with a hold to an axis near one; no bend made automatically as a line is drawn |
+| Spline: Interpolation; Control Vertex | partial | through points: `a_spline_goes_through_its_points_and_its_length_is_found_along_it`. Gap: no control-vertex spline, no handles at the points |
+| Bend: a corner rounded by a radius | done | `a_bend_rounds_a_square_corner_tangent_to_both_lines_and_its_length_is_a_quarter_circle`, `a_bend_deleted_gives_its_corner_back_and_a_length_held_stays_to_the_corner` |
+| Point | done | `a_point_clicked_on_nothing_is_where_the_pointer_is_and_on_a_face_is_on_the_face` |
+| Include Geometry: edges of the part as reference geometry that follows the part | partial | `a_model_edge_brought_in_follows_the_part_and_a_line_held_parallel_to_it_turns_with_it`, `a_circular_edge_brought_in_can_be_a_path`. Gap: an edge neither straight nor round is its mesh's points; loops and faces are not taken at once |
+| Constraints and dimensions in space; a fully constrained sketch changes colour | partial | coincident, fix, parallel to X, Y or Z, parallel, perpendicular, equal, tangent; length, distance, coordinate, radius: `four_points_and_three_lines_have_twelve_freedoms_and_each_constraint_takes_its_own`, `every_constraint_tool_works_by_clicks_and_a_symbol_clicked_can_be_deleted`, `what_over_constrains_is_refused_in_words_and_leaves_the_sketch_as_it_was`. Gap: no angle or driven dimension, no constraint to a plane or a face (On Face, Parallel to Plane), no point on a curve; a dimension's value is not dragged; constraints are not found while drawing but for an axis |
+| A sweep's path; work features from its points and lines | done | `a_tube_along_a_bent_path_in_no_one_plane_has_the_volume_of_its_length`, `work_features_from_its_points_and_lines_are_where_they_should_be`, `a_work_plane_square_to_a_curve_and_a_work_point_at_its_end_by_clicks`. (A Loft has no rails to take one: see Loft) |
+| Arc, Helical Curve, Equation Curve, Silhouette Curve, Project to Surface, Intersection Curve; Move and rotate by a triad | missing | |
+
 ## Standard parts and 3D printing
 
 | Inventor | Tenon | Proof / gap |
@@ -280,7 +294,7 @@ on inventor and make ours feel 1-1"). The rows marked closed then were done in t
 | Thread: on a round face, full length or a length and offset, sized from the face | done | cosmetic or modelled (DEC-038) |
 | Split: Split Part, Split Face, Trim Solid; by a plane, surface or sketch | partial | solids by a plane, keeping both or one side (M6). Gap: split faces only; by a sketch or surface |
 | Combine: Join, Cut, Intersect, keep the tool | done | M6 |
-| Sweep: profile along a path, following it or fixed, with twist and taper; guide rail or surface | partial | follows the path or keeps its direction (M6). Gap: twist, taper, guide rails |
+| Sweep: profile along a path, following it or fixed, with twist and taper; guide rail or surface | partial | follows the path or keeps its direction (M6), along a sketch or a 3D sketch (DEC-136). Gap: twist, taper, guide rails |
 | Loft: sections, rails, a centre line, end conditions | partial | sections in order, smooth or ruled (M6). Gap: rails, centre line, conditions |
 | Coil: pitch and revolutions, revolutions and height, pitch and height, spiral; flat ends | partial | pitch and turns, or turns and height (DEC-101). Gap: spiral; flat ends |
 | Emboss, Decal, Derive; plastic part features (Grill, Boss, Rest, Snap Fit, Rule Fillet, Lip) | missing | Emboss and Derive are on the ribbon, greyed |

@@ -1388,12 +1388,17 @@ fn work_axis(s: &mut Session, p: &Value) -> CmdResult {
 fn work_point(s: &mut Session, p: &Value) -> CmdResult {
     let def = if arg(p, "edge").is_some() {
         WorkPoint::Center { edge: parse(p, "edge")? }
-    } else if arg(p, "point").is_some() {
-        WorkPoint::At { point: parse(p, "point")? }
     } else {
         WorkPoint::Intersection { axis: axis_param(p, "axis")?, plane: plane_value(p, "plane")? }
     };
     let kind = FeatureKind::WorkPoint(def);
+    check_work_refs(s, &kind)?;
+    add_feature(s, kind, p)
+}
+
+/// A work point at a point of a 3D sketch or a sketch, or a vertex (DEC-136).
+fn work_point_at(s: &mut Session, p: &Value) -> CmdResult {
+    let kind = FeatureKind::WorkPoint(WorkPoint::At { point: parse(p, "point")? });
     check_work_refs(s, &kind)?;
     add_feature(s, kind, p)
 }
@@ -2301,7 +2306,7 @@ fn axis3_value(v: &Value) -> Result<Axis3, CmdError> {
 
 fn sketch3d_line(s: &mut Session, mut k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let a = point3_value(s, k.as_deref_mut(), field(p, "start")?)?;
-    let b = point3_value(s, k.as_deref_mut(), field(p, "end")?)?;
+    let b = point3_value(s, k, field(p, "end")?)?;
     let along = arg(p, "along").filter(|v| !v.is_null()).map(axis3_value).transpose()?;
     let (line, start, end) = on_sketch3d(s, p, |d, id| {
         let (a, b) = (point3_ref(d, id, &a)?, point3_ref(d, id, &b)?);
@@ -4805,6 +4810,13 @@ static COMMANDS: &[CommandSpec] = &[
         work_axis
     ),
     doc_cmd!("work.point", "Work Point", "edge: a circular edge reference (its centre); or axis and plane (where they meet)", true, work_point),
+    doc_cmd!(
+        "work.point_at",
+        "Work Point at a Point",
+        "point: {\"sketch3d_point\": {\"sketch\": id, \"point\": id}}, {\"sketch_point\": {\"sketch\": id, \"point\": id}} or {\"vertex\": {\"edge\": edge reference, \"end\": 0 or 1}}",
+        true,
+        work_point_at
+    ),
     doc_cmd!(
         "feature.add",
         "Add Feature",

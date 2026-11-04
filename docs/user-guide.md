@@ -110,6 +110,38 @@ every one. **Center Point** (Sketch > Format) makes the selected points sketch p
 as a dot, which a hole takes only when you pick them, or centre points again; with nothing
 selected it switches what Point makes.
 
+### 3D sketches
+
+**Start 3D Sketch** (under the arrow of Start 2D Sketch) opens a sketch on no plane, with a 3D Sketch tab in
+place of the Sketch tab. It is a feature in the browser; double-click its row to go back into it, and Finish
+3D Sketch to leave it. Undo works in it as in any sketch. It is drawn in a colour of its own.
+
+- **Line** (L). Click the points, or type X, Y and Z in the box at the top of the view and press Add or
+  Enter. A click on a vertex of the part, a work point or the origin ties the line's end to it: when the part
+  changes, it goes along. A click on a point of the sketch joins the lines there. A click on a face is on
+  the face. A click on nothing is in the plane through the last point that faces you, so orbit first to
+  choose how a line leaves. Near an axis through the last point, the line stays on that axis and is held to it
+  (the rubber band takes the axis's colour). Esc ends the chain.
+- **Spline**. Click or type the points it goes through; Enter or Make Spline makes it.
+- **Bend**. Click the corner where two lines meet and say the radius. The corner stays as a faint point: what
+  held it still holds it, and delete the bend to have the corner back.
+- **Point**. A point on its own: on a vertex or a work point it follows the part.
+- **Include Geometry**. Click edges of the part: they come in, in amber, and follow the part. Break Link makes
+  a straight one or a point the sketch's own.
+
+Constraints are on the tab too: Coincident, Fix, Parallel to X, Y or Z, Parallel, Perpendicular, Equal and
+Tangent (two curves that meet at an end). **Dimension** takes a line's length, a bend's radius or the distance
+between two points, and X, Y and Z Coordinate where a point is; double-click a value to change it, and a
+dimension is a parameter like a sketch's. The status bar says how many degrees of freedom are left, and what
+is held whole changes colour. What would over-constrain the sketch is refused, and the status bar says why.
+Drag a point to move it, in the plane that faces you. A curve selected says its length in the status bar;
+Measure (Inspect) takes a click on a curve too, and Shift adds up several.
+
+**Sweep** takes a 3D sketch as its path: from its list, or a click on one of its curves. The profile goes on a
+plane across the path's start. **Work Plane > Square to a 3D Sketch Curve** makes that plane: click the curve
+near its end. **Work Point > At a Point** takes a point of the sketch, a work axis a line of it, and a
+three-point plane its points or vertices of the part.
+
 ## Features
 
 An extrusion goes a **Distance**, **Through All**, **To Next** (as far as the part's next face;

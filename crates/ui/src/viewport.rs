@@ -317,7 +317,11 @@ impl Workbench {
     }
 
     pub(crate) fn scene_box(&self) -> Option<Aabb3> {
-        self.scene.bbox()
+        // (A 3D sketch shown is part of what there is to see: it is on no plane of the part.)
+        match (self.scene.bbox(), self.sketch3d_box()) {
+            (Some(a), Some(b)) => Some(a.union(&b)),
+            (a, b) => a.or(b),
+        }
     }
 
     /// Radius of everything the camera may need in its depth range.

@@ -3512,3 +3512,85 @@ against the code as it was before it:
   way to one they all lie on to within the chords. Only then, so as not to move a surface off a flat
   face whose edges the kernel holds loosely. Below about a millionth of the plate's width the two
   heights cannot be told from the drawing's rounding, and it is as it was.
+
+## DEC-136 Everything on the menu: the 3D sketch (2026-11-03)
+
+The owner: "Make sure all the features on the menu are available not grayed out". Start 3D Sketch was
+one of the twenty commands that had no code behind them. It now makes a real sketch on no plane.
+
+**What it is.** `tenon_sketch::Sketch3d`, beside the 2D sketch: points (three unknowns each), lines,
+arcs, splines, and curved edges brought in from the part. A feature of its own in the document
+(`FeatureKind::Sketch3d`) with what its reference geometry stands for (`links`). Its own mode in the
+app, with its own ribbon tab in the place of the Sketch tab, and `sketch3d.*` commands.
+
+**Not a generalisation of the 2D sketch.** The first thought was to give the 2D solver a third
+coordinate. It was not done: the 2D sketch is 20 constraint kinds and its text, dimensions drawn in the
+plane, trims and patterns, all in plane terms, and each would have had to say what it means off the
+plane. The 3D sketch shares what does not care how many coordinates there are: the Gauss-Newton of
+`lm.rs`, the rank and determined-column tests (`determined_columns`), the id types and the way a file
+lays out a sketch. It is about 1400 lines beside 3000.
+
+**Constraints.** Coincident, fix, parallel to X, Y or Z, parallel, perpendicular, equal, tangent; length,
+distance, coordinate, radius. Parallel and tangent are two rows each, of the second direction against
+two directions square to the first (found from the world axis furthest from it, chosen once for a solve,
+so that the rows do not swing about). Tangent asks that the curves meet at an end: in 3D a line and a
+circle that do not share a point seldom touch at all, and two rows at the joint say what is wanted.
+Two lines are not offered it: that is Parallel, and it says so.
+
+**Over-constraining is refused in words.** As the 2D sketch: a trial solve, each constraint left out in
+turn to find what it conflicts with, then the rank of the Jacobian with and without it. Added: a solve that
+"succeeds" by leaving nothing of a line (along X and along Y both) counts as a conflict, since a solver is
+content with a line of no length. The words name what is in the way: "This would over-constrain the
+sketch: e3 parallel to Y cannot be had with what already holds it. It conflicts with: e3 parallel to X."
+
+**A bend keeps its corner.** A bend is an arc, two tangents and a radius, and the corner it rounds stays as a
+construction point held where the tangents at the arc's ends meet (`Corner`, three rows). So the freedoms of
+two lines and a bend are those of the corner and the two far ends (the test counts them: 12 before and 12
+after). What held the corner goes on holding it, and a length that went to the corner becomes the distance
+from the far end to the corner: a path typed by its corners stays where it was typed when it is bent, and
+a bend deleted gives the corner back. Tried first: moving the lines' ends and dropping what was on the
+corner, which left a fully constrained path with nine freedoms after one bend. Changing a radius first
+tries with the corner and the far ends held, so that a radius does not walk a free path about.
+
+**An arc goes the short way.** Three points say it. A bend turns less than a half turn, so that is enough;
+an edge of the part can be more, and those are `Edge`, with the point halfway along that the kernel gives.
+
+**A spline goes through its points.** The natural cubic: chord length for parameter, tangents by a
+tridiagonal solve, no curvature at its ends. It is kept as its points; it can be drawn, measured
+(Gauss-Legendre, five points in four parts of each span) and told to the kernel from them. A new path curve
+`Curve3::BSpline` takes its poles and whole knot vector, so what is drawn is exactly what is swept
+(`a_spline_as_a_b_spline_is_the_same_curve`). Interpolating in the kernel instead was not done, as
+the app's thread has no kernel and would have drawn something else.
+
+**A click.** On a point of the sketch, a vertex, a work point, the origin; on a face, where the pointer is
+on it; else in the plane through the last point that faces the viewer. Near an axis through the last
+point a line stays on that axis and is held to it. A vertex or work point makes reference geometry
+linked to it (`PointSel::Vertex`, which three-point planes can now use too; the end of a named edge), found
+again at every regeneration as a projected edge is. Typed X, Y, Z go in a box at the top of the view, there
+while a tool places points: the 2D sketch's boxes beside the cursor say how long and at what angle, which is
+not what is wanted here. A typed point off the screen brings the view round to it.
+
+**Include Geometry** brings in a straight edge as a reference line, so that lines can be parallel to it, and
+any other as `Edge`: a circle's by its middle point, exactly, and any other by the points of its mesh (a
+sweep along one runs along a spline through those, which is near enough to see, not to the kernel's
+tolerance). They follow the part as projected edges do (`Regen::sketches3d`, `Session::follow_links`).
+
+**What the part does with it.** The path of a Sweep: a click on a curve in the Sweep panel, or the list. Rails
+of a Loft: Loft has none. A work point at a point (`work.point_at`: `work.point`'s schema could not grow
+to take it, since which parameters go together is a thing the schemas cannot change within a version), a
+work axis along a line, a three-point plane through its points, and a plane square to a curve at its
+end, which is where a sweep's profile is drawn: nothing else in the part can say that plane for a path that
+leaves at an angle.
+
+**A profile not square to the path** makes a thinner tube, and says nothing: a line tangent to a spline at
+first gave 0.85% too little volume in a test, and the fault was the test's. A free line had turned to meet
+the spline, away from the profile's plane, and a pipe keeps the angle it starts at. The kernel's figure was
+right: area, the cosine of 7.5 degrees, length. The test now holds the line.
+
+**In a file** it is a feature of type `sketch3d`, laid out as a sketch is. An older build refuses a file with
+one, naming the record, as for every new feature type (docs/file-format.md).
+
+**Left out, and said so** in ROADMAP.md: arcs other than bends, helical and equation curves, silhouette and
+intersection curves, constraints to a surface or a plane, angle and driven dimensions, a dimension's value
+dragged, relative coordinates, a point on a curve (only ends meet), spline handles, moving by a triad, a
+3D sketch shown in a drawing view.

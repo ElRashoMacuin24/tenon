@@ -25,6 +25,11 @@ pub(crate) fn colour(t: &Tokens) -> Color32 {
     if t.dark { Color32::from_rgb(64, 208, 196) } else { Color32::from_rgb(0, 128, 118) }
 }
 
+/// The same when the constraints hold it whole: as a 2D sketch goes from one colour to another.
+fn colour_done(t: &Tokens) -> Color32 {
+    if t.dark { Color32::from_rgb(190, 245, 240) } else { Color32::from_rgb(0, 72, 66) }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tool3 {
     Select,
@@ -118,7 +123,10 @@ pub(crate) enum Target {
     /// A point of the sketch.
     Existing(EntityId),
     /// A vertex of the part.
-    Vertex { edge: EdgeRef, end: u8 },
+    Vertex {
+        edge: EdgeRef,
+        end: u8,
+    },
     Work(FeatureId),
     Origin,
     /// Just a place.
@@ -197,6 +205,14 @@ impl Sketch3dMode {
     }
 }
 
+impl Sketch3dMode {
+    /// Where the symbol of a constraint was last drawn (tests).
+    #[cfg(test)]
+    pub(crate) fn badges_of(&self, c: ConstraintId) -> Option<Pos2> {
+        self.badges.iter().find(|b| b.0 == c).map(|b| b.1.center())
+    }
+}
+
 /// A dimension's value as it reads: "40", "R6", "X 12".
 fn dimension_text(c: &Constraint3) -> Option<String> {
     let v = crate::sketcher::fmt_len(c.value()?);
@@ -264,8 +280,13 @@ impl Workbench {
             return Err(format!("{feature} is not a 3D sketch"));
         };
         self.panel = None;
+        let drawn = !base.is_empty();
         self.mode = Mode::Sketch3d(Box::new(Sketch3dMode::new(feature, Some(base))));
         self.chrome.tab = crate::commands::SKETCH3D_TAB;
+        // (It is on no plane: the view stays as it was, and takes in what is drawn.)
+        if drawn {
+            self.zoom_all();
+        }
         self.set_status(format!("Editing {}. {}", self.feature_name(feature), Tool3::Select.hint()));
         Ok(())
     }
@@ -382,15 +403,42 @@ impl Workbench {
             _ => None,
         };
         // (Picking a point or a line of one, or measuring, all that are not hidden by hand show.)
-        let picking = match &self.panel {
-            Some(Panel::Work(_) | Panel::Measure(_) | Panel::Sweep(_)) => true,
-            _ => false,
-        };
+        let picking = matches!(&self.panel, Some(Panel::Work(_) | Panel::Measure(_) | Panel::Sweep(_)));
         live.iter()
             .filter(|f| matches!(f.kind, FeatureKind::Sketch3d { .. }))
             .filter(|f| chosen == Some(f.id) || f.visible.unwrap_or(picking || !used.contains(&f.id)))
             .map(|f| (f.id, chosen == Some(f.id)))
             .collect()
+    }
+
+    /// What the 3D sketches shown take up, the open one with them.
+    pub(crate) fn sketch3d_box(&self) -> Option<tenon_geom::Aabb3> {
+        let open = match &self.mode {
+            Mode::Sketch3d(s) => Some((s.feature, false)),
+            _ => None,
+        };
+        let doc = self.document();
+        tenon_geom::Aabb3::from_points(
+            self.shown_sketches3d().into_iter().chain(open).filter_map(|(id, _)| doc.sketch3d(id)).flat_map(Sketch3d::extent),
+        )
+    }
+
+    /// Frames what there is with `at` in the view: a typed point can be anywhere.
+    fn frame_with(&mut self, at: Vec3) {
+        let Mode::Sketch3d(sm) = &self.mode else { return };
+        let extra = sm.clicks.iter().map(|c| c.at).chain([at]);
+        let Some(mut b) = tenon_geom::Aabb3::from_points(extra) else { return };
+        if let Some(there) = self.scene_box() {
+            b = b.union(&there);
+        }
+        let mut to = self.view.anim.map_or(self.view.camera, |a| a.to);
+        // (A point alone has no size to fit: it goes in the middle.)
+        if b.diagonal() > 1e-6 {
+            to.fit(&b);
+        } else {
+            to.target = at;
+        }
+        self.animate_to(to);
     }
 
     /// Draws the 3D sketches that show, but for the one being worked in.
@@ -610,7 +658,10 @@ impl Workbench {
             Tool3::Spline => {
                 sm.clicks.push(click);
                 let n = sm.clicks.len();
-                self.set_status(format!("{n} point{} of the spline. Click the next, or Enter to make it; Esc leaves it.", if n == 1 { "" } else { "s" }));
+                self.set_status(format!(
+                    "{n} point{} of the spline. Click the next, or Enter to make it; Esc leaves it.",
+                    if n == 1 { "" } else { "s" }
+                ));
             }
             Tool3::Line => {
                 let Some(first) = sm.clicks.last().cloned() else {
@@ -781,7 +832,11 @@ impl Workbench {
         let Mode::Sketch3d(sm) = &self.mode else { return };
         let feature = sm.feature;
         if let Some([x, y, z]) = typed {
-            self.place3(feature, Click3 { at: Vec3::new(x, y, z), target: Target::Free, axis: None });
+            let at = Vec3::new(x, y, z);
+            self.place3(feature, Click3 { at, target: Target::Free, axis: None });
+            if !self.screen3(at, rect).is_some_and(|q| rect.contains(q)) {
+                self.frame_with(at);
+            }
         }
         if make {
             self.finish_spline3(feature);
@@ -809,7 +864,8 @@ impl Workbench {
         }
         // Keys.
         let typing = ui.ctx().egui_wants_keyboard_input();
-        let (enter, esc, delete) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Delete)));
+        let (enter, esc, delete) =
+            ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Delete)));
         if !typing && esc {
             self.sketch3d_escape();
         }
@@ -851,7 +907,8 @@ impl Workbench {
         {
             // A dimension's value, double-clicked: to change it. (The first click of it did nothing.)
             let value = doc_sketch.constraint(cid).and_then(Constraint3::value).unwrap_or(0.0);
-            self.panel = Some(Panel::Value(ValuePanel::new("Edit Dimension", "Value", value, ValueFor::EditDimension3 { sketch: feature, constraint: cid })));
+            self.panel =
+                Some(Panel::Value(ValuePanel::new("Edit Dimension", "Value", value, ValueFor::EditDimension3 { sketch: feature, constraint: cid })));
         } else if primary && on_dim.is_some() && tool == Tool3::Select {
             self.set_status("Double-click a dimension to change it.");
         } else if primary && let (Some(cid), Mode::Sketch3d(sm)) = (on_badge, &mut self.mode) {
@@ -998,7 +1055,8 @@ impl Workbench {
         // What the kernel knows of an edge, from the scene.
         let line = view.mesh.edges.iter().find(|m| m.edge == edge).map_or(&[][..], |m| m.points.as_slice());
         let along: Vec<Vec3> = line.iter().map(|q| Vec3::new(f64::from(q[0]), f64::from(q[1]), f64::from(q[2]))).collect();
-        let info = tenon_kernel::EdgeInfo { curve: curve.clone(), length: named.1.length, start: ends[0], end: ends[1], mid: *mid, degenerate: false };
+        let info =
+            tenon_kernel::EdgeInfo { curve: curve.clone(), length: named.1.length, start: ends[0], end: ends[1], mid: *mid, degenerate: false };
         let found = tenon_model::sketch3d::edge_found(&info, || Ok(along));
         match found {
             Ok(found) => {
@@ -1038,9 +1096,9 @@ impl Workbench {
         let feature = sm.feature;
         let p = ui.painter().with_clip_rect(rect);
         let fully = sm.dof.as_ref().map(|d| d.2.clone()).unwrap_or_default();
-        let (done, picked, hot) = (t.sketch_done, t.sketch_picked, t.sketch_hot);
+        let (picked, hot) = (t.sketch_picked, t.sketch_hot);
         let (reference, orphan) = (t.sketch_ref, t.sketch_lost);
-        let own = colour(t);
+        let (own, done) = (colour(t), colour_done(t));
         let lost: BTreeSet<EntityId> = self.scene.lost.get(&feature).map(|l| l.iter().map(|(e, _)| *e).collect()).unwrap_or_default();
         let lit: BTreeSet<EntityId> = sm.constraints.iter().filter_map(|c| shown.constraint(*c)).flat_map(Constraint3::refs).collect();
         let color_of = |id: EntityId| {

@@ -5,6 +5,18 @@ shows it in [ROADMAP.md](ROADMAP.md).
 
 ## Unreleased
 
+### Everything on the menu
+
+- **3D sketches.** Start 3D Sketch now works: a sketch on no plane, a feature with its own tab. Lines through
+  vertices, work points, existing points or typed X, Y, Z, staying on an axis when near one; splines through
+  points; bends that round a corner by a radius and keep it; points; and Include Geometry, which brings model
+  edges in to follow the part. Coincident, fix, parallel to X, Y or Z, parallel, perpendicular, equal, tangent;
+  dimensions of a length, a distance, a coordinate and a radius, which are parameters; the degrees of freedom
+  shown, and over-constraining refused in words. A Sweep runs along its curves in any direction (a new
+  `Curve3::BSpline` for splines); work points, axes and planes come from its points and lines, among them
+  a plane square to a curve at its end; Measure takes its curves. New commands `sketch.new_3d`, `sketch3d.*` and
+  `work.point_at`; a new `sketch3d` feature type in part files, which older builds refuse (DEC-136).
+
 ### Stress checks
 
 - **Optimize Shape** (topology optimization): in Stress Analysis, the Optimize panel works out

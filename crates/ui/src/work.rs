@@ -51,7 +51,9 @@ impl WorkMethod {
                 &[WorkMethod::Offset, WorkMethod::Angle, WorkMethod::Midplane, WorkMethod::ThreePoints, WorkMethod::SquareToCurve]
             }
             WorkMethod::Along | WorkMethod::Planes => &[WorkMethod::Along, WorkMethod::Planes],
-            WorkMethod::Center | WorkMethod::Intersection | WorkMethod::PointAt => &[WorkMethod::Center, WorkMethod::Intersection, WorkMethod::PointAt],
+            WorkMethod::Center | WorkMethod::Intersection | WorkMethod::PointAt => {
+                &[WorkMethod::Center, WorkMethod::Intersection, WorkMethod::PointAt]
+            }
         }
     }
     /// The selectors it needs, in order.
@@ -156,7 +158,9 @@ impl WorkPanel {
             FeatureKind::WorkPoint(WorkPoint::Intersection { axis, plane }) => {
                 WorkPanel { axis: Some(axis.clone()), a: Some(plane.clone()), ..WorkPanel::new(WorkMethod::Intersection) }
             }
-            FeatureKind::WorkPoint(WorkPoint::At { point }) => WorkPanel { points: [Some(point.clone()), None, None], ..WorkPanel::new(WorkMethod::PointAt) },
+            FeatureKind::WorkPoint(WorkPoint::At { point }) => {
+                WorkPanel { points: [Some(point.clone()), None, None], ..WorkPanel::new(WorkMethod::PointAt) }
+            }
             _ => return None,
         };
         p.editing = editing;
@@ -273,7 +277,7 @@ pub(crate) fn work_params(kind: &FeatureKind) -> Option<(&'static str, Value)> {
         FeatureKind::WorkPlane(WorkPlane::SquareToCurve { sketch, curve, end }) => {
             ("work.plane", json!({ "by": "square_to_curve", "sketch": sketch.0, "curve": curve.0, "end": end.0 }))
         }
-        FeatureKind::WorkPoint(WorkPoint::At { point }) => ("work.point", json!({ "point": point })),
+        FeatureKind::WorkPoint(WorkPoint::At { point }) => ("work.point_at", json!({ "point": point })),
         FeatureKind::WorkAxis(WorkAxis::Along { axis }) => ("work.axis", json!({ "axis": axis_json(axis) })),
         FeatureKind::WorkAxis(WorkAxis::Planes { a, b }) => ("work.axis", json!({ "a": plane_json(a), "b": plane_json(b) })),
         FeatureKind::WorkPoint(WorkPoint::Center { edge }) => ("work.point", json!({ "edge": edge })),

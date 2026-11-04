@@ -410,6 +410,70 @@ edge is seen square on.
 Point positions are where the solver left them; they are rounded on writing (see
 [Text files](#text-files)).
 
+### 3D sketches
+
+A feature of type `sketch3d` is a sketch on no plane (DEC-136). Its entities and constraints are lists
+of records with their ids, as a sketch's are, and its positions are in the part's own axes:
+
+```toml
+[[feature]]
+id = 3
+name = "3D Sketch1"
+suppressed = false
+type = "sketch3d"
+next_entity = 9
+next_constraint = 6
+entities = [
+  { id = 1, type = "point", pos = { x = 0.0, y = 0.0, z = 10.0 }, reference = true },
+  { id = 2, type = "point", pos = { x = 0.0, y = 0.0, z = 50.0 } },
+  { id = 3, type = "line", start = 1, end = 2 },
+]
+constraints = [
+  { id = 1, type = "along", line = 3, axis = "z" },
+  { id = 2, type = "length", line = 3, value = 40.0 },
+]
+links = [
+  { entity = 1, to = { point = { vertex = { edge = { faces = [...], fingerprint = {...} }, end = 0 } } } },
+]
+```
+
+**Entity types:**
+
+| `type` | Fields |
+|---|---|
+| `point` | `pos` (solved position) |
+| `line` | `start`, `end` (point ids) |
+| `arc` | `center`, `start`, `end` (point ids): the short way round the centre, in the plane of the three. A bend is one of these |
+| `spline` | `points`: the 2 to 500 point ids it goes through, in order. It is the natural cubic through them, by chord length |
+| `edge` | `start`, `end` (point ids; one at both ends of a whole circle) and `curve`: `along` (the points it is drawn through), `length`, and for a circular edge `mid`, the point halfway. Always `reference = true` |
+
+An entity may have `construction = true` or `reference = true`; those left out are false.
+
+**Constraint types:** `coincident` (`a`, `b`: points), `fix` (`point`), `along` (`line`, `axis`: `x`, `y` or `z`),
+`parallel`, `perpendicular` (`a`, `b`: lines), `equal` (`a`, `b`: two lines or two arcs), `tangent` (`a`,
+`b`: curves that meet at an end, not two lines), `corner` (`point`, `arc`: where the tangents at the arc's
+ends meet, the corner a bend rounds), and the dimensions `length` (`line`, `value`), `distance` (`a`, `b`,
+`value`), `coordinate` (`point`, `axis`, `value`) and `radius` (`arc`, `value`). A dimension has a parameter
+name as a sketch's does: `target = { kind = "dimension", sketch = 3, constraint = 2 }`.
+
+**Links.** A 3D sketch whose reference geometry follows the part lists what each stands for, after its
+constraints. `entity` is a `reference = true` entity, listed once at most. `to` is `{ edge = <an edge
+reference> }`, or `{ point = ... }` with `"origin"`, `{ work = id }`, `{ center = <edge reference> }`, `{
+sketch_point = { sketch, point } }`, `{ sketch3d_point = { sketch, point } }` or `{ vertex = { edge = <edge
+reference>, end = 0 or 1 } }`: an end of a named edge, 0 where the edge starts. What it refers to must come
+before the sketch. At every regeneration each is found again and its entity put there, and the sketch
+solved; the positions in the file are those of the last regeneration. What is not found leaves its entity
+where it is. A 3D sketch with no links has no `links` field.
+
+A sweep's `path` may name a `sketch3d` feature as its `sketch`, with any of its curves in `curves`. A work
+plane may be `{ by = "square_to_curve", sketch, curve, end }`, a work point `{ by = "at", point = ... }`, and
+an axis `{ sketch3d_line = { sketch, line } }`.
+
+An older build refuses a file with a `sketch3d` feature, naming the record ("line 41: feature 3 (3D
+Sketch1): unknown variant"), as for every new feature type, and it does the same for a work plane, a work
+point or an axis of the new kinds, and a vertex or a point of a 3D sketch in a three-point plane. Files
+without them are written and read as they were.
+
 ### References to faces and edges
 
 Features store persistent references, never kernel indices (docs/persistent-naming.md):
@@ -868,7 +932,7 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   `pin` and `frictionless` supports, the `gravity` load and `suppressed` (DEC-097), then
   `edges` and the `moment`, `bearing`, `remote_force` and `body` loads (DEC-100), then a
   part's `part_number` and `description` (DEC-101), and after 0.1.0, among others, a study's
-  `[study.optimize]` (DEC-123).
+  `[study.optimize]` (DEC-123), and the `sketch3d` feature type with its `links`, a sweep along one, the `square_to_curve` work plane, the `at` work point, the `sketch3d_line` axis, and the `sketch3d_point` and `vertex` points (DEC-136).
 - **The layout is part of the format.** Field order, record names and what is inline all
   change every file, so they are changed as a version.
 - **The container** (one text file, TOML) is the owner's decision (DEC-031).

@@ -342,10 +342,10 @@ impl Workbench {
             .document()
             .features()
             .iter()
-            .find(|f| f.name == name && matches!(f.kind, FeatureKind::Sketch { .. }))
+            .find(|f| f.name == name && matches!(f.kind, FeatureKind::Sketch { .. } | FeatureKind::Sketch3d { .. }))
             .map(|f| f.id)
             .ok_or_else(|| format!("the part has no sketch named `{name}`"))?;
-        self.enter_sketch(id)
+        self.edit_feature(id)
     }
 
     /// Shows the ribbon tab called `name` (the app's `--tab`).
@@ -405,7 +405,11 @@ impl Workbench {
             return Err(c.not_yet());
         }
         // Modelling from inside a 3D sketch leaves it first, as from inside a 2D sketch.
-        if self.is_sketching3d() && id != "sketch.new_3d" && ["sketch.", "model.", "work.", "sheet."].iter().any(|p| id.starts_with(p)) && id != "model.rebuild" {
+        if self.is_sketching3d()
+            && id != "sketch.new_3d"
+            && ["sketch.", "model.", "work.", "sheet."].iter().any(|p| id.starts_with(p))
+            && id != "model.rebuild"
+        {
             self.finish_sketch3d();
         }
         let export_2d = matches!(id, "export.pdf" | "export.svg" | "export.dxf");
