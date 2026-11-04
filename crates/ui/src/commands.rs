@@ -1282,6 +1282,10 @@ mod tests {
         assert_eq!(for_key("L", part).map(|c| c.id), Some("sketch.line"), "as its button does, it asks for a plane");
         assert_eq!(for_key("E", Env::Sketch3d).map(|c| c.id), Some("model.extrude"), "as in a 2D sketch, it finishes the sketch");
         assert_eq!(for_key("L", Env::Sketch3d).map(|c| c.id), Some("sketch3d.line"));
+        // As the guide's table says: these are not for a 3D sketch.
+        for key in ["C", "A", "X", "O"] {
+            assert!(for_key(key, Env::Sketch3d).is_none(), "{key}");
+        }
         assert_eq!(for_key("C", Env::Assembly).map(|c| c.id), Some("asm.constrain"));
         assert!(for_key("E", Env::Assembly).is_none(), "no part keys in an assembly");
         assert_eq!(for_key("D", Env::Drawing).map(|c| c.id), Some("drw.dimension"));

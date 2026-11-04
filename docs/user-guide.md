@@ -63,9 +63,9 @@ drawing's sheet has a menu of what is under the pointer.)
 | S | Start 2D Sketch |
 | E, R | Extrude, Revolve |
 | H, F | Hole, Fillet |
-| L, C, A | Line, Circle, Arc (outside a sketch, each first asks for a plane to start one on) |
-| D | Dimension (in a sketch, or a drawing; outside one, as L) |
-| X, O | Trim, Offset (in a sketch; outside one, as L) |
+| L, C, A | Line, Circle, Arc (in a 2D sketch; outside a sketch, each first asks for a plane to start one on; in a 3D sketch, L alone, for its Line) |
+| D | Dimension (in a 2D or 3D sketch, or a drawing; outside one, as L) |
+| X, O | Trim, Offset (in a 2D sketch; outside a sketch, as L; nothing in a 3D sketch) |
 | F8, F9 | Show, hide constraints (in a sketch) |
 | P, J, C | Place, Joint, Constrain (in an assembly) |
 | T, B | Text, Balloon (in a drawing) |
