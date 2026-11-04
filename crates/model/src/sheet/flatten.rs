@@ -209,7 +209,7 @@ impl BendRead {
 }
 
 /// Why a bend with a cut through it at an angle is not laid flat.
-const SLANTED_WALLS: &str = "A cut in this bend does not go square through the sheet (a plain straight cut through a bend meets its inside and its outside in different places), so laid flat and folded back it would not be the same. Make the cut with Cut Normal or Cut Across Bend, or make it after the refold.";
+const SLANTED_WALLS: &str = "A cut in this bend does not go square through the sheet (a plain straight cut through a bend meets its inside and its outside in different places, and a pocket is on one of them only), so laid flat and folded back it would not be the same. Make the cut right through with Cut Normal or Cut Across Bend, or make it after the refold.";
 
 /// Whether two sides of a bend, laid out by one chart, have the same outline: no point of the one
 /// is further from the other than the points that stand for a curve can be.
@@ -280,7 +280,7 @@ pub(crate) fn read_bend(
         axis: *axis,
         r0: c0,
         mid: 0.0,
-        slant: 0.0,
+        wander: Vec::new(),
         rho,
         o2: Vec2::ZERO,
         ea: Vec2::Y,
@@ -339,7 +339,7 @@ pub(crate) fn read_bend(
         axis: *axis,
         r0: start,
         mid: sweep / 2.0,
-        slant: 0.0,
+        wander: Vec::new(),
         rho,
         o2: Vec2::ZERO,
         ea: Vec2::Y,
@@ -359,7 +359,7 @@ pub(crate) fn read_bend(
             axis: *axis,
             r0: start,
             mid: sweep / 2.0,
-            slant: 0.0,
+            wander: Vec::new(),
             rho,
             o2: Vec2::ZERO,
             ea: Vec2::Y,

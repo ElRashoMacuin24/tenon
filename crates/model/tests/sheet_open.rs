@@ -1170,6 +1170,18 @@ fn a_straight_cut_that_is_not_square_to_a_bend_is_not_laid_flat_unsaid() {
         let v = run(&mut s, &mut k, "model.mass", json!({}))["bodies"][0]["volume"].as_f64().unwrap();
         assert!(near(v, before), "{name}: {v} {before}");
     }
+    // A pocket in the bend, on its one side, is no more than that.
+    let (mut s, mut k, _) = bracket();
+    let top = run(&mut s, &mut k, "model.face_ref", json!({ "origin": { "type": "cap", "feature": 2, "end": "end" } }));
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "face": top })), "feature");
+    let (a, b) = (in_sketch(&mut s, &mut k, sk, (56.0, 15.0)), in_sketch(&mut s, &mut k, sk, (60.0, 25.0)));
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": a.0, "y1": a.1, "x2": b.0, "y2": b.1 }));
+    run(&mut s, &mut k, "sheet.cut_across_bend", json!({ "sketch": sk, "distance": 1 }));
+    assert!(volume(&mut s, &mut k) > 0.0);
+    let top = face_at(&mut s, &mut k, [10.0, 20.0, T]);
+    run(&mut s, &mut k, "sheet.unfold", json!({ "face": top }));
+    assert!(failure(&mut s, &mut k).contains("does not go square through"));
+
     // The same cut square to the bend, and it comes back: to a part with the hole it had.
     let (mut s, mut k, _) = bracket();
     let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy", "project_origin": false })), "feature");
@@ -1184,18 +1196,28 @@ fn a_straight_cut_that_is_not_square_to_a_bend_is_not_laid_flat_unsaid() {
     assert!((v - before).abs() < 2e-3 * before.min(10.0), "{v} {before}");
 }
 
-/// A tube 50 long, 10 inside radius, its gap by the rule 1: what its flat length and area are when a
-/// slit runs from `a` degrees at one end to `b` at the other.
-fn tube_slit_at_a_slant(a: f64, b: f64) -> (Session, OcctKernel, f64, f64) {
+/// A tube 50 long, 10 inside radius, 12 outside, its gap by the rule 1.
+fn tube() -> (Session, OcctKernel) {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": T, "bend_radius": R, "k_factor": K, "gap": 1 }));
     let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
     run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 10 }));
     run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 12 }));
     run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 50 }));
-    let at = |d: f64, z: f64| [12.0 * d.to_radians().cos(), 12.0 * d.to_radians().sin(), z];
-    let side = face_at(&mut s, &mut k, at(a + 90.0, 25.0));
-    run(&mut s, &mut k, "sheet.rip", json!({ "face": side, "way": "between", "from": at(a, 0.0), "to": at(b, 50.0) }));
+    (s, k)
+}
+
+/// The place on the outside of that tube at an angle in degrees, and along it.
+fn round_the_tube(degrees: f64, z: f64) -> [f64; 3] {
+    [12.0 * degrees.to_radians().cos(), 12.0 * degrees.to_radians().sin(), z]
+}
+
+/// A tube 50 long, 10 inside radius, its gap by the rule 1: what its flat length and area are when a
+/// slit runs from `a` degrees at one end to `b` at the other.
+fn tube_slit_at_a_slant(a: f64, b: f64) -> (Session, OcctKernel, f64, f64) {
+    let (mut s, mut k) = tube();
+    let side = face_at(&mut s, &mut k, round_the_tube(a + 90.0, 25.0));
+    run(&mut s, &mut k, "sheet.rip", json!({ "face": side, "way": "between", "from": round_the_tube(a, 0.0), "to": round_the_tube(b, 50.0) }));
     // In the flat the tube is a strip as long as its neutral round; the slit crosses it from end to
     // end, so across its 50 it moves as far as it turns, and it is 1 wide square to its own run.
     let rho = 10.0 + K * T;
@@ -1251,16 +1273,10 @@ fn a_hole_in_a_ripped_tube_does_not_move_where_it_is_opened() {
     }
     taken *= h / 3.0;
     let long = TAU * rho - 1.0;
-    let (slit, hole_plane) = ([12.0, 0.0, 20.0], "xz");
     for (slit, plane) in
-        [(slit, hole_plane), ([12.0, 0.0, 20.0], "yz"), ([-12.0, 0.0, 20.0], "xz"), ([0.0, -12.0, 20.0], "xz"), ([0.0, -12.0, 20.0], "yz")]
+        [([12.0, 0.0, 20.0], "xz"), ([12.0, 0.0, 20.0], "yz"), ([-12.0, 0.0, 20.0], "xz"), ([0.0, -12.0, 20.0], "xz"), ([0.0, -12.0, 20.0], "yz")]
     {
-        let (mut s, mut k) = (Session::default(), OcctKernel::new());
-        run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": T, "bend_radius": R, "k_factor": K, "gap": 1 }));
-        let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
-        run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 10 }));
-        run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 12 }));
-        run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 50 }));
+        let (mut s, mut k) = tube();
         let side = face_at(&mut s, &mut k, slit);
         run(&mut s, &mut k, "sheet.rip", json!({ "face": side, "at": slit }));
         let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": plane, "project_origin": false })), "feature");
@@ -1280,6 +1296,80 @@ fn a_hole_in_a_ripped_tube_does_not_move_where_it_is_opened() {
     let got = flat(&mut s, &mut k);
     assert!(near(num(&got, "length"), long) && (num(&got, "area") - (area - taken)).abs() < 0.01, "{long} {area} {got}");
     assert_eq!(got["holes"].as_u64(), Some(1));
+}
+
+#[test]
+fn a_slit_with_a_corner_in_it_is_laid_flat_wherever_it_is() {
+    // Two rips that meet half way along, the seam turning 30 degrees and then back 40. Away from the
+    // kernel's seam at 0 degrees, and right across it.
+    let rho = 10.0 + K * T;
+    let mut figures = Vec::new();
+    for start in [80.0, 350.0, 200.0] {
+        let (first, second) = (start + 30.0, start - 10.0);
+        let (mut s, mut k) = tube();
+        let side = face_at(&mut s, &mut k, round_the_tube(start + 100.0, 25.0));
+        run(
+            &mut s,
+            &mut k,
+            "sheet.rip",
+            json!({ "face": side.clone(), "way": "between", "from": round_the_tube(start, 0.0), "to": round_the_tube(first, 25.0) }),
+        );
+        // Stopped half way it is still a ring at one end.
+        assert!(refused(&mut s, &mut k, "sheet.flat", json!({})).contains("closes on itself"));
+        run(
+            &mut s,
+            &mut k,
+            "sheet.rip",
+            json!({ "face": side, "way": "between", "from": round_the_tube(first, 25.0), "to": round_the_tube(second, 50.0) }),
+        );
+        sound(&mut s, &mut k);
+        let f = flat(&mut s, &mut k);
+        assert_eq!(f["holes"].as_u64(), Some(0), "{start}");
+        assert_eq!(f["bends"].as_array().unwrap().len(), 1, "{start}");
+        // The two slots, less what they have in common at the corner: a kite (g / 2)^2 tan(a / 2),
+        // where a is how far the second turns from the first.
+        let (x1, x2) = (rho * 30f64.to_radians(), rho * 40f64.to_radians());
+        let (a1, a2) = ((x1 * x1 + 625.0).sqrt(), (x2 * x2 + 625.0).sqrt());
+        let turned = (x1 / 25.0).atan() + (x2 / 25.0).atan();
+        let by_hand = TAU * rho * 50.0 - a1 - a2 + 0.25 * (turned / 2.0).tan();
+        assert!((num(&f, "area") - by_hand).abs() < 1e-3, "{start}: {} {by_hand}", f["area"]);
+        figures.push((num(&f, "length"), num(&f, "area"), num(&f, "cut_length")));
+    }
+    for other in &figures[1..] {
+        assert!(near(figures[0].0, other.0) && close(figures[0].1, other.1) && close(figures[0].2, other.2), "{figures:?}");
+    }
+}
+
+#[test]
+fn a_slit_in_a_tube_with_a_hole_goes_the_short_way_between_its_points() {
+    // The hole moves the middle of the face, and half a turn from there nothing is special now.
+    let rho = 10.0 + K * T;
+    for hole_at in [0.0f64, 90.0, 180.0, 270.0] {
+        let (mut s, mut k) = tube();
+        let plane = if hole_at == 0.0 || hole_at == 180.0 { "yz" } else { "xz" };
+        let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": plane, "project_origin": false })), "feature");
+        run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 25, "r": 2 }));
+        let reverse = !((plane == "yz" && hole_at == 0.0) || (plane == "xz" && hole_at == 270.0));
+        run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 20, "reverse": reverse, "operation": "cut" }));
+        let before = volume(&mut s, &mut k);
+        assert!(before < PI * 44.0 * 50.0, "a hole is there at {hole_at}");
+        // Across from the hole, 20 degrees round from end to end.
+        let side = face_at(&mut s, &mut k, round_the_tube(hole_at + 100.0, 10.0));
+        let (from, to) = (hole_at + 170.0, hole_at + 190.0);
+        run(
+            &mut s,
+            &mut k,
+            "sheet.rip",
+            json!({ "face": side, "way": "between", "from": round_the_tube(from, 0.0), "to": round_the_tube(to, 50.0) }),
+        );
+        let slit = ((rho * 20f64.to_radians()).powi(2) + 2500.0).sqrt();
+        // In the flat it is 1 by its run; folded, sheet has 11 / rho of its flat volume.
+        let taken = 1.0 * slit * T * 11.0 / rho;
+        let v = volume(&mut s, &mut k);
+        assert!(close(before - v, taken), "{hole_at}: {} {taken}", before - v);
+        sound(&mut s, &mut k);
+        assert_eq!(flat(&mut s, &mut k)["holes"].as_u64(), Some(1), "{hole_at}");
+    }
 }
 
 /// Takes the rectangle between two points of the part's XY out of the flat sheet.
@@ -1495,12 +1585,7 @@ fn a_rip_s_points_are_on_the_face_or_it_says_which_is_not() {
     sound(&mut s, &mut k);
 
     // On a tube: far out from the axis, and on it.
-    let (mut s, mut k) = (Session::default(), OcctKernel::new());
-    run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": T, "bend_radius": R, "k_factor": K, "gap": 1 }));
-    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })), "feature");
-    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 10 }));
-    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 12 }));
-    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk, "distance": 50 }));
+    let (mut s, mut k) = tube();
     let side = face_at(&mut s, &mut k, [0.0, 12.0, 20.0]);
     run(&mut s, &mut k, "sheet.rip", json!({ "face": side.clone(), "at": [0, 300, 20] }));
     assert!(failure(&mut s, &mut k).contains("is not on the face"));

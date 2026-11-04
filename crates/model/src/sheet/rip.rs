@@ -14,7 +14,7 @@ use super::RipWay;
 use super::flatten::rim_of;
 use super::outline::{Piece, polygon};
 use super::region::{self, Shape};
-use super::unfold::{Chart, Read, Unfold, base_chart, bend_side, radial, read};
+use super::unfold::{Chart, Read, Unfold, base_chart, bend_side, opposite_opening, radial, read};
 use super::wrap::{Tool, has_other_side, outline_of};
 
 /// What names a slit's two sides and its two ends.
@@ -179,8 +179,8 @@ fn round(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, face: u32, way: &RipW
     let inside = if inner { *radius } else { radius - t };
     let rho = inside + opts.k_factor * t;
     let a = axis.dir();
-    // How far round and along the face reaches, from the middle of it; all the way round, a tube
-    // has no middle, and is measured from the first point of the rip.
+    // How far round and along the face reaches, measured from the first point of the rip or, with
+    // none, from the middle of the face.
     let in_reach = |what: &str, at: Vec3| -> Result<(), String> {
         let Some(out) = radial(axis, at) else {
             return Err(format!(
@@ -204,30 +204,25 @@ fn round(k: &dyn Kernel, shape: ShapeHandle, solid: &Read, face: u32, way: &RipW
         }
         RipWay::Face => None,
     };
-    let middle = radial(axis, info.centroid);
-    let Some(r0) = middle.or(picked) else {
-        return Err("Taking out the whole of a tube leaves nothing of it. Open it with a slit: pick a point on it.".into());
+    let whole_tube = "Taking out the whole of a tube leaves nothing of it. Open it with a slit: pick a point on it.";
+    let Some(r0) = picked.or_else(|| radial(axis, info.centroid)) else {
+        return Err(whole_tube.into());
     };
-    let chart = |r0: Vec3| Chart::Bend {
-        q: axis.origin() + r0 * *radius,
-        axis: *axis,
-        r0,
-        mid: 0.0,
-        slant: 0.0,
-        rho,
-        o2: Vec2::ZERO,
-        ea: Vec2::Y,
-        eg: Vec2::X,
-        inner,
-        radius: *radius,
-    };
-    let here = chart(r0);
+    // Laid out from there, opposite the opening in it, if it has one: then the two points of a slit
+    // are as far apart as they are on the face. A face that has no opening goes all the way round,
+    // and a slit in it goes from its first point the short way.
+    let q = axis.origin() + r0 * *radius;
+    let opening = opposite_opening(solid, face, axis, q, r0);
+    let whole = opening.is_none();
+    if whole && matches!(way, RipWay::Face) {
+        return Err(whole_tube.into());
+    }
+    let (mid, wander) = opening.unwrap_or((0.0, Vec::new()));
+    let here = Chart::Bend { q, axis: *axis, r0, mid, wander, rho, o2: Vec2::ZERO, ea: Vec2::Y, eg: Vec2::X, inner, radius: *radius };
     let (mut turn, run) = rim_of(k, shape, solid, face, &here, axis, opts)?;
     if run.1 - run.0 <= 1e-9 || !run.0.is_finite() {
         return Err("This face of the sheet could not be read: it has no length along its axis.".into());
     }
-    // A face with no middle goes all the way round.
-    let whole = middle.is_none();
     if whole {
         turn = (-PI, PI);
     }
