@@ -846,3 +846,69 @@ fn with_no_room_outside_the_view_the_tool_says_to_click_where_it_goes() {
     assert_eq!(turned["axis"], "vertical", "{turned}");
     assert!((turned["rows"][0]["level"].as_f64().unwrap() - right).abs() < 0.05, "{turned}");
 }
+
+#[test]
+fn a_set_is_made_follows_the_model_and_turns_on_the_geometry_thread() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = plate("worker");
+    let mut wb = Workbench::new(|| Box::new(OcctKernel::new()), None, crate::Services::default());
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    let wait = |d: &mut Driver, wb: &mut Workbench| {
+        for _ in 0..1200 {
+            d.frame(wb, vec![]);
+            if !wb.is_busy() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("the geometry thread never finished");
+    };
+    wb.run_ui("file.new_drawing").unwrap();
+    wait(&mut d, &mut wb);
+    wb.place_base_view(&dir.join("plate.tenon"), Orientation::Front, Some(1.0), false).unwrap();
+    wait(&mut d, &mut wb);
+    d.tap(&mut wb, egui::Key::Escape);
+    wb.drw.as_mut().unwrap().selected = None;
+    wb.chrome.tab = 1;
+    wait(&mut d, &mut wb);
+
+    // From the bottom edge's left end to the top edge's right end, to the right of the view: up the
+    // sheet, the plate's thickness, 16.
+    press(&mut d, &mut wb, "ribbon drw.baseline");
+    let (from, to, place) = (in_view(&mut wb, 8.0, 0.0), in_view(&mut wb, 112.0, 16.0), in_view(&mut wb, 150.0, 8.0));
+    d.click(&mut wb, from);
+    d.click(&mut wb, to);
+    assert_eq!(panel(&wb).unwrap().targets.len(), 1, "{}", wb.status());
+    d.click(&mut wb, place);
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    wait(&mut d, &mut wb);
+    let i = info(&mut wb);
+    assert_eq!((i["annotations"][0]["axis"].as_str(), shown(&i["annotations"][0])), (Some("vertical"), vec!["16".to_owned()]), "{i}");
+
+    // The model edited from the drawing: t = 20, and the same record reads 20.
+    wb.drw.as_mut().unwrap().selected = Some(Owner::View(ViewId(1)));
+    wb.run_ui("drw.edit_model").unwrap();
+    wait(&mut d, &mut wb);
+    wb.exec("param.set", json!({ "name": "t", "equation": "20" })).unwrap();
+    wait(&mut d, &mut wb);
+    wb.run_ui("drw.return").unwrap();
+    wait(&mut d, &mut wb);
+    assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["20"]);
+    let was = info(&mut wb)["annotations"][0].clone();
+
+    // Turned in its panel: across the sheet, the plate's width, 120, 10 above the view's top. One
+    // undo takes it back.
+    settle(&mut d, &mut wb, 2);
+    let row = browser_row(&d, "Baseline 1: 1 dimension(s)").center();
+    double_click(&mut d, &mut wb, row);
+    assert!(panel(&wb).is_some(), "{}", wb.status());
+    press(&mut d, &mut wb, "tn_set_axis_h");
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    wait(&mut d, &mut wb);
+    let above = sheet(&mut wb, 0.0, 20.0).y + 10.0;
+    rows_are(&info(&mut wb)["annotations"][0], above, &[("120", 0.0)]);
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    wait(&mut d, &mut wb);
+    assert_eq!(info(&mut wb)["annotations"][0], was);
+}
