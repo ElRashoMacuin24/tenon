@@ -212,14 +212,14 @@ impl BendRead {
 const SLANTED_WALLS: &str = "A cut in this bend does not go square through the sheet (a plain straight cut through a bend meets its inside and its outside in different places, and a pocket is on one of them only), so laid flat and folded back it would not be the same. Make the cut right through with Cut Normal or Cut Across Bend, or make it after the refold.";
 
 /// Whether two sides of a bend, laid out by one chart, have the same outline: no point of the one
-/// is further from the other than the points that stand for a curve can be.
-fn same_outlines(a: &[Outline], b: &[Outline], opts: &Unfold) -> bool {
+/// is further from the other than `slack`, what the points that stand for a curve can be off by.
+fn same_outlines(a: &[Outline], b: &[Outline], slack: f64) -> bool {
     let loops = |of: &[Outline]| -> Vec<Vec<Piece>> { of.iter().flat_map(|o| std::iter::once(&o.outer).chain(&o.holes).cloned()).collect() };
     let (a, b) = (loops(a), loops(b));
     let furthest = |from: &[Vec<Piece>], to: &[Vec<Piece>]| {
         from.iter().flatten().flat_map(|p| [p.a, p.mid(), p.b]).map(|q| region::distance_to(to, q)).fold(0.0, f64::max)
     };
-    furthest(&a, &b).max(furthest(&b, &a)) <= 4.0 * opts.deflection
+    furthest(&a, &b).max(furthest(&b, &a)) <= slack
 }
 
 /// How far round a chart a round face reaches, and how far along.
@@ -373,7 +373,9 @@ pub(crate) fn read_bend(
             .map(|g| outline_of_face(k, shape, &solid, g.0, &other, tag, opts))
             .collect::<Result<_, String>>()
             .map_err(|_| SLANTED_WALLS.to_owned())?;
-        if !far_side.is_empty() && !same_outlines(&outlines, &far_side, opts) {
+        // (Laid flat, a step round a tight inside is stretched by as much as rho is more than it.)
+        let slack = 4.0 * opts.deflection * (rho / inside.max(t * 1e-3)).max(1.0);
+        if !far_side.is_empty() && !same_outlines(&outlines, &far_side, slack) {
             return Err(SLANTED_WALLS.into());
         }
     }

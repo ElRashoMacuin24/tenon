@@ -3626,7 +3626,8 @@ words if it is not, so a shape nobody thought of cannot pass as this one did.
 straight cut through a bend meets its inside and its outside in different places, and a pocket is on
 one of them, so laid flat and folded back such a bend would change, with the hole bigger than it was.
 The bend's two sides are laid out by one chart and must have one outline, to within what the points
-standing for a curve can be off (4 x the flat pattern's deflection, 0.02 mm); if not, Unfold refuses
+standing for a curve can be off (4 x the flat pattern's deflection, 0.02 mm, and more on a bend so tight
+that its neutral radius is many times its inside radius); if not, Unfold refuses
 and names Cut Normal and Cut Across Bend. Carrying leaning walls across was the other way: the strip
 would then be no prism, and nothing could roll it up. Refold has always refused the same thing made
 while flat, so the two now agree.
@@ -3642,9 +3643,9 @@ was tried first and did it for one rip; two rips that meet have a corner in the 
 right at 80 degrees and false at 350, where the kernel's own seam is. A path does both.
 
 A slit is measured from its first point for the same reason. It was measured from the centroid too,
-so a slit in a tube with a hole, near half a turn from the hole, went the long way round and took 66 mm
-of sheet in place of 26. A tube with no opening takes the short way between the points; a face with
-one, the way that stays on it.
+so one near half a turn from that middle could go the long way round: the second of two rips, that
+should take 26 mm of sheet, took 66. A tube with no opening takes the short way between the points; a
+face with one, the way that stays on it.
 
 **A rip that would part the sheet is refused.** A slit on a flat face runs alongside the bend beside
 it, which on an open bracket takes the end of the plate off, and it said "Made Rip1". Flat Pattern
