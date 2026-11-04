@@ -64,6 +64,24 @@ fn stress_check_args(size: f64) -> Vec<String> {
         .to_vec()
 }
 
+/// What the mesher is told for a stress check whose first mesh the solver refused, with elements
+/// turned inside out: the same, and its mid-side nodes then moved so that none is. The first try
+/// is left as it is, so that what solves today gives the same answer.
+fn straightened_args(size: f64) -> Vec<String> {
+    let mut args = stress_check_args(size);
+    args.extend(["-setnumber", "Mesh.HighOrderOptimize", "2"].map(str::to_owned));
+    args
+}
+
+/// Whether the solver refused a mesh for having an element turned inside out. Curved mid-side
+/// nodes do that on a tight curve meeting a flat, as at the tip of a drilled hole.
+fn turned_inside_out(e: &str) -> bool {
+    e.contains("nonpositive jacobian")
+}
+
+/// What is said when the mesher could not put a mesh right for the solver.
+const STILL_INSIDE_OUT: &str = "The study could not be solved: some of the part's elements come out turned inside out, even after a second try by the mesher. It happens most at the tip of a drilled hole. Make such a hole flat-bottomed, or suppress it for the study, or make the elements smaller (Mesh Settings).";
+
 /// What the mesher is told for a shape, elements no smaller than `floor`: see [`mesh_for_shape`]
 /// for how, and why, it differs. `to_a_turn`: how many elements go to a full turn of a round face.
 fn shape_args(size: f64, floor: f64, to_a_turn: u32) -> Vec<String> {
@@ -398,7 +416,17 @@ pub fn work_out(
 ) -> Result<(Results, Took), String> {
     let Prepared { problem, meshing, .. } = prepare(tools, step, part, setup, size, dir, cancel)?;
     let started = Instant::now();
-    let solution = solve(tools, &problem, dir, cancel)?;
+    let (problem, solution, meshing) = match solve(tools, &problem, dir, cancel) {
+        Err(e) if turned_inside_out(&e) => {
+            let again = Instant::now();
+            let mesh = run_mesher(tools, step, size, &straightened_args(size), dir, cancel, QUICK)?;
+            let meshing = meshing + again.elapsed().as_secs_f64();
+            let Prepared { problem, .. } = put_on(mesh, part, setup, meshing)?;
+            let solution = solve(tools, &problem, dir, cancel).map_err(|e| if turned_inside_out(&e) { STILL_INSIDE_OUT.to_owned() } else { e })?;
+            (problem, solution, meshing)
+        }
+        solved => (problem, solved?, meshing),
+    };
     let solving = started.elapsed().as_secs_f64();
     Ok((Results::new(problem.mesh, solution)?, Took { meshing, solving }))
 }
@@ -443,6 +471,16 @@ mod tests {
             shape_args(3.0, shape_floor(3.0, Some(1.5)), to_a_turn_at_first(3.0, shape_floor(3.0, Some(1.5)))).join(" "),
             "part.step -3 -order 2 -clmax 3 -clmin 0.5 -clcurv 4 -setnumber Mesh.MeshSizeExtendFromBoundary 0 -setnumber Mesh.SecondOrderLinear 1 -nt 1 -format msh2 -o part.msh"
         );
+    }
+
+    #[test]
+    fn a_second_try_at_a_stress_checks_mesh_adds_to_the_first() {
+        let (first, second) = (stress_check_args(4.0), straightened_args(4.0));
+        assert_eq!(first.join(" "), "part.step -3 -order 2 -clmax 4 -clmin 0.4 -clcurv 12 -nt 1 -format msh2 -o part.msh");
+        assert_eq!(second[..first.len()], first[..]);
+        assert_eq!(second[first.len()..], ["-setnumber", "Mesh.HighOrderOptimize", "2"]);
+        assert!(turned_inside_out("ccx failed (exit code: 201). It said:\n *ERROR in e_c3d: nonpositive jacobian\n determinant in element 5695"));
+        assert!(!turned_inside_out("ccx failed (exit code: 201). It said:\n *ERROR in something else"));
     }
 
     #[test]

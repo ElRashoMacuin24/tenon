@@ -107,6 +107,9 @@ shows it in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- A stress study of a part with a blind hole with a drilled tip often could not be solved: the
+  solver refused the mesh, in its own words. Tenon now has the mesher try again where that
+  happens, and says what helps if that fails too.
 - Ctrl+Z with a feature's panel open undid the change before it, unseen. It now leaves the
   panel, as Cancel does.
 - A value a field refused was still taken for OK with the value from before. OK is now refused

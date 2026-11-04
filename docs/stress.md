@@ -54,7 +54,10 @@ When one is missing, the study says which, and everything else in Tenon works as
 2. Gmsh divides it into ten-node tetrahedra. Their size is the study's (Mesh Settings,
    `study.mesh_size`), or a twentieth of the part's size; round holes and fillets get
    smaller ones. It runs on one thread, so that the same part gives the same mesh, and the
-   same answer, every time.
+   same answer, every time. Where the solver refuses that mesh for an element turned inside out
+   (it happens most at the tip of a drilled hole), Gmsh divides it again and moves the mid-side
+   nodes so that none is, and the study is solved on that; if it still cannot be, the study says
+   what helps.
 3. Tenon reads the mesh and tells which face of the part each of its surfaces is, and which
    edge each of its curves lies along, by where they are (a STEP file keeps neither the
    order of faces and edges nor their names).

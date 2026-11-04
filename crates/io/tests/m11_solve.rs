@@ -233,6 +233,30 @@ fn a_hole_in_a_plate_raises_the_stress_as_the_handbooks_say() {
 }
 
 #[test]
+fn a_plate_with_a_blind_drilled_hole_is_solved() {
+    if !programs("a_plate_with_a_blind_drilled_hole_is_solved") {
+        return;
+    }
+    // A plate 20 thick with a hole of the Hole panel's own sizes, 6 across, 12 deep, with its
+    // drilled tip: the first mesh has elements turned inside out there, which the solver refuses.
+    let mut p = Part::new();
+    let sk = p.run("sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    p.run("sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 100, "y2": 60 }));
+    let block = p.run("model.extrude", json!({ "sketch": sk, "distance": 20 }))["feature"].clone();
+    p.run("document.material", json!({ "name": "Aluminium 6061" }));
+    let top = p.run("model.face_ref", json!({ "origin": { "type": "cap", "feature": block, "end": "end" } }));
+    let on = p.run("sketch.create", json!({ "face": top }))["feature"].clone();
+    p.run("sketch.point", json!({ "sketch": on, "x": 50, "y": 30 }));
+    p.run("model.hole", json!({ "sketch": on, "diameter": 6, "depth": 12 }));
+    p.run("study.new", json!({}));
+    let (left, right) = (p.facing("left"), p.facing("right"));
+    p.run("study.fix", json!({ "faces": [left] }));
+    p.run("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" }));
+    let (stress, moved, _) = p.solved();
+    assert!(stress > 0.1 && stress < 50.0 && moved > 0.0, "{stress} MPa, {moved} mm");
+}
+
+#[test]
 fn a_study_that_cannot_be_worked_out_says_why_before_anything_is_started() {
     // (These refusals need neither program: they are made before one is looked for.)
     let mut p = Part::new();
