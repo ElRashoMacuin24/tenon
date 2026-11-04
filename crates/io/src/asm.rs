@@ -427,7 +427,8 @@ pub fn bom_csv(asm: &Assembly, parts: &Parts) -> String {
     let mut out = String::from("Item,Part,Name,Quantity,Volume (mm^3),Material,Mass (g),Part Number,Description\r\n");
     for r in tenon_assembly::session::bom(asm, parts) {
         let volume = r.volume.map(|v| format!("{v:.3}")).unwrap_or_default();
-        let material = csv(r.material.as_deref().unwrap_or(""));
+        // (As the window has it.)
+        let material = csv(r.material.as_deref().unwrap_or("Generic"));
         let mass = r.mass.map(|m| format!("{m:.3}")).unwrap_or_default();
         let (number, what) = (csv(&r.number()), csv(&r.what()));
         out.push_str(&format!("{},{},{},{},{volume},{material},{mass},{number},{what}\r\n", r.item, csv(&r.part), csv(&r.name), r.quantity));

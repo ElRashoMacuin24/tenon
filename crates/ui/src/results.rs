@@ -547,9 +547,13 @@ impl Workbench {
             painter.circle_stroke(at, 5.0, Stroke::new(3.5, edge));
             painter.circle_stroke(at, 5.0, Stroke::new(1.5, ink));
             painter.line_segment([at + vec2(4.0, -4.0), at + vec2(22.0, -22.0)], Stroke::new(1.5, ink));
+            // (On a backing of the theme's, to be read over whatever colour is under it.)
             let label = at + vec2(26.0, -26.0);
-            painter.text(label + vec2(1.0, 1.0), Align2::LEFT_BOTTOM, &text, theme::body(), edge);
-            painter.text(label, Align2::LEFT_BOTTOM, &text, theme::body(), ink);
+            let words = if in_sight { t.text } else { t.text_dim };
+            let galley = painter.layout_no_wrap(text, theme::body(), words);
+            let box_at = Align2::LEFT_BOTTOM.anchor_size(label, galley.size());
+            painter.rect_filled(box_at.expand(3.0), 3.0, t.panel.gamma_multiply(0.88));
+            painter.galley(box_at.min, galley, words);
         }
 
         // The scale: ten bands, the top one the most (the least, for a safety factor: the
