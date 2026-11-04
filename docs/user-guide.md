@@ -141,6 +141,27 @@ Flange, Contour Flange, Hem, Fold, Bend, Corner Seam, Cut (also across bends) an
 Round/Chamfer. **Go to Flat Pattern** lays it flat; **File > Export Flat Pattern DXF**
 writes it for a cutter.
 
+**Contour Roll** rolls an open profile round an axis as sheet: a line of the sketch or an
+axis clicked in the view, and an angle of up to 359.9 degrees (a sheet has a seam). One
+straight line (a ring, a cone or a flat ring) unrolls exactly. A profile of several lines and
+arcs cannot, and the flat pattern says so in words, and by how much: each row round the axis is
+as long as it is on the neutral surface, so the area is right and the sheet stretches to make up
+the rest.
+
+**Lofted Flange** makes a sheet between two open profiles in two sketches (a round going to a
+square, say). Click the profiles in the view. **Die Formed** is one smooth surface, laid flat by
+triangles: the panel, the browser row's tip and the flat pattern say how close that is, and it is
+worth trying a part before cutting many. **Press Brake** is flat facets with a bend between each
+two, to a chord tolerance, and unfolds exactly. Where folds meet at a corner of a profile they stop
+short of it, as a relief; a smaller bend radius makes that smaller.
+
+**Punch Tool** stamps a shape from the punch library at a sketch's centre points, or at clicks
+on a flat face: a round hole, a square, a rectangle, an obround slot and a D-shape, cut through;
+a dimple and a louver, pressed out of the sheet. Each has its own sizes, and a rotation. A
+stamp stays on one flat face: across a bend or over an edge it is refused, and it says which.
+In the flat pattern and its DXF a cut is its outline and a formed shape a centre mark and the
+line it bends at, each with its name.
+
 ## Assemblies
 
 **File > New Assembly**, then **Place** (P) part files: the first is grounded at the
@@ -224,6 +245,6 @@ Protocol ([mcp.md](mcp.md)). Every command the ribbon runs is listed in
 
 Tenon 0.1 is a first release. Among what it does not do: sub-assemblies, motion studies and
 parts that adapt to one another; shaded drawing views, tolerances and ordinate dimensions;
-ellipses in sketches, a choice of fonts for sketch text; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
+ellipses in sketches, a choice of fonts for sketch text; Rip and Unfold in sheet metal;
 stress studies of assemblies or of more than one material. [ROADMAP.md](../ROADMAP.md)
 lists everything that works, with the test that shows it, and what is missing.

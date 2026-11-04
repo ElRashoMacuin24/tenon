@@ -13,7 +13,7 @@ rules are enforced by `cargo xtask layers` (table in `xtask/src/layers.rs`) and
 | L1 | `kernel` | backend-neutral `Kernel` trait, handles, operation history, query types, validation | M0 |
 | L2 (backend) | `kernel-occt` | OpenCASCADE 8 backend: cxx bridge + C++ shim; the only crate with `unsafe` | M0 |
 | L2 | `sketch` | 2D sketch entities, constraints, solver behind `SketchSolver`, sketch tools, profile regions | M1 |
-| L3 | `model` | feature tree, regeneration (incremental), face and edge naming, parameters and equations, measuring, command registry and undo, regeneration worker; the standard parts library; sheet metal (the rule, faces, flanges, hems, contour flanges, corner seams and rips, bends between faces made apart and on sharp edges, folds, cuts wrapped round the bends or seen on the sheet from their sketch, and the flat pattern unfolded from the solid: `sheet`) | M8 |
+| L3 | `model` | feature tree, regeneration (incremental), face and edge naming, parameters and equations, measuring, command registry and undo, regeneration worker; the standard parts library; sheet metal (the rule, faces, flanges, hems, contour flanges, corner seams and rips, bends between faces made apart and on sharp edges, folds, cuts wrapped round the bends or seen on the sheet from their sketch, contour rolls, lofted flanges, punches from a library of shapes, and the flat pattern unfolded from the solid: `sheet`) | M8 |
 | L4 | `assembly` | assemblies: components, constraints and joints, the rigid-body solver, degrees of freedom, parts list, interference, exploded view, `asm.*` commands | M3 |
 | L4 | `fea` | stress checks: the mesh of elements read from the mesher's file, its surfaces told to be faces of the part, a study's supports and loads put on nodes, the solver's input written and its results read, the two programs found and started | M11 |
 | L5 | `drawing` | drawings: sheets, views through hidden-line removal (projected, section, detail, isometric), associative dimensions, centrelines, hole tables, balloons, parts lists, title blocks, PDF/SVG/DXF, `drw.*` commands | M4 |
@@ -60,6 +60,8 @@ model / io / cli  ──>  dyn Kernel  ──>  OcctKernel (Rust arena of shapes
   bend of sheet metal with a relief cut out of it) makes its faces itself: the two round ones on
   cylinders from the outline as curves of their (angle, height) planes, flat sides where the
   outline runs along or round the axis, ruled ones elsewhere, sewn into a solid and checked.
+  `ruled_sheet` (a die-formed sheet) makes its in the same way: two sides ruled between smooth
+  curves through points, and four walls between them.
   `unify` makes faces that lie in one surface one face across the edges it is told of, with
   the image of every face (OCCT's ShapeUpgrade_UnifySameDomain, every other edge kept).
 - **Volumes to a precision.** `mass_properties` asks OCCT for a solid's volume to 1e-9 a face

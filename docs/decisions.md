@@ -3512,3 +3512,96 @@ against the code as it was before it:
   way to one they all lie on to within the chords. Only then, so as not to move a surface off a flat
   face whose edges the kernel holds loosely. Below about a millionth of the plate's width the two
   heights cannot be told from the drawing's rounding, and it is as it was.
+
+## DEC-138 Sheet that rolls, lofts and is stamped: Contour Roll, Lofted Flange, Punch Tool (2026-11-03)
+
+The owner asked that everything on the menu work and none of it be greyed out. Three of the
+twenty were sheet metal that makes sheet of its own or stamps it. All three are features with
+commands, in the file, rebuilt, undoable, suppressible, with panels; the flat pattern of each is
+what took the thinking. It still comes from the solid (DEC-058). What the features add is only what
+the solid cannot say: where a die-formed sheet goes, and which faces a punch has formed.
+
+**Contour Roll** is the strip of a contour flange (DEC-064) revolved. Nothing new in the kernel.
+Whole turns are refused, up to 359.9 degrees: a rolled sheet has a seam, and the ends of a whole
+turn would be two faces in one place. A cylinder is already one long bend to the unfolding, and
+a cone is the next simplest: one new chart, a sector of a ring about the point the neutral cone
+comes to. Both are exact, to hand figures.
+
+A profile of several pieces cannot lie flat: two surfaces of revolution that meet round the axis
+have different curves for that rim once unrolled, and a torus has no development at all.
+
+- *Tried first:* each piece unrolled exactly, its sector or rectangle touching the next in the middle
+  of their common rim, with short lines across at the ends. It failed on the simplest hat
+  section: at 2 radians the flat ring's rim bows 25 mm from the cylinder's straight one, and the two
+  pieces lie over one another. That was refused as an overlap, which was true and of no use. That
+  layout is kept only for a sheet that also has flat tabs turned off it, and says how far apart its
+  pieces are.
+- *Done:* row by row. Each row round the axis is laid straight, as long as it is on the neutral
+  surface, centred on one line. So the lengths across and round are right, and so is the area, and
+  nothing can overlap; the rims of the pieces are straight where they would not be alone. The flat
+  pattern says so, and how many millimetres that is at worst. One straight line is not laid out this
+  way: it stays exact, and says nothing.
+- A round part's neutral radius is the K factor from the inside of *its* bend, and a line's from the
+  side nearest the axis, and at their common rim they differ by up to a thickness. The round part
+  runs from one to the other, and the lines are their own.
+
+**Lofted Flange** starts from matching the two profiles' points into a strip of triangles.
+
+- *Tried first:* the strip of least area, from a table over the points of the two. It gave a sheet of
+  about the right area and folds in both directions, bumps where no sheet would have them, and the
+  apex of the flat triangle on the square's side a chord away from the middle. Weighting area by how
+  far the two ends of a line are from one tangent plane, compared at the two curves' points with one
+  tangent each, was no better at sharp corners.
+- *Done:* the discrete form of what makes a surface developable. A triangle on an edge of one curve
+  stands on a point of the other, and its plane should be tangent to that curve there; at a corner
+  of a profile it is, when the plane passes between the two ways the curve runs. Area counts for
+  more the more a triangle fails at that. A round-to-square then comes out as the textbook one: a
+  flat triangle on each side with its point where the circle's tangent runs along the side, a fan at
+  each corner, every fold one way (`a_round_to_square_transition_as_press_brake_facets_comes_to_the_known_sheet`).
+- **Press-brake:** arcs taken as chords to the chord tolerance, triangles in one plane one facet, each
+  facet a prism and each fold `Kernel::roll`, joined. That makes flat faces and cylinders, which the
+  ordinary unfolding lays flat exactly: nothing new in it. Bends here are cylinders, and bends of
+  one radius that meet at a fan's point run into one another, so each facet stops where the
+  next bend starts and a corner of the profile is relieved. *Tried:* cones that taper to nothing at the
+  point, which would have needed a new kernel operation and an apex in every fan; and leaving the
+  facets beside a fan as they were, which laid flat with the two corners over one another, since a
+  bend is wider in the flat than the corner it rounds (K x thickness x angle, summed round the
+  fan). Each is cut back to where its bend stops. How far that is goes with the bend radius, and
+  a smaller radius makes the relief smaller.
+- **Die-formed:** the same matching, smoothed so that neither rim stands still, makes a single
+  smooth ruled surface, which `Kernel::ruled_sheet` (new, sewn as `roll` is) thickens: the far side
+  ruled between the rims offset along the surface's own normal, not one in each sketch's plane. That
+  is why `Kernel::loft` of two thick sections was not used: the sheet would be thin by the cosine of
+  how far the surface leans from the sketch's normal.
+  Laid flat it has no faces or bends to unfold, so the feature's columns are laid out in the
+  plane, each piece two triangles by its shorter diagonal, and every point of the solid goes where
+  its nearest triangle does. How close that is is said in words on the panel, on the browser row's
+  tip and in the flat pattern: how much the other diagonals come out stretched, and how far laying
+  them out the other way moves the sheet. For a developable surface both are next to nothing, and
+  the die-formed round-to-square came to 0.00 % and 0.002 mm.
+  The neutral surface goes by the K factor from the inside of the rim's curve, and stays where it was
+  where the rim runs straight: chosen afresh there by the sign of a curvature that is only noise, it
+  zigzagged, and the pattern came out too big.
+- At most 120 facets: joining 450 pieces took more than a minute.
+
+**Punch Tool** is a library of shapes written here (`sheet::punch`), stamped at a sketch's centre points
+or at clicks on a face, which make such a sketch in the same undo step as Hole's do (DEC-113).
+Each stamp must lie wholly on one flat side of the sheet: its reach is tested against the face's
+outline, and the words say whether it goes over a bend or over an edge. A cut is a prism. A dimple
+is two spheres about one centre: it adds pi x depth squared x thickness to the plate, whatever
+its diameter, which is what the test holds it to (the outer cap above the near face and the disc
+under it, less the inner cap). A louver is a flap lanced on three sides and bent along the fourth, with
+a real bend, whose flat length is the opening's, so it could be bent from the sheet that was there.
+It is open at its two ends; a hood drawn closed at the ends would need a surface stretched in two
+directions, and is not done.
+
+In the flat pattern a formed stamp must not unfold: what the press does is one stroke. So its faces are
+skipped by the unfolding, by their names, and the sheet is shown whole with a centre mark, the line
+it bends at and its name, on `PUNCH` and `PUNCH_ID` layers in the DXF. Its place is read from the
+edges its faces leave on the sheet, not stored: a fold made after it moves it, and it is still right.
+
+*Left:* no closed ring (a seam of at least a tenth of a degree); one way of unrolling, at the neutral
+surface, where a press shop may want another; a cut across bends is not wrapped round a cone or a
+round part, and goes as an ordinary cut; facets by angle or by distance as well as by chord; conical
+bends at a fan's point; a user's own punch shapes; a hood-type louver. docs/inventor-fidelity.md has
+these against what that program does.

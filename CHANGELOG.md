@@ -107,6 +107,26 @@ shows it in [ROADMAP.md](ROADMAP.md).
 - [docs/inventor-fidelity.md](docs/inventor-fidelity.md) compares every environment with
   Inventor's, command by command.
 
+### Sheet metal
+
+- **Contour Roll:** an open profile rolled round an axis as sheet, up to 359.9 degrees. Its flat
+  pattern unrolls each line and arc at the neutral surface: exactly for one straight line (a ring,
+  a cone, a flat ring), and row by row for anything else, with a warning that says how far out it
+  is. New command `sheet.contour_roll`.
+- **Lofted Flange:** a sheet between two open profiles, as one smooth die-formed surface laid flat
+  by triangles (and saying how close that is) or as press-brake facets with bends between them, to
+  a chord tolerance, which unfold exactly. A round going to a square comes out as the textbook
+  one. New command `sheet.lofted_flange`, and in the kernel `ruled_sheet`.
+- **Punch Tool:** a library of shapes written for Tenon, stamped at a sketch's centre points or at
+  clicks on a flat face, with a rotation: round, square, rectangle, obround slot and D-shape as
+  cuts, a dimple and a louver as formed shapes. Refused in words across a bend. In the flat
+  pattern and its DXF and SVG a cut is its outline and a formed shape a centre mark and a bend line,
+  each with its name (new layers `PUNCH` and `PUNCH_ID`; `punches` of `sheet.export_dxf` and
+  `sheet.export_svg` leaves them out). New command `sheet.punch`.
+- The flat pattern says what it is not exact about (`notes` of `sheet.flat`), and bends close
+  together are named where their names do not lie on one another.
+- These three add the feature types `contour_roll`, `lofted_flange` and `punch` to format version 2.
+
 ### Fixed
 
 - Ctrl+Z with a feature's panel open undid the change before it, unseen. It now leaves the

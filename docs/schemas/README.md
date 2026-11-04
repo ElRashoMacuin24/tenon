@@ -116,7 +116,8 @@ taken away), without a check.
     (DEC-118); `sketch.stretch` (DEC-119); `sketch.ellipse` (DEC-120); point ids among `sketch.spline`'s `points`, and the
     constraint type `smooth` (DEC-121); `end_radius`, `radii` and `faces` of `model.fillet`, whose
     `edges` may be left out for `faces` (DEC-122); `study.keep`, `study.shape` and `study.optimize`,
-    and `depth` of `study.set` (DEC-123). 235 commands.
+    and `depth` of `study.set` (DEC-123); `sheet.contour_roll`, `sheet.lofted_flange` and `sheet.punch`, and
+    `punches` of `sheet.export_dxf` and `sheet.export_svg` (DEC-138). 238 commands.
   - `study.shape`'s `symmetry` still has the plane's type, so a face passes the schema and is
     refused by the command, in words: a schema that took less would break a program written
     against it, and its description says what is refused. `null` for `min_member`, `element_size`
