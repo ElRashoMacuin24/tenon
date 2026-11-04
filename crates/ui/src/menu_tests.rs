@@ -944,6 +944,36 @@ fn the_keys_a_tooltip_shows_work_where_it_shows_them() {
     assert!(!wb.is_sketching3d() && wb.pick_plane, "Start 2D Sketch: {}", wb.status());
 }
 
+/// The radial menu's words are one line each, and Repeat offers what can be done again here.
+#[test]
+fn the_radial_menu_reads_on_one_line_and_repeats_what_applies() {
+    let mut wb = Workbench::without_kernel();
+    let at = egui::pos2(500.0, 400.0);
+    wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap();
+    let name = wb.document().features()[0].name.clone();
+    wb.edit_sketch_named(&name).unwrap();
+    let labels = |r: &crate::radial::Radial| -> Vec<String> {
+        r.slots.iter().flatten().map(|e| e.label.clone()).chain(r.more.iter().map(|e| e.label.clone())).collect()
+    };
+    let in_sketch = labels(&wb.radial_entries(at));
+    assert!(in_sketch.contains(&"Project Geometry".to_owned()), "{in_sketch:?}");
+    assert!(in_sketch.iter().all(|l| !l.contains('\n')), "{in_sketch:?}");
+    wb.finish_sketch();
+    // What was done in an assembly is not offered on a part, nor what only shows something.
+    wb.last_command = Some("asm.place");
+    assert!(labels(&wb.radial_entries(at)).iter().all(|l| !l.starts_with("Repeat")), "{:?}", labels(&wb.radial_entries(at)));
+    wb.last_command = Some("model.extrude");
+    assert!(labels(&wb.radial_entries(at)).contains(&"Repeat Extrude".to_owned()));
+    wb.last_command = None;
+    wb.command("inspect.mass");
+    assert_eq!(wb.last_command, None);
+    wb.run_unprompted("file.new_assembly").unwrap();
+    wb.last_command = Some("model.extrude");
+    assert!(labels(&wb.radial_entries(at)).iter().all(|l| !l.starts_with("Repeat")));
+    wb.last_command = Some("asm.place");
+    assert!(labels(&wb.radial_entries(at)).contains(&"Repeat Place".to_owned()));
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

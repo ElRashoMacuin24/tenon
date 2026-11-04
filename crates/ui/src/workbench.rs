@@ -374,7 +374,11 @@ impl Workbench {
         #[cfg(test)]
         self.ran.push(id.to_owned());
         let repeatable = commands::find(id)
-            .filter(|c| ["sketch.", "model.", "work.", "inspect."].iter().any(|p| c.id.starts_with(p)) && c.id != "sketch.finish")
+            // (Not what only shows something, or leaves: there is nothing in that to do again.)
+            .filter(|c| {
+                ["sketch.", "model.", "work.", "inspect."].iter().any(|p| c.id.starts_with(p))
+                    && !["sketch.finish", "inspect.mass", "inspect.print", "model.rebuild"].contains(&c.id)
+            })
             .or_else(|| {
                 commands::find(id).filter(|c| ["asm.constrain", "asm.joint", "asm.place", "asm.pattern", "asm.mirror", "asm.copy"].contains(&c.id))
             })

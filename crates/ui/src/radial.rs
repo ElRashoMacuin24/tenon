@@ -33,7 +33,7 @@ fn entry(id: &'static str) -> Option<RadialEntry> {
         "ui.ok" => "OK".to_owned(),
         "ui.cancel" => "Cancel".to_owned(),
         "view.previous" => "Previous View".to_owned(),
-        _ => commands::find(id).map(|c| c.label.to_owned())?,
+        _ => commands::find(id).map(commands::UiCommand::name)?,
     };
     Some(RadialEntry { label, id })
 }
@@ -57,7 +57,10 @@ pub(crate) fn flick_slot(from: Pos2, to: Pos2) -> Option<usize> {
 impl Workbench {
     /// The menu for the current situation.
     pub(crate) fn radial_entries(&self, center: Pos2) -> Radial {
-        let repeat = self.last_command.and_then(|id| entry(id).map(|e| RadialEntry { label: format!("Repeat {}", e.label), id: "ui.repeat" }));
+        // (What was last done is offered again where it can be: an assembly's commands in an assembly,
+        // a part's on a part.)
+        let last = self.last_command.filter(|id| id.starts_with("asm.") == self.in_assembly());
+        let repeat = last.and_then(|id| entry(id).map(|e| RadialEntry { label: format!("Repeat {}", e.label), id: "ui.repeat" }));
         let (slots, more): ([Option<RadialEntry>; 8], Vec<&'static str>) = if self.panel.is_some() {
             (
                 [entry("ui.ok"), None, entry("view.fit"), None, entry("ui.cancel"), None, entry("view.previous"), None],

@@ -51,7 +51,8 @@ Intel Macs and other systems: build Tenon from its source ([setup.md](https://gi
 | The view before | F5 |
 
 Right-click in the view for the **radial menu**: the commands you are most likely to want
-next, by a flick of the mouse.
+next, by a flick of the mouse. (The flat pattern has none: what there is to do there is on its tab. A
+drawing's sheet has a menu of what is under the pointer.)
 
 ### Keys
 
