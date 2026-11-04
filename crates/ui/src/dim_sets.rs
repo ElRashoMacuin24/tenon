@@ -316,7 +316,7 @@ impl Workbench {
                     p["by"] = json!([by.x, by.y]);
                 }
                 if panel.targets != old.targets {
-                    p["remove"] = json!((0..old.targets.len()).collect::<Vec<_>>());
+                    p["remove"] = json!((1..=old.targets.len()).collect::<Vec<_>>());
                     p["add"] = picks(&panel.targets)?;
                 }
                 if panel.from != old.from {

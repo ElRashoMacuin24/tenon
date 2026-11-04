@@ -653,11 +653,11 @@ fn drw_dimension_auto(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value
 }
 
 /// What a set's places come to, as `drw.info` and the commands that make one say it. `place` is a
-/// target's number in the set (0 for the first; null for an ordinate set's origin).
+/// target's number in the set, the one that messages, the panel's list and `remove` use (1 for the
+/// first; null for an ordinate set's origin).
 fn set_rows(l: &dimsets::SetLayout) -> Value {
-    let rows: Vec<Value> =
-        l.rows.iter().map(|r| json!({ "place": r.place, "value": r.value, "shown": r.shown, "at": v2(r.text), "level": r.level })).collect();
-    json!(rows)
+    let row = |r: &dimsets::SetRow| json!({ "place": r.place.map(|i| i + 1), "value": r.value, "shown": r.shown, "at": v2(r.text), "level": r.level });
+    json!(l.rows.iter().map(row).collect::<Vec<Value>>())
 }
 
 fn set_axis(p: &Value) -> Result<Option<SetAxis>, CmdError> {
@@ -747,7 +747,7 @@ fn drw_ordinate(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> C
 }
 
 /// The set `kind` with what `p` changes of it: another datum or origin, places taken away (their
-/// numbers as `drw.info` gives them) and then added, another direction or spacing.
+/// numbers, from 1, as `drw.info` gives them) and then added, another direction or spacing.
 fn set_changed(kind: &AnnotKind, p: &Value) -> Result<Option<AnnotKind>, CmdError> {
     let (datum, axis_given, spacing_given) = (opt_pick(p, "datum")?, set_axis(p)?, spacing_param(p)?);
     let (add, remove) = (picks(p, "add")?, arg(p, "remove").filter(|r| !r.is_null()));
@@ -767,11 +767,11 @@ fn set_changed(kind: &AnnotKind, p: &Value) -> Result<Option<AnnotKind>, CmdErro
         *axis = a;
     }
     if let Some(r) = remove {
-        let numbers = r.as_array().ok_or("`remove` must be a list of place numbers, as drw.info gives them")?;
+        let numbers = r.as_array().ok_or("`remove` must be a list of place numbers, from 1, as drw.info gives them")?;
         let mut gone = Vec::with_capacity(numbers.len());
         for n in numbers {
-            let i = n.as_u64().and_then(|i| usize::try_from(i).ok()).filter(|i| *i < targets.len());
-            gone.push(i.ok_or_else(|| CmdError(format!("`remove` holds {n}, and the set's places are 0 to {}", targets.len().saturating_sub(1))))?);
+            let i = n.as_u64().and_then(|i| usize::try_from(i).ok()).and_then(|i| i.checked_sub(1)).filter(|i| *i < targets.len());
+            gone.push(i.ok_or_else(|| CmdError(format!("`remove` holds {n}, and the set's places are 1 to {}", targets.len())))?);
         }
         let mut i = 0;
         targets.retain(|_| {
@@ -1295,7 +1295,7 @@ static COMMANDS: &[DrwCommand] = &[
     DrwCommand {
         id: "drw.annotation.edit",
         label: "Edit Annotation",
-        help: "annotation; by: [dx, dy] (move; a baseline or ordinate set only across what it measures); text (dimension text, \"<>\" the value, null for the value alone; or a note's text); precision. Of a baseline or ordinate set also: remove: [place numbers from drw.info], add: [picks], datum: a pick (its datum or origin), axis: horizontal | vertical, spacing (baseline)",
+        help: "annotation; by: [dx, dy] (move; a baseline or ordinate set only across what it measures); text (dimension text, \"<>\" the value, null for the value alone; or a note's text); precision. Of a baseline or ordinate set also: remove: [place numbers, from 1, as drw.info gives them], add: [picks], datum: a pick (its datum or origin), axis: horizontal | vertical (turned with no `by`, it goes outside the view), spacing (baseline)",
         mutates: true,
         views: false,
         run: drw_annotation_edit,

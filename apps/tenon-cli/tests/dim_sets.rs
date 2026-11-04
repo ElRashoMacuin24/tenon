@@ -112,7 +112,7 @@ fn baseline_sets_measure_from_their_datum_and_follow_the_model() {
     assert_eq!(r["axis"], "horizontal", "{r}");
     assert_eq!(r["step"], 8.0);
     rows_are(&r, &[("30", 115.0, 180.0), ("70", 135.0, 188.0), ("100", 150.0, 196.0)]);
-    assert_eq!(r["rows"][0]["place"], 2, "the place's number in the set");
+    assert_eq!(r["rows"][0]["place"], 3, "the place's number in the set");
     let set = r["annotation"].clone();
 
     // To the right of the view: vertical, from the bottom edge at y = 100, in columns at x = 220 on:
@@ -143,12 +143,12 @@ fn baseline_sets_measure_from_their_datum_and_follow_the_model() {
     change_plate(&mut e, &[("hx", "80")]);
     let info = run(&mut e, "drw.info", json!({}));
     rows_are(&info["annotations"][0], &[("70", 125.0, 180.0), ("80", 130.0, 188.0), ("120", 150.0, 196.0)]);
-    assert_eq!(info["annotations"][0]["rows"][0]["place"], 1);
+    assert_eq!(info["annotations"][0]["rows"][0]["place"], 2);
     change_plate(&mut e, &[("hx", "36")]);
 
     // Add to it, take from it, as one record: its middle place (the far hole) taken away and the
     // near hole left. Numbers are the set's, in the order given.
-    let taken = run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "remove": [1] }));
+    let taken = run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "remove": [2] }));
     rows_are(&taken, &[("36", 108.0, 180.0), ("120", 150.0, 188.0)]);
     let far_hole = pick(&mut e, &view, 74.0, 40.0);
     let added = run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "add": [far_hole] }));
@@ -169,8 +169,8 @@ fn baseline_sets_measure_from_their_datum_and_follow_the_model() {
     let far_hole = pick(&mut e, &view, 74.0, 40.0);
     let one_more = |e: &mut Engine, p: Value| e.exec("drw.annotation.edit", &p).unwrap_err();
     assert!(one_more(&mut e, json!({ "annotation": set, "add": [far_hole] })).contains("in one place"));
-    assert!(one_more(&mut e, json!({ "annotation": set, "remove": [0, 1, 2] })).contains("at least one place"));
-    assert!(one_more(&mut e, json!({ "annotation": set, "remove": [7] })).contains("places are 0 to 2"));
+    assert!(one_more(&mut e, json!({ "annotation": set, "remove": [1, 2, 3] })).contains("at least one place"));
+    assert!(one_more(&mut e, json!({ "annotation": set, "remove": [7] })).contains("places are 1 to 3"));
     assert!(one_more(&mut e, json!({ "annotation": set, "text": "<> TYP" })).contains("no text"));
     run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "text": null }));
     assert!(
@@ -231,7 +231,7 @@ fn ordinate_sets_read_positions_from_their_origin_and_follow_the_model() {
     rows_are(&info["annotations"][0], &[("-36", 90.0, y), ("0", 126.0, y), ("34", 160.0, y), ("84", 210.0, y)]);
 
     // Moved across, added to and taken from.
-    let moved = run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "by": [99, -5], "remove": [1] }));
+    let moved = run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "by": [99, -5], "remove": [2] }));
     let y = y - 5.0;
     rows_are(&moved, &[("-36", 90.0, y), ("0", 126.0, y), ("84", 210.0, y)]);
     assert!(e.exec("drw.annotation.edit", &json!({ "annotation": set, "spacing": 12 })).unwrap_err().contains("no spacing"));
@@ -414,7 +414,7 @@ fn a_set_at_another_scale_reads_model_millimetres_and_what_it_has_lost_is_said()
     run(&mut e, "drw.export.pdf", json!({ "path": "lost.pdf" }));
     // Taking them away puts it right.
     let id = set["id"].clone();
-    run(&mut e, "drw.annotation.edit", json!({ "annotation": id, "remove": [0, 1] }));
+    run(&mut e, "drw.annotation.edit", json!({ "annotation": id, "remove": [1, 2] }));
     assert!(run(&mut e, "drw.info", json!({}))["annotations"][0]["problem"].is_null());
     // With its datum gone it cannot be drawn, and says so. (A pick of the origin's hole.)
     let info = run(&mut e, "drw.info", json!({}));
@@ -656,4 +656,37 @@ fn a_set_turned_with_no_place_given_goes_outside_the_view() {
     let err = e.exec("drw.annotation.edit", &json!({ "annotation": set, "axis": "horizontal", "spacing": 200 })).unwrap_err();
     assert!(err.contains("no room"), "{err}");
     assert_eq!(run(&mut e, "drw.info", json!({}))["annotations"], before);
+}
+
+#[test]
+fn a_place_has_one_number_in_what_is_said_what_is_listed_and_what_is_taken_away() {
+    let dir = scratch("numbers");
+    let mut e = Engine::new(Box::new(OcctKernel::new()), &dir);
+    plate(&mut e);
+    let view = top_view(&mut e, 1.0);
+    let (left, right, hole2) = (pick(&mut e, &view, 0.0, 30.0), pick(&mut e, &view, 100.0, 30.0), pick(&mut e, &view, 74.0, 40.0));
+    let r = run(&mut e, "drw.ordinate", json!({ "view": view, "origin": left, "targets": [hole2, right], "at": [150, 80] }));
+    assert_eq!(r["rows"][1]["place"], 1, "the hole, the first in the list: {r}");
+    assert_eq!(r["rows"][2]["place"], 2, "the right side, the second: {r}");
+    let set = r["annotation"].clone();
+
+    // The hole deleted: the first place cannot be found, and the message and the list say the same.
+    run(&mut e, "file.open", json!({ "path": "plate.tenon" }));
+    let tree = run(&mut e, "model.tree", json!({}));
+    let hole = tree["features"].as_array().unwrap().iter().find(|f| f["type"] == "Hole").unwrap()["id"].clone();
+    run(&mut e, "feature.delete", json!({ "feature": hole }));
+    run(&mut e, "file.save", json!({ "path": "plate.tenon" }));
+    run(&mut e, "drw.update", json!({}));
+    let info = run(&mut e, "drw.info", json!({}));
+    let a = &info["annotations"][0];
+    assert!(a["problem"].as_str().unwrap().contains("place 1 of the set"), "{a}");
+    assert_eq!(a["rows"][1]["place"], 2, "the right side is still the second: {a}");
+
+    // Taking away the number the message gives takes away the place it means.
+    assert!(e.exec("drw.annotation.edit", &json!({ "annotation": set, "remove": [0] })).unwrap_err().contains("places are 1 to 2"));
+    assert!(e.exec("drw.annotation.edit", &json!({ "annotation": set, "remove": [3] })).unwrap_err().contains("places are 1 to 2"));
+    let r = run(&mut e, "drw.annotation.edit", json!({ "annotation": set, "remove": [1] }));
+    assert_eq!(rows(&r).iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["0", "100"], "{r}");
+    assert_eq!(r["rows"][1]["place"], 1, "{r}");
+    assert!(run(&mut e, "drw.info", json!({}))["annotations"][0]["problem"].is_null());
 }
