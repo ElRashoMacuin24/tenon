@@ -178,6 +178,20 @@ pub trait Kernel: Send {
         let _ = (face, distance);
         unsupported!("thicken")
     }
+    /// What of a face looks along `way` (its normal, out of the shape, has some of `way` in it): a
+    /// shape of one face for each piece, cut where the face turns away, which is where its normal
+    /// is square to `way`. A piece keeps the surface and the way it looks. None of them when none
+    /// of it does.
+    fn facing(&mut self, face: FaceId, way: Vec3) -> KResult<Vec<ShapeHandle>> {
+        let _ = (face, way);
+        unsupported!("facing")
+    }
+    /// A face swept straight along `along`: a solid, with the face at one end and the face moved
+    /// by `along` at the other. It should not turn away along `along`: see [`Kernel::facing`].
+    fn prism_of_face(&mut self, face: FaceId, along: Vec3) -> KResult<ShapeHandle> {
+        let _ = (face, along);
+        unsupported!("prism_of_face")
+    }
     fn sweep(&mut self, profile: &Profile, path: &Path3, opts: &SweepOpts) -> KResult<Op> {
         let _ = (profile, path, opts);
         unsupported!("sweep")

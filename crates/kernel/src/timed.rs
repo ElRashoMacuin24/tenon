@@ -97,6 +97,12 @@ impl Kernel for Timed {
     fn thicken(&mut self, face: FaceId, distance: f64) -> KResult<Op> {
         timed!(self, "thicken", self.inner.thicken(face, distance))
     }
+    fn facing(&mut self, face: FaceId, way: Vec3) -> KResult<Vec<ShapeHandle>> {
+        timed!(self, "facing", self.inner.facing(face, way))
+    }
+    fn prism_of_face(&mut self, face: FaceId, along: Vec3) -> KResult<ShapeHandle> {
+        timed!(self, "prism_of_face", self.inner.prism_of_face(face, along))
+    }
     fn sweep(&mut self, profile: &Profile, path: &Path3, opts: &SweepOpts) -> KResult<Op> {
         timed!(self, "sweep", self.inner.sweep(profile, path, opts))
     }

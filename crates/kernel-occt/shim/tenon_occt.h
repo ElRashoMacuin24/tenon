@@ -79,6 +79,10 @@ std::unique_ptr<Shape> roll(const ProfileIn& profile, double rho, double inner, 
 std::unique_ptr<Shape> roll_cone(const ProfileIn& profile, double half_angle, double inner, double outer, HistoryOut& hist);
 // A solid from a face and the same face `distance` along its normal.
 std::unique_ptr<Shape> thicken(const Shape& shape, std::uint32_t face, double distance, HistoryOut& hist);
+// What of a face looks along `way`: one shape of one face for each piece, cut where it turns away.
+std::unique_ptr<ShapeList> facing(const Shape& shape, std::uint32_t face, const V3& way);
+// A face swept straight along `along`: a solid.
+std::unique_ptr<Shape> prism_of_face(const Shape& shape, std::uint32_t face, const V3& along);
 std::unique_ptr<Shape> revolve(const ProfileIn& profile, const V3& origin, const V3& dir, double start, double sweep, bool full,
                                HistoryOut& hist);
 std::unique_ptr<Shape> transform(const Shape& shape, std::uint8_t kind, const V3& a, const V3& b, double value, HistoryOut& hist);

@@ -489,6 +489,31 @@ impl Kernel for OcctKernel {
         self.finish(shape, hist)
     }
 
+    fn facing(&mut self, face: FaceId, way: Vec3) -> KResult<Vec<ShapeHandle>> {
+        self.not_cancelled()?;
+        let way = check::point("the way a face is looked at", way)?;
+        if way.len() < tol::LINEAR {
+            return Err(bad("a face is looked at from a direction that is not nothing"));
+        }
+        let list = sys::facing(self.get(face.shape)?, face.index, &v3(way.normalized())).map_err(failed("facing"))?;
+        let mut out = Vec::new();
+        for i in 0..sys::shape_list_len(&list) {
+            let s = sys::shape_list_get(&list, i).map_err(failed("facing"))?;
+            out.push(self.insert(s)?);
+        }
+        Ok(out)
+    }
+
+    fn prism_of_face(&mut self, face: FaceId, along: Vec3) -> KResult<ShapeHandle> {
+        self.not_cancelled()?;
+        let along = check::point("the way a face is swept", along)?;
+        if along.len() < tol::LINEAR {
+            return Err(bad("a face is swept by a distance that is not nothing"));
+        }
+        let shape = sys::prism_of_face(self.get(face.shape)?, face.index, &v3(along)).map_err(failed("prism_of_face"))?;
+        self.insert(shape)
+    }
+
     fn revolve(&mut self, profile: &Profile, axis: &Axis, angle: &AngleExtent) -> KResult<Op> {
         self.not_cancelled()?;
         check::point("revolve axis origin", axis.origin())?;

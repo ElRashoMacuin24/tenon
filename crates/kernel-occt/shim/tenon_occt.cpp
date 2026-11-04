@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -19,7 +20,10 @@
 #include <vector>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepTopAdaptor_FClass2d.hxx>
+#include <ElSLib.hxx>
 #include <BRepLib.hxx>
 #include <HLRAlgo_Projector.hxx>
 #include <HLRBRep_Algo.hxx>
@@ -37,6 +41,7 @@
 #include <GeomFill_Trihedron.hxx>
 #include <Geom_CylindricalSurface.hxx>
 #include <gp_Dir2d.hxx>
+#include <gp_Vec2d.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Pnt2d.hxx>
 #include <TopTools_ListOfShape.hxx>
@@ -1362,9 +1367,41 @@ std::unique_ptr<Shape> roll_cone(const ProfileIn& profile, double half_angle, do
   });
 }
 
+namespace {
+
+// A copy of a face as an offset can take it. A face cut out of a closed surface may hold an edge whose
+// circle runs on past a full turn (from 6.3 radians to 8, say), and an offset brings that back into
+// the first turn while the edge's curve on the surface stays where it was, which loses the edge.
+// In the copy such an edge has a curve of its own, worked out from the one on the surface.
+TopoDS_Face fit_for_offset(const TopoDS_Face& face) {
+  BRepBuilderAPI_Copy copy(face);
+  const TopoDS_Face out = TopoDS::Face(copy.Shape());
+  BRep_Builder builder;
+  for (TopExp_Explorer ex(out, TopAbs_EDGE); ex.More(); ex.Next()) {
+    const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+    if (BRep_Tool::Degenerated(edge)) {
+      continue;
+    }
+    const BRepAdaptor_Curve curve(edge);
+    if (!curve.IsPeriodic()) {
+      continue;
+    }
+    const double period = curve.Period();
+    if (curve.FirstParameter() < -1.0e-9 || curve.LastParameter() > period + 1.0e-9) {
+      builder.UpdateEdge(edge, occ::handle<Geom_Curve>(), TopLoc_Location(), BRep_Tool::Tolerance(edge));
+      if (!BRepLib::BuildCurve3d(edge, 1.0e-7)) {
+        throw std::runtime_error("could not work out an edge of the face");
+      }
+    }
+  }
+  return out;
+}
+
+} // namespace
+
 std::unique_ptr<Shape> thicken(const Shape& shape, std::uint32_t face, double distance, HistoryOut& hist) {
   return guarded("thicken", [&] {
-    const TopoDS_Face& from = face_at(shape, face);
+    const TopoDS_Face from = fit_for_offset(face_at(shape, face));
     BRepOffsetAPI_MakeThickSolid mk;
     mk.MakeThickSolidBySimple(from, distance);
     mk.Build();
@@ -1389,6 +1426,408 @@ std::unique_ptr<Shape> thicken(const Shape& shape, std::uint32_t face, double di
       }
     }
     return out;
+  });
+}
+
+namespace {
+
+// Below this, a face's normal is taken for square to the way it is looked at from (radians, about).
+constexpr double kTurnTolerance = 1.0e-5;
+// The lines of the grid a freeform surface is searched over for where it turns away.
+constexpr int kTurnGrid = 96;
+// A sharper turn than this between points along that curve (radians) is a corner of it.
+constexpr double kTurnCorner = 0.5;
+
+// The surface's own normal at (u, v): zero where it has none (a cone's apex, a pole).
+gp_Vec surface_normal(const BRepAdaptor_Surface& surf, double u, double v) {
+  gp_Pnt at;
+  gp_Vec du;
+  gp_Vec dv;
+  surf.D1(u, v, at, du, dv);
+  const gp_Vec n = du.Crossed(dv);
+  return n.Magnitude() < 1.0e-12 ? gp_Vec(0.0, 0.0, 0.0) : n.Normalized();
+}
+
+// The points of a grid over a face's (u, v) box that lie within the face.
+std::vector<gp_Pnt2d> points_within(const TopoDS_Face& face, int lines) {
+  double u0 = 0.0;
+  double u1 = 0.0;
+  double v0 = 0.0;
+  double v1 = 0.0;
+  BRepTools::UVBounds(face, u0, u1, v0, v1);
+  BRepTopAdaptor_FClass2d inside(face, 1.0e-7);
+  std::vector<gp_Pnt2d> out;
+  for (int i = 0; i < lines; ++i) {
+    for (int j = 0; j < lines; ++j) {
+      const gp_Pnt2d p(u0 + (u1 - u0) * (i + 0.5) / lines, v0 + (v1 - v0) * (j + 0.5) / lines);
+      if (inside.Perform(p, false) == TopAbs_IN) {
+        out.push_back(p);
+      }
+    }
+  }
+  return out;
+}
+
+double face_sign(const TopoDS_Face& face) { return face.Orientation() == TopAbs_REVERSED ? -1.0 : 1.0; }
+
+// How far a face looks along `way`, at most and at least, over points within it and on its edges.
+std::pair<double, double> looks_along(const TopoDS_Face& face, const gp_Vec& way) {
+  const BRepAdaptor_Surface surf(face, true);
+  const double sign = face_sign(face);
+  double least = std::numeric_limits<double>::infinity();
+  double most = -std::numeric_limits<double>::infinity();
+  const auto take = [&](double u, double v) {
+    const gp_Vec n = surface_normal(surf, u, v);
+    if (n.Magnitude() > 0.5) {
+      const double d = sign * n.Dot(way);
+      least = std::min(least, d);
+      most = std::max(most, d);
+    }
+  };
+  for (const gp_Pnt2d& p : points_within(face, 24)) {
+    take(p.X(), p.Y());
+  }
+  for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+    double first = 0.0;
+    double last = 0.0;
+    const occ::handle<Geom2d_Curve> c = BRep_Tool::CurveOnSurface(TopoDS::Edge(ex.Current()), face, first, last);
+    if (c.IsNull()) {
+      continue;
+    }
+    for (int k = 0; k <= 16; ++k) {
+      const gp_Pnt2d p = c->Value(first + (last - first) * k / 16.0);
+      take(p.X(), p.Y());
+    }
+  }
+  return {most, least};
+}
+
+// The plane a cylinder, cone or sphere turns away from `way` on, by its surface alone: a point of it
+// and its normal. None for any other surface, or where the surface does not turn away at all.
+std::optional<std::pair<gp_Pnt, gp_Vec>> turning_plane(const BRepAdaptor_Surface& surf, const gp_Vec& way) {
+  switch (surf.GetType()) {
+  case GeomAbs_Cylinder: {
+    const gp_Cylinder c = surf.Cylinder();
+    const gp_Vec z(c.Axis().Direction());
+    const gp_Vec across = way - z * way.Dot(z);
+    if (across.Magnitude() < kTurnTolerance) {
+      return std::nullopt;
+    }
+    return std::make_pair(c.Location(), across);
+  }
+  case GeomAbs_Sphere:
+    return std::make_pair(surf.Sphere().Location(), way);
+  case GeomAbs_Cone: {
+    // Its normal at the angle whose radial direction is r is r cos(a) - z sin(a), square to `way`
+    // where r . way = tan(a) (z . way): two generators, in a plane through the apex.
+    const gp_Cone c = surf.Cone();
+    const gp_Vec z(c.Axis().Direction());
+    const double along = way.Dot(z);
+    const gp_Vec across = way - z * along;
+    const double t = std::tan(c.SemiAngle());
+    if (std::abs(t * along) >= across.Magnitude()) {
+      return std::nullopt;
+    }
+    return std::make_pair(c.Apex(), across - z * (t * t * along));
+  }
+  default:
+    return std::nullopt;
+  }
+}
+
+// A flat face in that plane, wider than `face`.
+TopoDS_Face plane_across(const TopoDS_Face& face, const gp_Pnt& through, const gp_Vec& normal) {
+  Bnd_Box box;
+  BRepBndLib::Add(face, box);
+  double x0 = 0.0;
+  double y0 = 0.0;
+  double z0 = 0.0;
+  double x1 = 0.0;
+  double y1 = 0.0;
+  double z1 = 0.0;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  const gp_Pln plane(through, gp_Dir(normal));
+  double cu = 0.0;
+  double cv = 0.0;
+  ElSLib::Parameters(plane, gp_Pnt(0.5 * (x0 + x1), 0.5 * (y0 + y1), 0.5 * (z0 + z1)), cu, cv);
+  const double reach = gp_Pnt(x0, y0, z0).Distance(gp_Pnt(x1, y1, z1)) + 1.0;
+  BRepBuilderAPI_MakeFace mk(plane, cu - reach, cu + reach, cv - reach, cv + reach);
+  if (!mk.IsDone()) {
+    throw std::runtime_error("could not make the plane a face turns away on");
+  }
+  return mk.Face();
+}
+
+// Where a surface's normal is square to `way` within a (u, v) box: chains of points of its (u, v)
+// plane, found on a grid and put right along its lines by halving. A chain ends on the box's edge
+// or comes back to its start, where it holds its first point again.
+std::vector<std::vector<gp_Pnt2d>> turning_chains(const BRepAdaptor_Surface& surf, const gp_Vec& way, double u0, double u1, double v0, double v1) {
+  constexpr int n = kTurnGrid;
+  // (Its inner lines stand a little off the even places, where a surface's lines of symmetry fall:
+  // the curve along one of them would be lost in the rounding of its normals.)
+  const auto line = [&](int i) { return i == 0 || i == n ? static_cast<double>(i) : i + 0.381966; };
+  const auto grid = [&](int i, int j) { return gp_Pnt2d(u0 + (u1 - u0) * line(i) / n, v0 + (v1 - v0) * line(j) / n); };
+  const auto value = [&](const gp_Pnt2d& p) { return surface_normal(surf, p.X(), p.Y()).Dot(way); };
+  std::vector<bool> up(static_cast<std::size_t>((n + 1) * (n + 1)));
+  const auto at = [&](int i, int j) { return static_cast<std::size_t>(i * (n + 1) + j); };
+  for (int i = 0; i <= n; ++i) {
+    for (int j = 0; j <= n; ++j) {
+      up[at(i, j)] = value(grid(i, j)) >= 0.0;
+    }
+  }
+  // A crossing is named by the line of the grid it is on: from (i, j) to the next point across
+  // (`along` 0) or up (1).
+  std::map<int, gp_Pnt2d> places;
+  std::map<int, std::vector<int>> links;
+  const auto crossing = [&](int i, int j, int along) {
+    const int key = static_cast<int>(at(i, j)) * 2 + along;
+    if (places.find(key) == places.end()) {
+      gp_Pnt2d a = grid(i, j);
+      gp_Pnt2d b = along == 0 ? grid(i + 1, j) : grid(i, j + 1);
+      const bool from = up[at(i, j)];
+      for (int k = 0; k < 40; ++k) {
+        const gp_Pnt2d mid(0.5 * (a.X() + b.X()), 0.5 * (a.Y() + b.Y()));
+        if ((value(mid) >= 0.0) == from) {
+          a = mid;
+        } else {
+          b = mid;
+        }
+      }
+      places.emplace(key, gp_Pnt2d(0.5 * (a.X() + b.X()), 0.5 * (a.Y() + b.Y())));
+    }
+    return key;
+  };
+  const auto link = [&](int a, int b) {
+    links[a].push_back(b);
+    links[b].push_back(a);
+  };
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      const bool s0 = up[at(i, j)];
+      const bool s1 = up[at(i + 1, j)];
+      const bool s2 = up[at(i + 1, j + 1)];
+      const bool s3 = up[at(i, j + 1)];
+      std::vector<int> here;
+      if (s0 != s1) {
+        here.push_back(crossing(i, j, 0));
+      }
+      if (s1 != s2) {
+        here.push_back(crossing(i + 1, j, 1));
+      }
+      if (s3 != s2) {
+        here.push_back(crossing(i, j + 1, 0));
+      }
+      if (s0 != s3) {
+        here.push_back(crossing(i, j, 1));
+      }
+      if (here.size() == 2) {
+        link(here[0], here[1]);
+      } else if (here.size() == 4) {
+        // Two curves through one cell: the middle goes with the corners of its own sign.
+        const gp_Pnt2d a = grid(i, j);
+        const gp_Pnt2d b = grid(i + 1, j + 1);
+        if ((value(gp_Pnt2d(0.5 * (a.X() + b.X()), 0.5 * (a.Y() + b.Y()))) >= 0.0) == s0) {
+          link(here[0], here[1]);
+          link(here[2], here[3]);
+        } else {
+          link(here[0], here[3]);
+          link(here[1], here[2]);
+        }
+      }
+    }
+  }
+  std::vector<std::vector<gp_Pnt2d>> chains;
+  std::map<int, bool> walked;
+  const auto walk = [&](int start) {
+    std::vector<gp_Pnt2d> chain;
+    int here = start;
+    while (here >= 0 && !walked[here]) {
+      walked[here] = true;
+      chain.push_back(places.at(here));
+      int next = -1;
+      for (const int other : links[here]) {
+        if (!walked[other]) {
+          next = other;
+          break;
+        }
+      }
+      here = next;
+    }
+    return chain;
+  };
+  for (const auto& [key, others] : links) {
+    if (others.size() == 1 && !walked[key]) {
+      chains.push_back(walk(key));
+    }
+  }
+  for (const auto& [key, others] : links) {
+    if (!walked[key]) {
+      std::vector<gp_Pnt2d> ring = walk(key);
+      ring.push_back(ring.front());
+      chains.push_back(std::move(ring));
+    }
+  }
+  return chains;
+}
+
+// Edges on a face's surface along where it turns away from `way`.
+std::vector<TopoDS_Edge> turning_edges(const TopoDS_Face& face, const gp_Vec& way) {
+  const BRepAdaptor_Surface surf(face, true);
+  double u0 = 0.0;
+  double u1 = 0.0;
+  double v0 = 0.0;
+  double v1 = 0.0;
+  BRepTools::UVBounds(face, u0, u1, v0, v1);
+  TopLoc_Location where;
+  const occ::handle<Geom_Surface> surface = BRep_Tool::Surface(face, where);
+  // One run of points, made an edge. A curve goes through all of them, smoothly.
+  std::vector<TopoDS_Edge> out;
+  const auto run_edge = [&](const std::vector<gp_Pnt2d>& run, bool ring) {
+    auto pts = new NCollection_HArray1<gp_Pnt2d>(1, static_cast<int>(run.size()));
+    const occ::handle<NCollection_HArray1<gp_Pnt2d>> points = pts;
+    for (std::size_t i = 0; i < run.size(); ++i) {
+      pts->SetValue(static_cast<int>(i) + 1, run[i]);
+    }
+    Geom2dAPI_Interpolate fit(points, ring, 1.0e-9);
+    fit.Perform();
+    if (!fit.IsDone()) {
+      throw std::runtime_error("could not follow where the face turns away");
+    }
+    const occ::handle<Geom2d_BSplineCurve> curve = fit.Curve();
+    BRepBuilderAPI_MakeEdge mk(curve, surface);
+    if (!mk.IsDone()) {
+      throw std::runtime_error("could not make an edge where the face turns away");
+    }
+    TopoDS_Edge edge = mk.Edge();
+    if (!BRepLib::BuildCurve3d(edge, 1.0e-7)) {
+      throw std::runtime_error("could not work out an edge where the face turns away");
+    }
+    edge.Location(where);
+    out.push_back(edge);
+  };
+  // How much the way between points turns at a point, measured on the box made square.
+  const auto turn = [&](const gp_Pnt2d& a, const gp_Pnt2d& b, const gp_Pnt2d& c) {
+    const gp_Vec2d p((b.X() - a.X()) / (u1 - u0), (b.Y() - a.Y()) / (v1 - v0));
+    const gp_Vec2d q((c.X() - b.X()) / (u1 - u0), (c.Y() - b.Y()) / (v1 - v0));
+    return std::abs(p.Angle(q));
+  };
+  for (const std::vector<gp_Pnt2d>& chain : turning_chains(surf, way, u0, u1, v0, v1)) {
+    // (Two crossings may fall as good as together where the curve goes through a point of the grid.)
+    std::vector<gp_Pnt2d> apart;
+    for (const gp_Pnt2d& p : chain) {
+      if (apart.empty() || apart.back().Distance(p) > 1.0e-7) {
+        apart.push_back(p);
+      }
+    }
+    if (apart.size() < 2) {
+      continue;
+    }
+    // Where two such curves cross (a torus seen square to its axis), the way turns sharply: a
+    // smooth curve round that would wander off, so each straight run has its own edge.
+    std::vector<std::vector<gp_Pnt2d>> runs(1);
+    runs.back().push_back(apart.front());
+    for (std::size_t i = 1; i < apart.size(); ++i) {
+      runs.back().push_back(apart[i]);
+      if (i + 1 < apart.size() && turn(apart[i - 1], apart[i], apart[i + 1]) > kTurnCorner) {
+        runs.emplace_back(1, apart[i]);
+      }
+    }
+    const bool closes = apart.size() > 3 && apart.front().Distance(apart.back()) <= 1.0e-7;
+    for (std::vector<gp_Pnt2d>& run : runs) {
+      const bool ring = closes && runs.size() == 1;
+      if (ring) {
+        run.pop_back();
+      }
+      run_edge(run, ring);
+    }
+  }
+  return out;
+}
+
+// A face's pieces, each looking as it does, cut by what `tools` holds.
+std::vector<TopoDS_Face> pieces_of(const TopoDS_Face& face, const NCollection_List<TopoDS_Shape>& tools) {
+  BRepAlgoAPI_Splitter split;
+  NCollection_List<TopoDS_Shape> args;
+  args.Append(face);
+  split.SetArguments(args);
+  split.SetTools(tools);
+  split.Build();
+  if (split.HasErrors() || !split.IsDone()) {
+    throw std::runtime_error("could not cut the face where it turns away");
+  }
+  std::vector<TopoDS_Face> out;
+  for (TopExp_Explorer ex(split.Shape(), TopAbs_FACE); ex.More(); ex.Next()) {
+    TopoDS_Face piece = TopoDS::Face(ex.Current());
+    piece.Orientation(face.Orientation());
+    out.push_back(piece);
+  }
+  return out;
+}
+
+// How far a piece of a face looks along `way`, taken over it.
+double piece_looks(const TopoDS_Face& piece, const gp_Vec& way) {
+  const BRepAdaptor_Surface surf(piece, true);
+  double sum = 0.0;
+  for (const gp_Pnt2d& p : points_within(piece, 12)) {
+    sum += surface_normal(surf, p.X(), p.Y()).Dot(way);
+  }
+  return face_sign(piece) * sum;
+}
+
+} // namespace
+
+std::unique_ptr<ShapeList> facing(const Shape& shape, std::uint32_t face, const V3& way) {
+  return guarded("facing", [&] {
+    const TopoDS_Face& from = face_at(shape, face);
+    const gp_Vec look(way.x, way.y, way.z);
+    auto list = std::make_unique<ShapeList>();
+    const auto [most, least] = looks_along(from, look);
+    if (most <= kTurnTolerance) {
+      return list;
+    }
+    if (least >= -kTurnTolerance) {
+      list->items.push_back(from);
+      return list;
+    }
+    const BRepAdaptor_Surface surf(from, true);
+    NCollection_List<TopoDS_Shape> tools;
+    if (const auto plane = turning_plane(surf, look)) {
+      tools.Append(plane_across(from, plane->first, plane->second));
+    } else {
+      for (const TopoDS_Edge& e : turning_edges(from, look)) {
+        tools.Append(e);
+      }
+    }
+    if (tools.IsEmpty()) {
+      throw std::runtime_error("could not find where the face turns away");
+    }
+    const std::vector<TopoDS_Face> pieces = pieces_of(from, tools);
+    if (pieces.size() < 2) {
+      throw std::runtime_error("could not cut the face where it turns away");
+    }
+    for (const TopoDS_Face& piece : pieces) {
+      if (piece_looks(piece, look) > 0.0) {
+        list->items.push_back(piece);
+      }
+    }
+    return list;
+  });
+}
+
+std::unique_ptr<Shape> prism_of_face(const Shape& shape, std::uint32_t face, const V3& along) {
+  return guarded("prism_of_face", [&] {
+    BRepPrimAPI_MakePrism mk(face_at(shape, face), gp_Vec(along.x, along.y, along.z), false, true);
+    mk.Build();
+    if (!mk.IsDone()) {
+      throw std::runtime_error("the face could not be swept");
+    }
+    TopExp_Explorer solids(mk.Shape(), TopAbs_SOLID);
+    if (!solids.More()) {
+      throw std::runtime_error("sweeping the face gave no solid");
+    }
+    TopoDS_Solid solid = TopoDS::Solid(solids.Current());
+    BRepLib::OrientClosedSolid(solid);
+    return wrap(solid);
   });
 }
 
@@ -2245,15 +2684,20 @@ void face_normal(const Shape& s, std::uint32_t index, V3& out) {
     double v0 = 0.0;
     double v1 = 0.0;
     BRepTools::UVBounds(face, u0, u1, v0, v1);
-    gp_Pnt at;
-    gp_Vec du;
-    gp_Vec dv;
-    surf.D1(0.5 * (u0 + u1), 0.5 * (v0 + v1), at, du, dv);
-    gp_Vec n = du.Crossed(dv);
-    if (n.Magnitude() < 1e-12) {
+    // The point within the face nearest the middle of its box: a crescent's middle is off it.
+    const gp_Pnt2d box_middle(0.5 * (u0 + u1), 0.5 * (v0 + v1));
+    gp_Pnt2d middle = box_middle;
+    double nearest = std::numeric_limits<double>::infinity();
+    for (const gp_Pnt2d& p : points_within(face, 12)) {
+      if (p.Distance(box_middle) < nearest) {
+        nearest = p.Distance(box_middle);
+        middle = p;
+      }
+    }
+    gp_Vec n = surface_normal(surf, middle.X(), middle.Y());
+    if (n.Magnitude() < 0.5) {
       throw std::runtime_error("the face has no normal at its middle");
     }
-    n.Normalize();
     if (face.Orientation() == TopAbs_REVERSED) {
       n.Reverse();
     }

@@ -248,6 +248,11 @@ pub(crate) mod bridge {
         fn roll_cone(profile: &ProfileIn, half_angle: f64, inner: f64, outer: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// A solid from face `face` of `shape` and the face `distance` along its normal.
         fn thicken(shape: &Shape, face: u32, distance: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
+        /// What of face `face` looks along `way`: a shape of one face for each piece, cut where it
+        /// turns away. None of them when none of it does.
+        fn facing(shape: &Shape, face: u32, way: &V3) -> Result<UniquePtr<ShapeList>>;
+        /// Face `face` swept straight along `along`: a solid.
+        fn prism_of_face(shape: &Shape, face: u32, along: &V3) -> Result<UniquePtr<Shape>>;
         /// Revolution of the profile about an axis, from angle `start` sweeping `sweep` radians;
         /// `full` makes a closed revolution.
         fn revolve(profile: &ProfileIn, origin: &V3, dir: &V3, start: f64, sweep: f64, full: bool, hist: &mut HistoryOut)
