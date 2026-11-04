@@ -172,6 +172,13 @@ pub trait Kernel: Send {
         let _ = (a, b, tags);
         unsupported!("ruled_sheet")
     }
+    /// The same solid with every face on a right-handed surface: the same faces in the same
+    /// order, so that an operation's history still holds of it. A revolve can leave a flat face
+    /// on a left-handed plane, whose `normal` then looks into the solid; on this one it looks out.
+    fn direct_faces(&mut self, shape: ShapeHandle) -> KResult<ShapeHandle> {
+        let _ = shape;
+        unsupported!("direct_faces")
+    }
     fn sweep(&mut self, profile: &Profile, path: &Path3, opts: &SweepOpts) -> KResult<Op> {
         let _ = (profile, path, opts);
         unsupported!("sweep")

@@ -69,6 +69,7 @@
 #include <Geom_Line.hxx>
 #include <NCollection_Array1.hxx>
 #include <Precision.hxx>
+#include <ShapeCustom.hxx>
 #include <ShapeFix_Face.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <TopExp_Explorer.hxx>
@@ -1162,6 +1163,27 @@ std::unique_ptr<Shape> ruled_sheet(rust::Slice<const V3> a0, rust::Slice<const V
       TagGen gen{tags[i], 0, 0};
       if (locate(*out, sew.Modified(walls[i]), gen.gen_kind, gen.gen_index)) {
         hist.tagged.push_back(gen);
+      }
+    }
+    return out;
+  });
+}
+
+std::unique_ptr<Shape> direct_faces(const Shape& body) {
+  return guarded("direct_faces", [&] {
+    auto out = wrap(ShapeCustom::DirectFaces(body.shape));
+    // The same faces in the same order, which is what the caller keeps its history by.
+    if (out->faces.Extent() != body.faces.Extent()) {
+      throw std::runtime_error("the faces of a solid changed when it was given right-handed surfaces");
+    }
+    for (int i = 1; i <= body.faces.Extent(); ++i) {
+      GProp_GProps was;
+      GProp_GProps now;
+      BRepGProp::SurfaceProperties(body.faces(i), was);
+      BRepGProp::SurfaceProperties(out->faces(i), now);
+      const double slack = 1.0e-6 * (1.0 + std::abs(was.Mass()));
+      if (std::abs(was.Mass() - now.Mass()) > slack || was.CentreOfMass().Distance(now.CentreOfMass()) > slack) {
+        throw std::runtime_error("the faces of a solid changed when it was given right-handed surfaces");
       }
     }
     return out;

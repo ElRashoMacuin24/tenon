@@ -485,6 +485,12 @@ impl Kernel for OcctKernel {
         self.finish(shape, hist)
     }
 
+    fn direct_faces(&mut self, shape: ShapeHandle) -> KResult<ShapeHandle> {
+        self.not_cancelled()?;
+        let out = sys::direct_faces(self.get(shape)?).map_err(failed("direct_faces"))?;
+        self.insert(out)
+    }
+
     fn revolve(&mut self, profile: &Profile, axis: &Axis, angle: &AngleExtent) -> KResult<Op> {
         self.not_cancelled()?;
         check::point("revolve axis origin", axis.origin())?;

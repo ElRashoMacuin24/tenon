@@ -94,6 +94,9 @@ impl Kernel for Timed {
     fn ruled_sheet(&mut self, a: [&[Vec3]; 2], b: [&[Vec3]; 2], tags: [u64; 4]) -> KResult<Op> {
         timed!(self, "ruled_sheet", self.inner.ruled_sheet(a, b, tags))
     }
+    fn direct_faces(&mut self, shape: ShapeHandle) -> KResult<ShapeHandle> {
+        timed!(self, "direct_faces", self.inner.direct_faces(shape))
+    }
     fn sweep(&mut self, profile: &Profile, path: &Path3, opts: &SweepOpts) -> KResult<Op> {
         timed!(self, "sweep", self.inner.sweep(profile, path, opts))
     }
