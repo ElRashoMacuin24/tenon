@@ -99,8 +99,8 @@ pub(crate) struct Running {
 #[derive(Clone, Debug)]
 pub(crate) struct Outcome {
     pub study: StudyId,
-    /// The revision of the part it is of.
-    pub revision: u64,
+    /// What it hangs on, as the part and the study were: see `results_basis`.
+    pub basis: u64,
     pub solved: Option<Arc<Solved>>,
     /// The mesh alone, when it was not solved.
     meshed: Option<Arc<TetMesh>>,
@@ -115,8 +115,8 @@ pub(crate) struct Outcome {
 }
 
 impl Outcome {
-    fn new(study: StudyId, revision: u64, element_size: f64, solved: Option<Arc<Solved>>, meshed: Option<Arc<TetMesh>>) -> Result<Outcome, String> {
-        let mut o = Outcome { study, revision, solved, meshed, element_size, nodes: Vec::new(), tris: Vec::new(), sides: Vec::new() };
+    fn new(study: StudyId, basis: u64, element_size: f64, solved: Option<Arc<Solved>>, meshed: Option<Arc<TetMesh>>) -> Result<Outcome, String> {
+        let mut o = Outcome { study, basis, solved, meshed, element_size, nodes: Vec::new(), tris: Vec::new(), sides: Vec::new() };
         let mesh = o.mesh().ok_or("there is no mesh")?;
         let outward = mesh.outward()?;
         let mut place: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
@@ -177,18 +177,44 @@ fn ramp(t: f64) -> Color32 {
 }
 
 impl Workbench {
+    /// What results hang on, as the part and its studies now are: everything but what only Optimize
+    /// Shape looks at, its kept faces and its settings. (Worked out once for each revision: it is
+    /// asked many times a frame.)
+    pub(crate) fn results_basis(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let revision = self.session.revision();
+        if let Some((r, basis)) = self.results_basis_memo.get()
+            && r == revision
+        {
+            return basis;
+        }
+        let mut v = serde_json::to_value(self.document()).unwrap_or(serde_json::Value::Null);
+        if let Some(serde_json::Value::Array(studies)) = v.get_mut("studies") {
+            for s in studies.iter_mut().filter_map(serde_json::Value::as_object_mut) {
+                s.remove("optimize");
+            }
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        v.to_string().hash(&mut h);
+        let basis = h.finish();
+        self.results_basis_memo.set(Some((revision, basis)));
+        basis
+    }
+
     /// What there is to show of the study worked on, if it is still of the part as it is.
     pub(crate) fn outcome(&self) -> Option<&Outcome> {
         let env = self.analysis.as_ref().filter(|_| self.in_analysis())?;
         let active = self.active_study()?.id;
-        env.outcome.as_ref().filter(|o| o.study == active && o.revision == self.session.revision())
+        let basis = self.results_basis();
+        env.outcome.as_ref().filter(|o| o.study == active && o.basis == basis)
     }
 
     /// The study worked on has an outcome, and the part or the study has changed since.
     pub(crate) fn outcome_is_stale(&self) -> bool {
         let Some(env) = self.analysis.as_ref() else { return false };
         let active = self.active_study().map(|s| s.id);
-        env.outcome.as_ref().is_some_and(|o| Some(o.study) == active && o.revision != self.session.revision())
+        let basis = self.results_basis();
+        env.outcome.as_ref().is_some_and(|o| Some(o.study) == active && o.basis != basis)
     }
 
     /// Something of a study is drawn over the part: its results, or its mesh.
@@ -284,15 +310,16 @@ impl Workbench {
             ));
             return;
         }
+        let basis = self.results_basis();
         let outcome = if solving {
             let solved = result.downcast::<Result<Solved, String>>().map_or_else(|_| Err("internal: unexpected result".to_owned()), |b| *b);
             solved.and_then(|s| {
                 let size = s.element_size;
-                Outcome::new(study, revision, size, Some(Arc::new(s)), None)
+                Outcome::new(study, basis, size, Some(Arc::new(s)), None)
             })
         } else {
             let meshed = result.downcast::<Result<(TetMesh, f64), String>>().map_or_else(|_| Err("internal: unexpected result".to_owned()), |b| *b);
-            meshed.and_then(|(mesh, size)| Outcome::new(study, revision, size, None, Some(Arc::new(mesh))))
+            meshed.and_then(|(mesh, size)| Outcome::new(study, basis, size, None, Some(Arc::new(mesh))))
         };
         let outcome = match outcome {
             Ok(o) => o,

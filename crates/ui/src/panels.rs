@@ -1762,6 +1762,7 @@ impl Workbench {
             self.set_error(said.clone());
         }
         let Some(mut panel) = self.panel.take() else { return };
+        let said_before = self.status.clone();
         // OK, Cancel or Apply from the properties panel, the mini-toolbar or the radial menu.
         let request = match self.panel_request.take() {
             Some(PanelRequest::Ok | PanelRequest::Apply) if refused.is_some() || failing.is_some() => None,
@@ -2310,6 +2311,10 @@ impl Workbench {
             self.panel = Some(panel);
         } else if !keep {
             self.panel_eqs.clear();
+            // (What the panel asked for is no longer asked, if nothing has been said since.)
+            if self.panel.is_none() && !self.status_error && self.status == said_before {
+                self.set_status("Ready");
+            }
         }
         if let Some(id) = reopen {
             self.command(id);

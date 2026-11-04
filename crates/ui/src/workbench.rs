@@ -126,6 +126,8 @@ pub struct Workbench {
     pub(crate) keys_elsewhere: bool,
     /// What a shape of a study hangs on, of a revision of the part: `shape_basis`.
     pub(crate) shape_basis_memo: std::cell::Cell<Option<(u64, tenon_model::study::StudyId, u64)>>,
+    /// What results hang on, at a revision.
+    pub(crate) results_basis_memo: std::cell::Cell<Option<(u64, u64)>>,
     /// The last modelling or sketch command (for "Repeat").
     pub(crate) last_command: Option<&'static str>,
     /// OK, Cancel or Apply asked for from outside the open panel (properties, radial menu).
@@ -194,6 +196,7 @@ impl Workbench {
             port_run: None,
             keys_elsewhere: false,
             shape_basis_memo: std::cell::Cell::new(None),
+            results_basis_memo: std::cell::Cell::new(None),
             last_command: None,
             panel_request: None,
             pending_tool: None,

@@ -678,7 +678,9 @@ impl Workbench {
         self.stop_runs_of_the_environment();
         self.analysis = Some(Env { study, ..Env::default() });
         self.chrome.tab = ANALYSIS_TAB;
+        let set_up = self.document().studies().first().is_some_and(|s| !s.supports.is_empty() && !s.loads.is_empty());
         self.set_status(match study {
+            Some(_) if set_up => "Stress Analysis: Simulate works the study out.",
             Some(_) => "Stress Analysis: say where the part is held (Fixed) and what pushes on it (Force, Pressure).",
             None => "Stress Analysis: Create Study, then say where the part is held and what pushes on it.",
         });

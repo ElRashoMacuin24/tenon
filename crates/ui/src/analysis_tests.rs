@@ -231,7 +231,7 @@ fn a_bar_is_held_at_one_end_and_loaded_at_the_other_by_clicks() {
     d.frame(&mut wb, vec![]);
     browser_row(&d, "Study1");
     browser_row(&d, "Fixed1");
-    assert!(wb.status().contains("say where the part is held"), "{}", wb.status());
+    assert!(wb.status().contains("Simulate works the study out"), "{}", wb.status());
 }
 
 fn load_id(wb: &Workbench, name: &str) -> u32 {
@@ -2678,4 +2678,62 @@ fn a_shape_is_worked_out_shown_on_a_slider_and_exported() {
     wb.exec("study.set", json!({ "item": 2, "newtons": 150 })).unwrap();
     d.frame(&mut wb, vec![]);
     browser_row(&d, "Shape: out of date (Optimize Shape)");
+}
+
+#[test]
+fn a_panel_of_the_environment_does_not_go_on_asking_when_it_has_closed() {
+    let (mut wb, mut d) = bar();
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    d.frame(&mut wb, vec![]);
+    // Fixed: asks for faces; Cancel, and it no longer does.
+    wb.run_ui("study.fix").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(wb.status().starts_with("Fixed: click"), "{}", wb.status());
+    wb.run_ui("ui.cancel").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none());
+    assert_eq!(wb.status(), "Ready");
+
+    // Held and loaded, coming back in says what is left to do.
+    let find = |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
+    wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
+    wb.run_ui("analysis.finish").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("analysis.begin").unwrap();
+    assert!(wb.status().contains("Simulate works the study out"), "{}", wb.status());
+}
+
+#[test]
+fn kept_faces_leave_a_stress_result_as_it_is() {
+    if !programs("kept_faces_leave_a_stress_result_as_it_is") {
+        return;
+    }
+    let (mut wb, mut d) = bar();
+    let find = |wb: &mut Workbench, way: &str| wb.exec("model.find", json!({ "what": "faces", "facing": way })).unwrap()["found"][0]["reference"].clone();
+    let (left, right) = (find(&mut wb, "left"), find(&mut wb, "right"));
+    wb.exec("document.material", json!({ "name": "Steel, mild" })).unwrap();
+    wb.run_ui("analysis.begin").unwrap();
+    wb.run_ui("study.new").unwrap();
+    wb.exec("study.fix", json!({ "faces": [left.clone()] })).unwrap();
+    wb.exec("study.force", json!({ "faces": [right], "newtons": 100, "direction": "down" })).unwrap();
+    wb.exec("study.mesh_size", json!({ "size": 10 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    click_text(&mut d, &mut wb, "Simulate");
+    assert!(wb.outcome().is_some_and(|o| o.solved.is_some()), "{}", wb.status());
+
+    // What only a shape looks at changes nothing of it.
+    wb.exec("study.keep", json!({ "faces": [left.clone()] })).unwrap();
+    wb.exec("study.shape", json!({ "remove": 50 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(wb.outcome().is_some() && !wb.outcome_is_stale(), "{}", wb.status());
+
+    // A support does.
+    wb.exec("study.fix", json!({ "faces": [left] })).unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(wb.outcome().is_none() && wb.outcome_is_stale());
 }

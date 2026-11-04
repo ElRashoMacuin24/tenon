@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use tenon_kernel::{Kernel, Mesh, MeshTol};
 use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult, CommandSpec, Run, Session};
