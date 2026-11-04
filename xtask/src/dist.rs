@@ -159,10 +159,9 @@ pub fn run_dist(args: &[&str]) -> Result<(), String> {
     summary += &crate_licences(&meta, &licences)?;
     // The font sketch text is drawn in, built into the program (DEC-102).
     copy(&root().join("assets").join("fonts").join("DejaVu-LICENSE.txt"), &licences.join("fonts").join("DejaVu-LICENSE.txt"))?;
-    summary += concat!(
-        "Fonts built into the program\n",
-        "  DejaVu Sans 2.37: Bitstream Vera and Arev font licences, DejaVu changes public domain (licenses/fonts/DejaVu-LICENSE.txt)\n",
-    );
+    summary += "Fonts built into the program\n";
+    summary += "  DejaVu Sans 2.37: Bitstream Vera and Arev font licences, DejaVu changes public domain (licenses/fonts/DejaVu-LICENSE.txt)\n";
+    summary += &window_fonts(&meta)?;
     write(&licences.join("THIRD-PARTY.txt"), &summary)?;
     for f in ["LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "ATTRIBUTION.md", "CHANGELOG.md"] {
         copy(&root().join(f), &layout.top.join(f))?;
@@ -522,14 +521,14 @@ fn crate_licences(meta: &serde_json::Value, licences: &Path) -> Result<String, S
         *by_licence.entry(licence.clone()).or_default() += 1;
         let dir = Path::new(p["manifest_path"].as_str().unwrap_or_default()).parent().map(Path::to_path_buf).unwrap_or_default();
         let to = licences.join("rust").join(format!("{name}-{version}"));
-        let mut copied = 0;
-        for entry in std::fs::read_dir(&dir).map_err(|e| format!("dist: cannot read {}: {e}", dir.display()))?.filter_map(Result::ok) {
-            let file = entry.file_name().to_string_lossy().to_uppercase();
-            if entry.path().is_file() && ["LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT", "UNLICENSE"].iter().any(|w| file.starts_with(w)) {
-                copy(&entry.path(), &to.join(entry.file_name()))?;
-                copied += 1;
-            }
+        let files = licence_files(&dir)?;
+        if let Some(text) = font_licence_missing(&licence, &files) {
+            return Err(format!("dist: {name} {version} is under {licence}, but no {text} text was found in {}", dir.display()));
         }
+        for file in &files {
+            copy(&dir.join(file), &to.join(file))?;
+        }
+        let copied = files.len();
         let authors: Vec<&str> = p["authors"].as_array().into_iter().flatten().filter_map(|a| a.as_str()).collect();
         let source = p["repository"].as_str().unwrap_or("");
         if copied > 0 {
@@ -545,6 +544,75 @@ fn crate_licences(meta: &serde_json::Value, licences: &Path) -> Result<String, S
         text += &format!("  {n:4}  {licence}\n");
     }
     Ok(text)
+}
+
+/// The fonts of the window, which the crate `epaint_default_fonts` builds in, and the licence
+/// text of each, among those that crate's folder under `licenses/rust` holds.
+fn window_fonts(meta: &serde_json::Value) -> Result<String, String> {
+    let version = meta["packages"]
+        .as_array()
+        .and_then(|p| p.iter().find(|p| p["name"] == "epaint_default_fonts"))
+        .and_then(|p| p["version"].as_str())
+        .ok_or("dist: no epaint_default_fonts in cargo metadata: say which fonts the window is now drawn in")?;
+    let at = format!("licenses/rust/epaint_default_fonts-{version}/fonts");
+    Ok(format!(
+        concat!(
+            "  Ubuntu Light, the window's text: Ubuntu Font Licence 1.0 ({at}/UFL.txt)\n",
+            "  Hack Regular, the window's fixed-width text: MIT, Bitstream Vera licence ({at}/Hack-Regular.txt)\n",
+            "  Noto Emoji, the window's symbols: SIL Open Font License 1.1 ({at}/OFL.txt)\n",
+            "  emoji-icon-font, the window's symbols: MIT ({at}/emoji-icon-font-mit-license.txt)\n",
+        ),
+        at = at
+    ))
+}
+
+/// The licence files of a crate's folder, by their paths within it: those at its top, and those
+/// further down that are of something it took from others (a font's licence, a module's). What
+/// only its tests use is not in the programs.
+fn licence_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut found = Vec::new();
+    let mut todo = vec![PathBuf::new()];
+    while let Some(within) = todo.pop() {
+        let at = dir.join(&within);
+        for entry in std::fs::read_dir(&at).map_err(|e| format!("dist: cannot read {}: {e}", at.display()))?.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let path = within.join(&name);
+            if entry.path().is_dir() {
+                if !["tests", "benches", "examples", "target"].contains(&name.as_str()) {
+                    todo.push(path);
+                }
+            } else if names_a_licence(&name, &within) {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+/// Whether a file, in that folder of its crate, is by its name a licence.
+fn names_a_licence(name: &str, within: &Path) -> bool {
+    let file = name.to_uppercase();
+    if file.ends_with(".RS") || file.ends_with(".TOML") {
+        return false;
+    }
+    if ["LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT", "UNLICENSE"].iter().any(|w| file.starts_with(w)) {
+        return true;
+    }
+    // Further down: `fonts/OFL.txt`, `fonts/emoji-icon-font-mit-license.txt`, and a font's own
+    // text under the font's name (`fonts/Hack-Regular.txt`).
+    within.as_os_str() != ""
+        && (file.starts_with("OFL")
+            || file.starts_with("UFL")
+            || file.contains("LICENSE")
+            || file.contains("LICENCE")
+            || (within.ends_with("fonts") && file.ends_with(".TXT")))
+}
+
+/// The text of a font licence that a crate's licence expression names and its files lack.
+fn font_licence_missing(licence: &str, files: &[PathBuf]) -> Option<&'static str> {
+    let has = |text: &str| files.iter().filter_map(|f| f.file_name()).any(|f| f.to_string_lossy().to_uppercase().starts_with(text));
+    [("OFL-", "OFL"), ("Ubuntu-font", "UFL")].into_iter().find(|(named, text)| licence.contains(named) && !has(text)).map(|(_, text)| text)
 }
 
 // ---- files
@@ -666,5 +734,43 @@ mod tests {
         };
         assert!(names.iter().any(|n| n.to_lowercase() == wanted.to_lowercase()), "{names:?}");
         assert!(imports(&root().join("Cargo.toml")).unwrap_err().contains("neither PE, ELF nor"));
+    }
+
+    #[test]
+    fn a_crates_licences_are_found_further_down_as_well() {
+        let dir = std::env::temp_dir().join(format!("tenon-dist-licences-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for f in [
+            "LICENSE-MIT",
+            "README.md",
+            "src/license.rs",
+            "src/spin/LICENSE",
+            "fonts/OFL.txt",
+            "fonts/UFL.txt",
+            "fonts/Hack-Regular.txt",
+            "fonts/Hack-Regular.ttf",
+            "fonts/emoji-icon-font-mit-license.txt",
+            "tests/COPYRIGHT",
+        ] {
+            let at = dir.join(f);
+            std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::fs::write(at, "text").unwrap();
+        }
+        let found: Vec<String> = licence_files(&dir).unwrap().iter().map(|p| p.to_string_lossy().replace('\\', "/")).collect();
+        assert_eq!(
+            found,
+            ["LICENSE-MIT", "fonts/Hack-Regular.txt", "fonts/OFL.txt", "fonts/UFL.txt", "fonts/emoji-icon-font-mit-license.txt", "src/spin/LICENSE"]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_font_licence_named_and_not_found_stops_the_package() {
+        let expression = "(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0";
+        let files = |names: &[&str]| names.iter().map(PathBuf::from).collect::<Vec<_>>();
+        assert_eq!(font_licence_missing(expression, &files(&["fonts/OFL.txt", "fonts/UFL.txt"])), None);
+        assert_eq!(font_licence_missing(expression, &files(&["fonts/UFL.txt"])), Some("OFL"));
+        assert_eq!(font_licence_missing(expression, &files(&["fonts/OFL.txt"])), Some("UFL"));
+        assert_eq!(font_licence_missing("MIT OR Apache-2.0", &[]), None);
     }
 }
