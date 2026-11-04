@@ -13,14 +13,19 @@
 //!   folded along a line), [`CutAcrossBend`] (a profile cut round the bends, as drawn on the
 //!   sheet laid flat) and [`CutNormal`] (one cut where it is seen on the sheet: both [`wrap`]).
 //!   Other cuts, holes and rounded corners are the ordinary features.
+//!   [`Rip`] opens a seam in a face, so that a closed shape can be laid flat ([`rip`]);
+//!   [`UnfoldBends`] lays chosen bends flat for work across them, and [`Refold`] folds them back
+//!   with what was done meanwhile ([`flatten`]).
 //! - The **flat pattern** ([`flat`], [`unfold`]) is worked out from the solid, not from the
 //!   features, so whatever made the part, what is cut is what the model shows.
 
 pub mod flange;
 pub mod flat;
+pub mod flatten;
 pub mod join;
 pub mod outline;
 pub mod region;
+pub mod rip;
 pub mod strip;
 pub mod unfold;
 pub mod wrap;
@@ -36,6 +41,7 @@ use crate::params::{ParamUnit, UserParam};
 use crate::{Document, FeatureId};
 
 pub use flat::{Bend, FlatCurve, FlatLoop, FlatPattern};
+pub use flatten::FlatBend;
 pub use join::DoubleBend;
 pub use unfold::{Unfold, unfold};
 
@@ -350,6 +356,102 @@ impl CornerRip {
             return Err("a corner rip has no relief: there is no bend at the corner it opens".into());
         }
         self.corner.check()
+    }
+}
+
+/// How a rip opens the face it is on.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RipWay {
+    /// A slit right across the face through a point of it, from its edge to its edge.
+    Point {
+        at: tenon_geom::Vec3,
+        /// The slit runs alongside this edge. Without one, on a bend along the bend's axis; on
+        /// a flat face alongside the bend beside it, else across the face's short way.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        along: Option<EdgeRef>,
+    },
+    /// A slit from one point of the face to another. A point on the edge of the face takes the
+    /// slit through that edge.
+    Between { from: tenon_geom::Vec3, to: tenon_geom::Vec3 },
+    /// The whole face taken out, and the sheet behind it.
+    Face,
+}
+
+/// A seam opened in a face of the sheet, so that a shape that closes on itself (a tube, a box)
+/// can be laid flat. In the flat pattern a slit is a slot as wide as the gap.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Rip {
+    /// The face of the sheet: a flat side of it, or one side of a bend.
+    pub face: FaceRef,
+    pub way: RipWay,
+    /// How wide a slit is; without it, the part's `GapSize`. (A whole face has none: what is
+    /// left stands apart by the face.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f64>,
+}
+
+impl Rip {
+    pub fn check(&self) -> Result<(), String> {
+        let at = |p: &tenon_geom::Vec3| {
+            if p.is_finite() { Ok(()) } else { Err("a point of a rip must be a place: three finite numbers".to_owned()) }
+        };
+        match &self.way {
+            RipWay::Point { at: p, .. } => at(p)?,
+            RipWay::Between { from, to } => {
+                at(from)?;
+                at(to)?;
+            }
+            RipWay::Face if self.gap.is_some() => {
+                return Err("a rip that takes a whole face out has no gap of its own: what is left stands apart by the face".into());
+            }
+            RipWay::Face => {}
+        }
+        match self.gap {
+            Some(g) if !(g.is_finite() && (0.0..=1000.0).contains(&g)) => Err("the gap of a rip must be from 0 to 1000 mm".into()),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Bends of the sheet laid flat so that work can be done across them: a stationary face stays
+/// where it is, each bend chosen becomes a flat strip as wide as its allowance, and the sheet
+/// beyond it comes round into the plane. The part after it is that partly flat sheet.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UnfoldBends {
+    /// The flat face of the sheet that stays where it is.
+    pub face: FaceRef,
+    /// The bends to lay flat, each by one of its round faces. None: every bend of the sheet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bends: Vec<FaceRef>,
+}
+
+impl UnfoldBends {
+    pub fn check(&self) -> Result<(), String> {
+        if self.bends.len() > MAX_FLANGE_EDGES {
+            return Err(format!("an unfold takes at most {MAX_FLANGE_EDGES} bends"));
+        }
+        Ok(())
+    }
+}
+
+/// Bends an unfold laid flat folded back, carrying what was done to them meanwhile: the strip
+/// each became is rolled up again, holes and all, and the sheet beyond turns back with it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Refold {
+    /// The unfold whose bends these are.
+    pub unfold: FeatureId,
+    /// Which of them, each by a face of its flat strip. None: all that are still flat.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bends: Vec<FaceRef>,
+}
+
+impl Refold {
+    pub fn check(&self) -> Result<(), String> {
+        if self.bends.len() > MAX_FLANGE_EDGES {
+            return Err(format!("a refold takes at most {MAX_FLANGE_EDGES} bends"));
+        }
+        Ok(())
     }
 }
 

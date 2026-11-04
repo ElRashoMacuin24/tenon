@@ -1,5 +1,7 @@
 //! Regenerating sheet metal features: faces and flanges (see `crate::sheet`).
 
+mod opening;
+
 use tenon_geom::{Axis, Frame, Vec2, Vec3};
 use tenon_kernel::{
     BoolOp, CurveKind, Extent, Op, Origin, PrimitiveRole, Profile, Region, ShapeHandle, SubShape, SurfaceKind, TopoKind, Topology, Transform,

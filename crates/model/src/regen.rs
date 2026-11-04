@@ -113,6 +113,8 @@ pub struct Regen {
     pub work: BTreeMap<FeatureId, WorkGeom>,
     /// The threads on the part, cosmetic and modelled.
     pub threads: Vec<ThreadMark>,
+    /// The bends an unfold has laid flat and no refold has folded back, where they now lie.
+    pub flat_bends: Vec<crate::sheet::FlatBend>,
     pub cancelled: bool,
     /// Wall time of the regeneration in milliseconds.
     pub millis: f64,
@@ -292,6 +294,9 @@ fn prefix_hashes(doc: &Document, copied: &std::collections::BTreeSet<FeatureId>)
                 | FeatureKind::Bend(_)
                 | FeatureKind::SharpBend(_)
                 | FeatureKind::Fold(_)
+                | FeatureKind::Rip(_)
+                | FeatureKind::Unfold(_)
+                | FeatureKind::Refold(_)
         ) {
             rule.hash(&mut h);
         }
@@ -655,6 +660,9 @@ impl<'a> Ctx<'a> {
             FeatureKind::Bend(b) => self.bend_between(f.id, b),
             FeatureKind::SharpBend(b) => self.sharp_bend(f.id, b),
             FeatureKind::Fold(fo) => self.fold(f.id, fo),
+            FeatureKind::Rip(r) => self.rip(f.id, r),
+            FeatureKind::Unfold(u) => self.unfold_bends(f.id, u),
+            FeatureKind::Refold(r) => self.refold(f.id, r),
             FeatureKind::PatternRect(p) => {
                 p.check()?;
                 let sign = |r: bool| if r { -1.0 } else { 1.0 };

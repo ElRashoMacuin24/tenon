@@ -105,7 +105,7 @@ fn shared(drawn: &[Vec<Vec<Piece>>], here: &[Vec<Piece>]) -> Result<Vec<Shape>, 
 
 /// Whether flat face `i` of the solid is a side of the sheet: the sheet's other side is one
 /// thickness behind it (the rim of the sheet has none).
-fn has_other_side(solid: &Read, i: usize, t: f64) -> bool {
+pub(super) fn has_other_side(solid: &Read, i: usize, t: f64) -> bool {
     let Some(face) = solid.faces.get(i) else { return false };
     let SurfaceKind::Plane { normal, .. } = &face.surface else { return false };
     let n = normal.normalized();

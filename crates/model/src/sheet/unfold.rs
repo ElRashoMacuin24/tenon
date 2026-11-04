@@ -57,7 +57,7 @@ pub(super) enum Chart {
 }
 
 /// The unit direction from an axis to `p`, unless `p` is on it.
-fn radial(axis: &Axis, p: Vec3) -> Option<Vec3> {
+pub(super) fn radial(axis: &Axis, p: Vec3) -> Option<Vec3> {
     let d = p - axis.origin();
     let r = d - axis.dir() * d.dot(axis.dir());
     (r.len() > 1e-9).then(|| r.normalized())
@@ -175,6 +175,31 @@ pub(super) fn base_chart(face: &FaceInfo) -> Option<Chart> {
         (u, n.cross(u))
     };
     Some(Chart::Plane { o3: face.centroid, u3, v3, o2: Vec2::ZERO, u2: Vec2::X, v2: Vec2::Y })
+}
+
+/// The chart of a round side of the sheet the pattern is laid out from, as a tube that was ripped
+/// open has no flat one: seen from outside, its axis up the page, from the middle of the face.
+fn round_chart(face: &FaceInfo, inner: bool, opts: &Unfold) -> Option<Chart> {
+    let SurfaceKind::Cylinder { axis, radius } = &face.surface else { return None };
+    let r0 = radial(axis, face.centroid)?;
+    let rho = if inner { radius + opts.k_factor * opts.thickness } else { radius - (1.0 - opts.k_factor) * opts.thickness };
+    let eg = if inner { -Vec2::X } else { Vec2::X };
+    Some(Chart::Bend { q: axis.origin() + r0 * *radius, axis: *axis, r0, mid: 0.0, rho, o2: Vec2::ZERO, ea: Vec2::Y, eg, inner, radius: *radius })
+}
+
+/// The face a pattern is laid out from when it is not told: the largest flat face, unless that
+/// is no side of the sheet and a round side is to be had (a tube that was ripped open, whose
+/// flat faces are its rims and the sides of the slit): then the largest round side.
+fn side_to_lay_out_from(solid: &Read, t: f64) -> Option<u32> {
+    let flat = largest_flat(&solid.faces);
+    if flat.is_some_and(|f| super::wrap::has_other_side(solid, f as usize, t)) {
+        return flat;
+    }
+    let round = (0..solid.faces.len())
+        .filter(|i| bend_side(*i, &solid.faces, t).is_some())
+        .max_by(|x, y| solid.faces[*x].area.total_cmp(&solid.faces[*y].area))
+        .and_then(|i| u32::try_from(i).ok());
+    round.or(flat)
 }
 
 /// The chart of a face tangent to `parent` at `q`.
@@ -316,10 +341,19 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
     }
     let base = match opts.base {
         Some(b) => b,
-        None => largest_flat(&solid.faces).ok_or("The part has no flat face to lay the pattern out from.")?,
+        None => side_to_lay_out_from(&solid, t).ok_or("The part has no flat face to lay the pattern out from.")?,
     };
     let base_info = solid.faces.get(base as usize).ok_or("the face to lay the pattern out from does not exist")?;
-    let first = base_chart(base_info).ok_or("The pattern is laid out from a flat face: the face chosen is not flat.")?;
+    if let SurfaceKind::Cylinder { axis, .. } = &base_info.surface
+        && radial(axis, base_info.centroid).is_none()
+    {
+        return Err(
+            "The sheet goes all the way round (a tube), so it cannot be laid flat: it needs an open seam somewhere. Open one with Rip.".into()
+        );
+    }
+    let first = base_chart(base_info)
+        .or_else(|| round_chart(base_info, bend_side(base as usize, &solid.faces, t)?, opts))
+        .ok_or("The pattern is laid out from a flat face or a side of a bend: the face chosen is neither.")?;
     let charts = follow(&solid, base, first, opts)?;
     let Read { topo, faces, edges } = solid;
 
@@ -358,7 +392,14 @@ pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatP
         if info.degenerate {
             continue;
         }
-        let on: Vec<u32> = topo.edge_faces.get(e).map_or(&[][..], Vec::as_slice).iter().copied().filter(|f| charts.contains_key(f)).collect();
+        let around = topo.edge_faces.get(e).map_or(&[][..], Vec::as_slice);
+        let on: Vec<u32> = around.iter().copied().filter(|f| charts.contains_key(f)).collect();
+        // The line where a round face meets itself: it goes all the way round there.
+        if let ([_], [f]) = (around, on.as_slice())
+            && matches!(charts.get(f), Some(Chart::Bend { .. }))
+        {
+            return Err("The sheet closes on itself (a box section, or a tube), so it cannot be laid flat: it needs an open seam somewhere.".into());
+        }
         match on.as_slice() {
             [f] => {
                 let Some(chart) = charts.get(f) else { continue };

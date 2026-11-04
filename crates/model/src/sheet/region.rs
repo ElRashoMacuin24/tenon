@@ -33,6 +33,24 @@ impl Shape {
     pub fn area(&self) -> f64 {
         outline::area(&self.outer) - self.holes.iter().map(|h| outline::area(h)).sum::<f64>()
     }
+
+    /// How far `p` is from it: nothing when it is within its outer boundary.
+    pub fn away(&self, p: Vec2) -> f64 {
+        let outer = std::slice::from_ref(&self.outer);
+        if inside(outer, p) { 0.0 } else { distance_to(outer, p) }
+    }
+}
+
+/// How far `p` is from the boundary of a region.
+pub fn distance_to(loops: &[Vec<Piece>], p: Vec2) -> f64 {
+    let from = |piece: &Piece| match piece.arc {
+        None => p.dist(piece.a + (piece.b - piece.a) * along(piece, p).clamp(0.0, 1.0)),
+        Some((c, r)) => {
+            let at = along(piece, p);
+            if (0.0..=1.0).contains(&at) { (p.dist(c) - r).abs() } else { p.dist(piece.a).min(p.dist(piece.b)) }
+        }
+    };
+    loops.iter().flatten().map(from).fold(f64::INFINITY, f64::min)
 }
 
 fn length(p: &Piece) -> f64 {

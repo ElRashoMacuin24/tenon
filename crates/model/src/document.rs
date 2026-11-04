@@ -925,6 +925,12 @@ pub enum FeatureKind {
     SharpBend(crate::sheet::SharpBend),
     /// A face of the sheet folded along a line drawn across it.
     Fold(crate::sheet::Fold),
+    /// A seam opened in a face of the sheet.
+    Rip(crate::sheet::Rip),
+    /// Chosen bends laid flat, from a stationary face.
+    Unfold(crate::sheet::UnfoldBends),
+    /// Bends an unfold laid flat folded back.
+    Refold(crate::sheet::Refold),
 }
 
 impl FeatureKind {
@@ -989,6 +995,9 @@ impl FeatureKind {
             FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => "Cut",
             FeatureKind::Bend(_) | FeatureKind::SharpBend(_) => "Bend",
             FeatureKind::Fold(_) => "Fold",
+            FeatureKind::Rip(_) => "Rip",
+            FeatureKind::Unfold(_) => "Unfold",
+            FeatureKind::Refold(_) => "Refold",
         }
     }
     /// Base of the default name of a new feature ("Extrusion" gives Extrusion1, Extrusion2, ...).
@@ -1024,6 +1033,9 @@ impl FeatureKind {
             FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => "Cut",
             FeatureKind::Bend(_) | FeatureKind::SharpBend(_) => "Bend",
             FeatureKind::Fold(_) => "Fold",
+            FeatureKind::Rip(_) => "Rip",
+            FeatureKind::Unfold(_) => "Unfold",
+            FeatureKind::Refold(_) => "Refold",
         }
     }
     /// Features this one depends on.
@@ -1084,6 +1096,15 @@ impl FeatureKind {
             FeatureKind::Bend(b) => b.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::SharpBend(b) => b.edges.iter().flat_map(EdgeRef::features).collect(),
             FeatureKind::Fold(f) => vec![f.sketch],
+            FeatureKind::Rip(r) => {
+                let mut v: Vec<FeatureId> = r.face.feature().into_iter().collect();
+                if let crate::sheet::RipWay::Point { along: Some(e), .. } = &r.way {
+                    v.extend(e.features());
+                }
+                v
+            }
+            FeatureKind::Unfold(u) => std::iter::once(&u.face).chain(&u.bends).filter_map(FaceRef::feature).collect(),
+            FeatureKind::Refold(r) => std::iter::once(r.unfold).chain(r.bends.iter().filter_map(FaceRef::feature)).collect(),
             FeatureKind::PatternRect(p) => {
                 let mut v = p.features.clone();
                 for d in std::iter::once(&p.dir1).chain(p.dir2.as_ref()) {
@@ -1644,6 +1665,9 @@ impl Document {
                 FeatureKind::SharpBend(b) => b.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Fold(fo) if self.sketch(fo.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, fo.sketch)),
                 FeatureKind::Fold(fo) => fo.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Rip(r) => r.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Unfold(u) => u.check().map_err(|e| format!("{}: {e}", f.name))?,
+                FeatureKind::Refold(r) => r.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,

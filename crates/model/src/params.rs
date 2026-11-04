@@ -147,6 +147,7 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         FeatureKind::CutAcrossBend(_) | FeatureKind::CutNormal(_) => &[("/distance", Mm)],
         FeatureKind::Bend(_) | FeatureKind::SharpBend(_) => &[("/radius", Mm)],
         FeatureKind::Fold(_) => &[("/angle", Deg), ("/radius", Mm)],
+        FeatureKind::Rip(_) => &[("/gap", Mm)],
         FeatureKind::Sketch { .. }
         | FeatureKind::Mirror(_)
         | FeatureKind::WorkAxis(_)
@@ -155,6 +156,8 @@ fn fields(kind: &FeatureKind) -> &'static [(&'static str, ParamUnit)] {
         | FeatureKind::Loft(_)
         | FeatureKind::Split(_)
         | FeatureKind::Combine(_)
+        | FeatureKind::Unfold(_)
+        | FeatureKind::Refold(_)
         | FeatureKind::SheetFace(_) => &[],
     }
 }
