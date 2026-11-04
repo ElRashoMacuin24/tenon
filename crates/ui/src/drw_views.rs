@@ -314,7 +314,18 @@ impl Workbench {
             let v = over.ok_or("click inside a view")?;
             let target = d.session.drawing().view(v).ok_or("the view is gone")?;
             target.may_have(&what.probe())?;
-            return self.open_mod_panel(what, Some(v));
+            // A view with a crop: its crop, to change.
+            if what == ModWhat::Crop && target.mods.iter().any(|m| matches!(m.kind, ModKind::Crop { .. })) {
+                return self.open_mod_panel(what, Some(v));
+            }
+            if let Some(panel) = d.mod_panel.as_mut() {
+                panel.view = Some(v);
+            }
+            let tool = DrwTool::Modify { what, pick, view: Some(v), first: None };
+            let prompt = tool.prompt();
+            d.tool = Some(tool);
+            self.set_status(prompt);
+            return Ok(());
         };
         let dr = d.session.drawing();
         let target = dr.view(v).ok_or("the view is gone")?;
@@ -404,7 +415,7 @@ impl Workbench {
 
     /// The panels of this file.
     pub(crate) fn drw_view_windows(&mut self, ui: &Ui) {
-        let at = [self.view.rect.right() - 310.0, self.view.rect.top() + 36.0];
+        let at = [self.view.rect.right() - 350.0, self.view.rect.top() + 36.0];
         self.mod_window(ui, at);
         self.overlay_window(ui, at);
     }

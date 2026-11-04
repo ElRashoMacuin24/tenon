@@ -1664,13 +1664,11 @@ impl Workbench {
                 },
             );
             d.view_dialog = (open && !ok && !cancel && !another_edge).then_some(dlg.clone());
-            if another_edge {
-                if let Some(ViewKind::Auxiliary { parent, .. }) = d.session.drawing().view(dlg.view).map(|v| &v.kind) {
-                    let tool = DrwTool::Auxiliary { parent: Some(*parent), edge: None, changing: Some(dlg.view) };
-                    let prompt = tool.prompt();
-                    d.tool = Some(tool);
-                    self.set_status(prompt);
-                }
+            if another_edge && let Some(ViewKind::Auxiliary { parent, .. }) = d.session.drawing().view(dlg.view).map(|v| &v.kind) {
+                let tool = DrwTool::Auxiliary { parent: Some(*parent), edge: None, changing: Some(dlg.view) };
+                let prompt = tool.prompt();
+                d.tool = Some(tool);
+                self.set_status(prompt);
             }
             if ok {
                 action = Some(parse_scale(&dlg.scale).and_then(|scale| {

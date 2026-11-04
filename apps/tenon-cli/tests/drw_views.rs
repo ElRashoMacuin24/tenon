@@ -800,7 +800,9 @@ fn an_auxiliary_view_is_seen_as_the_drawing_projects() {
     // it is on. First-angle: seen from behind, the side away from it.
     for (standard, seen) in [("ansi", -1.0), ("iso", 1.0)] {
         run(&mut e, "drw.new", json!({ "name": "Plate", "standard": standard }));
-        let v = run(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "top", "scale": 1, "at": [150, 170], "hidden": false }))["view"].clone();
+        let v = run(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "top", "scale": 1, "at": [150, 170], "hidden": false }))
+            ["view"]
+            .clone();
         let edge = run(&mut e, "drw.pick", json!({ "view": v, "view_at": [20, 0] }));
         let aux = run(&mut e, "drw.auxiliary", json!({ "parent": v, "edge": edge, "at": [170, 60] }))["view"].as_u64().unwrap();
         let i = view_info(&mut e, aux);
