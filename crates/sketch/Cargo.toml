@@ -1,6 +1,6 @@
 [package]
 name = "tenon-sketch"
-description = "2D sketch entities, constraint solver, editing tools, profile regions"
+description = "2D and 3D sketch entities, constraint solvers, editing tools, profile regions"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

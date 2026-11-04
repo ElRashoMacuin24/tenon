@@ -760,7 +760,7 @@ impl<'a> Ctx<'a> {
             }
         }
         if moved {
-            out.solve().map_err(|e| format!("its reference geometry moved with the part and the sketch cannot follow: {e}"))?;
+            out.solve().map_err(|e| format!("its reference geometry moved with the part and the sketch cannot follow: {}", out.words(&e)))?;
         }
         if !lost.is_empty() {
             self.regen.lost.insert(id, lost);

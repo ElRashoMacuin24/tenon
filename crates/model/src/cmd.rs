@@ -2426,7 +2426,7 @@ fn sketch3d_move(s: &mut Session, p: &Value) -> CmdResult {
         if !sk.is_point(point) {
             return Err(CmdError(format!("{point} is not a point of {id}")));
         }
-        Ok(sk.drag(point, to)?)
+        sk.drag(point, to).map_err(|e| CmdError(format!("The point cannot go there: {}", sk.words(&e))))
     })?;
     Ok(json!({}))
 }

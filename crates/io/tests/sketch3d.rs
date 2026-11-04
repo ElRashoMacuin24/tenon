@@ -108,8 +108,9 @@ fn comparing_two_versions_says_what_changed_in_a_3d_sketch() {
     let mut s = part(&mut k);
     let before = serde_json::to_value(s.document()).unwrap();
     let id = s.document().features().iter().find(|f| f.name == "3D Sketch1").unwrap().id;
-    let c = s.document().sketch3d(id).unwrap().constraints().find(|(_, c)| matches!(c, tenon_sketch::Constraint3::Radius { .. })).unwrap().0;
-    run(&mut s, &mut k, "sketch3d.set_dimension", json!({ "sketch": id.0, "constraint": c.0, "value": 9.5 }));
+    let info = run(&mut s, &mut k, "sketch3d.info", json!({ "sketch": id.0 }));
+    let c = info["constraints"].as_array().unwrap().iter().find(|c| c["type"] == "radius").unwrap()["id"].as_u64().unwrap();
+    run(&mut s, &mut k, "sketch3d.set_dimension", json!({ "sketch": id.0, "constraint": c, "value": 9.5 }));
     run(&mut s, &mut k, "sketch3d.point", json!({ "sketch": id.0, "at": [1, 2, 3] }));
     let after = serde_json::to_value(s.document()).unwrap();
     let text = diff::diff_documents("part", &before, &after).text();

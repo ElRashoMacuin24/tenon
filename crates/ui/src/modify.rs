@@ -89,7 +89,9 @@ impl Workbench {
             Some(Panel::Work(w)) => Some(match w.slot {
                 WorkSlot::A | WorkSlot::B => Wants { edges: false, faces: true },
                 WorkSlot::Axis => Wants { edges: true, faces: true },
-                WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 | WorkSlot::Curve => Wants { edges: true, faces: false },
+                WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => Wants { edges: true, faces: false },
+                // (A curve of a 3D sketch is picked before anything of the part is looked at.)
+                WorkSlot::Curve => Wants { edges: false, faces: false },
             }),
             _ => None,
         }

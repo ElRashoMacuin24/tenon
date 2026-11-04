@@ -747,3 +747,26 @@ fn a_sweeps_path_is_picked_by_a_click_on_a_3d_sketch_and_a_measure_adds_up_curve
     d.modifiers(&mut wb, egui::Modifiers::default());
     assert!((got(&wb) - 90.0).abs() < 1e-9, "{}", got(&wb));
 }
+
+#[test]
+fn undo_in_the_middle_of_a_chain_of_lines_starts_the_chain_again() {
+    let (mut wb, mut d) = app();
+    wb.run_ui("sketch.new_3d").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("sketch3d.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    add_xyz(&mut d, &mut wb, 0.0, 0.0, 0.0);
+    add_xyz(&mut d, &mut wb, 30.0, 0.0, 0.0);
+    assert_eq!(sk(&wb).entities().filter(|(id, _)| sk(&wb).is_line(*id)).count(), 1, "{}", wb.status());
+    wb.run_ui("edit.undo").unwrap();
+    d.frame(&mut wb, vec![]);
+    // The point the chain would go on from is gone: the next two points make a line of their own.
+    add_xyz(&mut d, &mut wb, 0.0, 10.0, 0.0);
+    assert!(!wb.status_error, "{}", wb.status());
+    add_xyz(&mut d, &mut wb, 0.0, 10.0, 25.0);
+    assert!(!wb.status_error, "{}", wb.status());
+    let s = sk(&wb);
+    let line = s.entities().find(|(id, _)| s.is_line(*id)).map(|(id, _)| id).unwrap();
+    let (a, b) = s.line(line).unwrap();
+    assert!(a.dist(Vec3::new(0.0, 10.0, 0.0)) < 1e-9 && b.dist(Vec3::new(0.0, 10.0, 25.0)) < 1e-9, "{a:?} {b:?}");
+}

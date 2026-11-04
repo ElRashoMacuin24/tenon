@@ -238,6 +238,7 @@ shows until a feature uses it and a work feature shows.
 | `type` | Fields |
 |---|---|
 | `sketch` | `plane`, `next_entity`, `next_constraint`, `entities`, `constraints`; optional `projections` (all below) |
+| `sketch3d` | `next_entity`, `next_constraint`, `entities`, `constraints`; optional `links` ([3D sketches](#3d-sketches)) |
 | `extrude` | `sketch`, `regions`, `extent`, `reverse`, `operation`; optional `taper` (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through-all only) |
 | `revolve` | `sketch`, `regions`, `axis` (revolve axis), `angle`, `operation` |
 | `fillet` | `edges` (edge references), `radius`; optional `radii` (a variable radius: `[{ at, radius }, ...]`, `at` from 0 at each edge's start to 1 at its end, `radius` being the start's) and `faces` (a face fillet: two lists of face references, `edges` then empty; DEC-122) |

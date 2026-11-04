@@ -700,6 +700,11 @@ impl Workbench {
             self.mode = Mode::Model;
             self.chrome.tab = self.home_tab();
         }
+        // (A chain of lines goes on from a point that may be gone.)
+        if let Mode::Sketch3d(s) = &mut self.mode {
+            s.clicks.clear();
+            s.picks.clear();
+        }
         self.panel = None;
     }
 
@@ -956,7 +961,9 @@ impl Workbench {
         self.regen_note = None;
         // (Not while a primitive is being sized by the pointer: the view must stay where it is
         // under the clicks. The first solid is fitted once it is made.)
-        if !self.view.fitted && !self.scene.bodies.is_empty() && !matches!(self.panel, Some(Panel::Primitive(_))) {
+        // (Nor while a 3D sketch is being drawn by the pointer. One with no solid is fitted when it is left.)
+        let to_see = !self.scene.bodies.is_empty() || (!self.is_sketching3d() && self.sketch3d_box().is_some());
+        if !self.view.fitted && to_see && !matches!(self.panel, Some(Panel::Primitive(_))) {
             self.fit_view();
             self.view.fitted = true;
         }

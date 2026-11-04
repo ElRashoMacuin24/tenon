@@ -1116,6 +1116,11 @@ impl Sketch3d {
 
     // ---- solving ----------------------------------------------------------------------------
 
+    /// What a solve said, in words.
+    pub fn words(&self, e: &SketchError) -> String {
+        words_of(self, e)
+    }
+
     /// Solves every constraint and writes the geometry back; unchanged on failure.
     pub fn solve(&mut self) -> SketchResult<()> {
         self.solve_with(None, &[])
@@ -1393,7 +1398,10 @@ impl Sketch3d {
                     Some(mid) => vec![Curve3::Arc { start: s, mid, end: e }],
                     // Any other curve: a spline through the points along it.
                     None => {
-                        let (poles, knots) = Through::new(&curve.along)?.b_spline();
+                        // (A mesh can have a point twice.)
+                        let mut pts = curve.along.clone();
+                        pts.dedup_by(|a, b| a.dist(*b) <= tol::MIN_SIZE);
+                        let (poles, knots) = Through::new(&pts)?.b_spline();
                         vec![Curve3::BSpline { poles, knots }]
                     }
                 }

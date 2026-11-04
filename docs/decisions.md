@@ -3528,7 +3528,7 @@ coordinate. It was not done: the 2D sketch is 20 constraint kinds and its text, 
 plane, trims and patterns, all in plane terms, and each would have had to say what it means off the
 plane. The 3D sketch shares what does not care how many coordinates there are: the Gauss-Newton of
 `lm.rs`, the rank and determined-column tests (`determined_columns`), the id types and the way a file
-lays out a sketch. It is about 1400 lines beside 3000.
+lays out a sketch.
 
 **Constraints.** Coincident, fix, parallel to X, Y or Z, parallel, perpendicular, equal, tangent; length,
 distance, coordinate, radius. Parallel and tangent are two rows each, of the second direction against
