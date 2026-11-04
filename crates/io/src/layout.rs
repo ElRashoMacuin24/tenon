@@ -478,7 +478,11 @@ fn source_keys(v: &mut Value, to_signed: bool) {
                 && let Some(s) = o.get_mut("source")
             {
                 let other = if to_signed {
-                    s.as_u64().filter(|k| *k > i64::MAX.unsigned_abs()).map(|k| Value::from(i64::from_ne_bytes(k.to_ne_bytes())))
+                    // (A document's own form has one too long for a double as a string: see `wide_key`.)
+                    s.as_u64().or_else(|| s.as_str().and_then(|t| t.parse().ok())).map(|k| match i64::try_from(k) {
+                        Ok(small) => Value::from(small),
+                        Err(_) => Value::from(i64::from_ne_bytes(k.to_ne_bytes())),
+                    })
                 } else {
                     s.as_i64().filter(|k| *k < 0).map(|k| Value::from(u64::from_ne_bytes(k.to_ne_bytes())))
                 };

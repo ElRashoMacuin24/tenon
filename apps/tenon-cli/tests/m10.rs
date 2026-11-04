@@ -636,3 +636,60 @@ fn an_agent_is_made_to_choose_when_no_replacement_is_clearly_the_one_meant() {
     let now = volume_of(&mut server);
     assert!(now < 40.0 * 30.0 * 10.0 && now >= whole - 1e-6 * whole, "an edge of it is rounded again: {now} (all of it: {whole})");
 }
+
+/// What a client that reads numbers as doubles makes of what it is given and hands back, as any
+/// JavaScript client does.
+fn through_doubles(v: &Value) -> Value {
+    match v {
+        Value::Number(n) => {
+            let d = n.as_f64().unwrap();
+            if d.fract() == 0.0 && d.abs() < 1e21 { Value::from(d as i128 as u64) } else { json!(d) }
+        }
+        Value::Array(a) => Value::Array(a.iter().map(through_doubles).collect()),
+        Value::Object(o) => Value::Object(o.iter().map(|(k, x)| (k.clone(), through_doubles(x))).collect()),
+        other => other.clone(),
+    }
+}
+
+/// A face named by a hash past 2^53, as those a Derive, a fillet or a hole makes are. As a number, a
+/// JavaScript client lost digits of it and the reference was then refused, with words that sent one
+/// looking in the wrong place. It goes out as a string; a number is still taken; and a file has it as
+/// it always did.
+#[test]
+fn a_face_s_name_comes_through_a_client_that_reads_numbers_as_doubles() {
+    let dir = std::env::temp_dir().join(format!("tenon-wide-key-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = Engine::new(Box::new(OcctKernel::new()), &dir);
+    let run = |e: &mut Engine, id: &str, p: Value| e.exec(id, &p).unwrap_or_else(|err| panic!("{id}: {err}"));
+    run(&mut e, "model.box", json!({ "width": 20, "depth": 20, "height": 20 }));
+    let edges = run(&mut e, "model.find", json!({ "what": "edges", "along": "z" }));
+    let edge = edges["found"][0]["reference"].clone();
+    run(&mut e, "model.fillet", json!({ "edges": [edge], "radius": 2 }));
+    // The fillet's face, a cylinder.
+    let found = run(&mut e, "model.find", json!({ "what": "faces", "kind": "cylinder" }));
+    let reference = found["found"][0]["reference"].clone();
+    let source = reference["origin"]["source"].clone();
+    let digits = source.as_str().unwrap_or_else(|| panic!("past 2^53 it is a string of digits: {reference}"));
+    assert!(digits.parse::<u64>().unwrap() > (1u64 << 53));
+    // Through such a client and back, it finds its face.
+    let back = through_doubles(&reference);
+    assert_eq!(back["origin"]["source"], source);
+    let measured = run(&mut e, "model.measure", json!({ "a": { "face": back } }));
+    assert!(!measured.is_null());
+    // As a number, as before, it does too; and with its digits lost, as it was, it is not found.
+    let mut number = reference.clone();
+    number["origin"]["source"] = json!(digits.parse::<u64>().unwrap());
+    run(&mut e, "model.measure", json!({ "a": { "face": number } }));
+    let mut lost = number.clone();
+    lost["origin"]["source"] = through_doubles(&number["origin"]["source"]);
+    assert!(e.exec("model.measure", &json!({ "a": { "face": lost } })).is_err());
+    // A file has it as a number, and reads back to the same.
+    run(&mut e, "file.save", json!({ "path": "wide.tenon" }));
+    let text = std::fs::read_to_string(dir.join("wide.tenon")).unwrap();
+    assert!(!text.contains(&format!("source = \"{digits}\"")), "as a number in the file");
+    run(&mut e, "file.open", json!({ "path": "wide.tenon" }));
+    let again = run(&mut e, "model.find", json!({ "what": "faces", "kind": "cylinder" }));
+    assert_eq!(again["found"][0]["reference"]["origin"]["source"], source);
+    let _ = std::fs::remove_dir_all(dir);
+}

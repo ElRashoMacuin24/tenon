@@ -31,7 +31,41 @@ pub enum FaceOrigin {
     /// Made by `feature` from the named sub-shape whose key is `source`: a fillet face from an
     /// edge, a corner blend from a vertex, a shell's inner wall from a face, a patterned copy of a
     /// face. `ordinal` tells several faces from one source apart.
-    From { feature: FeatureId, source: u64, ordinal: u32 },
+    From {
+        feature: FeatureId,
+        #[serde(with = "wide_key")]
+        source: u64,
+        ordinal: u32,
+    },
+}
+
+/// A `source` is a 64-bit hash, and in JSON a client that reads numbers as doubles (any JavaScript
+/// client) would lose the digits of one past 2^53, and with them the face. So past that it goes out
+/// as a string of digits, and either comes back in. (In a file it is written as a number, signed:
+/// `source_keys` in tenon-io.)
+mod wide_key {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    /// The most a double holds every whole number up to.
+    const EXACT: u64 = 1 << 53;
+
+    pub fn serialize<S: Serializer>(key: &u64, to: S) -> Result<S::Ok, S::Error> {
+        if *key <= EXACT { key.serialize(to) } else { to.serialize_str(&key.to_string()) }
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Written {
+        Number(u64),
+        Digits(String),
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(from: D) -> Result<u64, D::Error> {
+        match Written::deserialize(from)? {
+            Written::Number(key) => Ok(key),
+            Written::Digits(digits) => digits.parse().map_err(serde::de::Error::custom),
+        }
+    }
 }
 
 /// FNV-1a: a fixed, platform-independent hash, so names are the same on every run and machine.

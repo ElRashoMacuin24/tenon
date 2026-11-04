@@ -4757,3 +4757,14 @@ nothing can be done about that from here. Two rare things go the other way: a re
 such a face, when an edit turns the face more than a quarter turn, is taken for an old one and stays
 as it was (edit a Mirror's plane under a sketch on what it made); and a reference repaired onto such a
 face takes the new way.
+
+## DEC-141 A face's name in JSON is no number past what a double holds (2026-11-04)
+
+`FaceOrigin::From.source` is a 64-bit hash, and faces of Derive, Contour Roll and Refold are named by it,
+as fillets and holes have been since 0.1.0. A client that parses JSON into doubles, which any JavaScript
+client does, lost digits of it, and the reference was refused as "no longer exists" though its fingerprint
+was intact. docs/mcp.md tells agents to pass `reference` on. Past 2^53 it now goes out as a string of
+digits, and a number or a string is taken back. A file still has it as a number, signed (`source_keys`),
+to the same bytes. *Not done:* the other way the audit offered, falling back on the fingerprint when a
+name is not found. A reference that no longer matches is reported, and never guessed
+(docs/persistent-naming.md).

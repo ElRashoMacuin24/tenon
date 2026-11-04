@@ -1107,8 +1107,12 @@ impl AsmSession {
     /// behind them). One with unsaved changes stays until it is saved.
     pub fn close_unused(&mut self) {
         let shown = std::iter::once(&self.asm).chain(self.preview.as_deref());
-        let named: std::collections::BTreeSet<&str> =
-            shown.chain(self.undo.iter().map(|s| &s.asm)).chain(self.redo.iter().map(|s| &s.asm)).flat_map(|a| a.components.iter()).map(|c| c.part.as_str()).collect();
+        let named: std::collections::BTreeSet<&str> = shown
+            .chain(self.undo.iter().map(|s| &s.asm))
+            .chain(self.redo.iter().map(|s| &s.asm))
+            .flat_map(|a| a.components.iter())
+            .map(|c| c.part.as_str())
+            .collect();
         self.parts.retain(|k, p| named.contains(crate::model::key_file(k)) || p.session.is_dirty());
     }
 

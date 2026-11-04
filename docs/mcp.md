@@ -80,7 +80,9 @@ The helpers are ordinary commands, so they are also there for scripts and for th
 - `model.find` finds faces and edges by description: `{what: faces, facing: top}`,
   `{what: edges, kind: line, along: z}`, `{what: faces, hole: true, radius: 3}`,
   `{what: faces, kind: plane, most: largest}`, `{what: faces, feature: id}`. Each comes with a
-  reference to pass on (to a fillet's `edges`, a shell's `remove`, a sketch's `face`).
+  reference to pass on (to a fillet's `edges`, a shell's `remove`, a sketch's `face`). Pass it on as it
+  came: a name in it too long for a double (`source` of a face made from another) is a string of digits,
+  so that a client that reads numbers as doubles keeps it whole.
 
 There is no parser of sentences in Tenon. The client's language model turns "a 60 by 40 plate,
 8 thick, with a 10 mm hole in the middle" into the four steps above; these commands are what
