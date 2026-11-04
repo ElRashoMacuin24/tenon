@@ -674,6 +674,32 @@ fn a_name_in_a_file_is_held_to_a_length() {
 }
 
 #[test]
+fn a_parameter_in_a_file_is_held_to_a_length() {
+    let mut s = Session::default();
+    run(&mut s, "param.add", json!({ "name": "width", "equation": "10 mm", "comment": "as wide" }));
+    let text = String::from_utf8(project::to_bytes(s.document(), &Map::new()).unwrap()).unwrap();
+    let with = |what: &str, by: String| text.replace(what, &by);
+    // What the Parameters window would have to draw, and has not the graphics memory for.
+    let cases = [
+        ("\"width\"", format!("\"{}\"", "w".repeat(1_000_000)), "the name of a parameter"),
+        ("\"10 mm\"", format!("\"{}\"", "1".repeat(1_000_000)), "the equation of `width`"),
+        ("\"as wide\"", format!("\"{}\"", "c".repeat(1_000_000)), "the comment of `width`"),
+    ];
+    for (what, by, said) in &cases {
+        let m = damaged(&with(what, by.clone()));
+        assert!(m.contains(said) && m.contains("1000000 bytes") && m.len() < 200, "{m}");
+    }
+    // What commands could have left, and more, opens: an equation made long by a rename, and a
+    // long comment given by a script before there was a limit.
+    let long = with("\"10 mm\"", format!("\"{}\"", "1".repeat(32_000)));
+    project::from_bytes(long.as_bytes()).unwrap();
+    project::from_bytes(with("\"as wide\"", format!("\"{}\"", "c".repeat(5_000))).as_bytes()).unwrap();
+    // A command takes no more of a comment than it means to.
+    let e = s.exec("param.add", &json!({ "name": "w2", "equation": "1", "comment": "c".repeat(1001) }), None).unwrap_err().to_string();
+    assert!(e.contains("the comment is too long"), "{e}");
+}
+
+#[test]
 fn a_sketch_shown_by_the_user_says_so_on_its_record() {
     let mut s = Session::default();
     let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();

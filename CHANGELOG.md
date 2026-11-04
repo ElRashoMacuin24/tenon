@@ -168,8 +168,9 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 - The close button did nothing while the geometry thread was inside one long operation of the
   kernel: the window hung and memory went on growing. It now closes within a few seconds.
 - What a file says is now held to limits, as the commands' words are: a text to its 2000 characters
-  (a small file could hang the rebuild), a name to 1000 bytes (a very long one crashed the window),
-  and a part or model on another machine is not gone to because a file names it (Windows would
+  (a small file could hang the rebuild); a name, or what fills a title block, to 1000 bytes, and a
+  parameter's equation or comment to 64,000 (a very long one crashed the window, or took minutes to
+  draw); and a part or model on another machine is not gone to because a file names it (Windows would
   connect there, offering the user's credentials) unless the file is on that machine itself.
 - A stress study no longer runs what it finds in a `.pixi` folder of the working folder: only a
   program built in a checkout looks in that checkout's.

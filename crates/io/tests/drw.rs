@@ -113,6 +113,25 @@ standard = \"iso\"
 }
 
 #[test]
+fn what_fills_a_title_block_is_held_to_a_length_in_a_file() {
+    let bytes = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m4-plate/plate.tenondrw")).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m4-plate");
+    let with = |what: &str, by: String| text.replacen(what, &by, 1);
+    // Drawing a very long one takes minutes, with nothing to say why.
+    let cases = [
+        ("title = \"MOUNTING PLATE\"", format!("title = \"{}\"", "T".repeat(1_000_000)), "the drawing's title"),
+        ("size = { name = \"B\"", format!("size = {{ name = \"{}\"", "B".repeat(1_000_000)), "the name of a sheet's size"),
+    ];
+    for (what, by, said) in &cases {
+        let m = drw::from_bytes(with(what, by.clone()).as_bytes(), &dir).unwrap_err().to_string();
+        assert!(m.contains(said) && m.contains("1000000 bytes") && m.len() < 200, "{m}");
+    }
+    // What the command takes, and more, opens.
+    drw::from_bytes(with("title = \"MOUNTING PLATE\"", format!("title = \"{}\"", "T".repeat(256))).as_bytes(), &dir).unwrap();
+}
+
+#[test]
 fn title_block_templates_round_trip_and_bad_ones_are_refused() {
     let dir = scratch("template");
     let mut s = DrwSession::default();

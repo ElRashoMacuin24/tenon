@@ -1368,6 +1368,19 @@ fn a_revolution_goes_round_to_a_plane_or_to_the_next_faces() {
 }
 
 #[test]
+fn a_tapped_holes_name_is_held_to_what_a_threads_is() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    let sk = run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    run(&mut s, &mut k, "sketch.point", json!({ "sketch": sk, "x": 5, "y": 5 }));
+    let hole = |name: String| json!({ "sketch": sk, "diameter": 6.8, "through_all": true, "tapped": true, "designation": name });
+    let e = s.exec("model.hole", &hole("M".repeat(65)), Some(&mut k)).unwrap_err().to_string();
+    assert!(e.contains("the thread designation must be 1 to 64 characters"), "{e}");
+    run(&mut s, &mut k, "model.hole", hole("M".repeat(64)));
+    s.document().validate().unwrap();
+}
+
+#[test]
 fn a_tapped_hole_has_its_thread_from_its_mouth() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     let (_, ex, _, _) = block(&mut s, &mut k, 40.0, 20.0, 10.0);

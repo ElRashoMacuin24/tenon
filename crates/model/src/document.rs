@@ -355,6 +355,13 @@ pub fn hole_centres(sk: &Sketch) -> Vec<EntityId> {
     sk.entities().map(|(id, _)| id).filter(|id| sk.is_center_point(*id)).collect()
 }
 
+/// What a thread may be called on drawings.
+fn designation_ok(d: &str) -> bool {
+    !d.trim().is_empty() && d.chars().count() <= 64
+}
+
+const BAD_DESIGNATION: &str = "the thread designation must be 1 to 64 characters";
+
 /// The usual drill point angle, 118 degrees.
 pub const DRILL_POINT: f64 = 118.0 * std::f64::consts::PI / 180.0;
 
@@ -362,6 +369,9 @@ impl Hole {
     /// Why the hole's sizes cannot make a hole, if they cannot.
     pub fn check(&self) -> Result<(), String> {
         let positive = |v: f64| v.is_finite() && v > 0.0;
+        if self.tapped.as_ref().and_then(|t| t.designation.as_ref()).is_some_and(|d| !designation_ok(d)) {
+            return Err(BAD_DESIGNATION.into());
+        }
         if !positive(self.diameter) {
             return Err("the hole diameter must be positive".into());
         }
@@ -677,8 +687,8 @@ impl Thread {
         {
             return Err("the thread length must be more than 0".into());
         }
-        if self.designation.as_ref().is_some_and(|d| d.trim().is_empty() || d.chars().count() > 64) {
-            return Err("the thread designation must be 1 to 64 characters".into());
+        if self.designation.as_ref().is_some_and(|d| !designation_ok(d)) {
+            return Err(BAD_DESIGNATION.into());
         }
         Ok(())
     }
@@ -1156,9 +1166,14 @@ pub const MAX_NAME_IN_FILE: usize = 1000;
 
 /// Whether a name read from a file is one: see [`MAX_NAME_IN_FILE`].
 pub fn name_in_file(what: &str, name: &str) -> Result<(), String> {
-    if name.len() > MAX_NAME_IN_FILE {
-        let start: String = name.chars().take(40).collect();
-        return Err(format!("the name of {what} (\"{start}...\") is {} bytes long, and a name has at most {MAX_NAME_IN_FILE}", name.len()));
+    text_in_file(&format!("the name of {what}"), name, MAX_NAME_IN_FILE)
+}
+
+/// Whether what a file says of `what` fits in `most` bytes, given what it takes to draw it.
+pub fn text_in_file(what: &str, text: &str, most: usize) -> Result<(), String> {
+    if text.len() > most {
+        let start: String = text.chars().take(40).collect();
+        return Err(format!("{what} (\"{start}...\") is {} bytes long, and may be at most {most}", text.len()));
     }
     Ok(())
 }
@@ -1586,6 +1601,7 @@ impl Document {
         for f in &self.features {
             name_in_file("a feature", &f.name)?;
         }
+        self.params_check()?;
         for (what, said) in [("part number", &self.part_number), ("description", &self.description)] {
             if let Some(text) = said {
                 prop_ok(text).map_err(|e| format!("the {what}: {e}"))?;

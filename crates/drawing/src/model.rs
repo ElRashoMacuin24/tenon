@@ -580,8 +580,20 @@ impl Drawing {
     /// Checks a document read from a file: ids, references, numbers.
     pub fn validate(&self) -> Result<(), String> {
         tenon_model::name_in_file("the drawing", &self.name)?;
+        let p = &self.props;
+        for (what, said) in [
+            ("title", &p.title),
+            ("number", &p.number),
+            ("revision", &p.revision),
+            ("company", &p.company),
+            ("drawn by", &p.drawn_by),
+            ("date", &p.date),
+        ] {
+            tenon_model::text_in_file(&format!("the drawing's {what}"), said, tenon_model::MAX_NAME_IN_FILE)?;
+        }
         for s in &self.sheets {
             tenon_model::name_in_file("a sheet", &s.name)?;
+            tenon_model::name_in_file("a sheet's size", &s.size.name)?;
         }
         for v in &self.views {
             tenon_model::name_in_file("a view", &v.name)?;

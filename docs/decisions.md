@@ -3559,7 +3559,9 @@ Auditors went through the program ahead of 0.2.0; what they found is fixed, each
   end the program: a text to the 2000 characters `sketch.text` takes, and numbers that are a size
   and an angle (the range of heights is for making one, and Scale keeps to it, so anything saved
   opens; a height past it fails the rebuild in words); a name to 1000 bytes (commands take 200 or
-  256, so nothing 0.1.0 could write is refused); 4 million values in all, counted before parsing,
+  256, so nothing 0.1.0 could write is refused), and so what fills a title block; an equation or a
+  comment on a parameter to 64,000 (a rename can lengthen an equation, and 0.1.0's `param.add` took
+  a comment of any length); 4 million values in all, counted before parsing,
   which bounds memory to about a gigabyte where 64 MB of text could take 8; only plain files. A path
   naming another machine is not followed unless the file is on that machine itself: Windows would
   connect there, offering the user's credentials.

@@ -9,7 +9,7 @@ use serde_json::Value;
 use tenon_sketch::ConstraintId;
 
 use crate::FeatureId;
-use crate::document::{Document, FeatureKind};
+use crate::document::{Document, FeatureKind, name_in_file, text_in_file};
 use crate::expr;
 
 /// What a parameter's number means: a length (mm), an angle (degrees, stored in radians) or a
@@ -76,6 +76,14 @@ pub struct Parameters {
 
 /// Most user parameters (hostile-input cap).
 pub const MAX_USER_PARAMS: usize = 10_000;
+
+/// The longest comment a command takes, in bytes.
+const MAX_COMMENT: usize = 1_000;
+
+/// The longest equation or comment a file may hold, in bytes. More than commands leave: an equation
+/// is taken at [`expr::MAX_LEN`] and each name in it may then be renamed to a name's 64, and a
+/// script could once give a user parameter a comment of any length.
+const MAX_WORDS_IN_FILE: usize = expr::MAX_LEN * 64;
 
 /// The numbers of each feature type that are parameters: JSON pointer and unit. Pointers that do
 /// not exist in a given definition (another extent, another chamfer method) are skipped.
@@ -464,6 +472,18 @@ impl Document {
         Ok(())
     }
 
+    /// What a file's parameters are held to, since the Parameters window draws all of it.
+    pub(crate) fn params_check(&self) -> Result<(), String> {
+        let model = self.params.model.iter().map(|m| (&m.name, m.equation.as_deref(), &m.comment));
+        let user = self.params.user.iter().map(|u| (&u.name, Some(u.equation.as_str()), &u.comment));
+        for (name, equation, comment) in model.chain(user) {
+            name_in_file("a parameter", name)?;
+            text_in_file(&format!("the equation of `{name}`"), equation.unwrap_or(""), MAX_WORDS_IN_FILE)?;
+            text_in_file(&format!("the comment of `{name}`"), comment, MAX_WORDS_IN_FILE)?;
+        }
+        Ok(())
+    }
+
     /// Sets (or with `None` clears) the equation of a parameter. A model parameter without an
     /// equation keeps its plain value; a user parameter always has one.
     pub fn set_equation(&mut self, name: &str, equation: Option<&str>) -> Result<(), String> {
@@ -485,7 +505,7 @@ impl Document {
     }
 
     pub fn set_comment(&mut self, name: &str, comment: &str) -> Result<(), String> {
-        if comment.len() > 1_000 {
+        if comment.len() > MAX_COMMENT {
             return Err("the comment is too long".into());
         }
         if let Some(m) = self.params.model.iter_mut().find(|m| m.name == name) {
@@ -514,6 +534,9 @@ impl Document {
         }
         if self.params.user.len() >= MAX_USER_PARAMS {
             return Err("too many parameters".into());
+        }
+        if p.comment.len() > MAX_COMMENT {
+            return Err("the comment is too long".into());
         }
         expr::parse(&p.equation).map_err(|err| format!("{}: {err}", p.name))?;
         self.params.user.push(p);

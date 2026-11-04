@@ -23,7 +23,7 @@ pub enum Op {
 }
 
 /// Longest equation accepted (hostile-input cap).
-const MAX_LEN: usize = 1_000;
+pub(crate) const MAX_LEN: usize = 1_000;
 /// Deepest nesting accepted.
 const MAX_DEPTH: usize = 64;
 
