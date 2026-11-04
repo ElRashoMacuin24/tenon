@@ -159,11 +159,15 @@ and the angle they spread over. The view shows them before OK. In the browser it
 its elements under it: double-click it to change it, and elements move, come and go; its menu has
 Suppress, Make Elements Independent and Delete. An element is a component like any other to the
 parts list, a constraint or a drawing, but it stands where the pattern puts it: move what it
-repeats.
+repeats. Suppress takes out its elements and what a later pattern makes of them; one you hid on its
+own stays hidden when they come back. If what gives a pattern its direction goes from its part, its
+row turns red, the elements stay where they are, and Update and the status line say so: double-click
+the row to pick again.
 
 **Mirror** reflects components in a flat face or a plane. Each is a mirrored occurrence of the same
 part file, with a row of its own in the parts list as a mirrored part; it follows its source, the
-plane, and any change to the part. For a part that is the same as its mirror image, choose Placed
+plane, and any change to the part, and can be constrained to as the image of what it mirrors: a
+block mated to its top stands on it. For a part that is the same as its mirror image, choose Placed
 again: the same part, in the mirrored position, on the same row of the list.
 
 **Copy** makes independent copies, of the same parts or (A new part file) each in a new part file

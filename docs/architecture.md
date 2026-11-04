@@ -145,7 +145,9 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
   solve (`session::place_elements`), so they need nothing of whatever reads components. A mirrored
   occurrence has a rigid `placement` and holds a part of its own: its part file's document with
   `Document::reflected` set, worked out as a part in one row of a design table is, and built by
-  regeneration as the mirror image in its XY plane.
+  regeneration as the mirror image in its XY plane. Whatever reads what is to be seen goes through
+  `Assembly::shown`: `Component::visible` is only what was asked of a component alone, and those of
+  a suppressed pattern are out as well.
 
 ## Drawings (M4)
 

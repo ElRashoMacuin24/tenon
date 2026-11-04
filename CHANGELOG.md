@@ -23,6 +23,13 @@ shows it in [ROADMAP.md](ROADMAP.md).
   element. An assembly file gains `[[pattern]]` records, `next_pattern` and a component's
   `mirrored`: a build from before them opens such a file with each element a free component and each
   mirrored occurrence unreflected, and drops the records if it saves it. DEC-130.
+- **Undo after deleting the last component of a part** brings it back with its part: it used to come
+  back with nothing behind it, not drawn, and refused by mass and export until the file was opened
+  again.
+- **Parts:** a flat face made by a **Mirror** feature now has its normal out of the material, as
+  every other face has. A sketch on such a face faces outward, and an extrude from it goes outward.
+  A file from before with such a sketch changes: what is drawn on it lands reflected in the plane,
+  and an extrude that was reversed to get round this now goes into the part. DEC-130.
 
 ### Stress checks
 

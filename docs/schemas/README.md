@@ -118,7 +118,8 @@ taken away), without a check.
     `edges` may be left out for `faces` (DEC-122); `study.keep`, `study.shape` and `study.optimize`,
     and `depth` of `study.set` (DEC-123). 235 commands. Then `asm.pattern`, `asm.mirror`,
     `asm.edit_pattern`, `asm.suppress_pattern`, `asm.delete_pattern`, `asm.copy`, and `pattern` of
-    `asm.rename` (DEC-130).
+    `asm.rename` (DEC-130); in what comes back, `asm.update` and the assembly's edits have
+    `patterns_failing` when a pattern's rule cannot be worked out.
   - `study.shape`'s `symmetry` still has the plane's type, so a face passes the schema and is
     refused by the command, in words: a schema that took less would break a program written
     against it, and its description says what is refused. `null` for `min_member`, `element_size`

@@ -3610,4 +3610,65 @@ word in one program should mean one thing.
 slot that believed it had sent revision 1 already, so its scene never came: `sync_assembly` now drops
 slots of parts that are gone. Worth saying because any row-of-a-table part could have met it.
 
+**What a review of it found.** The fault that mattered: triangles and volumes of a mirror image were
+right, and what `FaceInfo` said of its flat faces was not. OCCT's mirror leaves left-handed
+surfaces; the shim's `face_info` allowed for that on cylinders, cones, spheres and tori and not on
+planes, so every flat face said its normal pointed into the material. Nothing held to a mirrored
+occurrence (a mate, a flush, an insert, a rigid joint, a pattern along a face, auto explode) came
+out right, and a block mated to a mirrored foot sank into it. It is mended where the handedness is
+known, in the shim. A part's own Mirror feature has always had the same fault, so this changes that
+too: a sketch on a face a Mirror feature made now faces out of the material, as on any other face.
+In a file from before with such a sketch, the sketch's frame turns over: what is drawn on it lands
+reflected in the plane, and an extrude from it goes out and not in. That was the point of the fix (a
+Join from such a face used to go into the part and add nothing), but a file made to work round it by
+a reversed extrude changes, so it is said in the CHANGELOG. Considered: keeping a part's Mirror as
+it was by rebuilding the planes in `regen::reflect` alone. It would have left `FaceInfo`'s one
+promise, that a normal points out of the material, true of some parts and not of others.
+
+What a scene does not hold had the same trouble: a work plane took a normal from a right-handed
+frame (`reflected_plane` now gives the image of the normal, which the sketch frames must not have:
+what is drawn on them comes out by their X and Y), and a mirrored occurrence's own XY plane and Z
+axis, which are worked out and in no scene, kept the part's Z. `geometry::resolve` takes `mirrored`
+for those; a joint on a bare point, which has no direction but the part's Z, takes `End::mirrored`
+for the same.
+
+**Undo and closed parts.** Deleting the last component of a part closed its entry, so undo brought
+back components with nothing behind them (true of a plain delete too, from long before, but Delete
+on a source is now the ordinary way to reach it). `AsmSession::close_unused` now keeps a part while
+any step of undo or redo names it. Tried on paper: reading it back on undo, as recovery does: the
+assembly crate knows no files, and undo would have had a read that can fail. One kept only for undo
+is read from its file again when it is placed anew, as it used to be when it had been closed: the
+file may have changed since.
+
+**Suppressed is not hidden.** Suppressing first wrote `visible = false` on each element, so that
+every reader held good with no change, and one hidden on its own came back shown. And what a later
+pattern made of an element stayed drawn, repeating what was out. `Assembly::suppressed_elements` now
+follows that on through later patterns, one pass in order being enough by the order `validate` holds
+them to, and `Assembly::shown` is what is there to be seen and worked with: every reader that took
+`visible` for that reads it. `visible` is what was asked of each alone. A build from before these,
+knowing nothing of `suppressed`, now shows such elements, where it used to find them hidden: the
+cost of the fix, said in the format's notes.
+
+**The same bytes, what a file keeps.** Reading re-orthonormalised every frame from its rounded axes,
+which changed the last digit on the next save, on every element of a pattern at no axis in
+particular; `tidy` now leaves what is as good as a file can write (`PLACEMENT_KEPT`). Then what the
+app does on opening had to hold too: a mirror image's arrival from the worker has it solve the
+assembly (as a part in a design table's row does), and the solver's frames are the same only to
+rounding. So a solve leaves what is the same as far as a file can tell (`same_placement`), and for
+an element that allows for how far off it stands: a direction read back is a part in a thousand
+million out, which at 20 m along it is 2e-5 mm, enough to read as moved, make a new undo step, and
+ask to save a file just opened.
+
+**Smaller ones.** A second direction along the first is refused (`rule_of`): elements would stand on
+one another and the parts list count them; part patterns only union. What would put a component
+beyond the limit of a placement says so and what to lower (`check_reach`, for every edit and for the
+preview); the words before it were `validate`'s, for a damaged file. Mirror's plane selection does
+not look for edges, which cannot serve it. A part file gone is told once, not again for each mirror
+image or size of it. A rule that cannot be worked out is told by the results of `asm.update` and of
+every edit (`patterns_failing`), and on the status line on Update, a drag and a part's change:
+before, Update said all was well with its row red. `reflected` is read as false from a part file: it
+is in the part's layout only to name what is kept of a mirror image's scene (DEC-091).
+
+
+
 **Not done.** Said row by row in ROADMAP.md.

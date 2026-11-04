@@ -623,7 +623,9 @@ Implemented in `crates/io/src/asm.rs` and `crates/assembly/src/model.rs`; tested
   mirror image in the part's own XY plane, not the part: a mirrored occurrence of the same file.
   `placement` stays a right-handed frame: the image of a part at the frame F in a plane is its
   mirror image at that plane's reflection of F with its Z turned over. Nothing is written for the
-  mirror image: it is worked out from the part file each time. A part file does not say it.
+  mirror image: it is worked out from the part file each time. A part file does not say it: the
+  part's layout has a `reflected` field only so that what is kept of such a scene (DEC-091) has a
+  name of its own, and one in a part file, put there by hand, is read as false and not written back.
 - **`[[pattern]]`** (optional, with `next_pattern`; DEC-130): a pattern or mirror, one record:
 
   ```toml
@@ -640,8 +642,9 @@ Implemented in `crates/io/src/asm.rs` and `crates/assembly/src/model.rs`; tested
   ]
   ```
 
-  - `sources` are what it repeats. `suppressed` is written only when true: its elements are then
-    written with `visible = false`, and left out of the parts list.
+  - `sources` are what it repeats. `suppressed` is written only when true: its elements, and what a
+    later pattern makes of them, are out of the assembly (not drawn, listed, weighed, checked or
+    exported). Each one's `visible` stays what was asked of it alone, and is not changed by this.
   - `type`: `rectangular` (`first`, optional `second`: each `along`, a target; `count`, the source
     counted; `spacing` in mm, positive; `reverse` written only when true); `circular` (`axis`, a
     target; `count`; `angle` in radians, over how much of a turn they spread evenly, a whole turn
@@ -655,9 +658,9 @@ Implemented in `crates/io/src/asm.rs` and `crates/assembly/src/model.rs`; tested
   - A pattern may repeat the elements of those before it, and take its rule from them, and from no
     others. Anything else, or counts that do not say the elements there are, is damage, and refused.
   - **A build from before them** (0.1.0 among them) opens such a file: each element is a free
-    component where it stands, an element of a suppressed pattern hidden, the parts list counting
-    them all, and each mirrored occurrence the part itself, unreflected, at its frame (so turned over,
-    and not where the mirror image is). Saved by it, the records and `mirrored` are gone.
+    component where it stands, a suppressed pattern's among them, shown, the parts list counting
+    them all, and each mirrored occurrence the part itself, unreflected, at its frame (so turned
+    over, and not where the mirror image is). Saved by it, the records and `mirrored` are gone.
 - **Validation:** relationships must name existing components, and never join a component to
   itself.
 
