@@ -64,7 +64,7 @@ Standard sizes and physical constants held in code:
 | `examples/m1-bracket/bracket.stl` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
 | `examples/m1-bracket/bracket.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m1-bracket/bracket-thick-base.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
-| `examples/m1-bracket/workbench.png` | Tenon contributors | screenshot of Tenon itself: `tenon examples/m1-bracket/bracket.tenon --screenshot examples/m1-bracket/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m1-bracket/workbench.png` | Tenon contributors | screenshot of Tenon itself: `tenon examples/m1-bracket/bracket.tenon --screenshot examples/m1-bracket/workbench.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m2-enclosure/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m2-enclosure/enclosure.json` | Tenon contributors | written for this repository (the M2 demo command script) | MIT OR Apache-2.0 | Original |
 | `examples/m2-enclosure/enclosure.tenon` | Tenon contributors | generated: `tenon-cli run examples/m2-enclosure/enclosure.json --out examples/m2-enclosure` | MIT OR Apache-2.0 | Original |
@@ -72,7 +72,7 @@ Standard sizes and physical constants held in code:
 | `examples/m2-enclosure/enclosure.stl` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
 | `examples/m2-enclosure/enclosure.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m2-enclosure/enclosure-larger.png` | Tenon contributors | generated: same command (software render at L = 100, H = 40) | MIT OR Apache-2.0 | Original |
-| `examples/m2-enclosure/workbench.png` | Tenon contributors | generated: `tenon examples/m2-enclosure/enclosure.tenon --screenshot examples/m2-enclosure/workbench.png` | MIT OR Apache-2.0 | Original |
+| `examples/m2-enclosure/workbench.png` | Tenon contributors | generated: `tenon examples/m2-enclosure/enclosure.tenon --screenshot examples/m2-enclosure/workbench.png --size 1400x860` | MIT OR Apache-2.0 | Original |
 | `examples/m3-pivot/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m3-pivot/pivot.json` | Tenon contributors | written for this repository (the M3 demo command script) | MIT OR Apache-2.0 | Original |
 | `examples/m3-pivot/base.tenon` | Tenon contributors | generated: `tenon-cli run examples/m3-pivot/pivot.json --out examples/m3-pivot` | MIT OR Apache-2.0 | Original |
@@ -84,7 +84,7 @@ Standard sizes and physical constants held in code:
 | `examples/m3-pivot/pivot-bom.csv` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
 | `examples/m3-pivot/pivot.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m3-pivot/pivot-exploded.png` | Tenon contributors | generated: same command (software render, exploded) | MIT OR Apache-2.0 | Original |
-| `examples/m3-pivot/workbench.png` | Tenon contributors | generated: `tenon examples/m3-pivot/pivot.tenonasm --run asm.dof --screenshot examples/m3-pivot/workbench.png` | MIT OR Apache-2.0 | Original |
+| `examples/m3-pivot/workbench.png` | Tenon contributors | generated: `tenon examples/m3-pivot/pivot.tenonasm --run asm.dof --screenshot examples/m3-pivot/workbench.png --size 1400x860` | MIT OR Apache-2.0 | Original |
 | `examples/m4-plate/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m4-plate/plate.json` | Tenon contributors | written for this repository (the M4 demo command script) | MIT OR Apache-2.0 | Original |
 | `examples/m4-plate/plate.tenon` | Tenon contributors | generated: `tenon-cli run examples/m4-plate/plate.json --out examples/m4-plate` | MIT OR Apache-2.0 | Original |
@@ -96,7 +96,7 @@ Standard sizes and physical constants held in code:
 | `examples/m4-plate/plate.dxf` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
 | `examples/m4-plate/plate-sheet1.png` | Tenon contributors | generated: same command (software render of sheet 1) | MIT OR Apache-2.0 | Original |
 | `examples/m4-plate/plate-sheet2.png` | Tenon contributors | generated: same command (software render of sheet 2) | MIT OR Apache-2.0 | Original |
-| `examples/m4-plate/workbench.png` | Tenon contributors | generated: `tenon examples/m4-plate/plate.tenondrw --screenshot examples/m4-plate/workbench.png` | MIT OR Apache-2.0 | Original |
+| `examples/m4-plate/workbench.png` | Tenon contributors | generated: `tenon examples/m4-plate/plate.tenondrw --screenshot examples/m4-plate/workbench.png --size 1400x860` | MIT OR Apache-2.0 | Original |
 | `examples/m6-fittings/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m6-fittings/fittings.json` | Tenon contributors | written for this repository (the M6 demo command script) | MIT OR Apache-2.0 | Original |
 | `examples/m6-fittings/spring.tenon` | Tenon contributors | generated: `tenon-cli run examples/m6-fittings/fittings.json --out examples/m6-fittings` | MIT OR Apache-2.0 | Original |
@@ -114,9 +114,9 @@ Standard sizes and physical constants held in code:
 | `examples/m6-fittings/nozzle.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m6-fittings/nozzle-section.png` | Tenon contributors | generated: same command (software render of the split nozzle) | MIT OR Apache-2.0 | Original |
 | `examples/m6-fittings/fittings.png` | Tenon contributors | generated: same command (software render of the assembly) | MIT OR Apache-2.0 | Original |
-| `examples/m6-fittings/workbench.png` | Tenon contributors | generated: `tenon examples/m6-fittings/fittings.tenonasm --screenshot examples/m6-fittings/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
-| `examples/m6-fittings/properties.png` | Tenon contributors | generated: `tenon examples/m6-fittings/nozzle.tenon --run inspect.mass --screenshot examples/m6-fittings/properties.png` | MIT OR Apache-2.0 | Original; no third-party UI |
-| `examples/m6-fittings/design-table.png` | Tenon contributors | generated: `tenon examples/m6-fittings/spring.tenon --run tools.table --screenshot examples/m6-fittings/design-table.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m6-fittings/workbench.png` | Tenon contributors | generated: `tenon examples/m6-fittings/fittings.tenonasm --screenshot examples/m6-fittings/workbench.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m6-fittings/properties.png` | Tenon contributors | generated: `tenon examples/m6-fittings/nozzle.tenon --run inspect.mass --screenshot examples/m6-fittings/properties.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m6-fittings/design-table.png` | Tenon contributors | generated: `tenon examples/m6-fittings/spring.tenon --run tools.table --screenshot examples/m6-fittings/design-table.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m7-end-cap/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m7-end-cap/end-cap.json` | Tenon contributors | written for this repository (the M7 demo command script) | MIT OR Apache-2.0 | Original |
 | `examples/m7-end-cap/end-cap.tenon` | Tenon contributors | generated: `tenon-cli run examples/m7-end-cap/end-cap.json --out examples/m7-end-cap` | MIT OR Apache-2.0 | Original |
@@ -130,9 +130,9 @@ Standard sizes and physical constants held in code:
 | `examples/m7-end-cap/bar.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m7-end-cap/end-cap.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m7-end-cap/capped-bar.png` | Tenon contributors | generated: same command (software render of the assembly) | MIT OR Apache-2.0 | Original |
-| `examples/m7-end-cap/workbench.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/capped-bar.tenonasm --screenshot examples/m7-end-cap/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
-| `examples/m7-end-cap/print-check.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/end-cap.tenon --run inspect.print --screenshot examples/m7-end-cap/print-check.png` | MIT OR Apache-2.0 | Original; no third-party UI |
-| `examples/m7-end-cap/library.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/capped-bar.tenonasm --run tools.library --screenshot examples/m7-end-cap/library.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m7-end-cap/workbench.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/capped-bar.tenonasm --screenshot examples/m7-end-cap/workbench.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m7-end-cap/print-check.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/end-cap.tenon --run inspect.print --screenshot examples/m7-end-cap/print-check.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m7-end-cap/library.png` | Tenon contributors | generated: `tenon examples/m7-end-cap/capped-bar.tenonasm --run tools.library --screenshot examples/m7-end-cap/library.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m8-tray/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m8-tray/tray.json` | Tenon contributors | written for this repository (the M8 demo command script) | MIT OR Apache-2.0 | Original |
 | `examples/m8-tray/tray.tenon` | Tenon contributors | generated: `tenon-cli run examples/m8-tray/tray.json --out examples/m8-tray` | MIT OR Apache-2.0 | Original |
@@ -140,11 +140,11 @@ Standard sizes and physical constants held in code:
 | `examples/m8-tray/tray-flat.svg` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
 | `examples/m8-tray/tray.step` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
 | `examples/m8-tray/tray.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
-| `examples/m8-tray/workbench.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --screenshot examples/m8-tray/workbench.png` | MIT OR Apache-2.0 | Original; no third-party UI |
-| `examples/m8-tray/flat-pattern.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.flat_view --screenshot examples/m8-tray/flat-pattern.png` | MIT OR Apache-2.0 | Original; no third-party UI |
-| `examples/m8-tray/flange.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.flange --screenshot examples/m8-tray/flange.png` | MIT OR Apache-2.0 | Original; no third-party UI |
-| `examples/m8-tray/hem.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.hem --screenshot examples/m8-tray/hem.png` | MIT OR Apache-2.0 | Original; no third-party UI |
-| `examples/m8-tray/defaults.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.defaults --screenshot examples/m8-tray/defaults.png` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m8-tray/workbench.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --screenshot examples/m8-tray/workbench.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m8-tray/flat-pattern.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.flat_view --screenshot examples/m8-tray/flat-pattern.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m8-tray/flange.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.flange --screenshot examples/m8-tray/flange.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m8-tray/hem.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.hem --screenshot examples/m8-tray/hem.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
+| `examples/m8-tray/defaults.png` | Tenon contributors | generated: `tenon examples/m8-tray/tray.tenon --run sheet.defaults --screenshot examples/m8-tray/defaults.png --size 1400x860` | MIT OR Apache-2.0 | Original; no third-party UI |
 | `examples/m2-mount/README.md` | Tenon contributors | written for this repository | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.json` | Tenon contributors | written for this repository (a second M2 example script) | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.tenon` | Tenon contributors | generated: `tenon-cli run examples/m2-mount/mount.json --out examples/m2-mount` | MIT OR Apache-2.0 | Original |
@@ -152,4 +152,4 @@ Standard sizes and physical constants held in code:
 | `examples/m2-mount/mount.stl` | Tenon contributors | generated: same command | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount.png` | Tenon contributors | generated: same command (software render) | MIT OR Apache-2.0 | Original |
 | `examples/m2-mount/mount-thick.png` | Tenon contributors | generated: same command (software render at t = 10) | MIT OR Apache-2.0 | Original |
-| `examples/m2-mount/workbench.png` | Tenon contributors | generated: `tenon examples/m2-mount/mount.tenon --screenshot examples/m2-mount/workbench.png` | MIT OR Apache-2.0 | Original |
+| `examples/m2-mount/workbench.png` | Tenon contributors | generated: `tenon examples/m2-mount/mount.tenon --screenshot examples/m2-mount/workbench.png --size 1400x860` | MIT OR Apache-2.0 | Original |
