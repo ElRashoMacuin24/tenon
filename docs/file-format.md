@@ -855,7 +855,7 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
   A 0.1.0 build refuses, in the words "the project is damaged", a file using text, an ellipse or
   a Smooth constraint; To, To Next or Between of an extrusion; To, To Next or two angles of a
   revolution, or one turned the other way; a spotface or To hole; a variable or face
-  fillet; or a Tangent or Symmetry relationship. It opens the part the same and silently loses, on
+  fillet; a work plane through three points; or a Tangent or Symmetry relationship. It opens the part the same and silently loses, on
   a save, a tapped hole's thread (`tapped`; the drawing's note and the Threads list lose it at
   once), which points are sketch points (`sketch_point`), which sketches are shown (`visible`)
   and a study's `[study.optimize]`.

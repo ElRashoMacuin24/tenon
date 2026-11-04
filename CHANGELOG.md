@@ -24,7 +24,7 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 - **Going back to 0.1.0.** It refuses a file that uses what is new, in the words "the project is
   damaged", though it is not: text, ellipses or Smooth; an extrusion To, To Next or Between; a
   revolution To, To Next, by two angles or Flipped; a spotface or To hole; a variable or face fillet;
-  a Tangent or Symmetry relationship. Other new things it opens, and on a save it loses them: a
+  a work plane through three points; a Tangent or Symmetry relationship. Other new things it opens, and on a save it loses them: a
   tapped hole's thread (the solid is the same), which points are sketch points, which sketches are
   shown, and a study's Optimize Shape settings.
 
