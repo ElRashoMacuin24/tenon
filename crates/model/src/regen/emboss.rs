@@ -27,18 +27,18 @@ type Named = (ShapeHandle, Vec<Option<FaceOrigin>>);
 /// on: about a degree. A wall along the normal, or one that leans back, is not.
 const FACING: f64 = 0.02;
 
-/// How far over what it is seen from the space above the part starts: little enough to stay clear of
-/// a wall that stands near a sketch in a hole, and more than a sketch on a face has between them.
-const JUST_OVER: f64 = 0.01;
+/// How far the space above the part starts short of the next material over a profile: enough to be a
+/// space, and little enough that it starts there and not in the material.
+const JUST_UNDER: f64 = 0.01;
 
 /// How far a tool laid round a surface reaches past the layer it is cut to, at most, so that its top
 /// and foot are not a face on a face for the kernel to judge.
 const OVER: f64 = 0.05;
 
-/// The faces an emboss goes on, thickened: the solid of them, and how far it may reach from the
-/// sketch plane.
+/// The faces an emboss goes on, thickened, a solid each, and how far it may reach from the sketch
+/// plane.
 struct Floors {
-    solid: Named,
+    layers: Vec<Named>,
     /// Along the way the faces look.
     above: f64,
     /// The other way.
@@ -344,38 +344,43 @@ impl<'a> Ctx<'a> {
             let Some(floors) = self.floors_under(id, bi, e, profile, &wide)? else { continue };
             seen_on_some = true;
             let (forward, backward) = if e.reverse { (floors.below, floors.above) } else { (floors.above, floors.below) };
-            let (thick, thick_names) = floors.solid;
             let prism = self.emboss_prism(id, profile, &Extent::TwoSided { forward, backward }, Self::lean(e, narrows));
             let (prism, prism_names) = match prism {
                 Ok(p) => p,
                 Err(err) => {
-                    self.k.release(thick);
+                    for (s, _) in floors.layers {
+                        self.k.release(s);
+                    }
                     return Err(err);
                 }
             };
-            let cut = self.k.boolean(BoolOp::Intersect, thick, &[prism]);
-            self.k.release(thick);
-            self.k.release(prism);
-            let op = match cut {
-                Ok(op) => op,
-                Err(err) if err.to_string().contains("empty shape") => continue,
-                Err(err) => return Err(err.into()),
-            };
-            let topo = match self.k.topology(op.shape) {
-                Ok(t) => t,
-                Err(err) => {
-                    self.k.release(op.shape);
-                    return Err(err.into());
+            // Each is cut to the profile before they are joined: what is seen as one sheet (a
+            // rounded end of a shaft and its flat) touches all along, and such closed sides are
+            // joined better with less of them there.
+            let mut tools: Vec<Named> = Vec::new();
+            let mut failed = None;
+            for (layer, names) in floors.layers {
+                if failed.is_none() {
+                    match self.emboss_cut_to(layer, &names, prism, &prism_names) {
+                        Ok(Some(tool)) => tools.push(tool),
+                        Ok(None) => {}
+                        Err(err) => failed = Some(err),
+                    }
                 }
-            };
-            if topo.solids == 0 {
-                self.k.release(op.shape);
+                self.k.release(layer);
+            }
+            self.k.release(prism);
+            if let Some(err) = failed {
+                for (s, _) in tools {
+                    self.k.release(s);
+                }
+                return Err(err);
+            }
+            if tools.is_empty() {
                 continue;
             }
-            let names = names_of_boolean(&op.history, &[&thick_names, &prism_names], topo.faces);
-            return self.emboss_held(bi, e.style, |c| {
-                c.combine_at(id, vec![(op.shape, names)], if raise { Operation::Join } else { Operation::Cut }, Some(bi))
-            });
+            let tools = self.emboss_joined(tools);
+            return self.emboss_held(bi, e.style, |c| c.combine_at(id, tools, if raise { Operation::Join } else { Operation::Cut }, Some(bi)));
         }
         Err(if seen_on_some {
             "The profile does not fall on the faces it is seen on: move the sketch."
@@ -404,8 +409,10 @@ impl<'a> Ctx<'a> {
         let mut temp: Vec<ShapeHandle> = Vec::new();
         let mut layers: Vec<Named> = Vec::new();
         let result = (|| -> Result<Option<(f64, f64)>, Stop> {
-            // Where the material over the profile goes on to, from the plane itself.
+            // Where the material over the profile goes on to, from the plane itself; and where any
+            // more of it starts over that, which what is seen is seen from under.
             let mut top = 0.0f64;
+            let mut more: Vec<f64> = Vec::new();
             if high > tenon_geom::tol::LINEAR {
                 let up = self.k.extrude(profile, &Extent::Distance(sign * (high + 1.0)), None)?.shape;
                 temp.push(up);
@@ -417,9 +424,10 @@ impl<'a> Ctx<'a> {
                         for i in 0..self.k.topology(common.shape)?.solids {
                             let s = self.k.solid(common.shape, i)?;
                             temp.push(s.shape);
-                            if self.k.min_distance(SubShape::Shape(s.shape), SubShape::Shape(plane))?.value < 1e-6
-                                && let Some(b) = self.k.bounding_box(s.shape)?
-                            {
+                            let from_plane = self.k.min_distance(SubShape::Shape(s.shape), SubShape::Shape(plane))?.value;
+                            if from_plane >= 1e-6 {
+                                more.push(from_plane);
+                            } else if let Some(b) = self.k.bounding_box(s.shape)? {
                                 let far = corners(&b).into_iter().map(|c| (c - frame.origin()).dot(look)).fold(f64::NEG_INFINITY, f64::max);
                                 top = top.max(far);
                             }
@@ -432,13 +440,16 @@ impl<'a> Ctx<'a> {
             if low >= -tenon_geom::tol::LINEAR && top <= tenon_geom::tol::LINEAR {
                 return Ok(None);
             }
-            // The space from just above all that, down through the part. (What is raised reaches
-            // higher, and is not cut by this.)
+            // The space from above all that, well over it so that a round face is not cut short
+            // beside the profile, and under what comes next, down through the part. (What is
+            // raised reaches higher, and is not cut by this.)
             let above = top + depth + 1.0;
             let below = (-low).max(0.0) + 1.0;
-            let start_frame = frame.with_origin(frame.origin() + look * (top + JUST_OVER)).ok_or("the sketch's plane is out of range")?;
+            let next = more.into_iter().filter(|d| *d > top).fold(f64::INFINITY, f64::min);
+            let from = above.min(next - JUST_UNDER).max(top + JUST_UNDER);
+            let start_frame = frame.with_origin(frame.origin() + look * from).ok_or("the sketch's plane is out of range")?;
             let start = Profile { frame: start_frame, regions: wide.regions.clone() };
-            let shaft = self.k.extrude(&start, &Extent::Distance(-sign * (top + JUST_OVER + below)), None)?.shape;
+            let shaft = self.k.extrude(&start, &Extent::Distance(-sign * (from + below)), None)?.shape;
             temp.push(shaft);
             let free = match self.k.boolean(BoolOp::Cut, shaft, &[body]) {
                 Ok(op) => op,
@@ -505,17 +516,15 @@ impl<'a> Ctx<'a> {
         for t in temp {
             self.k.release(t);
         }
-        let reach = match result {
-            Ok(Some(reach)) if !layers.is_empty() => reach,
+        match result {
+            Ok(Some((above, below))) if !layers.is_empty() => Ok(Some(Floors { layers, above, below })),
             other => {
                 for (s, _) in layers {
                     self.k.release(s);
                 }
-                return other.map(|_| None);
+                other.map(|_| None)
             }
-        };
-        let solid = self.joined(layers)?;
-        Ok(Some(Floors { solid, above: reach.0, below: reach.1 }))
+        }
     }
 
     /// What of `pieces` (a face each, none of which turns away from `look`) is seen looking along
@@ -576,28 +585,65 @@ impl<'a> Ctx<'a> {
         Ok(out)
     }
 
-    /// Solids as one, with the names of their faces. They are let go.
-    fn joined(&mut self, mut solids: Vec<Named>) -> Result<Named, Stop> {
-        if solids.len() < 2 {
-            return solids.pop().ok_or_else(|| Stop::from("there is nothing to join"));
-        }
-        let tools: Vec<ShapeHandle> = solids.iter().skip(1).map(|s| s.0).collect();
-        let op = self.k.boolean(BoolOp::Union, solids[0].0, &tools);
-        let names = op.as_ref().ok().map(|op| {
-            let inputs: Vec<&[Option<FaceOrigin>]> = solids.iter().map(|s| s.1.as_slice()).collect();
-            self.k.topology(op.shape).map(|t| names_of_boolean(&op.history, &inputs, t.faces))
-        });
-        for (s, _) in solids {
-            self.k.release(s);
-        }
-        let op = op?;
-        match names {
-            Some(Ok(names)) => Ok((op.shape, names)),
-            Some(Err(err)) => {
+    /// What of `layer` lies in `prism`, with the names of its faces. None when nothing does.
+    fn emboss_cut_to(
+        &mut self,
+        layer: ShapeHandle,
+        names: &[Option<FaceOrigin>],
+        prism: ShapeHandle,
+        prism_names: &[Option<FaceOrigin>],
+    ) -> Result<Option<Named>, Stop> {
+        let op = match self.k.boolean(BoolOp::Intersect, layer, &[prism]) {
+            Ok(op) => op,
+            Err(err) if err.to_string().contains("empty shape") => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        match self.k.topology(op.shape) {
+            Ok(t) if t.solids > 0 => Ok(Some((op.shape, names_of_boolean(&op.history, &[names, prism_names], t.faces)))),
+            Ok(_) => {
+                self.k.release(op.shape);
+                Ok(None)
+            }
+            Err(err) => {
                 self.k.release(op.shape);
                 Err(err.into())
             }
-            None => Err("the layers could not be joined".into()),
+        }
+    }
+
+    /// Solids that may overlap, joined, with the names of their faces, as what they are handed on as
+    /// tools: one, or them as they came if the kernel cannot make a whole of them. (Two whole rings
+    /// that touch all round may come to nothing, with no complaint; each is joined to the part
+    /// all the same.)
+    fn emboss_joined(&mut self, solids: Vec<Named>) -> Vec<Named> {
+        if solids.len() < 2 {
+            return solids;
+        }
+        let volume = |c: &Self, s: ShapeHandle| c.k.mass_properties(s, 1.0).map(|m| m.volume).unwrap_or(0.0);
+        let (mut largest, mut sum) = (0.0f64, 0.0f64);
+        for (s, _) in &solids {
+            let v = volume(self, *s);
+            largest = largest.max(v);
+            sum += v;
+        }
+        let tools: Vec<ShapeHandle> = solids.iter().skip(1).map(|s| s.0).collect();
+        let Ok(op) = self.k.boolean(BoolOp::Union, solids[0].0, &tools) else { return solids };
+        let made = volume(self, op.shape);
+        let topo = self.k.topology(op.shape);
+        let whole = made >= largest - tenon_geom::tol::MIN_SIZE && made <= sum + tenon_geom::tol::MIN_SIZE;
+        match topo {
+            Ok(t) if whole => {
+                let inputs: Vec<&[Option<FaceOrigin>]> = solids.iter().map(|s| s.1.as_slice()).collect();
+                let names = names_of_boolean(&op.history, &inputs, t.faces);
+                for (s, _) in solids {
+                    self.k.release(s);
+                }
+                vec![(op.shape, names)]
+            }
+            _ => {
+                self.k.release(op.shape);
+                solids
+            }
         }
     }
 

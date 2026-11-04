@@ -1376,6 +1376,10 @@ namespace {
 TopoDS_Face fit_for_offset(const TopoDS_Face& face) {
   BRepBuilderAPI_Copy copy(face);
   const TopoDS_Face out = TopoDS::Face(copy.Shape());
+  // (A flat face moves, curves and all.)
+  if (BRepAdaptor_Surface(out, false).GetType() == GeomAbs_Plane) {
+    return out;
+  }
   BRep_Builder builder;
   for (TopExp_Explorer ex(out, TopAbs_EDGE); ex.More(); ex.Next()) {
     const TopoDS_Edge edge = TopoDS::Edge(ex.Current());

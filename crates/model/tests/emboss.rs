@@ -916,6 +916,46 @@ fn on_a_ball_a_cone_a_ring_and_a_freeform_face_it_stops_where_they_turn_away() {
 }
 
 #[test]
+fn a_rounded_end_is_seen_as_one_sheet_with_its_flat() {
+    // A shaft of radius 10 with its end rounded by 3, seen along its axis: a flat of radius 7, and
+    // a quarter of a ring round it. By Pappus, the section of the layer on the round, a quarter
+    // annulus from 3 to 4 (or 2 to 3) about the circle of radius 7, turned once round.
+    let round = |r0: f64, r1: f64| {
+        let quarter = |r: f64| 7.0 * FRAC_PI_2 * r * r / 2.0 + r * r * r / 3.0;
+        2.0 * PI * (quarter(r1) - quarter(r0))
+    };
+    for (style, sign, ring) in [("raise", 1.0, round(3.0, 4.0)), ("recess", -1.0, round(2.0, 3.0))] {
+        let (mut s, mut k) = (Session::default(), OcctKernel::new());
+        shaft(&mut s, &mut k, 10.0, 50.0);
+        let edge = run(&mut s, &mut k, "model.edge_ref", json!({ "at": [50.0, 6.0, 8.0] }));
+        run(&mut s, &mut k, "model.fillet", json!({ "edges": [edge], "radius": 3 }));
+        let v0 = volume(&mut s, &mut k);
+        let wp = feature(&run(&mut s, &mut k, "work.plane", json!({ "base": "yz", "distance": 60 })));
+        let sk = feature(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp })));
+        run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": -15, "y1": -15, "x2": 15, "y2": 15 }));
+        let e = feature(&run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 1, "style": style })));
+        near(volume(&mut s, &mut k), v0 + sign * (PI * 49.0 + ring), 1e-2);
+        one_solid(&mut s, &mut k);
+        // A profile that reaches onto the round all the way, cut square: less than that, more than
+        // the flat by itself; and one on the flat alone, its own area.
+        let t = run(&mut s, &mut k, "model.topology", json!({}));
+        let _ = t;
+        let sk2 = feature(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp })));
+        run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk2, "x1": -9, "y1": -9, "x2": 9, "y2": 9 }));
+        run(&mut s, &mut k, "feature.suppress", json!({ "feature": e }));
+        let e2 = feature(&run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk2, "depth": 1, "style": style })));
+        let got = (volume(&mut s, &mut k) - v0).abs();
+        assert!(got > PI * 49.0 && got < PI * 49.0 + ring, "{got}");
+        one_solid(&mut s, &mut k);
+        let sk3 = feature(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp })));
+        run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk3, "x1": -3, "y1": -3, "x2": 3, "y2": 3 }));
+        run(&mut s, &mut k, "feature.suppress", json!({ "feature": e2 }));
+        run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk3, "depth": 1, "style": style }));
+        near(volume(&mut s, &mut k), v0 + sign * 36.0, 1e-6);
+    }
+}
+
+#[test]
 fn what_lies_under_an_overhang_is_not_seen() {
     // An I section along Y: a base 40 wide, a web from x = 15 to 25, a flange from x = 10 to 30.
     let ibeam = |s: &mut Session, k: &mut OcctKernel| {
@@ -1018,6 +1058,31 @@ fn what_it_is_seen_from_goes_by_the_profile_and_not_by_the_depth() {
     let sk = rect_above(&mut s, &mut k, 0.0, [10.0, -3.0, 20.0, 3.0]);
     run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 2 }));
     near(volume(&mut s, &mut k), PI * 100.0 * 50.0 + 10.0 * (under_round(12.0, -3.0, 3.0) - under_round(10.0, -3.0, 3.0)), 1e-2);
+    // To one side of the axis: the top over the profile is lower than the shaft's, and the shaft
+    // stands up through where the space above starts. It takes no notice of that.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    shaft(&mut s, &mut k, 10.0, 50.0);
+    let sk = rect_above(&mut s, &mut k, 0.0, [10.0, 2.0, 20.0, 8.0]);
+    run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 2 }));
+    near(volume(&mut s, &mut k), PI * 100.0 * 50.0 + 10.0 * (under_round(12.0, 2.0, 8.0) - under_round(10.0, 2.0, 8.0)), 1e-2);
+    one_solid(&mut s, &mut k);
+}
+
+#[test]
+fn a_recess_that_would_part_the_part_is_refused() {
+    // Right across a block, and deeper than the block: two pieces.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    block(&mut s, &mut k);
+    let sk = rect_above(&mut s, &mut k, 10.0, [15.0, -5.0, 25.0, 45.0]);
+    let e = feature(&run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 12, "style": "recess" })));
+    let said = fails(&mut s, &mut k);
+    assert!(said.contains("cuts a piece of the part loose") && said.contains("smaller depth"), "{said}");
+    near(run(&mut s, &mut k, "model.mass", json!({}))["bodies"][0]["volume"].as_f64().unwrap(), 16000.0, 1e-6);
+    // Leaving a floor, it is a groove.
+    let kind = json!({ "type": "emboss", "sketch": sk, "style": "recess", "depth": 9.0 });
+    run(&mut s, &mut k, "feature.update", json!({ "feature": e, "kind": kind }));
+    near(volume(&mut s, &mut k), 16000.0 - 10.0 * 40.0 * 9.0, 1e-6);
+    one_solid(&mut s, &mut k);
 }
 
 #[test]

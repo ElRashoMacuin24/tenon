@@ -3548,11 +3548,15 @@ commonly understood.
   same search and was weighed; its several kinds of line would each need turning into edges, and
   the search is short enough to own and to test. A plane or a surface swept along the look was
   weighed and left, since such a sheet is tangent to the surface exactly where it should cut it. Nor is
-  the whole part swept: that makes one solid per face with faces lying on faces. What the profile
+  the whole part swept: that makes one solid per face with faces lying on faces. Each layer is cut to
+  the profile before they are joined, and where the kernel cannot make a whole of them (the layers on
+  a shaft's rounded end and its flat, which touch all round, came to nothing, with no complaint), they
+  go on to the part separately, which it does well. What the profile
   is seen from goes by the profile, not by the box round it, which grew with the depth and could reach
   the plate's outside from a sketch in a hole's middle. The sketch plane on or above a face looks down
   at it; a profile in the material looks from where the material over it ends; one in open space
-  looks from there; the sketch's normal says which way, and Flip the other.
+  looks from there, as far up as the next material over it; the sketch's normal says which way, and
+  Flip the other.
 
   It goes on one solid, the last that the profile falls on, as a feature goes on the last solid. Going
   on every solid it is seen on was weighed and left: a feature changes one solid everywhere else in
@@ -3574,8 +3578,8 @@ commonly understood.
   the apex, `atan2(x, y) / sin(a)` round. Lines go to curves on the cone, so each curve is a spline
   through 25 points in the cone's (angle, distance) plane, and the sides are ruled between the two
   cones. The tool reaches a little (`OVER`, at most 0.05 mm) past the layer on both sides and is cut
-  to the layer on the picked face, that face thickened by the depth: so a boolean never meets a face
-  lying on a face, and what runs past the face's edge is left off, as a raised profile stops at a
+  to the layer on the picked face, that face thickened by the depth: so that cut meets no face lying
+  on a face, and what runs past the face's edge is left off, as a raised profile stops at a
   face's edge. (Without it a profile past the end of a shaft stood in the air, and one wholly past it
   was a second, floating solid.) A profile wholly off the face is refused. Where the sketch lies:
   across the axis, from the axis as seen on the sketch's plane, so a letter added does not shift the
