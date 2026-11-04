@@ -396,5 +396,9 @@ fn a_shape_that_does_not_unroll_exactly_says_so_on_its_panel_its_row_and_its_fla
     wb.run_ui("sheet.flat_view").unwrap();
     frames(&mut d, &mut wb);
     frames(&mut d, &mut wb);
-    assert!(d.texts().iter().any(|t| t.contains("does not unroll exactly") && t.contains("row by row") && t.contains(" mm from where")), "{:?}", d.texts());
+    assert!(
+        d.texts().iter().any(|t| t.contains("does not unroll exactly") && t.contains("row by row") && t.contains(" mm from where")),
+        "{:?}",
+        d.texts()
+    );
 }

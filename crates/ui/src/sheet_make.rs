@@ -625,7 +625,10 @@ impl Workbench {
             Panel::Punch(p) => {
                 let family = sheet::punch::family_of(&p.shape);
                 section(ui, "Shape", true, |ui| {
-                    if crate::drawing::button(ui, "Library...", "tn_punch_library_open").on_hover_text("The punch library's window: every shape, by kind, with a picture of it").clicked() {
+                    if crate::drawing::button(ui, "Library...", "tn_punch_library_open")
+                        .on_hover_text("The punch library's window: every shape, by kind, with a picture of it")
+                        .clicked()
+                    {
                         p.library = true;
                     }
                     egui::Grid::new("tn_props_punch_shape").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {

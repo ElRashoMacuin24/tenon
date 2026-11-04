@@ -770,7 +770,7 @@ pub(super) fn read(k: &dyn Kernel, shape: ShapeHandle) -> Result<Read, String> {
 }
 
 /// The edges of face `f`, as they are.
-fn edges_of<'a>(solid: &'a Read, f: u32) -> Vec<&'a EdgeInfo> {
+fn edges_of(solid: &Read, f: u32) -> Vec<&EdgeInfo> {
     solid
         .topo
         .face_edges

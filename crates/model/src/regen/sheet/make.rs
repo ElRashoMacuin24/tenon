@@ -325,7 +325,7 @@ impl Ctx<'_> {
             for (i, (facet, corners)) in facets.iter().zip(&outlines).enumerate() {
                 let (p0, p1) = (corners[0], corners.get(1).copied().unwrap_or(corners[0]));
                 let x = corners.iter().map(|q| *q - p0).find(|d| d.len() > 1e-9).unwrap_or(p1 - p0);
-                let frame = Frame::new(p0 + facet.normal * lo, facet.normal, x).ok_or_else(&too_tight)?;
+                let frame = Frame::new(p0 + facet.normal * lo, facet.normal, x).ok_or_else(too_tight)?;
                 let flat: Vec<(Vec2, u64)> = corners
                     .iter()
                     .enumerate()
@@ -345,7 +345,7 @@ impl Ctx<'_> {
                 let (Some(b), Some([first, second])) = (fold, reach) else { continue };
                 let turn = b.out[0].cross(b.out[1]).dot(b.along);
                 let (z, way) = if turn >= 0.0 { (b.along, 1.0) } else { (-b.along, -1.0) };
-                let frame = Frame::new(b.axis, z, b.out[0]).ok_or_else(&too_tight)?;
+                let frame = Frame::new(b.axis, z, b.out[0]).ok_or_else(too_tight)?;
                 let w = b.angle * rho;
                 let name = |part: u32| fold_key(i, part);
                 let corners = [
@@ -460,7 +460,7 @@ impl Ctx<'_> {
                     let name = |part: u32| punch::tag(*point, part);
                     if !p.shape.is_formed() {
                         let site = Frame::new(centre, side.normal, x).ok_or("a face of the sheet has no direction")?;
-                        let region = p.shape.outline(&name);
+                        let region = p.shape.outline(name);
                         cuts.push(self.sheet_prism(id, &Profile { frame: site, regions: vec![region] }, -t, None)?);
                         continue;
                     }
@@ -512,7 +512,7 @@ impl Ctx<'_> {
                             let r = sizes.bend_radius;
                             let (turned, straight) = punch::louver_flap(width, height, t, r, sizes.k_factor)?;
                             let site = Frame::new(near, up, x).ok_or("a face of the sheet has no direction")?;
-                            let opening = p.shape.outline(&name);
+                            let opening = p.shape.outline(name);
                             cuts.push(self.sheet_prism(id, &Profile { frame: site, regions: vec![opening] }, -t, None)?);
                             // Seen along the hinge: across the opening, and up. The bend's inside is
                             // the face the flap stands out of.

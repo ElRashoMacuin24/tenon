@@ -26,19 +26,14 @@ use crate::FeatureId;
 use crate::document::Operation;
 
 /// How a lofted flange is formed.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Forming {
     /// One smooth surface, pressed in a die: laid flat by triangles.
+    #[default]
     DieFormed,
     /// Flat facets with bends between them, no further from the profiles' arcs than `chord`.
     PressBrake { chord: f64 },
-}
-
-impl Default for Forming {
-    fn default() -> Self {
-        Forming::DieFormed
-    }
 }
 
 /// The smallest chord tolerance (mm), and the most facets a lofted flange is made of.

@@ -254,3 +254,35 @@ fn a_lofted_flange_says_what_it_cannot_be() {
     let e = refused(&mut s, &mut k, "sheet.lofted_flange", json!({ "sketches": [a, closed], "forming": "press_brake", "chord": 0 }));
     assert!(e.contains("chord tolerance"), "{e}");
 }
+
+/// A lofted flange follows the rule, and its sketches; it is taken back, suppressed and deleted.
+#[test]
+fn a_lofted_flange_follows_the_rule_and_its_sketches_and_can_be_taken_back() {
+    let (mut s, mut k) = start(T, R);
+    let v = [(0.0, 0.0), (40.0, 0.0), (40.0, 30.0)];
+    let a = sketch_at(&mut s, &mut k, "xz", 0.0);
+    chain(&mut s, &mut k, a, &v);
+    let b = sketch_at(&mut s, &mut k, "xz", 50.0);
+    chain(&mut s, &mut k, b, &v);
+    let f = id(&run(&mut s, &mut k, "sheet.lofted_flange", json!({ "sketches": [a, b], "forming": "press_brake" })), "feature");
+    let section = |t: f64, r: f64| {
+        // The profile is the outside of the bend, so the bend takes r + t of each line.
+        t * (40.0 - (r + t) + 30.0 - (r + t)) + FRAC_PI_2 / 2.0 * ((r + t) * (r + t) - r * r)
+    };
+    assert!(close(volume(&mut s, &mut k), section(T, R) * 50.0, 1e-5));
+    // A thickness and a radius of the rule.
+    run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": 1, "bend_radius": 2 }));
+    assert!(close(volume(&mut s, &mut k), section(1.0, 2.0) * 50.0, 1e-5), "{}", volume(&mut s, &mut k));
+    let p = flat(&mut s, &mut k);
+    assert!(close(num(&p, "area"), (40.0 - 3.0 + 30.0 - 3.0 + FRAC_PI_2 * (2.0 + K)) * 50.0, 1e-5), "{p}");
+    // Suppressed, and back; deleted, and back.
+    let whole = volume(&mut s, &mut k);
+    run(&mut s, &mut k, "feature.suppress", json!({ "feature": f, "suppressed": true }));
+    assert_eq!(volume(&mut s, &mut k), 0.0);
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    assert!(close(volume(&mut s, &mut k), whole, 1e-6));
+    run(&mut s, &mut k, "feature.delete", json!({ "feature": f }));
+    assert_eq!(volume(&mut s, &mut k), 0.0);
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    assert!(close(volume(&mut s, &mut k), whole, 1e-6));
+}

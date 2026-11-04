@@ -110,8 +110,6 @@ fn a_ring_unrolls_to_a_rectangle_as_long_as_its_neutral_surface() {
     let v = volume(&mut s, &mut k);
     let half = |a: f64, b: f64| (b * b - a * a) / 2.0 * PI * 40.0;
     assert!(close(v, half(50.0, 52.0), 1e-5) || close(v, half(48.0, 50.0), 1e-5), "{v}");
-    let line = s.document().sketch(tenon_model::FeatureId(sk as u32)).unwrap().entities().next().map(|e| e.0).unwrap();
-    let _ = line;
 }
 
 /// A straight line at a slant is a cone: unrolled about the point it comes to, it is a sector of
@@ -279,4 +277,61 @@ fn a_hole_in_a_ring_is_in_its_flat_pattern_where_it_lies_on_the_neutral_surface(
     // In the middle of the sheet's length, 20 up it.
     let along = num(&whole, "length").max(num(&whole, "width"));
     assert!(close((x0 + x1) / 2.0, along / 2.0, 1e-2) && close((y0 + y1) / 2.0, 20.0, 1e-2), "{hole}");
+}
+
+/// A profile that is one arc: the round part of a profile on its own. It has no development: laid
+/// flat it is the cone through its two rims, as long as its neutral surface is.
+#[test]
+fn a_round_profile_is_unrolled_as_long_as_its_neutral_surface_and_says_it_is_not_exact() {
+    let (mut s, mut k) = start();
+    // A quarter circle of radius 20 about (60, 0), from (80, 0) to (60, 20).
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" })), "feature");
+    run(&mut s, &mut k, "sketch.arc", json!({ "sketch": sk, "cx": 60, "cy": 0, "x1": 80, "y1": 0, "x2": 60, "y2": 20 }));
+    let turn = 2.0;
+    run(&mut s, &mut k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": turn }));
+    // The sheet goes on the left of the arc, its inside: radii 18 to 20 about (60, 0). The solid
+    // is the angle x the integral of the distance from the axis over the section.
+    let area = FRAC_PI_2 / 2.0 * (400.0 - 324.0);
+    let moment = 60.0 * area + (8000.0 - 5832.0) / 3.0;
+    let v = volume(&mut s, &mut k);
+    assert!(close(v, turn * moment, 1e-3), "{v} {}", turn * moment);
+    let p = flat(&mut s, &mut k);
+    assert!(p["notes"][0].as_str().unwrap().contains("does not unroll exactly"), "{p}");
+    // The neutral surface is 0.88 through from the inside: radius 18.88 about (60, 0). Its rims
+    // are 78.88 and 60 from the axis, and it is a quarter of that circle long.
+    let (near, far, long) = (60.0, 78.88, FRAC_PI_2 * 18.88);
+    let (x, y) = (num(&p, "length"), num(&p, "width"));
+    assert!(close(x, turn * far, 1e-5) && close(y, long, 1e-5), "{x} {y}");
+    assert!(close(num(&p, "area"), turn * (near + far) / 2.0 * long, 1e-5), "{}", num(&p, "area"));
+    // A bend of inside radius 18, a quarter turn: where it runs round the axis in the flat.
+    let bends = p["bends"].as_array().unwrap();
+    assert_eq!(bends.len(), 1, "{p}");
+    assert!(close(num(&bends[0], "radius"), 18.0, 1e-6) && close(num(&bends[0], "angle"), FRAC_PI_2, 1e-6), "{p}");
+}
+
+/// A contour roll follows the rule and its sketch; it is deleted with what it was made of.
+#[test]
+fn a_contour_roll_follows_the_rule_and_its_sketch_and_can_be_deleted() {
+    let (mut s, mut k) = start();
+    let sk = id(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xz" })), "feature");
+    let up = run(&mut s, &mut k, "sketch.line", json!({ "sketch": sk, "x1": 50, "y1": 0, "x2": 50, "y2": 40 }));
+    let f = id(&run(&mut s, &mut k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": 2.0 })), "feature");
+    // Which side the sheet is on: on the left of a line that runs up is towards the axis.
+    let ring = |a: f64, b: f64, high: f64| (b * b - a * a) * high;
+    assert!(close(volume(&mut s, &mut k), ring(48.0, 50.0, 40.0), 1e-4), "{}", volume(&mut s, &mut k));
+    // The rule's thickness.
+    run(&mut s, &mut k, "sheet.defaults", json!({ "thickness": 3 }));
+    assert!(close(volume(&mut s, &mut k), ring(47.0, 50.0, 40.0), 1e-4), "{}", volume(&mut s, &mut k));
+    let p = flat(&mut s, &mut k);
+    let along = 2.0 * (47.0 + K * 3.0);
+    assert!(close(num(&p, "length").max(num(&p, "width")), along, 1e-6), "{p}");
+    // The sketch: the line's end moved makes it 60 long.
+    run(&mut s, &mut k, "sketch.drag", json!({ "sketch": sk, "point": up["end"], "x": 50, "y": 60 }));
+    assert!(close(volume(&mut s, &mut k), ring(47.0, 50.0, 60.0), 1e-3), "{}", volume(&mut s, &mut k));
+    // Deleted, with the sketch it was made of: nothing left.
+    run(&mut s, &mut k, "feature.delete", json!({ "feature": f, "consumed": true }));
+    assert_eq!(volume(&mut s, &mut k), 0.0);
+    assert!(s.document().sketch(tenon_model::FeatureId(sk as u32)).is_none(), "the sketch went with it");
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    assert!(close(volume(&mut s, &mut k), ring(47.0, 50.0, 60.0), 1e-3));
 }
