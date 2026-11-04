@@ -388,6 +388,17 @@ pub fn check(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetLayout, 
     Ok(l)
 }
 
+/// Whether two picks in a view are one place now: the same point of the same edge, as the model is.
+/// What a pick holds of its edge is how that was when it was picked, so it is not compared.
+pub fn same_place(d: &Drawing, ev: &Evaluation, view: ViewId, a: &GeomPick, b: &GeomPick) -> bool {
+    let Some(m) = d.view(view).and_then(|v| ev.models.get(&v.model)) else { return false };
+    let edge = |p: &GeomPick| {
+        let scene = m.scenes.get(&m.instance(p.component)?.part)?;
+        tenon_assembly::geometry::find_edge(scene, &p.edge).ok()
+    };
+    a.component == b.component && a.point == b.point && edge(a).is_some() && edge(a) == edge(b)
+}
+
 /// Where a pick is on the sheet now: the point it stands for (for marking it while a set is made).
 pub fn pick_on_sheet(d: &Drawing, ev: &Evaluation, view: ViewId, pick: &GeomPick) -> Option<Vec2> {
     let v = d.view(view)?;

@@ -636,3 +636,54 @@ fn a_line_of_the_view_that_is_no_edge_is_said_to_be_so() {
     assert!(panel(&wb).is_none(), "{}", wb.status());
     assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["120"]);
 }
+
+#[test]
+fn a_second_click_takes_a_place_away_though_the_model_has_changed() {
+    let _quiet = crate::tests::timing_lock();
+    let (mut wb, mut d) = drawing_of_plate("again", Orientation::Top, 1.0);
+    press(&mut d, &mut wb, "ribbon drw.baseline");
+    let (datum, hole, far, place) =
+        (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0), in_view(&mut wb, 109.0, 65.0), in_view(&mut wb, 60.0, 110.0));
+    d.click(&mut wb, datum);
+    d.click(&mut wb, hole);
+    d.click(&mut wb, far);
+    d.click(&mut wb, place);
+    assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["15", "105"]);
+
+    // The plate thicker, from the drawing: what the file says of each edge is out of date now.
+    wb.drw.as_mut().unwrap().selected = Some(Owner::View(ViewId(1)));
+    wb.run_ui("drw.edit_model").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.exec("param.set", json!({ "name": "t", "equation": "20" })).unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("drw.return").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.chrome.tab = 1;
+    settle(&mut d, &mut wb, 2);
+    let row = browser_row(&d, "Baseline 1: 2 dimension(s)").center();
+    double_click(&mut d, &mut wb, row);
+    let (datum, hole, far) = (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0), in_view(&mut wb, 109.0, 65.0));
+    let s = sheet(&mut wb, 19.0, 15.0);
+    let fresh = wb.drw_exec("drw.pick", json!({ "view": 1, "at": [s.x, s.y] })).unwrap();
+    let fresh: tenon_drawing::GeomPick = serde_json::from_value(fresh).unwrap();
+    assert_ne!(panel(&wb).unwrap().targets[0].edge.fingerprint.mid, fresh.edge.fingerprint.mid, "the stored fingerprint is out of date");
+
+    // A second click on the hole takes it away, as the prompt says; a third brings it back.
+    d.click(&mut wb, hole);
+    let p = panel(&wb).unwrap();
+    assert_eq!(p.targets.len(), 1, "{}", wb.status());
+    d.click(&mut wb, hole);
+    assert_eq!(panel(&wb).unwrap().targets.len(), 2, "{}", wb.status());
+    // The datum is still the datum.
+    d.click(&mut wb, datum);
+    assert!(wb.status().contains("that is the datum"), "{}", wb.status());
+    assert_eq!(panel(&wb).unwrap().targets.len(), 2);
+    // A place made the datum stops being a place, whichever way it was stored. From the far hole at
+    // x = 105 to the near one at 15: 90.
+    press(&mut d, &mut wb, "tn_set_change");
+    d.click(&mut wb, far);
+    assert_eq!(panel(&wb).unwrap().targets.len(), 1, "{}", wb.status());
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["90"]);
+}

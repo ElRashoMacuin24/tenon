@@ -111,15 +111,6 @@ impl SetPanel {
     }
 }
 
-/// One edge and one point of it, whatever its fingerprint was rounded to in a file.
-fn same_place(a: &GeomPick, b: &GeomPick) -> bool {
-    a.component == b.component
-        && a.point == b.point
-        && a.edge.faces == b.edge.faces
-        && a.edge.fingerprint.mid.dist(b.edge.fingerprint.mid) <= 1e-6
-        && (a.edge.fingerprint.length - b.edge.fingerprint.length).abs() <= 1e-6
-}
-
 /// Whether the annotation is a set of dimensions.
 pub(crate) fn is_set(d: &Drawing, a: AnnotId) -> bool {
     d.annotation(a).is_some_and(|x| dimsets::parts(&x.kind).is_some())
@@ -223,6 +214,10 @@ impl Workbench {
 
     /// A pick while the panel is open: another datum or origin, or a place, added or taken away.
     fn set_pick(&mut self, panel: &mut SetPanel, pick: GeomPick) -> Result<(), String> {
+        let d = self.drw.as_ref().ok_or("no drawing")?;
+        let ev = d.shown_evaluation().ok_or("the views are still being computed; try again in a moment")?;
+        let view = panel.view.ok_or("click an edge of a view first")?;
+        let same_place = |a: &GeomPick, b: &GeomPick| dimsets::same_place(d.session.drawing(), ev, view, a, b);
         if panel.from.is_none() || panel.choosing_from {
             if let Some(i) = panel.targets.iter().position(|t| same_place(t, &pick)) {
                 panel.targets.remove(i);
@@ -243,7 +238,6 @@ impl Workbench {
         with.targets.push(pick);
         if with.axis.is_some() {
             with.at = with.at.or(Some(Vec2::new(0.0, 0.0)));
-            let d = self.drw.as_ref().ok_or("no drawing")?;
             let ev = d.session.evaluation().ok_or("the views are still being computed; try again in a moment")?;
             if let Some(a) = with.annotation_at(d.session.drawing(), ev, None) {
                 dimsets::check(d.session.drawing(), ev, &a)?;
