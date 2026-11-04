@@ -177,7 +177,7 @@ I'd use it as a reference for build-script tricks only, copying no code.
 
 ## 6. Toolchain and CI
 
-- **All platforms:** Rust stable 1.90 or later via rustup, and `pixi` (it provides OCCT, CMake and Ninja).
+- **All platforms:** Rust stable 1.95 or later via rustup, and `pixi` (it provides OCCT, CMake and Ninja).
 - **Platform compilers:**
   - Windows: VS 2022 Build Tools with the C++ workload.
   - macOS: Xcode Command Line Tools.

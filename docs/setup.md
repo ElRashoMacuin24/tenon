@@ -2,7 +2,7 @@
 
 Tenon needs:
 
-- **Rust**, stable 1.90 or later (edition 2024), with `rustfmt`, `clippy` and the
+- **Rust**, stable 1.95 or later (edition 2024), with `rustfmt`, `clippy` and the
   `wasm32-unknown-unknown` target;
 - **a C++17 compiler** for the OpenCASCADE shim: MSVC 2022 on Windows, Xcode command line tools
   on macOS, gcc or clang on Linux;

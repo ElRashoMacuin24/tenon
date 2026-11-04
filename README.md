@@ -106,7 +106,7 @@ See [docs/architecture.md](docs/architecture.md) and [docs/plan.md](docs/plan.md
 
 ## Building
 
-You need Rust (stable, 1.90 or later), a C++17 compiler (MSVC 2022 on Windows, Xcode command line
+You need Rust (stable, 1.95 or later), a C++17 compiler (MSVC 2022 on Windows, Xcode command line
 tools on macOS, gcc or clang on Linux) and [pixi](https://pixi.sh), which provides OpenCASCADE.
 Step-by-step instructions per platform are in [docs/setup.md](docs/setup.md).
 
