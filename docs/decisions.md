@@ -3582,9 +3582,9 @@ not through its box's middle or not square to its axes is not looked for: such a
 
 **Copy leaves no record.** Asked for as "independent copies", it has nothing to depend on, so
 nothing to rebuild or to reopen: each copy is an ordinary component, undoable as one step, deletable,
-renamable, opened from its row as any component is. That is a real departure from the general rule
-for these lanes (every command a record reopened from a row), and is here because the owner's own
-word for what it makes is independent. Copies are not grounded, whatever was copied, so that they
+renamable, opened from its row as any component is. Everything else on the menu is a record reopened
+from a row; this is not, because the owner's own word for what it makes is independent. Copies are
+not grounded, whatever was copied, so that they
 can be moved at once: the same as what is placed after the first. Relationships come when every
 target is on what is copied; one reaching anything else, the assembly's origin included, stays
 behind, as it would pull the copy back. New part files take the document as it is in memory,
@@ -3599,8 +3599,8 @@ is DEC-107's rule: the copies' middle under the pointer, in the view's plane thr
 until a click puts them down. While the panel is open the view draws the assembly as OK would
 leave it, by way of `AsmSession::preview`: `shown_assembly` reads it and `sync_variants` keeps its
 parts ready, so a mirror image comes from the worker for a preview and is dropped with it. What the
-preview adds is lit and cannot be picked. A panel found out while testing here: Enter in one of these value
-boxes means OK, as in the part panels (Constrain's does not, and is left as it was).
+preview adds is lit and cannot be picked. Enter in one of these value boxes means OK, as in the part
+panels (Constrain's does not, and is left as it was).
 
 **The angle.** "Over how much of a turn they spread evenly", as Tenon's part pattern has it, not the
 step from one to the next, which is what the program this is modelled on takes for components: one

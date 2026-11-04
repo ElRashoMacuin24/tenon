@@ -7590,7 +7590,7 @@
       "id": "asm.tree",
       "label": "Assembly Tree",
       "undoable": false,
-      "description": "",
+      "description": "the components (each with where it stands, whether it is mirrored and what pattern it is an element of), the relationships and the patterns and mirrors",
       "params": {
         "type": "object",
         "properties": {},
@@ -8141,7 +8141,7 @@
       "id": "asm.bom",
       "label": "Bill of Materials",
       "undoable": false,
-      "description": "one row per part: quantity, volume, material and mass (grams, of one)",
+      "description": "one row per part: quantity, volume, material and mass (grams, of one). A mirrored part has a row of its own, with mirrored true",
       "params": {
         "type": "object",
         "properties": {},

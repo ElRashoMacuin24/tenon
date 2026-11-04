@@ -142,3 +142,26 @@ fn a_part_opened_again_is_shown_at_once_from_what_was_kept_and_the_rebuild_confi
     assert_eq!(kept_files(&nowhere), 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_mirror_image_is_kept_apart_from_the_part_it_is_the_image_of() {
+    let dir = scratch("scenes-mirror");
+    let store = SceneFiles::at(&dir);
+    let tol = MeshTol::default();
+    let plain = example("m3-pivot/arm.tenon");
+    let mut image = plain.clone();
+    image.set_reflected(true);
+    let mut k = OcctKernel::new();
+    let of = |doc: &Document, k: &mut OcctKernel| {
+        let regen = tenon_model::regenerate(doc, k);
+        tenon_model::scene(&regen, k, &tol).unwrap()
+    };
+    let (a, b) = (of(&plain, &mut k), of(&image, &mut k));
+    store.put(&plain, &tol, false, &a);
+    assert!(store.get(&image, &tol, false).is_none(), "what is kept of a part is not its mirror image");
+    store.put(&image, &tol, false, &b);
+    assert!(store.get(&plain, &tol, false).unwrap().same_as(&a));
+    assert!(store.get(&image, &tol, false).unwrap().same_as(&b));
+    assert!(!a.same_as(&b));
+    let _ = std::fs::remove_dir_all(&dir);
+}

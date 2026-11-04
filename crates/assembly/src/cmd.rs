@@ -930,7 +930,14 @@ fn asm_edit_part(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> C
 }
 
 static COMMANDS: &[AsmCommand] = &[
-    AsmCommand { id: "asm.tree", label: "Assembly Tree", help: "", mutates: false, kernel: false, run: asm_tree },
+    AsmCommand {
+        id: "asm.tree",
+        label: "Assembly Tree",
+        help: "the components (each with where it stands, whether it is mirrored and what pattern it is an element of), the relationships and the patterns and mirrors",
+        mutates: false,
+        kernel: false,
+        run: asm_tree,
+    },
     AsmCommand {
         id: "asm.geom",
         label: "Assembly Geometry",
@@ -1018,7 +1025,7 @@ static COMMANDS: &[AsmCommand] = &[
     AsmCommand {
         id: "asm.bom",
         label: "Bill of Materials",
-        help: "one row per part: quantity, volume, material and mass (grams, of one)",
+        help: "one row per part: quantity, volume, material and mass (grams, of one). A mirrored part has a row of its own, with mirrored true",
         mutates: false,
         kernel: false,
         run: asm_bom,

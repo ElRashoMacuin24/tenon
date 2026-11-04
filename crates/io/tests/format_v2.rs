@@ -519,6 +519,7 @@ description = \"Mounting bracket\"
         key: "bracket.tenon".into(),
         name: "Bracket".into(),
         row: row.map(str::to_owned),
+        mirrored: false,
         quantity: 2,
         material: None,
         mass: None,
@@ -528,6 +529,9 @@ description = \"Mounting bracket\"
         components: Vec::new(),
     };
     assert_eq!((row(None, None, None).number(), row(None, None, None).what()), ("bracket".to_owned(), "Bracket".to_owned()));
+    // A mirrored part says so, with whatever it is called.
+    let image = tenon_assembly::session::BomRow { mirrored: true, ..row(Some("BR-0042"), Some("A bracket"), Some("Long")) };
+    assert_eq!((image.number(), image.what()), ("BR-0042 (Long) (mirrored)".to_owned(), "A bracket, mirrored".to_owned()));
     let own = row(Some("BR-0042"), Some("Mounting bracket"), None);
     assert_eq!((own.number(), own.what()), ("BR-0042".to_owned(), "Mounting bracket".to_owned()));
     assert_eq!(row(Some("SC-5"), None, Some("M5x16")).number(), "SC-5 (M5x16)");

@@ -7,8 +7,6 @@ use serde_json::json;
 use tenon_assembly::{ComponentId, Geom, PatternId, PatternKind, RelationshipId, Target};
 use tenon_model::{OriginAxis, OriginPlane};
 
-use tenon_assembly::session as asm_session;
-
 use crate::icons::{self, Icon};
 use crate::panels::Panel;
 use crate::theme::{self, Tokens};
@@ -133,6 +131,7 @@ impl Workbench {
         p.text(pos2(tab.left() + 8.0, tab.center().y), Align2::LEFT_CENTER, "Model", theme::body(), t.text);
         p.hline(header.x_range(), header.bottom(), Stroke::new(1.0, t.border));
         ui.add_space(header.height() + 2.0);
+        let problems = self.pattern_problems();
         let Some(a) = self.asm.as_ref() else { return };
         let asm = a.session.assembly();
         let origin_open = self.chrome.origin_open;
@@ -269,7 +268,7 @@ impl Workbench {
                     }
                     Line::Pattern(i) => {
                         let Some(p) = asm.patterns.get(i) else { continue };
-                        let problem = asm_session::pattern_problem(asm, &a.session.parts, p);
+                        let problem = problems.get(&p.id);
                         let style = if p.suppressed {
                             Style::Dim
                         } else if problem.is_some() {

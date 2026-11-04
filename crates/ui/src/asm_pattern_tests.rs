@@ -151,9 +151,20 @@ fn a_pattern_is_made_by_clicking_seen_before_ok_and_listed_with_its_elements() {
     d.frame(&mut wb, vec![]);
     assert_eq!(wb.scene().bodies.len(), 4, "the plate and three blocks");
     assert_eq!(wb.assembly().unwrap().assembly().components.len(), 2);
-    let top = |wb: &Workbench| wb.scene().bbox().unwrap();
     assert!((wb.scene().bodies.iter().map(|b| b.volume).sum::<f64>() - (200000.0 + 3000.0)).abs() < 1e-6);
-    let _ = top;
+    // What the preview adds is lit, and is not there to pick: a click on it passes it by.
+    assert!(!wb.repeat_highlights().is_empty());
+    d.click(&mut wb, pressable(&d, "tn_repeat_components"));
+    d.frame(&mut wb, vec![]);
+    let body = wb.asm.as_ref().unwrap().map.iter().position(|(c, _)| wb.assembly().unwrap().assembly().component(*c).is_none()).unwrap();
+    let ghost = wb.scene().bodies[body].mass.center_of_mass + Vec3::new(0.0, 0.0, 5.0);
+    let ghost = on_screen(&wb, ghost);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(ghost)]);
+    d.frame(&mut wb, vec![]);
+    d.click(&mut wb, ghost);
+    d.frame(&mut wb, vec![]);
+    let Some(Panel::Asm(p)) = &wb.panel else { panic!() };
+    assert_eq!(p.components, [ComponentId(2)], "{}", wb.status());
 
     // A second direction, along the plate's right edge: two rows 20 apart.
     d.click(&mut wb, pressable(&d, "tn_pattern_second"));
@@ -249,6 +260,19 @@ fn a_pattern_is_made_by_clicking_seen_before_ok_and_listed_with_its_elements() {
     wb.run_ui("edit.undo").unwrap();
     d.settle(&mut wb);
     assert_eq!(wb.assembly().unwrap().assembly().components.len(), 5);
+    // Made independent: the record goes, the elements stay, each a free component on its own row.
+    menu_on(&mut d, &mut wb, "Pattern:1 (2 x 2)");
+    d.click(&mut wb, d.text_pos("Make Elements Independent").expect("the menu"));
+    d.settle(&mut wb);
+    let asm = wb.assembly().unwrap().assembly();
+    assert!(asm.patterns.is_empty() && asm.elements().is_empty());
+    assert_eq!(asm.components.len(), 5);
+    browser_row(&d, "block:2");
+    let at = on_screen(&wb, placement(&wb, 3).to_world(Vec3::new(5.0, 5.0, 10.0)));
+    let was = placement(&wb, 3).origin();
+    d.drag(&mut wb, at, at + vec2(30.0, 0.0), egui::PointerButton::Primary);
+    d.frame(&mut wb, vec![]);
+    assert!(placement(&wb, 3).origin().dist(was) > 1.0, "it moves now: {}", wb.status());
     assert!(!wb.status_error, "{}", wb.status());
 }
 
@@ -408,7 +432,9 @@ fn a_mirror_is_made_by_clicking_and_its_part_is_reflected_in_the_view() {
     let enclosed: f64 = b
         .mesh
         .indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|t| {
             let at = |i: u32| p.point(b.mesh.positions[i as usize]);
             at(t[0]).dot(at(t[1]).cross(at(t[2]))) / 6.0
@@ -548,6 +574,17 @@ fn a_symmetric_part_is_placed_again_from_the_mirror_panel() {
     assert_eq!(back.patterns.len(), 1);
     assert!(near(back.component(ComponentId(3)).unwrap().placement.origin(), Vec3::new(-20.0, 0.0, 0.0)));
     browser_row(&d, "Mirror:1");
+    let problems = wb.pattern_problems();
+    assert!(problems.is_empty(), "{problems:?}");
+
+    // The part is changed so that it no longer is the same as its mirror image: the row says so,
+    // and the element stays where it was until that is put right.
+    wb.asm_exec("asm.edit_part", json!({ "component": 2, "run": "model.box", "with": { "x": 0, "y": 0, "width": 2, "depth": 2, "height": 20 } }))
+        .unwrap();
+    d.settle(&mut wb);
+    let problems = wb.pattern_problems();
+    assert!(problems.values().any(|m| m.contains("no longer the same")), "{problems:?}");
+    assert_eq!(d.text_color("Mirror:1"), Some(crate::theme::Tokens::of(wb.theme()).history_marker));
 }
 
 #[test]
@@ -657,7 +694,11 @@ fn a_pattern_of_two_components_lists_each_element_with_both_and_folds_away() {
     box_part(&dir.join("peg.tenon"), "Peg", 4.0, 4.0, 12.0);
     let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
     let mut d = Driver::new(vec2(1400.0, 860.0));
-    opened(&mut wb, &mut d, &[(&dir.join("base.tenon"), [0.0, 0.0, 0.0]), (&dir.join("cube.tenon"), [5.0, 5.0, 5.0]), (&dir.join("peg.tenon"), [8.0, 8.0, 15.0])]);
+    opened(
+        &mut wb,
+        &mut d,
+        &[(&dir.join("base.tenon"), [0.0, 0.0, 0.0]), (&dir.join("cube.tenon"), [5.0, 5.0, 5.0]), (&dir.join("peg.tenon"), [8.0, 8.0, 15.0])],
+    );
     let x = wb.asm_exec("asm.geom", json!({ "axis": "x" })).unwrap();
     wb.asm_exec("asm.pattern", json!({ "components": [2, 3], "type": "rectangular", "direction": x, "count": 2, "spacing": 30 })).unwrap();
     d.settle(&mut wb);
@@ -676,7 +717,9 @@ fn a_pattern_of_two_components_lists_each_element_with_both_and_folds_away() {
     d.click(&mut wb, bx);
     d.frame(&mut wb, vec![]);
     d.frame(&mut wb, vec![]);
-    assert!(!d.ctx.data(|x| x.get_temp::<Vec<(String, egui::Rect)>>(egui::Id::new("tn_browser_rows"))).unwrap().iter().any(|(l, _)| l == "Element:2"));
+    assert!(
+        !d.ctx.data(|x| x.get_temp::<Vec<(String, egui::Rect)>>(egui::Id::new("tn_browser_rows"))).unwrap().iter().any(|(l, _)| l == "Element:2")
+    );
     browser_row(&d, "base:1");
     d.click(&mut wb, bx);
     d.frame(&mut wb, vec![]);
@@ -713,13 +756,16 @@ fn a_mirrored_part_comes_from_the_worker_in_a_slot_of_its_own() {
     use std::time::{Duration, Instant};
     let dir = scratch("worker");
     post_part(&dir.join("post.tenon"));
-    // The assembly on disk, as the app opens it: a post, and its mirror image in the YZ plane.
+    box_part(&dir.join("cube.tenon"), "Cube", 10.0, 10.0, 10.0);
+    // The assembly on disk, as the app opens it: a post, its mirror image in the YZ plane, a cube.
     let mut s = tenon_assembly::AsmSession::default();
     let mut k = OcctKernel::new();
     let post = dir.join("post.tenon").to_string_lossy().into_owned();
     tenon_io::asm::run(&mut s, "asm.insert", &json!({ "path": post, "at": [100, 0, 0], "grounded": false }), Some(&mut k)).unwrap();
     let plane = tenon_io::asm::run(&mut s, "asm.geom", &json!({ "plane": "yz" }), Some(&mut k)).unwrap();
     tenon_io::asm::run(&mut s, "asm.mirror", &json!({ "components": [1], "plane": plane }), Some(&mut k)).unwrap();
+    let cube = dir.join("cube.tenon").to_string_lossy().into_owned();
+    tenon_io::asm::run(&mut s, "asm.insert", &json!({ "path": cube, "at": [0, 50, 0], "grounded": false }), Some(&mut k)).unwrap();
     let file = dir.join("pair.tenonasm");
     tenon_io::asm::run(&mut s, "asm.save", &json!({ "path": file.to_string_lossy() }), None).unwrap();
 
@@ -733,7 +779,7 @@ fn a_mirrored_part_comes_from_the_worker_in_a_slot_of_its_own() {
             std::thread::sleep(Duration::from_millis(5));
         }
     };
-    wait(&mut wb, &mut d, &|wb| wb.scene().bodies.len() == 2);
+    wait(&mut wb, &mut d, &|wb| wb.scene().bodies.len() == 3);
     let a = wb.asm.as_ref().unwrap();
     let body = a.map.iter().position(|(c, _)| *c == ComponentId(2)).expect("drawn");
     assert!(near(wb.scene().bodies[body].mass.center_of_mass, Vec3::new(-117.0, 9.0, 8.0)), "{:?}", wb.scene().bodies[body].mass.center_of_mass);
@@ -746,18 +792,32 @@ fn a_mirrored_part_comes_from_the_worker_in_a_slot_of_its_own() {
 
     // The mirror of another part, through the panel's preview: its image arrives from the worker
     // for the preview, is dropped with the panel, and comes again for what is made.
-    let a = wb.asm.as_mut().unwrap();
-    a.selected = vec![ComponentId(1)];
-    wb.command("asm.mirror");
-    d.frame(&mut wb, vec![]);
-    let Some(Panel::Asm(p)) = &mut wb.panel else { panic!() };
-    let target = tenon_assembly::Target { component: None, geom: tenon_assembly::Geom::Plane { plane: tenon_model::OriginPlane::XZ } };
-    p.a = Some((target, "Assembly: XZ".to_owned()));
-    wait(&mut wb, &mut d, &|wb| wb.scene().bodies.len() == 3);
-    assert_eq!(wb.scene().bodies.len(), 3, "{}", wb.status());
+    let preview = |wb: &mut Workbench, d: &mut Driver| {
+        wb.asm.as_mut().unwrap().selected = vec![ComponentId(3)];
+        wb.command("asm.mirror");
+        d.frame(wb, vec![]);
+        let Some(Panel::Asm(p)) = &mut wb.panel else { panic!() };
+        let target = tenon_assembly::Target { component: None, geom: tenon_assembly::Geom::Plane { plane: tenon_model::OriginPlane::XZ } };
+        p.a = Some((target, "Assembly: XZ".to_owned()));
+    };
+    preview(&mut wb, &mut d);
+    wait(&mut wb, &mut d, &|wb| wb.scene().bodies.len() == 4);
+    assert_eq!(wb.scene().bodies.len(), 4, "{}", wb.status());
     wb.panel = None;
-    wait(&mut wb, &mut d, &|wb| wb.scene().bodies.len() == 2);
-    assert_eq!(wb.scene().bodies.len(), 2);
+    wait(&mut wb, &mut d, &|wb| wb.scene().bodies.len() == 3);
+    assert_eq!(wb.scene().bodies.len(), 3);
     assert!(wb.assembly().unwrap().preview().is_none());
+    assert_eq!(wb.assembly().unwrap().parts.values().filter(|p| p.variant.is_some()).count(), 1, "the preview's part went with it");
+
+    preview(&mut wb, &mut d);
+    wait(&mut wb, &mut d, &|wb| wb.scene().bodies.len() == 4);
+    assert_eq!(wb.scene().bodies.len(), 4, "{}", wb.status());
+    wait(&mut wb, &mut d, &|wb| !wb.is_busy());
+    let ok = d.text_pos("OK").expect("the panel's OK");
+    d.click(&mut wb, ok);
+    wait(&mut wb, &mut d, &|wb| wb.panel.is_none() && !wb.is_busy());
+    assert!(wb.panel.is_none(), "{}", wb.status());
+    assert_eq!(wb.assembly().unwrap().assembly().patterns.len(), 2);
+    assert_eq!(wb.scene().bodies.len(), 4);
     assert!(!wb.status_error, "{}", wb.status());
 }

@@ -177,7 +177,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `asm.export_stl` | Export Assembly STL | path (.stl); exploded (default false); linear (mm), angular (rad) deflection; ascii (default binary). Every visible component's solids in one file, each where it is. Returns the solid and triangle counts and whether the surface is closed (watertight) | no |
 | `asm.export_3mf` | Export Assembly 3MF | path (.3mf); exploded (default false); linear (mm), angular (rad) deflection. An object for each part (each size of one), an item for each visible component where it is, with materials and colours. Returns the counts and whether every surface is closed (watertight) | no |
 | `asm.export_bom` | Export Bill of Materials | path (.csv) | no |
-| `asm.tree` | Assembly Tree | none | no |
+| `asm.tree` | Assembly Tree | the components (each with where it stands, whether it is mirrored and what pattern it is an element of), the relationships and the patterns and mirrors | no |
 | `asm.geom` | Assembly Geometry | component; and face: a face origin or {"body", "index"} \| edge: [face origin, face origin] or {"body", "index"} \| plane: "xy" \| "yz" \| "xz" \| axis: "x" \| "y" \| "z" \| origin: true \| work: feature id. Without component: the assembly's own origin planes, axes and point. Returns a target for asm.constrain and asm.joint | no |
 | `asm.constrain` | Constrain | type: mate \| flush \| angle \| insert; a, b: targets from asm.geom; offset (mm); angle (rad, for angle); aligned (insert: axes the same way) | yes |
 | `asm.joint` | Joint | type: rigid \| revolute \| slider \| cylindrical \| planar \| ball; a, b: targets from asm.geom (their origins); flip (Z axes the same way); offset (mm along A's Z); angle (rad, rigid and slider) | yes |
@@ -192,7 +192,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `asm.place` | Place At | component; origin: [x, y, z]; z, x: its part's Z and X directions (default unturned) | yes |
 | `asm.update` | Update | solves again (after parts changed) | yes |
 | `asm.dof` | Degrees of Freedom | each component's free directions and axes (others held still), and the assembly's total | no |
-| `asm.bom` | Bill of Materials | one row per part: quantity, volume, material and mass (grams, of one) | no |
+| `asm.bom` | Bill of Materials | one row per part: quantity, volume, material and mass (grams, of one). A mirrored part has a row of its own, with mirrored true | no |
 | `asm.mass` | Assembly Mass | total volume, mass (grams) and centre of mass of the visible components, each at its part's material | no |
 | `asm.explode.add` | Tweak Components | components: [ids]; direction: [x, y, z] or "x" \| "-z" ...; distance (mm) | yes |
 | `asm.explode.auto` | Auto Explode | spacing (mm, default a quarter of the assembly's size): replaces the exploded view with one made from the relationships | yes |

@@ -31,7 +31,7 @@ fn enclosed(m: &Mesh) -> f64 {
         let p = m.positions[i as usize];
         Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))
     };
-    m.indices.chunks_exact(3).map(|t| at(t[0]).dot(at(t[1]).cross(at(t[2]))) / 6.0).sum()
+    m.indices.as_chunks::<3>().0.iter().map(|t| at(t[0]).dot(at(t[1]).cross(at(t[2]))) / 6.0).sum()
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn a_part_built_as_its_mirror_image_is_a_true_solid_with_its_faces_named_as_they
     // the side its triangle's winding says. Reflected without care, both would be the other way.
     let m = &b.mesh;
     assert!((enclosed(m) - 10000.0).abs() < 1e-2, "{}", enclosed(m));
-    for t in m.indices.chunks_exact(3) {
+    for t in m.indices.as_chunks::<3>().0 {
         let at = |i: u32| {
             let p = m.positions[i as usize];
             Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))

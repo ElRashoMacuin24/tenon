@@ -87,6 +87,7 @@ pub fn from_bytes(data: &[u8], dir: &Path) -> Result<Assembly, ProjectError> {
     let file: AsmFile = serde_json::from_value(head.clone()).map_err(|e| {
         project::locate::<tenon_assembly::Component>(&head, &layout::ASSEMBLY, "components", &lines)
             .or_else(|| project::locate::<tenon_assembly::Relationship>(&head, &layout::ASSEMBLY, "relationships", &lines))
+            .or_else(|| project::locate::<tenon_assembly::Pattern>(&head, &layout::ASSEMBLY, "patterns", &lines))
             .unwrap_or_else(|| ProjectError::Damaged(e.to_string()))
     })?;
     let mut asm = file.assembly;
@@ -99,7 +100,8 @@ pub fn from_bytes(data: &[u8], dir: &Path) -> Result<Assembly, ProjectError> {
     Ok(asm)
 }
 
-fn folder_of(path: &Path) -> PathBuf {
+/// The folder a file is in ("." for one named without a folder).
+pub fn folder_of(path: &Path) -> PathBuf {
     let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
     if parent.as_os_str().is_empty() { PathBuf::from(".") } else { parent }
 }
@@ -276,7 +278,9 @@ fn asm_copy(s: &mut AsmSession, mut k: Option<&mut dyn Kernel>, p: &Value) -> Cm
                 .document()
                 .clone();
             // (A new part of its own: not the old one's number.)
-            doc.name = format!("{} Copy", doc.name);
+            if doc.name.len() <= 195 {
+                doc.name = format!("{} Copy", doc.name);
+            }
             doc.part_number = None;
             let stem = Path::new(&part).file_stem().map_or_else(|| "part".to_owned(), |x| x.to_string_lossy().into_owned());
             let file = copy_file(&folder, &stem);

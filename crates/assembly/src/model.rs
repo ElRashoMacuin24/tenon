@@ -1064,7 +1064,7 @@ mod tests {
         let word = Component { row: Some("mirrored".into()), ..plain };
         assert_ne!(word.key(), k1);
         // In a file it is written only when it is so.
-        assert!(serde_json::to_value(&plain_of(&asm, a)).unwrap().get("mirrored").is_none());
+        assert!(serde_json::to_value(plain_of(&asm, a)).unwrap().get("mirrored").is_none());
         assert_eq!(serde_json::to_value(&mirrored).unwrap()["mirrored"], true);
     }
 

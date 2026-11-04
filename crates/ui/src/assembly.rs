@@ -123,6 +123,8 @@ pub(crate) struct AsmDoc {
     pub expanded: std::collections::BTreeSet<ComponentId>,
     /// Patterns whose elements are not listed in the browser.
     pub patterns_closed: std::collections::BTreeSet<PatternId>,
+    /// What keeps patterns' rules from being worked out, and what that was found from.
+    pub(crate) pattern_problems: Option<(u64, BTreeMap<PatternId, String>)>,
 }
 
 impl AsmDoc {
@@ -155,6 +157,7 @@ impl AsmDoc {
             relationships_open: true,
             expanded: Default::default(),
             patterns_closed: Default::default(),
+            pattern_problems: None,
         }
     }
 
@@ -835,6 +838,24 @@ impl Workbench {
         h.finish()
     }
 
+    /// What keeps each pattern's rule from being worked out, in words: found again only when the
+    /// assembly or a part has changed (whether a part is the same as its mirror image is not
+    /// quick to tell, and the browser asks every frame).
+    pub(crate) fn pattern_problems(&mut self) -> BTreeMap<PatternId, String> {
+        let key = self.dof_key();
+        let Some(a) = self.asm.as_mut() else { return BTreeMap::new() };
+        if let Some((k, found)) = &a.pattern_problems
+            && *k == key
+        {
+            return found.clone();
+        }
+        let asm = a.session.assembly();
+        let found: BTreeMap<PatternId, String> =
+            asm.patterns.iter().filter_map(|p| asm_session::pattern_problem(asm, &a.session.parts, p).map(|m| (p.id, m))).collect();
+        a.pattern_problems = Some((key, found.clone()));
+        found
+    }
+
     /// Keeps the degrees of freedom up to date while they are shown.
     pub(crate) fn refresh_dof(&mut self) {
         let key = self.dof_key();
@@ -1400,7 +1421,7 @@ impl Workbench {
                         ui.end_row();
                         for r in &rows {
                             ui.label(r.item.to_string());
-                            ui.label(r.number()).on_hover_text(format!("{}.tenon", r.key.trim_end_matches(".tenon")));
+                            ui.label(r.number()).on_hover_text(tenon_assembly::key_file(&r.key));
                             ui.label(r.what());
                             ui.label(r.quantity.to_string());
                             ui.label(r.material.as_deref().unwrap_or("Generic"));

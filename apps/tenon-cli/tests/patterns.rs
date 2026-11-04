@@ -268,7 +268,14 @@ fn a_part_in_a_size_is_mirrored_and_patterned_in_that_size_and_follows_it() {
     run(e, "asm.pattern", json!({ "components": [pin], "type": "rectangular", "direction": y, "count": 2, "spacing": 10 }));
     let rows = |e: &mut Engine| {
         let bom = run(e, "asm.bom", json!({}));
-        bom["rows"].as_array().unwrap().iter().map(|r| (r["part"].as_str().unwrap().to_owned(), r["name"].as_str().unwrap().to_owned(), r["quantity"].as_u64().unwrap(), num(&r["volume"]))).collect::<Vec<_>>()
+        bom["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (r["part"].as_str().unwrap().to_owned(), r["name"].as_str().unwrap().to_owned(), r["quantity"].as_u64().unwrap(), num(&r["volume"]))
+            })
+            .collect::<Vec<_>>()
     };
     // 10 x 4 x 50 = 2000 mm^3: the mirror image of that size, on a row of its own.
     let r = rows(e);
@@ -539,7 +546,7 @@ fn a_mirrored_occurrence_holds_its_part_reflected_wherever_it_is_read() {
     assert_eq!(r["watertight"], true, "{r}");
     let data = std::fs::read(dir.join("pair.stl")).unwrap();
     let (mut signed, mut left) = (0.0, 0.0);
-    for t in data[84..].chunks_exact(50) {
+    for t in data[84..].as_chunks::<50>().0 {
         let f = |i: usize| f32::from_le_bytes(t[i..i + 4].try_into().unwrap()) as f64;
         let (a, b, c) = ([f(12), f(16), f(20)], [f(24), f(28), f(32)], [f(36), f(40), f(44)]);
         let n = [f(0), f(4), f(8)];
@@ -957,10 +964,8 @@ fn patterns_and_mirrors_are_saved_and_read_back_to_the_same_bytes() {
     let again = run(e, "asm.mirror", json!({ "components": [block], "plane": plane, "reuse": [block] }));
     run(e, "asm.suppress_pattern", json!({ "pattern": again["pattern"] }));
     // And in a flat face of a component: a reference with its fingerprint, rounded as all are.
-    let flat = (0..6)
-        .map(|i| run(e, "asm.geom", json!({ "component": block, "face": { "body": 0, "index": i } })))
-        .find(|t| t["kind"] == "plane")
-        .unwrap();
+    let flat =
+        (0..6).map(|i| run(e, "asm.geom", json!({ "component": block, "face": { "body": 0, "index": i } }))).find(|t| t["kind"] == "plane").unwrap();
     run(e, "asm.mirror", json!({ "components": [element], "plane": flat }));
     run(e, "asm.save", json!({ "path": "a.tenonasm" }));
     let first = std::fs::read(dir.join("a.tenonasm")).unwrap();
@@ -1017,11 +1022,16 @@ fn patterns_and_mirrors_are_saved_and_read_back_to_the_same_bytes() {
     assert!(diff.changes.iter().any(|c| c.section == "Components" && c.op == '+'), "{:?}", diff.changes);
     for (from, to, says) in [
         ("next_pattern = 6", "next_pattern = 2", "bad or repeated id"),
-        ("count = 5
-", "count = 100000
-", "the count must be"),
+        (
+            "count = 5
+",
+            "count = 100000
+",
+            "the count must be",
+        ),
         ("spacing = 15.5", "spacing = -2.0", "spacing must be positive"),
         ("sources = [", "sources = [999, ", "does not stand for"),
+        ("type = \"circular\"", "type = \"spiral\"", "pattern 3 (Pattern:2)"),
     ] {
         assert!(text.contains(from), "{from}");
         let damaged = text.replacen(from, to, 1);

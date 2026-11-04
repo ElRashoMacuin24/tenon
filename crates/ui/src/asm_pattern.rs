@@ -347,10 +347,10 @@ impl Workbench {
             clicked
         };
         section(ui, "Components", true, |ui| {
-            let text = if p.components.is_empty() {
-                "click the components".to_string()
-            } else {
-                p.components.iter().map(names).collect::<Vec<_>>().join(", ")
+            let text = match p.components.len() {
+                0 => "click the components".to_string(),
+                1..=3 => p.components.iter().map(names).collect::<Vec<_>>().join(", "),
+                n => format!("{n} components"),
             };
             if slot_button(ui, "", "tn_repeat_components", p.slot == SLOT_COMPONENTS, &text) {
                 p.slot = SLOT_COMPONENTS;
@@ -534,7 +534,7 @@ impl Workbench {
         if p.tool == AsmTool::Copy {
             let mut params = json!({ "components": ids, "by": p.by, "new_files": p.new_files });
             if p.new_files {
-                let folder = self.asm.as_ref().and_then(|a| a.path.as_ref()).and_then(|f| f.parent()).map(|f| f.to_string_lossy().into_owned());
+                let folder = self.asm.as_ref().and_then(|a| a.path.as_deref()).map(|f| tenon_io::asm::folder_of(f).to_string_lossy().into_owned());
                 params["folder"] = json!(folder.ok_or("Save the assembly first: the new part files go beside it.")?);
             }
             let r = self.asm_exec("asm.copy", params)?;
