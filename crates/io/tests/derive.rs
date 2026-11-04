@@ -532,3 +532,32 @@ fn a_relative_path_in_a_definition_is_from_this_file_and_with_no_file_it_is_refu
     assert!(std::fs::read_to_string(&mine).unwrap().contains("path = \"other.tenon\""));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A drawing follows its model's files about once a second: and what its part derives from too, which
+/// it went on drawing at the old size, with no word, until Update.
+#[test]
+fn a_drawing_follows_the_file_its_part_derives_from() {
+    let dir = folder("drawing-follows");
+    let (src, part) = (dir.join("src.tenon"), dir.join("part.tenon"));
+    block_file(&src, 0.0, 50.0, 40.0, 10.0);
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "model.derive", json!({ "path": path(&src) }));
+    run(&mut s, &mut k, "file.save", json!({ "path": path(&part) }));
+    let mut d = tenon_drawing::DrwSession::default();
+    tenon_io::drw::run(&mut d, "drw.new", &json!({ "name": "D" }), Some(&mut k)).unwrap();
+    tenon_io::drw::run(&mut d, "drw.view.base", &json!({ "model": path(&part), "orientation": "top", "scale": 1, "at": [150, 130] }), Some(&mut k))
+        .unwrap();
+    let plan = dir.join("plan.tenondrw");
+    tenon_io::drw::run(&mut d, "drw.save", &json!({ "path": path(&plan) }), Some(&mut k)).unwrap();
+    tenon_io::drw::run(&mut d, "drw.open", &json!({ "path": path(&plan) }), Some(&mut k)).unwrap();
+    assert_eq!(tenon_io::drw::reload_changed(&mut d), tenon_io::drw::Changed::default(), "nothing has changed");
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    block_file(&src, 0.0, 90.0, 40.0, 10.0);
+    let changed = tenon_io::drw::reload_changed(&mut d);
+    assert_eq!(changed.reloaded, ["part.tenon"], "{changed:?}");
+    d.refresh(&mut k);
+    let info = tenon_io::drw::run(&mut d, "drw.info", &json!({}), Some(&mut k)).unwrap();
+    near(info["views"][0]["size"][0].as_f64().unwrap(), 90.0);
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -119,6 +119,17 @@ fn read_links(doc: &Document, home: Option<&str>, chain: &mut Vec<String>) -> Li
     links
 }
 
+/// The files a document derives from, and what those derive from in turn, as full paths.
+pub(crate) fn files_of(doc: &Document, out: &mut Vec<String>) {
+    let links = doc.links();
+    for (path, source) in &links.sources {
+        out.push(full_path(path, links.home.as_deref()));
+        if let Ok(from) = &source.document {
+            files_of(from, out);
+        }
+    }
+}
+
 /// The chain of a document at `home`: itself.
 fn chain_from(home: Option<&str>) -> Vec<String> {
     home.map(identity).into_iter().collect()

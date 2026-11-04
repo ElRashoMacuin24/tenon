@@ -116,8 +116,9 @@ pub fn save(path: &Path, d: &Drawing) -> Result<Option<PathBuf>, ProjectError> {
 
 // ---- noticing model files that change on disk ---------------------------------------------------
 
-/// A fingerprint of a model's files as they are on disk now: the file and, for an assembly, its
-/// part files, each by length and modification time (a missing file counts too).
+/// A fingerprint of a model's files as they are on disk now: the file, for an assembly its part
+/// files, and the files a part derives from, each by length and modification time (a missing file
+/// counts too).
 pub fn model_stamp(key: &str, m: &DrwModel) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -134,11 +135,18 @@ pub fn model_stamp(key: &str, m: &DrwModel) -> u64 {
         }
     };
     file(key);
-    if let DrwModel::Assembly(a) = m {
-        for part in a.parts.keys() {
-            file(part);
+    let mut derived = Vec::new();
+    match m {
+        DrwModel::Part(p) => crate::derive::files_of(p.document(), &mut derived),
+        DrwModel::Assembly(a) => {
+            for (part, p) in &a.parts {
+                file(part);
+                crate::derive::files_of(p.session.document(), &mut derived);
+            }
         }
+        DrwModel::Missing(_) => {}
     }
+    derived.iter().for_each(|d| file(d));
     h.finish()
 }
 

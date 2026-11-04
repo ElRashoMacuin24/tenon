@@ -268,6 +268,8 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- A drawing follows what its part derives from, as it follows the part's own file. A balloon on a
+  component that has gone says so in `drw.info`.
 - Words that read wrong: Auto Explode of nothing said "Exploded in 0 steps" and went into the exploded
   state, and of two parts "1 steps"; Update on a drawing with no views said "Read again: "; and the title
   "Bill of Materials" was cut off at the window's edge.
