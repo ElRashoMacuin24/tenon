@@ -419,6 +419,11 @@ fn a_break_out_is_clicked_with_its_depth_typed_and_changed_from_its_row() {
 /// rotational joint in its hole, 5 from its end. Saved, in a new drawing, with a view from above at
 /// 1:1, nothing selected. The joint is relationship 1.
 fn pivot_view(wb: &mut Workbench, d: &mut Driver, dir: &Path) {
+    pivot_view_hiding(wb, d, dir, false);
+}
+
+/// The same; `hide`: the arm is hidden in the assembly.
+fn pivot_view_hiding(wb: &mut Workbench, d: &mut Driver, dir: &Path, hide: bool) {
     let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
     wb.exec("sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 100, "y2": 60 })).unwrap();
     let hole = wb.exec("sketch.circle", json!({ "sketch": sk, "cx": 20, "cy": 20, "r": 5 })).unwrap()["circle"].clone();
@@ -446,6 +451,9 @@ fn pivot_view(wb: &mut Workbench, d: &mut Driver, dir: &Path) {
     };
     let (ga, gb) = (edge(wb, &b, &base, "end", &hole), edge(wb, &a, &arm, "start", &arm_hole));
     wb.asm_exec("asm.joint", json!({ "type": "revolute", "a": ga, "b": gb })).unwrap();
+    if hide {
+        wb.asm_exec("asm.visible", json!({ "component": a, "visible": false })).unwrap();
+    }
     wb.asm_exec("asm.save", json!({ "path": dir.join("pivot.tenonasm").to_str().unwrap() })).unwrap();
     wb.run_ui("file.new_drawing").unwrap();
     settle(d, wb, 3);
@@ -598,4 +606,331 @@ fn the_five_are_on_the_ribbon_and_available() {
         assert!(wb.run_ui(id).is_ok(), "{id}: {}", wb.status());
         d.tap(&mut wb, egui::Key::Escape);
     }
+}
+
+/// A 100 x 60 x 25 block with its corner cut from (100, 30) to (70, 60), in a new drawing: seen from
+/// above at 1:1 (view 1), nothing selected.
+fn wedge_view(wb: &mut Workbench, d: &mut Driver, dir: &Path) {
+    let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    let first = wb.exec("sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 60, "x2": 0, "y2": 0 })).unwrap();
+    let mut last = first["end"].clone();
+    for (x, y) in [(100, 0), (100, 30), (70, 60)] {
+        last = wb.exec("sketch.line", json!({ "sketch": sk, "start": last, "x2": x, "y2": y })).unwrap()["end"].clone();
+    }
+    wb.exec("sketch.line", json!({ "sketch": sk, "start": last, "end": first["start"] })).unwrap();
+    wb.exec("model.extrude", json!({ "sketch": sk, "distance": 25 })).unwrap();
+    let path = dir.join("wedge.tenon");
+    wb.save(&path).unwrap();
+    wb.run_ui("file.new_drawing").unwrap();
+    d.frame(wb, vec![]);
+    wb.place_base_view(&path, Orientation::Top, Some(1.0), false).unwrap();
+    d.tap(wb, egui::Key::Escape);
+    wb.drw.as_mut().unwrap().selected = None;
+    settle(d, wb, 2);
+}
+
+#[test]
+fn a_break_out_on_an_auxiliary_view_is_cut_from_the_face_and_one_that_cuts_nothing_says_so() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("break-out-aux");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wedge_view(&mut wb, &mut d, &dir);
+    let edge = wb.drw_exec("drw.pick", json!({ "view": 1, "view_at": [85, 45] })).unwrap();
+    let at = [edge["at"][0].as_f64().unwrap() + 70.0, edge["at"][1].as_f64().unwrap() + 70.0];
+    wb.drw_exec("drw.auxiliary", json!({ "parent": 1, "edge": edge, "at": at })).unwrap();
+    settle(&mut d, &mut wb, 3);
+    d.tap(&mut wb, egui::Key::Escape);
+
+    // Modify > Break Out, the auxiliary view, a square on the inclined face, and OK at the depth the
+    // panel starts with. The face is the nearest of the block seen from there, so 5 down is in the part:
+    // the square's area, over the 3 between hatch lines.
+    wb.run_ui("drw.break_out").unwrap();
+    let middle = {
+        let ev = wb.drawing().unwrap().evaluation().unwrap();
+        tenon_drawing::views::project(&ev.view(ViewId(2)).unwrap().frame, tenon_geom::Vec3::new(85.0, 45.0, 12.5))
+    };
+    let inside = in_view(&mut wb, 2, middle.x, middle.y);
+    d.click(&mut wb, inside);
+    assert_eq!(wb.drw.as_ref().unwrap().mod_panel.as_ref().unwrap().view, Some(ViewId(2)), "{}", wb.status());
+    let (p, q) = (in_view(&mut wb, 2, middle.x - 8.0, middle.y - 8.0), in_view(&mut wb, 2, middle.x + 8.0, middle.y + 8.0));
+    d.click(&mut wb, p);
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(q)]);
+    settle(&mut d, &mut wb, 2);
+    d.click(&mut wb, q);
+    settle(&mut d, &mut wb, 2);
+    press(&mut d, &mut wb, "tn_mod_ok");
+    settle(&mut d, &mut wb, 3);
+    let v = view(&mut wb, 1);
+    assert_eq!(v["modifiers"][0]["type"], "break_out", "{v} {}", wb.status());
+    assert!(v["error"].is_null(), "{v}");
+    assert!(wb.status().contains("done"), "{}", wb.status());
+    let px = wb.drw.as_ref().unwrap().cam.px;
+    let h = length(&drawn(&wb, 2, Pen::Hatch));
+    // (The corners were clicked to within a pixel or so.)
+    assert!((h - 256.0 / 3.0).abs() < 256.0 / 3.0 * 0.03 + 70.0 / px / 3.0, "{h} against {}", 256.0 / 3.0);
+
+    // The same on the base view, over the corner taken off the block: nothing to cut, and it says so
+    // in the status bar and on its row.
+    wb.drw.as_mut().unwrap().selected = Some(Owner::View(ViewId(1)));
+    wb.run_ui("drw.break_out").unwrap();
+    let (p, q) = (in_view(&mut wb, 1, 92.0, 52.0), in_view(&mut wb, 1, 99.0, 59.0));
+    d.click(&mut wb, p);
+    d.click(&mut wb, q);
+    settle(&mut d, &mut wb, 2);
+    press(&mut d, &mut wb, "tn_mod_ok");
+    settle(&mut d, &mut wb, 3);
+    assert!(wb.status().contains("cuts nothing"), "{}", wb.status());
+    assert!(view(&mut wb, 0)["error"].as_str().is_some_and(|t| t.contains("cuts nothing")));
+}
+
+#[test]
+fn a_curve_is_no_edge_for_an_auxiliary_view_and_a_slanted_edge_across_a_break_is_clicked_where_it_is_drawn() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("aux-curve");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    // A plate whose top edge is a curve from (100, 50) to (0, 50), rising in the middle, and whose right
+    // side leans: from (100, 0) to (120, 50).
+    let sk = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    let a = wb.exec("sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 50, "x2": 0, "y2": 0 })).unwrap();
+    let b = wb.exec("sketch.line", json!({ "sketch": sk, "start": a["end"], "x2": 100, "y2": 0 })).unwrap();
+    let c = wb.exec("sketch.line", json!({ "sketch": sk, "start": b["end"], "x2": 120, "y2": 50 })).unwrap();
+    wb.exec("sketch.spline", json!({ "sketch": sk, "points": [c["end"], [80, 62], [30, 62], a["start"]] })).unwrap();
+    wb.exec("model.extrude", json!({ "sketch": sk, "distance": 10 })).unwrap();
+    let path = dir.join("curvy.tenon");
+    wb.save(&path).unwrap();
+    wb.run_ui("file.new_drawing").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.place_base_view(&path, Orientation::Top, Some(1.0), false).unwrap();
+    d.tap(&mut wb, egui::Key::Escape);
+    wb.drw.as_mut().unwrap().selected = None;
+    settle(&mut d, &mut wb, 2);
+
+    // Where the curve is drawn: its sheet point, as the pick says it is, is of its chord, so found on it.
+    let y = (0..200)
+        .map(|i| 52.0 + f64::from(i) * 0.1)
+        .find(|y| wb.drw_exec("drw.pick", json!({ "view": 1, "view_at": [60, y] })).is_ok_and(|p| p["kind"] == "curve"))
+        .expect("the curve is there");
+    wb.run_ui("drw.auxiliary").unwrap();
+    let inside = in_view(&mut wb, 1, 50.0, 20.0);
+    d.click(&mut wb, inside);
+    let on_curve = in_view(&mut wb, 1, 60.0, y);
+    d.click(&mut wb, on_curve);
+    assert!(wb.status().contains("curve"), "{}", wb.status());
+    assert!(matches!(tool(&wb), Some(DrwTool::Auxiliary { edge: None, .. })), "it still waits for an edge");
+    d.tap(&mut wb, egui::Key::Escape);
+    settle(&mut d, &mut wb, 2);
+
+    // The leaning side crossed by a band across the sheet, 10 to 40 up: two strokes, each to click.
+    wb.drw_exec("drw.break", json!({ "view": 1, "lines": "horizontal", "from": 10, "to": 40, "gap": 6 })).unwrap();
+    settle(&mut d, &mut wb, 2);
+    d.tap(&mut wb, egui::Key::D);
+    // (x = 100 + 20 y / 50.)
+    for (y, n) in [(5.0, 1), (45.0, 2)] {
+        let at = in_view(&mut wb, 1, 100.0 + 0.4 * y, y);
+        d.click(&mut wb, at);
+        match tool(&wb) {
+            Some(DrwTool::Dimension { picks, .. }) => assert_eq!(picks.len(), n, "{}", wb.status()),
+            t => panic!("{t:?}"),
+        }
+    }
+}
+
+#[test]
+fn seeing_an_auxiliary_view_from_its_other_side_takes_the_view_projected_from_it_along() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("aux-flip");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    plate_view(&mut wb, &mut d, &dir.join("plate.tenon"));
+    let c = |v: &Value| Vec2::new(v["center"][0].as_f64().unwrap(), v["center"][1].as_f64().unwrap());
+    let base = c(&view(&mut wb, 0));
+    let bottom = wb.drw_exec("drw.pick", json!({ "view": 1, "view_at": [20, 0] })).unwrap();
+    wb.drw_exec("drw.auxiliary", json!({ "parent": 1, "edge": bottom, "at": [base.x, base.y - 70.0] })).unwrap();
+    wb.drw_exec("drw.view.projected", json!({ "parent": 2, "side": "right", "at": [base.x + 110.0, base.y - 70.0] })).unwrap();
+    settle(&mut d, &mut wb, 3);
+    let row = browser_row(&d, "Auxiliary A");
+    double_click(&mut d, &mut wb, row.center());
+    settle(&mut d, &mut wb, 3);
+    press(&mut d, &mut wb, "tn_view_flip");
+    press(&mut d, &mut wb, "tn_view_ok");
+    assert!(c(&view(&mut wb, 1)).near(Vec2::new(base.x, base.y + 70.0), 1e-6), "{}", wb.status());
+    assert!(c(&view(&mut wb, 2)).near(Vec2::new(base.x + 110.0, base.y + 70.0), 1e-6), "{}", wb.status());
+}
+
+#[test]
+fn a_break_over_another_says_so_in_the_status_bar() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("break-over");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    plate_view(&mut wb, &mut d, &dir.join("plate.tenon"));
+    wb.drw_exec("drw.break", json!({ "view": 1, "lines": "vertical", "from": 10, "to": 30, "gap": 6 })).unwrap();
+    wb.drw.as_mut().unwrap().selected = Some(Owner::View(ViewId(1)));
+    wb.run_ui("drw.break").unwrap();
+    settle(&mut d, &mut wb, 2);
+    type_into(&mut d, &mut wb, "tn_mod_from", "20");
+    type_into(&mut d, &mut wb, "tn_mod_to", "50");
+    press(&mut d, &mut wb, "tn_mod_ok");
+    assert!(wb.status().contains("Break 1") && wb.status().contains("elsewhere"), "{}", wb.status());
+    assert!(wb.drw.as_ref().unwrap().mod_panel.is_some(), "the panel waits");
+}
+
+#[test]
+fn a_panel_ends_when_the_work_goes_elsewhere() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("panels");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    plate_view(&mut wb, &mut d, &dir.join("plate.tenon"));
+    let size = wb.drawing().unwrap().drawing().sheets[0].size.name.clone();
+    wb.drw_exec("drw.sheet.add", json!({ "size": size })).unwrap();
+    settle(&mut d, &mut wb, 2);
+    let mods = |wb: &mut Workbench| view(wb, 0)["modifiers"].as_array().unwrap().len();
+
+    // The Crop panel on the view, one corner clicked; then to the other sheet. The panel ends with it:
+    // clicks on that sheet fill nothing in, and nothing is cropped.
+    wb.run_ui("drw.crop").unwrap();
+    let inside = in_view(&mut wb, 1, 60.0, 40.0);
+    d.click(&mut wb, inside);
+    d.click(&mut wb, inside);
+    assert!(matches!(tool(&wb), Some(DrwTool::Modify { first: Some(_), .. })));
+    settle(&mut d, &mut wb, 2);
+    let row = browser_row(&d, "Sheet:2");
+    d.click(&mut wb, row.center());
+    settle(&mut d, &mut wb, 2);
+    assert!(wb.drw.as_ref().unwrap().mod_panel.is_none(), "{}", wb.status());
+    assert!(tool(&wb).is_none(), "{}", wb.status());
+    assert!(wb.status().contains("another sheet"), "{}", wb.status());
+    d.click(&mut wb, inside);
+    d.click(&mut wb, inside + vec2(40.0, 40.0));
+    assert_eq!(mods(&mut wb), 0);
+    settle(&mut d, &mut wb, 2);
+    let row = browser_row(&d, "Sheet:1");
+    d.click(&mut wb, row.center());
+    settle(&mut d, &mut wb, 3);
+
+    // The panel with no view yet may go with the user to the other sheet, and take a view there.
+    // Another tool ends it: the clicks are that tool's, and the panel does not stay to wait for any.
+    wb.run_ui("drw.crop").unwrap();
+    settle(&mut d, &mut wb, 2);
+    wb.run_ui("drw.projected").unwrap();
+    assert!(wb.drw.as_ref().unwrap().mod_panel.is_none());
+    assert!(matches!(tool(&wb), Some(DrwTool::Projected { .. })));
+    d.tap(&mut wb, egui::Key::Escape);
+    // A dialog that takes the tool away ends it too.
+    wb.run_ui("drw.break").unwrap();
+    assert!(wb.drw.as_ref().unwrap().mod_panel.is_some());
+    wb.run_ui("drw.base").unwrap();
+    settle(&mut d, &mut wb, 2);
+    assert!(wb.drw.as_ref().unwrap().mod_panel.is_none());
+    wb.drw.as_mut().unwrap().base_dialog = None;
+}
+
+#[test]
+fn an_overlay_panel_goes_with_its_sheet_and_with_another_tool() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("overlay-panel");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    pivot_view(&mut wb, &mut d, &dir);
+    let size = wb.drawing().unwrap().drawing().sheets[0].size.name.clone();
+    wb.drw_exec("drw.sheet.add", json!({ "size": size })).unwrap();
+    settle(&mut d, &mut wb, 2);
+    wb.drw.as_mut().unwrap().selected = Some(Owner::View(ViewId(1)));
+    wb.run_ui("drw.overlay").unwrap();
+    settle(&mut d, &mut wb, 2);
+    assert!(wb.drw.as_ref().unwrap().overlay_panel.is_some());
+    wb.run_ui("drw.detail").unwrap();
+    assert!(wb.drw.as_ref().unwrap().overlay_panel.is_none(), "another tool");
+    d.tap(&mut wb, egui::Key::Escape);
+    wb.drw.as_mut().unwrap().selected = Some(Owner::View(ViewId(1)));
+    wb.run_ui("drw.overlay").unwrap();
+    settle(&mut d, &mut wb, 2);
+    let row = browser_row(&d, "Sheet:2");
+    d.click(&mut wb, row.center());
+    settle(&mut d, &mut wb, 2);
+    assert!(wb.drw.as_ref().unwrap().overlay_panel.is_none(), "another sheet");
+}
+
+#[test]
+fn an_overlay_is_typed_with_the_part_it_moves_hidden() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("overlay-hidden");
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    pivot_view_hiding(&mut wb, &mut d, &dir, true);
+    // The arm is hidden in the assembly, and the panel reads its joint all the same.
+    wb.run_ui("drw.overlay").unwrap();
+    let inside = in_view(&mut wb, 1, 50.0, 40.0);
+    d.click(&mut wb, inside);
+    settle(&mut d, &mut wb, 3);
+    let panel = wb.drw.as_ref().unwrap().overlay_panel.clone().unwrap_or_else(|| panic!("{}", wb.status()));
+    let now = panel.rows[0].angle_now.unwrap();
+    type_into(&mut d, &mut wb, "tn_overlay_angle_0", &(now + 90.0).to_string());
+    settle(&mut d, &mut wb, 2);
+    let panel = wb.drw.as_ref().unwrap().overlay_panel.clone().unwrap();
+    assert!(panel.problem.is_none(), "{:?}", panel.problem);
+    press(&mut d, &mut wb, "tn_overlay_ok");
+    assert!(wb.drw.as_ref().unwrap().overlay_panel.is_none(), "{}", wb.status());
+    let v = view(&mut wb, 1);
+    assert_eq!(v["kind"]["type"], "overlay", "{v}");
+    assert!(v["error"].is_null(), "{v}");
+}
+
+#[test]
+fn a_click_on_an_edge_while_the_views_are_computed_is_told_to_wait() {
+    let _quiet = crate::tests::timing_lock();
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m4-plate");
+    let dir = scratch("wait");
+    for f in ["plate.tenon", "pin.tenon", "plate-pins.tenonasm", "plate.tenondrw"] {
+        std::fs::copy(src.join(f), dir.join(f)).unwrap();
+    }
+    let mut wb = Workbench::new(|| Box::new(OcctKernel::new()), None, crate::Services::default());
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    let idle = |d: &mut Driver, wb: &mut Workbench| {
+        for _ in 0..600 {
+            d.frame(wb, vec![]);
+            if !wb.is_busy() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("the geometry thread never finished");
+    };
+    wb.open(&dir.join("plate.tenondrw")).unwrap();
+    idle(&mut d, &mut wb);
+    let i = info(&mut wb);
+    let top = i["views"].as_array().unwrap().iter().find(|v| v["direction"] == json!([0.0, 0.0, 1.0])).unwrap()["id"].as_u64().unwrap() as u32;
+    settle(&mut d, &mut wb, 2);
+    let (lo, hi) = wb.drawing().unwrap().evaluation().unwrap().view(ViewId(top)).unwrap().bounds.unwrap();
+    let mid = (lo + hi) * 0.5;
+    let inside = in_view(&mut wb, top, mid.x, mid.y);
+    let bottom = in_view(&mut wb, top, mid.x, lo.y);
+    // The tool, the view, and the edge, the views being out of date for as long as the job takes: it can
+    // finish first, on a machine with little else to do, so this is tried a few times.
+    let mut told = false;
+    for depth in 1..=20 {
+        wb.run_ui("drw.auxiliary").unwrap();
+        d.click(&mut wb, inside);
+        assert!(matches!(tool(&wb), Some(DrwTool::Auxiliary { parent: Some(_), edge: None, .. })), "{}", wb.status());
+        wb.drw_exec(
+            "drw.break_out",
+            json!({ "view": top, "center": [mid.x, mid.y], "radius": (hi.y - lo.y) * 0.25, "depth": f64::from(depth) * 0.1 }),
+        )
+        .unwrap();
+        d.click(&mut wb, bottom);
+        let waiting = wb.status().contains("being computed");
+        assert!(waiting || matches!(tool(&wb), Some(DrwTool::Auxiliary { edge: Some(_), .. })), "the edge is straight: {}", wb.status());
+        d.tap(&mut wb, egui::Key::Escape);
+        idle(&mut d, &mut wb);
+        told = told || waiting;
+        wb.drw_exec("drw.undo", json!({})).unwrap();
+        idle(&mut d, &mut wb);
+        if told {
+            break;
+        }
+    }
+    assert!(told, "the views were never out of date when clicked");
 }

@@ -413,8 +413,46 @@ impl Workbench {
         Ok(())
     }
 
+    /// Says what computing a view that has just been modified found, once it is computed.
+    fn report_modified(&mut self) {
+        let Some(d) = self.drw.as_mut() else { return };
+        let Some(id) = d.report else { return };
+        let Some(ev) = d.session.evaluation() else { return };
+        d.report = None;
+        let dr = d.session.drawing();
+        let said = dr.view(id).zip(ev.view(id)).and_then(|(v, g)| tenon_drawing::annotate::view_problem(v, g).map(|e| format!("{}: {e}", v.name)));
+        if let Some(e) = said {
+            self.set_error(e);
+        }
+    }
+
+    /// Closes a panel whose work is over: a modifier's panel is filled by its tool, so another tool
+    /// taking over ends it, and what either fills in is on its view's sheet.
+    fn close_stale_panels(&mut self) {
+        let Some(d) = self.drw.as_mut() else { return };
+        let dr = d.session.drawing();
+        let elsewhere = |v: Option<ViewId>| v.and_then(|v| dr.view(v)).is_some_and(|v| v.sheet != d.sheet);
+        let mod_stale = d.mod_panel.as_ref().is_some_and(|p| elsewhere(p.view) || !matches!(d.tool, Some(DrwTool::Modify { .. })));
+        let overlay_stale = d.overlay_panel.as_ref().is_some_and(|p| elsewhere(Some(p.parent)));
+        let off_sheet = d.mod_panel.as_ref().is_some_and(|p| elsewhere(p.view)) || overlay_stale;
+        if mod_stale {
+            d.mod_panel = None;
+            if matches!(d.tool, Some(DrwTool::Modify { .. })) {
+                d.tool = None;
+            }
+        }
+        if overlay_stale {
+            d.overlay_panel = None;
+        }
+        if off_sheet {
+            self.set_status("The panel is closed: its view is on another sheet.");
+        }
+    }
+
     /// The panels of this file.
     pub(crate) fn drw_view_windows(&mut self, ui: &Ui) {
+        self.report_modified();
+        self.close_stale_panels();
         let at = [self.view.rect.right() - 350.0, self.view.rect.top() + 36.0];
         self.mod_window(ui, at);
         self.overlay_window(ui, at);
@@ -519,6 +557,7 @@ impl Workbench {
                     match self.drw_exec(id, p) {
                         Ok(_) => {
                             if let Some(d) = self.drw.as_mut() {
+                                d.report = d.mod_panel.as_ref().and_then(|p| p.view);
                                 d.mod_panel = None;
                                 d.tool = None;
                                 d.selected = None;

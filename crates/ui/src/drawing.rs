@@ -282,6 +282,8 @@ pub(crate) struct DrwDoc {
     pub suggest_dialog: Option<SuggestDialog>,
     pub mod_panel: Option<ModPanel>,
     pub overlay_panel: Option<OverlayPanel>,
+    /// A view that has just been modified: what computing it finds is said once, when it is computed.
+    pub report: Option<ViewId>,
     pub jobs: BTreeMap<u64, DrwJob>,
     /// The model being edited from the drawing (its key), while it is.
     pub editing: Option<String>,
@@ -314,6 +316,7 @@ impl DrwDoc {
             suggest_dialog: None,
             mod_panel: None,
             overlay_panel: None,
+            report: None,
             jobs: BTreeMap::new(),
             editing: None,
             pointer: None,
@@ -721,6 +724,9 @@ impl Workbench {
         let prompt = tool.prompt();
         if let Some(d) = self.drw.as_mut() {
             d.tool = Some(tool);
+            // The clicks are this tool's now, and a panel left open would take none.
+            d.mod_panel = None;
+            d.overlay_panel = None;
         }
         self.set_status(prompt);
     }
@@ -1396,7 +1402,8 @@ impl Workbench {
                     && (view.is_none() || over == view)
                     && let Ok(mut pick) = self.drw_exec("drw.pick", json!({ "view": v.0, "at": v2(at) }))
                 {
-                    if pick["kind"] == "line"
+                    // (Of a curve, its chord.)
+                    if (pick["kind"] == "line" || pick["kind"] == "curve")
                         && let Some(ends) = line_ends(self, v, &pick)
                     {
                         pick["ends"] = json!([v2(ends.0), v2(ends.1)]);
@@ -1508,13 +1515,15 @@ impl Workbench {
                 next(self, Some(DrwTool::Auxiliary { parent: Some(need_view()?), edge: None, changing }))
             }
             DrwTool::Auxiliary { parent: Some(p), edge: None, changing } => {
-                let pick =
-                    self.drw_exec("drw.pick", json!({ "view": p.0, "at": v2(at) })).map_err(|_| "click a straight edge of the view".to_string())?;
+                let pick = self.drw_exec("drw.pick", json!({ "view": p.0, "at": v2(at) })).map_err(|e| {
+                    if e.contains("computed") { STILL_COMPUTING.to_string() } else { "click a straight edge of the view".to_string() }
+                })?;
                 if pick["kind"] != "line" {
-                    return Err("click a straight edge: a circle or an arc has no direction to look square to".into());
+                    return Err("click a straight edge: a circle, an arc or a curve has no one direction to look square to".into());
                 }
                 if let Some(v) = changing {
-                    self.drw_exec("drw.view.edit", json!({ "view": v.0, "edge": pick }))?;
+                    self.drw_exec("drw.view.edit", json!({ "view": v.0, "edge": pick }))
+                        .map_err(|e| if e.contains("computed") { STILL_COMPUTING.to_string() } else { e })?;
                     next(self, None);
                     self.set_status("The auxiliary view looks square to that edge now.");
                 } else {
@@ -1522,7 +1531,9 @@ impl Workbench {
                 }
             }
             DrwTool::Auxiliary { parent: Some(p), edge: Some(edge), .. } => {
-                let r = self.drw_exec("drw.auxiliary", json!({ "parent": p.0, "edge": edge, "at": v2(at) }))?;
+                let r = self
+                    .drw_exec("drw.auxiliary", json!({ "parent": p.0, "edge": edge, "at": v2(at) }))
+                    .map_err(|e| if e.contains("computed") { STILL_COMPUTING.to_string() } else { e })?;
                 next(self, None);
                 self.set_status(format!("View {} placed.", r["name"].as_str().unwrap_or("")));
             }
@@ -1788,7 +1799,9 @@ impl Workbench {
         let (active, selected) = (d.sheet, d.selected);
         let errors: BTreeMap<ViewId, String> = d
             .shown_evaluation()
-            .map(|e| dr.views.iter().filter_map(|v| e.view(v.id).and_then(|g| g.error.clone()).map(|m| (v.id, m))).collect())
+            .map(|e| {
+                dr.views.iter().filter_map(|v| e.view(v.id).and_then(|g| tenon_drawing::annotate::view_problem(v, g)).map(|m| (v.id, m))).collect()
+            })
             .unwrap_or_default();
         let mut pick_sheet: Option<SheetId> = None;
         let mut pick_view: Option<(SheetId, ViewId)> = None;
@@ -1935,6 +1948,9 @@ fn moving_owners(s: &DrwSession, o: Owner) -> Vec<Owner> {
     }
     out
 }
+
+/// What a click that needs the views is told while they are being computed.
+const STILL_COMPUTING: &str = "the views are still being computed; try again in a moment";
 
 /// How far a dragged view moves: a view that stays lined up with its parent only slides in line
 /// with it (as `drw.view.edit` moves it).
