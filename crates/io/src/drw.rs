@@ -46,7 +46,7 @@ pub fn to_bytes(d: &Drawing, dir: &Path) -> Result<Vec<u8>, ProjectError> {
 /// Reads drawing file bytes of any version; model paths are resolved against `dir`.
 pub fn from_bytes(data: &[u8], dir: &Path) -> Result<Drawing, ProjectError> {
     let (head, lines) = project::read_head(data, FORMAT, &layout::DRAWING, VERSION)?;
-    let file: DrwFile = serde_json::from_value(head.clone()).map_err(|e| {
+    let file = DrwFile::deserialize(&head).map_err(|e| {
         project::locate::<tenon_drawing::Sheet>(&head, &layout::DRAWING, "sheets", &lines)
             .or_else(|| project::locate::<tenon_drawing::View>(&head, &layout::DRAWING, "views", &lines))
             .or_else(|| project::locate::<tenon_drawing::Annotation>(&head, &layout::DRAWING, "annotations", &lines))

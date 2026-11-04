@@ -1339,3 +1339,31 @@ fn diff_says_what_changed_of_what_optimize_shape_is_asked() {
     assert!(diff::diff_files(&a, &b).unwrap().same());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_file_of_many_records_is_refused_in_good_time_with_its_line() {
+    // Each record's place used to be counted from the top of the file: this took minutes.
+    let many = "[[x]]\n".repeat(200_000);
+    let text = format!("format = \"tenon\"\nversion = 2\n{many}");
+    let started = std::time::Instant::now();
+    assert!(project::from_bytes(text.as_bytes()).is_err());
+    assert!(started.elapsed().as_secs_f64() < 30.0, "{:?}", started.elapsed());
+    // Where each record starts is still right.
+    let bad = enclosure_text().replacen("type = \"fillet\"", "type = \"no such thing\"", 1);
+    let line = bad.lines().position(|l| l == "[[feature]]" ).unwrap();
+    assert!(line > 0);
+    assert!(damaged(&bad).starts_with("line "), "{}", damaged(&bad));
+}
+
+#[test]
+fn a_file_listing_more_values_than_a_document_can_use_is_refused_before_it_is_read() {
+    // Under the limit on a file's size, and far more in memory than it is on disk.
+    let list = "1,".repeat(5_000_000);
+    let text = format!("format = \"tenon\"\nversion = 2\nx = [{list}]\n");
+    assert!(text.len() < 64 * 1024 * 1024);
+    assert!(damaged(&text).contains("more than a document can use"), "{}", damaged(&text));
+    // A version-1 zip, which is small on disk.
+    let json = format!("{{\"format\":\"tenon\",\"version\":1,\"x\":[{}1]}}", "1,".repeat(5_000_000));
+    let e = project::from_bytes(&project::zip_json(json.as_bytes()).unwrap()).unwrap_err().to_string();
+    assert!(e.contains("more than a document can use"), "{e}");
+}

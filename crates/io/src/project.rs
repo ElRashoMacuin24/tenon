@@ -23,6 +23,18 @@ pub const VERSION: u32 = 2;
 pub const MAX_PROJECT_JSON: u64 = 64 * 1024 * 1024;
 /// Largest project file accepted.
 pub const MAX_FILE: u64 = 256 * 1024 * 1024;
+/// Most values a document's text may list (by its commas). A document under the size above could
+/// otherwise take well over a hundred times its size in memory, read as values, and end a machine
+/// with less than that free. Ten thousand features of a hundred values each leave room to spare.
+const MAX_VALUES: usize = 4_000_000;
+
+/// Whether a document's text lists more values than one can have: looked at before it is read.
+fn too_many_values(text: &[u8]) -> Result<(), ProjectError> {
+    if text.iter().filter(|b| **b == b',').count() > MAX_VALUES {
+        return Err(ProjectError::Damaged(format!("it lists more than {MAX_VALUES} values, more than a document can use")));
+    }
+    Ok(())
+}
 
 /// Whether what `path` names is on another machine, or is a device (to know it, say, before looking).
 pub fn names_a_machine(path: &Path) -> bool {
@@ -139,6 +151,7 @@ fn zip_head(data: &[u8]) -> Result<Value, ProjectError> {
     if json.len() as u64 > MAX_PROJECT_JSON {
         return Err(ProjectError::Damaged("project.json is too large".into()));
     }
+    too_many_values(&json)?;
     serde_json::from_slice(&json).map_err(|e| ProjectError::Damaged(e.to_string()))
 }
 
@@ -148,6 +161,7 @@ fn text_head(data: &[u8], shape: &Shape) -> Result<(Value, Lines), ProjectError>
         return Err(ProjectError::Damaged("the file is too large".into()));
     }
     let text = std::str::from_utf8(data).map_err(|_| ProjectError::NotAProject("the file is neither text nor a zip".into()))?;
+    too_many_values(data)?;
     let (file, lines) = text::read(text).map_err(|e| {
         // Text that never meant to be a Tenon file is not "damaged".
         if text.contains("format") { ProjectError::Damaged(e) } else { ProjectError::NotAProject(e) }
@@ -176,7 +190,7 @@ pub(crate) fn locate<T: serde::de::DeserializeOwned>(head: &Value, shape: &Shape
 /// Reads project file bytes of any version: the document plus any unknown top-level fields.
 pub fn from_bytes(data: &[u8]) -> Result<(Document, Map<String, Value>), ProjectError> {
     let (head, lines) = read_head(data, FORMAT, &layout::PART, VERSION)?;
-    let file: ProjectFile = serde_json::from_value(head.clone()).map_err(|e| {
+    let file = ProjectFile::deserialize(&head).map_err(|e| {
         locate::<tenon_model::Feature>(&head, &layout::PART, "features", &lines)
             .or_else(|| locate::<tenon_model::study::Study>(&head, &layout::PART, "studies", &lines))
             .unwrap_or_else(|| ProjectError::Damaged(e.to_string()))

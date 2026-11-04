@@ -159,11 +159,13 @@ pub(crate) fn read(text: &str) -> Result<(Map<String, Value>, Lines), String> {
     })?;
     let mut lines = Lines::new();
     let mut out = Map::new();
+    // (Where each line starts, once: a file of many records asks for many positions.)
+    let starts: Vec<usize> = std::iter::once(0).chain(text.bytes().enumerate().filter(|(_, b)| *b == b'\n').map(|(i, _)| i + 1)).collect();
     for (k, item) in doc.as_table().iter() {
         if let toml_edit::Item::ArrayOfTables(a) = item {
             for (i, t) in a.iter().enumerate() {
                 if let Some(s) = t.span() {
-                    lines.insert((k.to_owned(), i), position(text, s.start).0);
+                    lines.insert((k.to_owned(), i), starts.partition_point(|start| *start <= s.start));
                 }
             }
         }

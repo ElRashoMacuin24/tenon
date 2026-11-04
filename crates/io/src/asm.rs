@@ -83,7 +83,7 @@ pub fn to_bytes(asm: &Assembly, dir: &Path) -> Result<Vec<u8>, ProjectError> {
 /// folder).
 pub fn from_bytes(data: &[u8], dir: &Path) -> Result<Assembly, ProjectError> {
     let (head, lines) = project::read_head(data, FORMAT, &layout::ASSEMBLY, VERSION)?;
-    let file: AsmFile = serde_json::from_value(head.clone()).map_err(|e| {
+    let file = AsmFile::deserialize(&head).map_err(|e| {
         project::locate::<tenon_assembly::Component>(&head, &layout::ASSEMBLY, "components", &lines)
             .or_else(|| project::locate::<tenon_assembly::Relationship>(&head, &layout::ASSEMBLY, "relationships", &lines))
             .unwrap_or_else(|| ProjectError::Damaged(e.to_string()))
