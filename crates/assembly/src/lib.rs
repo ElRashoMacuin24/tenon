@@ -19,7 +19,7 @@ pub mod solve;
 
 pub use geometry::Prim;
 pub use model::{
-    Assembly, Component, ComponentId, Geom, JointKind, MAX_COMPONENTS, MAX_RELATIONSHIPS, RelKind, Relationship, RelationshipId, Target, Tweak,
-    key_file, part_key,
+    Assembly, Component, ComponentId, Element, Geom, JointKind, MAX_COMPONENTS, MAX_COUNT, MAX_RELATIONSHIPS, Pattern, PatternId, PatternKind, RelKind,
+    Relationship, RelationshipId, Reused, Run, Target, Tweak, key_file, mirrored_key, part_key,
 };
 pub use session::{AsmSession, BomRow, Part, Parts, Solved, Variant};

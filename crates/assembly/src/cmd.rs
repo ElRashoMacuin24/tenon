@@ -10,7 +10,7 @@ use tenon_kernel::Kernel;
 use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult, FaceOrigin, FeatureId, OriginAxis, OriginPlane};
 
-use crate::model::{ComponentId, Geom, JointKind, RelKind, RelationshipId, Target, Tweak};
+use crate::model::{Assembly, ComponentId, Geom, JointKind, MAX_COUNT, PatternId, PatternKind, RelKind, RelationshipId, Run, Target, Tweak};
 use crate::session::{self, AsmSession, auto_explode, bom, dof, exploded, relate, scene_of, solve_assembly};
 
 pub type AsmFn = fn(&mut AsmSession, Option<&mut dyn Kernel>, &Value) -> CmdResult;
@@ -97,7 +97,7 @@ fn vec3(v: &Value, key: &str) -> Result<Vec3, CmdError> {
     if [out.x, out.y, out.z].iter().all(|c| tol::is_valid_coord(*c)) { Ok(out) } else { Err(CmdError(format!("`{key}` is out of range"))) }
 }
 
-fn opt_vec3(p: &Value, key: &str) -> Result<Option<Vec3>, CmdError> {
+pub fn opt_vec3(p: &Value, key: &str) -> Result<Option<Vec3>, CmdError> {
     match arg(p, key) {
         None | Some(Value::Null) => Ok(None),
         Some(v) => vec3(v, key).map(Some),
@@ -130,6 +130,8 @@ fn asm_tree(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
     let asm = s.assembly();
     let (per, total) = dof(asm, &s.parts);
     let failing = |id: RelationshipId| s.failing.iter().find(|(r, _)| *r == id).map(|(_, m)| m.clone());
+    let element_of: std::collections::BTreeMap<ComponentId, PatternId> =
+        asm.patterns.iter().flat_map(|p| p.elements.iter().flat_map(move |e| e.components.iter().map(move |c| (*c, p.id)))).collect();
     let components: Vec<Value> = asm
         .components
         .iter()
@@ -137,6 +139,7 @@ fn asm_tree(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
         .map(|(c, d)| {
             json!({
                 "id": c.id.0, "name": c.name, "part": c.part, "row": c.row, "grounded": c.grounded, "visible": c.visible,
+                "mirrored": c.mirrored, "element_of": element_of.get(&c.id).map(|p| p.0),
                 "placement": frame_json(&c.placement),
                 "missing": s.parts.get(&c.key()).and_then(|p| p.missing.clone()),
                 "dof": d.count(),
@@ -151,7 +154,27 @@ fn asm_tree(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
             json!({ "id": r.id.0, "name": r.name, "type": r.kind.label(), "components": names, "suppressed": r.suppressed, "failing": failing(r.id) })
         })
         .collect();
-    Ok(json!({ "name": asm.name, "components": components, "relationships": relationships, "dof": total }))
+    let patterns: Vec<Value> = asm
+        .patterns
+        .iter()
+        .map(|p| {
+            let ids = |c: &[ComponentId]| c.iter().map(|x| x.0).collect::<Vec<_>>();
+            json!({
+                "id": p.id.0, "name": p.name, "type": pattern_type(&p.kind), "suppressed": p.suppressed, "sources": ids(&p.sources),
+                "elements": p.elements.iter().map(|e| json!({ "at": e.at, "components": ids(&e.components) })).collect::<Vec<_>>(),
+                "failing": session::pattern_problem(asm, &s.parts, p),
+            })
+        })
+        .collect();
+    Ok(json!({ "name": asm.name, "components": components, "relationships": relationships, "patterns": patterns, "dof": total }))
+}
+
+fn pattern_type(kind: &PatternKind) -> &'static str {
+    match kind {
+        PatternKind::Rectangular { .. } => "rectangular",
+        PatternKind::Circular { .. } => "circular",
+        PatternKind::Mirror { .. } => "mirror",
+    }
 }
 
 fn asm_dof(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdResult {
@@ -175,7 +198,7 @@ fn asm_dof(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdRe
 fn asm_bom(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdResult {
     let rows: Vec<Value> = bom(s.assembly(), &s.parts)
         .iter()
-        .map(|r| json!({ "item": r.item, "part": r.part, "name": r.name, "quantity": r.quantity, "volume": r.volume, "material": r.material, "mass": r.mass, "components": r.components }))
+        .map(|r| json!({ "item": r.item, "part": r.part, "name": r.name, "mirrored": r.mirrored, "quantity": r.quantity, "volume": r.volume, "material": r.material, "mass": r.mass, "components": r.components }))
         .collect();
     let total: usize = rows.iter().filter_map(|r| r["quantity"].as_u64()).map(|q| q as usize).sum();
     Ok(json!({ "rows": rows, "parts": rows.len(), "components": total }))
@@ -355,8 +378,19 @@ fn asm_joint(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
     after(s, json!({ "relationship": rid.0, "name": name }))
 }
 
+/// Refuses what cannot be done to an element of a pattern, which stands where the pattern says.
+fn not_an_element(asm: &Assembly, c: ComponentId, what: &str) -> Result<(), CmdError> {
+    match asm.pattern_of(c) {
+        Some(p) => {
+            let name = asm.component(c).map_or_else(|| c.to_string(), |x| x.name.clone());
+            Err(CmdError(format!("{name} is an element of {}: {what}", p.name)))
+        }
+        None => Ok(()),
+    }
+}
+
 /// Re-solves inside an edit; refuses the edit when it does not hold.
-fn solve_or_refuse(asm: &mut crate::model::Assembly, parts: &session::Parts, drag: Option<ComponentId>) -> Result<(), CmdError> {
+pub fn solve_or_refuse(asm: &mut crate::model::Assembly, parts: &session::Parts, drag: Option<ComponentId>) -> Result<(), CmdError> {
     let solved = solve_assembly(asm, parts, drag);
     if solved.converged {
         return Ok(());
@@ -423,11 +457,177 @@ fn asm_delete(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
         return after(s, json!({ "deleted": rid.0 }));
     }
     let cid = component(p, "component")?;
+    not_an_element(s.assembly(), cid, "change the pattern's count, or delete the pattern")?;
     s.edit(|asm, _| if asm.remove_component(cid) { Ok(()) } else { Err(CmdError(format!("{cid} does not exist"))) })?;
-    // Parts no component uses any more are closed.
+    close_unused(s);
+    after(s, json!({ "deleted": cid.0 }))
+}
+
+/// Parts no component uses any more are closed.
+fn close_unused(s: &mut AsmSession) {
     let used: std::collections::BTreeSet<String> = s.assembly().components.iter().flat_map(|c| [c.part.clone(), c.key()]).collect();
     s.parts.retain(|k, p| used.contains(k) || p.session.is_dirty());
-    after(s, json!({ "deleted": cid.0 }))
+}
+
+// ---- patterns and mirrors ---------------------------------------------------------------------
+
+fn pattern_param(p: &Value, key: &str) -> Result<PatternId, CmdError> {
+    id(field(p, key)?, key).map(PatternId)
+}
+
+fn opt_count(p: &Value, key: &str) -> Result<Option<u32>, CmdError> {
+    match arg(p, key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| (1..=MAX_COUNT).contains(n))
+            .map(Some)
+            .ok_or_else(|| CmdError(format!("`{key}` must be a whole number from 1 to {MAX_COUNT}"))),
+    }
+}
+
+/// One direction of a rectangular pattern from its parameters (those named with `suffix`), what
+/// is not given as it `was`. A null direction takes the direction away.
+fn run_param(p: &Value, suffix: &str, was: Option<&Run>) -> Result<Option<Run>, CmdError> {
+    let (direction, count, spacing, reverse) =
+        (format!("direction{suffix}"), format!("count{suffix}"), format!("spacing{suffix}"), format!("reverse{suffix}"));
+    let along = match arg(p, &direction) {
+        Some(Value::Null) => None,
+        Some(_) => Some(target(p, &direction)?),
+        None => was.map(|r| r.along.clone()),
+    };
+    let (count_given, spacing_given) = (opt_count(p, &count)?, opt_num(p, &spacing)?);
+    let Some(along) = along else {
+        if count_given.is_some() || spacing_given.is_some() {
+            return Err(CmdError(format!("`{count}` and `{spacing}` need a `{direction}`")));
+        }
+        return Ok(None);
+    };
+    let count = count_given.or(was.map(|r| r.count)).ok_or_else(|| CmdError(format!("missing parameter `{count}`")))?;
+    let spacing = spacing_given.or(was.map(|r| r.spacing)).ok_or_else(|| CmdError(format!("missing parameter `{spacing}`")))?;
+    let reverse = opt_bool(p, &reverse)?.or(was.map(|r| r.reverse)).unwrap_or(false);
+    Ok(Some(Run { along, reverse, count, spacing }))
+}
+
+/// A rectangular or circular rule from its parameters, what is not given as it `was`.
+fn pattern_kind(p: &Value, was: Option<&PatternKind>) -> Result<PatternKind, CmdError> {
+    let (first, second) = match was {
+        Some(PatternKind::Rectangular { first, second }) => (Some(first), second.as_ref()),
+        _ => (None, None),
+    };
+    let (axis, reverse, count, angle) = match was {
+        Some(PatternKind::Circular { axis, reverse, count, angle }) => (Some(axis), Some(*reverse), Some(*count), Some(*angle)),
+        _ => (None, None, None, None),
+    };
+    let circular = match arg(p, "type").and_then(Value::as_str) {
+        Some("circular") => true,
+        Some("rectangular") => false,
+        Some(other) => return Err(CmdError(format!("unknown pattern type `{other}` (rectangular, circular)"))),
+        None => axis.is_some(),
+    };
+    if circular {
+        let axis = match arg(p, "axis").filter(|v| !v.is_null()) {
+            Some(_) => target(p, "axis")?,
+            None => axis.cloned().ok_or("missing parameter `axis`")?,
+        };
+        let count = opt_count(p, "count")?.or(count).ok_or("missing parameter `count`")?;
+        let angle = opt_num(p, "angle")?.or(angle).unwrap_or(std::f64::consts::TAU);
+        let reverse = opt_bool(p, "reverse")?.or(reverse).unwrap_or(false);
+        return Ok(PatternKind::Circular { axis, reverse, count, angle });
+    }
+    let first = run_param(p, "", first)?.ok_or("missing parameter `direction`")?;
+    Ok(PatternKind::Rectangular { first, second: run_param(p, "2", second)? })
+}
+
+/// The ids of a list of components, in order.
+fn ids_param(s: &AsmSession, p: &Value, key: &str) -> Result<Vec<ComponentId>, CmdError> {
+    let list = field(p, key)?.as_array().ok_or_else(|| CmdError(format!("`{key}` must be a list of component ids")))?;
+    let ids: Vec<ComponentId> = list.iter().map(|v| id(v, key).map(ComponentId)).collect::<Result<_, _>>()?;
+    for c in &ids {
+        s.component(*c)?;
+    }
+    Ok(ids)
+}
+
+/// What a pattern made or changed comes to.
+fn pattern_result(s: &AsmSession, id: PatternId) -> CmdResult {
+    let p = s.assembly().pattern(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?;
+    let components: Vec<u32> = p.elements.iter().flat_map(|e| e.components.iter().map(|c| c.0)).collect();
+    after(s, json!({ "pattern": id.0, "name": p.name, "elements": p.elements.len(), "components": components }))
+}
+
+fn asm_pattern(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let sources = components_param(s, p)?;
+    let kind = pattern_kind(p, None)?;
+    let id = s.edit(|asm, parts| {
+        let id = session::add_pattern(asm, parts, sources, kind)?;
+        solve_or_refuse(asm, parts, None)?;
+        Ok(id)
+    })?;
+    s.failing.clear();
+    pattern_result(s, id)
+}
+
+fn asm_mirror(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let sources = components_param(s, p)?;
+    let plane = target(p, "plane")?;
+    let reuse = if arg(p, "reuse").is_some_and(|v| !v.is_null()) { ids_param(s, p, "reuse")? } else { Vec::new() };
+    if let Some(c) = reuse.iter().find(|c| !sources.contains(c)) {
+        return Err(CmdError(format!("{c} is in `reuse` but not among `components`")));
+    }
+    let kind = session::mirror_kind(s.assembly(), &s.parts, plane, &reuse).map_err(CmdError)?;
+    let id = s.edit(|asm, parts| {
+        let id = session::add_pattern(asm, parts, sources, kind)?;
+        solve_or_refuse(asm, parts, None)?;
+        Ok(id)
+    })?;
+    s.failing.clear();
+    pattern_result(s, id)
+}
+
+/// Changes a pattern or mirror: what is given changes, the rest stays.
+fn asm_edit_pattern(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let id = pattern_param(p, "pattern")?;
+    let was = s.assembly().pattern(id).cloned().ok_or_else(|| CmdError(format!("{id} does not exist")))?;
+    let sources = if arg(p, "components").is_some_and(|v| !v.is_null()) { ids_param(s, p, "components")? } else { was.sources.clone() };
+    let kind = match &was.kind {
+        PatternKind::Mirror { plane, reuse } => {
+            let plane = if arg(p, "plane").is_some_and(|v| !v.is_null()) { target(p, "plane")? } else { plane.clone() };
+            let again = if arg(p, "reuse").is_some_and(|v| !v.is_null()) {
+                ids_param(s, p, "reuse")?
+            } else {
+                reuse.iter().map(|r| r.component).filter(|c| sources.contains(c)).collect()
+            };
+            if let Some(c) = again.iter().find(|c| !sources.contains(c)) {
+                return Err(CmdError(format!("{c} is in `reuse` but not among what is mirrored")));
+            }
+            session::mirror_kind(s.assembly(), &s.parts, plane, &again).map_err(CmdError)?
+        }
+        kind => pattern_kind(p, Some(kind))?,
+    };
+    s.edit(|asm, parts| {
+        session::change_pattern(asm, parts, id, sources, kind)?;
+        solve_or_refuse(asm, parts, None)
+    })?;
+    s.failing.clear();
+    close_unused(s);
+    pattern_result(s, id)
+}
+
+fn asm_suppress_pattern(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let id = pattern_param(p, "pattern")?;
+    let on = opt_bool(p, "suppressed")?.unwrap_or(true);
+    s.edit(|asm, _| session::suppress_pattern(asm, id, on))?;
+    after(s, json!({ "pattern": id.0, "suppressed": on }))
+}
+
+fn asm_delete_pattern(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
+    let id = pattern_param(p, "pattern")?;
+    let keep = opt_bool(p, "keep_elements")?.unwrap_or(false);
+    s.edit(|asm, _| if asm.remove_pattern(id, keep) { Ok(()) } else { Err(CmdError(format!("{id} does not exist"))) })?;
+    close_unused(s);
+    after(s, json!({ "deleted": id.0, "kept_elements": keep }))
 }
 
 /// The rows of the design table of the part file at `part` (empty without a table).
@@ -458,11 +658,14 @@ fn asm_set_row(s: &mut AsmSession, k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
         Some(_) => return Err("`row` must be the name of a row, or null".into()),
     };
     let part = s.component(cid)?.part.clone();
+    not_an_element(s.assembly(), cid, "it is the size of what it repeats")?;
     if let Some(row) = &row {
         check_row(&s.parts, &part, row)?;
     }
-    s.edit(|asm, _| {
+    s.edit(|asm, parts| {
         asm.component_mut(cid).ok_or_else(|| CmdError(format!("{cid} does not exist")))?.row = row.clone();
+        // (What repeats it is that size too.)
+        session::place_elements(asm, parts);
         Ok(())
     })?;
     // The part in that size, then the relationships that hold the component.
@@ -488,6 +691,12 @@ fn asm_rename(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
             asm.component_mut(cid).ok_or_else(|| CmdError(format!("{cid} does not exist")))?.name = name.clone();
             Ok(())
         })?;
+    } else if arg(p, "pattern").is_some_and(|v| !v.is_null()) {
+        let pid = pattern_param(p, "pattern")?;
+        s.edit(|asm, _| {
+            asm.pattern_mut(pid).ok_or_else(|| CmdError(format!("{pid} does not exist")))?.name = name.clone();
+            Ok(())
+        })?;
     } else {
         s.edit(|asm, _| {
             asm.name = name.clone();
@@ -500,6 +709,7 @@ fn asm_rename(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
 fn asm_ground(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let cid = component(p, "component")?;
     let on = opt_bool(p, "grounded")?.unwrap_or(true);
+    not_an_element(s.assembly(), cid, "the pattern holds it")?;
     s.edit(|asm, parts| {
         asm.component_mut(cid).ok_or_else(|| CmdError(format!("{cid} does not exist")))?.grounded = on;
         solve_or_refuse(asm, parts, None)
@@ -510,6 +720,9 @@ fn asm_ground(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> Cmd
 fn asm_visible(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let cid = component(p, "component")?;
     let on = opt_bool(p, "visible")?.unwrap_or(true);
+    if s.assembly().suppressed_elements().contains(&cid) {
+        return Err(CmdError(format!("{cid} is an element of a suppressed pattern: bring the pattern back first")));
+    }
     s.edit(|asm, _| {
         asm.component_mut(cid).ok_or_else(|| CmdError(format!("{cid} does not exist")))?.visible = on;
         Ok(())
@@ -531,6 +744,7 @@ fn asm_move(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
         }
         None => None,
     };
+    not_an_element(s.assembly(), cid, "it stands where the pattern puts it; move what it repeats")?;
     s.edit(|asm, parts| {
         let c = asm.component(cid).ok_or_else(|| CmdError(format!("{cid} does not exist")))?;
         if c.grounded {
@@ -561,6 +775,7 @@ fn asm_place(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
     let z = opt_vec3(p, "z")?.unwrap_or(Vec3::Z);
     let x = opt_vec3(p, "x")?.unwrap_or(if z.normalized().x.abs() > 0.9 { Vec3::Y } else { Vec3::X });
     let f = Frame::new(origin, z, x).ok_or("`x` and `z` must be non-zero and not parallel")?;
+    not_an_element(s.assembly(), cid, "it stands where the pattern puts it; move what it repeats")?;
     s.edit(|asm, parts| {
         asm.component_mut(cid).ok_or_else(|| CmdError(format!("{cid} does not exist")))?.placement = f;
         solve_or_refuse(asm, parts, Some(cid))
@@ -595,7 +810,7 @@ fn asm_redo(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
 
 // ---- exploded view ----------------------------------------------------------------------------
 
-fn components_param(s: &AsmSession, p: &Value) -> Result<Vec<ComponentId>, CmdError> {
+pub fn components_param(s: &AsmSession, p: &Value) -> Result<Vec<ComponentId>, CmdError> {
     let list = field(p, "components")?.as_array().ok_or("`components` must be a list of component ids")?;
     let ids: Vec<ComponentId> = list.iter().map(|v| id(v, "components").map(ComponentId)).collect::<Result<_, _>>()?;
     if ids.is_empty() {
@@ -832,6 +1047,46 @@ static COMMANDS: &[AsmCommand] = &[
     },
     AsmCommand { id: "asm.undo", label: "Undo", help: "", mutates: false, kernel: false, run: asm_undo },
     AsmCommand { id: "asm.redo", label: "Redo", help: "", mutates: false, kernel: false, run: asm_redo },
+    AsmCommand {
+        id: "asm.pattern",
+        label: "Pattern Components",
+        help: "components: [ids]; type: rectangular (direction: a target from asm.geom, count, spacing (mm), reverse; direction2, count2, spacing2, reverse2 for rows of rows) or circular (axis: a target, count, angle (rad, over how much of a turn they spread evenly, default all of it), reverse). One record; its elements are components held by it, which follow what they repeat",
+        mutates: true,
+        kernel: false,
+        run: asm_pattern,
+    },
+    AsmCommand {
+        id: "asm.mirror",
+        label: "Mirror Components",
+        help: "components: [ids]; plane: a target from asm.geom, a plane or flat face; reuse: those of the components, parts the same as their mirror image, to place again in the mirrored position instead of reflecting. One record; each mirrored occurrence holds its part reflected and has its own row in the parts list",
+        mutates: true,
+        kernel: false,
+        run: asm_mirror,
+    },
+    AsmCommand {
+        id: "asm.edit_pattern",
+        label: "Edit Pattern",
+        help: "pattern; what is given changes, as in asm.pattern or asm.mirror, the rest stays: components; direction, count, spacing, reverse; direction2 (null: no second direction), count2, spacing2, reverse2; axis, angle; plane, reuse. Elements are moved, added or taken away; those taken away take their relationships",
+        mutates: true,
+        kernel: false,
+        run: asm_edit_pattern,
+    },
+    AsmCommand {
+        id: "asm.suppress_pattern",
+        label: "Suppress Pattern",
+        help: "pattern, suppressed (default true): its elements are out of the assembly (not drawn, listed or checked) until it is brought back",
+        mutates: true,
+        kernel: false,
+        run: asm_suppress_pattern,
+    },
+    AsmCommand {
+        id: "asm.delete_pattern",
+        label: "Delete Pattern",
+        help: "pattern; keep_elements (default false): the elements stay where they stand, as components of their own, instead of going with it",
+        mutates: true,
+        kernel: false,
+        run: asm_delete_pattern,
+    },
     AsmCommand {
         id: "asm.interference",
         label: "Interference",

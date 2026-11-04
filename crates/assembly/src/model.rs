@@ -1,6 +1,6 @@
 //! The assembly document: components (placed part files), the relationships between them
-//! (constraints and joints) and the steps of the exploded view. Saved as `.tenonasm`
-//! (docs/file-format.md, DEC-024).
+//! (constraints and joints), the patterns and mirrors that repeat components, and the steps of
+//! the exploded view. Saved as `.tenonasm` (docs/file-format.md, DEC-024, DEC-130).
 
 use serde::{Deserialize, Serialize};
 use tenon_geom::{Frame, Vec3, tol};
@@ -12,6 +12,11 @@ pub const MAX_COMPONENTS: usize = 5_000;
 pub const MAX_RELATIONSHIPS: usize = 20_000;
 /// Most exploded-view steps.
 pub const MAX_TWEAKS: usize = 5_000;
+/// Most patterns and mirrors one assembly may have.
+pub const MAX_PATTERNS: usize = 5_000;
+/// Most occurrences a pattern may have in one direction (hostile-input cap: an assembly holds
+/// [`MAX_COMPONENTS`] in all).
+pub const MAX_COUNT: u32 = 5_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -20,6 +25,16 @@ pub struct ComponentId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RelationshipId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PatternId(pub u32);
+
+impl std::fmt::Display for PatternId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "pattern {}", self.0)
+    }
+}
 
 impl std::fmt::Display for ComponentId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -56,6 +71,10 @@ pub struct Component {
     pub row: Option<String>,
     #[serde(default = "yes")]
     pub visible: bool,
+    /// The component holds the mirror image of its part (in the part's XY plane), not the part:
+    /// a mirrored occurrence of the part file (DEC-130). `placement` stays a rigid frame.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mirrored: bool,
 }
 
 /// The key of a part among an assembly's loaded parts: its file's path, and for a part in one
@@ -67,6 +86,12 @@ pub fn part_key(part: &str, row: Option<&str>) -> String {
     }
 }
 
+/// The key of a part as a mirrored occurrence holds it, the key's row empty when it has none (a
+/// row is never empty, and holds no control character: the two cannot be taken for each other).
+pub fn mirrored_key(part: &str, row: Option<&str>) -> String {
+    format!("{part}\0{}\0mirrored", row.unwrap_or(""))
+}
+
 /// The file of a part key (see [`part_key`]).
 pub fn key_file(key: &str) -> &str {
     key.split('\0').next().unwrap_or(key)
@@ -75,7 +100,7 @@ pub fn key_file(key: &str) -> &str {
 impl Component {
     /// The key of this component's part among the assembly's loaded parts.
     pub fn key(&self) -> String {
-        part_key(&self.part, self.row.as_deref())
+        if self.mirrored { mirrored_key(&self.part, self.row.as_deref()) } else { part_key(&self.part, self.row.as_deref()) }
     }
 }
 
@@ -223,6 +248,22 @@ pub enum RelKind {
 }
 
 impl RelKind {
+    /// The same relationship between the components `map` says stand for those it joins, if it
+    /// is all between those: it touches no other component and not the assembly's own origin.
+    pub fn between(&self, map: &std::collections::BTreeMap<ComponentId, ComponentId>) -> Option<RelKind> {
+        if self.all_targets().iter().any(|t| t.component.is_none_or(|c| !map.contains_key(&c))) {
+            return None;
+        }
+        let mut kind = self.clone();
+        let mapped = |t: &mut Target| t.component = t.component.and_then(|c| map.get(&c).copied());
+        for t in kind.targets_mut() {
+            mapped(t);
+        }
+        if let RelKind::Symmetry { plane, .. } = &mut kind {
+            mapped(plane);
+        }
+        Some(kind)
+    }
     pub fn targets(&self) -> [&Target; 2] {
         match self {
             RelKind::Mate { a, b, .. }
@@ -280,6 +321,156 @@ impl RelKind {
     }
 }
 
+/// One direction of a rectangular pattern.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Run {
+    /// What gives the direction: a straight edge or an axis, a flat face's normal, a circular
+    /// edge's axis.
+    pub along: Target,
+    /// The other way along it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reverse: bool,
+    /// How many, the source counted.
+    pub count: u32,
+    /// From one to the next (mm).
+    pub spacing: f64,
+}
+
+/// A source of a mirror placed again in the mirrored position, not reflected: for a part that is
+/// the same as its mirror image.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Reused {
+    pub component: ComponentId,
+    /// Square to the part's own plane of symmetry, which goes through the middle of its box.
+    pub about: OriginAxis,
+}
+
+/// The rule that says where the elements of a pattern stand.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PatternKind {
+    /// Rows along one direction, or rows of rows along two.
+    Rectangular {
+        first: Run,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        second: Option<Run>,
+    },
+    /// Round an axis (a straight edge, a round face's or a circular edge's axis). `angle` is
+    /// over how much of a turn they spread evenly, as in a part's circular pattern: a whole turn
+    /// has them `1 / count` of it apart, less than that from the first to the last.
+    Circular {
+        axis: Target,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reverse: bool,
+        count: u32,
+        angle: f64,
+    },
+    /// Reflected in a plane or flat face (DEC-130): each source a mirrored occurrence, but for
+    /// those in `reuse`.
+    Mirror {
+        plane: Target,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reuse: Vec<Reused>,
+    },
+}
+
+impl PatternKind {
+    /// Where each element stands in the pattern. [0, 0], the sources themselves, is not one.
+    pub fn places(&self) -> Vec<[u32; 2]> {
+        match self {
+            PatternKind::Rectangular { first, second } => {
+                let rows = second.as_ref().map_or(1, |s| s.count);
+                (0..rows).flat_map(|j| (0..first.count).map(move |i| [i, j])).filter(|at| *at != [0, 0]).collect()
+            }
+            PatternKind::Circular { count, .. } => (1..*count).map(|i| [i, 0]).collect(),
+            PatternKind::Mirror { .. } => vec![[1, 0]],
+        }
+    }
+
+    /// What the rule takes from the assembly: its directions, axis or plane.
+    pub fn targets(&self) -> Vec<&Target> {
+        match self {
+            PatternKind::Rectangular { first, second } => std::iter::once(&first.along).chain(second.as_ref().map(|s| &s.along)).collect(),
+            PatternKind::Circular { axis, .. } => vec![axis],
+            PatternKind::Mirror { plane, .. } => vec![plane],
+        }
+    }
+
+    fn targets_mut(&mut self) -> Vec<&mut Target> {
+        match self {
+            PatternKind::Rectangular { first, second } => std::iter::once(&mut first.along).chain(second.as_mut().map(|s| &mut s.along)).collect(),
+            PatternKind::Circular { axis, .. } => vec![axis],
+            PatternKind::Mirror { plane, .. } => vec![plane],
+        }
+    }
+
+    /// "Pattern" or "Mirror": the record's name, before its number.
+    pub fn label(&self) -> &'static str {
+        match self {
+            PatternKind::Mirror { .. } => "Mirror",
+            _ => "Pattern",
+        }
+    }
+
+    /// What is wrong with its numbers, in words.
+    pub fn check(&self) -> Result<(), String> {
+        let count_ok = |count: u32| (1..=MAX_COUNT).contains(&count);
+        match self {
+            PatternKind::Rectangular { first, second } => {
+                for run in std::iter::once(first).chain(second) {
+                    if !count_ok(run.count) {
+                        return Err(format!("the counts must be 1 to {MAX_COUNT}"));
+                    }
+                    if run.count > 1 && !(run.spacing.is_finite() && run.spacing > 0.0 && run.spacing <= tol::MAX_SIZE) {
+                        return Err("the spacing must be positive".into());
+                    }
+                }
+                if first.count.saturating_mul(second.as_ref().map_or(1, |s| s.count)) < 2 {
+                    return Err("a pattern needs at least two occurrences".into());
+                }
+            }
+            PatternKind::Circular { count, angle, .. } => {
+                if *count < 2 || !count_ok(*count) {
+                    return Err(format!("the count must be 2 to {MAX_COUNT}"));
+                }
+                if !(angle.is_finite() && *angle > 0.0 && *angle <= std::f64::consts::TAU + 1e-9) {
+                    return Err("the angle must be more than 0 and at most 360 degrees".into());
+                }
+            }
+            PatternKind::Mirror { .. } => {}
+        }
+        Ok(())
+    }
+}
+
+/// One element of a pattern: what stands for its sources at one place of it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Element {
+    /// Its place along the first direction and along the second (a circular pattern's and a
+    /// mirror's second is 0): what keeps it the same element when the counts change.
+    pub at: [u32; 2],
+    /// A component for each source, in the order of the sources.
+    pub components: Vec<ComponentId>,
+}
+
+/// Components repeated by a rule, or reflected: one record (DEC-130). Each element's components
+/// are ordinary components of the assembly, drawn, listed, checked and exported as any other, and
+/// held by the rule: they stand where it puts them and follow what it depends on.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Pattern {
+    pub id: PatternId,
+    /// "Pattern:1", "Mirror:2", ...
+    pub name: String,
+    /// Its elements are out of the assembly (hidden, and not in the parts list) until it is
+    /// brought back; the sources stay.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppressed: bool,
+    /// The components repeated.
+    pub sources: Vec<ComponentId>,
+    pub kind: PatternKind,
+    pub elements: Vec<Element>,
+}
+
 /// A constraint or joint.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Relationship {
@@ -306,11 +497,24 @@ pub struct Assembly {
     pub name: String,
     pub components: Vec<Component>,
     pub relationships: Vec<Relationship>,
+    /// Patterns and mirrors (DEC-130). A later one may repeat the elements of an earlier one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patterns: Vec<Pattern>,
     /// The exploded view, step by step.
     #[serde(default)]
     pub explode: Vec<Tweak>,
     pub next_component: u32,
     pub next_relationship: u32,
+    #[serde(default = "first_pattern", skip_serializing_if = "is_first_pattern")]
+    pub next_pattern: u32,
+}
+
+fn first_pattern() -> u32 {
+    1
+}
+
+fn is_first_pattern(n: &u32) -> bool {
+    *n == 1
 }
 
 impl Default for Assembly {
@@ -319,9 +523,11 @@ impl Default for Assembly {
             name: "Assembly1".into(),
             components: Vec::new(),
             relationships: Vec::new(),
+            patterns: Vec::new(),
             explode: Vec::new(),
             next_component: 1,
             next_relationship: 1,
+            next_pattern: 1,
         }
     }
 }
@@ -402,16 +608,101 @@ impl Assembly {
         format!("{label}:{}", n.saturating_add(1))
     }
 
-    /// Removes a component with its relationships and exploded-view steps.
+    /// The pattern or mirror at `id`.
+    pub fn pattern(&self, id: PatternId) -> Option<&Pattern> {
+        self.patterns.iter().find(|p| p.id == id)
+    }
+    pub fn pattern_mut(&mut self, id: PatternId) -> Option<&mut Pattern> {
+        self.patterns.iter_mut().find(|p| p.id == id)
+    }
+    /// The pattern a component is an element of. (The sources are not elements.)
+    pub fn pattern_of(&self, id: ComponentId) -> Option<&Pattern> {
+        self.patterns.iter().find(|p| p.elements.iter().any(|e| e.components.contains(&id)))
+    }
+    /// A new pattern id.
+    pub fn take_pattern_id(&mut self) -> PatternId {
+        let id = PatternId(self.next_pattern);
+        self.next_pattern = self.next_pattern.saturating_add(1);
+        id
+    }
+    /// "Pattern:2" for the next pattern labelled `label`.
+    pub fn pattern_name(&self, label: &str) -> String {
+        let n = self
+            .patterns
+            .iter()
+            .filter_map(|p| p.name.rsplit_once(':').filter(|(b, _)| *b == label).and_then(|(_, n)| n.parse::<u32>().ok()))
+            .max()
+            .unwrap_or(0);
+        format!("{label}:{}", n.saturating_add(1))
+    }
+    /// Every component that is an element of a pattern.
+    pub fn elements(&self) -> std::collections::BTreeSet<ComponentId> {
+        self.patterns.iter().flat_map(|p| p.elements.iter()).flat_map(|e| e.components.iter().copied()).collect()
+    }
+    /// The elements of suppressed patterns: components that are out of the assembly for now.
+    pub fn suppressed_elements(&self) -> std::collections::BTreeSet<ComponentId> {
+        self.patterns.iter().filter(|p| p.suppressed).flat_map(|p| p.elements.iter()).flat_map(|e| e.components.iter().copied()).collect()
+    }
+
+    /// Removes a component with its relationships and exploded-view steps, and with what stands
+    /// for it in a pattern. A pattern with nothing left to repeat goes, and so does one whose
+    /// rule took its direction, axis or plane from the component, or that has lost an element
+    /// (its counts cannot say that): the elements it had left stay, as components of their own.
     pub fn remove_component(&mut self, id: ComponentId) -> bool {
-        let before = self.components.len();
-        self.components.retain(|c| c.id != id);
-        self.relationships.retain(|r| !r.kind.components().contains(&id));
-        for t in &mut self.explode {
-            t.components.retain(|c| *c != id);
+        let existed = self.component(id).is_some();
+        let mut going = vec![id];
+        while let Some(id) = going.pop() {
+            if self.component(id).is_none() {
+                continue;
+            }
+            self.components.retain(|c| c.id != id);
+            self.relationships.retain(|r| !r.kind.components().contains(&id));
+            for t in &mut self.explode {
+                t.components.retain(|c| *c != id);
+            }
+            self.explode.retain(|t| !t.components.is_empty());
+            for p in &mut self.patterns {
+                if let Some(i) = p.sources.iter().position(|s| *s == id) {
+                    p.sources.remove(i);
+                    for e in &mut p.elements {
+                        if i < e.components.len() {
+                            going.push(e.components.remove(i));
+                        }
+                    }
+                    if let PatternKind::Mirror { reuse, .. } = &mut p.kind {
+                        reuse.retain(|r| r.component != id);
+                    }
+                }
+            }
+            let (broken, whole): (Vec<Pattern>, Vec<Pattern>) = std::mem::take(&mut self.patterns)
+                .into_iter()
+                .partition(|p| p.kind.targets().iter().any(|t| t.component == Some(id)) || p.elements.iter().any(|e| e.components.contains(&id)));
+            self.patterns = whole;
+            self.patterns.retain(|p| !p.sources.is_empty());
+            for c in broken.iter().filter(|p| p.suppressed).flat_map(|p| p.elements.iter()).flat_map(|e| e.components.iter()) {
+                if let Some(c) = self.component_mut(*c) {
+                    c.visible = true;
+                }
+            }
         }
-        self.explode.retain(|t| !t.components.is_empty());
-        self.components.len() != before
+        existed
+    }
+
+    /// Takes a pattern out of the assembly, and its elements with it unless `keep` leaves them
+    /// as components of their own, where they stand.
+    pub fn remove_pattern(&mut self, id: PatternId, keep: bool) -> bool {
+        let Some(i) = self.patterns.iter().position(|p| p.id == id) else { return false };
+        let p = self.patterns.remove(i);
+        for c in p.elements.iter().flat_map(|e| e.components.iter()) {
+            if !keep {
+                self.remove_component(*c);
+            } else if let Some(c) = self.component_mut(*c)
+                && p.suppressed
+            {
+                c.visible = true;
+            }
+        }
+        true
     }
 
     /// Rewrites every component's part path (used to store paths relative to the file and read
@@ -432,6 +723,9 @@ impl Assembly {
         }
         if self.explode.len() > MAX_TWEAKS {
             return Err(format!("more than {MAX_TWEAKS} exploded-view steps"));
+        }
+        if self.patterns.len() > MAX_PATTERNS {
+            return Err(format!("more than {MAX_PATTERNS} patterns"));
         }
         let mut ids = std::collections::BTreeSet::new();
         for c in &self.components {
@@ -489,6 +783,75 @@ impl Assembly {
                 return Err(format!("an exploded-view step moves a missing {c}"));
             }
         }
+        self.validate_patterns(&ids)
+    }
+
+    /// Checks the patterns: ids, what they refer to, numbers. A pattern may lean on the elements
+    /// of those before it and on no others, so that they can be worked out in order.
+    fn validate_patterns(&self, ids: &std::collections::BTreeSet<ComponentId>) -> Result<(), String> {
+        let mut pids = std::collections::BTreeSet::new();
+        let mut taken = std::collections::BTreeSet::new();
+        let all = self.elements();
+        for p in &self.patterns {
+            if p.id.0 == 0 || p.id.0 >= self.next_pattern || !pids.insert(p.id) {
+                return Err(format!("{} has a bad or repeated id", p.id));
+            }
+            if p.name.is_empty() || p.name.len() > 256 {
+                return Err(format!("{} has a bad name", p.id));
+            }
+            p.kind.check().map_err(|e| format!("{}: {e}", p.name))?;
+            if p.sources.is_empty() {
+                return Err(format!("{} repeats nothing", p.name));
+            }
+            let places = p.kind.places();
+            if p.elements.len() != places.len() || places.iter().any(|at| !p.elements.iter().any(|e| e.at == *at)) {
+                return Err(format!("{} does not have the elements its counts say", p.name));
+            }
+            let mut mine = std::collections::BTreeSet::new();
+            for e in &p.elements {
+                if e.components.len() != p.sources.len() {
+                    return Err(format!("{} has an element that does not stand for all its sources", p.name));
+                }
+                for c in &e.components {
+                    if !ids.contains(c) {
+                        return Err(format!("{} refers to a missing {c}", p.name));
+                    }
+                    if !mine.insert(*c) || taken.contains(c) {
+                        return Err(format!("{c} is an element of more than one place"));
+                    }
+                }
+            }
+            let mut sources = std::collections::BTreeSet::new();
+            for s in &p.sources {
+                if !ids.contains(s) {
+                    return Err(format!("{} refers to a missing {s}", p.name));
+                }
+                if !sources.insert(*s) {
+                    return Err(format!("{} repeats {s} twice", p.name));
+                }
+            }
+            // (Those of the patterns after it, and its own, are not to lean on.)
+            let later = |c: ComponentId| mine.contains(&c) || (all.contains(&c) && !taken.contains(&c));
+            if let Some(s) = p.sources.iter().find(|s| later(**s)) {
+                return Err(format!("{} repeats {s}, which depends on it", p.name));
+            }
+            for t in p.kind.targets() {
+                match t.component {
+                    Some(c) if !ids.contains(&c) => return Err(format!("{} refers to a missing {c}", p.name)),
+                    Some(c) if later(c) => return Err(format!("{} takes its rule from {c}, which depends on it", p.name)),
+                    None if !matches!(t.geom, Geom::Plane { .. } | Geom::Axis { .. } | Geom::Origin) => {
+                        return Err(format!("{}: the assembly origin has only planes, axes and a point", p.name));
+                    }
+                    _ => {}
+                }
+            }
+            if let PatternKind::Mirror { reuse, .. } = &p.kind
+                && let Some(r) = reuse.iter().find(|r| !sources.contains(&r.component))
+            {
+                return Err(format!("{}: {} is not among what it mirrors", p.name, r.component));
+            }
+            taken.extend(mine);
+        }
         Ok(())
     }
 
@@ -515,6 +878,13 @@ impl Assembly {
                 plane.component = Some(to);
             }
         }
+        for p in &mut self.patterns {
+            for t in p.kind.targets_mut() {
+                if t.component == Some(from) {
+                    t.component = Some(to);
+                }
+            }
+        }
     }
 }
 
@@ -526,7 +896,7 @@ mod tests {
     fn comp(asm: &mut Assembly, name: &str) -> ComponentId {
         let id = asm.take_component_id();
         let name = asm.occurrence_name(name);
-        asm.components.push(Component { id, name, part: "p.tenon".into(), placement: Frame::WORLD, grounded: false, row: None, visible: true });
+        asm.components.push(Component { id, name, part: "p.tenon".into(), placement: Frame::WORLD, grounded: false, row: None, visible: true, mirrored: false });
         id
     }
 
@@ -576,5 +946,131 @@ mod tests {
         assert!(asm.remove_component(b));
         assert!(asm.relationships.is_empty());
         assert!(!asm.remove_component(b));
+    }
+
+    /// An assembly of a source and a pattern of it along the assembly's X axis.
+    fn patterned(count: u32) -> (Assembly, ComponentId, PatternId) {
+        let mut asm = Assembly::default();
+        let source = comp(&mut asm, "Plate");
+        let elements: Vec<Element> = (1..count)
+            .map(|i| {
+                let c = comp(&mut asm, "Plate");
+                Element { at: [i, 0], components: vec![c] }
+            })
+            .collect();
+        let id = asm.take_pattern_id();
+        let along = Target { component: None, geom: Geom::Axis { axis: OriginAxis::X } };
+        asm.patterns.push(Pattern {
+            id,
+            name: "Pattern:1".into(),
+            suppressed: false,
+            sources: vec![source],
+            kind: PatternKind::Rectangular { first: Run { along, reverse: false, count, spacing: 10.0 }, second: None },
+            elements,
+        });
+        (asm, source, id)
+    }
+
+    #[test]
+    fn a_pattern_is_checked_as_a_record_and_its_elements_go_with_it() {
+        let (asm, source, id) = patterned(3);
+        asm.validate().unwrap();
+        assert_eq!(asm.pattern_name("Pattern"), "Pattern:2");
+        assert_eq!(asm.pattern_name("Mirror"), "Mirror:1");
+        assert_eq!(asm.elements().len(), 2);
+        assert_eq!(asm.pattern_of(ComponentId(2)).map(|p| p.id), Some(id));
+        assert!(asm.pattern_of(source).is_none(), "a source is not an element");
+
+        // Damage is told in words, and a file with it is refused.
+        let mut bad = asm.clone();
+        bad.patterns[0].elements.pop();
+        assert!(bad.validate().unwrap_err().contains("counts"), "{:?}", bad.validate());
+        let mut bad = asm.clone();
+        bad.patterns[0].sources[0] = ComponentId(99);
+        assert!(bad.validate().unwrap_err().contains("missing"));
+        let mut bad = asm.clone();
+        bad.patterns[0].sources[0] = ComponentId(2);
+        assert!(bad.validate().unwrap_err().contains("depends on it"), "{:?}", bad.validate());
+        let mut bad = asm.clone();
+        if let PatternKind::Rectangular { first, .. } = &mut bad.patterns[0].kind {
+            first.along.component = Some(ComponentId(3));
+            first.along.geom = Geom::Axis { axis: OriginAxis::X };
+        }
+        assert!(bad.validate().unwrap_err().contains("depends on it"), "{:?}", bad.validate());
+        let mut bad = asm.clone();
+        if let PatternKind::Rectangular { first, .. } = &mut bad.patterns[0].kind {
+            first.spacing = f64::NAN;
+        }
+        assert!(bad.validate().unwrap_err().contains("spacing"));
+        let mut bad = asm.clone();
+        bad.patterns[0].elements[1].components[0] = ComponentId(2);
+        assert!(bad.validate().unwrap_err().contains("more than one"), "{:?}", bad.validate());
+
+        // Without a pattern nothing of them is written, so a file is as it was.
+        let plain = serde_json::to_value(Assembly::default()).unwrap();
+        assert!(plain.get("patterns").is_none() && plain.get("next_pattern").is_none(), "{plain}");
+        let back: Assembly = serde_json::from_value(serde_json::to_value(&asm).unwrap()).unwrap();
+        assert_eq!(back, asm);
+
+        // Without an element it is no pattern (the commands refuse this: they change its count);
+        // the other elements stay. The source takes the pattern with it, with all that stands
+        // for it.
+        let mut less = asm.clone();
+        assert!(less.remove_component(ComponentId(3)));
+        assert!(less.patterns.is_empty());
+        assert_eq!(less.components.len(), 2);
+        less.validate().unwrap();
+        let mut none = asm.clone();
+        assert!(none.remove_component(source));
+        assert!(none.patterns.is_empty() && none.components.is_empty(), "{none:?}");
+
+        // A pattern taken away takes its elements; kept, they are components of their own.
+        let mut gone = asm.clone();
+        assert!(gone.remove_pattern(id, false));
+        assert_eq!(gone.components.len(), 1);
+        let mut kept = asm;
+        assert!(kept.remove_pattern(id, true));
+        assert_eq!(kept.components.len(), 3);
+        assert!(kept.elements().is_empty());
+        kept.validate().unwrap();
+    }
+
+    #[test]
+    fn mirrored_occurrences_have_a_part_key_of_their_own() {
+        let mut asm = Assembly::default();
+        let a = comp(&mut asm, "Plate");
+        let plain = asm.component(a).unwrap().clone();
+        let mirrored = Component { mirrored: true, ..plain.clone() };
+        let (k0, k1) = (plain.key(), mirrored.key());
+        assert_ne!(k0, k1);
+        assert_eq!(key_file(&k1), "p.tenon");
+        let row = Component { row: Some("A".into()), ..mirrored.clone() };
+        assert_ne!(row.key(), k1, "each size has its mirror image");
+        assert_eq!(key_file(&row.key()), "p.tenon");
+        // A row named as the word in a mirrored key is still only a row.
+        let word = Component { row: Some("mirrored".into()), ..plain };
+        assert_ne!(word.key(), k1);
+        // In a file it is written only when it is so.
+        assert!(serde_json::to_value(&plain_of(&asm, a)).unwrap().get("mirrored").is_none());
+        assert_eq!(serde_json::to_value(&mirrored).unwrap()["mirrored"], true);
+    }
+
+    fn plain_of(asm: &Assembly, id: ComponentId) -> Component {
+        asm.component(id).unwrap().clone()
+    }
+
+    #[test]
+    fn the_places_of_a_pattern_leave_out_the_sources() {
+        let along = Target { component: None, geom: Geom::Axis { axis: OriginAxis::X } };
+        let run = |count| Run { along: along.clone(), reverse: false, count, spacing: 5.0 };
+        let two = PatternKind::Rectangular { first: run(3), second: Some(run(2)) };
+        assert_eq!(two.places(), [[1, 0], [2, 0], [0, 1], [1, 1], [2, 1]]);
+        let round = PatternKind::Circular { axis: along.clone(), reverse: false, count: 4, angle: 1.0 };
+        assert_eq!(round.places(), [[1, 0], [2, 0], [3, 0]]);
+        assert_eq!(PatternKind::Mirror { plane: along.clone(), reuse: Vec::new() }.places(), [[1, 0]]);
+        assert_eq!(PatternKind::Rectangular { first: run(1), second: None }.check().unwrap_err(), "a pattern needs at least two occurrences");
+        assert!(PatternKind::Rectangular { first: run(MAX_COUNT + 1), second: None }.check().is_err());
+        assert!(PatternKind::Circular { axis: along.clone(), reverse: false, count: 2, angle: 0.0 }.check().is_err());
+        assert!(PatternKind::Circular { axis: along, reverse: false, count: 1, angle: 1.0 }.check().is_err());
     }
 }

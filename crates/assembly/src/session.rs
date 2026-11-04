@@ -6,12 +6,15 @@ use std::sync::Arc;
 
 use tenon_geom::{Aabb3, Frame, Vec3, tol};
 use tenon_kernel::{Kernel, MeshTol};
-use tenon_model::{CmdError, Document, Scene, Session};
+use tenon_model::{CmdError, Document, Fingerprint, OriginAxis, Scene, Session};
 
 use crate::geometry::{self, Prim};
 use crate::math::M3;
-use crate::model::{Assembly, Component, ComponentId, Geom, RelKind, Relationship, RelationshipId, Target, Tweak};
-use crate::solve::{self, Body, BodyDof, End, Law, Rel};
+use crate::model::{
+    Assembly, Component, ComponentId, Element, Geom, MAX_COMPONENTS, Pattern, PatternId, PatternKind, RelKind, Relationship, RelationshipId, Reused,
+    Run, Target, Tweak,
+};
+use crate::solve::{self, Body, BodyDof, End, Law, Motion, Rel};
 
 /// Undo depth.
 const MAX_UNDO: usize = 200;
@@ -25,8 +28,8 @@ pub struct Part {
     /// Why the file could not be read (or, for a part in a row of its design table, why that
     /// row cannot be had); its components are shown as missing.
     pub missing: Option<String>,
-    /// Set for a part in one row of its design table: worked out from the part file's own entry,
-    /// never saved, and worked out again when that changes.
+    /// Set for a part in one row of its design table, or a part's mirror image: worked out from
+    /// the part file's own entry, never saved, and worked out again when that changes.
     pub variant: Option<Variant>,
 }
 
@@ -43,12 +46,14 @@ impl Part {
     }
 }
 
-/// What a part in one row of its design table was worked out from.
+/// What a part in one row of its design table, or a part's mirror image, was worked out from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Variant {
     /// The key of the part file's own entry.
     pub base: String,
-    pub row: String,
+    pub row: Option<String>,
+    /// The part's mirror image, for mirrored occurrences (DEC-130).
+    pub mirrored: bool,
     /// That entry's document revision when this was worked out (none: it was not loaded).
     pub base_revision: Option<u64>,
 }
@@ -96,12 +101,14 @@ pub struct System {
     pub unresolved: Vec<(RelationshipId, String)>,
 }
 
-fn body_of(parts: &Parts, c: &Component) -> Body {
+/// An element of a pattern is held by the pattern's rule: to the solver it stands still, and
+/// `place_elements` moves it after its source.
+fn body_of(parts: &Parts, c: &Component, element: bool) -> Body {
     let (center, size) = match local_bbox(parts, c) {
         Some(b) => (c.placement.to_world(b.center()), b.diagonal()),
         None => (c.placement.origin(), 10.0),
     };
-    Body { frame: c.placement, fixed: c.grounded, center, size }
+    Body { frame: c.placement, fixed: c.grounded || element, center, size }
 }
 
 /// The law of a relationship, with a symmetry's plane found in `asm` (DEC-115).
@@ -147,7 +154,8 @@ pub fn resolve_target(asm: &Assembly, parts: &Parts, t: &Target) -> Result<End, 
 
 /// The solver's view of `asm`.
 pub fn system(asm: &Assembly, parts: &Parts) -> System {
-    let bodies = asm.components.iter().map(|c| body_of(parts, c)).collect();
+    let elements = asm.elements();
+    let bodies = asm.components.iter().map(|c| body_of(parts, c, elements.contains(&c.id))).collect();
     let (mut rels, mut ids, mut unresolved) = (Vec::new(), Vec::new(), Vec::new());
     for r in asm.relationships.iter().filter(|r| !r.suppressed) {
         let [a, b] = r.kind.targets();
@@ -170,26 +178,393 @@ pub fn system(asm: &Assembly, parts: &Parts) -> System {
     System { bodies, rels, ids, unresolved }
 }
 
-/// Solves `asm` in place: free components move so the relationships hold. `drag` is a component
-/// the user moved, which stays as near where it was put as it may.
+/// How many times a solve and the patterns may answer each other before they are given up on: a
+/// relationship on an element moves what is held by it, which may move the element's source.
+const SOLVE_ROUNDS: usize = 8;
+
+/// Solves `asm` in place: free components move so the relationships hold, and the elements of
+/// patterns follow what they repeat. `drag` is a component the user moved, which stays as near
+/// where it was put as it may.
 pub fn solve_assembly(asm: &mut Assembly, parts: &Parts, drag: Option<ComponentId>) -> Solved {
-    let sys = system(asm, parts);
-    let drag = drag.and_then(|d| asm.components.iter().position(|c| c.id == d));
-    let sol = solve::solve(&sys.bodies, &sys.rels, drag);
-    for (c, f) in asm.components.iter_mut().zip(&sol.frames) {
-        if !c.grounded {
-            c.placement = *f;
+    let elements = asm.elements();
+    let held = asm.relationships.iter().filter(|r| !r.suppressed && r.kind.components().iter().any(|c| elements.contains(c))).map(|r| r.id);
+    let held: Vec<RelationshipId> = held.collect();
+    let dragged = drag.and_then(|d| asm.components.iter().position(|c| c.id == d));
+    let mut solved = Solved::default();
+    for _ in 0..SOLVE_ROUNDS {
+        let sys = system(asm, parts);
+        let sol = solve::solve(&sys.bodies, &sys.rels, dragged);
+        for (c, f) in asm.components.iter_mut().zip(&sol.frames) {
+            if !c.grounded && !elements.contains(&c.id) {
+                c.placement = *f;
+            }
+        }
+        let mut failing = sys.unresolved;
+        if !sol.converged {
+            for (id, e) in sys.ids.iter().zip(&sol.errors) {
+                if *e > tol::ASSEMBLY_BROKEN {
+                    failing.push((*id, "cannot hold together with the other relationships".into()));
+                }
+            }
+        }
+        solved = Solved { converged: sol.converged, failing };
+        // (Nothing that holds on to an element, or no element moved: what was solved stands.)
+        if !place_elements(asm, parts) || held.is_empty() {
+            return solved;
         }
     }
-    let mut failing = sys.unresolved;
-    if !sol.converged {
-        for (id, e) in sys.ids.iter().zip(&sol.errors) {
-            if *e > tol::ASSEMBLY_BROKEN {
-                failing.push((*id, "cannot hold together with the other relationships".into()));
+    solved.converged = false;
+    solved.failing.extend(held.into_iter().map(|id| (id, "holds on to an element of a pattern that moves with it".to_owned())));
+    solved
+}
+
+// ---- patterns and mirrors (DEC-130) -----------------------------------------------------------
+
+/// A target's geometry where it stands now, in assembly coordinates.
+pub fn world_prim(asm: &Assembly, parts: &Parts, t: &Target) -> Result<Prim, String> {
+    let end = resolve_target(asm, parts, t)?;
+    Ok(match end.body.and_then(|i| asm.components.get(i)) {
+        Some(c) => end.prim.placed(&M3::of_frame(&c.placement), c.placement.origin()),
+        None => end.prim,
+    })
+}
+
+/// What a pattern's rule comes to with things as they stand.
+#[derive(Clone, Copy, Debug)]
+enum Rule {
+    /// One step along each direction: its way and its spacing.
+    Rows { first: Vec3, second: Vec3 },
+    /// Round an axis, by so much a step.
+    Round { point: Vec3, axis: Vec3, step: f64 },
+    /// Reflected in a plane.
+    Reflect { point: Vec3, normal: Vec3 },
+}
+
+impl Rule {
+    /// What takes a source to its element at `at`, for a rule that moves things.
+    fn motion(&self, at: [u32; 2]) -> Motion {
+        let [i, j] = at.map(f64::from);
+        match *self {
+            Rule::Rows { first, second } => Motion { r: M3::IDENTITY, t: first * i + second * j },
+            Rule::Round { point, axis, step } => {
+                let r = M3::exp(axis * (step * i));
+                Motion { r, t: point - r.apply(point) }
+            }
+            Rule::Reflect { .. } => Motion::IDENTITY,
+        }
+    }
+}
+
+/// One step along a direction of a rectangular pattern.
+fn step_along(asm: &Assembly, parts: &Parts, run: &Run) -> Result<Vec3, String> {
+    let way = world_prim(asm, parts, &run.along)?.direction().ok_or("a point gives no direction: pick a straight edge, an axis or a flat face")?;
+    Ok(way.normalized() * (if run.reverse { -run.spacing } else { run.spacing }))
+}
+
+fn rule_of(asm: &Assembly, parts: &Parts, kind: &PatternKind) -> Result<Rule, String> {
+    match kind {
+        PatternKind::Rectangular { first, second } => {
+            let (first, second) = (first, second.as_ref());
+            Ok(Rule::Rows {
+                first: step_along(asm, parts, first)?,
+                second: match second {
+                    Some(s) if s.count > 1 => step_along(asm, parts, s)?,
+                    _ => Vec3::ZERO,
+                },
+            })
+        }
+        PatternKind::Circular { axis, reverse, count, angle } => {
+            let (point, dir) = match world_prim(asm, parts, axis)? {
+                Prim::Line { point, dir } => (point, dir),
+                Prim::Circle { center, normal, .. } => (center, normal),
+                _ => return Err("that gives no axis: pick a straight edge, a round face or a circular edge".into()),
+            };
+            // As a part's circular pattern: a whole turn shared out, or from the first to the last.
+            let full = (*angle - std::f64::consts::TAU).abs() < 1e-9;
+            let step = if full { *angle / f64::from(*count) } else { *angle / f64::from(count.saturating_sub(1).max(1)) };
+            Ok(Rule::Round { point, axis: dir.normalized(), step: if *reverse { -step } else { step } })
+        }
+        PatternKind::Mirror { plane, .. } => match world_prim(asm, parts, plane)? {
+            Prim::Plane { point, normal } => Ok(Rule::Reflect { point, normal: normal.normalized() }),
+            _ => Err("that is not flat: pick a flat face or a plane to mirror in".into()),
+        },
+    }
+}
+
+/// A frame standing for `f` reflected in a plane (`point`, `normal`, a unit vector) and, before
+/// that, in the part's own coordinates in the plane through `within` square to `across`: two
+/// reflections make a rigid motion. So with the part's XY plane for the second, the frame of a
+/// mirrored occurrence, whose part is reflected in that plane; with the part's plane of symmetry,
+/// the frame of the part placed again in the mirrored position.
+pub fn reflected_frame(f: &Frame, point: Vec3, normal: Vec3, within: Vec3, across: Vec3) -> Option<Frame> {
+    let way = |v: Vec3| {
+        let w = f.dir_to_world(v - across * (2.0 * v.dot(across)));
+        w - normal * (2.0 * w.dot(normal))
+    };
+    let origin = f.to_world(across * (2.0 * within.dot(across)));
+    Frame::new(origin - normal * (2.0 * (origin - point).dot(normal)), way(Vec3::Z), way(Vec3::X))
+}
+
+fn axis_unit(a: OriginAxis) -> Vec3 {
+    match a {
+        OriginAxis::X => Vec3::X,
+        OriginAxis::Y => Vec3::Y,
+        OriginAxis::Z => Vec3::Z,
+    }
+}
+
+/// Whether a part is the same on both sides of its middle plane square to `axis`, the plane
+/// through the middle of its box: every face has its image there, of the same kind and area.
+pub fn symmetric_about(scene: &Scene, axis: OriginAxis) -> bool {
+    let Some(b) = scene.bbox() else { return false };
+    let (middle, across, near) = (b.center(), axis_unit(axis), b.diagonal() * 1e-5 + 1e-6);
+    let image = |p: Vec3| p - across * (2.0 * (p - middle).dot(across));
+    let image_way = |v: Vec3| v - across * (2.0 * v.dot(across));
+    let faces: Vec<Fingerprint> = scene.bodies.iter().flat_map(|x| x.faces.iter()).map(|(_, info)| Fingerprint::of(info)).collect();
+    faces.iter().all(|f| {
+        faces.iter().any(|g| {
+            g.surface == f.surface
+                && (g.area - f.area).abs() <= f.area.abs() * 1e-4 + 1e-6
+                && g.centroid.dist(image(f.centroid)) <= near
+                && image_way(f.direction).cross(g.direction).len() <= 1e-5
+        })
+    })
+}
+
+/// How to place `source` again in its position mirrored in `plane`, for a part that is the same
+/// as its mirror image: `about` its own middle plane square to that axis or, with none given, the
+/// one that turns it least (of those it is the same about).
+pub fn reused(asm: &Assembly, parts: &Parts, source: ComponentId, plane: &Target, about: Option<OriginAxis>) -> Result<Reused, String> {
+    let c = asm.component(source).ok_or_else(|| format!("{source} does not exist"))?;
+    let scene = scene_of(parts, c).ok_or_else(|| format!("{}: the part's geometry is not available", c.name))?;
+    let same: Vec<OriginAxis> = [OriginAxis::X, OriginAxis::Y, OriginAxis::Z].into_iter().filter(|a| symmetric_about(scene, *a)).collect();
+    if let Some(a) = about {
+        if same.contains(&a) {
+            return Ok(Reused { component: source, about: a });
+        }
+        return Err(format!("{} is not the same on both sides of its middle plane square to its {a:?} axis, so it cannot be placed again about it", c.name));
+    }
+    let Prim::Plane { normal, .. } = world_prim(asm, parts, plane)? else { return Err("that is not flat: pick a flat face or a plane to mirror in".into()) };
+    let seen = c.placement.dir_to_local(normal);
+    let square = |a: OriginAxis| axis_unit(a).dot(seen).abs();
+    same.into_iter()
+        .max_by(|a, b| square(*a).total_cmp(&square(*b)))
+        .map(|about| Reused { component: source, about })
+        .ok_or_else(|| format!("{} is not the same as its mirror image, so it cannot be placed again in the mirrored position: leave it to be mirrored", c.name))
+}
+
+/// A mirror's rule: reflected in `plane`, those in `reuse` placed again in the mirrored position.
+pub fn mirror_kind(asm: &Assembly, parts: &Parts, plane: Target, reuse: &[ComponentId]) -> Result<PatternKind, String> {
+    let reuse = reuse.iter().map(|c| reused(asm, parts, *c, &plane, None)).collect::<Result<Vec<_>, _>>()?;
+    Ok(PatternKind::Mirror { plane, reuse })
+}
+
+/// What keeps a pattern's rule from being worked out now, in words: its elements then stay where
+/// they are. None when all is well.
+pub fn pattern_problem(asm: &Assembly, parts: &Parts, p: &Pattern) -> Option<String> {
+    if let Err(e) = rule_of(asm, parts, &p.kind) {
+        return Some(e);
+    }
+    if let PatternKind::Mirror { reuse, .. } = &p.kind {
+        for r in reuse {
+            let c = asm.component(r.component)?;
+            if let Some(scene) = scene_of(parts, c)
+                && !symmetric_about(scene, r.about)
+            {
+                return Some(format!("{} is no longer the same as its mirror image: mirror it instead of placing it again", c.name));
             }
         }
     }
-    Solved { converged: sol.converged, failing }
+    None
+}
+
+/// Puts every element where its pattern's rule says and makes it of what its source is of,
+/// pattern by pattern (a later one may repeat an earlier one's elements). True when anything
+/// moved or changed.
+pub fn place_elements(asm: &mut Assembly, parts: &Parts) -> bool {
+    let mut changed = false;
+    for i in 0..asm.patterns.len() {
+        let Some(p) = asm.patterns.get(i).cloned() else { continue };
+        // (A rule that cannot be worked out leaves its elements where they are:
+        // `pattern_problem` says why.)
+        let Ok(rule) = rule_of(asm, parts, &p.kind) else { continue };
+        for e in &p.elements {
+            for (s, c) in p.sources.iter().zip(&e.components) {
+                let Some(source) = asm.component(*s).cloned() else { continue };
+                let (frame, mirrored) = match rule {
+                    Rule::Reflect { point, normal } => {
+                        let again = match &p.kind {
+                            PatternKind::Mirror { reuse, .. } => reuse.iter().find(|r| r.component == *s),
+                            _ => None,
+                        };
+                        match again {
+                            Some(r) => {
+                                // (Until its part's geometry is there it stays where it is.)
+                                let Some(b) = local_bbox(parts, &source) else { continue };
+                                (reflected_frame(&source.placement, point, normal, b.center(), axis_unit(r.about)), source.mirrored)
+                            }
+                            None => (reflected_frame(&source.placement, point, normal, Vec3::ZERO, Vec3::Z), !source.mirrored),
+                        }
+                    }
+                    _ => (Some(rule.motion(e.at).apply_frame(&source.placement)), source.mirrored),
+                };
+                let Some(frame) = frame else { continue };
+                let Some(c) = asm.component_mut(*c) else { continue };
+                let moved = !c.placement.origin().near(frame.origin(), 1e-9) || !c.placement.x().near(frame.x(), 1e-12) || !c.placement.z().near(frame.z(), 1e-12);
+                if moved || c.part != source.part || c.row != source.row || c.mirrored != mirrored {
+                    changed = true;
+                    c.placement = frame;
+                    c.part = source.part;
+                    c.row = source.row;
+                    c.mirrored = mirrored;
+                }
+            }
+        }
+    }
+    changed
+}
+
+/// A new component standing for `source`, in the same part: `place_elements` puts it.
+fn new_element(asm: &mut Assembly, source: ComponentId, visible: bool) -> Result<ComponentId, CmdError> {
+    let s = asm.component(source).cloned().ok_or_else(|| CmdError(format!("{source} does not exist")))?;
+    let id = asm.take_component_id();
+    let name = asm.occurrence_name(s.name.rsplit_once(':').map_or(s.name.as_str(), |(base, _)| base));
+    asm.components.push(Component { id, name, grounded: false, visible, ..s });
+    Ok(id)
+}
+
+/// What is wrong with a pattern about to be made or changed, in words.
+fn check_pattern(asm: &Assembly, parts: &Parts, sources: &[ComponentId], kind: &PatternKind) -> Result<(), CmdError> {
+    kind.check().map_err(CmdError)?;
+    if sources.is_empty() {
+        return Err("choose at least one component to repeat".into());
+    }
+    for (i, s) in sources.iter().enumerate() {
+        asm.component(*s).ok_or_else(|| CmdError(format!("{s} does not exist")))?;
+        if sources[..i].contains(s) {
+            return Err(CmdError(format!("{s} is chosen twice")));
+        }
+    }
+    if kind.places().len().saturating_mul(sources.len()).saturating_add(asm.components.len()) > MAX_COMPONENTS.saturating_add(asm.elements().len()) {
+        return Err(CmdError(format!("that would make more than {MAX_COMPONENTS} components")));
+    }
+    rule_of(asm, parts, kind).map(|_| ()).map_err(CmdError)
+}
+
+/// Gives a pattern the sources and elements its rule asks for: elements that are still wanted stay
+/// the same components, so what holds on to them holds; those no longer wanted go, with their
+/// relationships; the rest are made. Each then stands where the rule says.
+fn rebuild_elements(asm: &mut Assembly, parts: &Parts, id: PatternId, sources: Vec<ComponentId>) -> Result<(), CmdError> {
+    let p = asm.pattern(id).cloned().ok_or_else(|| CmdError(format!("{id} does not exist")))?;
+    let mut old: BTreeMap<([u32; 2], ComponentId), ComponentId> = BTreeMap::new();
+    for e in &p.elements {
+        old.extend(p.sources.iter().zip(&e.components).map(|(s, c)| ((e.at, *s), *c)));
+    }
+    let mut elements = Vec::new();
+    for at in p.kind.places() {
+        let mut components = Vec::with_capacity(sources.len());
+        for s in &sources {
+            components.push(match old.remove(&(at, *s)) {
+                Some(c) => c,
+                None => new_element(asm, *s, !p.suppressed)?,
+            });
+        }
+        elements.push(Element { at, components });
+    }
+    if let Some(p) = asm.pattern_mut(id) {
+        p.sources = sources;
+        p.elements = elements;
+    }
+    // (They are no longer its elements: each goes alone.)
+    for c in old.into_values() {
+        asm.remove_component(c);
+    }
+    place_elements(asm, parts);
+    Ok(())
+}
+
+/// Makes a pattern or mirror of `sources`, with its elements where its rule says. The caller
+/// solves after it.
+pub fn add_pattern(asm: &mut Assembly, parts: &Parts, sources: Vec<ComponentId>, kind: PatternKind) -> Result<PatternId, CmdError> {
+    check_pattern(asm, parts, &sources, &kind)?;
+    let id = asm.take_pattern_id();
+    let name = asm.pattern_name(kind.label());
+    asm.patterns.push(Pattern { id, name, suppressed: false, sources: Vec::new(), kind, elements: Vec::new() });
+    rebuild_elements(asm, parts, id, sources)?;
+    Ok(id)
+}
+
+/// Gives a pattern a new rule (a count, a spacing, a direction) or new sources: its elements are
+/// moved, added or taken away. The caller solves after it.
+pub fn change_pattern(asm: &mut Assembly, parts: &Parts, id: PatternId, sources: Vec<ComponentId>, kind: PatternKind) -> Result<(), CmdError> {
+    check_pattern(asm, parts, &sources, &kind)?;
+    let p = asm.pattern_mut(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?;
+    p.kind = kind;
+    rebuild_elements(asm, parts, id, sources)
+}
+
+/// Takes a pattern's elements out of the assembly for now (hidden, not in the parts list), or
+/// brings them back.
+pub fn suppress_pattern(asm: &mut Assembly, id: PatternId, on: bool) -> Result<(), CmdError> {
+    let p = asm.pattern_mut(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?;
+    p.suppressed = on;
+    let elements: Vec<ComponentId> = p.elements.iter().flat_map(|e| e.components.iter().copied()).collect();
+    for c in elements {
+        if let Some(c) = asm.component_mut(c) {
+            c.visible = !on;
+        }
+    }
+    Ok(())
+}
+
+/// How far copies of `ids` go by default: along X by the width of what is copied and a gap, so
+/// that they lie beside what they are copied from and not on it.
+pub fn copy_offset(asm: &Assembly, parts: &Parts, ids: &[ComponentId]) -> Vec3 {
+    let boxes = ids.iter().filter_map(|c| asm.component(*c)).filter_map(|c| local_bbox(parts, c).map(|b| placed_bbox(&b, &c.placement)));
+    match boxes.reduce(|a, b| a.union(&b)) {
+        Some(b) => Vec3::new(b.max.x - b.min.x + (b.diagonal() * 0.1).max(5.0), 0.0, 0.0),
+        None => Vec3::new(10.0, 0.0, 0.0),
+    }
+}
+
+/// Independent copies of `ids`, moved by `by`: further occurrences of their parts, or of the
+/// part files `files` says stand for those (file by file). The relationships among them come too;
+/// those that reach anything else stay with what they hold. Not grounded, so that they can be
+/// moved. Returns the new components, in the order of `ids`, and relationships.
+pub fn copy_components(
+    asm: &mut Assembly,
+    ids: &[ComponentId],
+    by: Vec3,
+    files: &BTreeMap<String, String>,
+) -> Result<(Vec<ComponentId>, Vec<RelationshipId>), CmdError> {
+    let mut map = BTreeMap::new();
+    let mut made = Vec::with_capacity(ids.len());
+    for c in ids {
+        let s = asm.component(*c).cloned().ok_or_else(|| CmdError(format!("{c} does not exist")))?;
+        let placement = s.placement.with_origin(s.placement.origin() + by).ok_or("the copy would be out of range")?;
+        let id = asm.take_component_id();
+        let name = match files.get(&s.part) {
+            Some(file) => {
+                let file = file.rsplit(['/', '\\']).next().unwrap_or(file);
+                asm.occurrence_name(file.strip_suffix(".tenon").unwrap_or(file))
+            }
+            None => asm.occurrence_name(s.name.rsplit_once(':').map_or(s.name.as_str(), |(base, _)| base)),
+        };
+        let part = files.get(&s.part).cloned().unwrap_or(s.part);
+        asm.components.push(Component { id, name, part, placement, grounded: false, row: s.row, visible: true, mirrored: s.mirrored });
+        map.insert(*c, id);
+        made.push(id);
+    }
+    let copied: Vec<(RelKind, bool, &'static str)> =
+        asm.relationships.iter().filter_map(|r| r.kind.between(&map).map(|k| (k, r.suppressed, r.kind.label()))).collect();
+    let mut rels = Vec::with_capacity(copied.len());
+    for (kind, suppressed, label) in copied {
+        let id = asm.take_relationship_id();
+        let name = asm.relationship_name(label);
+        asm.relationships.push(Relationship { id, name, suppressed, kind });
+        rels.push(id);
+    }
+    Ok((made, rels))
 }
 
 /// Remaining degrees of freedom of every component (in order) and of the whole assembly.
@@ -322,6 +697,8 @@ pub struct BomRow {
     pub name: String,
     /// The row of the part's design table these components use.
     pub row: Option<String>,
+    /// These are mirrored occurrences of the part: its mirror image, a part of its own to make.
+    pub mirrored: bool,
     pub quantity: usize,
     /// What the part is made of, when it has a material.
     pub material: Option<String>,
@@ -340,16 +717,21 @@ impl BomRow {
     /// What a parts list says the part's number is: its own, with the size when it comes in
     /// several, or its file's name.
     pub fn number(&self) -> String {
-        match (&self.part_number, &self.row) {
+        let number = match (&self.part_number, &self.row) {
             (Some(n), Some(row)) => format!("{n} ({row})"),
             (Some(n), None) => n.clone(),
-            (None, _) => self.part.clone(),
-        }
+            (None, _) => return self.part.clone(),
+        };
+        if self.mirrored { format!("{number} (mirrored)") } else { number }
     }
 
     /// What a parts list says the part is: its description, or its name.
     pub fn what(&self) -> String {
-        self.description.clone().unwrap_or_else(|| self.name.clone())
+        match &self.description {
+            Some(d) if self.mirrored => format!("{d}, mirrored"),
+            Some(d) => d.clone(),
+            None => self.name.clone(),
+        }
     }
 }
 
@@ -373,10 +755,12 @@ pub fn bom(asm: &Assembly, parts: &Parts) -> Vec<BomRow> {
 
 /// The parts list from what is known of the parts: `name` gives a part's document name (none:
 /// the file name stands in), `volume` a component's part volume. Every parts list in Tenon (the
-/// assembly's, a drawing's) is made here, so they number parts alike.
+/// assembly's, a drawing's) is made here, so they number parts alike. The elements of a
+/// suppressed pattern are out of it; a mirrored occurrence has a row of its own.
 pub fn bom_with(asm: &Assembly, name: impl Fn(&str) -> Option<String>, volume: impl Fn(&Component) -> Option<f64>) -> Vec<BomRow> {
     let mut rows: Vec<BomRow> = Vec::new();
-    for c in &asm.components {
+    let out = asm.suppressed_elements();
+    for c in asm.components.iter().filter(|c| !out.contains(&c.id)) {
         let key = c.key();
         if let Some(r) = rows.iter_mut().find(|r| r.key == key) {
             r.quantity += 1;
@@ -390,12 +774,14 @@ pub fn bom_with(asm: &Assembly, name: impl Fn(&str) -> Option<String>, volume: i
             Some(row) => (format!("{stem} ({row})"), format!("{name}, {row}")),
             None => (stem, name),
         };
+        let (stem, name) = if c.mirrored { (format!("{stem} (mirrored)"), format!("{name}, mirrored")) } else { (stem, name) };
         rows.push(BomRow {
             item: rows.len() + 1,
             part: stem,
             key,
             name,
             row: c.row.clone(),
+            mirrored: c.mirrored,
             quantity: 1,
             material: None,
             mass: None,
@@ -408,23 +794,28 @@ pub fn bom_with(asm: &Assembly, name: impl Fn(&str) -> Option<String>, volume: i
     rows
 }
 
-/// Keeps the parts that are a part file in one row of its design table in step with the
-/// assembly and with the part files' own entries: makes those components need, works them out
-/// again when their part file's document has changed, and drops those no component uses.
-/// Returns true when anything changed.
-pub fn sync_variants(asm: &Assembly, parts: &mut Parts) -> bool {
-    let wanted: BTreeMap<String, (&str, &str)> =
-        asm.components.iter().filter_map(|c| c.row.as_deref().map(|row| (c.key(), (c.part.as_str(), row)))).collect();
+/// Keeps the parts that are a part file in one row of its design table, or a part's mirror
+/// image, in step with the assemblies given (the document and what a panel is showing) and with
+/// the part files' own entries: makes those components need, works them out again when their part
+/// file's document has changed, and drops those no component uses. Returns true when anything
+/// changed.
+pub fn sync_variants(assemblies: &[&Assembly], parts: &mut Parts) -> bool {
+    let wanted: BTreeMap<String, (&str, Option<&str>, bool)> = assemblies
+        .iter()
+        .flat_map(|a| a.components.iter())
+        .filter(|c| c.row.is_some() || c.mirrored)
+        .map(|c| (c.key(), (c.part.as_str(), c.row.as_deref(), c.mirrored)))
+        .collect();
     let before = parts.len();
     parts.retain(|k, p| p.variant.is_none() || wanted.contains_key(k));
     let mut changed = parts.len() != before;
-    for (key, (base, row)) in wanted {
+    for (key, (base, row, mirrored)) in wanted {
         let base_revision = parts.get(base).filter(|b| b.missing.is_none()).map(|b| b.session.revision());
-        let variant = Variant { base: base.to_owned(), row: row.to_owned(), base_revision };
+        let variant = Variant { base: base.to_owned(), row: row.map(str::to_owned), mirrored, base_revision };
         if parts.get(&key).is_some_and(|p| p.variant.as_ref() == Some(&variant)) {
             continue;
         }
-        // The part file's document, put at the row.
+        // The part file's document, put at the row and reflected.
         let made: Result<Document, String> = match parts.get(base) {
             None => Err("its part file is not loaded".into()),
             Some(b) => match &b.missing {
@@ -432,9 +823,13 @@ pub fn sync_variants(asm: &Assembly, parts: &mut Parts) -> bool {
                 None => {
                     let mut doc = b.session.document().clone();
                     let file = base.rsplit(['/', '\\']).next().unwrap_or(base);
-                    match doc.table_activate(row).and_then(|()| doc.sync_parameters()) {
-                        Ok(()) => Ok(doc),
-                        Err(e) => Err(format!("{file} cannot be had at row `{row}`: {e}")),
+                    doc.set_reflected(mirrored);
+                    match row {
+                        None => Ok(doc),
+                        Some(row) => match doc.table_activate(row).and_then(|()| doc.sync_parameters()) {
+                            Ok(()) => Ok(doc),
+                            Err(e) => Err(format!("{file} cannot be had at row `{row}`: {e}")),
+                        },
                     }
                 }
             },
@@ -478,6 +873,8 @@ pub struct AsmSession {
     pub parts: Parts,
     /// Relationships that failed in the last solve, and why.
     pub failing: Vec<(RelationshipId, String)>,
+    /// The assembly as a panel would leave it, being shown: its parts are kept ready too.
+    preview: Option<Box<Assembly>>,
 }
 
 impl Default for AsmSession {
@@ -488,10 +885,30 @@ impl Default for AsmSession {
 
 impl AsmSession {
     pub fn new(asm: Assembly) -> AsmSession {
-        AsmSession { asm, undo: Vec::new(), steps: 0, redo: Vec::new(), revision: 1, saved_revision: 1, parts: Parts::new(), failing: Vec::new() }
+        AsmSession {
+            asm,
+            undo: Vec::new(),
+            steps: 0,
+            redo: Vec::new(),
+            revision: 1,
+            saved_revision: 1,
+            parts: Parts::new(),
+            failing: Vec::new(),
+            preview: None,
+        }
     }
     pub fn assembly(&self) -> &Assembly {
         &self.asm
+    }
+    /// The assembly as an open panel would leave it, when one is being shown.
+    pub fn preview(&self) -> Option<&Assembly> {
+        self.preview.as_deref()
+    }
+    /// Shows the assembly as a panel would leave it (the parts it needs are made ready), or (none)
+    /// stops. It is no change to the assembly.
+    pub fn set_preview(&mut self, preview: Option<Assembly>) {
+        self.preview = preview.map(Box::new);
+        self.sync_variants();
     }
     pub fn revision(&self) -> u64 {
         self.revision
@@ -520,6 +937,7 @@ impl AsmSession {
         self.revision += 1;
         self.saved_revision = self.revision;
         self.failing.clear();
+        self.preview = None;
         self.sync_variants();
     }
 
@@ -613,7 +1031,8 @@ impl AsmSession {
     /// [`sync_variants`]). Called after every change here; call it after changing a part's
     /// document directly. True when anything changed.
     pub fn sync_variants(&mut self) -> bool {
-        sync_variants(&self.asm, &mut self.parts)
+        let shown: Vec<&Assembly> = std::iter::once(&self.asm).chain(self.preview.as_deref()).collect();
+        sync_variants(&shown, &mut self.parts)
     }
 
     /// Adds a part file (if it is not already there).
@@ -722,7 +1141,7 @@ pub fn insert(asm: &mut Assembly, parts: &Parts, key: &str, at: Option<Frame>, g
     });
     let id = asm.take_component_id();
     let name = asm.occurrence_name(&base);
-    asm.components.push(Component { id, name, part: key.to_owned(), placement, grounded: grounded.unwrap_or(first), row: None, visible: true });
+    asm.components.push(Component { id, name, part: key.to_owned(), placement, grounded: grounded.unwrap_or(first), row: None, visible: true, mirrored: false });
     id
 }
 
