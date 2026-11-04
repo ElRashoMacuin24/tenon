@@ -210,6 +210,7 @@ impl Workbench {
     /// The app: regeneration on a worker thread with the kernel `make_kernel` creates there.
     /// `waker` is called when results arrive (e.g. to repaint).
     pub fn new(make_kernel: impl FnOnce() -> Box<dyn Kernel> + Send + 'static, waker: Option<Box<dyn Fn() + Send>>, services: Services) -> Self {
+        tenon_fea::tools::has_options();
         match Worker::spawn(make_kernel, MeshTol::default(), waker) {
             Ok(w) => Self::with_geo(Geo::Worker(w), services),
             Err(e) => {

@@ -39,6 +39,9 @@ const OS: Os = if cfg!(windows) {
 
 const PROGRAMS: [&str; 2] = ["tenon", "tenon-cli"];
 
+/// What a user reads beyond the first page, from `docs`: into a folder of that name.
+const USER_DOCS: [&str; 7] = ["user-guide.md", "stress.md", "topology.md", "scripts.md", "commands.md", "mcp.md", "file-format.md"];
+
 /// The user's first page, put at the top of the folder (`{version}` is filled in).
 const README: &str = include_str!("../dist/README.txt");
 
@@ -167,9 +170,15 @@ pub fn run_dist(args: &[&str]) -> Result<(), String> {
         copy(&root().join(f), &layout.top.join(f))?;
     }
     write(&layout.top.join("README.txt"), &README.replace("{version}", &version))?;
+    for f in USER_DOCS {
+        copy(&root().join("docs").join(f), &layout.top.join("docs").join(f))?;
+    }
 
     // What a user starts from: the example parts, assemblies and drawings, and the templates.
     copy_tree(&root().join("examples"), &layout.top.join("examples"), &["tenon", "tenonasm", "tenondrw", "json", "md", "csv"])?;
+    // (m0-bracket is a README about a STEP and an STL file, which are not among these.)
+    let m0 = layout.top.join("examples").join("m0-bracket");
+    std::fs::remove_dir_all(&m0).map_err(|e| format!("dist: cannot remove {}: {e}", m0.display()))?;
     copy_tree(&root().join("assets").join("templates"), &layout.top.join("templates"), &["tenondrw", "json"])?;
 
     if OS == Os::Mac {

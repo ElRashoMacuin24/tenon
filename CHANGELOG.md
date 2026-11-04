@@ -1,7 +1,7 @@
 # Changelog
 
 What changes from one release of Tenon to the next. Every item that works has the test that
-shows it in [ROADMAP.md](ROADMAP.md).
+shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROADMAP.md).
 
 ## Unreleased
 
@@ -23,7 +23,7 @@ shows it in [ROADMAP.md](ROADMAP.md).
   `grams`, not both), and `tenon-cli diff` compares them. New commands `study.keep`,
   `study.shape`, `study.optimize`; `study.check` gains `shape_needs`, what only a shape needs,
   which does not stop Simulate; `study.solve` and `study.optimize` over the control port are runs
-  the window can stop; docs/topology.md.
+  the window can stop; [docs/topology.md](https://github.com/ElRashoMacuin24/tenon/blob/main/docs/topology.md).
 - **A part in pieces.** A bore wider than a plate leaves a part in two pieces that is one solid to
   the kernel. A stress check of it held by one piece used to solve, with a displacement in the tens
   of billions of millimetres and "it holds". A piece not held fast is now refused, in words, also
@@ -104,6 +104,15 @@ shows it in [ROADMAP.md](ROADMAP.md).
   the part. `feature.visibility`.
 - **Constrain** offers Mate, Angle and Insert, with Flush as Mate's second solution; offsets and
   angles are typed.
+
+### Getting it
+
+- The archive now holds the user's documents (`docs`: the guide, stress checks, Optimize Shape,
+  scripts, commands, agents, the file format), and its README says where they are. The licences
+  of the fonts built into the window are in it too, and NOTICE says what the bundled libraries'
+  licences ask to have said.
+- The first start on macOS 15 and later is by Open Anyway in System Settings: README and guide
+  say so.
 
 ### Fixed
 

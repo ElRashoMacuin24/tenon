@@ -42,6 +42,14 @@ fn checkout_environment(start: &Path) -> Option<PathBuf> {
     start.ancestors().take(8).map(|dir| dir.join(".pixi").join("envs").join("fea")).find(|env| env.is_dir())
 }
 
+/// Whether this program has a window, and so Tools > Application Options to choose them in.
+static HAS_OPTIONS: AtomicBool = AtomicBool::new(false);
+
+/// Says that this program has Tools > Application Options.
+pub fn has_options() {
+    HAS_OPTIONS.store(true, Ordering::Relaxed);
+}
+
 /// Where the user said the programs are (Tools > Application Options), if they said.
 static CHOSEN: std::sync::RwLock<(Option<PathBuf>, Option<PathBuf>)> = std::sync::RwLock::new((None, None));
 
@@ -94,14 +102,25 @@ impl Tools {
                         .filter(|(missing, _)| *missing)
                         .map(|(_, what)| what)
                         .collect();
-                Err(format!(
-                    "Working a study out takes two programs that are not part of Tenon, and {} not found: {}. Install them (docs/stress.md says how), and choose them in Tools > Application Options if they are not on the search path.",
-                    if missing.len() == 1 { "one was" } else { "they were" },
-                    missing.join("; ")
-                ))
+                Err(not_found(&missing, HAS_OPTIONS.load(Ordering::Relaxed)))
             }
         }
     }
+}
+
+/// What is said when programs are `missing`: what to do first, in the words of a program that
+/// has Application Options or (`options` false) of one that has none.
+fn not_found(missing: &[&str], options: bool) -> String {
+    let what_to_do = if options {
+        "Install Gmsh and CalculiX, or say where they are in Tools > Application Options."
+    } else {
+        "Install Gmsh and CalculiX and put them on the search path, or say where they are with TENON_GMSH and TENON_CCX."
+    };
+    format!(
+        "{what_to_do} A study takes these two programs, which are not part of Tenon, and {} not found: {}. How to get them: https://github.com/ElRashoMacuin24/tenon/blob/main/docs/stress.md",
+        if missing.len() == 1 { "one was" } else { "they were" },
+        missing.join("; ")
+    )
 }
 
 /// The folders of a conda environment whose libraries a program of it needs on Windows, when
@@ -255,6 +274,16 @@ mod tests {
         assert!(given.is_dir());
         drop(scratch);
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn programs_not_found_are_told_in_the_words_of_the_program_that_says_so() {
+        let window = not_found(&["CalculiX (ccx), which solves them"], true);
+        assert!(window.starts_with("Install Gmsh and CalculiX, or say where they are in Tools > Application Options."), "{window}");
+        assert!(window.contains("one was not found: CalculiX (ccx)") && window.contains("https://github.com/"), "{window}");
+        let cli = not_found(&["Gmsh", "CalculiX"], false);
+        assert!(cli.contains("TENON_GMSH and TENON_CCX") && cli.contains("they were not found"), "{cli}");
+        assert!(!cli.contains("Application Options"), "{cli}");
     }
 
     #[test]

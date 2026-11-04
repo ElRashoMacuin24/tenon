@@ -1063,7 +1063,7 @@ fn study_check(s: &mut Session, k: &mut dyn Kernel, p: &Value) -> CmdResult {
     }
     if d.strength().is_none() {
         let what = d.material().map_or("the part has no material".to_owned(), |m| format!("{} does not say", m.name));
-        needs.push(format!("a material that says how strong it is ({what}): document.material, with youngs_modulus, poisson and yield_strength"));
+        needs.push(format!("a material that says how strong it is ({what}): Assign one (in a script, document.material, with youngs_modulus, poisson and yield_strength)"));
     }
     // Each support and load that is in the study: its faces on the part as it is.
     let surface = |body: usize, face: u32| -> Option<&'static str> {

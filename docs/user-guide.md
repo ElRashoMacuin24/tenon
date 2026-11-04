@@ -14,11 +14,12 @@ folder together.
 | System | Start | The first time |
 |---|---|---|
 | Windows 10 or 11 (64-bit) | `tenon.exe` | Windows may say it protected your PC from an unrecognised app: choose **More info**, then **Run anyway**. Tenon is not signed. |
-| macOS 11 or later (Apple silicon) | `Tenon.app` | Control-click it and choose **Open** (Tenon is not notarised). If macOS says the app is damaged, run `xattr -dr com.apple.quarantine Tenon.app` once in Terminal. |
+| macOS 11 or later (Apple silicon) | `Tenon.app` | Tenon is not notarised. On macOS 15 and later, try to open it, then choose **Open Anyway** in System Settings > Privacy & Security. On earlier versions, Control-click it and choose **Open**. If macOS still will not open it, or says it is damaged, run `xattr -dr com.apple.quarantine Tenon.app` once in Terminal, with the path of the app where it is. |
 | Linux (64-bit, glibc 2.35 or later) | `bin/tenon` | A graphics driver with Vulkan or OpenGL 3.3. |
 
 The archive also holds example parts, assemblies and drawings (`examples`), the drawing
-templates (`templates`), and `tenon-cli`, the command-line program.
+templates (`templates`), this guide and the other documents for users (`docs`), and `tenon-cli`,
+the command-line program.
 
 Intel Macs and other systems: build Tenon from its source ([setup.md](setup.md)).
 
@@ -225,5 +226,5 @@ Protocol ([mcp.md](mcp.md)). Every command the ribbon runs is listed in
 Tenon 0.1 is a first release. Among what it does not do: sub-assemblies, motion studies and
 parts that adapt to one another; shaded drawing views, tolerances and ordinate dimensions;
 ellipses in sketches, a choice of fonts for sketch text; Lofted Flange, Contour Roll, Punch, Rip and Unfold in sheet metal;
-stress studies of assemblies or of more than one material. [ROADMAP.md](../ROADMAP.md)
+stress studies of assemblies or of more than one material. [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROADMAP.md)
 lists everything that works, with the test that shows it, and what is missing.
