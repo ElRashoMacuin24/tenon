@@ -61,7 +61,7 @@ fn at(wb: &Workbench, x: f64, y: f64) -> Pos2 {
 fn sketching(wb: &Workbench) -> tenon_model::FeatureId {
     match &wb.mode {
         crate::workbench::Mode::Sketch(s) => s.feature,
-        crate::workbench::Mode::Model => panic!("not sketching: {}", wb.status()),
+        _ => panic!("not sketching: {}", wb.status()),
     }
 }
 

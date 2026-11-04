@@ -23,7 +23,7 @@ fn frame(wb: &mut Workbench, ctx: &egui::Context, size: egui::Vec2) {
 fn sketching(wb: &Workbench) -> FeatureId {
     match &wb.mode {
         Mode::Sketch(s) => s.feature,
-        Mode::Model => panic!("not in sketch mode"),
+        _ => panic!("not in sketch mode"),
     }
 }
 
@@ -2128,7 +2128,7 @@ fn the_status_bar_changes_how_dimensions_read_and_hides_constraint_symbols() {
     // so does the status bar's Constraints button.
     let symbols = |wb: &Workbench| match &wb.mode {
         Mode::Sketch(sm) => sm.badges.len(),
-        Mode::Model => 0,
+        _ => 0,
     };
     assert_eq!(symbols(&wb), 4, "two level sides and two upright ones");
     d.tap(&mut wb, egui::Key::F9);

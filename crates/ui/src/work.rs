@@ -19,10 +19,14 @@ pub(crate) enum WorkMethod {
     Midplane,
     /// Through three points (DEC-116).
     ThreePoints,
+    /// Square to a curve of a 3D sketch at its end (DEC-136).
+    SquareToCurve,
     Along,
     Planes,
     Center,
     Intersection,
+    /// At a point: of a 3D sketch or a sketch, or a vertex (DEC-136).
+    PointAt,
 }
 
 impl WorkMethod {
@@ -32,20 +36,22 @@ impl WorkMethod {
             WorkMethod::Angle => "Angle to Plane around Edge",
             WorkMethod::Midplane => "Midplane between Two Planes",
             WorkMethod::ThreePoints => "Three Points",
+            WorkMethod::SquareToCurve => "Square to a 3D Sketch Curve",
             WorkMethod::Along => "On Edge, Axis or Cylinder",
             WorkMethod::Planes => "Intersection of Two Planes",
             WorkMethod::Center => "Center of Circular Edge",
             WorkMethod::Intersection => "Axis through Plane",
+            WorkMethod::PointAt => "At a Point",
         }
     }
     /// The methods of the same kind (plane, axis or point).
     pub(crate) fn family(self) -> &'static [WorkMethod] {
         match self {
-            WorkMethod::Offset | WorkMethod::Angle | WorkMethod::Midplane | WorkMethod::ThreePoints => {
-                &[WorkMethod::Offset, WorkMethod::Angle, WorkMethod::Midplane, WorkMethod::ThreePoints]
+            WorkMethod::Offset | WorkMethod::Angle | WorkMethod::Midplane | WorkMethod::ThreePoints | WorkMethod::SquareToCurve => {
+                &[WorkMethod::Offset, WorkMethod::Angle, WorkMethod::Midplane, WorkMethod::ThreePoints, WorkMethod::SquareToCurve]
             }
             WorkMethod::Along | WorkMethod::Planes => &[WorkMethod::Along, WorkMethod::Planes],
-            WorkMethod::Center | WorkMethod::Intersection => &[WorkMethod::Center, WorkMethod::Intersection],
+            WorkMethod::Center | WorkMethod::Intersection | WorkMethod::PointAt => &[WorkMethod::Center, WorkMethod::Intersection, WorkMethod::PointAt],
         }
     }
     /// The selectors it needs, in order.
@@ -55,9 +61,11 @@ impl WorkMethod {
             WorkMethod::Angle => &[WorkSlot::A, WorkSlot::Axis],
             WorkMethod::Midplane | WorkMethod::Planes => &[WorkSlot::A, WorkSlot::B],
             WorkMethod::ThreePoints => &[WorkSlot::P1, WorkSlot::P2, WorkSlot::P3],
+            WorkMethod::SquareToCurve => &[WorkSlot::Curve],
             WorkMethod::Along => &[WorkSlot::Axis],
             WorkMethod::Center => &[WorkSlot::Edge],
             WorkMethod::Intersection => &[WorkSlot::Axis, WorkSlot::A],
+            WorkMethod::PointAt => &[WorkSlot::P1],
         }
     }
 }
@@ -73,6 +81,8 @@ pub(crate) enum WorkSlot {
     P1,
     P2,
     P3,
+    /// A curve of a 3D sketch, and the end of it.
+    Curve,
 }
 
 impl WorkSlot {
@@ -97,6 +107,8 @@ pub(crate) struct WorkPanel {
     pub edge: Option<EdgeRef>,
     /// A three-point plane's points.
     pub points: [Option<PointSel>; 3],
+    /// A plane square to a curve of a 3D sketch: the sketch, the curve, the end.
+    pub curve: Option<(FeatureId, tenon_sketch::EntityId, tenon_sketch::EntityId)>,
     pub distance: f64,
     pub degrees: f64,
     pub slot: WorkSlot,
@@ -112,6 +124,7 @@ impl WorkPanel {
             axis: None,
             edge: None,
             points: [None, None, None],
+            curve: None,
             distance: 10.0,
             degrees: 90.0,
             slot: method.slots()[0],
@@ -132,6 +145,9 @@ impl WorkPanel {
             FeatureKind::WorkPlane(WorkPlane::ThreePoints { points }) => {
                 WorkPanel { points: points.clone().map(Some), ..WorkPanel::new(WorkMethod::ThreePoints) }
             }
+            FeatureKind::WorkPlane(WorkPlane::SquareToCurve { sketch, curve, end }) => {
+                WorkPanel { curve: Some((*sketch, *curve, *end)), ..WorkPanel::new(WorkMethod::SquareToCurve) }
+            }
             FeatureKind::WorkAxis(WorkAxis::Along { axis }) => WorkPanel { axis: Some(axis.clone()), ..WorkPanel::new(WorkMethod::Along) },
             FeatureKind::WorkAxis(WorkAxis::Planes { a, b }) => {
                 WorkPanel { a: Some(a.clone()), b: Some(b.clone()), ..WorkPanel::new(WorkMethod::Planes) }
@@ -140,6 +156,7 @@ impl WorkPanel {
             FeatureKind::WorkPoint(WorkPoint::Intersection { axis, plane }) => {
                 WorkPanel { axis: Some(axis.clone()), a: Some(plane.clone()), ..WorkPanel::new(WorkMethod::Intersection) }
             }
+            FeatureKind::WorkPoint(WorkPoint::At { point }) => WorkPanel { points: [Some(point.clone()), None, None], ..WorkPanel::new(WorkMethod::PointAt) },
             _ => return None,
         };
         p.editing = editing;
@@ -148,9 +165,9 @@ impl WorkPanel {
 
     pub(crate) fn title(&self) -> &'static str {
         match self.method {
-            WorkMethod::Offset | WorkMethod::Angle | WorkMethod::Midplane | WorkMethod::ThreePoints => "Work Plane",
+            WorkMethod::Offset | WorkMethod::Angle | WorkMethod::Midplane | WorkMethod::ThreePoints | WorkMethod::SquareToCurve => "Work Plane",
             WorkMethod::Along | WorkMethod::Planes => "Work Axis",
-            WorkMethod::Center | WorkMethod::Intersection => "Work Point",
+            WorkMethod::Center | WorkMethod::Intersection | WorkMethod::PointAt => "Work Point",
         }
     }
 
@@ -174,10 +191,18 @@ impl WorkPanel {
                 let [a, b, c] = &self.points;
                 FeatureKind::WorkPlane(WorkPlane::ThreePoints { points: [a.clone()?, b.clone()?, c.clone()?] })
             }
+            WorkMethod::SquareToCurve => {
+                let (sketch, curve, end) = self.curve?;
+                FeatureKind::WorkPlane(WorkPlane::SquareToCurve { sketch, curve, end })
+            }
             WorkMethod::Along => FeatureKind::WorkAxis(WorkAxis::Along { axis: self.axis.clone()? }),
             WorkMethod::Planes => FeatureKind::WorkAxis(WorkAxis::Planes { a: self.a.clone()?, b: self.b.clone()? }),
             WorkMethod::Center => FeatureKind::WorkPoint(WorkPoint::Center { edge: self.edge.clone()? }),
             WorkMethod::Intersection => FeatureKind::WorkPoint(WorkPoint::Intersection { axis: self.axis.clone()?, plane: self.a.clone()? }),
+            WorkMethod::PointAt => {
+                let [p, ..] = &self.points;
+                FeatureKind::WorkPoint(WorkPoint::At { point: p.clone()? })
+            }
         })
     }
 
@@ -189,6 +214,7 @@ impl WorkPanel {
             WorkSlot::Axis => self.axis.is_some(),
             WorkSlot::Edge => self.edge.is_some(),
             WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => s.point().is_some_and(|i| self.points[i].is_some()),
+            WorkSlot::Curve => self.curve.is_some(),
         };
         if let Some(next) = self.method.slots().iter().find(|s| !filled(s)) {
             self.slot = *next;
@@ -200,7 +226,7 @@ impl WorkPanel {
         match self.slot {
             WorkSlot::A | WorkSlot::B => (true, false),
             WorkSlot::Axis => (false, true),
-            WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => (false, false),
+            WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 | WorkSlot::Curve => (false, false),
         }
     }
 
@@ -229,6 +255,7 @@ pub(crate) fn axis_json(a: &AxisSel) -> Value {
         AxisSel::Edge(e) => json!(e),
         AxisSel::Face(f) => json!(f),
         AxisSel::Work(id) => json!({ "work": id.0 }),
+        AxisSel::Sketch3dLine { sketch, line } => json!({ "sketch3d": sketch.0, "line": line.0 }),
     }
 }
 
@@ -243,6 +270,10 @@ pub(crate) fn work_params(kind: &FeatureKind) -> Option<(&'static str, Value)> {
         }
         FeatureKind::WorkPlane(WorkPlane::Midplane { a, b }) => ("work.plane", json!({ "by": "midplane", "a": plane_json(a), "b": plane_json(b) })),
         FeatureKind::WorkPlane(WorkPlane::ThreePoints { points }) => ("work.plane", json!({ "by": "three_points", "points": points })),
+        FeatureKind::WorkPlane(WorkPlane::SquareToCurve { sketch, curve, end }) => {
+            ("work.plane", json!({ "by": "square_to_curve", "sketch": sketch.0, "curve": curve.0, "end": end.0 }))
+        }
+        FeatureKind::WorkPoint(WorkPoint::At { point }) => ("work.point", json!({ "point": point })),
         FeatureKind::WorkAxis(WorkAxis::Along { axis }) => ("work.axis", json!({ "axis": axis_json(axis) })),
         FeatureKind::WorkAxis(WorkAxis::Planes { a, b }) => ("work.axis", json!({ "a": plane_json(a), "b": plane_json(b) })),
         FeatureKind::WorkPoint(WorkPoint::Center { edge }) => ("work.point", json!({ "edge": edge })),
@@ -277,7 +308,7 @@ impl Workbench {
         (m - a.dir() * h, m + a.dir() * h)
     }
 
-    fn to_screen(&self, p: Vec3, rect: Rect) -> Option<Pos2> {
+    pub(crate) fn to_screen(&self, p: Vec3, rect: Rect) -> Option<Pos2> {
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
         self.view.camera.project(p, w, h).map(|(x, y, _)| rect.min + vec2(x as f32, y as f32))
     }
@@ -520,8 +551,8 @@ impl Workbench {
         }
         self.set_status(match panel.title() {
             "Work Plane" => "Work Plane: click a face or plane (origin planes are in the browser), set the offset, then OK.",
-            "Work Axis" => "Work Axis: click an edge, a cylinder or an axis, then OK.",
-            _ => "Work Point: click a circular edge, then OK.",
+            "Work Axis" => "Work Axis: click an edge, a cylinder, an axis or a line of a 3D sketch, then OK.",
+            _ => "Work Point: click a circular edge, then OK; At a Point takes a point of a sketch or a vertex.",
         });
         self.panel = Some(Panel::Work(Box::new(panel)));
         self.start_equations();

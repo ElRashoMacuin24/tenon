@@ -329,6 +329,7 @@ fn axis_picker(ui: &mut Ui, id: &str, a: &mut Option<AxisSel>, active: bool, wor
         Some(AxisSel::Edge(_)) => "Edge".into(),
         Some(AxisSel::Face(_)) => "Cylinder".into(),
         Some(AxisSel::Work(w)) => work_name(work, *w),
+        Some(AxisSel::Sketch3dLine { .. }) => "A line of a 3D sketch".into(),
     };
     let clicked = slot_button(ui, active, &label, t);
     egui::ComboBox::from_id_salt(id).selected_text("").width(18.0).show_ui(ui, |ui| {
@@ -1669,7 +1670,11 @@ impl Workbench {
                         section(ui, "Selection", true, |ui| {
                             egui::Grid::new("tn_props_measure_sel").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                                 ui.label("First");
-                                ui.label(m.a.as_ref().map_or_else(|| "click a face or edge".to_string(), label));
+                                if m.curves.is_empty() {
+                                    ui.label(m.a.as_ref().map_or_else(|| "click a face or edge".to_string(), label));
+                                } else {
+                                    ui.label(format!("{} of a 3D sketch", if m.curves.len() == 1 { "a curve".to_owned() } else { format!("{} curves", m.curves.len()) }));
+                                }
                                 ui.end_row();
                                 ui.label("Second");
                                 ui.label(m.b.as_ref().map_or_else(|| "click another (for distance and angle)".to_string(), label));
@@ -1751,11 +1756,24 @@ impl Workbench {
                                                 Some(tenon_model::PointSel::Origin) => "Center Point".to_string(),
                                                 Some(tenon_model::PointSel::Work(id)) => self.feature_name(id.to_owned()),
                                                 Some(tenon_model::PointSel::Center(_)) => "a circle's centre".to_string(),
-                                                Some(tenon_model::PointSel::SketchPoint { sketch, .. }) => format!("a point of {}", self.feature_name(sketch.to_owned())),
+                                                Some(
+                                                    tenon_model::PointSel::SketchPoint { sketch, .. } | tenon_model::PointSel::Sketch3dPoint { sketch, .. },
+                                                ) => format!("a point of {}", self.feature_name(sketch.to_owned())),
+                                                Some(tenon_model::PointSel::Vertex { .. }) => "a vertex".to_string(),
                                             };
                                             let r = slot_button(ui, w.slot == *slot, &label, t);
                                             if r {
                                                 w.slot = *slot;
+                                            }
+                                        }
+                                        WorkSlot::Curve => {
+                                            ui.label("Curve");
+                                            let label = match w.curve {
+                                                Some((sketch, ..)) => format!("a curve of {}", self.feature_name(sketch)),
+                                                None => "click a curve of a 3D sketch near its end".to_string(),
+                                            };
+                                            if slot_button(ui, w.slot == WorkSlot::Curve, &label, t) {
+                                                w.slot = WorkSlot::Curve;
                                             }
                                         }
                                     }

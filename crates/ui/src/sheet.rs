@@ -726,7 +726,11 @@ impl Workbench {
             return std::iter::once(FLAT_TAB).chain(["Tools", "View"].iter().filter_map(|n| named(n))).collect();
         }
         let sheet = self.is_sheet_metal();
-        let rest = all.filter(|i| *i != SHEET_TAB && *i != FLAT_TAB && *i != crate::commands::ANALYSIS_TAB);
+        // (In a 3D sketch its own tab takes the place of the Sketch tab; otherwise it is not there.)
+        let in_3d = self.is_sketching3d();
+        let rest = all.filter(|i| *i != SHEET_TAB && *i != FLAT_TAB && *i != crate::commands::ANALYSIS_TAB && *i != crate::commands::SKETCH3D_TAB).map(
+            |i| if in_3d && i == crate::commands::SKETCH_TAB { crate::commands::SKETCH3D_TAB } else { i },
+        );
         if sheet { std::iter::once(SHEET_TAB).chain(rest).collect() } else { rest.collect() }
     }
 

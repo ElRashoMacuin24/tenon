@@ -595,7 +595,8 @@ impl Workbench {
                 ui.painter().rect_filled(tr, 3.0, t.hover);
             }
             // While sketching, the Sketch tab is the contextual one.
-            let color = if active || (sketching && i == commands::SKETCH_TAB && !self.in_assembly()) { t.text } else { t.text_dim };
+            let contextual = (sketching && i == commands::SKETCH_TAB) || i == commands::SKETCH3D_TAB;
+            let color = if active || (contextual && !self.in_assembly()) { t.text } else { t.text_dim };
             ui.painter().text(tr.center(), Align2::CENTER_CENTER, tab.name, theme::body(), color);
             if resp.clicked() {
                 self.chrome.tab = i;

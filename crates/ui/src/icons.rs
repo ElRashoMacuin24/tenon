@@ -7,6 +7,12 @@ use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, pos2};
 pub enum Icon {
     // part modelling
     NewSketch,
+    /// A sketch on no plane.
+    Sketch3d,
+    /// Parallel to an axis, by the axis's letter.
+    AlongX,
+    AlongY,
+    AlongZ,
     Extrude,
     Revolve,
     Sweep,
@@ -193,7 +199,7 @@ fn category(icon: Icon) -> Option<Category> {
         | DetailView | SheetFace | Flange | SheetCut | FlatPattern | FoldedPart | ASide | SheetDefaults | ConvertSheet | PrimBox | PrimCylinder
         | PrimSphere | PrimTorus => Category::Solid,
         Plane | Axis | Point | Ucs | LookAt => Category::Work,
-        NewSketch | FinishSketch => Category::Sketch,
+        NewSketch | Sketch3d | FinishSketch => Category::Sketch,
         _ => return None,
     })
 }
@@ -293,6 +299,25 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32, soft: Color32
             pen.arc((0.5, 0.55), 0.38, 0.16, 0.2, TAU - 0.4);
             pen.arrow_head((0.84, 0.47), (0.7, 0.42));
             pen.fill(&[(0.5, 0.25), (0.75, 0.3), (0.75, 0.55), (0.5, 0.55)], soft);
+        }
+        Icon::Sketch3d => {
+            // A path that goes up, across and back: drawn over the corner of a box.
+            pen.line(&[(0.12, 0.88), (0.12, 0.42), (0.55, 0.2), (0.88, 0.36)]);
+            pen.line(&[(0.12, 0.42), (0.45, 0.58), (0.88, 0.36)]);
+            pen.dot((0.12, 0.88), 0.07);
+            pen.dot((0.45, 0.58), 0.07);
+            pen.dot((0.88, 0.36), 0.07);
+        }
+        Icon::AlongX => {
+            pen.line(&[(0.22, 0.2), (0.78, 0.8)]);
+            pen.line(&[(0.78, 0.2), (0.22, 0.8)]);
+        }
+        Icon::AlongY => {
+            pen.line(&[(0.22, 0.2), (0.5, 0.52), (0.78, 0.2)]);
+            pen.line(&[(0.5, 0.52), (0.5, 0.82)]);
+        }
+        Icon::AlongZ => {
+            pen.line(&[(0.22, 0.2), (0.78, 0.2), (0.22, 0.8), (0.78, 0.8)]);
         }
         Icon::Sweep => {
             pen.arc((0.15, 0.8), 0.7, 0.62, -PI / 2.0, 0.0);

@@ -89,7 +89,7 @@ impl Workbench {
             Some(Panel::Work(w)) => Some(match w.slot {
                 WorkSlot::A | WorkSlot::B => Wants { edges: false, faces: true },
                 WorkSlot::Axis => Wants { edges: true, faces: true },
-                WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => Wants { edges: true, faces: false },
+                WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 | WorkSlot::Curve => Wants { edges: true, faces: false },
             }),
             _ => None,
         }
@@ -178,7 +178,7 @@ impl Workbench {
                     CopyKind::Circular => match &p.axis {
                         AxisSel::Edge(e) => edges(std::slice::from_ref(e)),
                         AxisSel::Face(f) => face(f).into_iter().collect(),
-                        AxisSel::Origin(_) | AxisSel::Work(_) => Vec::new(),
+                        AxisSel::Origin(_) | AxisSel::Work(_) | AxisSel::Sketch3dLine { .. } => Vec::new(),
                     },
                     CopyKind::Mirror => match &p.plane {
                         PlaneRef::Face(f) => face(f).into_iter().collect(),
@@ -287,7 +287,7 @@ impl Workbench {
                     && match w.slot {
                         WorkSlot::A | WorkSlot::B => matches!(surface(body, face), Some(SurfaceKind::Plane { .. })),
                         WorkSlot::Axis => matches!(surface(body, face), Some(SurfaceKind::Cylinder { .. } | SurfaceKind::Cone { .. })),
-                        WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => false,
+                        WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 | WorkSlot::Curve => false,
                     }
             }
             (Pick::Face { body, face }, Some(Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_))) => {
@@ -623,6 +623,16 @@ impl Workbench {
     /// Returns false when no such panel is open.
     pub(crate) fn panel_pointer(&mut self, resp: &egui::Response, rect: Rect) -> bool {
         if matches!(self.panel, Some(Panel::Measure(_))) {
+            // A curve of a 3D sketch: its length; with Shift or Ctrl, the length of those so far.
+            if let Some(pos) = resp.hover_pos()
+                && let Some(curve) = self.sketch3d_curve_at(pos, rect)
+            {
+                self.view.hover = None;
+                if resp.clicked() {
+                    self.measure_curve3(curve, resp.ctx.input(|i| i.modifiers.command || i.modifiers.shift));
+                }
+                return true;
+            }
             // Any face or edge: the first click is the first entity, the second the second, a
             // third starts over.
             let (meshes, tree) = (self.scene.placed(), self.body_tree());
@@ -639,6 +649,7 @@ impl Workbench {
                 && let Some(p) = hover
             {
                 if let Some(Panel::Measure(m)) = &mut self.panel {
+                    m.curves.clear();
                     match (m.a, m.b) {
                         (None, _) => m.a = Some(p),
                         (Some(_), None) => m.b = Some(p),
@@ -698,6 +709,20 @@ impl Workbench {
                 return true;
             }
         }
+        // A sweep's path: a curve of a 3D sketch clicked is the whole of that sketch (DEC-136).
+        if matches!(self.panel, Some(Panel::Sweep(_)))
+            && let Some(pos) = resp.hover_pos()
+            && let Some((sketch, _)) = self.sketch3d_curve_at(pos, rect)
+        {
+            self.view.hover = None;
+            if resp.clicked()
+                && let Some(path) = crate::sweeps::path_curves(self.document(), sketch)
+                && let Some(Panel::Sweep(p)) = &mut self.panel
+            {
+                p.path = Some(path);
+            }
+            return true;
+        }
         if matches!(
             self.panel,
             Some(Panel::Extrude(_) | Panel::Revolve(_) | Panel::Sweep(_) | Panel::Coil(_) | Panel::SheetFace(_) | Panel::SheetCut(_))
@@ -738,6 +763,54 @@ impl Workbench {
                     && let Some(Panel::Work(w)) = &mut self.panel
                 {
                     w.put_point(tenon_model::PointSel::SketchPoint { sketch, point });
+                }
+                return true;
+            }
+            // A point of a 3D sketch, or a vertex of the part (DEC-136).
+            if let Some((sketch, point)) = self.sketch3d_point_at(pos, rect) {
+                self.view.hover = None;
+                if resp.clicked()
+                    && let Some(Panel::Work(w)) = &mut self.panel
+                {
+                    w.put_point(tenon_model::PointSel::Sketch3dPoint { sketch, point });
+                }
+                return true;
+            }
+            if let Some((edge, end, _)) = self.vertex_at(pos, rect) {
+                self.view.hover = None;
+                if resp.clicked()
+                    && let Some(Panel::Work(w)) = &mut self.panel
+                {
+                    w.put_point(tenon_model::PointSel::Vertex { edge, end });
+                }
+                return true;
+            }
+        }
+        // A work axis along a line of a 3D sketch; a plane square to a curve of one, through the
+        // end of it nearer the pointer (DEC-136).
+        if let Some(Panel::Work(w)) = &self.panel
+            && let Some(pos) = resp.hover_pos()
+            && let Some((sketch, curve)) = self.sketch3d_curve_at(pos, rect)
+        {
+            let slot = w.slot;
+            let sk = self.document().sketch3d(sketch);
+            let line = sk.is_some_and(|s| s.is_line(curve));
+            let ends = sk.and_then(|s| s.geometry(curve)).and_then(tenon_sketch::Geometry3::ends);
+            let near = ends.and_then(|(a, b)| {
+                let at = |e| sk.and_then(|s| s.point(e)).and_then(|q| self.to_screen(q, rect)).map(|q| q.distance(pos));
+                Some(if at(a)? <= at(b)? { a } else { b })
+            });
+            if (slot == crate::work::WorkSlot::Axis && line) || slot == crate::work::WorkSlot::Curve {
+                self.view.hover = None;
+                if resp.clicked()
+                    && let Some(Panel::Work(w)) = &mut self.panel
+                {
+                    match (slot, near) {
+                        (crate::work::WorkSlot::Axis, _) => w.axis = Some(tenon_model::AxisSel::Sketch3dLine { sketch, line: curve }),
+                        (_, Some(end)) => w.curve = Some((sketch, curve, end)),
+                        _ => {}
+                    }
+                    w.advance();
                 }
                 return true;
             }

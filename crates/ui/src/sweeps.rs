@@ -98,8 +98,13 @@ impl LoftPanel {
     }
 }
 
-/// The lines and arcs of a sketch a sweep runs along: those that are not construction.
+/// The lines and arcs of a sketch a sweep runs along: those that are not construction. (Of a 3D
+/// sketch, its own lines, bends and splines that are not.)
 pub(crate) fn path_curves(doc: &Document, sketch: FeatureId) -> Option<SketchCurves> {
+    if let Some(sk) = doc.sketch3d(sketch) {
+        let curves = tenon_model::sketch3d::path_curves(sk);
+        return (!curves.is_empty()).then_some(SketchCurves { sketch, curves });
+    }
     let sk = doc.sketch(sketch)?;
     let curves: Vec<_> = sk
         .entities()
@@ -173,13 +178,14 @@ impl Workbench {
                 // The path: the last other sketch drawn with lines and arcs, preferring one with no
                 // closed profile of its own.
                 let doc = self.document();
-                let others: Vec<FeatureId> = self.sketches().iter().rev().map(|s| s.0).filter(|id| *id != sketch).collect();
+                // (A 3D sketch is a path too.)
+                let others: Vec<FeatureId> = doc.features().iter().rev().map(|f| f.id).filter(|id| *id != sketch && doc.has_curves(*id)).collect();
                 let path = others
                     .iter()
                     .find(|id| !has_profile(doc, **id) && path_curves(doc, **id).is_some())
                     .or_else(|| others.iter().find(|id| path_curves(doc, **id).is_some()))
                     .and_then(|id| path_curves(doc, *id))
-                    .ok_or("Sweep needs a path: draw it with lines and arcs in a sketch of its own first")?;
+                    .ok_or("Sweep needs a path: draw it with lines and arcs in a sketch of its own, or in a 3D sketch, first")?;
                 // A profile in a plane parallel to the path's cannot be swept along it: prefer the
                 // last one that can.
                 let parallel = |a: FeatureId| match (self.sketch_frame(a), self.sketch_frame(path.sketch)) {
@@ -322,12 +328,13 @@ impl Workbench {
                         });
                         ui.end_row();
                         ui.label("Path");
-                        let shown = p.path.as_ref().map_or_else(|| "Choose a sketch".to_string(), |c| name(c.sketch));
+                        let shown = p.path.as_ref().map_or_else(|| "Choose a sketch".to_string(), |c| self.feature_name(c.sketch));
                         egui::ComboBox::from_id_salt("tn_props_sweep_path").selected_text(shown).show_ui(ui, |ui| {
-                            for (id, n) in sketches.iter().filter(|s| s.0 != p.sketch && path_curves(doc, s.0).is_some()) {
-                                let on = p.path.as_ref().is_some_and(|c| c.sketch == *id);
-                                if ui.selectable_label(on, n).clicked() {
-                                    p.path = path_curves(doc, *id);
+                            // (Of the sketches and the 3D sketches.)
+                            for f in doc.features().iter().filter(|f| f.id != p.sketch && path_curves(doc, f.id).is_some()) {
+                                let on = p.path.as_ref().is_some_and(|c| c.sketch == f.id);
+                                if ui.selectable_label(on, &f.name).clicked() {
+                                    p.path = path_curves(doc, f.id);
                                 }
                             }
                         });

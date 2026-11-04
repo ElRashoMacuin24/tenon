@@ -20,7 +20,7 @@ use crate::workbench::Mode;
 fn sketching(wb: &Workbench) -> FeatureId {
     match &wb.mode {
         Mode::Sketch(s) => s.feature,
-        Mode::Model => panic!("not in sketch mode"),
+        _ => panic!("not in sketch mode"),
     }
 }
 
@@ -335,11 +335,11 @@ fn a_constraint_symbol_is_pointed_at_selected_and_deleted() {
     d.frame(&mut wb, vec![]);
     let marks = |wb: &Workbench| match &wb.mode {
         Mode::Sketch(sm) => sm.badges.clone(),
-        Mode::Model => Vec::new(),
+        _ => Vec::new(),
     };
     let picked = |wb: &Workbench| match &wb.mode {
         Mode::Sketch(sm) => (sm.constraints.clone(), sm.constraint_hover),
-        Mode::Model => (Vec::new(), None),
+        _ => (Vec::new(), None),
     };
     // A symbol on each side of the rectangle. The part origin shown in the sketch is held too,
     // but that is not a constraint anyone put there: it has no symbol.

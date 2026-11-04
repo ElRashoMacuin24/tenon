@@ -39,6 +39,7 @@ mod results;
 pub mod settings;
 mod shape;
 mod sheet;
+mod sketch3d;
 mod sketch_tools;
 mod sketcher;
 mod sweeps;
@@ -71,6 +72,8 @@ mod recovery_tests;
 mod save_tests;
 #[cfg(test)]
 mod sheet_tests;
+#[cfg(test)]
+mod sketch3d_tests;
 #[cfg(test)]
 mod sketch_tests;
 #[cfg(test)]

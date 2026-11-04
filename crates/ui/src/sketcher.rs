@@ -603,6 +603,7 @@ impl Workbench {
     }
 
     pub(crate) fn finish_sketch(&mut self) {
+        self.finish_sketch3d();
         if let Mode::Sketch(s) = &self.mode {
             let name = self.feature_name(s.feature);
             self.mode = Mode::Model;
@@ -627,6 +628,7 @@ impl Workbench {
         }
         match &self.mode {
             Mode::Sketch(s) => s.tool.id(),
+            Mode::Sketch3d(_) => self.active_tool3(),
             Mode::Model => None,
         }
     }
@@ -739,6 +741,9 @@ impl Workbench {
     }
 
     pub(crate) fn sketch_dof_text(&mut self) -> Option<String> {
+        if self.is_sketching3d() {
+            return self.sketch3d_dof_text();
+        }
         let rev = self.session.revision();
         let Mode::Sketch(s) = &mut self.mode else { return None };
         if s.dof.as_ref().is_none_or(|(r, _, _)| *r != rev) {
@@ -1006,7 +1011,7 @@ impl Workbench {
         }
         let tool = match &self.mode {
             Mode::Sketch(sm) => sm.tool,
-            Mode::Model => Tool::Select,
+            _ => Tool::Select,
         };
         // Project Geometry works on the part behind the sketch, not on the sketch.
         if matches!(tool, Tool::Project | Tool::ProjectFlat) {
@@ -1092,7 +1097,7 @@ impl Workbench {
         // Dragging a point (select tool): preview on a copy, one command on release.
         let tool = match &self.mode {
             Mode::Sketch(sm) => sm.tool,
-            Mode::Model => Tool::Select,
+            _ => Tool::Select,
         };
         if tool == Tool::Select {
             // A dimension's value dragged: the dimension moves with it, one command on release.
@@ -1713,7 +1718,7 @@ impl Workbench {
                     "{} control points; Enter finishes.",
                     match &self.mode {
                         Mode::Sketch(sm) => sm.clicks.len(),
-                        Mode::Model => 0,
+                        _ => 0,
                     }
                 ));
             }
