@@ -103,6 +103,7 @@ fn smooth_sheet(rims: &Rims, l: &LoftedFlange, sizes: &Sizes) -> Result<(Vec<[Ve
         loft::points_of(runs, frame, loft::smooth_step, |len| ((len / (total / 60.0)).ceil() as usize).clamp(1, 60))
     };
     let (a, b) = (points(&first, &rims.frames[0]), points(&second, &rims.frames[1]));
+    loft::not_too_many(&a, &b)?;
     let columns = loft::columns(&a, &b);
     let normals = loft::normals(&columns, rims.sign);
     Ok((columns, normals))

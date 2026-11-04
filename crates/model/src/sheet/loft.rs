@@ -122,6 +122,18 @@ fn triangle_area(a: Vec3, b: Vec3, c: Vec3) -> f64 {
     (b - a).cross(c - a).len() / 2.0
 }
 
+/// Refuses two runs of points too long to be matched: every point of one is tried against every
+/// point of the other (hostile-input cap).
+pub(crate) fn not_too_many(a: &[Vec3], b: &[Vec3]) -> Result<(), String> {
+    if a.len().saturating_mul(b.len()) > 9_000_000 {
+        return Err(
+            "The two profiles of the lofted flange come to too many points to match: draw them with fewer curves, or use a larger chord tolerance."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 /// How much more a triangle of a sheet counts for the more it twists: enough that the sheet takes
 /// the surface that lies flat when there is one, and not so much that it goes the long way round.
 const TWIST: f64 = 25.0;
@@ -224,6 +236,7 @@ const SAME_PLANE: f64 = 1e-7;
 /// The facets of the strip between `a` and `b`, `sign` turning their normals to the side the
 /// sheet's thickness is measured from. An error says why there are none.
 pub(crate) fn facets(a: &[Vec3], b: &[Vec3], sign: f64) -> Result<Vec<Facet>, String> {
+    not_too_many(a, b)?;
     let path = matched_by(a, b, TWIST);
     // The triangles, with the normal each has and the line it ends on.
     struct Tri {

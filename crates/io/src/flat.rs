@@ -132,9 +132,13 @@ pub fn dxf(flat: &FlatPattern, marks: Marks) -> (String, Counts) {
     let center = [12.0, -3.0, 3.0, -3.0];
     t.extend([s(0, "LTYPE"), s(2, "CENTER"), i(70, 0), s(3, "Center ____ _ ____"), i(72, 65), i(73, 4), f(40, 21.0)]);
     t.extend(center.iter().map(|d| f(49, *d)));
-    t.extend([s(0, "ENDTAB"), s(0, "TABLE"), s(2, "LAYER"), i(70, LAYERS.len() as i64)]);
-    for (name, color, ltype) in LAYERS {
-        t.extend([s(0, "LAYER"), s(2, name), i(70, 0), i(62, color), s(6, ltype)]);
+    // (The punches' layers only where there are punches: a pattern without them is written as it
+    // ever was.)
+    let punched = marks.punches && !flat.marks.is_empty();
+    let layers: Vec<&(&str, i64, &str)> = LAYERS.iter().filter(|l| punched || (l.0 != PUNCH && l.0 != PUNCH_ID)).collect();
+    t.extend([s(0, "ENDTAB"), s(0, "TABLE"), s(2, "LAYER"), i(70, layers.len() as i64)]);
+    for (name, color, ltype) in layers {
+        t.extend([s(0, "LAYER"), s(2, name), i(70, 0), i(62, *color), s(6, ltype)]);
     }
     t.extend([s(0, "ENDTAB"), s(0, "ENDSEC"), s(0, "SECTION"), s(2, "ENTITIES")]);
     let mut n = Counts::default();
@@ -435,6 +439,8 @@ mod tests {
         let named: Vec<String> =
             tables.iter().filter(|(k, _)| k == "LAYER").filter_map(|(_, r)| r.iter().find(|t| t.code == 2).map(Tag::str)).collect();
         assert!(on.iter().all(|(_, layer)| named.contains(layer)), "{on:?}");
+        // Without any, the layers are not written either: a pattern with no punches is as it ever was.
+        assert!(!dxf(&pattern(), Marks::default()).0.contains("PUNCH"));
         // Without them, nothing of them.
         let marks = Marks { punches: false, ..Marks::default() };
         let (_, on) = read_back(&dxf(&flat, marks).0);
