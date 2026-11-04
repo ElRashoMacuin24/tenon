@@ -541,6 +541,8 @@ fn select<'r>(sketch: &Sketch, all: &'r [SketchRegion], sel: &RegionSel) -> Resu
 
 impl<'a> Ctx<'a> {
     fn step(&mut self, f: &Feature) -> Result<(), Stop> {
+        // (A file is not held to these: a parameter can have taken one past what it can be.)
+        f.kind.check_sizes()?;
         match &f.kind {
             FeatureKind::Sketch { plane, sketch, projections } => {
                 let frame = self.plane_frame(plane)?;

@@ -1048,17 +1048,92 @@ fn a_sheet_metal_part_is_written_as_text_and_read_back() {
     assert!(older.len() < text.len());
     let (old, _) = project::from_bytes(older.as_bytes()).unwrap();
     assert_eq!(old.sheet_sizes().unwrap().gap, 1.5);
-    // A file edited into something that cannot be is refused as damaged, saying what is wrong.
-    let e = project::from_bytes(text.replace("angle = 1.25", "angle = 4.0").as_bytes()).unwrap_err().to_string();
-    assert!(e.contains("the flange angle must be from 1 to 179 degrees"), "{e}");
+    // What is no value at all is refused as damaged, saying what is wrong.
     let e = project::from_bytes(text.replace("corner = \"square\"", "corner = \"wavy\"").as_bytes()).unwrap_err().to_string();
     assert!(e.contains("wavy"), "{e}");
-    let e = project::from_bytes(text.replace("gap = 0.75", "gap = 0.0").as_bytes()).unwrap_err().to_string();
-    assert!(e.contains("the hem's gap must be from"), "{e}");
-    let e = project::from_bytes(text.replace("distance = 50.0", "distance = -1.0").as_bytes()).unwrap_err().to_string();
-    assert!(e.contains("the contour flange's distance must be more than 0"), "{e}");
-    let e = project::from_bytes(text.replace("overlap = 0.5", "overlap = 2.0").as_bytes()).unwrap_err().to_string();
-    assert!(e.contains("from 0 to 1"), "{e}");
+    // A size that cannot be opens, as a parameter pushed that far leaves it (DEC-126), and the
+    // rebuild says what is wrong, of the feature.
+    for (from, to, said) in [
+        ("angle = 1.25", "angle = 4.0", "the flange angle must be from 1 to 179 degrees"),
+        ("gap = 0.75", "gap = 0.0", "the hem's gap must be from"),
+        ("distance = 50.0", "distance = -1.0", "the contour flange's distance must be more than 0"),
+        ("overlap = 0.5", "overlap = 2.0", "from 0 to 1"),
+    ] {
+        let (edited, _) = project::from_bytes(text.replace(from, to).as_bytes()).unwrap();
+        let wrong: Vec<String> = edited.features().iter().filter_map(|f| edited.sizes_of(f.id).err()).collect();
+        assert!(wrong.len() == 1 && wrong[0].contains(said), "{said}: {wrong:?}");
+    }
+}
+
+#[test]
+fn a_parameter_pushed_past_what_its_feature_can_be_still_opens() {
+    fn parts(dir: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                parts(&p, out);
+            } else if p.extension().is_some_and(|x| x == "tenon") {
+                out.push(p);
+            }
+        }
+    }
+    // Every parameter of every example, at what a person might type or an equation come to.
+    let mut files = Vec::new();
+    parts(&root().join("examples"), &mut files);
+    let (mut taken, mut past) = (0, 0);
+    for f in &files {
+        let (doc, extra) = project::from_bytes(&std::fs::read(f).unwrap()).unwrap();
+        let params = doc.parameters();
+        let names: Vec<String> = params.model.iter().map(|m| m.name.clone()).chain(params.user.iter().map(|u| u.name.clone())).collect();
+        for name in names {
+            for v in ["0", "-1", "0.0001", "999999", "10000000"] {
+                let mut s = Session::new(doc.clone());
+                if s.exec("param.set", &json!({ "name": name, "equation": v }), None).is_err() {
+                    continue;
+                }
+                taken += 1;
+                past += usize::from(s.document().features().iter().any(|f| s.document().sizes_of(f.id).is_err()));
+                let bytes = project::to_bytes(s.document(), &extra).unwrap();
+                project::from_bytes(&bytes).unwrap_or_else(|e| panic!("{} {name} = {v}: {e}", f.display()));
+            }
+        }
+    }
+    assert!(taken > 400 && past > 50, "{taken} taken, {past} past what a feature can be");
+
+    // Opened, the rebuild says what is wrong of that feature, and the part comes back when it is
+    // put right.
+    let mut k = OcctKernel::new();
+    let mut go =
+        |s: &mut Session, id: &str, p: Value| tenon_io::cmd::run(s, id, &p, Some(&mut k as &mut dyn Kernel)).unwrap_or_else(|e| panic!("{id}: {e}"));
+    let mut s = Session::default();
+    go(&mut s, "model.box", json!({ "width": 60, "depth": 40, "height": 20 }));
+    let sk = go(&mut s, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    go(&mut s, "sketch.point", json!({ "sketch": sk, "x": 30, "y": 20 }));
+    go(
+        &mut s,
+        "model.hole",
+        json!({ "sketch": sk, "diameter": 6, "through_all": true, "reverse": true, "type": "counterbore", "counterbore_diameter": 12, "counterbore_depth": 3 }),
+    );
+    let widest = |s: &Session| {
+        s.document()
+            .parameters()
+            .model
+            .iter()
+            .find(|m| matches!(&m.target, tenon_model::ValuePath::Feature { field, .. } if field == "/diameter"))
+            .unwrap()
+            .name
+            .clone()
+    };
+    let name = widest(&s);
+    go(&mut s, "param.set", json!({ "name": name, "equation": "30" }));
+    let bytes = project::to_bytes(s.document(), &Map::new()).unwrap();
+    let (doc, _) = project::from_bytes(&bytes).unwrap();
+    let mut s = Session::new(doc);
+    let r = go(&mut s, "model.regenerate", json!({}));
+    assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("the counterbore must be wider than the hole")), "{r}");
+    go(&mut s, "param.set", json!({ "name": name, "equation": "6" }));
+    let r = go(&mut s, "model.regenerate", json!({}));
+    assert!(r["error"].is_null(), "{r}");
 }
 
 #[test]

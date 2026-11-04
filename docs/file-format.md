@@ -533,7 +533,9 @@ After reading, a part is checked:
 - ids are unique and within their counters;
 - references point to earlier features;
 - sketch references point to entities of the right type;
-- numbers are finite and in range;
+- numbers are finite, and in range where a command could not have left them otherwise. A feature's
+  sizes are not held to it (DEC-126): a parameter can take a size past what its feature can be, and
+  such a file opens, with the rebuild saying what is wrong of that feature, to be put right;
 - a material has a name, a density in range and a colour, and if it says how it answers to a
   load, a stiffness, a Poisson's ratio and a yield strength in range; an appearance is a
   colour;

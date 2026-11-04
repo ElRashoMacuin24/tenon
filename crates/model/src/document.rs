@@ -938,6 +938,36 @@ pub enum FeatureKind {
 }
 
 impl FeatureKind {
+    /// Whether its sizes can make a feature. A rebuild asks this first, and says so on the feature.
+    pub fn check_sizes(&self) -> Result<(), String> {
+        match self {
+            FeatureKind::Extrude(e) => e.check(),
+            FeatureKind::Hole(h) => h.check(),
+            FeatureKind::Rib(r) => r.check(),
+            FeatureKind::Sweep(s) => s.check(),
+            FeatureKind::Coil(c) => c.check(),
+            FeatureKind::Loft(l) => l.check(),
+            FeatureKind::Draft(d) => d.check(),
+            FeatureKind::Combine(c) => c.check(),
+            FeatureKind::Thread(t) => t.check(),
+            FeatureKind::SheetFace(s) => s.check(),
+            FeatureKind::Flange(f) => f.check(),
+            FeatureKind::Hem(h) => h.check(),
+            FeatureKind::ContourFlange(c) => c.check(),
+            FeatureKind::CornerSeam(c) => c.check(),
+            FeatureKind::CornerRip(c) => c.check(),
+            FeatureKind::CutAcrossBend(c) => c.check(),
+            FeatureKind::CutNormal(c) => c.check(),
+            FeatureKind::Bend(b) => b.check(),
+            FeatureKind::SharpBend(b) => b.check(),
+            FeatureKind::Fold(f) => f.check(),
+            FeatureKind::PatternRect(p) => p.check(),
+            FeatureKind::PatternCircular(p) => p.check(),
+            FeatureKind::Mirror(m) => check_sources(&m.features),
+            _ => Ok(()),
+        }
+    }
+
     /// The features this one copies (patterns and mirrors).
     pub fn copies(&self) -> &[FeatureId] {
         match self {
@@ -1592,7 +1622,16 @@ impl Document {
         Ok(())
     }
 
-    /// Checks references and every sketch, e.g. after loading a file.
+    /// Whether the sizes of one feature can make it, said with its name: what a new or changed
+    /// feature is held to at once.
+    pub fn sizes_of(&self, id: FeatureId) -> Result<(), String> {
+        let Some(f) = self.feature(id) else { return Ok(()) };
+        f.kind.check_sizes().map_err(|e| format!("{}: {e}", f.name))
+    }
+
+    /// Checks references, words and every sketch, e.g. after loading a file. A feature's sizes are
+    /// not asked here ([`FeatureKind::check_sizes`]): a parameter can take one past what it can be,
+    /// and a file saved like that opens, with the feature in error, to be put right.
     pub fn validate(&self) -> Result<(), String> {
         if self.features.len() > MAX_FEATURES {
             return Err("too many features".into());
@@ -1600,6 +1639,14 @@ impl Document {
         name_in_file("the part", &self.name)?;
         for f in &self.features {
             name_in_file("a feature", &f.name)?;
+            let designation = match &f.kind {
+                FeatureKind::Thread(t) => t.designation.as_ref(),
+                FeatureKind::Hole(h) => h.tapped.as_ref().and_then(|t| t.designation.as_ref()),
+                _ => None,
+            };
+            if let Some(d) = designation {
+                text_in_file(&format!("the thread of {}", f.name), d, MAX_NAME_IN_FILE)?;
+            }
         }
         self.params_check()?;
         for (what, said) in [("part number", &self.part_number), ("description", &self.description)] {
@@ -1641,46 +1688,22 @@ impl Document {
                     }
                 }
                 FeatureKind::Extrude(e) if self.sketch(e.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, e.sketch)),
-                FeatureKind::Extrude(e) => e.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Revolve(r) if self.sketch(r.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, r.sketch)),
+                // (Points that went missing are a regeneration error, as sizes are.)
                 FeatureKind::Hole(h) if self.sketch(h.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, h.sketch)),
-                // Sizes are checked here too: a file must not hold a hole that cannot be built
-                // without saying so. (Points that went missing are a regeneration error instead.)
-                FeatureKind::Hole(h) => h.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Rib(r) if self.sketch(r.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, r.sketch)),
-                FeatureKind::Rib(r) => r.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Sweep(s) if self.sketch(s.sketch).is_none() || self.sketch(s.path.sketch).is_none() => {
                     return Err(format!("{}: the profile and the path must be sketches", f.name));
                 }
-                FeatureKind::Sweep(s) => s.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Coil(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
-                FeatureKind::Coil(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Loft(l) if l.sections.iter().any(|s| self.sketch(*s).is_none()) => {
                     return Err(format!("{}: every loft section must be a sketch", f.name));
                 }
-                FeatureKind::Loft(l) => l.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::Draft(d) => d.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::Combine(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::Thread(t) => t.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::SheetFace(s) if self.sketch(s.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, s.sketch)),
-                FeatureKind::SheetFace(s) => s.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::Flange(fl) => fl.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::Hem(h) => h.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::ContourFlange(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
-                FeatureKind::ContourFlange(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::CornerSeam(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::CornerRip(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::CutAcrossBend(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
-                FeatureKind::CutAcrossBend(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::CutNormal(c) if self.sketch(c.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, c.sketch)),
-                FeatureKind::CutNormal(c) => c.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::Bend(b) => b.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::SharpBend(b) => b.check().map_err(|e| format!("{}: {e}", f.name))?,
                 FeatureKind::Fold(fo) if self.sketch(fo.sketch).is_none() => return Err(format!("{}: {} is not a sketch", f.name, fo.sketch)),
-                FeatureKind::Fold(fo) => fo.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::PatternRect(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::PatternCircular(p) => p.check().map_err(|e| format!("{}: {e}", f.name))?,
-                FeatureKind::Mirror(m) => check_sources(&m.features).map_err(|e| format!("{}: {e}", f.name))?,
                 _ => {}
             }
             self.check_copies(&f.kind).map_err(|e| format!("{}: {e}", f.name))?;

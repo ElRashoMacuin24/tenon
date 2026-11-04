@@ -2437,7 +2437,7 @@ fn feature_add(s: &mut Session, p: &Value) -> CmdResult {
     check_work_refs(s, &kind)?;
     let id = s.edit(|d| {
         let id = d.add(kind).map_err(CmdError)?;
-        d.validate().map_err(CmdError)?;
+        d.validate().and_then(|()| d.sizes_of(id)).map_err(CmdError)?;
         apply_feature_equations(d, id, &[], &equations)?;
         Ok(id)
     })?;
@@ -2633,7 +2633,7 @@ fn feature_update(s: &mut Session, p: &Value) -> CmdResult {
             return Err("a feature cannot change its type".into());
         }
         f.kind = kind;
-        d.validate().map_err(CmdError)?;
+        d.validate().and_then(|()| d.sizes_of(id)).map_err(CmdError)?;
         apply_feature_equations(d, id, &before, &equations)?;
         Ok(json!({}))
     })

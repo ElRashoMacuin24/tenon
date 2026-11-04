@@ -3576,3 +3576,19 @@ Auditors went through the program ahead of 0.2.0; what they found is fixed, each
 - **A solver left running by a parent that was killed is not dealt with.** A job object would do it, and
   takes unsafe code outside the kernel crate; it ends on its own, or at its limit. Its folder is
   cleared at the next run.
+
+## DEC-126 A file's feature sizes are the rebuild's to judge (2026-11-04)
+
+A parameter takes a value its feature cannot: a hole's depth at 0, or its diameter past its
+counterbore's. The rebuild says so on the feature, as it should, for that is how a part is worked
+on, and a Save writes what there is. But opening asked every feature's `check()` of the file, so
+that file was then "damaged", in 0.1.0 as well, with no way back in. On the examples alone, setting
+one parameter could reach 20 different refusals of that kind.
+
+**Now:** `Document::validate`, which is what a file is held to, asks what cannot be otherwise:
+references, ids, the sketches, words of a length, studies and materials. `FeatureKind::check_sizes`
+is asked by a rebuild, first thing for each feature, and by the commands that make or change one,
+which go on refusing at once. So a hand-edited or hostile file with an impossible size opens with
+that feature red and the words on it, and nothing of it reaches the kernel; a part saved like that
+by 0.1.0 opens too. Numbers that are no numbers (`nan`, `inf`) and what is no value at all are
+still refused on reading.

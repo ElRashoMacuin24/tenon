@@ -820,3 +820,40 @@ fn an_equation_in_a_box_is_not_taken_for_what_the_box_shows_after() {
     assert_eq!(wb.status(), "nothing + 1 is not a number, or an equation of the parameters.");
     assert!(wb.status_error);
 }
+
+/// A part saved with a size no feature can have opens: the rebuild says what is wrong, the panel
+/// opens on it, and what is typed there puts it right.
+#[test]
+fn a_size_a_parameter_pushed_too_far_is_put_right_in_its_panel() {
+    let (mut wb, mut d, sk) = block_with_a_point();
+    wb.exec("model.hole", json!({ "sketch": sk.0, "diameter": 6, "through_all": true, "reverse": true })).unwrap();
+    d.settle(&mut wb);
+    let id = last(&wb).id;
+    let name =
+        wb.exec("param.list", json!({})).unwrap()["model"].as_array().unwrap().iter().find(|m| m["target"]["field"] == "/diameter").unwrap()["name"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+    wb.exec("param.set", json!({ "name": name, "equation": "0" })).unwrap();
+    d.settle(&mut wb);
+    let bytes = tenon_io::project::to_bytes(wb.document(), &serde_json::Map::new()).unwrap();
+
+    let dir = std::env::temp_dir().join(format!("tenon-ui-pushed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("pushed.tenon");
+    std::fs::write(&file, &bytes).unwrap();
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    wb.open(&file).unwrap();
+    d.settle(&mut wb);
+    assert!(wb.status().contains("Hole1: the hole diameter must be positive"), "{}", wb.status());
+    wb.edit_feature(id).unwrap();
+    d.settle(&mut wb);
+    assert!(wb.panel.is_some());
+    type_into(&mut d, &mut wb, "tn_props_hole_dia", "6");
+    wb.run_ui("ui.ok").unwrap();
+    d.settle(&mut wb);
+    assert!(wb.panel.is_none() && !wb.status_error, "{}", wb.status());
+    let FeatureKind::Hole(h) = &last(&wb).kind else { panic!() };
+    assert_eq!(h.diameter, 6.0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
