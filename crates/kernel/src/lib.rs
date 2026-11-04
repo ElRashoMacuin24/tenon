@@ -321,7 +321,8 @@ pub trait Kernel: Send {
 
     // ---- exchange ---------------------------------------------------------------------------
 
-    /// Shapes read from STEP (AP203/AP214/AP242) data, one handle per root.
+    /// Shapes read from STEP (AP203/AP214/AP242) data, one handle per root; and a root that is a
+    /// compound, as an assembly is, one per shape it holds.
     fn import_step(&mut self, data: &[u8]) -> KResult<Vec<ShapeHandle>> {
         let _ = data;
         unsupported!("import_step")

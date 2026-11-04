@@ -3303,6 +3303,20 @@ rust::Vec<std::uint8_t> export_step(const ShapeList& shapes) {
   });
 }
 
+namespace {
+// What a root of a STEP file comes to: an assembly reads as one compound, of its components and of
+// the sub-assemblies' own compounds, and each component is a shape of its own, as it was written.
+void add_components(const TopoDS_Shape& s, std::vector<TopoDS_Shape>& out) {
+  if (s.ShapeType() != TopAbs_COMPOUND) {
+    out.push_back(s);
+    return;
+  }
+  for (TopoDS_Iterator it(s); it.More(); it.Next()) {
+    add_components(it.Value(), out);
+  }
+}
+} // namespace
+
 std::unique_ptr<ShapeList> import_step(rust::Slice<const std::uint8_t> data) {
   return guarded("import_step", [&] {
     std::istringstream stream(std::string(reinterpret_cast<const char*>(data.data()), data.size()));
@@ -3315,7 +3329,7 @@ std::unique_ptr<ShapeList> import_step(rust::Slice<const std::uint8_t> data) {
     for (int i = 1; i <= reader.NbShapes(); ++i) {
       const TopoDS_Shape s = reader.Shape(i);
       if (!s.IsNull()) {
-        list->items.push_back(s);
+        add_components(s, list->items);
       }
     }
     if (list->items.empty()) {

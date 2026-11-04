@@ -27,6 +27,9 @@ views and Baseline and Ordinate dimensions.
   volume; a name, or what fills a title block, over 1000 bytes; an equation or comment over 64,000.
 - **A flange on a sheet a Mirror feature made** came to nothing, with no word. It is there now.
 - **Parts list CSV:** its Material column says Generic for a part with none, where it was empty.
+- **STEP of an assembly, or of a part of several solids,** is now one assembly in the file, a product for each
+  solid, where each was a product on its own: another program shows one assembly with its components. The solids
+  and where they stand are the same.
 - **Solve again** any study with a bearing load on a wall not symmetric about the load: results move
   by tens of percent (below). A part in pieces with a piece not held fast is now refused, where it
   gave a meaningless answer.
@@ -157,8 +160,9 @@ views and Baseline and Ordinate dimensions.
   and Clear Explode with nothing to do say so, as Auto Explode of nothing and Update with no views now read
   right. The radial menu's labels are on one line, and Repeat offers what can be done there.
 - **Command line:** `tenon --help` and `tenon-cli` with nothing say how. `tenon-cli info` and `convert` say a
-  damaged STEP file could not be read. `--size` holds against the saved size. `study.solve`'s `keep` goes under
-  `--out`. A face's name in JSON is a string past what a double holds, for JavaScript clients.
+  damaged STEP file could not be read, and see each component of an assembly's STEP file on its own, another
+  program's too, where that read as one compound. `--size` holds against the saved size. `study.solve`'s `keep`
+  goes under `--out`. A face's name in JSON is a string past what a double holds, for JavaScript clients.
 
 ## 0.1.0 (2026-10-13)
 

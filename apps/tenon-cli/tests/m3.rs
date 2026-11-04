@@ -267,4 +267,15 @@ fn an_assembly_in_step_comes_back_where_it_stood() {
     assert!((right - 110.0).abs() < 1e-3 && (far - 220.0).abs() < 1e-3 && (top - 80.0).abs() < 1e-3, "{right} {far} {top}");
     let one = k.import_step(&std::fs::read(dir.join("one.step")).unwrap()).unwrap();
     assert_eq!(one.len(), 1);
+
+    // Each component is seen on its own, as when the file held one root for each.
+    assert_eq!(k.import_step(&three).unwrap().len(), 3);
+    let info = tenon_cli::info(&mut k, &dir.join("three.step")).unwrap();
+    assert!(info.text.contains("3 shape(s)"), "{}", info.text);
+    for s in info.json["shapes"].as_array().unwrap() {
+        assert_eq!((&s["kind"], &s["solids"]), (&json!("Solid"), &json!(1)), "{s}");
+        assert!((s["volume_mm3"].as_f64().unwrap() - 6000.0).abs() < 1e-6, "{s}");
+    }
+    let stl = tenon_cli::convert(&mut k, &dir.join("three.step"), &dir.join("three.stl")).unwrap();
+    assert_eq!((&stl.json["shapes"], &stl.json["triangles"]), (&json!(3), &json!(36)), "{}", stl.text);
 }
