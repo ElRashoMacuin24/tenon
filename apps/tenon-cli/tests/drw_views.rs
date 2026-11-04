@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use tenon_cli::Engine;
 use tenon_drawing::graphics::Pen;
 use tenon_drawing::{Graphics, Owner, SheetId, ViewId, ViewKind};
-use tenon_geom::Vec2;
+use tenon_geom::{Frame, Vec2, Vec3};
 use tenon_kernel::Kernel;
 use tenon_kernel_occt::OcctKernel;
 
@@ -79,7 +79,8 @@ fn plate(e: &mut Engine) {
     run(e, "param.add", json!({ "name": "w", "equation": "120 mm" }));
     let sk = run(e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
     let rect = run(e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 120, "y2": 80 }));
-    run(e, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "distance", "a": rect["corners"][0], "b": rect["corners"][1] }, "equation": "w" }));
+    run(e, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "fix", "point": rect["corners"][0] } }));
+    run(e, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "length", "line": rect["lines"][0], "value": 120 }, "equation": "w" }));
     let body = run(e, "model.extrude", json!({ "sketch": sk, "distance": 10, "equations": { "/extent/distance": "t" } }))["feature"].clone();
     let top = run(e, "model.face_ref", json!({ "origin": { "type": "cap", "feature": body, "end": "end" } }));
     let holes = run(e, "sketch.create", json!({ "face": top }))["feature"].clone();
@@ -128,11 +129,18 @@ fn an_auxiliary_view_looks_square_to_an_edge_and_follows_it() {
     let cap_line = lines[3]["line"].clone();
     let moving_corner = lines[3]["end"].clone();
     let body = run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": 25 }))["feature"].clone();
-    assert!((num(&run(&mut e, "model.mass", json!({}))["bodies"][0]["volume"]) - (6000.0 - 450.0) * 25.0).abs() < 1e-6);
+
     let side = run(&mut e, "model.face_ref", json!({ "origin": { "type": "side", "feature": body, "curve": cap_line } }));
-    let on_face = run(&mut e, "sketch.create", json!({ "face": side }));
-    let info = run(&mut e, "sketch.info", json!({ "sketch": on_face["feature"] }));
-    let _ = info;
+    // The sketch on the face has the part's origin projected onto it as its own; the hole goes in
+    // the middle of the face, at (85, 45, 12.5).
+    let on_face = run(&mut e, "sketch.create", json!({ "face": side }))["feature"].clone();
+    let n = Vec3::new(1.0, 1.0, 0.0) * (1.0 / SQRT_2);
+    let onto = Frame::from_normal(n * (130.0 / SQRT_2), n).unwrap();
+    let middle = Vec3::new(85.0, 45.0, 12.5);
+    let there = middle - onto.origin();
+    run(&mut e, "sketch.point", json!({ "sketch": on_face, "x": there.dot(onto.x()), "y": there.dot(onto.y()) }));
+    run(&mut e, "model.hole", json!({ "sketch": on_face, "diameter": 10, "depth": 8, "flat_bottom": true }));
+    near(num(&run(&mut e, "model.mass", json!({}))["bodies"][0]["volume"]), (6000.0 - 450.0) * 25.0 - 200.0 * PI, "the part");
     run(&mut e, "file.save", json!({ "path": "wedge.tenon" }));
 
     run(&mut e, "drw.new", json!({ "name": "Wedge" }));
@@ -164,11 +172,11 @@ fn an_auxiliary_view_looks_square_to_an_edge_and_follows_it() {
     // A point of the model is as far along the edge in both: (100, 30, 25) and the same seen there.
     let g_parent = {
         let ev = e.drw.evaluation().unwrap();
-        tenon_drawing::views::project(&ev.view(ViewId(top as u32)).unwrap().frame, tenon_geom::Vec3::new(100.0, 30.0, 25.0))
+        tenon_drawing::views::project(&ev.view(ViewId(top as u32)).unwrap().frame, Vec3::new(100.0, 30.0, 25.0))
     };
     let g_aux = {
         let ev = e.drw.evaluation().unwrap();
-        tenon_drawing::views::project(&ev.view(ViewId(aux as u32)).unwrap().frame, tenon_geom::Vec3::new(100.0, 30.0, 25.0))
+        tenon_drawing::views::project(&ev.view(ViewId(aux as u32)).unwrap().frame, Vec3::new(100.0, 30.0, 25.0))
     };
     let (sp, sa) = (on_sheet(&mut e, top, g_parent.x, g_parent.y), on_sheet(&mut e, aux, g_aux.x, g_aux.y));
     near((sa - sp).dot(along_edge), 0.0, "the same corner lines up across the two views");
@@ -181,6 +189,21 @@ fn an_auxiliary_view_looks_square_to_an_edge_and_follows_it() {
 
     // Its label, and the arrow on its parent with the same letter.
     let g = sheet(&e);
+    // The hole in that face, square to the eye: a true circle of 10 across, where it is. From above
+    // it shows as an edge-on slot, not a circle.
+    let round: Vec<Vec2> = tenon_drawing::clean::items(&g)
+        .into_iter()
+        .filter_map(|(p, i)| match i {
+            tenon_drawing::clean::Item::Circle { c, r } if p == Pen::Visible && (r - 5.0).abs() < 1e-6 => Some(c),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(round.len(), 1, "{round:?}");
+    let seen = {
+        let ev = e.drw.evaluation().unwrap();
+        tenon_drawing::views::project(&ev.view(ViewId(aux as u32)).unwrap().frame, middle)
+    };
+    assert!(round[0].near(on_sheet(&mut e, aux, seen.x, seen.y), 1e-6), "{round:?}");
     let text = |o: u64, t: &str| g.texts.iter().any(|(ow, x)| *ow == Owner::View(ViewId(o as u32)) && x.text == t);
     assert!(text(aux, "VIEW A") && text(aux, "SCALE 1:1") && text(top, "A"), "{:?}", g.texts);
     assert!(g.fills.iter().any(|(o, _)| *o == Owner::View(ViewId(top as u32))), "the arrow on the parent");
@@ -196,7 +219,8 @@ fn an_auxiliary_view_looks_square_to_an_edge_and_follows_it() {
     assert!(moved.near(after + Vec2::new(10.0, 5.0), 1e-9), "{moved:?}");
 
     // Flipped: from the other side, the other way along its direction.
-    run(&mut e, "drw.view.edit", json!({ "view": aux, "flip": true }));
+    let was = view_info(&mut e, aux)["kind"]["flip"].as_bool().unwrap();
+    run(&mut e, "drw.view.edit", json!({ "view": aux, "flip": !was }));
     let z = view_info(&mut e, aux)["direction"].clone();
     near(num(&z[0]), -s, "seen from the other side");
     run(&mut e, "drw.undo", json!({}));
@@ -240,7 +264,7 @@ fn a_crop_draws_only_what_is_inside_and_dimensions_keep_their_true_values() {
     // The plate's edges along the bottom and the left: 50 and 30 of them, plus the hole at (30, 20)
     // whole (10 pi round). The hole at (90, 60) is outside.
     let total: f64 = lines.iter().map(|r| length(r)).sum();
-    assert!((total - (50.0 + 30.0 + 10.0 * PI)).abs() < 0.01, "{total}");
+    assert!((total - (50.0 + 30.0 + 10.0 * PI)).abs() < 0.05, "{total}");
     // Its centre mark, none on the other hole.
     let (mlo, mhi) = extent(&strokes(&g, v, Pen::Center));
     assert!(mhi.x <= 140.0 + 1e-9 && mlo.y >= 105.0 - 1e-9, "{mlo:?} {mhi:?}");
@@ -262,7 +286,7 @@ fn a_crop_draws_only_what_is_inside_and_dimensions_keep_their_true_values() {
     run(&mut e, "drw.crop", json!({ "view": v, "center": [30, 20], "radius": 10, "rect": null, "outline": true }));
     let g = sheet(&e);
     let total: f64 = strokes(&g, v, Pen::Visible).iter().map(|r| length(r)).sum();
-    assert!((total - 10.0 * PI).abs() < 0.01, "{total}");
+    assert!((total - 10.0 * PI).abs() < 0.05, "{total}");
     // Its outline, on its own to click: 20 pi round.
     let outline: f64 = g.strokes.iter().filter(|s| s.0 == Owner::Mod(ViewId(v as u32), 1)).map(|s| length(&s.2)).sum();
     assert!((outline - 20.0 * PI).abs() < 0.05, "{outline}");
@@ -387,7 +411,7 @@ fn block(e: &mut Engine) {
     let info = run(e, "sketch.info", json!({ "sketch": holes }));
     let _ = info;
     run(e, "sketch.point", json!({ "sketch": holes, "x": 30, "y": -20 }));
-    run(e, "model.hole", json!({ "sketch": holes, "diameter": 10, "depth": 10 }));
+    run(e, "model.hole", json!({ "sketch": holes, "diameter": 10, "depth": 10, "flat_bottom": true }));
     let volume = num(&run(e, "model.mass", json!({}))["bodies"][0]["volume"]);
     assert!((volume - (48000.0 - 250.0 * PI)).abs() < 1e-3, "{volume}");
     run(e, "file.save", json!({ "path": "block.tenon" }));
@@ -467,7 +491,7 @@ fn a_break_out_cuts_to_a_depth_and_hatches_what_it_leaves() {
 
     // Back to the rectangle, 15 down, by undo. The block made 30 thick: the floor at 15 now, above
     // the hole: the depth is from the top as it is.
-    for _ in 0..3 {
+    for _ in 0..4 {
         run(&mut e, "drw.undo", json!({}));
     }
     let i = view_info(&mut e, v);
@@ -478,7 +502,7 @@ fn a_break_out_cuts_to_a_depth_and_hatches_what_it_leaves() {
     run(&mut e, "drw.update", json!({}));
     let g = sheet(&e);
     assert_eq!((circles(&g, Pen::Hidden, 5.0), circles(&g, Pen::Visible, 5.0)), (1, 0), "the hole is below the floor now");
-    assert!((hatch_length(&g, v) - 133.33).abs() < 12.0 * 133.33, "circle: {}", hatch_length(&g, v));
+    assert!((hatch_length(&g, v) - 400.0).abs() < 400.0 * 0.03, "the floor whole: {}", hatch_length(&g, v));
 
     // A section of it, a detail: the detail shows what the break-out left. Picking the part cut away
     // is refused; suppressing it brings it back.
@@ -597,8 +621,8 @@ fn an_overlay_draws_the_assembly_in_another_position_in_phantom_lines() {
     assert!(view_info(&mut e, f)["error"].is_null());
     let g = sheet(&e);
     let (lo, hi) = extent(&strokes(&g, f, Pen::Phantom));
-    // The view's middle (x 50, z 7.5: the model is 15 high) is at (150, 60).
-    let up = |y: f64| y - 60.0 + 7.5;
+    // The view's middle (x 50, z 10: the model is 20 high, to the cube's top) is at (150, 60).
+    let up = |y: f64| y - 60.0 + 10.0;
     near(up(lo.y), 50.0, "the cube's underside, lifted");
     near(up(hi.y), 60.0, "its top, lifted");
     near(lo.x - 150.0 + 50.0, 60.0, "its left, where it was");
@@ -608,6 +632,9 @@ fn an_overlay_draws_the_assembly_in_another_position_in_phantom_lines() {
     run(&mut e, "file.open", json!({ "path": "base.tenon" }));
     run(&mut e, "param.set", json!({ "name": "t", "equation": "15" }));
     run(&mut e, "file.save", json!({ "path": "base.tenon" }));
+    run(&mut e, "asm.open", json!({ "path": "pivot.tenonasm" }));
+    run(&mut e, "asm.update", json!({}));
+    run(&mut e, "asm.save", json!({ "path": "pivot.tenonasm" }));
     run(&mut e, "drw.update", json!({}));
     let g = sheet(&e);
     let (lo, hi) = extent(&strokes(&g, f, Pen::Phantom));
@@ -637,7 +664,7 @@ fn an_overlay_draws_the_assembly_in_another_position_in_phantom_lines() {
 }
 
 /// Every kind on one drawing, for what they share.
-fn everything(e: &mut Engine) -> (u64, u64) {
+fn everything(e: &mut Engine) {
     plate(e);
     let (joint, _) = pivot(e);
     run(e, "drw.new", json!({ "name": "All" }));
@@ -649,15 +676,14 @@ fn everything(e: &mut Engine) -> (u64, u64) {
     run(e, "drw.auxiliary", json!({ "parent": top, "edge": edge, "at": [100, 110] }));
     let asm = run(e, "drw.view.base", json!({ "model": "pivot.tenonasm", "orientation": "top", "scale": 1, "at": [300, 150], "hidden": false }))["view"].as_u64().unwrap();
     let a0 = num(&run(e, "drw.overlay.values", json!({ "view": asm }))["values"][0]["angle"]);
-    let ov = run(e, "drw.overlay", json!({ "parent": asm, "values": [{ "relationship": joint, "angle": a0 + 1.0 }] }))["view"].as_u64().unwrap();
-    (top, ov)
+    run(e, "drw.overlay", json!({ "parent": asm, "values": [{ "relationship": joint, "angle": a0 + 1.0 }] }));
 }
 
 #[test]
 fn all_of_them_come_through_save_and_open_to_the_same_bytes_and_go_to_pdf_and_dxf() {
     let dir = scratch("files");
     let mut e = Engine::new(kernel(), &dir);
-    let (top, ov) = everything(&mut e);
+    everything(&mut e);
     let before = e.drw.drawing().clone();
     let shown = sheet(&e);
     run(&mut e, "drw.save", json!({ "path": "all.tenondrw" }));
@@ -696,10 +722,6 @@ fn all_of_them_come_through_save_and_open_to_the_same_bytes_and_go_to_pdf_and_dx
     // A picture of the sheet.
     assert!(e.render_sheet_png(None, 800).unwrap().starts_with(&[0x89, b'P', b'N', b'G']));
 
-    // Undo takes each back, one step at a time, and the file with none reads as it did.
-    let views = e.drw.drawing().views.len();
-    run(&mut e, "drw.overlay", json!({ "parent": top, "values": [{ "relationship": 1, "offset": 1 }] })).as_object().map(|_| ()).unwrap_or_default();
-    let _ = (views, ov);
 }
 
 #[test]

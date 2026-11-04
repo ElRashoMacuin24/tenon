@@ -811,8 +811,10 @@ fn draw_view(gr: &mut Graphics, d: &Drawing, v: &View, ev: &Evaluation) {
     if v.label {
         let bounds = gr.bounds_of(o);
         let low = bounds.map_or(v.center.y - 10.0, |b| b.0.y);
-        // Under what is drawn: a crop may have left that well to one side of the view's middle.
-        let x = if Clip::of(v) == Clip::default() { v.center.x } else { bounds.map_or(v.center.x, |b| (b.0.x + b.1.x) * 0.5) };
+        // Under what is drawn: a crop may have left that well to one side of the view's middle, and
+        // an auxiliary view's middle is where it lines up with its parent.
+        let under = Clip::of(v) != Clip::default() || matches!(v.kind, ViewKind::Auxiliary { .. });
+        let x = if under { bounds.map_or(v.center.x, |b| (b.0.x + b.1.x) * 0.5) } else { v.center.x };
         let title = match &v.kind {
             ViewKind::Section { .. } => format!("SECTION {0}-{0}", v.name),
             ViewKind::Detail { .. } => format!("DETAIL {}", v.name),

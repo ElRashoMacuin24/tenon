@@ -408,6 +408,9 @@ fn beside(s: &DrwSession, parent: &View, f: &tenon_geom::Frame, scale: f64, dir:
 }
 
 fn frame_of(s: &DrwSession, v: ViewId) -> tenon_geom::Frame {
+    if let Some(g) = s.evaluation().and_then(|e| e.view(v)) {
+        return g.frame;
+    }
     crate::views::frames(s.drawing()).get(&v).copied().unwrap_or(tenon_geom::Frame::WORLD)
 }
 
@@ -882,23 +885,27 @@ fn drw_view_edit(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
     let flip = opt_bool(p, "flip")?;
     let edge = opt_pick(p, "edge")?.map(|e| GeomPick { point: PickPoint::Whole, ..e });
     let third = s.drawing().standard == crate::model::Standard::Ansi;
-    // Another edge, or the other side, for an auxiliary view: it stays as far from its parent.
+    // Another edge, or the other side, for an auxiliary view, or moving it: it stays as far from its
+    // parent, square to the edge as it is now.
+    let moves = at.is_some() || by.is_some() || flip.is_some() || edge.is_some();
     let turned = match (&view(s.drawing(), vid)?.kind, &edge, flip) {
-        (ViewKind::Auxiliary { parent, edge: was, a, b, flip: was_flip }, _, _) => {
+        (ViewKind::Auxiliary { parent, edge: was, a, b, flip: was_flip }, _, _) if moves => {
             let new_flip = flip.unwrap_or(*was_flip);
             let pv = view(s.drawing(), *parent)?.clone();
-            let line = match &edge {
-                Some(e) => {
-                    let (na, nb) = edge_line(s, &pv, e)?;
-                    Some((e.clone(), na, nb))
+            let chosen = edge.as_ref().unwrap_or(was);
+            let (na, nb) = match (&edge, edge_line(s, &pv, chosen)) {
+                (Some(_), line) => line?,
+                (None, Ok(line)) => {
+                    let (x, y) = line;
+                    if (y - x).dot(*b - *a) < 0.0 { (y, x) } else { (x, y) }
                 }
-                None => None,
+                (None, Err(_)) => (*a, *b),
             };
-            let (e, na, nb) = line.unwrap_or_else(|| (was.clone(), *a, *b));
             let c = view(s.drawing(), vid)?.center;
             let away = (c - pv.center).dot(auxiliary_toward(third, *a, *b, *was_flip));
-            Some((e, na, nb, new_flip, pv.center + auxiliary_toward(third, na, nb, new_flip) * away))
+            Some((chosen.clone(), na, nb, new_flip, pv.center + auxiliary_toward(third, na, nb, new_flip) * away))
         }
+        (ViewKind::Auxiliary { .. }, _, _) => None,
         (_, Some(_), _) => return Err("only an auxiliary view looks square to an edge".into()),
         (_, _, Some(_)) => return Err("only an auxiliary view flips this way".into()),
         _ => None,

@@ -1841,7 +1841,9 @@ impl Workbench {
                             tenon_drawing::ModKind::Break { .. } => (Icon::Split, ModWhat::Break),
                             tenon_drawing::ModKind::BreakOut { .. } => (Icon::Trim, ModWhat::BreakOut),
                         };
-                        let name = if what == ModWhat::Crop { m.kind.label().to_owned() } else { format!("{} {}", m.kind.label(), m.id) };
+                        // Numbered among those of its kind on the view.
+                        let nth = v.mods.iter().take_while(|x| x.id != m.id).filter(|x| x.kind.label() == m.kind.label()).count() + 1;
+                        let name = if what == ModWhat::Crop { m.kind.label().to_owned() } else { format!("{} {nth}", m.kind.label()) };
                         let label = if m.suppressed { format!("{name} (suppressed)") } else { name };
                         let resp = browser_row(ui, t, depth + 1, icon, &label, selected == Some(Owner::Mod(id, m.id)), false);
                         if resp.clicked() {
