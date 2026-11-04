@@ -10,7 +10,8 @@
 //! (tori) cannot be laid flat at all without stretching: each is unrolled as the cone through
 //! its two rims, as long as its neutral surface is, and the pattern says so ([`Chart::Turned`]).
 //! A die-formed sheet is laid flat by triangles, which it is given ([`Extras`]): its smooth
-//! faces say nothing of how.
+//! faces say nothing of how, and nothing is followed out of them, so with anything but cuts
+//! straight through it the solid is refused.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::f64::consts::TAU;
@@ -225,15 +226,34 @@ impl Chart {
         }
     }
 
+    /// A point of the turned face `face` by how far round the axis it is from the chart's reference
+    /// point and how far along. (What [`Chart::round`] gives of a point.)
+    pub(super) fn point_of(&self, face: &FaceInfo, angle: f64, along: f64) -> Option<Vec3> {
+        let Chart::Turned { axis, r0, along: how, .. } = self else { return None };
+        let round = *r0 * angle.cos() + axis.dir().cross(*r0) * angle.sin();
+        let (height, radius) = match (how, &face.surface) {
+            (Along::Cone { q, cos, sin }, _) => {
+                let d = *q - axis.origin();
+                (d.dot(axis.dir()) + along * cos, (d - axis.dir() * d.dot(axis.dir())).len() + along * sin)
+            }
+            (Along::Tube { neutral, from, .. }, SurfaceKind::Torus { major_radius, minor_radius, .. }) => {
+                let b = from + along / neutral;
+                (minor_radius * b.sin(), major_radius + minor_radius * b.cos())
+            }
+            _ => return None,
+        };
+        Some(axis.origin() + axis.dir() * height + round * radius)
+    }
+
     /// Whether this is a piece of a rolled sheet whose rims are circles of the flat, or straight
     /// lines where a neighbour has circles: where two meet they meet at one point only.
-    fn turned(&self) -> bool {
+    pub(super) fn turned(&self) -> bool {
         matches!(self, Chart::Turned { .. })
     }
 }
 
 /// The normal of a flat or round face at `p` (either way round), if it is one of those.
-fn normal_at(face: &FaceInfo, p: Vec3) -> Option<Vec3> {
+pub(super) fn normal_at(face: &FaceInfo, p: Vec3) -> Option<Vec3> {
     match &face.surface {
         SurfaceKind::Plane { normal, .. } => Some(normal.normalized()),
         SurfaceKind::Cylinder { axis, .. } => radial(axis, p),
@@ -866,6 +886,22 @@ pub struct PunchFaces {
     pub faces: BTreeSet<u32>,
     /// A formed shape: those of its faces the sheet bends at, where the sheet meets them.
     pub bends: BTreeSet<u32>,
+    /// The faces of the solid made by features after this one.
+    pub later: BTreeSet<u32>,
+    /// Where its point was when it was stamped, on the sheet's side.
+    pub at: Option<Vec3>,
+}
+
+/// Whether face `f` touches both sides of die-formed sheet `skin`, as a wall of a cut through it does.
+fn reaches_across(topo: &Topology, f: u32, skin: &Skin) -> bool {
+    let touches = |side: &Vec<u32>| {
+        topo.face_edges
+            .get(f as usize)
+            .into_iter()
+            .flatten()
+            .any(|e| topo.edge_faces.get(*e as usize).into_iter().flatten().any(|g| side.contains(g)))
+    };
+    skin.faces.iter().all(touches)
 }
 
 /// How many pieces a curve of the flat that is not straight is drawn in where it is marked.
@@ -876,7 +912,8 @@ const MARK_STEP: f64 = 0.2;
 /// The solid must be one sheet of `thickness`: flat faces joined by round bends, cut square
 /// through. That is checked by volume (its A side's faces, each `thickness` deep, must account
 /// for the solid to within 2 %), so a solid that is something else is refused in plain words
-/// and never unfolded into nonsense.
+/// and never unfolded into nonsense. A die-formed sheet is held to that too, and every other face
+/// must reach from one of its sides to the other: a volume does not see what it leaves out.
 pub fn unfold(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold) -> Result<FlatPattern, String> {
     unfold_with(k, shape, opts, &Extras::default())
 }
@@ -897,6 +934,26 @@ pub fn unfold_with(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold, extras: &E
             "A flat pattern is of one solid, and this part has {}. Combine them, or keep each in a part of its own.",
             solid.topo.solids
         ));
+    }
+    // A formed shape is one stroke of the press, and a mark in the flat: a cut through it has no
+    // place there.
+    for p in extras.punches.iter().filter(|p| p.formed) {
+        let cut = p.faces.iter().any(|f| {
+            let beside = solid
+                .topo
+                .face_edges
+                .get(*f as usize)
+                .into_iter()
+                .flatten()
+                .flat_map(|e| solid.topo.edge_faces.get(*e as usize).into_iter().flatten());
+            beside.into_iter().any(|g| !p.faces.contains(g) && p.later.contains(g) && !super::wrap::has_other_side(&solid, *g as usize, t))
+        });
+        if cut {
+            return Err(format!(
+                "{} has been cut since it was stamped: in a flat pattern a formed shape is a mark, and what cuts it has no place there. Move the cut clear of it, or take it off, and the flat pattern can be laid out.",
+                p.name
+            ));
+        }
     }
     let volume = k.mass_properties(shape, 1.0).map_err(kerr)?.volume;
     // The faces of the side, each one thickness deep, must be the solid.
@@ -942,14 +999,26 @@ pub fn unfold_with(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold, extras: &E
             Some(b) => skin.faces.iter().position(|fs| fs.contains(&b))?,
             None => 0,
         };
-        let base = skin.faces.get(side)?.iter().copied().max_by(|a, b| {
-            let area = |f: &u32| solid.faces.get(*f as usize).map_or(0.0, |i| i.area);
-            area(a).total_cmp(&area(b))
-        })?;
-        Some((base, Chart::Skin { skin: skin.clone(), side }))
+        (!skin.faces.get(side)?.is_empty()).then_some((skin, side))
     });
-    let charts = if let Some((base, first)) = skin_base {
-        follow(&solid, base, first, opts)?
+    let charts = if let Some((skin, side)) = skin_base {
+        let charts: BTreeMap<u32, Chart> = skin.faces[side].iter().map(|f| (*f, Chart::Skin { skin: skin.clone(), side })).collect();
+        // Nothing is followed out of a die-formed side (its triangles are all it has), so whatever
+        // else is on the solid would be left out. Every other face must be a wall of a cut
+        // straight through: it reaches from one side of the sheet to the other.
+        let stray = (0..solid.faces.len() as u32)
+            .filter(|f| !skin.faces.iter().any(|fs| fs.contains(f)))
+            .filter(|f| !reaches_across(&solid.topo, *f, skin))
+            .count();
+        if stray > 0 || !account(&charts) {
+            return Err(format!(
+                "A die-formed sheet is laid flat by its own triangles, and only what is cut straight through it can be shown on them. Something else is joined to this one or cut part way into it: {stray} of the solid's faces do not reach from one side of the sheet to the other, and the two sides {} mm thick account for {:.0} mm³ of its {:.0} mm³. Take that off, or make the sheet as Press Brake facets, which unfold with what is joined to them.",
+                crate::explain::mm(t),
+                accounted_by(&charts),
+                volume
+            ));
+        }
+        charts
     } else {
         let plain = match opts.base {
             Some(b) => {
@@ -1187,9 +1256,17 @@ pub fn unfold_with(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold, extras: &E
     for p in &extras.punches {
         let mut pieces: Vec<FlatCurve> = Vec::new();
         let mut lines: Vec<[Vec2; 2]> = Vec::new();
+        // Its own point, when the face it is on is still where it was stamped (a fold made after
+        // it moves the face, and not the sketch).
+        let mut own: Option<Vec2> = None;
         for (e, info) in edges.iter().enumerate().filter(|(_, i)| !i.degenerate) {
             let at = topo.edge_faces.get(e).map_or(&[][..], Vec::as_slice);
             let Some(chart) = at.iter().find_map(|f| charts.get(f)).filter(|_| at.iter().any(|f| p.faces.contains(f))) else { continue };
+            if let (None, Some(point), Chart::Plane { o3, u3, v3, .. }) = (own, p.at, chart)
+                && (point - *o3).dot(u3.cross(*v3)).abs() <= t * (1.0 + 1e-6)
+            {
+                own = Some(chart.map(point));
+            }
             let curve = flatten(k, shape.edge(e as u32), info, chart, opts.deflection)?;
             if p.formed && at.iter().any(|f| p.bends.contains(f)) {
                 lines.extend(curve.points(MARK_STEP).windows(2).map(|w| [w[0], w[1]]));
@@ -1199,13 +1276,14 @@ pub fn unfold_with(k: &dyn Kernel, shape: ShapeHandle, opts: &Unfold, extras: &E
         if pieces.is_empty() {
             continue;
         }
-        // The middle of what it is: a round shape's centre, however much of it is left, or
-        // else the middle of the box round it (every other shape is even about its centre).
-        let round = pieces.iter().find_map(|c| match c {
+        // Its own point; else the middle of what it is: a round shape's centre, however much of
+        // it is left, or else the middle of the box round it (every other shape is even about its
+        // centre).
+        let round = own.or(pieces.iter().find_map(|c| match c {
             FlatCurve::Circle { center, .. } => Some(*center),
             FlatCurve::Arc { center, .. } if c.sweep().abs() > std::f64::consts::PI + 0.01 => Some(*center),
             _ => None,
-        });
+        }));
         let center = round.unwrap_or_else(|| {
             let points: Vec<Vec2> = pieces.iter().flat_map(|c| c.points(0.2)).collect();
             let least = points.iter().fold(Vec2::new(f64::INFINITY, f64::INFINITY), |a, q| a.min(*q));

@@ -267,18 +267,19 @@ impl PunchShape {
         Region { outer: Loop { curves }, holes: vec![] }
     }
 
-    /// Points round the whole of what the stamp takes up on the face it is on, about its centre,
-    /// for a sheet `t` thick: to see that it is all on the face.
+    /// Points in order round the whole of what the stamp takes up on the face it is on, about its
+    /// centre, for a sheet `t` thick: to see that it is all on the face.
     pub fn reach(&self, t: f64) -> Vec<Vec2> {
         let round = |r: f64, cx: f64, from: f64, sweep: f64, n: usize| -> Vec<Vec2> {
             (0..=n).map(|i| Vec2::polar(Vec2::new(cx, 0.0), r, from + sweep * i as f64 / n as f64)).collect()
         };
         let box_of = |l: f64, w: f64| {
             let (x, y) = (l / 2.0, w / 2.0);
-            let mut out = Vec::new();
-            for k in 0..=8 {
-                let f = f64::from(k) / 8.0;
-                out.extend([Vec2::new(-x + l * f, -y), Vec2::new(-x + l * f, y), Vec2::new(-x, -y + w * f), Vec2::new(x, -y + w * f)]);
+            let corners = [Vec2::new(-x, -y), Vec2::new(x, -y), Vec2::new(x, y), Vec2::new(-x, y)];
+            let mut out = Vec::with_capacity(32);
+            for i in 0..4 {
+                let (a, b) = (corners[i], corners[(i + 1) % 4]);
+                out.extend((0..8).map(|k| a + (b - a) * (f64::from(k) / 8.0)));
             }
             out
         };
@@ -340,6 +341,36 @@ pub fn louver_flap(width: f64, height: f64, t: f64, r: f64, k: f64) -> Result<(f
             "A louver {} mm wide stands at most {} mm high with this sheet's bends: make it wider or lower, or the bend radius smaller.",
             size(width),
             size(rise(hi))
+        ));
+    }
+    // Whether the underside of the flap, turned this far, clears the far wall of its opening: the
+    // wall is `width` from the hinge and goes down from the face. (Below that height the lip of a
+    // flap as long as its opening runs into that wall, wherever on the sheet it is.)
+    let clears = |turn: f64| {
+        let (sin, cos) = turn.sin_cos();
+        let reach = r * sin + straight(turn) * cos + t * sin;
+        let top = r * (1.0 - cos) + straight(turn) * sin - t * cos;
+        reach <= width || top - (reach - width) * sin / cos.max(1e-9) >= 1e-3 * t
+    };
+    if !clears(hi) {
+        return Err(format!(
+            "A louver {} mm wide runs into the far side of its own opening however high it stands, with this sheet's thickness and bends: make it wider, or the bend radius smaller.",
+            size(width)
+        ));
+    }
+    let (mut under, mut over) = (0.0f64, hi);
+    for _ in 0..60 {
+        let mid = (under + over) / 2.0;
+        if clears(mid) {
+            over = mid;
+        } else {
+            under = mid;
+        }
+    }
+    if rise(over) > height {
+        return Err(format!(
+            "A louver on this sheet must stand at least {} mm high, or the lip of its flap runs into the far side of its own opening: make it higher.",
+            size((rise(over) * 1000.0).ceil() / 1000.0)
         ));
     }
     for _ in 0..80 {

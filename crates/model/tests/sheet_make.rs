@@ -335,3 +335,242 @@ fn a_contour_roll_follows_the_rule_and_its_sketch_and_can_be_deleted() {
     run(&mut s, &mut k, "edit.undo", json!({}));
     assert!(close(volume(&mut s, &mut k), ring(47.0, 50.0, 60.0), 1e-3));
 }
+
+/// A flat ring turned 2 radians about Z, its middle along +X: from radius 30 to 60, z from 10 to 12.
+fn flat_ring(s: &mut Session, k: &mut OcctKernel) -> f64 {
+    let sk = lines_on(s, k, "xz", &[(30.0, 10.0), (60.0, 10.0)]);
+    run(s, k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": 2.0, "direction": "symmetric" }));
+    (60.0 * 60.0 - 30.0 * 30.0) / 2.0 * 2.0 * T
+}
+
+/// A new sketch on a plane parallel to XY at height `z`.
+fn sketch_at_height(s: &mut Session, k: &mut OcctKernel, z: f64) -> u64 {
+    let wp = id(&run(s, k, "work.plane", json!({ "by": "offset", "base": "xy", "distance": z })), "feature");
+    id(&run(s, k, "sketch.create", json!({ "work_plane": wp, "project_origin": false })), "feature")
+}
+
+/// A flat ring is flat faces like any other, both ways up: each looks out of the sheet, the other
+/// side one thickness behind it, and all that goes on a flat side goes on it.
+#[test]
+fn a_flat_ring_is_a_side_of_the_sheet_both_ways_up() {
+    let (mut s, mut k) = start();
+    let whole = flat_ring(&mut s, &mut k);
+    assert!(close(volume(&mut s, &mut k), whole, 1e-6));
+    let planes = run(&mut s, &mut k, "model.find", json!({ "what": "faces", "kind": "plane" }));
+    let mut looks: Vec<(f64, f64)> = planes["found"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["area"].as_f64().unwrap() > 2000.0)
+        .map(|f| (f["centroid"][2].as_f64().unwrap(), f["normal"][2].as_f64().unwrap()))
+        .collect();
+    looks.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert_eq!(looks.len(), 2, "{planes}");
+    assert!(close(looks[0].0, 10.0, 1e-9) && close(looks[0].1, -1.0, 1e-9), "{looks:?}");
+    assert!(close(looks[1].0, 12.0, 1e-9) && close(looks[1].1, 1.0, 1e-9), "{looks:?}");
+    let flat_area = (60.0 * 60.0 - 30.0 * 30.0) / 2.0 * 2.0;
+
+    let mut made = Vec::new();
+    for z in [10.0, 12.0] {
+        // A punch on that side: a hole of its own area in the solid and the flat.
+        let (mut s, mut k) = start();
+        flat_ring(&mut s, &mut k);
+        let sk = sketch_at_height(&mut s, &mut k, z);
+        run(&mut s, &mut k, "sketch.point", json!({ "sketch": sk, "x": 45, "y": 0 }));
+        run(&mut s, &mut k, "sheet.punch", json!({ "sketch": sk, "shape": "round", "diameter": 6 }));
+        assert!(close(volume(&mut s, &mut k), whole - PI * 9.0 * T, 1e-5), "{z}");
+        let p = flat(&mut s, &mut k);
+        assert!(close(num(&p, "area"), flat_area - PI * 9.0, 1e-5) && p["holes"] == 1 && p["notes"].is_null(), "{z}: {p}");
+        assert_eq!(p["marks"][0]["name"].as_str().unwrap(), "Round 6", "{p}");
+
+        // A formed shape stands out of that side, by hand.
+        let (mut s, mut k) = start();
+        flat_ring(&mut s, &mut k);
+        let sk = sketch_at_height(&mut s, &mut k, z);
+        run(&mut s, &mut k, "sketch.point", json!({ "sketch": sk, "x": 45, "y": 0 }));
+        run(&mut s, &mut k, "sheet.punch", json!({ "sketch": sk, "shape": "dimple", "diameter": 10, "depth": 2 }));
+        assert!(close(volume(&mut s, &mut k), whole + PI * 4.0 * T, 1e-5), "{z}: {}", volume(&mut s, &mut k));
+        let top = run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0]["bbox"].clone();
+        let (lo, hi) = (top["min"][2].as_f64().unwrap(), top["max"][2].as_f64().unwrap());
+        assert!(if z > 11.0 { close(hi, 14.0, 1e-5) } else { close(lo, 8.0, 1e-5) }, "{z}: {top}");
+
+        // A cut normal, from far off on that side: a circle of 5.
+        let (mut s, mut k) = start();
+        flat_ring(&mut s, &mut k);
+        let sk = sketch_at_height(&mut s, &mut k, if z > 11.0 { 100.0 } else { -100.0 });
+        run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 45, "cy": 0, "r": 5 }));
+        run(&mut s, &mut k, "sheet.cut_normal", json!({ "sketch": sk }));
+        assert!(close(volume(&mut s, &mut k), whole - PI * 25.0 * T, 1e-5), "{z}");
+        assert!(close(num(&flat(&mut s, &mut k), "area"), flat_area - PI * 25.0, 1e-5));
+
+        // A cut across bends, on that side: nothing to go across, 10 x 10.
+        let (mut s, mut k) = start();
+        flat_ring(&mut s, &mut k);
+        let sk = sketch_at_height(&mut s, &mut k, z);
+        run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 40, "y1": -5, "x2": 50, "y2": 5 }));
+        run(&mut s, &mut k, "sheet.cut_across_bend", json!({ "sketch": sk }));
+        assert!(close(volume(&mut s, &mut k), whole - 100.0 * T, 1e-5), "{z}");
+        assert!(close(num(&flat(&mut s, &mut k), "area"), flat_area - 100.0, 1e-5));
+
+        // A flange on a straight edge of that side, from its seam at angle 0: the edge from radius
+        // 30 to 60. It takes the ring back by the bend's outside radius of 5, a strip a little more
+        // than 5 x 30 where the ring's arcs lean in; then a quarter ring and 15 straight, 30 wide.
+        let (mut s, mut k) = start();
+        let sk = lines_on(&mut s, &mut k, "xz", &[(30.0, 10.0), (60.0, 10.0)]);
+        run(&mut s, &mut k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": 2.0 }));
+        let edge = run(&mut s, &mut k, "model.edge_ref", json!({ "at": [45, 0, z] }));
+        run(&mut s, &mut k, "sheet.flange", json!({ "edges": [edge], "height": 20 }));
+        let bend = FRAC_PI_2 / 2.0 * ((R + T) * (R + T) - R * R) * 30.0;
+        let strip = 150.0 + 125.0 / 360.0;
+        let v = volume(&mut s, &mut k);
+        let want = whole - strip * T + bend + 15.0 * T * 30.0;
+        assert!(close(v, want, 2.0), "{z}: {v} {want}");
+        let p = flat(&mut s, &mut k);
+        let wide = FRAC_PI_2 * (R + K * T) + 15.0;
+        assert!(close(num(&p, "area"), flat_area - strip + wide * 30.0, 1.0), "{z}: {p}");
+        assert_eq!(p["bends"].as_array().unwrap().len(), 1, "{p}");
+        // Whichever side it is on, the same sheet.
+        made.push((v, num(&p, "length"), num(&p, "width"), num(&p, "area")));
+    }
+    assert!(
+        close(made[0].0, made[1].0, 1e-3)
+            && close(made[0].1, made[1].1, 1e-6)
+            && close(made[0].2, made[1].2, 1e-6)
+            && close(made[0].3, made[1].3, 1e-6),
+        "{made:?}"
+    );
+}
+
+/// A cone with a flat tab on it, tangent along a seam: by hand 12160 mm³, and 6070.4 mm² flat.
+/// (The cone: rims 30 and 60 at 40 apart, turned 2 radians; a slant of 50. The tab: 30 x 50 x 2.)
+fn cone_and_tab(s: &mut Session, k: &mut OcctKernel) -> u64 {
+    let sk = lines_on(s, k, "xz", &[(60.0, 40.0), (30.0, 0.0)]);
+    run(s, k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": 2.0 }));
+    let tilt = 0.6f64.atan2(0.8);
+    let q0 = id(&run(s, k, "work.plane", json!({ "by": "angle", "base": "yz", "axis": "y", "angle": tilt })), "feature");
+    let q = id(&run(s, k, "work.plane", json!({ "by": "offset", "base": { "work": q0 }, "distance": 24 })), "feature");
+    let tab = id(&run(s, k, "sketch.create", json!({ "work_plane": q, "project_origin": false })), "feature");
+    run(s, k, "sketch.rectangle", json!({ "sketch": tab, "x1": -30, "y1": 18, "x2": 0, "y2": 68 }));
+    run(s, k, "sheet.face", json!({ "sketch": tab }));
+    q
+}
+
+/// A cut across bends or normal to the sheet has nothing to go by on a cone or a round part. What
+/// reaches one is refused, not left half cut; what is on the flat is cut, by hand; a cylinder it
+/// follows as it does a bend.
+#[test]
+fn a_cut_that_reaches_a_rolled_part_is_refused_and_one_on_the_flat_or_a_cylinder_is_cut_by_hand() {
+    let rectangle = |s: &mut Session, k: &mut OcctKernel, q: u64, x1: f64, x2: f64| {
+        let c = id(&run(s, k, "sketch.create", json!({ "work_plane": q, "project_origin": false })), "feature");
+        run(s, k, "sketch.rectangle", json!({ "sketch": c, "x1": x1, "y1": 30, "x2": x2, "y2": 40 }));
+        c
+    };
+    for cut in ["sheet.cut_across_bend", "sheet.cut_normal"] {
+        // Over the seam, half on the tab and half on the cone.
+        let (mut s, mut k) = start();
+        let q = cone_and_tab(&mut s, &mut k);
+        assert!(close(volume(&mut s, &mut k), 12_160.0, 1e-3));
+        assert!(close(num(&flat(&mut s, &mut k), "area"), 6070.4, 1e-3));
+        let c = rectangle(&mut s, &mut k, q, -10.0, 10.0);
+        run(&mut s, &mut k, cut, json!({ "sketch": c }));
+        let e = failure(&mut s, &mut k);
+        assert!(e.contains("rolled part") && e.contains("ordinary Cut"), "{cut}: {e}");
+        // All on the tab: 10 x 10 goes.
+        let (mut s, mut k) = start();
+        let q = cone_and_tab(&mut s, &mut k);
+        let c = rectangle(&mut s, &mut k, q, -20.0, -10.0);
+        run(&mut s, &mut k, cut, json!({ "sketch": c }));
+        assert!(close(volume(&mut s, &mut k), 12_160.0 - 100.0 * T, 1e-3), "{cut}");
+        assert!(close(num(&flat(&mut s, &mut k), "area"), 6070.4 - 100.0, 1e-3), "{cut}");
+    }
+    // Over the seam of a tab and a cylinder it is followed all the way: a square of 20 x 10 in
+    // the flat, half of it round the cylinder.
+    let (mut s, mut k) = start();
+    let wp = id(&run(&mut s, &mut k, "work.plane", json!({ "by": "offset", "base": "yz", "distance": 48 })), "feature");
+    let t = id(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp, "project_origin": false })), "feature");
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": t, "x1": -30, "y1": 0, "x2": 0, "y2": 40 }));
+    run(&mut s, &mut k, "sheet.face", json!({ "sketch": t }));
+    let sk = lines_on(&mut s, &mut k, "xz", &[(50.0, 0.0), (50.0, 40.0)]);
+    run(&mut s, &mut k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": 3.0 }));
+    let (before, area) = (volume(&mut s, &mut k), num(&flat(&mut s, &mut k), "area"));
+    let c = id(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp, "project_origin": false })), "feature");
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": c, "x1": -10, "y1": 10, "x2": 10, "y2": 20 }));
+    run(&mut s, &mut k, "sheet.cut_across_bend", json!({ "sketch": c }));
+    // On the tab 10 x 10 x 2; on the cylinder 10 long along the neutral radius 48.88, which is
+    // 10 / 48.88 radians, of a ring from 48 to 50, 10 wide.
+    let on_ring = 10.0 / (48.0 + K * T) * (50.0 * 50.0 - 48.0 * 48.0) / 2.0 * 10.0;
+    assert!(close(volume(&mut s, &mut k), before - 200.0 - on_ring, 1e-3), "{} {}", before - volume(&mut s, &mut k), 200.0 + on_ring);
+    assert!(close(num(&flat(&mut s, &mut k), "area"), area - 200.0, 1e-3));
+
+    // A hat: from its flat ring over the round part to the cylinder is refused; on the ring, cut.
+    let hat = |s: &mut Session, k: &mut OcctKernel| {
+        let sk = lines_on(s, k, "xz", &[(80.0, 0.0), (50.0, 0.0), (50.0, 30.0)]);
+        run(s, k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": 2.0, "direction": "symmetric" }));
+        sketch_at_height(s, k, T)
+    };
+    let (mut s, mut k) = start();
+    let c = hat(&mut s, &mut k);
+    let before = volume(&mut s, &mut k);
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": c, "x1": 45, "y1": -5, "x2": 65, "y2": 5 }));
+    run(&mut s, &mut k, "sheet.cut_across_bend", json!({ "sketch": c }));
+    let e = failure(&mut s, &mut k);
+    assert!(e.contains("rolled part"), "{e}");
+    let (mut s, mut k) = start();
+    let c = hat(&mut s, &mut k);
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": c, "x1": 60, "y1": -5, "x2": 70, "y2": 5 }));
+    run(&mut s, &mut k, "sheet.cut_across_bend", json!({ "sketch": c }));
+    assert!(close(volume(&mut s, &mut k), before - 100.0 * T, 1e-3));
+}
+
+/// Lines that run straight on from one another are one line, and so the surface they look like.
+#[test]
+fn a_cone_or_a_cylinder_drawn_in_pieces_is_one_and_unrolls_exactly() {
+    let cone = |points: &[(f64, f64)]| {
+        let (mut s, mut k) = start();
+        let sk = lines_on(&mut s, &mut k, "xz", points);
+        let f = id(&run(&mut s, &mut k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": 2.0 })), "feature");
+        let v = volume(&mut s, &mut k);
+        let p = flat(&mut s, &mut k);
+        let doc = s.document();
+        let sketch = doc.sketch(tenon_model::FeatureId(sk as u32)).unwrap();
+        let tenon_model::FeatureKind::ContourRoll(c) = &doc.feature(tenon_model::FeatureId(f as u32)).unwrap().kind else { panic!() };
+        (v, p, tenon_model::regen::roll_words(c, sketch).unwrap())
+    };
+    let (one, whole, _) = cone(&[(30.0, 0.0), (60.0, 40.0)]);
+    let (two, pieces, words) = cone(&[(30.0, 0.0), (45.0, 20.0), (60.0, 40.0)]);
+    assert!(close(one, two, 1e-6), "{one} {two}");
+    assert_eq!(pieces["notes"], Value::Null, "{pieces}");
+    assert!(words.contains("unrolls exactly"), "{words}");
+    for key in ["length", "width", "area", "cut_length"] {
+        assert!(close(num(&whole, key), num(&pieces, key), 1e-6), "{key}: {whole} {pieces}");
+    }
+    assert_eq!(pieces["bends"].as_array().unwrap().len(), 1, "{pieces}");
+    let (_, p, words) = cone(&[(50.0, 0.0), (50.0, 20.0), (50.0, 30.0), (50.0, 40.0)]);
+    assert!(words.contains("unrolls exactly") && p["notes"].is_null(), "{words} {p}");
+    assert!(close(num(&p, "length"), 2.0 * (48.0 + K * T), 1e-6) || close(num(&p, "length"), 2.0 * (50.0 + K * T), 1e-6), "{p}");
+    assert_eq!(p["bends"].as_array().unwrap().len(), 1, "{p}");
+    // A line that turns back on itself, or goes off at an angle, is no such thing.
+    let (_, _, words) = cone(&[(50.0, 0.0), (50.0, 20.0), (60.0, 40.0)]);
+    assert!(words.contains("does not unroll exactly"), "{words}");
+}
+
+/// A sheet with no flat side at all is told so by the cuts that start from one, and what it is
+/// takes an ordinary cut, by hand.
+#[test]
+fn a_sheet_with_no_flat_side_is_told_to_take_an_ordinary_cut() {
+    let ring = |s: &mut Session, k: &mut OcctKernel| {
+        let sk = lines_on(s, k, "xz", &[(50.0, 0.0), (50.0, 40.0)]);
+        run(s, k, "sheet.contour_roll", json!({ "sketch": sk, "axis": "z", "angle": 3.0, "direction": "symmetric", "position": "flipped" }));
+        let wp = id(&run(s, k, "work.plane", json!({ "by": "offset", "base": "yz", "distance": 100 })), "feature");
+        let c = id(&run(s, k, "sketch.create", json!({ "work_plane": wp, "project_origin": false })), "feature");
+        run(s, k, "sketch.circle", json!({ "sketch": c, "cx": 0, "cy": 20, "r": 5 }));
+        c
+    };
+    for cut in ["sheet.cut_normal", "sheet.cut_across_bend"] {
+        let (mut s, mut k) = start();
+        let c = ring(&mut s, &mut k);
+        run(&mut s, &mut k, cut, json!({ "sketch": c }));
+        let e = failure(&mut s, &mut k);
+        assert!(e.contains("rolled or die-formed all over") && e.contains("ordinary Cut"), "{cut}: {e}");
+    }
+}

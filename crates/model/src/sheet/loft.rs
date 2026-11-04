@@ -15,6 +15,7 @@
 //!
 //! [`Kernel::ruled_sheet`]: tenon_kernel::Kernel::ruled_sheet
 
+use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
 
 use serde::{Deserialize, Serialize};
@@ -347,6 +348,11 @@ pub(crate) fn clipped(corners: &[Vec3], at: Vec3, keep: Vec3) -> Vec<Vec3> {
     out
 }
 
+/// How much thinner than the rule a die-formed sheet comes to before its notes say so, as a share.
+/// (Its normals are taken from chords of its rims, so a sheet with no twist in it at all shows a
+/// few degrees of it and a tenth of a percent.)
+const THIN_SAID: f64 = 0.002;
+
 /// How many columns a die-formed sheet is taken in.
 const MOST_COLUMNS: usize = 240;
 const LEAST_COLUMNS: usize = 33;
@@ -364,12 +370,60 @@ fn lengths(p: &[Vec3]) -> Vec<f64> {
     out
 }
 
-/// The point `s` along a run of points whose lengths are `at`.
-fn point_at(p: &[Vec3], at: &[f64], s: f64) -> Vec3 {
-    let i = at.partition_point(|v| *v < s).clamp(1, p.len().saturating_sub(1).max(1));
-    let (Some(&a), Some(&b)) = (p.get(i - 1), p.get(i)) else { return p.first().copied().unwrap_or(Vec3::ZERO) };
-    let (s0, s1) = (at.get(i - 1).copied().unwrap_or(0.0), at.get(i).copied().unwrap_or(0.0));
-    a + (b - a) * if s1 > s0 { (s - s0) / (s1 - s0) } else { 0.0 }
+/// A rim of a smooth sheet: the curves of a profile, and points along them to match with the other
+/// rim's. The sheet's columns are taken on the curves themselves, not on the chords between the
+/// points: its lengths in the flat and the way its thickness goes are the curves' own.
+pub(crate) struct Rim<'a> {
+    runs: &'a [Run],
+    frame: &'a Frame,
+    pub points: Vec<Vec3>,
+    /// For each point: the run it is on, and how far along that run, 0 to 1.
+    at: Vec<(usize, f64)>,
+    lengths: Vec<f64>,
+}
+
+impl<'a> Rim<'a> {
+    pub(crate) fn of(runs: &'a [Run], frame: &'a Frame, arc_step: impl Fn(f64) -> f64, line_pieces: impl Fn(f64) -> usize) -> Rim<'a> {
+        let (mut points, mut at) = (Vec::new(), Vec::new());
+        for (r, run) in runs.iter().enumerate() {
+            let n = match *run {
+                Run::Line { from, to } => line_pieces(from.dist(to)).max(1),
+                Run::Arc { radius, sweep, .. } => ((sweep.abs() / arc_step(radius)).ceil() as usize).max(1),
+            };
+            for i in usize::from(r > 0)..=n {
+                let f = i as f64 / n as f64;
+                at.push((r, f));
+                points.push(frame.plane_point(along_run(run, f).0));
+            }
+        }
+        let lengths = lengths(&points);
+        Rim { runs, frame, points, at, lengths }
+    }
+
+    /// The point `s` along the points, and the way the curve goes there.
+    fn at_length(&self, s: f64) -> (Vec3, Vec3) {
+        let i = self.lengths.partition_point(|v| *v < s).clamp(1, self.points.len().saturating_sub(1).max(1));
+        let (s0, s1) = (self.lengths.get(i - 1).copied().unwrap_or(0.0), self.lengths.get(i).copied().unwrap_or(0.0));
+        let share = if s1 > s0 { ((s - s0) / (s1 - s0)).clamp(0.0, 1.0) } else { 0.0 };
+        let Some(&(r, to)) = self.at.get(i) else { return (self.points.first().copied().unwrap_or(Vec3::ZERO), Vec3::X) };
+        // (The point before may be the end of the run before: this piece starts this run.)
+        let from = self.at.get(i - 1).filter(|was| was.0 == r).map_or(0.0, |was| was.1);
+        let Some(run) = self.runs.get(r) else { return (self.points.first().copied().unwrap_or(Vec3::ZERO), Vec3::X) };
+        let (p, way) = along_run(run, from + (to - from) * share);
+        (self.frame.plane_point(p), self.frame.x() * way.x + self.frame.y() * way.y)
+    }
+}
+
+/// The point `f` of the way along a run, and the way the run goes there.
+fn along_run(run: &Run, f: f64) -> (Vec2, Vec2) {
+    match *run {
+        Run::Line { from, to } => (from + (to - from) * f, (to - from).normalized()),
+        Run::Arc { center, radius, from, sweep } => {
+            let angle = from + sweep * f;
+            let (s, c) = angle.sin_cos();
+            (Vec2::polar(center, radius, angle), Vec2::new(-s, c) * sweep.signum())
+        }
+    }
 }
 
 /// A run of numbers from 0 to 1 averaged over `half` either side, its ends held: it goes up
@@ -395,9 +449,20 @@ fn smoothed(v: &[f64], half: usize) -> Vec<f64> {
         .collect()
 }
 
-/// The columns of a smooth sheet between two runs of points: for each, a point on each run. The
-/// matching of least area, made smooth, and never standing still on either run.
-pub(crate) fn columns(a: &[Vec3], b: &[Vec3]) -> Vec<[Vec3; 2]> {
+/// The columns of a smooth sheet between two rims: for each, a point on each rim, and the way each
+/// rim goes there. The matching of least area, made smooth, and never standing still on either.
+pub(crate) fn columns(a: &Rim, b: &Rim) -> (Vec<[Vec3; 2]>, Vec<[Vec3; 2]>) {
+    stations(&a.points, &b.points)
+        .into_iter()
+        .map(|[s, w]| {
+            let ((pa, way_a), (pb, way_b)) = (a.at_length(s), b.at_length(w));
+            ([pa, pb], [way_a, way_b])
+        })
+        .unzip()
+}
+
+/// How far along each of two runs of points each column of a smooth sheet between them is.
+fn stations(a: &[Vec3], b: &[Vec3]) -> Vec<[f64; 2]> {
     let path = matched_by(a, b, TWIST);
     let (la, lb) = (lengths(a), lengths(b));
     let (ta, tb) = (la.last().copied().unwrap_or(0.0).max(1e-12), lb.last().copied().unwrap_or(0.0).max(1e-12));
@@ -417,29 +482,57 @@ pub(crate) fn columns(a: &[Vec3], b: &[Vec3]) -> Vec<[Vec3; 2]> {
             let at = c as f64 / (count - 1) as f64 * last;
             let k = (at.floor() as usize).min(path.len().saturating_sub(2));
             let f = at - k as f64;
-            let (u, w) = (wa[k] + (wa[k + 1] - wa[k]) * f, wb[k] + (wb[k + 1] - wb[k]) * f);
-            [point_at(a, &la, u * ta), point_at(b, &lb, w * tb)]
+            [(wa[k] + (wa[k + 1] - wa[k]) * f) * ta, (wb[k] + (wb[k + 1] - wb[k]) * f) * tb]
         })
         .collect()
 }
 
-/// The normal of the surface of `columns` at each end of each column, `sign` turning it to the
-/// side the thickness is measured along.
-pub(crate) fn normals(columns: &[[Vec3; 2]], sign: f64) -> Vec<[Vec3; 2]> {
-    let n = columns.len();
-    (0..n)
-        .map(|c| {
-            let (p, q) = (columns[c.saturating_sub(1)], columns[(c + 1).min(n.saturating_sub(1))]);
-            let across = columns[c][1] - columns[c][0];
+/// The normal of the surface of `columns` at each end of each column, where the rims go the `ways`
+/// given there, `sign` turning it to the side the thickness is measured along.
+pub(crate) fn normals(columns: &[[Vec3; 2]], ways: &[[Vec3; 2]], sign: f64) -> Vec<[Vec3; 2]> {
+    columns
+        .iter()
+        .zip(ways)
+        .map(|(column, way)| {
+            let across = column[1] - column[0];
             [0, 1].map(|end| {
-                let w = (q[end] - p[end]).cross(across);
-                // (A column that stands still on this rim: as the other end has it.)
-                let w = if w.len() > 1e-12 { w } else { (q[1 - end] - p[1 - end]).cross(across) };
+                let w = way[end].cross(across);
+                // (A line across that runs along this rim: as the other end has it.)
+                let w = if w.len() > 1e-12 { w } else { way[1 - end].cross(across) };
                 w.normalized() * sign
             })
         })
         .collect()
 }
+
+/// How far a smooth sheet reaching from `lo` to `hi` along `normals` falls short of its thickness:
+/// the largest angle between the normals at the two ends of one column (a surface that lays flat
+/// has one normal all along each line across it), and how thick it comes to on the whole: its
+/// volume over the mean of its two sides' areas. (Its far side is ruled between its offset rims,
+/// and where the normals differ that is nearer the near side than the thickness.)
+pub(crate) fn thickness_of(columns: &[[Vec3; 2]], normals: &[[Vec3; 2]], lo: f64, hi: f64) -> (f64, f64) {
+    let twist = normals.iter().map(|m| m[0].cross(m[1]).len().atan2(m[0].dot(m[1]))).fold(0.0, f64::max);
+    let at = |c: usize, d: f64| [columns[c][0] + normals[c][0] * d, columns[c][1] + normals[c][1] * d];
+    let (mut volume, mut area) = (0.0, 0.0);
+    for c in 0..columns.len().saturating_sub(1) {
+        let (p0, p1, q0, q1) = (at(c, lo), at(c + 1, lo), at(c, hi), at(c + 1, hi));
+        // The piece between two columns, as six tetrahedra about the line from one corner to the
+        // far one.
+        let (a, g) = (p0[0], q1[1]);
+        let tet = |b: Vec3, c: Vec3, d: Vec3| (b - a).dot((c - a).cross(d - a)) / 6.0;
+        let (b, c2, d) = (p1[0], p1[1], p0[1]);
+        let (e, f, h) = (q0[0], q1[0], q0[1]);
+        volume += tet(b, c2, g) + tet(c2, d, g) + tet(d, h, g) + tet(h, e, g) + tet(e, f, g) + tet(f, b, g);
+        area += (triangle_area(p0[0], p1[0], p1[1]) + triangle_area(p0[0], p1[1], p0[1])) / 2.0;
+        area += (triangle_area(q0[0], q1[0], q1[1]) + triangle_area(q0[0], q1[1], q0[1])) / 2.0;
+    }
+    (twist, if area > 1e-12 { volume.abs() / area } else { hi - lo })
+}
+
+/// How much thinner than the rule a die-formed sheet may come to, as a share. A flat pattern holds
+/// a solid to its sides' area x its thickness to the same share: thinner than this, it is no
+/// sheet of that thickness.
+pub const THIN: f64 = 0.02;
 
 /// A die-formed sheet as it is laid flat: its two sides and its neutral surface in the same
 /// columns, and where each point of them goes.
@@ -462,6 +555,11 @@ pub struct Skin {
     pub stretch: f64,
     /// How far the far end moves if it is laid out by the other diagonals (mm).
     pub drift: f64,
+    /// How far it twists: the largest angle between the normals at the two ends of a line across
+    /// it (radians). What lays flat has none.
+    pub twist: f64,
+    /// How thick it comes to on the whole (mm): its volume over its sides' area.
+    pub thick: f64,
 }
 
 /// A triangle in the flat from its neighbour's edge `a` to `b`: the point on the right of that
@@ -477,6 +575,87 @@ fn beside(a: Vec2, b: Vec2, to_a: f64, to_b: f64) -> Vec2 {
     let u = d * (1.0 / l);
     // To the right of a to b.
     a + u * x - u.perp() * y
+}
+
+/// How far from the reference surface the neutral surface lies at each end of each column: a share
+/// of the way through from the inside of the rim's curve. Where a rim runs straight it has no
+/// inside: there it keeps the depth of the curve beside it, and between two curves of opposite
+/// ways it goes evenly from one depth to the other. (By a jump, a rim would be longer by as much
+/// as the jump, across a column as short as a curve's are.) Where two such curves meet with no
+/// straight run between, the change is spread over a few columns.
+fn neutral_depths(columns: &[[Vec3; 2]], normals: &[[Vec3; 2]], lo: f64, hi: f64, k_factor: f64) -> Vec<[f64; 2]> {
+    let (n, t) = (columns.len(), hi - lo);
+    let mut out = vec![[lo + k_factor * t; 2]; n];
+    for end in [0, 1] {
+        let curved: Vec<Option<f64>> = (0..n)
+            .map(|c| {
+                let (p, q) = (columns[c.saturating_sub(1)][end], columns[(c + 1).min(n.saturating_sub(1))][end]);
+                let curve = (q + p - columns[c][end] * 2.0).dot(normals[c][end]);
+                (curve.abs() > 1e-6 * (q.dist(p) + 1e-9)).then_some(if curve > 0.0 { hi - k_factor * t } else { lo + k_factor * t })
+            })
+            .collect();
+        let known: Vec<(usize, f64)> = curved.iter().enumerate().filter_map(|(c, d)| d.map(|d| (c, d))).collect();
+        let (Some(first), Some(last)) = (known.first().copied(), known.last().copied()) else { continue };
+        let mut depth: Vec<f64> = vec![first.1; n];
+        for pair in known.windows(2) {
+            let ((a, da), (b, db)) = (pair[0], pair[1]);
+            for (c, d) in depth.iter_mut().enumerate().take(b + 1).skip(a) {
+                *d = da + (db - da) * (c - a) as f64 / (b - a) as f64;
+            }
+        }
+        for d in depth.iter_mut().skip(last.0) {
+            *d = last.1;
+        }
+        // (A run of even steps is left as it is by this: only a jump is spread.)
+        let spread = if t > 0.0 { depth.iter().map(|d| (d - lo) / t).collect::<Vec<f64>>() } else { vec![0.0; n] };
+        for (c, share) in smoothed(&spread, 3).into_iter().enumerate() {
+            out[c][end] = lo + share * t;
+        }
+    }
+    out
+}
+
+/// The columns of a pattern turned so that the box round them is the smallest there is, the
+/// longer way along X: the sheet it is cut from. (The box of a shape is smallest with one of the
+/// shape's own straight sides along it.)
+fn squared_up(flat: Vec<[Vec2; 2]>) -> Vec<[Vec2; 2]> {
+    let rim = |end: usize| flat.iter().map(move |c| c[end]);
+    let around: Vec<Vec2> = rim(0).chain(rim(1).rev()).collect();
+    // The ways its sides run, to about a thousandth of a degree, within a quarter turn.
+    let mut ways: BTreeMap<i64, f64> = BTreeMap::new();
+    for i in 0..around.len() {
+        let d = around[(i + 1) % around.len()] - around[i];
+        if d.len() > 1e-9 {
+            let a = d.angle().rem_euclid(PI / 2.0);
+            ways.entry((a * 1e5).round() as i64).or_insert(a);
+        }
+    }
+    let size = |a: f64| {
+        let (s, c) = a.sin_cos();
+        let (mut x, mut y) = ((f64::INFINITY, f64::NEG_INFINITY), (f64::INFINITY, f64::NEG_INFINITY));
+        for p in &around {
+            let (u, v) = (p.x * c + p.y * s, p.y * c - p.x * s);
+            x = (x.0.min(u), x.1.max(u));
+            y = (y.0.min(v), y.1.max(v));
+        }
+        (x.1 - x.0, y.1 - y.0)
+    };
+    let mut best: Option<(f64, f64)> = None;
+    for a in ways.values() {
+        let (x, y) = size(*a);
+        // (Of two as small to within a part in a million, the first.)
+        if best.is_none_or(|b| x * y < b.1 * (1.0 - 1e-6)) {
+            best = Some((*a, x * y));
+        }
+    }
+    let Some((mut a, _)) = best else { return flat };
+    let (x, y) = size(a);
+    if y > x {
+        a += PI / 2.0;
+    }
+    let (s, c) = a.sin_cos();
+    let turn = |p: Vec2| Vec2::new(p.x * c + p.y * s, p.y * c - p.x * s);
+    flat.into_iter().map(|col| [turn(col[0]), turn(col[1])]).collect()
 }
 
 /// The columns laid out in the flat, each piece by the two triangles `rising` says.
@@ -509,26 +688,30 @@ impl Skin {
         let offset = |d: f64| -> Vec<[Vec3; 2]> { columns.iter().zip(normals).map(|(c, m)| [c[0] + m[0] * d, c[1] + m[1] * d]).collect() };
         // The neutral surface is a share of the way through from the inside of the curve, column
         // by column: the sheet stretches outside it and shrinks inside it.
-        // (Where a rim runs straight it has no inside, and the neutral surface stays as it was.)
-        let mut last = [lo + k_factor * t; 2];
-        let neutral: Vec<[Vec3; 2]> = (0..n)
-            .map(|c| {
-                let (p, q) = (columns[c.saturating_sub(1)], columns[(c + 1).min(n.saturating_sub(1))]);
-                let here = columns[c];
-                [0, 1].map(|end| {
-                    let curve = (q[end] + p[end] - here[end] * 2.0).dot(normals[c][end]);
-                    if curve.abs() > 1e-6 * (q[end].dist(p[end]) + 1e-9) {
-                        last[end] = if curve > 0.0 { hi - k_factor * t } else { lo + k_factor * t };
-                    }
-                    here[end] + normals[c][end] * last[end]
-                })
-            })
-            .collect();
+        let depths = neutral_depths(columns, normals, lo, hi, k_factor);
+        let neutral: Vec<[Vec3; 2]> = (0..n).map(|c| [0, 1].map(|end| columns[c][end] + normals[c][end] * depths[c][end])).collect();
         // By the shorter diagonal of each piece.
         let rising: Vec<bool> =
             (0..n.saturating_sub(1)).map(|c| neutral[c][0].dist(neutral[c + 1][1]) < neutral[c][1].dist(neutral[c + 1][0])).collect();
         let flat = laid_out(&neutral, |c| rising[c]);
         let other = laid_out(&neutral, |c| !rising[c]);
+        // What the rims' lengths in the flat are out by: what the changes of depth put into them,
+        // beside how long they are at one depth, and what a chord between two columns is short of
+        // the curve it cuts across (its length x the turn squared / 24).
+        let added = [0, 1]
+            .map(|end| {
+                (1..n)
+                    .map(|c| {
+                        let at = |i: usize, d: f64| columns[i][end] + normals[i][end] * d;
+                        let (near, level) = (at(c - 1, depths[c - 1][end]), at(c - 1, depths[c][end]));
+                        let turn = normals[c - 1][end].cross(normals[c][end]).len();
+                        near.dist(at(c, depths[c][end])) - level.dist(at(c, depths[c][end])) + level.dist(at(c, depths[c][end])) * turn * turn / 24.0
+                    })
+                    .sum::<f64>()
+                    .abs()
+            })
+            .into_iter()
+            .fold(0.0, f64::max);
         // How long the other diagonal of each piece is, against how long it is in the flat.
         let mut stretch = 0.0f64;
         for c in 0..n.saturating_sub(1) {
@@ -541,16 +724,27 @@ impl Skin {
                 stretch = stretch.max((flat_length - true_length).abs() / true_length);
             }
         }
-        let drift = flat.iter().zip(&other).map(|(a, b)| a[0].dist(b[0]).max(a[1].dist(b[1]))).fold(0.0, f64::max);
+        let drift = flat.iter().zip(&other).map(|(a, b)| a[0].dist(b[0]).max(a[1].dist(b[1]))).fold(0.0, f64::max) + added;
+        let flat = squared_up(flat);
+        let (twist, thick) = thickness_of(columns, normals, lo, hi);
         let triangles = 2 * n.saturating_sub(1);
-        let words = format!(
-            "Die formed: laid flat by {triangles} triangles of its neutral surface, not by unfolding. Its rims and the lines across it keep their lengths; between them the sheet is up to {:.2} % stretched or shrunk, and laying the triangles out the other way moves the pattern by up to {} mm. That is how close this pattern is: try a part before cutting many.",
-            stretch * 100.0,
-            crate::explain::mm((drift * 1000.0).round() / 1000.0)
+        let moves =
+            if drift < 0.001 { "less than 0.001".to_owned() } else { format!("up to {}", crate::explain::mm((drift * 1000.0).ceil() / 1000.0)) };
+        let mut words = format!(
+            "Die formed: laid flat by {triangles} triangles of its neutral surface, not by unfolding. Its rims and the lines across it keep their lengths; between them the sheet is up to {:.2} % stretched or shrunk, and laying the triangles out the other way, with what a curve is longer than its chords, moves the pattern by {moves} mm. That is how close this pattern is: try a part before cutting many.",
+            stretch * 100.0
         );
+        if thick < t * (1.0 - THIN_SAID) {
+            words.push_str(&format!(
+                " It also twists by up to {:.0} degrees from one rim to the other, and no flat sheet takes a twist without stretching by more than those figures say. It comes to {} mm thick on the whole, where the rule says {} mm.",
+                twist.to_degrees(),
+                crate::explain::mm((thick * 1000.0).round() / 1000.0),
+                crate::explain::mm((t * 1000.0).round() / 1000.0)
+            ));
+        }
         // The flat is seen from the side the surface's own normal looks to.
         let mirrored = [sign > 0.0, sign < 0.0];
-        Skin { faces: [Vec::new(), Vec::new()], sides: [offset(lo), offset(hi)], flat, rising, mirrored, words, stretch, drift }
+        Skin { faces: [Vec::new(), Vec::new()], sides: [offset(lo), offset(hi)], flat, rising, mirrored, words, stretch, drift, twist, thick }
     }
 
     /// The whole of a rim of side `side` in the flat, when `start` and `end` are its two ends.
@@ -716,7 +910,13 @@ mod tests {
             })
             .collect();
         let sign = 1.0;
-        let m = normals(&cols, sign);
+        let ways: Vec<[Vec3; 2]> = (0..=n)
+            .map(|i| {
+                let a = turn * f64::from(i) / f64::from(n);
+                [Vec3::new(-a.sin(), a.cos(), 0.0); 2]
+            })
+            .collect();
+        let m = normals(&cols, &ways, sign);
         let skin = Skin::new(&cols, &m, 0.0, 0.1, 0.5, sign);
         // Nearly nothing: a cone is laid flat by triangles to within the facets' own chords.
         assert!(skin.stretch < 1e-3, "{}", skin.stretch);
@@ -741,12 +941,12 @@ mod tests {
         // A long line against a short one, in a fan-like way.
         let a: Vec<Vec3> = (0..=20).map(|i| Vec3::new(f64::from(i), 0.0, 0.0)).collect();
         let b: Vec<Vec3> = (0..=4).map(|i| Vec3::new(8.0 + f64::from(i), 0.0, 10.0)).collect();
-        let c = columns(&a, &b);
+        let c = stations(&a, &b);
         assert!(c.len() >= LEAST_COLUMNS);
-        assert!(c[0][0].near(a[0], 1e-9) && c[0][1].near(b[0], 1e-9));
-        assert!(c.last().unwrap()[0].near(a[20], 1e-9) && c.last().unwrap()[1].near(b[4], 1e-9));
+        assert!(c[0][0].abs() < 1e-9 && c[0][1].abs() < 1e-9);
+        assert!((c.last().unwrap()[0] - 20.0).abs() < 1e-9 && (c.last().unwrap()[1] - 4.0).abs() < 1e-9);
         for w in c.windows(2) {
-            assert!(w[1][0].x > w[0][0].x && w[1][1].x > w[0][1].x, "{w:?}");
+            assert!(w[1][0] > w[0][0] && w[1][1] > w[0][1], "{w:?}");
         }
     }
 

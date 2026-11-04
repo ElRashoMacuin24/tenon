@@ -558,6 +558,8 @@ impl<'a> Ctx<'a> {
                         KernelError::OperationFailed { .. } => Stop::Failed(crate::explain::explain(&f.kind, &e)),
                         e => e.into(),
                     })?;
+                    let most = law.iter().fold(0.0f64, |m, l| m.max(l.1));
+                    self.die_formed_measures(shape, op.shape, &edges, most, "fillet")?;
                     return self.replace_body(f.id, bi, op);
                 }
                 let op = match self.k.fillet(shape, &ids, fi.radius) {
@@ -587,6 +589,7 @@ impl<'a> Ctx<'a> {
                     }
                     Err(e) => return Err(e.into()),
                 };
+                self.die_formed_measures(shape, op.shape, &edges, fi.radius, "fillet")?;
                 self.replace_body(f.id, bi, op)
             }
             FeatureKind::Chamfer(c) => {
@@ -603,6 +606,12 @@ impl<'a> Ctx<'a> {
                     }
                 };
                 let op = self.k.chamfer(shape, &ids, &spec)?;
+                let size = match &c.size {
+                    ChamferSize::Equal(d) => *d,
+                    ChamferSize::TwoDistances { d1, d2, .. } => d1.max(*d2),
+                    ChamferSize::DistanceAngle { distance, angle, .. } => distance.max(distance * angle.tan().abs()),
+                };
+                self.die_formed_measures(shape, op.shape, &edges, size, "chamfer")?;
                 self.replace_body(f.id, bi, op)
             }
             FeatureKind::Shell(s) => {

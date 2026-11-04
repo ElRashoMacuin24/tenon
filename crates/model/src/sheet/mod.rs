@@ -963,7 +963,16 @@ fn extras_of(doc: &Document, regen: &crate::Regen, bi: usize, sizes: &Sizes) -> 
                     if formed {
                         extras.formed_volume += p.shape.formed_volume(sizes.thickness, sizes.bend_radius, sizes.k_factor);
                     }
-                    extras.punches.push(PunchFaces { name: p.shape.name(), formed, faces, bends });
+                    let later: BTreeSet<FeatureId> = doc.features().iter().skip_while(|x| x.id != f.id).skip(1).map(|x| x.id).collect();
+                    let later = body
+                        .names
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, n)| n.as_ref().is_some_and(|n| later.contains(&n.feature())))
+                        .filter_map(|(i, _)| u32::try_from(i).ok())
+                        .collect();
+                    let at = sketch.point(point).zip(regen.sketch_frames.get(&p.sketch)).map(|(at, frame)| frame.plane_point(at));
+                    extras.punches.push(PunchFaces { name: p.shape.name(), formed, faces, bends, later, at });
                 }
             }
             _ => {}

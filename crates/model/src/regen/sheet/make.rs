@@ -2,12 +2,11 @@
 //! Lofted Flange and Punch.
 
 use tenon_geom::{Axis, Frame, Vec2, Vec3};
-use tenon_kernel::{AngleExtent, BoolOp, Curve2, Extent, Loop, Profile, Region, TaggedCurve2};
+use tenon_kernel::{AngleExtent, BoolOp, Curve2, Extent, Loop, Op, Profile, Region, ShapeHandle, TaggedCurve2};
 use tenon_sketch::Sketch;
 
 use super::super::{Ctx, Stop};
 use super::{Named, contour_path};
-use crate::FeatureId;
 use crate::document::{AxisRef, Document};
 use crate::naming::sub_key;
 use crate::sheet::flange::Part;
@@ -18,6 +17,7 @@ use crate::sheet::strip::{self, Run};
 use crate::sheet::unfold::Unfold;
 use crate::sheet::wrap;
 use crate::sheet::{ContourRoll, SKIN_SIDES, Sides, Sizes};
+use crate::{FeatureId, FeatureKind};
 
 /// What a press-brake facet's and bend's faces are named after: its number and the part.
 fn facet_key(i: usize, part: u32) -> u64 {
@@ -98,15 +98,52 @@ fn smooth_sheet(rims: &Rims, l: &LoftedFlange, sizes: &Sizes) -> Result<(Vec<[Ve
         |runs: &[Run], lo: f64, hi: f64| -> Result<Vec<Run>, String> { Ok(strip::rounded(runs, r, lo, hi)?.into_iter().map(|p| p.0).collect()) };
     let first = rounded(&rims.runs[0], lo, hi)?;
     let second = if rims.second_left > 0.0 { rounded(&rims.runs[1], lo, hi)? } else { rounded(&rims.runs[1], -hi, -lo)? };
-    let points = |runs: &[Run], frame: &Frame| {
+    fn rim<'a>(runs: &'a [Run], frame: &'a Frame) -> loft::Rim<'a> {
         let total: f64 = runs.iter().map(Run::length).sum();
-        loft::points_of(runs, frame, loft::smooth_step, |len| ((len / (total / 60.0)).ceil() as usize).clamp(1, 60))
-    };
-    let (a, b) = (points(&first, &rims.frames[0]), points(&second, &rims.frames[1]));
-    loft::not_too_many(&a, &b)?;
-    let columns = loft::columns(&a, &b);
-    let normals = loft::normals(&columns, rims.sign);
+        loft::Rim::of(runs, frame, loft::smooth_step, |len| ((len / (total / 60.0)).ceil() as usize).clamp(1, 60))
+    }
+    let (a, b) = (rim(&first, &rims.frames[0]), rim(&second, &rims.frames[1]));
+    loft::not_too_many(&a.points, &b.points)?;
+    let (columns, ways) = loft::columns(&a, &b);
+    let normals = loft::normals(&columns, &ways, rims.sign);
+    let t = hi - lo;
+    for (end, (runs, frame)) in [(&first, &rims.frames[0]), (&second, &rims.frames[1])].into_iter().enumerate() {
+        if let Some(radius) = centre_passed(runs, frame, &columns, &normals, end, lo, hi) {
+            return Err(format!(
+                "A curve of these profiles has a radius of {} mm, and a die-formed sheet {} mm thick on the inside of it goes past its centre and crosses itself. Make the curve wider or the sheet thinner, or put the sheet on the outside of the curve with Position.",
+                crate::explain::mm((radius * 1000.0).round() / 1000.0),
+                crate::explain::mm(t)
+            ));
+        }
+    }
+    let (twist, thick) = loft::thickness_of(&columns, &normals, lo, hi);
+    if thick < t * (1.0 - loft::THIN) {
+        return Err(format!(
+            "These profiles twist a die-formed sheet by up to {:.0} degrees from one rim to the other, and it would come to only {} mm thick on the whole, where the rule says {} mm. Turn the profiles less, one against the other, or make it as Press Brake facets, which keep their thickness.",
+            twist.to_degrees(),
+            crate::explain::mm((thick * 1000.0).round() / 1000.0),
+            crate::explain::mm((t * 1000.0).round() / 1000.0)
+        ));
+    }
     Ok((columns, normals))
+}
+
+/// The radius of an arc of `runs` (the rim `end` of `columns`) whose centre the sheet reaches past,
+/// from `lo` to `hi` along `normals`.
+fn centre_passed(runs: &[Run], frame: &Frame, columns: &[[Vec3; 2]], normals: &[[Vec3; 2]], end: usize, lo: f64, hi: f64) -> Option<f64> {
+    runs.iter().find_map(|run| {
+        let Run::Arc { center, radius, .. } = *run else { return None };
+        let middle = frame.plane_point(center);
+        let past = columns.iter().zip(normals).any(|(column, normal)| {
+            let to = middle - column[end];
+            // (A point of the rim on this arc, or on a chord of it.)
+            (to.len() - radius).abs() <= 2e-3 * radius && {
+                let inward = to.normalized().dot(normal[end]);
+                (lo * inward).max(hi * inward) >= radius - 1e-6
+            }
+        });
+        past.then_some(radius)
+    })
 }
 
 /// How a die-formed sheet is laid flat: what the flat pattern goes by, and what the feature says
@@ -142,11 +179,35 @@ pub fn lofted_words(l: &LoftedFlange, sketches: [(&Sketch, Frame); 2], sizes: &S
     }
 }
 
+/// The profile of a contour roll: its curves in order, with lines that run straight on from one
+/// another taken as one line, so that it is the surface it looks like. (Two lines in one straight
+/// run are one cylinder or one cone, which unroll exactly; as two faces the unrolling would have to
+/// go across a rim between them.)
+fn roll_path(sketch: &Sketch, skip: &[tenon_sketch::EntityId]) -> Result<(Vec<Run>, Vec<tenon_sketch::EntityId>), String> {
+    let (runs, ids) =
+        contour_path(sketch, skip).map_err(|e| e.replace("A contour flange", "A contour roll").replace("a contour flange", "a contour roll"))?;
+    let mut merged: (Vec<Run>, Vec<tenon_sketch::EntityId>) = (Vec::with_capacity(runs.len()), Vec::with_capacity(ids.len()));
+    for (run, id) in runs.into_iter().zip(ids) {
+        if let (Some(Run::Line { from, to }), Run::Line { from: next, to: end }) = (merged.0.last().copied(), run)
+            && to.dist(next) <= 1e-6
+            && (to - from).cross(end - next).abs() <= 1e-9 * (to - from).len() * (end - next).len()
+            && (to - from).dot(end - next) > 0.0
+        {
+            if let Some(last) = merged.0.last_mut() {
+                *last = Run::Line { from, to: end };
+            }
+            continue;
+        }
+        merged.0.push(run);
+        merged.1.push(id);
+    }
+    Ok(merged)
+}
+
 /// What a contour roll's panel says of it: whether it unrolls exactly.
 pub fn roll_words(c: &ContourRoll, sketch: &Sketch) -> Result<String, String> {
     let skip: Vec<tenon_sketch::EntityId> = if let AxisRef::SketchLine(l) = c.axis { vec![l] } else { Vec::new() };
-    let (runs, _) =
-        contour_path(sketch, &skip).map_err(|e| e.replace("A contour flange", "A contour roll").replace("a contour flange", "a contour roll"))?;
+    let (runs, _) = roll_path(sketch, &skip)?;
     Ok(if matches!(runs.as_slice(), [Run::Line { .. }]) {
         "One straight line: a cylinder, a cone or a flat ring, which unrolls exactly.".to_owned()
     } else {
@@ -155,6 +216,55 @@ pub fn roll_words(c: &ContourRoll, sketch: &Sketch) -> Result<String, String> {
 }
 
 impl Ctx<'_> {
+    /// A revolve whose flat faces look out of the solid, as every sheet metal feature takes a
+    /// flat face's normal to. (The ordinary Revolve keeps what it gives: a sketch put on such a
+    /// face takes its direction from that, and old files must come out as they did.)
+    fn revolved(&mut self, profile: &Profile, axis: &Axis, turn: &AngleExtent) -> Result<Op, Stop> {
+        let op = self.k.revolve(profile, axis, turn)?;
+        let shape = self.k.direct_faces(op.shape);
+        self.k.release(op.shape);
+        Ok(Op { shape: shape?, history: op.history })
+    }
+
+    /// On a part with a die-formed sheet, that what a round or a chamfer of `size` on `edges` of
+    /// `before` left can be measured. On a ruled surface the kernel now and then gives, at some
+    /// sizes and not at others, a solid that passes every check with a face of the wrong area, even
+    /// a negative one, and a box past the part. A round takes off at most a strip of its size along
+    /// each face at each edge, and a corner of its size at each end.
+    pub(in crate::regen) fn die_formed_measures(
+        &mut self,
+        before: ShapeHandle,
+        after: ShapeHandle,
+        edges: &[u32],
+        size: f64,
+        what: &str,
+    ) -> Result<(), Stop> {
+        if !self.doc.features().iter().any(|f| matches!(&f.kind, FeatureKind::LoftedFlange(l) if l.forming == Forming::DieFormed)) {
+            return Ok(());
+        }
+        let mut area = [0.0f64; 2];
+        let mut negative = false;
+        for (i, shape) in [before, after].into_iter().enumerate() {
+            for f in 0..self.k.topology(shape)?.faces {
+                let a = self.k.face_info(shape.face(f))?.area;
+                area[i] += a;
+                negative |= a < 0.0;
+            }
+        }
+        let mut most = 0.0;
+        for e in edges {
+            most += 2.0 * size * self.k.edge_info(before.edge(*e))?.length + 4.0 * size * size;
+        }
+        if negative || area[0] - area[1] > 1.5 * most {
+            self.k.release(after);
+            return Err(format!(
+                "This {what} gives a face the kernel cannot measure: its area comes out wrong. That happens now and then on the ruled surface of a die-formed sheet, at some sizes and not at others. Try a slightly different size, or shape the corner in the profiles."
+            )
+            .into());
+        }
+        Ok(())
+    }
+
     pub(in crate::regen) fn contour_roll(&mut self, id: FeatureId, c: &ContourRoll) -> Result<(), Stop> {
         c.check()?;
         let sizes = self.doc.sheet_sizes()?;
@@ -175,8 +285,7 @@ impl Ctx<'_> {
         if axis.dir().dot(frame.z()).abs() > 1e-6 || (axis.origin() - frame.origin()).dot(frame.z()).abs() > 1e-6 {
             return Err("The axis of the contour roll is not in the sketch's plane, so the profile cannot be rolled about it. Choose an axis in that plane: a line of the sketch, or an origin axis that lies in it.".into());
         }
-        let (drawn, ids) =
-            contour_path(sketch, &skip).map_err(|e| e.replace("A contour flange", "A contour roll").replace("a contour flange", "a contour roll"))?;
+        let (drawn, ids) = roll_path(sketch, &skip)?;
         let (lo, hi) = c.reach(t);
         let path = strip::rounded(&drawn, c.radius.unwrap_or(sizes.bend_radius), lo, hi)?;
         let runs: Vec<Run> = path.iter().map(|p| p.0).collect();
@@ -218,7 +327,7 @@ impl Ctx<'_> {
             Sides::Flipped => AngleExtent::Angle(-c.angle),
             Sides::Symmetric => AngleExtent::Symmetric(c.angle),
         };
-        let op = self.k.revolve(&Profile { frame, regions: vec![region] }, &axis, &turn)?;
+        let op = self.revolved(&Profile { frame, regions: vec![region] }, &axis, &turn)?;
         let made = self.sheet_named(id, op, Some([sub_key(0, Part::Start as u32), sub_key(0, Part::End as u32)]))?;
         self.combine(id, vec![made], c.operation)
     }
@@ -455,6 +564,18 @@ impl Ctx<'_> {
                         }
                         .into());
                     }
+                    if p.shape.is_formed()
+                        && let Some(hole) = side.over_hole(&reach)
+                    {
+                        return Err(format!(
+                            "The punch at ({}, {}) would close the hole near ({}, {}): a formed shape needs whole sheet under it. Move it clear of the hole, or make it smaller.",
+                            crate::explain::mm((at.x * 100.0).round() / 100.0),
+                            crate::explain::mm((at.y * 100.0).round() / 100.0),
+                            crate::explain::mm((hole.x * 100.0).round() / 100.0),
+                            crate::explain::mm((hole.y * 100.0).round() / 100.0)
+                        )
+                        .into());
+                    }
                     // The stamp's own frame: X as turned, on the face it looks out of.
                     let x = frame.x() * cos + frame.y() * sin;
                     let centre = frame.plane_point(at);
@@ -506,7 +627,7 @@ impl Ctx<'_> {
                             ];
                             let axis = Axis::new(near, up).ok_or("a face of the sheet has no direction")?;
                             let profile = Profile { frame: section, regions: vec![Region { outer: Loop { curves }, holes: vec![] }] };
-                            let op = self.k.revolve(&profile, &axis, &AngleExtent::Full)?;
+                            let op = self.revolved(&profile, &axis, &AngleExtent::Full)?;
                             pieces.push(self.sheet_named(id, op, None)?);
                         }
                         PunchShape::Louver { length, width, height } => {

@@ -283,3 +283,162 @@ fn a_punch_follows_its_sketch_and_is_taken_back_and_suppressed() {
     let kind = serde_json::to_value(&s.document().feature(tenon_model::FeatureId(f as u32)).unwrap().kind).unwrap();
     assert_eq!(kind, json!({ "type": "punch", "sketch": sk, "shape": { "round": { "diameter": 10.0 } } }), "what a file says of it");
 }
+
+/// A dome or a flap over a hole would fill the hole in without a word. That is refused, whether the
+/// hole is in the middle of it or off to one side, and the part stays as it was. A cut may take a
+/// hole with it: what goes is its own area and what was left of the hole, by hand.
+#[test]
+fn a_formed_stamp_will_not_close_a_hole_and_a_cut_may_take_one() {
+    let with_a_hole = |at: (f64, f64)| {
+        let (mut s, mut k) = start();
+        plate(&mut s, &mut k, 200.0, 100.0);
+        let sk = points_on_top(&mut s, &mut k, &[at]);
+        run(&mut s, &mut k, "sheet.punch", json!({ "sketch": sk, "shape": "round", "diameter": 4 }));
+        (s, k)
+    };
+    let holed = 40_000.0 - PI * 4.0 * T;
+    for (shape, at) in [
+        (json!({ "shape": "dimple", "diameter": 30, "depth": 3 }), (50.0, 50.001)),
+        (json!({ "shape": "dimple", "diameter": 30, "depth": 3 }), (58.0, 50.0)),
+        (json!({ "shape": "louver", "length": 30, "width": 15, "height": 5 }), (50.0, 50.0)),
+        // (A hole that lies across the rim of the stamp.)
+        (json!({ "shape": "louver", "length": 30, "width": 15, "height": 5 }), (65.0, 50.0)),
+    ] {
+        let (mut s, mut k) = with_a_hole((50.0, 50.0));
+        assert!(close(volume(&mut s, &mut k), holed, 1e-5));
+        let sk = points_on_top(&mut s, &mut k, &[at]);
+        let mut p = shape.clone();
+        p["sketch"] = json!(sk);
+        run(&mut s, &mut k, "sheet.punch", p);
+        let e = failure(&mut s, &mut k);
+        assert!((e.contains("would close the hole") && e.contains("Move it clear")) || e.contains("clear of its edges and holes"), "{shape}: {e}");
+        let left = run(&mut s, &mut k, "model.mass", json!({}));
+        assert!(close(left["bodies"][0]["volume"].as_f64().unwrap(), holed, 1e-5), "{shape}: {left}");
+    }
+    // Clear of it, it goes on: the dome's rim is sqrt(15^2 + 2 x 2 x 3) = 15.39 from its point.
+    let (mut s, mut k) = with_a_hole((50.0, 50.0));
+    let sk = points_on_top(&mut s, &mut k, &[(50.0 + 2.0 + 15.5, 50.0)]);
+    run(&mut s, &mut k, "sheet.punch", json!({ "sketch": sk, "shape": "dimple", "diameter": 30, "depth": 3 }));
+    assert!(close(volume(&mut s, &mut k), holed + PI * 9.0 * T, 1e-5), "{}", volume(&mut s, &mut k));
+    // A round cut that takes the hole: its own area, all of the hole inside it.
+    let (mut s, mut k) = with_a_hole((55.0, 50.0));
+    let sk = points_on_top(&mut s, &mut k, &[(55.0, 50.0)]);
+    run(&mut s, &mut k, "sheet.punch", json!({ "sketch": sk, "shape": "round", "diameter": 30 }));
+    assert!(close(volume(&mut s, &mut k), 40_000.0 - PI * 225.0 * T, 1e-5), "{}", volume(&mut s, &mut k));
+    let p = flat(&mut s, &mut k);
+    assert_eq!(p["holes"], 1, "{p}");
+    assert!(close(num(&p, "area"), 20_000.0 - PI * 225.0, 1e-5), "{p}");
+}
+
+/// A formed stamp is a mark in the flat pattern, so a cut through it has no outline there: that
+/// flat pattern is refused, not drawn without the hole. A cut clear of it is in the pattern.
+#[test]
+fn a_cut_through_a_formed_stamp_is_refused_in_the_flat_pattern_and_one_clear_of_it_is_there() {
+    let cut_at = |s: &mut Session, k: &mut OcctKernel, x: f64, y: f64, r: f64| {
+        let c = id(&run(s, k, "sketch.create", json!({ "plane": "xy" })), "feature");
+        run(s, k, "sketch.circle", json!({ "sketch": c, "cx": x, "cy": y, "r": r }));
+        run(s, k, "model.extrude", json!({ "sketch": c, "distance": 50, "operation": "cut" }));
+    };
+    let stamped = |shape: Value| {
+        let (mut s, mut k) = start();
+        plate(&mut s, &mut k, 200.0, 100.0);
+        let sk = points_on_top(&mut s, &mut k, &[(50.0, 50.0)]);
+        let mut p = shape;
+        p["sketch"] = json!(sk);
+        run(&mut s, &mut k, "sheet.punch", p);
+        assert!(run(&mut s, &mut k, "model.regenerate", json!({}))["error"].is_null());
+        (s, k)
+    };
+    let dimple = json!({ "shape": "dimple", "diameter": 40, "depth": 8 });
+    let louver = json!({ "shape": "louver", "length": 30, "width": 15, "height": 5 });
+    // Through the top of the dome; through its rim; through the flap.
+    for (shape, x, y, name) in [
+        (dimple.clone(), 50.0, 50.0, "Dimple 40 x 8"),
+        (dimple.clone(), 70.0, 50.0, "Dimple 40 x 8"),
+        (louver.clone(), 52.0, 50.0, "Louver 30 x 15 x 5"),
+    ] {
+        let (mut s, mut k) = stamped(shape);
+        let before = volume(&mut s, &mut k);
+        cut_at(&mut s, &mut k, x, y, 5.0);
+        assert!(volume(&mut s, &mut k) < before - 1.0, "the cut took something");
+        let e = refused(&mut s, &mut k, "sheet.flat", json!({}));
+        assert!(e.contains(name) && e.contains("cut since it was stamped"), "{e}");
+    }
+    // Clear of it: its hole is in the pattern, and the mark is still its mark.
+    let (mut s, mut k) = stamped(dimple);
+    cut_at(&mut s, &mut k, 150.0, 50.0, 5.0);
+    assert!(close(volume(&mut s, &mut k), 40_000.0 + PI * 64.0 * T - PI * 25.0 * T, 1e-4));
+    let p = flat(&mut s, &mut k);
+    assert_eq!(p["holes"], 1, "{p}");
+    assert!(close(num(&p, "area"), 20_000.0 - PI * 25.0, 1e-5), "{p}");
+    assert_eq!(p["marks"].as_array().unwrap().len(), 1, "{p}");
+}
+
+/// Stamps of one punch that overlap are each marked at their own point, however little is left of
+/// the outline of each.
+#[test]
+fn stamps_that_overlap_are_marked_at_their_own_points() {
+    let centres = |shape: Value, points: &[(f64, f64)]| {
+        let (mut s, mut k) = start();
+        plate(&mut s, &mut k, 200.0, 100.0);
+        let sk = points_on_top(&mut s, &mut k, points);
+        let mut p = shape;
+        p["sketch"] = json!(sk);
+        run(&mut s, &mut k, "sheet.punch", p);
+        let v = volume(&mut s, &mut k);
+        let f = flat(&mut s, &mut k);
+        let marks: Vec<(f64, f64)> =
+            f["marks"].as_array().unwrap().iter().map(|m| (m["center"][0].as_f64().unwrap(), m["center"][1].as_f64().unwrap())).collect();
+        (v, marks)
+    };
+    // Two of 20 across, 10 apart: two circles less the lens they share. The lens: 2 r^2 acos(d / 2r)
+    // - (d / 2) sqrt(4 r^2 - d^2), r = 10, d = 10.
+    let lens = 200.0 * (0.5f64).acos() - 5.0 * 300f64.sqrt();
+    let (v, marks) = centres(json!({ "shape": "round", "diameter": 20 }), &[(50.0, 50.0), (60.0, 50.0)]);
+    assert!(close(v, 40_000.0 - (2.0 * PI * 100.0 - lens) * T, 1e-5), "{v}");
+    assert!(
+        close(marks[0].0, 50.0, 1e-6) && close(marks[0].1, 50.0, 1e-6) && close(marks[1].0, 60.0, 1e-6) && close(marks[1].1, 50.0, 1e-6),
+        "{marks:?}"
+    );
+    // Squares that overlap, where the middle of what is left is no shape's middle.
+    let (v, marks) = centres(json!({ "shape": "square", "side": 20 }), &[(50.0, 50.0), (60.0, 55.0)]);
+    assert!(close(v, 40_000.0 - (800.0 - 10.0 * 15.0) * T, 1e-5), "{v}");
+    assert!(
+        close(marks[0].0, 50.0, 1e-6) && close(marks[0].1, 50.0, 1e-6) && close(marks[1].0, 60.0, 1e-6) && close(marks[1].1, 55.0, 1e-6),
+        "{marks:?}"
+    );
+}
+
+/// Low, a flap as long as its opening runs into the far side of it, wherever it is on the sheet.
+/// Its lip's underside must be up off the face by then: by hand, height - t cos(turn) comes to 0.
+#[test]
+fn a_louver_too_low_to_clear_its_opening_says_how_high_it_must_be() {
+    let stamp = |height: f64| {
+        let (mut s, mut k) = start();
+        plate(&mut s, &mut k, 200.0, 100.0);
+        let sk = points_on_top(&mut s, &mut k, &[(100.0, 50.0)]);
+        run(&mut s, &mut k, "sheet.punch", json!({ "sketch": sk, "shape": "louver", "length": 30, "width": 15, "height": height }));
+        (s, k)
+    };
+    for low in [0.1, 1.0, 1.9] {
+        let (mut s, mut k) = stamp(low);
+        let e = failure(&mut s, &mut k);
+        assert!(e.contains("at least 1.986 mm") && e.contains("make it higher") && !e.contains("smaller"), "{low}: {e}");
+    }
+    assert!(tenon_model::sheet::punch::louver_flap(15.0, 1.9, T, R, K).is_err());
+    // What it says is what it takes: the lip's underside comes to the plane of the face there.
+    let (turn, _) = tenon_model::sheet::punch::louver_flap(15.0, 1.986, T, R, K).unwrap();
+    assert!((1.986 - T * turn.cos()).abs() < 0.006, "{}", 1.986 - T * turn.cos());
+    for height in [1.986, 2.0, 3.0] {
+        let (mut s, mut k) = stamp(height);
+        let (turn, straight) = tenon_model::sheet::punch::louver_flap(15.0, height, T, R, K).unwrap();
+        let v = volume(&mut s, &mut k);
+        let want = 20_000.0 * T - 450.0 * T + 30.0 * T * (straight + turn * (R + T / 2.0));
+        assert!(close(v, want, 1e-5), "{height}: {v} {want}");
+        let body = &run(&mut s, &mut k, "model.topology", json!({}))["bodies"][0];
+        assert!(body["valid"] == true && body["solids"] == 1, "{body}");
+    }
+    // On a sheet thin against its bends the same words have the same reason.
+    let e = tenon_model::sheet::punch::louver_flap(15.0, 0.1, 0.5, 3.0, 0.44).unwrap_err();
+    assert!(e.contains("at least") && e.contains("higher"), "{e}");
+}

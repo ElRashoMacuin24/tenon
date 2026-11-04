@@ -1574,7 +1574,12 @@ impl Document {
         for id in kind.copies() {
             match self.feature(*id) {
                 Some(f) if f.kind.has_tool() => {}
-                Some(f) => return Err(format!("{} cannot be copied: only features that add or remove material can", f.name)),
+                Some(f) => {
+                    return Err(format!(
+                        "{} cannot be copied: a pattern or mirror copies an Extrude, Revolve, Hole, Rib, Sweep, Coil, Loft, Face or another pattern, and not this kind of feature",
+                        f.name
+                    ));
+                }
                 None => return Err(format!("{id} does not exist")),
             }
         }
