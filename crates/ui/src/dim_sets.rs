@@ -345,6 +345,15 @@ impl Workbench {
     pub(crate) fn set_panel(&mut self, ctx: &egui::Context) {
         let Some(d) = self.drw.as_ref() else { return };
         let Some(DrwTool::Set(panel)) = d.tool.clone() else { return };
+        // What it is on can go while it is open: from the browser, or by a script over the port.
+        let dr = d.session.drawing();
+        if panel.annotation.is_some_and(|a| dr.annotation(a).is_none()) || panel.view.is_some_and(|v| dr.view(v).is_none()) {
+            if let Some(d) = self.drw.as_mut() {
+                d.tool = None;
+            }
+            self.set_status("What the panel was on is gone, so it has closed.");
+            return;
+        }
         let mut dlg = *panel;
         let (asked, axis_was) = (dlg.prompt(), dlg.axis);
         // What each place measures now, for the list.

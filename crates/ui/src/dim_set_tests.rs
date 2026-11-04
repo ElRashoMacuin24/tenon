@@ -747,3 +747,39 @@ fn turned_in_its_panel_a_set_shows_where_it_will_go_and_goes_there() {
     let clicked = info(&mut wb)["annotations"][0].clone();
     assert!((clicked["rows"][0]["level"].as_f64().unwrap() - far).abs() < 0.05, "{clicked}");
 }
+
+#[test]
+fn deleting_what_the_panel_is_on_closes_it() {
+    let _quiet = crate::tests::timing_lock();
+    let (mut wb, mut d) = drawing_of_plate("row", Orientation::Top, 1.0);
+    press(&mut d, &mut wb, "ribbon drw.baseline");
+    let (a, b, place) = (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0), in_view(&mut wb, 60.0, 110.0));
+    d.click(&mut wb, a);
+    d.click(&mut wb, b);
+    d.click(&mut wb, place);
+    settle(&mut d, &mut wb, 2);
+    // The set, from its row, with its panel open on it.
+    let row = browser_row(&d, "Baseline 1: 1 dimension(s)").center();
+    double_click(&mut d, &mut wb, row);
+    assert_eq!(panel(&wb).map(|p| p.annotation), Some(Some(AnnotId(1))));
+    right_click(&mut d, &mut wb, row);
+    press(&mut d, &mut wb, "tn_set_row_delete");
+    assert!(no_annotations(&mut wb));
+    assert!(panel(&wb).is_none(), "it closes with what it was changing: {}", wb.status());
+    assert!(wb.status().contains("gone"), "{}", wb.status());
+    // One undo brings the set back, with no panel.
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    settle(&mut d, &mut wb, 2);
+    assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["15"]);
+    assert!(panel(&wb).is_none());
+
+    // A set being made, its view deleted (by a script over the port, say).
+    press(&mut d, &mut wb, "ribbon drw.ordinate");
+    d.click(&mut wb, a);
+    d.click(&mut wb, b);
+    assert!(panel(&wb).is_some());
+    wb.drw_exec("drw.view.delete", json!({ "view": 1 })).unwrap();
+    settle(&mut d, &mut wb, 2);
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    assert!(wb.status().contains("gone"), "{}", wb.status());
+}
