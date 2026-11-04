@@ -961,7 +961,7 @@ pub enum Ucs {
     },
     /// Through three points: its origin, a point on its positive X, and a point on the positive
     /// Y side of its XY plane.
-    ThreePoints { points: [PointSel; 3] },
+    ThreePoints { points: Box<[PointSel; 3]> },
 }
 
 impl Ucs {

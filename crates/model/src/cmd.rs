@@ -1453,7 +1453,7 @@ fn work_ucs(s: &mut Session, p: &Value) -> CmdResult {
                 rz: or_zero("rz")?,
             }
         }
-        "three_points" => Ucs::ThreePoints { points: parse(p, "points")? },
+        "three_points" => Ucs::ThreePoints { points: Box::new(parse(p, "points")?) },
         other => return Err(format!("unknown way to place a UCS `{other}` (offset, three_points)").into()),
     };
     def.check().map_err(CmdError)?;

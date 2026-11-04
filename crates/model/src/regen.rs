@@ -771,7 +771,8 @@ impl<'a> Ctx<'a> {
                 let ex = rotate(ex, ez, *rz);
                 Ok(Frame::new(origin, ez, ex).ok_or("the UCS is out of range")?)
             }
-            Ucs::ThreePoints { points: [a, b, c] } => {
+            Ucs::ThreePoints { points } => {
+                let [a, b, c] = &**points;
                 let (a, b, c) = (self.point_of(a)?, self.point_of(b)?, self.point_of(c)?);
                 let x = b - a;
                 let n = x.cross(c - a);
