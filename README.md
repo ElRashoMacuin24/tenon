@@ -1,8 +1,10 @@
 # Tenon
 
-Tenon is a free, open-source, cross-platform parametric 3D CAD application written in Rust. The
-workflow is the familiar one for mechanical design: sketch, constrain, build features, assemble,
-then document in drawings.
+Tenon is a free, open-source, cross-platform parametric 3D CAD application written in Rust: sketch,
+model parts, sheet metal, assemblies, drawings, 3D printing checks, quick stress checks and shapes
+optimized for a stress study's loads. The workflow is the familiar one for mechanical design.
+
+![An assembly in the Tenon workbench](examples/m3-pivot/workbench.png)
 
 **Status: 0.1.0, the first release, is out ([Releases](https://github.com/ElRashoMacuin24/tenon/releases), [CHANGELOG.md](CHANGELOG.md)). Milestones M0 to M11 are done. In M11 (quick stress checks) a study is set up on the part in the Stress Analysis environment (supports and forces on faces or edges; pressure, weight, moments, bearing loads, remote forces and turning), worked out by Gmsh and CalculiX (programs of their own, not shipped with Tenon), checked against textbook cases, and shown in colour on the part ([docs/stress.md](docs/stress.md)). What it takes to rebuild, open and draw the examples is in [docs/performance.md](docs/performance.md).**
 CI runs on Linux, macOS and Windows.
@@ -90,8 +92,6 @@ properties panel, orientation cube, radial menu). The same commands drive script
 server for AI agents, which can work on its own or in the running app, where each step shows
 in the window and is undone like any other. What works, with the test that proves each item,
 is in [ROADMAP.md](ROADMAP.md).
-
-![The M3 demo assembly in the Tenon workbench](examples/m3-pivot/workbench.png)
 
 ![The M4 demo drawing in the Tenon workbench](examples/m4-plate/workbench.png)
 
