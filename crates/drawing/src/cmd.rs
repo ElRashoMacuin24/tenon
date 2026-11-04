@@ -850,6 +850,10 @@ fn drw_break(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdR
             Some(ModKind::Break { lines, from, to, gap }) => (Some(*lines), Some(*from), Some(*to), Some(*gap)),
             _ => (None, None, None, None),
         };
+        // Only suppressed or used again: as it stands, whatever the scale or the model have done since.
+        if let (Some(kept @ ModKind::Break { .. }), None, None, None, None) = (old, lines, from, to, gap) {
+            return Ok(kept.clone());
+        }
         let lines = lines.or(was_lines).ok_or("give `lines`: horizontal or vertical")?;
         let (a, b) = (from.or(was_from).ok_or("give `from`: where the first line goes")?, to.or(was_to).ok_or("give `to`: where the second goes")?);
         let (from, to) = (a.min(b), a.max(b));

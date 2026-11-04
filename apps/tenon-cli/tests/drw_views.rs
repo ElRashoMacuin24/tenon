@@ -1206,6 +1206,11 @@ fn a_break_never_makes_a_view_longer() {
         let (lo, hi) = extent(&strokes(&sheet(&e), v, Pen::Visible));
         assert!(hi.x - lo.x <= size + 1e-9, "{lo:?} {hi:?} at {scale}");
     }
+    // At 1:20 its band is under its gap: it can still be suppressed and used again, as it stands.
+    run(&mut e, "drw.break", json!({ "view": v, "modifier": 1, "suppressed": true }));
+    near(pt(&view_info(&mut e, v)["size"]).x, 6.0, "suppressed at 1:20");
+    run(&mut e, "drw.break", json!({ "view": v, "modifier": 1, "suppressed": false }));
+    assert_eq!(view_info(&mut e, v)["modifiers"][0]["from"], 40.0);
     // And back: the gap is kept.
     run(&mut e, "drw.view.edit", json!({ "view": v, "scale": 1 }));
     near(pt(&view_info(&mut e, v)["size"]).x, 86.0, "back at 1:1");
@@ -1370,6 +1375,10 @@ fn a_cropped_detail_keeps_its_circle_inside_and_a_break_left_behind_says_so() {
     assert_eq!(symbols(&sheet(&e)), 0);
     let i = view_info(&mut e, v);
     assert!(i["error"].as_str().is_some_and(|t| t.contains("Break 1") && t.contains("no longer crosses")), "{i}");
+    // It can be suppressed as it stands, which ends the word; its lines do not have to cross anything.
+    run(&mut e, "drw.break", json!({ "view": v, "modifier": b, "suppressed": true }));
+    assert!(view_info(&mut e, v)["error"].is_null());
+    run(&mut e, "drw.break", json!({ "view": v, "modifier": b, "suppressed": false }));
     // Back at 120 it is at work again and says nothing.
     run(&mut e, "file.open", json!({ "path": "plate.tenon" }));
     run(&mut e, "param.set", json!({ "name": "w", "equation": "120" }));
