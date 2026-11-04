@@ -22,8 +22,9 @@ first release" below). M11 is the last milestone of the plan; what comes after i
 owner's to say. Since the release, at their word (2026-10-16): a pass through the program as
 a user with the bugs it found fixed, and text in sketches (DEC-102); a comparison of every
 feature with Inventor's, with what it showed was missing filled in (the section "After 0.1.0");
-and, at their word on 2026-10-20, Optimize Shape (the section of that name). 0.2.0 is what these
-come to.
+at their word on 2026-10-20, Optimize Shape (the section of that name); and, at their word on
+2026-11-03, everything on the menu (the section of that name). 0.2.0 is what these come to: ready,
+and its tag and publishing are the owner's step (DEC-143).
 
 **M10** agent-native workflow was started on the owner's confirmation of M9 (2026-10-12),
 completed and confirmed the same day: a versioned schema
@@ -546,6 +547,7 @@ on inventor and make ours feel 1-1".
 
 ## Getting 0.2.0 ready
 
+"keep going and get it ready for another new version release" (the owner, 2026-11-03; DEC-143).
 What auditors of the program found ahead of 0.2.0, fixed, each with the test that holds it.
 
 | Item | Status | Proof / gap |

@@ -3,7 +3,7 @@
 What changes from one release of Tenon to the next. Every item that works has the test that
 shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROADMAP.md).
 
-## Unreleased
+## 0.2.0 (not yet released)
 
 **New:** Optimize Shape in Stress Analysis works out where material is needed to carry a study's
 loads, for a share of the mass kept, as a shape to model over (it needs Gmsh and CalculiX, as

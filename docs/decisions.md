@@ -4813,3 +4813,29 @@ An audit by real pointer and keyboard, after DEC-139 had run every entry by its 
   start, and again when they end, for a part on its way when they were asked for is only known then. The
   Properties window keeps its figures of what is there, as it can only ever show what has come, and says in red
   what they leave out.
+
+## DEC-143 The second release: 0.2.0 (2026-11-04)
+
+The owner: "keep going and get it ready for another new version release", and, while that went on,
+"Make sure all the features on the menu are available not grayed out" (DEC-139).
+
+**Version 0.2.0.** A release that adds a great deal and is still a young program's: a 0.x, the next
+one. Format version 2 and the command schema's version 1 stand, since all that was added is additive
+by their rules. What an older build does with a new file is in docs/file-format.md and the release
+notes.
+
+**The heading says it is not out.** The changelog's section is headed "(not yet released)" and the
+README says 0.1.0 is the latest until it is published. Publishing is the owner's step, as in DEC-101:
+a commit dates the heading and rewrites that line, a tag `v0.2.0` makes the draft from the release
+workflow, and a person publishes it.
+
+**What it was held to.** Six audits of the whole program (the archive, upgrading from 0.1.0, what it
+says of itself, two passes as a user, what comes in from outside), then three of the twenty new
+commands together with the rest, each fixed and checked by someone who had not fixed it.
+
+**Left as they are, each said where it is met:** a solver whose parent was killed goes on until its
+own limit (DEC-125); a loose piece that carries nothing is refused, not warned of (DEC-123); a bearing
+load that cannot stay square to its face brings no warning, only the notes' words; 0.1.0 opens an
+assembly with a suppressed pattern and a drawing with a crop or break, and loses them on a save; the
+shape Optimize Shape finds is not kept in the part file (DEC-123, a question of what a file holds, for
+the owner). Not signed, as in DEC-101.

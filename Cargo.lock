@@ -2939,7 +2939,7 @@ dependencies = [
 
 [[package]]
 name = "tenon"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "egui",
@@ -2952,7 +2952,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-assembly"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2965,7 +2965,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui",
  "quick-xml",
@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-drawing"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "quick-xml",
  "serde",
@@ -3003,14 +3003,14 @@ dependencies = [
 
 [[package]]
 name = "tenon-dxf"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "tenon-fea"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tenon-geom",
  "tenon-kernel",
@@ -3019,7 +3019,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-geom"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "robust",
  "serde",
@@ -3027,7 +3027,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-io"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3046,7 +3046,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-kernel"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "tenon-geom",
@@ -3055,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-kernel-occt"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -3065,7 +3065,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-model"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3078,7 +3078,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "image",
@@ -3090,7 +3090,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-sketch"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3102,7 +3102,7 @@ dependencies = [
 
 [[package]]
 name = "tenon-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui",
  "egui-wgpu",
@@ -4189,7 +4189,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
 ]

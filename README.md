@@ -6,7 +6,7 @@ optimized for a stress study's loads. The workflow is the familiar one for mecha
 
 ![An assembly in the Tenon workbench](examples/m3-pivot/workbench.png)
 
-**Status: 0.1.0, the first release, is out ([Releases](https://github.com/ElRashoMacuin24/tenon/releases), [CHANGELOG.md](CHANGELOG.md)). Milestones M0 to M11 are done. In M11 (quick stress checks) a study is set up on the part in the Stress Analysis environment (supports and forces on faces or edges; pressure, weight, moments, bearing loads, remote forces and turning), worked out by Gmsh and CalculiX (programs of their own, not shipped with Tenon), checked against textbook cases, and shown in colour on the part ([docs/stress.md](docs/stress.md)). What it takes to rebuild, open and draw the examples is in [docs/performance.md](docs/performance.md).**
+**Status: 0.1.0 is the latest release ([Releases](https://github.com/ElRashoMacuin24/tenon/releases)); this source is 0.2.0, ready to be published, with Optimize Shape and everything on the ribbon working ([CHANGELOG.md](CHANGELOG.md)). Milestones M0 to M11 are done. In M11 (quick stress checks) a study is set up on the part in the Stress Analysis environment (supports and forces on faces or edges; pressure, weight, moments, bearing loads, remote forces and turning), worked out by Gmsh and CalculiX (programs of their own, not shipped with Tenon), checked against textbook cases, and shown in colour on the part ([docs/stress.md](docs/stress.md)). What it takes to rebuild, open and draw the examples is in [docs/performance.md](docs/performance.md).**
 CI runs on Linux, macOS and Windows.
 
 Tenon is for makers, students and small shops. It aims to win on reliability, coherence and speed
