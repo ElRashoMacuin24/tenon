@@ -688,6 +688,14 @@ fn an_overlay_draws_the_assembly_in_another_position_in_phantom_lines() {
     let v = run(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "top", "scale": 1, "at": [320, 150] }))["view"].clone();
     assert!(err(&mut e, json!({ "parent": v, "values": [{ "relationship": mate, "offset": 1 }] })).contains("assembly"));
     assert!(e.exec("drw.overlay.values", &json!({ "view": v })).unwrap_err().contains("assembly"));
+    // The mate deleted from the assembly: the overlay stays, drawn empty, and says what to do.
+    run(&mut e, "asm.open", json!({ "path": "pivot.tenonasm" }));
+    run(&mut e, "asm.delete", json!({ "relationship": mate }));
+    run(&mut e, "asm.save", json!({ "path": "pivot.tenonasm" }));
+    run(&mut e, "drw.update", json!({}));
+    let i = view_info(&mut e, f);
+    assert!(i["error"].as_str().is_some_and(|m| m.contains("no longer in the assembly")), "{i}");
+    assert!(strokes(&sheet(&e), f, Pen::Phantom).is_empty());
     // Deleting the parent takes the overlay with it.
     run(&mut e, "drw.view.delete", json!({ "view": top }));
     let info = run(&mut e, "drw.info", json!({}));
@@ -833,4 +841,16 @@ fn an_auxiliary_view_told_nowhere_goes_clear_of_its_parent() {
     let z = num(&i["direction"][1]);
     near(z.abs(), 1.0, "it looks along Y");
     assert_eq!(c.y > 150.0, z > 0.0, "{i}");
+
+    // The plate's extrusion suppressed: the edge is
+    // gone. The view stays, looking the way it did, and says what to do.
+    run(&mut e, "file.open", json!({ "path": "plate.tenon" }));
+    let tree = run(&mut e, "model.tree", json!({}));
+    let extrude = tree["features"].as_array().unwrap().iter().find(|f| f["type"] == "Extrude").unwrap()["id"].clone();
+    run(&mut e, "feature.suppress", json!({ "feature": extrude }));
+    run(&mut e, "file.save", json!({ "path": "plate.tenon" }));
+    run(&mut e, "drw.update", json!({}));
+    let i = view_info(&mut e, aux);
+    assert!(i["error"].as_str().is_some_and(|m| m.contains("pick another edge")), "{i}");
+    near(num(&i["direction"][1]), z, "it looks the way it did");
 }

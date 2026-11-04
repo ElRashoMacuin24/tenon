@@ -820,7 +820,11 @@ fn draw_view(gr: &mut Graphics, d: &Drawing, v: &View, ev: &Evaluation) {
         }
     }
     if v.label {
-        let bounds = gr.bounds_of(o);
+        // (What modifies it, too: the label goes clear of a crop's outline and of break lines.)
+        let bounds = v.mods.iter().filter_map(|m| gr.bounds_of(Owner::Mod(v.id, m.id))).fold(gr.bounds_of(o), |all, b| match all {
+            Some(a) => Some((a.0.min(b.0), a.1.max(b.1))),
+            None => Some(b),
+        });
         let low = bounds.map_or(v.center.y - 10.0, |b| b.0.y);
         // Under what is drawn: a crop may have left that well to one side of the view's middle, and
         // an auxiliary view's middle is where it lines up with its parent.

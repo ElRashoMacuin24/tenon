@@ -2089,7 +2089,14 @@ fn draw_tool(p: &egui::Painter, rect: Rect, cam: &SheetCam, d: &DrwDoc, tool: &D
             let place = v.center + toward * (at - v.center).dot(toward);
             let (f, _, _) = tenon_drawing::views::section_frame(&g.frame, a, b, flip);
             if let Some(half) = model_size(*pv, &f, v.scale) {
-                box_at(place, half);
+                // Its middle is lined up with its parent's along the edge: what it draws lies
+                // off that by as far as the two boxes' middles are apart along it.
+                let u = (b - a).normalized();
+                let apart = ev
+                    .and_then(|e| e.models.get(&v.model))
+                    .and_then(|m| tenon_drawing::views::seen_middle(m, &f))
+                    .map_or(0.0, |c| (g.center - c).dot(u));
+                box_at(place - u * (apart * v.scale), half);
             }
             p.line_segment([s(to_sheet(a)), s(to_sheet(b))], Stroke::new(2.0, GHOST));
             p.extend(Shape::dashed_line(&[s(v.center), s(place)], Stroke::new(1.0, GHOST.gamma_multiply(0.6)), 4.0, 4.0));

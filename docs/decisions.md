@@ -3515,65 +3515,71 @@ against the code as it was before it:
 
 ## DEC-131 Auxiliary, crop, break, break out and overlay views (2026-11-03)
 
-The owner asked: "Make sure all the features on the menu are available not grayed out". These five
-of a drawing's view commands, greyed since M4, are made real here (other commands under this number
-are in their own entries). How they stand against the program Tenon's UI follows is in
-docs/inventor-fidelity.md.
+The owner asked: "Make sure all the features on the menu are available not grayed out". These
+five of a drawing's view commands, greyed since M4, are made real here (other commands under
+this number are in their own entries). How they stand against the program Tenon's UI follows
+is in docs/inventor-fidelity.md.
 
-**Two kinds of thing.** An auxiliary view and an overlay are views: a kind of `ViewKind`, each with a
-parent, a row and a place of its own. A crop, a break and a break out change a view that is there, so
-they are records on it (`View.mods`), each with a number among that view's, suppressible and with a row
-under the view. They were tried as annotations first, on paper, for the ids and the deleting that come
-free; but a view's lines then depend on annotations, and `drw.info`, templates and the other lane's new
-kinds would all have to step round them.
+**Two kinds of thing.** An auxiliary view and an overlay are views: a kind of `ViewKind`, each
+with a parent, a row and a place of its own. A crop, a break and a break out change a view
+that is there, so they are records on it (`View.mods`), each with a number among that view's,
+suppressible and with a row under the view. They were tried as annotations first, on paper,
+for the ids and the deleting that come free; but a view's lines then depend on annotations,
+and `drw.info`, templates and every new kind of annotation would have to step round them.
 
-**A view's curves stay true.** `ViewGeometry::curves` stays in true view coordinates whatever a crop or
-a break does: measuring, picking, a detail or section of the view go on as they were, and a dimension
-keeps its true value without being told to, since it is measured from the model. What changes is the
-drawing: `annotate::draw_view` clips with `modify::Clip`, and `to_sheet` closes the bands with
-`modify::Folds`. Closing a band is a continuous rising map (the band shrinks to its gap, what is beyond
-it moves up), so `from_sheet` undoes it and a click anywhere on the sheet has a true place. So a crop or
-a break computes nothing again (`eval_key` leaves them out; a test holds it), and neither needs a kernel.
-What a view takes along an axis with a band stays centred on `View::center`; along the other it is as it was.
+**A view's curves stay true.** `ViewGeometry::curves` stays in true view coordinates whatever
+a crop or a break does: measuring, picking, a detail or section of the view go on as they
+were, and a dimension keeps its true value without being told to, since it is measured from
+the model. What changes is the drawing: `annotate::draw_view` clips with `modify::Clip`, and
+`to_sheet` closes the bands with `modify::Folds`. Closing a band is a continuous rising map
+(the band shrinks to its gap, what is beyond it moves up), so `from_sheet` undoes it and a click
+anywhere on the sheet has a true place. So a crop or a break computes nothing again (`eval_key`
+leaves them out; a test holds it), and neither needs a kernel.  What a view takes along an axis
+with a band stays centred on `View::center`; along the other it is as it was.
 
-**Auxiliary.** Its frame is a section's (`section_frame`): the parent turned a quarter turn about the
-line, so a point of the model is as far along the edge in both views, and the two line up. It keeps the
-edge as a pick, and finds its line in the model each time (`frames_in`, used when the views are computed), so
-it turns with the edge; `a`-`b` is kept as the way round and for when the edge is gone (the view then
-stays and says so). `ViewGeometry::center` is moved along the edge so that the two middles are as far
-along it, and so a view whose centre is square to the edge from its parent's is lined up, whatever the
-boxes of the two come to. Tried first: the centre of its own box, which is not as far along an oblique edge
-as its parent's, so the same corner stood off by a few mm. It moves square to the edge only. When the model
-turns the edge, the view turns at once but keeps its place on the sheet until it is next moved, when it
-lines up again: a view's place is not worked out from the model anywhere in the drawing, and doing so for
-this one kind (or writing to the document when views are computed) was not worth it.
+**Auxiliary.** Its frame is a section's (`section_frame`): the parent turned a quarter turn
+about the line, so a point of the model is as far along the edge in both views, and the two
+line up. It keeps the edge as a pick, and finds its line in the model each time (`frames_in`,
+used when the views are computed), so it turns with the edge; `a`-`b` is kept as the way round
+and for when the edge is gone (the view then stays and says so). `ViewGeometry::center` is moved
+along the edge so that the two middles are as far along it, and so a view whose centre is square
+to the edge from its parent's is lined up, whatever the boxes of the two come to. Tried first:
+the centre of its own box, which is not as far along an oblique edge as its parent's, so the
+same corner stood off by a few mm. It moves square to the edge only. When the model turns the
+edge, the view turns at once but keeps its place on the sheet until it is next moved, when it
+lines up again: a view's place is not worked out from the model anywhere in the drawing, and
+doing so for this one kind (or writing to the document when views are computed) was not worth it.
 
-**Break out** cuts with what sections cut with (a prism from the boundary, a kernel boolean), projects what
-is left, and hatches the faces on the floor (`faces_on`, taken out of the section's code) within the
-boundary. Depth is from the model's nearest point as the view sees it, by its box, so it follows the
-model; none is through it all. Through a whole solid leaves nothing of it, which is not a failure. An edge
-of the model cut away is not there to pick; the new edges a cut makes have no persistent name, so as in a
-section they cannot be picked or dimensioned.
+**Break out** cuts with what sections cut with (a prism from the boundary, a kernel boolean),
+projects what is left, and hatches the faces on the floor (`faces_on`, taken out of the section's
+code) within the boundary. Depth is from the model's nearest point as the view sees it, by its
+box, so it follows the model; none is through it all. Through a whole solid leaves nothing of
+it, which is not a failure. An edge of the model cut away is not there to pick; the new edges
+a cut makes have no persistent name, so as in a section they cannot be picked or dimensioned.
 
-**Overlay.** A position is values for relationships (`tenon_assembly::position`): offsets of constraints and
-of joints, angles of angle constraints and of joints. A joint's free motion is held at its value by the
-kind that holds it: a rotational joint at an angle solves as a rigid one, a slider at a distance too, a
-cylindrical one as what is left free. So the solver is the assembly's own and no new law was needed. It
-runs where solving always runs, without a kernel, each time the views are computed, so the position follows the
-model; and each time the panel changes, so what the values come to shows as wireframes of what moves, and
-what cannot be reached says so in the panel, before OK. The whole assembly is projected at the position with its
-hidden lines removed by itself, and what lies along the parent's visible lines is dropped (`drop_seen`), so
-what has not moved is not drawn twice and what a moved part uncovers is. It draws through its parent's
-`to_sheet` and `Clip`, so a crop or a break of the parent applies. Its pen, `Phantom`, is a layer and a line type of
-its own in DXF. A relationship must be there and at work; a value on one suppressed says to take it out. The
-values live in the drawing, not the assembly: the assembly file has no positions of its own to name.
+**Overlay.** A position is values for relationships (`tenon_assembly::position`): offsets of
+constraints and of joints, angles of angle constraints and of joints. A joint's free motion is
+held at its value by the kind that holds it: a rotational joint at an angle solves as a rigid
+one, a slider at a distance too, a cylindrical one as what is left free. So the solver is the
+assembly's own and no new law was needed. It runs where solving always runs, without a kernel,
+each time the views are computed, so the position follows the model; and each time the panel
+changes, so what the values come to shows as wireframes of what moves, and what cannot be reached
+says so in the panel, before OK. The whole assembly is projected at the position with its hidden
+lines removed by itself, and what lies along the parent's visible lines is dropped (`drop_seen`),
+so what has not moved is not drawn twice and what a moved part uncovers is. It draws through its
+parent's `to_sheet` and `Clip`, so a crop or a break of the parent applies. Its pen, `Phantom`,
+is a layer and a line type of its own in DXF. A relationship must be there and at work; a value
+on one suppressed says to take it out. The values live in the drawing, not the assembly: the
+assembly file has no positions of its own to name.
 
-**Old files, old builds.** Additive within version 2: `mods` is left out when empty, so a drawing without
-them is written as it was. The file format says what an old build does with a new file.
+**Old files, old builds.** Additive within version 2: `mods` is left out when empty, so a drawing
+without them is written as it was. The file format says what an old build does with a new file.
 
-**Words.** Registry ids are the ribbon's (`drw.auxiliary`, `drw.crop`, `drw.break`, `drw.break_out`, `drw.overlay`),
-with `drw.overlay.values` to read what a position can set and `drw.modifier.delete`. "Modifier" is Tenon's word.
+**Words.** Registry ids are the ribbon's (`drw.auxiliary`, `drw.crop`, `drw.break`,
+`drw.break_out`, `drw.overlay`), with `drw.overlay.values` to read what a position can set and
+`drw.modifier.delete`. "Modifier" is Tenon's word.
 
-**Left out.** See the rows under "Everything on the menu" in ROADMAP.md: a closed sketch as a boundary (drawings have
-no sketches), a depth to a point or a hole, a break on a view passing to its projected views, an auxiliary view
-from a line that is no edge, an overlay with a label or positions kept in the assembly.
+**Left out.** See the rows under "Everything on the menu" in ROADMAP.md: a closed sketch as a
+boundary (drawings have no sketches), a depth to a point or a hole, a break on a view passing
+to its projected views, an auxiliary view from a line that is no edge, an overlay with a label
+or positions kept in the assembly.

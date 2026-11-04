@@ -123,6 +123,11 @@ pub fn seen_size(m: &ModelGeometry, f: &Frame) -> Option<Vec2> {
     Some(hi - lo)
 }
 
+/// The middle of a model's box seen in a view frame (view coordinates).
+pub fn seen_middle(m: &ModelGeometry, f: &Frame) -> Option<Vec2> {
+    m.bbox.map(|b| box_center(f, &b))
+}
+
 /// What a model is made of, for the kernel to build: a part document, or an assembly and its
 /// part documents (by part key).
 #[derive(Clone, Debug)]
