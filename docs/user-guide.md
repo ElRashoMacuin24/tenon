@@ -135,7 +135,7 @@ each face's normal, so that on a shaft the top follows the round; Direction says
 faces look. Only what can be seen from the sketch takes it: a profile wider than a shaft stops at
 the shaft's sides, and a floor under an overhang takes nothing where the overhang covers it. It
 goes on one solid, the last that the profile falls on, even if the profile is seen on another as
-well; a profile drawn in open space, in a hole's middle say, is seen from there. A profile that
+well, and even if another solid lies over it: solids are judged one at a time; a profile drawn in open space, in a hole's middle say, is seen from there. A profile that
 falls on nothing, or a cut that would leave a piece of the part loose, is refused in words.
 
 **From Sketch Plane** adds material on one side of the plane and takes it away on the other, each as

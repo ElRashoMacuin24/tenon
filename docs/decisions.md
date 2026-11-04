@@ -3560,7 +3560,7 @@ commonly understood.
 
   It goes on one solid, the last that the profile falls on, as a feature goes on the last solid. Going
   on every solid it is seen on was weighed and left: a feature changes one solid everywhere else in
-  the program. What leaves the part in more pieces, or changes nothing, is refused in words.
+  the program. So each solid is judged by itself, and another solid lying over it does not hide it. What leaves the part in more pieces, or changes nothing, is refused in words.
 - *From Sketch Plane* is the sketch plane made a land: on the side the feature looks, the prism is
   taken out of the part; on the other it is added; each as far as the depth. Where the plane lies
   off the part the shape stands up to it, where it lies in the part it goes down to it, and at a
