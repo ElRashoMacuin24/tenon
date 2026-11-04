@@ -978,6 +978,17 @@ fn a_break_out_hatches_what_it_cut_and_not_what_was_already_there() {
     hatched(&g, v, 800.0, "20 down, level with the step's top");
     let (lo, hi) = extent(&strokes(&g, v, Pen::Hatch));
     assert!(lo.x >= 130.0 - 1e-6 && hi.x <= 150.0 + 1e-3, "{lo:?} {hi:?}");
+    // Nor is a line left on it where the cut met it: over the low part, x 50 to 100 is at the sheet's 150
+    // to 200, the rim of the cut on it would run along y = 10, at the sheet's 130. It stops at the wall.
+    let on_rim = |g: &Graphics| -> f64 {
+        strokes(g, v, Pen::Visible)
+            .iter()
+            .flat_map(|r| r.windows(2).map(|w| (w[0], w[1])).collect::<Vec<_>>())
+            .filter(|(a, b)| (a.y - 130.0).abs() < 1e-6 && (b.y - 130.0).abs() < 1e-6 && a.x.min(b.x) >= 150.0 - 1e-6)
+            .map(|(a, b)| a.dist(b))
+            .sum()
+    };
+    assert!(on_rim(&g) < 1e-6, "{}", on_rim(&g));
     // 25 down it is under that top too: all of the 40 x 40.
     run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "depth": 25 }));
     let g = sheet(&e);
@@ -993,6 +1004,13 @@ fn a_break_out_hatches_what_it_cut_and_not_what_was_already_there() {
     run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "depth": 20 }));
     assert!(view_info(&mut e, v)["error"].as_str().is_some_and(|t| t.contains("cuts nothing")), "touching");
     assert_eq!(hatch_length(&sheet(&e), v), 0.0, "what it only touches is not hatched");
+    let (lines, whole) = (num(&view_info(&mut e, v)["visible_curves"]), {
+        run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "suppressed": true }));
+        let n = num(&view_info(&mut e, v)["visible_curves"]);
+        run(&mut e, "drw.undo", json!({}));
+        n
+    });
+    assert_eq!(lines, whole, "and leaves no line where it touched");
     run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "depth": 25 }));
     assert!(view_info(&mut e, v)["error"].is_null());
     hatched(&sheet(&e), v, 1200.0, "25 down, in the low part");

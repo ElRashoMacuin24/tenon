@@ -9147,7 +9147,7 @@
       "id": "drw.break_out",
       "label": "Break Out",
       "undoable": true,
-      "description": "view (base, projected or auxiliary); rect: [[x, y], [x, y]] or center, radius (view coordinates, model mm); depth: how far down from what is nearest the eye (model mm), or through: true; modifier: change that one instead of adding one; suppressed. Inside it the model is cut away; what is then seen is drawn, the floor of the cut hatched",
+      "description": "view (base, projected or auxiliary); rect: [[x, y], [x, y]] or center, radius (view coordinates, model mm); depth: how far down from what is nearest the eye (model mm), or through: true; modifier: change that one instead of adding one; suppressed. Inside it the model is cut away; what is then seen is drawn, the floor of the cut hatched. If that takes nothing away, the view's error in drw.info says so",
       "params": {
         "type": "object",
         "properties": {
@@ -9203,7 +9203,7 @@
           },
           "through": {
             "type": "boolean",
-            "description": "or through the whole model"
+            "description": "or true: through the whole model (false: not through, with the depth it has or is given)"
           },
           "modifier": {
             "type": "integer",

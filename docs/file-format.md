@@ -720,10 +720,13 @@ Implemented in `crates/io/src/drw.rs` and `crates/drawing/src/model.rs`; tested 
   not at work. In view coordinates, model mm, except a gap:
   - `crop`: `boundary`, `outline` (the boundary drawn too). One to a view.
   - `break`: `lines` (`vertical` lines take out a band of `x`, `horizontal` ones a band of `y`),
-    `from` < `to`, and `gap`, what is left between the two sides (mm of paper). Bands of the same
-    way may not overlap. On base and projected views.
-  - `break_out`: `boundary`, and `depth` (from the model's nearest point as the view sees it; left
-    out, through the whole model). On base, projected and auxiliary views.
+    `from` < `to`, and `gap`, what is left between the two sides (mm of paper; when the view's
+    scale makes the band narrower than that on paper, the band stays as wide as it is, and `gap`
+    is kept for when it is not). Bands of the same way may not overlap, suppressed or not. On base
+    and projected views.
+  - `break_out`: `boundary`, and `depth` (from the nearest point of the whole model as the view sees
+    it, read from its geometry; left out, through the whole model). On base, projected and auxiliary
+    views.
 
   A `boundary` is `{ shape = "rect", lo, hi }` or `{ shape = "circle", center, radius }`.
   An overlay has no `mods`: it is drawn as its parent is.

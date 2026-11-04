@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tenon_assembly::position::JointValue;
 use tenon_assembly::{Assembly, ComponentId};
 use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3, tol};
-use tenon_kernel::{BoolOp, HlrCurve, HlrKind, Kernel, MeshTol, ShapeHandle, SurfaceKind};
+use tenon_kernel::{BoolOp, FaceId, HlrCurve, HlrKind, Kernel, MeshTol, ShapeHandle, SurfaceKind};
 use tenon_model::{Document, Scene};
 
 use crate::annotate::{Resolved, edge_is_straight, resolve_pick};
@@ -709,6 +709,32 @@ fn compute_view(
     g
 }
 
+/// Whether a face is flat, on the plane through `point` square to `look`, and faces against `look`.
+fn on_plane(k: &dyn Kernel, face: FaceId, point: Vec3, look: Vec3) -> bool {
+    match k.face_info(face).map(|info| info.surface) {
+        Ok(SurfaceKind::Plane { normal, origin }) => normal.dot(-look) > 1.0 - 1e-6 && (origin - point).dot(look).abs() < 1e-6,
+        _ => false,
+    }
+}
+
+/// `s` with its faces on a floor's plane made one. Where a floor comes level with a face that was
+/// there, the cut leaves a line between the two that is no edge of anything, and it would be drawn.
+/// (If they will not join, as they are.)
+fn floor_joined(k: &mut dyn Kernel, s: ShapeHandle, f: &Frame, floor: f64) -> ShapeHandle {
+    let Ok(topo) = k.topology(s) else { return s };
+    let faces: Vec<FaceId> = (0..topo.faces).map(|i| s.face(i)).filter(|face| on_plane(k, *face, f.z() * floor, -f.z())).collect();
+    if faces.len() < 2 {
+        return s;
+    }
+    match k.unify(s, &faces) {
+        Ok(op) => {
+            k.release(s);
+            op.shape
+        }
+        Err(_) => s,
+    }
+}
+
 /// The triangles (view coordinates) of a solid's flat faces on the plane through `point` square to
 /// `look`, facing against `look`: what a cut leaves there to hatch.
 fn faces_on(k: &mut dyn Kernel, s: ShapeHandle, f: &Frame, point: Vec3, look: Vec3) -> Vec<[Vec2; 3]> {
@@ -716,12 +742,7 @@ fn faces_on(k: &mut dyn Kernel, s: ShapeHandle, f: &Frame, point: Vec3, look: Ve
     let Ok(mesh) = k.tessellate(s, &MeshTol::default()) else { return tris };
     let Ok(topo) = k.topology(s) else { return tris };
     for fi in 0..topo.faces {
-        let Ok(info) = k.face_info(s.face(fi)) else { continue };
-        let on_plane = match info.surface {
-            SurfaceKind::Plane { normal, origin } => normal.dot(-look) > 1.0 - 1e-6 && (origin - point).dot(look).abs() < 1e-6,
-            _ => false,
-        };
-        if !on_plane {
+        if !on_plane(k, s.face(fi), point, look) {
             continue;
         }
         for range in mesh.faces.iter().filter(|r| r.face == fi) {
@@ -851,10 +872,11 @@ fn cut_out(k: &mut dyn Kernel, solids: &[ShapeHandle], f: &Frame, model: &ModelG
                 Ok(op) => {
                     cut_any = cut_any || took_away(k, s, op.shape, tool);
                     k.release(s);
-                    if k.topology(op.shape).is_ok_and(|t| t.faces > 0) {
-                        next.push(op.shape);
+                    let left = out.floor.map_or(op.shape, |z| floor_joined(k, op.shape, f, z));
+                    if k.topology(left).is_ok_and(|t| t.faces > 0) {
+                        next.push(left);
                     } else {
-                        k.release(op.shape);
+                        k.release(left);
                     }
                 }
                 Err(e) => {

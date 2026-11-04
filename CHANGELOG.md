@@ -12,7 +12,8 @@ shows it in [ROADMAP.md](ROADMAP.md).
   what lies inside a rectangle or a circle on a view. Break takes a band out of a base
   or projected view, one or more of them, up the sheet or across, with break lines drawn;
   dimensions across it keep the true length. Break Out cuts a rectangle or circle of a view
-  down to a depth, or through, draws what is then seen, and hatches the floor. Overlay draws
+  down to a depth from the nearest of the model, or through, draws what is then seen, hatches
+  what it cut, and says so when it takes nothing away. Overlay draws
   an assembly's view again in another position, in phantom lines, from values of its joints
   and offsets typed in a panel and solved by the assembly solver; what they come to shows
   on the sheet as they are typed. All of them follow the model, have a row in the browser
@@ -21,6 +22,8 @@ shows it in [ROADMAP.md](ROADMAP.md).
   `drw.overlay.values`, `drw.crop`, `drw.break`, `drw.break_out`, `drw.modifier.delete`;
   `flip` and `edge` of `drw.view.edit`. In the file, the view kinds `auxiliary` and `overlay`
   and a view's `mods`; docs/file-format.md says what an older build does with them.
+- **`drw.pick` calls a curved edge a curve.** It said `line`, with its chord for a length, and
+  so an edge that curves could pass for a straight one. The length is still the chord.
 - **An edge across a detail's circle** can be picked where it crosses, and not only when one of its
   ends is inside.
 

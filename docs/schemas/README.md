@@ -120,7 +120,11 @@ taken away), without a check.
   - Since, without a new version (only more is taken): `drw.auxiliary`, `drw.overlay`,
     `drw.overlay.values`, `drw.crop`, `drw.break`, `drw.break_out` and `drw.modifier.delete`, and
     `flip` and `edge` of `drw.view.edit` (DEC-131). In what comes back, a view in `drw.info` has
-    `modifiers`, and its `size` is what is drawn of it when it has any.
+    `modifiers`, its `size` is what is drawn of it when it has any, and its `error` also says when
+    a break or a crop no longer has anything to do or a break out cuts nothing. `drw.pick` says
+    `kind: "curve"` for a whole edge that is neither a line nor a circle, where it said `line`;
+    its `length` is still the chord. `segments` of a centre mark or line in `drw.info` and in what
+    placing one gives back are as far as it is drawn, so they may be fewer, or none.
   - `study.shape`'s `symmetry` still has the plane's type, so a face passes the schema and is
     refused by the command, in words: a schema that took less would break a program written
     against it, and its description says what is refused. `null` for `min_member`, `element_size`

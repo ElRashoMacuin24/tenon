@@ -3552,10 +3552,35 @@ doing so for this one kind (or writing to the document when views are computed) 
 
 **Break out** cuts with what sections cut with (a prism from the boundary, a kernel boolean),
 projects what is left, and hatches the faces on the floor (`faces_on`, taken out of the section's
-code) within the boundary. Depth is from the model's nearest point as the view sees it, by its
-box, so it follows the model; none is through it all. Through a whole solid leaves nothing of
-it, which is not a failure. An edge of the model cut away is not there to pick; the new edges
-a cut makes have no persistent name, so as in a section they cannot be picked or dimensioned.
+code) within the boundary. Depth is from the model's nearest point as the view sees it, so it
+follows the model; none is through it all. Through a whole solid leaves nothing of it, which is
+not a failure. An edge of the model cut away is not there to pick; the new edges a cut makes have
+no persistent name, so as in a section they cannot be picked or dimensioned.
+
+*The nearest point is the model's, not its box's.* It was first taken from the corner of the
+bounding box. On a view from straight on the two agree; on an auxiliary view, the case those views
+exist for, the corner stands well clear of the part (21 mm on the test's block, whose face is at
+91.92 and the box's corner at 113.14), and a cut 5 deep was in the air: nothing cut, and "done".
+It now comes from the geometry (`views::nearest`): the ends of the edges in double precision, the
+mesh only where a curved face stands beyond them, so a cut can come exactly level with a face and
+a curved nearest point is good to the mesh's tolerance. The box still sizes the tool: it only has
+to be clear of everything.
+
+*A cut that takes nothing away says so*, on the view (`g.error`, so the row goes red with the
+words on its tip) and, when it was just made, in the status bar. Volumes before and after settle
+most cases at no cost; when they come to much the same (within `tol::MEASURE_REL`, which is also a
+small cut in a big part) the tool and the solid are intersected, since a volume alone cannot tell
+a tool that takes 1000 mm3 from a metre cube from one that takes nothing.
+
+*Only what was cut is hatched.* A floor that comes level with a face that was there (a step's top, a
+pocket's floor) lies on the same plane, and the boolean leaves a part of that face inside the
+boundary as a face of its own. Asking the boolean's history which faces came from the tool was
+thought of and not tried, as a face where the tool's bottom lies on an old one comes from both. So
+the old solid's faces on that plane are taken away from the hatch lines, on the lines themselves
+rather than by the triangles (`hatch_less`), since a triangle may run over both; and the lines are
+clipped to the boundary the same way, not by each triangle's middle. The split also leaves a line
+across the one flat face, which is no edge of anything and would be drawn, so the faces on a floor's
+plane are joined (`Kernel::unify`) after each cut.
 
 **Overlay.** A position is values for relationships (`tenon_assembly::position`): offsets of
 constraints and of joints, angles of angle constraints and of joints. A joint's free motion is
@@ -3571,6 +3596,32 @@ parent's `to_sheet` and `Clip`, so a crop or a break of the parent applies. Its 
 is a layer and a line type of its own in DXF. A relationship must be there and at work; a value
 on one suppressed says to take it out. The values live in the drawing, not the assembly: the
 assembly file has no positions of its own to name.
+
+**What a modifier leaves out goes with it.** A centre mark or a centre line by hand is drawn as
+far as what it marks is: none when its edges are cropped away, cut away or in a band, unless what
+it marks is a hole that goes on below a cut (a shallow cut takes off the circle it was placed on),
+and clipped at a crop's edge and at a break's gap otherwise. `center_segments` does it, so
+`drw.info` says what the sheet shows. Tags of a hole table go by the same test. Dimensions do not:
+they are measured values and stay whole by choice, even to what is cropped away. A detail's circle
+is clipped by its crop. Break lines the model has left behind are not drawn, and
+`annotate::view_problem` says so: a crop or a break is changed without computing the view, so what
+it finds is worked out on asking, not kept on the view.
+
+**A gap is at most its band.** The gap is paper and the band is model, so a smaller scale can make
+the one wider than the other, and a break would spread the view apart. Refusing the scale would
+make `drw.view.edit` depend on what is on the view, so `modify::bands` takes the smaller of the
+two and the band then stays as it is; `gap` is kept, for when the scale goes back.
+
+**Hidden parts.** A part all of whose components are hidden is still built when the views are
+computed, without being placed: the solver needs its geometry to place what is shown, and a
+position set while it is hidden must be solved as any other. Building it only when the drawing has
+an overlay would not do: the first overlay is asked about before there is one.
+The cost is that of the part being shown. What is wrong with it is not said on the views, which do
+not draw it; if the solver comes to want it, that is said there.
+
+**Panels.** A modifier's panel is filled by a tool and is about one view on one sheet, so it ends
+when another tool takes over or that sheet is left (checked each frame, so every way there is
+covered), rather than each of those ways closing it.
 
 **Old files, old builds.** Additive within version 2: `mods` is left out when empty, so a drawing
 without them is written as it was. The file format says what an old build does with a new file.

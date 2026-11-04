@@ -160,10 +160,10 @@ parameters and a JSON result. The list is generated in [commands.md](commands.md
   does a crop or a break, which change what is drawn of a view's curves and where (`modify`,
   `annotate::to_sheet`), not the curves (DEC-131).
 - **Sheets.** `annotate::build` turns a sheet into `Graphics`: polylines with a pen (visible,
-  hidden, thin, centre, cutting, border, hatch), filled arrowheads and text, in millimetres of
-  paper. Dimensions keep persistent edge references and are measured again every time, which is
-  what makes them follow model changes. The same `Graphics` feeds the screen, SVG, PDF, DXF (a
-  layer per pen) and PNG (`tenon_render::sheet`).
+  hidden, thin, centre, cutting, border, hatch, phantom), filled arrowheads and text, in
+  millimetres of paper. Dimensions keep persistent edge references and are measured again every
+  time, which is what makes them follow model changes. The same `Graphics` feeds the screen, SVG,
+  PDF, DXF (a layer per pen) and PNG (`tenon_render::sheet`).
 - **Picking.** A click on the sheet finds the model edge drawn nearest it (`annotate::edge_at`,
   the edge nearest the eye where several are drawn on top of each other), so dimensions and
   balloons are placed by clicking, in the UI and in scripts (`drw.pick` with `at`).

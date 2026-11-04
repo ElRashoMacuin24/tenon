@@ -127,7 +127,7 @@ static SCHEMAS: &[C] = &[
             CENTER,
             RADIUS,
             opt("depth", Length, "how far down from what is nearest the eye (model mm)"),
-            opt("through", Bool, "or through the whole model"),
+            opt("through", Bool, "or true: through the whole model (false: not through, with the depth it has or is given)"),
             MODIFIER,
             SUPPRESSED,
         ],

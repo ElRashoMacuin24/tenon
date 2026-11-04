@@ -1523,7 +1523,7 @@ static COMMANDS: &[DrwCommand] = &[
     DrwCommand {
         id: "drw.break_out",
         label: "Break Out",
-        help: "view (base, projected or auxiliary); rect: [[x, y], [x, y]] or center, radius (view coordinates, model mm); depth: how far down from what is nearest the eye (model mm), or through: true; modifier: change that one instead of adding one; suppressed. Inside it the model is cut away; what is then seen is drawn, the floor of the cut hatched",
+        help: "view (base, projected or auxiliary); rect: [[x, y], [x, y]] or center, radius (view coordinates, model mm); depth: how far down from what is nearest the eye (model mm), or through: true; modifier: change that one instead of adding one; suppressed. Inside it the model is cut away; what is then seen is drawn, the floor of the cut hatched. If that takes nothing away, the view's error in drw.info says so",
         mutates: true,
         views: false,
         run: drw_break_out,

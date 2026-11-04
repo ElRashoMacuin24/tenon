@@ -169,12 +169,15 @@ DXF** from the File menu.
   the joints and offsets that change, blank being as the assembly has it. What moves shows on the
   sheet as you type, and what cannot be reached is said in the panel. OK draws the assembly in that
   position over the view in phantom lines.
-- **Crop, Break, Break Out** (Place Views > Modify): click a view, then click what the panel asks for
-  on it, or type it, and OK. Crop draws only what lies inside a rectangle or a circle. Break takes out
-  the band between two lines, up the sheet or across, and leaves a gap; dimensions keep their true
-  values. Break Out cuts a rectangle or a circle of the view away down to a depth from what is nearest
-  you, or through the part, and hatches the floor of the cut. Each has a row under its view:
-  double-click it to change it, right-click it to suppress or delete it.
+- **Crop, Break, Break Out** (Place Views > Modify): click a view, then click what the panel asks
+  for on it, or type it, and OK. Crop draws only what lies inside a rectangle or a circle. Break
+  takes out the band between two lines, up the sheet or across, and leaves a gap; dimensions keep
+  their true values, and a gap wider than the band at the view's scale leaves the band as wide as
+  it is. Break Out cuts a rectangle or a circle of the view away down to a depth from what is
+  nearest you, or through the part, and hatches the floor of the cut; if that takes nothing away,
+  the status bar and the view's row say so. A centre mark or a hole's tag goes with what it marks.
+  Each has a row under its view: double-click it to change it, right-click it to suppress or
+  delete it. A panel closes when you start another tool or go to another sheet.
 
 ## 3D printing
 
