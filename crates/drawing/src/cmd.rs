@@ -15,7 +15,8 @@ use tenon_model::{CmdError, CmdResult, EdgeFingerprint, EdgeRef, FaceOrigin};
 use crate::annotate::{self, format_number, from_sheet, hole_rows, parts_rows, to_sheet};
 use crate::dimsets;
 use crate::model::{
-    AnnotId, AnnotKind, Annotation, DimKind, Drawing, GeomPick, Orientation, PickPoint, SET_SPACING, SetAxis, SheetId, Side, View, ViewId, ViewKind,
+    AnnotId, AnnotKind, Annotation, DimKind, Drawing, GeomPick, MAX_SET_PLACES, Orientation, PickPoint, SET_SPACING, SetAxis, SheetId, Side, View,
+    ViewId, ViewKind,
 };
 use crate::session::DrwSession;
 use crate::views::{project, seen_size};
@@ -672,7 +673,10 @@ fn picks(p: &Value, key: &str) -> Result<Vec<GeomPick>, CmdError> {
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(Value::Array(a)) => a
             .iter()
-            .map(|x| serde_json::from_value(x.clone()).map_err(|e| CmdError(format!("`{key}` holds something that is not a pick (make one with drw.pick): {e}"))))
+            .map(|x| {
+                serde_json::from_value(x.clone())
+                    .map_err(|e| CmdError(format!("`{key}` holds something that is not a pick (make one with drw.pick): {e}")))
+            })
             .collect(),
         Some(_) => Err(CmdError(format!("`{key}` must be a list of picks"))),
     }
@@ -701,6 +705,9 @@ fn add_set(s: &mut DrwSession, p: &Value, from: &GeomPick, spacing: Option<f64>,
     let targets = picks(p, "targets")?;
     if targets.is_empty() {
         return Err(CmdError("`targets` must hold at least one pick: an edge or point to measure".into()));
+    }
+    if targets.len() > MAX_SET_PLACES {
+        return Err(CmdError(format!("a set measures at most {MAX_SET_PLACES} places")));
     }
     let at = opt_vec2(p, "at")?;
     let ev = s.current()?;
@@ -775,6 +782,9 @@ fn set_changed(kind: &AnnotKind, p: &Value) -> Result<Option<AnnotKind>, CmdErro
     targets.extend(add);
     if targets.is_empty() {
         return Err("a set needs at least one place: delete it instead".into());
+    }
+    if targets.len() > MAX_SET_PLACES {
+        return Err(CmdError(format!("a set measures at most {MAX_SET_PLACES} places")));
     }
     match (&mut out, spacing_given) {
         (AnnotKind::Baseline { spacing, .. }, Some(x)) => *spacing = x,

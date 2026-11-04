@@ -9,7 +9,7 @@
 //! - the diameter of each size of hole or boss seen end-on, once per size with a count ("4X Ø8");
 //! - the radius of each size of round seen end-on ("2X R10");
 //!
-//! leaving out what the view's dimensions already give.
+//! leaving out what the view's dimensions, and its baseline and ordinate sets, already give.
 
 use tenon_assembly::ComponentId;
 use tenon_geom::{Vec2, Vec3};
@@ -17,7 +17,8 @@ use tenon_kernel::CurveKind;
 use tenon_model::EdgeRef;
 
 use crate::annotate::{self, to_sheet};
-use crate::model::{AnnotId, AnnotKind, Annotation, DimKind, Drawing, GeomPick, PickPoint, View, ViewId, ViewKind};
+use crate::dimsets;
+use crate::model::{AnnotId, AnnotKind, Annotation, DimKind, Drawing, GeomPick, PickPoint, SetAxis, View, ViewId, ViewKind};
 use crate::views::{Evaluation, project};
 
 /// How far outside the view suggested dimensions go (sheet mm), and between rows of them.
@@ -218,7 +219,7 @@ pub fn suggest(d: &Drawing, ev: &Evaluation, view: ViewId) -> Result<Vec<Suggest
     }
 
     // Values as they measure now; drop what cannot be measured and what is already there.
-    let existing: Vec<(DimKind, f64)> = d
+    let mut existing: Vec<(DimKind, f64)> = d
         .annotations
         .iter()
         .filter(|a| matches!(a.kind, AnnotKind::Dimension { view: vv, .. } if vv == view))
@@ -227,6 +228,13 @@ pub fn suggest(d: &Drawing, ev: &Evaluation, view: ViewId) -> Result<Vec<Suggest
             _ => None,
         })
         .collect();
+    // A set gives what each of its places reads, the way it measures.
+    for a in d.annotations.iter().filter(|a| a.kind.view() == Some(view)) {
+        if let (Some(set), Ok(l)) = (dimsets::parts(&a.kind), dimsets::layout(d, ev, a)) {
+            let dim = if set.axis == SetAxis::Horizontal { DimKind::Horizontal } else { DimKind::Vertical };
+            existing.extend(l.rows.iter().map(|r| (dim, r.value.abs())));
+        }
+    }
     let mut kept: Vec<Suggestion> = Vec::new();
     for mut s in out {
         let probe = Annotation { id: AnnotId(u32::MAX), kind: s.kind(view, v) };

@@ -1,6 +1,6 @@
 //! Building a sheet: views (their lines, centrelines, section and detail markings, labels),
-//! annotations (dimensions, hole tables, balloons, parts lists, notes), the border and the title
-//! block. Dimensions and the rest are worked out from the model's current geometry each time,
+//! annotations (dimensions and sets of them, hole tables, balloons, parts lists, notes), the border
+//! and the title block. Dimensions and the rest are worked out from the model's current geometry each time,
 //! so they follow model changes.
 
 use std::collections::BTreeMap;

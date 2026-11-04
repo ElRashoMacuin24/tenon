@@ -17,7 +17,7 @@ use tenon_geom::Vec2;
 
 use crate::annotate::{Resolved, format_number, pick_point, resolve_pick, to_sheet};
 use crate::graphics::{ARROW_LENGTH, Align, EXT_GAP, EXT_OVER, Graphics, Owner, Pen, TEXT};
-use crate::model::{AnnotKind, Annotation, Drawing, GeomPick, PickPoint, SetAxis, View, ViewId};
+use crate::model::{AnnotKind, Annotation, Drawing, GeomPick, Orientation, PickPoint, SetAxis, View, ViewId, ViewKind};
 use crate::stroke::text_width;
 use crate::views::{Evaluation, ModelGeometry, ViewGeometry, project};
 
@@ -359,9 +359,17 @@ pub fn layout(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetLayout,
     Ok(out)
 }
 
-/// A set that can be made: every place can be found, none is where the datum or origin is, and no
-/// two are in one place along what is measured. Returns how it lies.
+/// A set that can be made: in a view that is not isometric, every place can be found, none is where
+/// the datum or origin is, and no two are in one place along what is measured. Returns how it lies.
 pub fn check(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetLayout, String> {
+    let on_iso = a.kind.view().and_then(|v| d.view(v)).is_some_and(|v| match &v.kind {
+        ViewKind::Base { orientation: Orientation::Iso } => true,
+        ViewKind::Projected { side, .. } => side.diagonal(),
+        _ => false,
+    });
+    if on_iso {
+        return Err("an isometric view is not dimensioned: pick in a view that looks square on".into());
+    }
     let l = layout(d, ev, a)?;
     if let Some(p) = l.problem() {
         return Err(p);
@@ -432,7 +440,9 @@ pub fn default_at(d: &Drawing, ev: &Evaluation, view: ViewId, axis: SetAxis, roo
         .annotations
         .iter()
         .filter(|a| a.kind.view() == Some(view))
-        .filter(|a| matches!(a.kind, AnnotKind::Dimension { .. } | AnnotKind::Baseline { .. } | AnnotKind::Ordinate { .. } | AnnotKind::Balloon { .. }))
+        .filter(|a| {
+            matches!(a.kind, AnnotKind::Dimension { .. } | AnnotKind::Baseline { .. } | AnnotKind::Ordinate { .. } | AnnotKind::Balloon { .. })
+        })
         .filter_map(|a| sheet.bounds_of(Owner::Annotation(a.id)))
         .collect();
     let views: Vec<(Vec2, Vec2)> = d.views_on(v.sheet).filter(|o| o.id != view).filter_map(|o| sheet.bounds_of(Owner::View(o.id))).collect();
@@ -440,8 +450,7 @@ pub fn default_at(d: &Drawing, ev: &Evaluation, view: ViewId, axis: SetAxis, roo
     let free = |near: f64, far: f64| {
         let (a, b) = (near.min(far), near.max(far));
         let inside = a >= crate::sheets::BORDER && b <= axis.across(Vec2::new(sheet.width, sheet.height)) - crate::sheets::BORDER;
-        inside
-            && !views.iter().any(|(l, h)| axis.along(*l) < to && axis.along(*h) > from && axis.across(*l) < b && axis.across(*h) > a)
+        inside && !views.iter().any(|(l, h)| axis.along(*l) < to && axis.along(*h) > from && axis.across(*l) < b && axis.across(*h) > a)
     };
     let past_high = others.iter().map(|b| axis.across(b.1)).filter(|y| *y > axis.across(hi)).fold(axis.across(hi), f64::max) + OUTSIDE;
     let past_low = others.iter().map(|b| axis.across(b.0)).filter(|y| *y < axis.across(lo)).fold(axis.across(lo), f64::min) - OUTSIDE;
@@ -511,11 +520,7 @@ mod tests {
         let l = baseline(H, place(10.0), &places(&[40.0, 110.0, 70.0]), 150.0, 1.0, 8.0, 2);
         assert_eq!(l.step, Some(8.0));
         let rows: Vec<(Option<usize>, f64, &str, Option<f64>)> = l.rows.iter().map(|r| (r.place, r.value, r.shown.as_str(), r.level)).collect();
-        assert_eq!(
-            rows,
-            [(Some(0), 30.0, "30", Some(150.0)), (Some(2), 60.0, "60", Some(158.0)), (Some(1), 100.0, "100", Some(166.0))],
-            "{l:#?}"
-        );
+        assert_eq!(rows, [(Some(0), 30.0, "30", Some(150.0)), (Some(2), 60.0, "60", Some(158.0)), (Some(1), 100.0, "100", Some(166.0))], "{l:#?}");
         // Each text in the middle of its span, on its line.
         assert_eq!(l.rows[0].text, Vec2::new(125.0, 150.0));
         assert_eq!(l.rows[1].text, Vec2::new(140.0, 158.0));
@@ -527,7 +532,9 @@ mod tests {
         assert!(l.lines.contains(&vec![Vec2::new(210.0, 101.5), Vec2::new(210.0, 168.0)]), "{:?}", l.lines);
         // Two arrows a row, pointing out at the ends of the span.
         assert_eq!(l.arrows.len(), 6);
-        assert!(l.arrows.contains(&(Vec2::new(110.0, 150.0), Vec2::new(-1.0, 0.0))) && l.arrows.contains(&(Vec2::new(140.0, 150.0), Vec2::new(1.0, 0.0))));
+        assert!(
+            l.arrows.contains(&(Vec2::new(110.0, 150.0), Vec2::new(-1.0, 0.0))) && l.arrows.contains(&(Vec2::new(140.0, 150.0), Vec2::new(1.0, 0.0)))
+        );
         nothing_runs_into_anything(&l);
     }
 
@@ -574,7 +581,9 @@ mod tests {
         let want = 104.0 + ARROW_LENGTH + TAIL + half;
         assert!((l.rows[0].text.x - want).abs() < 1e-9, "{:?} {want}", l.rows[0]);
         // Arrows point in from outside.
-        assert!(l.arrows.contains(&(Vec2::new(100.0, 150.0), Vec2::new(1.0, 0.0))) && l.arrows.contains(&(Vec2::new(104.0, 150.0), Vec2::new(-1.0, 0.0))));
+        assert!(
+            l.arrows.contains(&(Vec2::new(100.0, 150.0), Vec2::new(1.0, 0.0))) && l.arrows.contains(&(Vec2::new(104.0, 150.0), Vec2::new(-1.0, 0.0)))
+        );
         // Where an extension line would run through the text, it is moved past it.
         let beyond = baseline(H, place(0.0), &places(&[4.0, 12.0, 60.0]), 150.0, 1.0, 8.0, 2);
         nothing_runs_into_anything(&beyond);
@@ -644,7 +653,8 @@ mod tests {
         assert_eq!(up.texts[0].0.x, 301.0);
         nothing_runs_into_anything(&up);
         // To the left of the view they end at the line's end the other way.
-        let left = ordinate(V, Place { along: 100.0, across: 100.0, model: 0.0 }, &[(0, Place { along: 140.0, across: 100.0, model: 40.0 })], 50.0, -1.0, 2);
+        let left =
+            ordinate(V, Place { along: 100.0, across: 100.0, model: 0.0 }, &[(0, Place { along: 140.0, across: 100.0, model: 40.0 })], 50.0, -1.0, 2);
         assert_eq!(left.texts[1].2, Align::Right);
         assert_eq!(left.texts[1].0, Vec2::new(49.0, 140.0 - TEXT / 2.0));
         assert_eq!(left.lines[1], [Vec2::new(98.5, 140.0), Vec2::new(50.0, 140.0)]);

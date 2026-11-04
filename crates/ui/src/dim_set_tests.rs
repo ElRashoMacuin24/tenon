@@ -95,7 +95,12 @@ fn panel(wb: &Workbench) -> Option<crate::dim_sets::SetPanel> {
 
 /// `shown` and `level` of each row of an annotation.
 fn rows(a: &Value) -> Vec<(String, f64)> {
-    a["rows"].as_array().unwrap_or_else(|| panic!("{a}")).iter().map(|r| (r["shown"].as_str().unwrap().to_owned(), r["level"].as_f64().unwrap_or(f64::NAN))).collect()
+    a["rows"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{a}"))
+        .iter()
+        .map(|r| (r["shown"].as_str().unwrap().to_owned(), r["level"].as_f64().unwrap_or(f64::NAN)))
+        .collect()
 }
 
 fn shown(a: &Value) -> Vec<String> {
@@ -157,7 +162,19 @@ fn a_baseline_set_is_made_changed_moved_and_deleted_by_clicking() {
     assert_eq!(panel(&wb).unwrap().targets.len(), 4);
     assert!(info(&mut wb)["annotations"].as_array().unwrap().is_empty(), "nothing is made yet");
 
-    // Above the view it shows where it would go; a click puts it there, at 110 in the view.
+    // It shows where it would go, by where the pointer is: to the right of the view it measures up
+    // the sheet, above it across, with two arrows a dimension that has a length.
+    let preview = |wb: &Workbench, at: Vec2| {
+        let dr = wb.drawing().unwrap();
+        let ev = dr.evaluation().unwrap();
+        let a = panel(wb).unwrap().annotation_at(dr.drawing(), ev, Some(at)).expect("something to show");
+        let axis = tenon_drawing::dimsets::parts(&a.kind).unwrap().axis;
+        (axis, tenon_drawing::annotate::one(dr.drawing(), ev, &a).fills.len())
+    };
+    let (right_of, above) = (sheet(&mut wb, 180.0, 40.0), sheet(&mut wb, 60.0, 110.0));
+    assert_eq!(preview(&wb, right_of), (tenon_drawing::SetAxis::Vertical, 4), "the counterbore and the right side are level with the datum");
+    assert_eq!(preview(&wb, above), (tenon_drawing::SetAxis::Horizontal, 8));
+    // Above the view, a click puts it there, at 110 in the view.
     let place = in_view(&mut wb, 60.0, 110.0);
     d.frame(&mut wb, vec![egui::Event::PointerMoved(place)]);
     settle(&mut d, &mut wb, 2);
@@ -239,12 +256,38 @@ fn a_baseline_set_is_made_changed_moved_and_deleted_by_clicking() {
     let after = info(&mut wb)["annotations"][0]["rows"][0]["at"].clone();
     assert!((after[1].as_f64().unwrap() - before[1].as_f64().unwrap() + 30.0 / px).abs() < 0.05, "{before} {after}");
 
-    // Its browser row: a double-click opens the panel again, its menu deletes it.
+    // Its browser row: a double-click opens the panel again. A spacing that is not one is refused
+    // in words. Change waits for a click for the new datum. Cancel keeps it all as it was.
     let row = browser_row(&d, "Baseline 1: 3 dimension(s)").center();
     double_click(&mut d, &mut wb, row);
     assert_eq!(panel(&wb).map(|p| p.annotation), Some(Some(AnnotId(1))));
+    let kept = info(&mut wb)["annotations"][0].clone();
+    type_into(&mut d, &mut wb, "tn_set_spacing", "wide");
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(wb.status().contains("spacing is a number") && panel(&wb).is_some(), "{}", wb.status());
+    type_into(&mut d, &mut wb, "tn_set_spacing", "12");
+    press(&mut d, &mut wb, "tn_set_change");
+    assert!(panel(&wb).unwrap().choosing_from);
+    assert!(wb.status().contains("new datum"), "{}", wb.status());
+    let side = in_view(&mut wb, 0.0, 40.0);
+    d.click(&mut wb, side);
+    let p = panel(&wb).unwrap();
+    assert!(!p.choosing_from && p.targets.len() == 3, "{p:?}");
     press(&mut d, &mut wb, "tn_set_cancel");
     assert!(panel(&wb).is_none());
+    assert_eq!(info(&mut wb)["annotations"][0], kept, "cancelled");
+    // For good: the right side was a place; as the datum it stops being one. From it, the hole at
+    // 105 is 15 away and the counterbore at 60 is 60.
+    let row = browser_row(&d, "Baseline 1: 3 dimension(s)").center();
+    double_click(&mut d, &mut wb, row);
+    press(&mut d, &mut wb, "tn_set_change");
+    let side = in_view(&mut wb, 120.0, 40.0);
+    d.click(&mut wb, side);
+    assert_eq!(panel(&wb).unwrap().targets.len(), 2);
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["15", "60"], "{}", wb.status());
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    settle(&mut d, &mut wb, 2);
     let row = browser_row(&d, "Baseline 1: 3 dimension(s)").center();
     right_click(&mut d, &mut wb, row);
     press(&mut d, &mut wb, "tn_set_row_delete");
@@ -351,6 +394,41 @@ fn an_ordinate_set_goes_where_it_is_clicked_with_its_values_kept_apart() {
     d.tap(&mut wb, egui::Key::Escape);
     assert!(panel(&wb).is_none());
     assert_eq!(info(&mut wb)["annotations"].as_array().unwrap().len(), 1);
+
+    // OK with nothing picked says what is missing. With a direction chosen in the panel and no
+    // place clicked, it goes outside the view: above it, horizontal, from the bottom left corner's
+    // left side to the right side.
+    press(&mut d, &mut wb, "ribbon drw.ordinate");
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(wb.status().contains("click the origin first") && panel(&wb).is_some(), "{}", wb.status());
+    let (from, to) = (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 120.0, 40.0));
+    d.click(&mut wb, from);
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(wb.status().contains("at least one"), "{}", wb.status());
+    d.click(&mut wb, to);
+    press(&mut d, &mut wb, "tn_set_axis_h");
+    press(&mut d, &mut wb, "tn_set_ok");
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    let i = info(&mut wb);
+    let set = &i["annotations"][1];
+    assert_eq!((set["axis"].as_str(), shown(set)), (Some("horizontal"), vec!["0".to_owned(), "120".to_owned()]), "{i}");
+    let top = sheet(&mut wb, 0.0, 80.0).y;
+    assert!(set["rows"][0]["at"][1].as_f64().unwrap() > top + 10.0, "above the view: {set}");
+
+    // Near a line's end, that end: the front edge clicked near its left end is the origin, and near
+    // its right end the place, 120 from it; the same edge, two points of it, one set.
+    press(&mut d, &mut wb, "ribbon drw.ordinate");
+    let (near_left, near_right) = (in_view(&mut wb, 8.0, 0.0), in_view(&mut wb, 112.0, 0.0));
+    d.click(&mut wb, near_left);
+    d.click(&mut wb, near_right);
+    let p = panel(&wb).unwrap();
+    let (one, other) = (p.from.as_ref().unwrap().point, p.targets[0].point);
+    assert!(one != other && one != tenon_drawing::PickPoint::Whole && other != tenon_drawing::PickPoint::Whole, "{p:?}");
+    let below = in_view(&mut wb, 60.0, -30.0);
+    d.click(&mut wb, below);
+    let i = info(&mut wb);
+    let last = i["annotations"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!((last["axis"].as_str(), shown(&last)), (Some("horizontal"), vec!["0".to_owned(), "120".to_owned()]), "{last}");
 }
 
 #[test]

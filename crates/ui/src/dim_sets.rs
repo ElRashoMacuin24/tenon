@@ -67,7 +67,7 @@ impl SetPanel {
         })
     }
 
-    fn from_word(&self) -> &'static str {
+    fn datum_word(&self) -> &'static str {
         if self.ordinate { "Origin" } else { "Datum" }
     }
 
@@ -85,7 +85,7 @@ impl SetPanel {
     }
 
     /// The set as it would be: at `at`, or where it has been put.
-    fn annotation_at(&self, d: &Drawing, ev: &Evaluation, at: Option<Vec2>) -> Option<Annotation> {
+    pub(crate) fn annotation_at(&self, d: &Drawing, ev: &Evaluation, at: Option<Vec2>) -> Option<Annotation> {
         let view = self.view?;
         let from = self.from.clone()?;
         if self.targets.is_empty() {
@@ -152,7 +152,10 @@ impl Workbench {
         let (sheet, panel) = (view.sheet, SetPanel::of(a, &note.kind, view.center).ok_or("that is not a set of dimensions")?);
         let prompt = panel.prompt();
         d.selected = Some(Owner::Annotation(a));
-        d.sheet = sheet;
+        if sheet != d.sheet {
+            d.sheet = sheet;
+            d.fitted = false;
+        }
         d.tool = Some(DrwTool::Set(Box::new(panel)));
         self.set_status(prompt);
         Ok(())
@@ -198,7 +201,7 @@ impl Workbench {
             return Ok(());
         }
         if panel.from.as_ref().is_some_and(|f| same_place(f, &pick)) {
-            return Err(format!("that is the {}: click what to measure from it", panel.from_word().to_lowercase()));
+            return Err(format!("that is the {}: click what to measure from it", panel.datum_word().to_lowercase()));
         }
         if let Some(i) = panel.targets.iter().position(|t| same_place(t, &pick)) {
             panel.targets.remove(i);
@@ -232,7 +235,7 @@ impl Workbench {
     fn finish_set(&mut self, panel: &SetPanel) -> Result<(), String> {
         let word = if panel.ordinate { "Ordinate" } else { "Baseline" };
         let spacing = panel.spacing_value().ok_or("the spacing is a number of millimetres on the sheet, more than 0 and at most 1000")?;
-        let from = panel.from.as_ref().ok_or_else(|| format!("click the {} first", panel.from_word().to_lowercase()))?;
+        let from = panel.from.as_ref().ok_or_else(|| format!("click the {} first", panel.datum_word().to_lowercase()))?;
         if panel.targets.is_empty() {
             return Err("click at least one edge or point to measure".into());
         }
@@ -299,11 +302,13 @@ impl Workbench {
         let Some(d) = self.drw.as_ref() else { return };
         let Some(DrwTool::Set(panel)) = d.tool.clone() else { return };
         let mut dlg = *panel;
+        let asked = dlg.prompt();
         // What each place measures now, for the list.
         let shown: Vec<String> = {
             let ev = d.session.evaluation().or(d.session.last_evaluation());
-            let at = dlg.at.or(Some(Vec2::new(0.0, 0.0)));
-            let rows = ev.and_then(|ev| dlg.annotation_at(d.session.drawing(), ev, at).and_then(|a| dimsets::layout(d.session.drawing(), ev, &a).ok()));
+            let at = dlg.at.or(d.pointer).or(Some(Vec2::new(0.0, 0.0)));
+            let rows =
+                ev.and_then(|ev| dlg.annotation_at(d.session.drawing(), ev, at).and_then(|a| dimsets::layout(d.session.drawing(), ev, &a).ok()));
             (0..dlg.targets.len())
                 .map(|i| {
                     let row = rows.as_ref().and_then(|l| l.rows.iter().find(|r| r.place == Some(i)));
@@ -317,7 +322,7 @@ impl Workbench {
         let corner = [(self.view.rect.right() - 300.0).max(self.view.rect.left()), self.view.rect.top() + 40.0];
         egui::Window::new(title).open(&mut open).collapsible(false).resizable(false).default_width(270.0).default_pos(corner).show(ctx, |ui| {
             egui::Grid::new("tn_set_panel").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label(dlg.from_word());
+                ui.label(dlg.datum_word());
                 ui.horizontal(|ui| {
                     ui.label(if dlg.from.is_some() && !dlg.choosing_from { "picked" } else { "click it in a view" });
                     if dlg.from.is_some() && button(ui, "Change", "tn_set_change").clicked() {
@@ -397,6 +402,8 @@ impl Workbench {
                 d.tool = None;
             }
             self.set_status("Ready");
+        } else if dlg.prompt() != asked {
+            self.set_status(dlg.prompt());
         }
     }
 }

@@ -36,7 +36,11 @@ fn plate(e: &mut Engine) {
         "sketch.constrain",
         json!({ "sketch": sk, "constraint": { "type": "horizontal_distance", "a": corners[0], "b": corners[1], "value": 100.0 }, "equation": "w" }),
     );
-    run(e, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "vertical_distance", "a": corners[0], "b": corners[3], "value": 60.0 } }));
+    run(
+        e,
+        "sketch.constrain",
+        json!({ "sketch": sk, "constraint": { "type": "vertical_distance", "a": corners[0], "b": corners[3], "value": 60.0 } }),
+    );
     let body = run(e, "model.extrude", json!({ "sketch": sk, "distance": 10, "equations": { "/extent/distance": "t" } }))["feature"].clone();
     let top = run(e, "model.face_ref", json!({ "origin": { "type": "cap", "feature": body, "end": "end" } }));
     let holes = run(e, "sketch.create", json!({ "face": top }))["feature"].clone();
@@ -168,12 +172,18 @@ fn baseline_sets_measure_from_their_datum_and_follow_the_model() {
     assert!(one_more(&mut e, json!({ "annotation": set, "remove": [0, 1, 2] })).contains("at least one place"));
     assert!(one_more(&mut e, json!({ "annotation": set, "remove": [7] })).contains("places are 0 to 2"));
     assert!(one_more(&mut e, json!({ "annotation": set, "text": "<> TYP" })).contains("no text"));
-    assert!(one_more(&mut e, json!({ "annotation": set, "axis": "vertical" })).contains("where the datum is"), "the right side is level with the left");
+    assert!(
+        one_more(&mut e, json!({ "annotation": set, "axis": "vertical" })).contains("where the datum is"),
+        "the right side is level with the left"
+    );
     assert!(one_more(&mut e, json!({ "annotation": set, "spacing": 0 })).contains("spacing"));
     let refuse = |e: &mut Engine, p: Value| e.exec("drw.baseline", &p).unwrap_err();
     assert!(refuse(&mut e, json!({ "view": view, "datum": bottom, "targets": [] })).contains("at least one"));
     assert!(refuse(&mut e, json!({ "view": view, "datum": bottom, "targets": [bottom], "axis": "vertical" })).contains("where the datum is"));
-    assert!(refuse(&mut e, json!({ "view": view, "datum": bottom, "targets": [1], "axis": "vertical" })).contains("must be an object"), "by its schema");
+    assert!(
+        refuse(&mut e, json!({ "view": view, "datum": bottom, "targets": [1], "axis": "vertical" })).contains("must be an object"),
+        "by its schema"
+    );
     assert_eq!(run(&mut e, "drw.info", json!({}))["annotations"], before["annotations"]);
     // Only a set takes what only a set takes.
     let note = run(&mut e, "drw.note", json!({ "text": "NOTE", "at": [30, 30] }))["annotation"].clone();
@@ -208,7 +218,10 @@ fn ordinate_sets_read_positions_from_their_origin_and_follow_the_model() {
     let up = run(&mut e, "drw.ordinate", json!({ "view": view, "origin": bottom, "targets": [hole1, hole2, top], "at": [220, 130], "precision": 1 }));
     assert_eq!(up["axis"], "vertical", "{up}");
     let half = |s: &str| tenon_drawing::stroke::text_width(s, 3.5) / 2.0;
-    rows_are(&up, &[("0", 221.0 + half("0"), 100.0), ("20", 221.0 + half("20"), 120.0), ("40", 221.0 + half("40"), 140.0), ("60", 221.0 + half("60"), 160.0)]);
+    rows_are(
+        &up,
+        &[("0", 221.0 + half("0"), 100.0), ("20", 221.0 + half("20"), 120.0), ("40", 221.0 + half("40"), 140.0), ("60", 221.0 + half("60"), 160.0)],
+    );
 
     // It follows the model: w = 120, hx = 36: the origin moved, so every reading did. The view's
     // middle is now at x = 60, so x on the sheet is 90 + x.
@@ -251,7 +264,11 @@ fn sets_are_saved_read_back_to_the_same_bytes_and_go_to_pdf_and_dxf() {
     let view = top_view(&mut e, 1.0);
     let (left, right, hole1, hole2) =
         (pick(&mut e, &view, 0.0, 30.0), pick(&mut e, &view, 100.0, 30.0), pick(&mut e, &view, 34.0, 20.0), pick(&mut e, &view, 74.0, 40.0));
-    run(&mut e, "drw.baseline", json!({ "view": view, "datum": left, "targets": [hole1, hole2, right], "at": [150, 180], "spacing": 9.5, "precision": 3 }));
+    run(
+        &mut e,
+        "drw.baseline",
+        json!({ "view": view, "datum": left, "targets": [hole1, hole2, right], "at": [150, 180], "spacing": 9.5, "precision": 3 }),
+    );
     let bottom = pick(&mut e, &view, 50.0, 0.0);
     let top = pick(&mut e, &view, 50.0, 60.0);
     run(&mut e, "drw.ordinate", json!({ "view": view, "origin": bottom, "targets": [hole1, hole2, top], "at": [80, 130], "axis": "vertical" }));
@@ -317,7 +334,10 @@ fn sets_are_saved_read_back_to_the_same_bytes_and_go_to_pdf_and_dxf() {
         .filter(|(k, r)| k == "LINE" && r.iter().any(|t| t.code == 8 && t.str() == "THIN"))
         .map(|(_, r)| [10, 20, 11, 21].map(|c| r.iter().find(|t| t.code == c).map_or(f64::NAN, tenon_dxf::Tag::f64)))
         .collect();
-    assert!(thin.iter().any(|l| (l[0] - 100.0).abs() < 1e-6 && (l[1] - 161.5).abs() < 1e-6 && (l[2] - 100.0).abs() < 1e-6 && (l[3] - 201.0).abs() < 1e-6), "{thin:?}");
+    assert!(
+        thin.iter().any(|l| (l[0] - 100.0).abs() < 1e-6 && (l[1] - 161.5).abs() < 1e-6 && (l[2] - 100.0).abs() < 1e-6 && (l[3] - 201.0).abs() < 1e-6),
+        "{thin:?}"
+    );
 
     // The PDF: read back as a reader does, with the values among its words.
     run(&mut e, "drw.export.pdf", json!({ "path": "sets.pdf" }));
@@ -333,6 +353,11 @@ fn sets_are_saved_read_back_to_the_same_bytes_and_go_to_pdf_and_dxf() {
     assert_eq!(run(&mut e, "drw.info", json!({}))["annotations"].as_array().unwrap().len(), 1);
     run(&mut e, "drw.undo", json!({}));
     assert_eq!(run(&mut e, "drw.info", json!({}))["annotations"].as_array().unwrap().len(), 2);
+    // `tenon-cli diff` tells of them as of other annotations.
+    run(&mut e, "drw.annotation.edit", json!({ "annotation": id, "spacing": 20 }));
+    run(&mut e, "drw.save", json!({ "path": "changed.tenondrw" }));
+    let told = tenon_io::diff::diff_files(&dir.join("sets.tenondrw"), &dir.join("changed.tenondrw")).unwrap().text();
+    assert!(told.contains("spacing"), "{told}");
     // A template keeps no set: they need a model.
     assert!(tenon_io::drw::as_template(&d, "T").annotations.is_empty());
 }
@@ -366,6 +391,13 @@ fn a_set_at_another_scale_reads_model_millimetres_and_what_it_has_lost_is_said()
     let past = 175.0 + tenon_drawing::stroke::text_width("100", 3.5) / 2.0 + 10.0;
     assert!((r["rows"][0]["level"].as_f64().unwrap() - past).abs() < 1e-6, "{r}");
 
+    // An isometric view is not dimensioned, as Suggest Dimensions says too.
+    let iso = run(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "iso", "scale": 0.5, "at": [320, 200] }))["view"].clone();
+    let edges = run(&mut e, "drw.pick", json!({ "view": iso, "edge": { "index": 0 } }));
+    let more = run(&mut e, "drw.pick", json!({ "view": iso, "edge": { "index": 3 } }));
+    let err = e.exec("drw.baseline", &json!({ "view": iso, "datum": edges, "targets": [more] })).unwrap_err();
+    assert!(err.contains("isometric"), "{err}");
+
     // A hole gone from the model: what can still be found is drawn, and the rest is said. Delete
     // the hole feature: of the first set, the hole places are lost, the right side is not.
     run(&mut e, "file.open", json!({ "path": "plate.tenon" }));
@@ -389,13 +421,34 @@ fn a_set_at_another_scale_reads_model_millimetres_and_what_it_has_lost_is_said()
 }
 
 #[test]
+fn suggestions_leave_out_what_a_set_already_gives() {
+    let dir = scratch("suggest");
+    let mut e = Engine::new(Box::new(OcctKernel::new()), &dir);
+    plate(&mut e);
+    let view = top_view(&mut e, 1.0);
+    let words = |r: &Value| -> Vec<String> {
+        r["suggestions"].as_array().unwrap().iter().map(|s| format!("{} {}", s["type"].as_str().unwrap(), s["shown"].as_str().unwrap())).collect()
+    };
+    let before = words(&run(&mut e, "drw.dimension.suggest", json!({ "view": view })));
+    assert!(before.contains(&"horizontal 100".to_owned()) && before.contains(&"vertical 60".to_owned()), "{before:?}");
+    let (left, right) = (pick(&mut e, &view, 0.0, 30.0), pick(&mut e, &view, 100.0, 30.0));
+    run(&mut e, "drw.baseline", json!({ "view": view, "datum": left, "targets": [right], "at": [150, 180] }));
+    let (bottom, top) = (pick(&mut e, &view, 50.0, 0.0), pick(&mut e, &view, 50.0, 60.0));
+    run(&mut e, "drw.ordinate", json!({ "view": view, "origin": bottom, "targets": [top], "at": [220, 130] }));
+    let after = words(&run(&mut e, "drw.dimension.suggest", json!({ "view": view })));
+    assert!(!after.iter().any(|w| w == "horizontal 100" || w == "vertical 60"), "{after:?}");
+    assert_eq!(after.len(), before.len() - 2, "{after:?}");
+}
+
+#[test]
 fn a_set_in_an_assembly_view_measures_across_its_parts() {
     let dir = scratch("assembly");
     let r = tenon_cli::demo_m4(Box::new(OcctKernel::new()), &dir).unwrap();
     assert_eq!(r.json["ok"], true, "{}", r.text);
     let mut e = Engine::new(Box::new(OcctKernel::new()), &dir);
     run(&mut e, "drw.new", json!({ "name": "Assembly" }));
-    let view = run(&mut e, "drw.view.base", json!({ "model": "plate-pins.tenonasm", "orientation": "top", "scale": 1, "at": [150, 130] }))["view"].clone();
+    let view =
+        run(&mut e, "drw.view.base", json!({ "model": "plate-pins.tenonasm", "orientation": "top", "scale": 1, "at": [150, 130] }))["view"].clone();
     // The plate's left side, and the heads of the pins (radius 7) at (15, 15) and (105, 65).
     let left = pick(&mut e, &view, 0.0, 40.0);
     assert!(left["kind"] == "line" && left["component"].is_number(), "{left}");
