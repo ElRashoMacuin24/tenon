@@ -336,6 +336,44 @@ fn wrapped_round_a_cylinder_its_length_is_kept_along_the_round() {
 }
 
 #[test]
+fn wrapped_it_lies_where_the_sketch_says_and_reads_as_it_does() {
+    let (r, d) = (10.0f64, 2.0f64);
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    shaft(&mut s, &mut k, r, 50.0);
+    let face = run(&mut s, &mut k, "model.face_ref", json!({ "at": [25.0, r, 0.0] }));
+    // 12 along the shaft from x = 10, and from 2 to 10 to the +Y side of the plane over the axis.
+    let sk = rect_above(&mut s, &mut k, 15.0, [10.0, 2.0, 22.0, 10.0]);
+    let e = feature(&run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": d, "wrap": face })));
+    volume(&mut s, &mut k);
+    let faces = run(&mut s, &mut k, "model.faces", json!({}));
+    let top = faces["faces"].as_array().unwrap().iter().find(|f| f["name"] == json!({ "type": "cap", "feature": e, "end": "end" })).unwrap();
+    // Its top: 12 long, and 8 / r radians of the round at r + d: from 0.2 to 1.0 rad round from the
+    // top toward +Y (as the sketch has it from above), about x = 16.
+    near(top["area"].as_f64().unwrap(), 12.0 * 0.8 * (r + d), 1e-3);
+    let c = &top["centroid"];
+    near(c[0].as_f64().unwrap(), 16.0, 1e-3);
+    // The middle of the arc is 0.6 rad round; the centroid of an arc of half angle 0.4 lies at
+    // r sin(0.4) / 0.4 along that.
+    let along = (r + d) * 0.4f64.sin() / 0.4;
+    near(c[1].as_f64().unwrap(), along * 0.6f64.sin(), 1e-3);
+    near(c[2].as_f64().unwrap(), along * 0.6f64.cos(), 1e-3);
+
+    // With the sketch's plane looking at the shaft from below instead, and the part seen from
+    // there: on the underside, the same way round the axis from the sketch's Y as it looks.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    shaft(&mut s, &mut k, r, 50.0);
+    let face = run(&mut s, &mut k, "model.face_ref", json!({ "at": [25.0, r, 0.0] }));
+    let sk = rect_above(&mut s, &mut k, -15.0, [10.0, 2.0, 22.0, 10.0]);
+    let e = feature(&run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": d, "wrap": face })));
+    volume(&mut s, &mut k);
+    let faces = run(&mut s, &mut k, "model.faces", json!({}));
+    let top = faces["faces"].as_array().unwrap().iter().find(|f| f["name"] == json!({ "type": "cap", "feature": e, "end": "end" })).unwrap();
+    let c = &top["centroid"];
+    near(c[1].as_f64().unwrap(), along * 0.6f64.sin(), 1e-3);
+    near(c[2].as_f64().unwrap(), -along * 0.6f64.cos(), 1e-3);
+}
+
+#[test]
 fn on_the_far_side_of_a_cylinder_and_inside_a_hole() {
     let (r, d, w, len) = (10.0, 2.0, 8.0, 12.0);
     // Reversed: on the side of the shaft away from the sketch.
