@@ -267,6 +267,10 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- Command search ranks what works where you are first. Enter on a name that several commands have ran
+  the first in the list, whichever environment it was for: Mirror and Copy in an assembly said "that
+  works on a part", Text and Dimension in a drawing were refused, and Line in a 3D sketch closed it to
+  ask for a plane. And a command that is refused no longer closes the 3D sketch it was asked for in.
 - On the flat pattern, keys, command search and the title bar still reached the part behind it: Measure
   and Extrude's panels asked for clicks on faces not on the screen, and E then Enter made a feature
   unseen. What is on the folded part now says so.

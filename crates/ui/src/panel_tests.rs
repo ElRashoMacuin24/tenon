@@ -749,7 +749,7 @@ fn an_angle_comes_back_as_it_was_through_the_panels_degrees() {
 
 #[test]
 fn command_search_finds_what_a_button_reads_and_keeps_enter_to_itself() {
-    assert!(crate::commands::search("go to flat").iter().any(|c| c.id == "sheet.flat_view"));
+    assert!(crate::commands::search("go to flat", crate::commands::Env::Part { sketching: false }).iter().any(|c| c.id == "sheet.flat_view"));
     let (mut wb, mut d, _) = block_and_a_circle_on_top();
     d.tap(&mut wb, egui::Key::E);
     d.frame(&mut wb, vec![]);

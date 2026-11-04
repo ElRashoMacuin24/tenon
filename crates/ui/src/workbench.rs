@@ -459,12 +459,22 @@ impl Workbench {
     }
 
     /// Runs a command without asking to save first. One whose panel takes clicks on the part leaves
-    /// a 2D sketch as it opens; one that is refused leaves things as they were.
+    /// a 2D sketch as it opens, and modelling from inside a 3D sketch leaves that; one that is
+    /// refused leaves things as they were.
     pub(crate) fn run_unprompted(&mut self, id: &str) -> Result<(), String> {
         let leave = self.is_sketching() && PICK_ON_THE_PART.contains(&id);
+        let leave3d = self.is_sketching3d()
+            && id != "sketch.new_3d"
+            && id != "model.rebuild"
+            && ["sketch.", "model.", "work.", "sheet."].iter().any(|p| id.starts_with(p));
         self.run_here(id)?;
         if leave {
             self.leave_sketch_for_panel();
+        }
+        if leave3d && self.is_sketching3d() {
+            let (said, error) = (self.status.clone(), self.status_error);
+            self.finish_sketch3d();
+            (self.status, self.status_error) = (said, error);
         }
         Ok(())
     }
@@ -481,14 +491,6 @@ impl Workbench {
     }
 
     fn run_here(&mut self, id: &str) -> Result<(), String> {
-        // Modelling from inside a 3D sketch leaves it first, as from inside a 2D sketch.
-        if self.is_sketching3d()
-            && id != "sketch.new_3d"
-            && ["sketch.", "model.", "work.", "sheet."].iter().any(|p| id.starts_with(p))
-            && id != "model.rebuild"
-        {
-            self.finish_sketch3d();
-        }
         let export_2d = matches!(id, "export.pdf" | "export.svg" | "export.dxf");
         if id.starts_with("drw.") || id == "file.new_drawing" || id == "file.new_drawing_template" || export_2d {
             return self.run_drw_ui(id);
@@ -1184,6 +1186,19 @@ impl Workbench {
         }
     }
 
+    /// Which commands are the ones for here.
+    pub(crate) fn command_env(&self) -> commands::Env {
+        if self.in_drawing() {
+            commands::Env::Drawing
+        } else if self.in_assembly() {
+            commands::Env::Assembly
+        } else if self.is_sketching3d() {
+            commands::Env::Sketch3d
+        } else {
+            commands::Env::Part { sketching: self.is_sketching() }
+        }
+    }
+
     fn shortcuts(&mut self, ui: &Ui) {
         if ui.ctx().egui_wants_keyboard_input() {
             return;
@@ -1215,17 +1230,8 @@ impl Workbench {
                     _ => None,
                 })
             });
-            let env = if self.in_drawing() {
-                commands::Env::Drawing
-            } else if self.in_assembly() {
-                commands::Env::Assembly
-            } else if self.is_sketching3d() {
-                commands::Env::Sketch3d
-            } else {
-                commands::Env::Part { sketching: self.is_sketching() }
-            };
             if let Some(k) = letter
-                && let Some(c) = commands::for_key(k.name(), env)
+                && let Some(c) = commands::for_key(k.name(), self.command_env())
             {
                 self.command(c.id);
             }

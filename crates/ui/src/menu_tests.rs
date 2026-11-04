@@ -643,6 +643,67 @@ fn the_flat_pattern_refuses_in_words_what_is_on_the_folded_part() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Types into the command search and presses Enter, as someone would.
+fn search_and_run(d: &mut Driver, wb: &mut Workbench, name: &str) {
+    let width = wb.view.rect.right();
+    d.click(wb, egui::pos2(width - 32.0 - 246.0 + 100.0, crate::chrome::TITLE_H / 2.0));
+    d.frame(wb, vec![egui::Event::Text(name.into())]);
+    d.frame(wb, vec![]);
+    d.tap(wb, egui::Key::Enter);
+    d.frame(wb, vec![]);
+}
+
+/// Enter on an exact name ran the command of another environment, and refused or did the wrong thing.
+#[test]
+fn a_name_typed_into_search_runs_the_command_of_where_you_are() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("search");
+    let (part, assembly, drawing) = (dir.join("part.tenon"), dir.join("pair.tenonasm"), dir.join("plan.tenondrw"));
+    part_file(&part);
+    assembly_file(&assembly, &part);
+    drawing_file(&drawing, &part);
+    let mut wb = window(&dir);
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    // In an assembly.
+    for (name, id) in [("Mirror", "asm.mirror"), ("Copy", "asm.copy")] {
+        wb.open(&assembly).unwrap();
+        idle(&mut d, &mut wb);
+        wb.ran.clear();
+        search_and_run(&mut d, &mut wb, name);
+        assert_eq!(wb.ran, [id]);
+        assert!(!wb.status_error, "{name}: {}", wb.status());
+        assert!(wb.panel.is_some(), "{name}: its panel: {}", wb.status());
+        wb.panel = None;
+    }
+    // In a drawing.
+    wb.open(&drawing).unwrap();
+    idle(&mut d, &mut wb);
+    wb.ran.clear();
+    search_and_run(&mut d, &mut wb, "Dimension");
+    assert_eq!(wb.ran, ["drw.dimension"]);
+    assert!(!wb.status_error, "{}", wb.status());
+    // In a 3D sketch: it stays in it.
+    wb.open(&part).unwrap();
+    idle(&mut d, &mut wb);
+    wb.run_ui("sketch.new_3d").unwrap();
+    idle(&mut d, &mut wb);
+    for (name, id) in [("Line", "sketch3d.line"), ("Dimension", "sketch3d.dimension"), ("Point", "sketch3d.point"), ("Bend", "sketch3d.bend")] {
+        wb.ran.clear();
+        search_and_run(&mut d, &mut wb, name);
+        assert_eq!(wb.ran, [id]);
+        assert!(wb.is_sketching3d(), "{name} stays in the 3D sketch: {}", wb.status());
+    }
+    // A command refused does not leave it, and one that goes ahead does.
+    assert!(wb.run_ui("sheet.bend").is_err());
+    assert!(wb.is_sketching3d(), "this is no sheet metal part, and the 3D sketch stays open");
+    assert!(wb.run_ui("sheet.export_dxf").is_err());
+    assert!(wb.is_sketching3d());
+    wb.run_ui("model.extrude").unwrap();
+    assert!(!wb.is_sketching3d());
+    assert!(wb.status().starts_with("Extrude"), "what it asks for stays said: {}", wb.status());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

@@ -545,7 +545,7 @@ impl Workbench {
     fn command_search(&mut self, ui: &mut Ui, rect: Rect, t: &Tokens) {
         let id = egui::Id::new("tn_search");
         let focused = ui.memory(|m| m.has_focus(id));
-        let results: Vec<&'static UiCommand> = commands::search(&self.chrome.search).into_iter().take(12).collect();
+        let results: Vec<&'static UiCommand> = commands::search(&self.chrome.search, self.command_env()).into_iter().take(12).collect();
         if focused && !results.is_empty() {
             let n = results.len();
             if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) {

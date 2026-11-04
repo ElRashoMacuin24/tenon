@@ -1108,8 +1108,26 @@ pub enum Env {
     Drawing,
 }
 
-/// Commands matching a search, best first: label prefix, then word prefix, then substring.
-pub fn search(query: &str) -> Vec<&'static UiCommand> {
+/// Whether `c` works where `env` says the window is: among commands of one name, the one that does
+/// is the one meant. (Mirror is a part's, a sketch's and an assembly's.)
+fn is_here(c: &UiCommand, env: Env) -> bool {
+    let on = |ribbon: &[RibbonTab]| {
+        ribbon.iter().flat_map(|t| t.panels.iter()).flat_map(|p| p.commands.iter()).any(|x| x.id == c.id || x.more.contains(&c.id))
+    };
+    match env {
+        Env::Drawing => on(DRW_RIBBON) || c.id.starts_with("drw.") || DRW_FILE_MENU.iter().any(|(_, id)| *id == c.id),
+        Env::Assembly => on(ASM_RIBBON) || c.id.starts_with("asm."),
+        Env::Sketch3d => c.id.starts_with("sketch3d."),
+        Env::Part { sketching: true } => c.id.starts_with("sketch."),
+        Env::Part { sketching: false } => {
+            !["sketch3d.", "asm.", "drw."].iter().any(|p| c.id.starts_with(p)) && !["export.pdf", "export.svg", "export.dxf"].contains(&c.id)
+        }
+    }
+}
+
+/// Commands matching a search, best first: label prefix, then word prefix, then substring; and
+/// within each, what works in `env` before what does not.
+pub fn search(query: &str, env: Env) -> Vec<&'static UiCommand> {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
         return Vec::new();
@@ -1133,7 +1151,7 @@ pub fn search(query: &str) -> Vec<&'static UiCommand> {
             Some((rank, c))
         })
         .collect();
-    scored.sort_by_key(|(r, c)| (*r, c.name()));
+    scored.sort_by_key(|(r, c)| (*r, !is_here(c, env), c.name()));
     scored.into_iter().map(|(_, c)| c).collect()
 }
 
@@ -1188,13 +1206,50 @@ mod tests {
         assert_eq!(names, ["Place Views", "Annotate", "Tools", "Manage", "View"]);
     }
 
+    /// A name that several commands have is the one that works here, with the others below it.
+    #[test]
+    fn a_name_searched_for_is_the_command_of_where_you_are() {
+        let sketch = Env::Part { sketching: true };
+        let part = Env::Part { sketching: false };
+        for (env, name, id) in [
+            (Env::Assembly, "Mirror", "asm.mirror"),
+            (Env::Assembly, "Copy", "asm.copy"),
+            (Env::Assembly, "Pattern", "asm.pattern"),
+            (Env::Assembly, "Update", "asm.update"),
+            (Env::Drawing, "Text", "drw.text"),
+            (Env::Drawing, "Dimension", "drw.dimension"),
+            (Env::Drawing, "Hole", "drw.hole_table"),
+            (Env::Drawing, "Update", "drw.update"),
+            (Env::Drawing, "Export DXF", "export.dxf"),
+            (Env::Drawing, "Export SVG", "export.svg"),
+            (sketch, "Spline", "sketch.spline"),
+            (sketch, "Break Link", "sketch.break_link"),
+            (sketch, "Point", "sketch.point"),
+            (sketch, "Mirror", "sketch.mirror"),
+            (Env::Sketch3d, "Line", "sketch3d.line"),
+            (Env::Sketch3d, "Dimension", "sketch3d.dimension"),
+            (Env::Sketch3d, "Point", "sketch3d.point"),
+            (Env::Sketch3d, "Bend", "sketch3d.bend"),
+            (Env::Sketch3d, "Spline", "sketch3d.spline"),
+            (part, "Mirror", "model.mirror"),
+            (part, "Bend", "sheet.bend"),
+            (part, "Line", "sketch.line"),
+            (part, "Export DXF", "sheet.export_dxf"),
+        ] {
+            let found = search(name, env);
+            assert_eq!(found.first().map(|c| c.id), Some(id), "{name} in {env:?}");
+        }
+        // The others stay below it.
+        assert!(search("Mirror", Env::Assembly).iter().any(|c| c.id == "model.mirror"));
+    }
+
     #[test]
     fn search_and_shortcuts() {
-        assert_eq!(search("extr").first().map(|c| c.id), Some("model.extrude"));
-        assert_eq!(search("start").first().map(|c| c.id), Some("sketch.new"));
-        assert!(search("sketch").iter().take(2).any(|c| c.id == "sketch.finish"), "a word prefix ranks above a substring");
-        assert!(search("zzzz").is_empty());
         let part = Env::Part { sketching: false };
+        assert_eq!(search("extr", part).first().map(|c| c.id), Some("model.extrude"));
+        assert_eq!(search("start", part).first().map(|c| c.id), Some("sketch.new"));
+        assert!(search("sketch", part).iter().take(2).any(|c| c.id == "sketch.finish"), "a word prefix ranks above a substring");
+        assert!(search("zzzz", part).is_empty());
         assert_eq!(for_key("E", part).map(|c| c.id), Some("model.extrude"));
         assert_eq!(for_key("L", Env::Part { sketching: true }).map(|c| c.id), Some("sketch.line"));
         assert!(for_key("L", part).is_none(), "sketch keys only while sketching");
