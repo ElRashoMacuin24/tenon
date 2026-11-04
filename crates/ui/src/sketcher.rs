@@ -633,6 +633,9 @@ impl Workbench {
         if self.in_drawing() {
             return self.drw.as_ref().and_then(|d| d.tool.as_ref()).map(crate::drawing::DrwTool::id);
         }
+        if self.in_assembly() {
+            return self.asm.as_ref().filter(|a| a.rotate).map(|_| "asm.free_rotate");
+        }
         match &self.mode {
             Mode::Sketch(s) => s.tool.id(),
             Mode::Sketch3d(_) => self.active_tool3(),

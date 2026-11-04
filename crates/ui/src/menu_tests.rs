@@ -764,6 +764,77 @@ fn the_flat_pattern_s_view_tab_is_what_it_has() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// "Esc: leave the command", as the guide has it: the plain windows close, those with Cancel are
+/// cancelled, topmost first; then the navigation bar's tool and Free Rotate.
+#[test]
+fn esc_leaves_windows_and_tools_that_had_only_their_own_buttons() {
+    let mut wb = Workbench::without_kernel();
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    d.frame(&mut wb, vec![]);
+    type Open = fn(&Workbench) -> bool;
+    let plain: [(&str, Open); 8] = [
+        ("inspect.mass", |w| w.chrome.mass),
+        ("tools.options", |w| w.chrome.options),
+        ("app.about", |w| w.chrome.about),
+        ("tools.parameters", |w| w.chrome.params),
+        ("tools.table", |w| w.chrome.table),
+        ("tools.library", |w| w.chrome.library),
+        ("inspect.print", |w| w.chrome.print.open),
+        ("sheet.convert", |w| w.chrome.sheet.defaults.is_some()),
+    ];
+    for (id, open) in plain {
+        wb.run_ui(id).unwrap();
+        d.frame(&mut wb, vec![]);
+        d.frame(&mut wb, vec![]);
+        assert!(open(&wb), "{id}");
+        d.tap(&mut wb, egui::Key::Escape);
+        d.frame(&mut wb, vec![]);
+        assert!(!open(&wb), "{id}: Esc closes it");
+    }
+    // Topmost first: the last opened is drawn on top.
+    wb.run_ui("app.about").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("tools.options").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.chrome.about && !wb.chrome.options, "the one on top goes first");
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    assert!(!wb.chrome.about);
+    // A tool of the navigation bar, and in an assembly Free Rotate, with its button lit.
+    wb.run_ui("view.orbit").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.view.nav, crate::viewport::Nav::Orbit);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert_eq!(wb.view.nav, crate::viewport::Nav::Select);
+    wb.run_ui("file.new_assembly").unwrap();
+    d.frame(&mut wb, vec![]);
+    assert_eq!(wb.active_tool_id(), None);
+    wb.run_ui("asm.free_rotate").unwrap();
+    assert_eq!(wb.active_tool_id(), Some("asm.free_rotate"), "its button is lit while it is on");
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert_eq!(wb.active_tool_id(), None);
+    assert!(!wb.asm.as_ref().unwrap().rotate);
+    // The Bill of Materials and a drawing's dialogs.
+    wb.run_ui("asm.bom").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(!wb.asm.as_ref().unwrap().bom);
+    wb.run_ui("file.new_drawing").unwrap();
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("drw.base").unwrap();
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(wb.drw.as_ref().unwrap().base_dialog.is_some());
+    d.tap(&mut wb, egui::Key::Escape);
+    assert!(wb.drw.as_ref().unwrap().base_dialog.is_none(), "Esc is its Cancel");
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

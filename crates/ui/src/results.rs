@@ -393,10 +393,10 @@ impl Workbench {
     }
 
     /// Whether something on the screen takes Esc before a study being worked out does. (A run that
-    /// was stopped cannot be taken up again, and Esc meant for one of these would stop it.) Only
-    /// what does something with Esc is listed: the windows closed by their own buttons (About, the
-    /// part's properties, the options, the tables, the print check) take no Esc, and were they
-    /// listed, it would neither close them nor stop the run while they stayed open.
+    /// was stopped cannot be taken up again, and Esc meant for one of these would stop it.) The
+    /// windows closed by their own buttons (About, the part's properties, the options, the tables,
+    /// the print check) are not listed: while a run goes on it is the run that Esc stops, as it says,
+    /// and they stay. With none going, Esc closes them (`esc_leaves`).
     pub(crate) fn esc_is_taken(&self) -> bool {
         let c = &self.chrome;
         self.panel.is_some()

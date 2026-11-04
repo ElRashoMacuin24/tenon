@@ -976,6 +976,90 @@ impl Workbench {
         }
     }
 
+    /// Esc leaves what is on the screen: the topmost window closes, as its X or Cancel does. With none
+    /// open, the navigation bar goes back to Select and Free Rotate stops. A study being worked out
+    /// comes first, as its words say, and a menu or a prompt that is open has it for itself.
+    pub(crate) fn esc_leaves(&mut self, ui: &Ui) {
+        let pressed =
+            ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, repeat: false, .. })));
+        let c = &self.chrome;
+        let menu = c.file_menu.is_some() || c.browser_menu.is_some() || c.dropdown.is_some() || c.radial.is_some();
+        let prompt = c.save_prompt.is_some() || c.overwrite_prompt.is_some() || self.recover_offer.is_some();
+        let running = self.port_run.is_some() || self.analysis.as_ref().is_some_and(|e| e.running.is_some() || e.shaping.is_some());
+        if !pressed || self.keys_elsewhere || menu || prompt || running {
+            return;
+        }
+        type Shut = fn(&mut Workbench);
+        let (a, d) = (self.asm.as_deref(), self.drw.as_deref());
+        let windows: [(&str, bool, Shut); 16] = [
+            ("About Tenon", c.about, |w| w.chrome.about = false),
+            ("Application Options", c.options, |w| w.chrome.options = false),
+            ("Tenon met a fault", c.crash.is_some(), |w| w.chrome.crash = None),
+            ("Parameters", c.params, |w| w.chrome.params = false),
+            ("Properties", c.mass, |w| w.chrome.mass = false),
+            ("Design Table", c.table, |w| w.chrome.table = false),
+            ("Standard Parts", c.library, |w| w.chrome.library = false),
+            ("3D Print Check", c.print.open, |w| w.chrome.print.open = false),
+            ("Sheet Metal Defaults", c.sheet.defaults.is_some(), |w| w.chrome.sheet.defaults = None),
+            ("Punch Library", matches!(&self.panel, Some(crate::panels::Panel::Punch(p)) if p.library), |w| {
+                if let Some(crate::panels::Panel::Punch(p)) = &mut w.panel {
+                    p.library = false;
+                }
+            }),
+            ("Bill of Materials", a.is_some_and(|a| a.bom), |w| {
+                if let Some(a) = w.asm.as_mut() {
+                    a.bom = false;
+                }
+            }),
+            ("Interference", a.is_some_and(|a| a.clashes.is_some()), |w| {
+                if let Some(a) = w.asm.as_mut() {
+                    a.clashes = None;
+                }
+            }),
+            ("Drawing View", d.is_some_and(|d| d.base_dialog.is_some()), |w| {
+                if let Some(d) = w.drw.as_mut() {
+                    d.base_dialog = None;
+                }
+            }),
+            ("Edit View", d.is_some_and(|d| d.view_dialog.is_some()), |w| {
+                if let Some(d) = w.drw.as_mut() {
+                    d.view_dialog = None;
+                }
+            }),
+            ("Text", d.is_some_and(|d| d.text_dialog.is_some()), |w| {
+                if let Some(d) = w.drw.as_mut() {
+                    d.text_dialog = None;
+                }
+            }),
+            ("Suggested Dimensions", d.is_some_and(|d| d.suggest_dialog.is_some()), |w| {
+                if let Some(d) = w.drw.as_mut() {
+                    d.suggest_dialog = None;
+                }
+            }),
+        ];
+        // The one on top: the last in egui's order, of those it has drawn.
+        let order: Vec<egui::LayerId> = ui.ctx().memory(|m| m.layer_ids().collect());
+        let height = |title: &str| order.iter().position(|l| l.id == egui::Id::new(title));
+        let top = windows.iter().filter(|w| w.1).max_by_key(|w| height(w.0)).map(|w| w.2);
+        let rotating = a.is_some_and(|a| a.rotate);
+        let nav = self.view.nav != crate::viewport::Nav::Select;
+        if let Some(shut) = top {
+            shut(self);
+        } else if nav {
+            self.view.nav = crate::viewport::Nav::Select;
+            self.set_status("Ready");
+        } else if rotating {
+            if let Some(a) = self.asm.as_mut() {
+                a.rotate = false;
+            }
+            self.set_status("Dragging moves components again.");
+        } else {
+            return;
+        }
+        // (Nothing else is to take it for itself.)
+        ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    }
+
     pub(crate) fn windows(&mut self, ui: &mut Ui) {
         let mut about = self.chrome.about;
         egui::Window::new("About Tenon").open(&mut about).collapsible(false).resizable(false).default_width(420.0).show(ui.ctx(), |ui| {

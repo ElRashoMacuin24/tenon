@@ -268,6 +268,8 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- Esc now leaves what the guide says it does: the windows with an X or a Cancel button, topmost first,
+  the navigation bar's Pan, Zoom and Orbit, and Free Rotate, whose button now lights while it is on.
 - `asm.undo` did not take back `asm.edit_part`: it took back the assembly's step before it, placed
   components included, and the part stayed as edited. It is now a step of the assembly's history. In the
   window's control port, it said there was nothing to undo.
