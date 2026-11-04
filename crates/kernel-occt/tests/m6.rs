@@ -95,6 +95,57 @@ fn a_sweep_along_a_bent_path_is_area_times_path_length() {
 }
 
 #[test]
+fn a_sweep_round_sharp_corners_is_mitred_and_is_still_area_times_length() {
+    let mut k = OcctKernel::new();
+    // Up 50, along X 50, along Y 50: two square corners in two planes. A corner is cut on the
+    // plane halfway between the lines, which takes off as much as it adds.
+    let path = Path3 {
+        curves: vec![
+            Curve3::Line { start: Vec3::ZERO, end: Vec3::new(0.0, 0.0, 50.0) },
+            Curve3::Line { start: Vec3::new(0.0, 0.0, 50.0), end: Vec3::new(50.0, 0.0, 50.0) },
+            Curve3::Line { start: Vec3::new(50.0, 0.0, 50.0), end: Vec3::new(50.0, 50.0, 50.0) },
+        ],
+    };
+    let op = k.sweep(&circle(Frame::WORLD, 5.0), &path, &solid()).unwrap();
+    let expected = PI * 25.0 * 150.0;
+    assert!(near(volume(&k, op.shape), expected, 1e-4), "{} vs {expected}", volume(&k, op.shape));
+    assert!(k.is_valid(op.shape).unwrap());
+    assert_eq!(caps(&op), 2);
+    // A square, the same.
+    let op = k.sweep(&square(Frame::WORLD, 10.0), &path, &solid()).unwrap();
+    assert!(near(volume(&k, op.shape), 100.0 * 150.0, 1e-4), "{}", volume(&k, op.shape));
+    // A line that goes straight back along itself is refused, whatever it would come to.
+    let back = Path3 {
+        curves: vec![
+            Curve3::Line { start: Vec3::ZERO, end: Vec3::new(0.0, 0.0, 50.0) },
+            Curve3::Line { start: Vec3::new(0.0, 0.0, 50.0), end: Vec3::new(0.0, 0.0, 10.0) },
+        ],
+    };
+    assert!(k.sweep(&circle(Frame::WORLD, 5.0), &back, &solid()).is_err());
+}
+
+#[test]
+fn a_sweep_along_a_cubic_b_spline_is_area_times_its_length() {
+    let mut k = OcctKernel::new();
+    // The straight line from (0,0,0) to (0,0,60) as a cubic B-spline with one knot inside.
+    let at = |z: f64| Vec3::new(0.0, 0.0, z);
+    let poles = vec![at(0.0), at(10.0), at(25.0), at(45.0), at(60.0)];
+    let knots = vec![0.0, 0.0, 0.0, 0.0, 30.0, 60.0, 60.0, 60.0, 60.0];
+    let path = Path3 { curves: vec![Curve3::BSpline { poles, knots }] };
+    let op = k.sweep(&circle(Frame::WORLD, 4.0), &path, &solid()).unwrap();
+    assert!(near(volume(&k, op.shape), PI * 16.0 * 60.0, 1e-6), "{}", volume(&k, op.shape));
+    // What is no knot vector is refused, in words, before it reaches the kernel.
+    for (poles, knots) in [
+        (vec![at(0.0), at(10.0), at(25.0), at(60.0)], vec![0.0; 3]),
+        (vec![at(0.0), at(10.0), at(25.0), at(60.0)], vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.5, 1.0]),
+        (vec![at(0.0), at(10.0), at(25.0), at(60.0)], vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, f64::NAN]),
+        (vec![at(0.0), at(60.0)], vec![0.0; 6]),
+    ] {
+        assert!(k.sweep(&circle(Frame::WORLD, 4.0), &Path3 { curves: vec![Curve3::BSpline { poles, knots }] }, &solid()).is_err());
+    }
+}
+
+#[test]
 fn a_coil_sweeps_its_profile_round_the_axis() {
     let mut k = OcctKernel::new();
     // A Ø2 circle in the XZ plane at radius 10, swept 3 turns of pitch 5 round the Z axis.

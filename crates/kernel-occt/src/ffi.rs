@@ -267,7 +267,8 @@ pub(crate) mod bridge {
         /// Thick solid from `body` with `faces` removed; `offset` < 0 thickens inwards.
         fn shell(body: &Shape, faces: &[u32], offset: f64, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// Sweeps the profile along `path`. `mode`: 0 corrected Frenet, 1 fixed, 2 the profile keeps
-        /// its binormal along `binormal` (a helix path always keeps it along the helix axis).
+        /// its binormal along `binormal` (a helix path always keeps it along the helix axis), 3
+        /// corrected Frenet round sharp corners of the path, mitred.
         fn sweep(profile: &ProfileIn, path: &PathIn, mode: u8, binormal: &V3, hist: &mut HistoryOut) -> Result<UniquePtr<Shape>>;
         /// A solid (or, not `solid`, a shell) through the sections' outer loops in order; `ruled`
         /// makes flat sides between sections.

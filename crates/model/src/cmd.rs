@@ -4728,7 +4728,7 @@ static COMMANDS: &[CommandSpec] = &[
     doc_cmd!(
         "model.sweep",
         "Sweep",
-        "sketch (the profile); regions; path_sketch; path: [line and arc ids], joined end to end (default: every line and arc of path_sketch that is not construction); the sweep starts at the end nearer the profile; fixed (keep the profile's orientation; default: turn it with the path); operation",
+        "sketch (the profile); regions; path_sketch (a sketch or a 3D sketch); path: [curve ids], joined end to end (default: every line and arc of path_sketch that is not construction; of a 3D sketch, every line, bend and spline of its own that is not); the sweep starts at the end nearer the profile; fixed (keep the profile's orientation; default: turn it with the path); operation",
         true,
         model_sweep
     ),

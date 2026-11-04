@@ -137,7 +137,8 @@ is held whole changes colour. What would over-constrain the sketch is refused, a
 Drag a point to move it, in the plane that faces you. A curve selected says its length in the status bar;
 Measure (Inspect) takes a click on a curve too, and Shift adds up several.
 
-**Sweep** takes a 3D sketch as its path: from its list, or a click on one of its curves. The profile goes on a
+**Sweep** takes a 3D sketch as its path: from its list, or a click on one of its curves. Round a corner with no
+bend it is mitred, if the profile is one outline with no holes. The profile goes on a
 plane across the path's start. **Work Plane > Square to a 3D Sketch Curve** makes that plane: click the curve
 near its end. **Work Point > At a Point** takes a point of the sketch, a work axis a line of it, and a
 three-point plane its points or vertices of the part.

@@ -642,6 +642,8 @@ impl Kernel for OcctKernel {
             }
         }
         let (mode, binormal) = match opts.orientation {
+            // (Round a sharp corner the path is mitred: the plain pipe stops at the first.)
+            SweepOrientation::Frenet if path.has_corner() => (3, Vec3::Z),
             SweepOrientation::Frenet => (0, Vec3::Z),
             SweepOrientation::Fixed => (1, Vec3::Z),
             SweepOrientation::Binormal(b) => (2, b.normalized()),

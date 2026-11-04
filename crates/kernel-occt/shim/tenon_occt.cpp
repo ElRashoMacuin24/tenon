@@ -28,6 +28,7 @@
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
+#include <BRepBuilderAPI_TransitionMode.hxx>
 #include <BRepOffsetAPI_MakePipeShell.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
@@ -1613,11 +1614,17 @@ std::unique_ptr<Shape> sweep(const ProfileIn& profile, const PathIn& path, std::
     const TopoDS_Wire spine = path_wire(path);
     TopoDS_Shape result;
     std::unique_ptr<Shape> out;
-    if (mode == 2 || path.kind == 1) {
-      // A fixed binormal (springs, threads): the pipe shell, one region without holes.
-      const TopoDS_Wire section = single_outer_wire(base, "a sweep along a helix");
+    if (mode == 2 || mode == 3 || path.kind == 1) {
+      // A fixed binormal (springs, threads), or round sharp corners, mitred: the pipe shell, one
+      // region without holes.
+      const TopoDS_Wire section = single_outer_wire(base, mode == 3 ? "a sweep round a sharp corner" : "a sweep along a helix");
       BRepOffsetAPI_MakePipeShell mk(spine);
-      mk.SetMode(mode == 2 ? dir(binormal) : dir(path.helix.axis.z_dir));
+      if (mode == 3) {
+        mk.SetMode(false);
+        mk.SetTransitionMode(BRepBuilderAPI_RightCorner);
+      } else {
+        mk.SetMode(mode == 2 ? dir(binormal) : dir(path.helix.axis.z_dir));
+      }
       mk.Add(section, false, false);
       mk.Build();
       if (!mk.IsDone() || !mk.MakeSolid()) {

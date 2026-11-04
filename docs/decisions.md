@@ -3587,6 +3587,15 @@ first gave 0.85% too little volume in a test, and the fault was the test's. A fr
 the spline, away from the profile's plane, and a pipe keeps the angle it starts at. The kernel's figure was
 right: area, the cosine of 7.5 degrees, length. The test now holds the line.
 
+**A sweep round a sharp corner stopped at the corner, without a word.** Looking for what a path with no bends
+would do: a tube along three lines of 50 had the volume of one. OCCT's plain pipe makes a shell for the first
+edge of a wire that turns sharply, and that is a solid, so nothing complained. It is so for a 2D path too, from
+M6. Now a path with a corner goes by the pipe shell with mitred corners (`Path3::has_corner`, mode 3 of the
+shim's sweep), which comes to area times length exactly, since each cut is on the plane halfway between its
+lines. The shell takes one outline with no holes, and a profile that keeps its direction has no corner to make:
+both are refused in words. The alternative, refusing every sharp corner, was the smaller change; but a mitred
+tube is what such a path is drawn to get.
+
 **In a file** it is a feature of type `sketch3d`, laid out as a sketch is. An older build refuses a file with
 one, naming the record, as for every new feature type (docs/file-format.md).
 

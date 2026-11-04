@@ -1780,6 +1780,15 @@ impl<'a> Ctx<'a> {
         {
             return Err("The profile lies along the path: its sketch plane holds the direction the path starts in, so the sweep would have no thickness. Draw the profile on a plane across the path, for example square to its first line.".into());
         }
+        // Round a sharp corner the sweep is mitred (DEC-136), which has its limits.
+        if path.has_corner() {
+            if s.fixed {
+                return Err("A profile that keeps its direction cannot go round a sharp corner of the path: let it follow the path (Orientation), or round the corner.".into());
+            }
+            if profile.regions.len() > 1 || profile.regions.iter().any(|r| !r.holes.is_empty()) {
+                return Err("A sweep round a sharp corner of the path takes one closed outline with no holes: round the corner with an arc or a bend, or sweep the outlines one at a time.".into());
+            }
+        }
         let orientation = if s.fixed { SweepOrientation::Fixed } else { SweepOrientation::Frenet };
         let op = self.k.sweep(&profile, &path, &SweepOpts { orientation, solid: true })?;
         let faces = self.k.topology(op.shape)?.faces;

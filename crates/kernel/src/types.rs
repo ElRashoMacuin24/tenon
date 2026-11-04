@@ -133,10 +133,47 @@ pub enum Curve3 {
     },
 }
 
+impl Curve3 {
+    /// The unit directions it starts and ends in.
+    pub fn directions(&self) -> Option<(Vec3, Vec3)> {
+        let unit = |a: Vec3, b: Vec3| Some((b - a).normalized()).filter(|d| d.len() > 0.5);
+        match self {
+            Curve3::Line { start, end } => {
+                let d = unit(*start, *end)?;
+                Some((d, d))
+            }
+            Curve3::Arc { start, mid, end } => {
+                let (a, b) = (*mid - *start, *end - *start);
+                let n = a.cross(b);
+                if n.len2() <= 0.0 {
+                    return None;
+                }
+                let centre = *start + (b.cross(n) * a.dot(a) + n.cross(a) * b.dot(b)) * (0.5 / n.dot(n));
+                let (s, e) = (n.cross(*start - centre).normalized(), n.cross(*end - centre).normalized());
+                Some((if s.dot(a) < 0.0 { -s } else { s }, if e.dot(*end - *mid) < 0.0 { -e } else { e }))
+            }
+            Curve3::BSpline { poles, .. } => {
+                Some((unit(*poles.first()?, *poles.get(1)?)?, unit(*poles.get(poles.len().checked_sub(2)?)?, *poles.last()?)?))
+            }
+            Curve3::Helix { .. } => None,
+        }
+    }
+}
+
 /// An open or closed chain of 3D curves.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Path3 {
     pub curves: Vec<Curve3>,
+}
+
+impl Path3 {
+    /// Whether it turns sharply where one curve meets the next.
+    pub fn has_corner(&self) -> bool {
+        self.curves.windows(2).any(|w| match (w[0].directions(), w[1].directions()) {
+            (Some((_, out)), Some((into, _))) => out.cross(into).len() > 1e-6 || out.dot(into) < 0.0,
+            _ => false,
+        })
+    }
 }
 
 /// How the profile is oriented along a sweep path.

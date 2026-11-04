@@ -16,6 +16,9 @@ shows it in [ROADMAP.md](ROADMAP.md).
   `Curve3::BSpline` for splines); work points, axes and planes come from its points and lines, among them
   a plane square to a curve at its end; Measure takes its curves. New commands `sketch.new_3d`, `sketch3d.*` and
   `work.point_at`; a new `sketch3d` feature type in part files, which older builds refuse (DEC-136).
+- **A sweep round a sharp corner** used to stop at the first corner of its path, saying nothing, and made a
+  third of the tube it should. It is now mitred, for any path; a profile with holes, or one that keeps its
+  direction, is refused there in words.
 
 ### Stress checks
 

@@ -80,6 +80,32 @@ fn a_tube_along_a_bent_path_in_no_one_plane_has_the_volume_of_its_length() {
 }
 
 #[test]
+fn a_tube_round_sharp_corners_is_mitred_and_as_long_as_its_lines_and_what_it_cannot_do_it_says() {
+    let mut s = Session::default();
+    let mut k = OcctKernel::new();
+    let (path, _, _) = staircase(&mut s, &mut k);
+    let circle = profile(&mut s, &mut k, 10.0);
+    let sweep = run(&mut s, &mut k, "model.sweep", json!({ "sketch": circle, "path_sketch": path }))["feature"].as_u64().unwrap();
+    // A corner is cut on the plane halfway between its lines: as much off as on.
+    let want = PI * 25.0 * 150.0;
+    let v = volume(&mut s, &mut k);
+    assert!((v - want).abs() < 1e-4 * want, "{v} and {want}");
+    // A profile that keeps its direction cannot go round.
+    let mut kind = serde_json::to_value(&s.document().feature(FeatureId(sweep as u32)).unwrap().kind).unwrap();
+    kind["fixed"] = json!(true);
+    run(&mut s, &mut k, "feature.update", json!({ "feature": sweep, "kind": kind }));
+    let r = s.regen(&mut k);
+    assert!(r.first_error().is_some_and(|(_, why)| why.contains("cannot go round a sharp corner")), "{:?}", r.first_error());
+    // Nor a profile with a hole in it.
+    let mut kind = serde_json::to_value(&s.document().feature(FeatureId(sweep as u32)).unwrap().kind).unwrap();
+    kind["fixed"] = json!(false);
+    run(&mut s, &mut k, "feature.update", json!({ "feature": sweep, "kind": kind }));
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": circle, "cx": 0, "cy": 0, "r": 2 }));
+    let r = s.regen(&mut k);
+    assert!(r.first_error().is_some_and(|(_, why)| why.contains("takes one closed outline with no holes")), "{:?}", r.first_error());
+}
+
+#[test]
 fn a_tube_along_a_spline_is_as_long_as_the_spline() {
     let mut s = Session::default();
     let mut k = OcctKernel::new();

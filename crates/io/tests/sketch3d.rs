@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use serde_json::{Map, Value, json};
-use tenon_io::project;
+use tenon_io::{diff, project};
 use tenon_kernel::Kernel;
 use tenon_kernel_occt::OcctKernel;
 use tenon_model::{Document, Session, regenerate};
@@ -100,4 +100,19 @@ fn a_part_without_one_is_written_as_it_was() {
     let text = String::from_utf8(project::to_bytes(&doc, &Map::new()).unwrap()).unwrap();
     assert!(!text.contains("sketch3d"));
     let _ = regenerate;
+}
+
+#[test]
+fn comparing_two_versions_says_what_changed_in_a_3d_sketch() {
+    let mut k = OcctKernel::new();
+    let mut s = part(&mut k);
+    let before = serde_json::to_value(s.document()).unwrap();
+    let id = s.document().features().iter().find(|f| f.name == "3D Sketch1").unwrap().id;
+    let c = s.document().sketch3d(id).unwrap().constraints().find(|(_, c)| matches!(c, tenon_sketch::Constraint3::Radius { .. })).unwrap().0;
+    run(&mut s, &mut k, "sketch3d.set_dimension", json!({ "sketch": id.0, "constraint": c.0, "value": 9.5 }));
+    run(&mut s, &mut k, "sketch3d.point", json!({ "sketch": id.0, "at": [1, 2, 3] }));
+    let after = serde_json::to_value(s.document()).unwrap();
+    let text = diff::diff_documents("part", &before, &after).text();
+    assert!(text.contains("7.5 -> 9.5"), "{text}");
+    assert!(text.contains("1 entity added"), "{text}");
 }

@@ -1971,7 +1971,8 @@ mod tests {
         let mut s = Sketch3d::new();
         let a = s.add_line(v(0.0, 0.0, 0.0), v(0.0, 0.0, 30.0)).unwrap();
         let (_, ea) = s.geometry(a).unwrap().ends().unwrap();
-        let spline = s.add_spline(&[PointRef3::New(v(0.0, 0.0, 30.0)), PointRef3::New(v(0.0, 10.0, 40.0)), PointRef3::New(v(5.0, 20.0, 45.0))]).unwrap();
+        let spline =
+            s.add_spline(&[PointRef3::New(v(0.0, 0.0, 30.0)), PointRef3::New(v(0.0, 10.0, 40.0)), PointRef3::New(v(5.0, 20.0, 45.0))]).unwrap();
         let (sb, _) = s.geometry(spline).unwrap().ends().unwrap();
         let held = s.add_constraint(Constraint3::Coincident { a: ea, b: sb }).unwrap();
         let tangent = s.add_constraint(Constraint3::Tangent { a, b: spline }).unwrap();
