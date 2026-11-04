@@ -18,12 +18,13 @@ struct Band {
     gap: f64,
 }
 
-/// The bands of a view along one axis, in order.
+/// The bands of a view along one axis, in order. A gap wider than its band, as a scale changed after
+/// it was made can leave it, is as wide as the band: a break never spreads a view apart.
 fn bands(v: &View, lines: BreakLines) -> Vec<Band> {
     let mut out: Vec<Band> = v
         .active_mods()
         .filter_map(|m| match &m.kind {
-            ModKind::Break { lines: l, from, to, gap } if *l == lines => Some(Band { from: *from, to: *to, gap: *gap / v.scale }),
+            ModKind::Break { lines: l, from, to, gap } if *l == lines => Some(Band { from: *from, to: *to, gap: (*gap / v.scale).min(*to - *from) }),
             _ => None,
         })
         .collect();
@@ -81,6 +82,11 @@ impl Folds {
     /// Where a drawn point truly is.
     pub(crate) fn open(&self, q: Vec2) -> Vec2 {
         Vec2::new(open(&self.x, q.x), open(&self.y, q.y))
+    }
+    /// The true places of the bands' edges: across the sheet, and up it.
+    pub(crate) fn edges(&self) -> (Vec<f64>, Vec<f64>) {
+        let of = |bands: &[Band]| bands.iter().flat_map(|b| [b.from, b.to]).collect();
+        (of(&self.x), of(&self.y))
     }
     /// The point drawn in the middle of a view whose true middle is `center`, whose true bounds
     /// are `lo`-`hi`: along an axis with a band the view stays centred on what is left of it.
@@ -141,7 +147,12 @@ impl Clip {
         c
     }
 
-    fn is_empty(&self) -> bool {
+    /// What is inside a boundary.
+    pub(crate) fn inside(boundary: Boundary) -> Clip {
+        Clip { crop: Some(boundary), ..Clip::default() }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
         self.crop.is_none() && self.x.is_empty() && self.y.is_empty()
     }
 

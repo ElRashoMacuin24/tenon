@@ -13,8 +13,9 @@ use tenon_geom::{Aabb3, Axis, Frame, Vec2, Vec3, tol};
 use tenon_kernel::{BoolOp, HlrCurve, HlrKind, Kernel, MeshTol, ShapeHandle, SurfaceKind};
 use tenon_model::{Document, Scene};
 
-use crate::annotate::{Resolved, resolve_pick};
+use crate::annotate::{Resolved, edge_is_straight, resolve_pick};
 use crate::model::{Boundary, Drawing, GeomPick, ModKind, Orientation, PickPoint, Side, View, ViewId, ViewKind};
+use crate::modify::Clip;
 
 fn frame(z: Vec3, x: Vec3) -> Frame {
     Frame::new(Vec3::ZERO, z, x).unwrap_or(Frame::WORLD)
@@ -98,6 +99,9 @@ pub fn frames_in(d: &Drawing, models: &BTreeMap<String, ModelGeometry>) -> BTree
 pub fn auxiliary_line(m: &ModelGeometry, pf: &Frame, edge: &GeomPick, a: Vec2, b: Vec2) -> Result<(Vec2, Vec2), String> {
     let whole = GeomPick { point: PickPoint::Whole, ..edge.clone() };
     let Resolved::Line(s, e) = resolve_pick(m, &whole)? else { return Err("the edge it looks square to is no longer straight".into()) };
+    if !edge_is_straight(m, &whole)? {
+        return Err("the edge it looks square to is no longer straight".into());
+    }
     let (s, e) = (project(pf, s), project(pf, e));
     if s.dist(e) < tol::LINEAR {
         return Err("the edge it looks square to is seen end-on in the parent view".into());
@@ -257,14 +261,18 @@ fn build_model(k: &mut dyn Kernel, key: &str, src: &ModelSource, overlaid: bool)
     };
     for (pk, doc, at) in docs {
         // A part file every component of which uses a row of its design table is nowhere itself:
-        // only its name is wanted (the parts list reads it).
-        if at.is_empty() {
+        // only its name is wanted (the parts list reads it). A part whose components are all hidden
+        // is drawn nowhere, but the assembly's solver still needs its geometry to place what is shown
+        // (an overlay's position): that is all it gives, so what is wrong with it is said only if
+        // that comes to be wanted.
+        let hidden = at.is_empty() && matches!(src, ModelSource::Assembly { asm, .. } if asm.components.iter().any(|c| c.key() == pk));
+        if at.is_empty() && !hidden {
             g.documents.insert(pk, doc);
             continue;
         }
         let pk_shown = tenon_assembly::key_file(&pk).to_owned();
         let mut regen = tenon_model::regenerate(&doc, k);
-        if let Some((f, msg)) = regen.first_error() {
+        if !hidden && let Some((f, msg)) = regen.first_error() {
             g.error = Some(format!("{pk_shown}: feature {f} fails: {msg}"));
         }
         match tenon_model::scene(&regen, k, &MeshTol::default()) {
@@ -277,7 +285,8 @@ fn build_model(k: &mut dyn Kernel, key: &str, src: &ModelSource, overlaid: bool)
                 }
                 g.scenes.insert(pk.clone(), Arc::new(s));
             }
-            Err(e) => g.error = Some(format!("{pk}: {e}")),
+            Err(e) if !hidden => g.error = Some(format!("{pk}: {e}")),
+            Err(_) => {}
         }
         for (component, f) in &at {
             g.instances.push(Instance { component: *component, part: pk.clone(), frame: *f });
@@ -472,6 +481,47 @@ pub fn hatch_at(triangles: &[[Vec2; 3]], spacing: f64, angle: f64) -> Vec<[Vec2;
     out
 }
 
+/// A hatch line less where it runs over `triangles`. What is left of it shorter than `shortest` is
+/// the rounding of the triangles' own numbers, and goes.
+fn hatch_less(line: [Vec2; 2], triangles: &[[Vec2; 3]], shortest: f64) -> Vec<[Vec2; 2]> {
+    let (a, d) = (line[0], line[1] - line[0]);
+    let cross = |u: Vec2, w: Vec2| u.x * w.y - u.y * w.x;
+    // The stretches of it (parameters from 0 to 1) inside each triangle.
+    let mut over: Vec<(f64, f64)> = Vec::new();
+    for t in triangles {
+        let area = cross(t[1] - t[0], t[2] - t[0]);
+        if area == 0.0 {
+            continue;
+        }
+        let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
+        for i in 0..3 {
+            let (p, side) = (t[i], t[(i + 1) % 3] - t[i]);
+            // Positive on the triangle's own side of this one of its sides.
+            let (at, rate) = (cross(side, a - p) * area.signum(), cross(side, d) * area.signum());
+            if rate > 0.0 {
+                lo = lo.max(-at / rate);
+            } else if rate < 0.0 {
+                hi = hi.min(-at / rate);
+            } else if at < 0.0 {
+                hi = lo;
+            }
+        }
+        if hi > lo {
+            over.push((lo, hi));
+        }
+    }
+    over.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let mut out = Vec::new();
+    let mut from = 0.0_f64;
+    for (lo, hi) in over.into_iter().chain([(1.0, 1.0)]) {
+        if lo > from && (lo - from) * d.len() >= shortest {
+            out.push([a + d * from, a + d * lo]);
+        }
+        from = from.max(hi);
+    }
+    out
+}
+
 /// The parts of curves inside the circle (`center`, `radius`).
 pub fn clip_to_circle(curves: &[HlrCurve], center: Vec2, radius: f64) -> Vec<HlrCurve> {
     let inside = |p: Vec2| p.dist(center) <= radius;
@@ -540,6 +590,8 @@ fn box_center(f: &Frame, b: &Aabb3) -> Vec2 {
 const PAPER_DEFLECTION: f64 = 0.02;
 /// Spacing of section hatching on paper (mm).
 pub const HATCH_SPACING: f64 = 3.0;
+/// Single-precision numbers (a mesh's) are good to about this at the size of anything drawn (mm).
+const MESH_ROUNDING: f64 = 1e-3;
 
 /// One view's geometry from the placed solids of its model.
 fn compute_view(
@@ -573,7 +625,7 @@ fn compute_view(
     if let ViewKind::Overlay { values, .. } = &v.kind {
         return overlay_view(k, f, deflection, model, built, parent, values);
     }
-    let outs = break_outs(v, f, model);
+    let outs = cut_outs(v, f, model);
     let mut cut: Vec<ShapeHandle> = Vec::new();
     let mut plane: Option<(Vec3, Vec3)> = None;
     let shapes: Vec<ShapeHandle> = match (&v.kind, parent_frame) {
@@ -618,14 +670,24 @@ fn compute_view(
             g.hatch.extend(hatch_at(&tris, HATCH_SPACING * spacing / v.scale, angle));
         }
     }
-    // The floor of each break-out: the same, within its boundary.
-    for (boundary, floor) in &outs {
-        let Some(floor) = floor else { continue };
+    // The floor of each break-out: the same, within its boundary, less what was on that plane before
+    // it was cut (the top of a step it comes level with is no cut face).
+    for out in &outs {
+        let Some(floor) = out.floor else { continue };
+        let plane = f.z() * floor;
+        let inside = Clip::inside(out.boundary);
+        let mut was: Option<Vec<[Vec2; 3]>> = None;
         for (i, s) in cut.iter().enumerate() {
-            let mut tris = faces_on(k, *s, f, f.z() * *floor, -f.z());
-            tris.retain(|t| boundary.contains((t[0] + t[1] + t[2]) * (1.0 / 3.0)));
+            let tris = faces_on(k, *s, f, plane, -f.z());
+            if tris.is_empty() {
+                continue;
+            }
+            let was = was.get_or_insert_with(|| solids.iter().flat_map(|u| faces_on(k, *u, f, plane, -f.z())).collect());
             let (angle, spacing) = part_hatch(i);
-            g.hatch.extend(hatch_at(&tris, HATCH_SPACING * spacing / v.scale, angle));
+            let lines = hatch_at(&tris, HATCH_SPACING * spacing / v.scale, angle);
+            let runs = lines.iter().flat_map(|l| inside.pieces(l));
+            let cut_lines = runs.filter_map(|r| Some([*r.first()?, *r.last()?])).flat_map(|l| hatch_less(l, was, MESH_ROUNDING));
+            g.hatch.extend(cut_lines);
         }
     }
     for s in cut {
@@ -684,16 +746,73 @@ fn z_range(f: &Frame, model: &ModelGeometry) -> Option<(f64, f64)> {
     Some(zs.fold((f64::MAX, f64::MIN), |(lo, hi), z| (lo.min(z), hi.max(z))))
 }
 
-/// A view's break-outs at work: each boundary and the height of its floor along the view's Z (none:
-/// it goes through the model).
-pub(crate) fn break_outs(v: &View, f: &Frame, model: &ModelGeometry) -> Vec<(Boundary, Option<f64>)> {
-    let Some((_, near)) = z_range(f, model) else { return Vec::new() };
-    v.active_mods()
+/// How far a model truly reaches towards the eye along `z`: from its geometry, not its box, whose
+/// corner may stand well clear of it when the view looks at it aslant. The ends of its edges are
+/// exact; a curved face can stand beyond them, and then only its mesh says how far, to within the
+/// mesh's tolerance.
+fn nearest(model: &ModelGeometry, z: Vec3) -> Option<f64> {
+    let mut near: Option<f64> = None;
+    for inst in &model.instances {
+        let Some(scene) = model.scenes.get(&inst.part) else { continue };
+        let along = |p: Vec3| inst.frame.to_world(p).dot(z);
+        for b in &scene.bodies {
+            let at = b.at.unwrap_or(Frame::WORLD);
+            let ends = b.ends.iter().flatten().map(|p| along(*p)).fold(f64::NEG_INFINITY, f64::max);
+            let mesh = b
+                .mesh
+                .positions
+                .iter()
+                .map(|p| along(at.to_world(Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))))
+                .fold(f64::NEG_INFINITY, f64::max);
+            let here = if mesh > ends + MESH_ROUNDING { mesh } else { ends };
+            if here.is_finite() {
+                near = Some(near.map_or(here, |n| n.max(here)));
+            }
+        }
+    }
+    near
+}
+
+/// A break-out at work on a view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CutOut {
+    /// Its number among the view's modifiers.
+    id: u32,
+    pub(crate) boundary: Boundary,
+    /// The height of its floor along the view's Z. None: it goes through the model.
+    pub(crate) floor: Option<f64>,
+}
+
+/// A view's break-outs at work. Each goes down from the model's nearest point as the view sees it.
+pub(crate) fn cut_outs(v: &View, f: &Frame, model: &ModelGeometry) -> Vec<CutOut> {
+    let mut wanted = v
+        .active_mods()
         .filter_map(|m| match &m.kind {
-            ModKind::BreakOut { boundary, depth } => Some((*boundary, depth.map(|d| near - d))),
+            ModKind::BreakOut { boundary, depth } => Some((m.id, *boundary, *depth)),
             _ => None,
         })
-        .collect()
+        .peekable();
+    if wanted.peek().is_none() {
+        return Vec::new();
+    }
+    let Some(near) = nearest(model, f.z()) else { return Vec::new() };
+    wanted.map(|(id, boundary, depth)| CutOut { id, boundary, floor: depth.map(|d| near - d) }).collect()
+}
+
+/// Whether cutting `tool` from a solid, which left `left`, took anything away. By their volumes when
+/// that is plain; when the two come to much the same it may be that the tool only touches the
+/// solid or misses it, or that it takes little from much, so what the two share is asked for.
+fn took_away(k: &mut dyn Kernel, solid: ShapeHandle, left: ShapeHandle, tool: ShapeHandle) -> bool {
+    let volume = |k: &dyn Kernel, s: ShapeHandle| k.mass_properties(s, 1.0).map(|m| m.mass);
+    let Ok(before) = volume(k, solid) else { return true };
+    let after = volume(k, left).unwrap_or(0.0);
+    if before - after > before * tol::MEASURE_REL {
+        return true;
+    }
+    let Ok(shared) = k.boolean(BoolOp::Intersect, solid, &[tool]) else { return true };
+    let some = volume(k, shared.shape).is_ok_and(|v| v > tol::CLASH_VOLUME);
+    k.release(shared.shape);
+    some
 }
 
 /// A prism along the view's Z over `boundary`, from `from` towards the eye for `height`.
@@ -713,28 +832,24 @@ fn prism(k: &mut dyn Kernel, f: &Frame, boundary: &Boundary, from: f64, height: 
 
 /// `solids` with each break-out cut from them (new shapes, for the caller to release). What is cut
 /// away whole is gone; a cut that fails leaves the solid as it was and says so on the view.
-fn cut_out(
-    k: &mut dyn Kernel,
-    solids: &[ShapeHandle],
-    f: &Frame,
-    model: &ModelGeometry,
-    outs: &[(Boundary, Option<f64>)],
-    g: &mut ViewGeometry,
-) -> Vec<ShapeHandle> {
+fn cut_out(k: &mut dyn Kernel, solids: &[ShapeHandle], f: &Frame, model: &ModelGeometry, outs: &[CutOut], g: &mut ViewGeometry) -> Vec<ShapeHandle> {
     let mut shapes: Vec<ShapeHandle> = solids.iter().filter_map(|s| k.duplicate(*s).ok()).collect();
     let Some((far, near)) = z_range(f, model) else { return shapes };
     let over = (near - far).abs() + 10.0;
-    for (boundary, floor) in outs {
-        // (A depth past the far side of the model goes through it, no farther.)
-        let from = floor.map_or(far - 1.0, |z| z.max(far - 1.0));
-        let Some(tool) = prism(k, f, boundary, from, near + over - from) else {
-            g.error = Some("the break out's boundary could not be made into a cut".into());
+    for out in outs {
+        // (A depth past the far side of the model goes through it, no farther. How far the tool goes
+        // comes from the model's box: it is enough to be clear of it all.)
+        let from = out.floor.map_or(far - 1.0, |z| z.max(far - 1.0));
+        let Some(tool) = prism(k, f, &out.boundary, from, near + over - from) else {
+            g.error = Some(format!("Break Out {}: its boundary could not be made into a cut", out.id));
             continue;
         };
         let mut next = Vec::with_capacity(shapes.len());
+        let mut cut_any = shapes.is_empty();
         for s in shapes {
             match k.boolean(BoolOp::Cut, s, &[tool]) {
                 Ok(op) => {
+                    cut_any = cut_any || took_away(k, s, op.shape, tool);
                     k.release(s);
                     if k.topology(op.shape).is_ok_and(|t| t.faces > 0) {
                         next.push(op.shape);
@@ -743,10 +858,17 @@ fn cut_out(
                     }
                 }
                 Err(e) => {
-                    g.error = Some(format!("the break out could not be cut: {e}"));
+                    cut_any = true;
+                    g.error = Some(format!("Break Out {} could not be cut: {e}", out.id));
                     next.push(s);
                 }
             }
+        }
+        if !cut_any {
+            g.error = Some(format!(
+                "Break Out {} cuts nothing: its boundary misses the part, or its floor is above it there: go deeper or move it",
+                out.id
+            ));
         }
         shapes = next;
         k.release(tool);

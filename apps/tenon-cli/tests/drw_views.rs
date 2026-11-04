@@ -404,7 +404,7 @@ fn a_break_closes_a_band_and_dimensions_across_it_keep_the_true_length() {
     assert!(err(&mut e, json!({ "view": v, "lines": "vertical", "from": 10, "to": 12 })).contains("closer together"));
     assert!(err(&mut e, json!({ "view": v, "lines": "vertical", "from": 200, "to": 300 })).contains("do not cross"));
     assert!(err(&mut e, json!({ "view": v, "lines": "vertical", "from": -5, "to": 130 })).contains("whole view"));
-    assert!(err(&mut e, json!({ "view": v, "lines": "vertical", "from": 45, "to": 60 })).contains("out of range"), "over another band");
+    assert!(err(&mut e, json!({ "view": v, "lines": "vertical", "from": 45, "to": 60 })).contains("elsewhere"), "over another band");
     let sec = run(&mut e, "drw.view.section", json!({ "parent": v, "a": [-5, 40], "b": [125, 40], "at": [150, 60] }))["view"].clone();
     assert!(err(&mut e, json!({ "view": sec, "lines": "vertical", "from": 40, "to": 60 })).contains("base or projected"));
     run(&mut e, "drw.undo", json!({}));
@@ -864,4 +864,566 @@ fn an_auxiliary_view_told_nowhere_goes_clear_of_its_parent() {
     let i = view_info(&mut e, aux);
     assert!(i["error"].as_str().is_some_and(|m| m.contains("pick another edge")), "{i}");
     near(num(&i["direction"][1]), z, "it looks the way it did");
+}
+
+/// A 100 x 60 x 25 block with its corner cut from (100, 30) to (70, 60): a face at 45 degrees, 30
+/// root 2 long and 25 wide. In a drawing: seen from above (at (120, 110)), and an auxiliary view
+/// square to that face, up and to the right of it. Returns the two views.
+fn wedge_drawing(e: &mut Engine) -> (u64, u64) {
+    run(e, "file.new", json!({ "name": "Wedge" }));
+    let sk = run(e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    let first = run(e, "sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 60, "x2": 0, "y2": 0 }));
+    let mut last = first["end"].clone();
+    for (x, y) in [(100, 0), (100, 30), (70, 60)] {
+        last = run(e, "sketch.line", json!({ "sketch": sk, "start": last, "x2": x, "y2": y }))["end"].clone();
+    }
+    run(e, "sketch.line", json!({ "sketch": sk, "start": last, "end": first["start"] }));
+    run(e, "model.extrude", json!({ "sketch": sk, "distance": 25 }));
+    near(num(&run(e, "model.mass", json!({}))["bodies"][0]["volume"]), 5550.0 * 25.0, "the part");
+    run(e, "file.save", json!({ "path": "wedge.tenon" }));
+    run(e, "drw.new", json!({ "name": "Wedge" }));
+    let top = run(e, "drw.view.base", json!({ "model": "wedge.tenon", "orientation": "top", "scale": 1, "at": [120, 110], "hidden": false }))["view"]
+        .as_u64()
+        .unwrap();
+    let edge = run(e, "drw.pick", json!({ "view": top, "view_at": [85, 45] }));
+    let at = pt(&edge["at"]) + Vec2::new(90.0, 90.0);
+    let aux = run(e, "drw.auxiliary", json!({ "parent": top, "edge": edge, "at": [at.x, at.y] }))["view"].as_u64().unwrap();
+    (top, aux)
+}
+
+/// Where a point of the model is in a view's own coordinates.
+fn seen_in(e: &Engine, view: u64, p: Vec3) -> Vec2 {
+    let ev = e.drw.evaluation().unwrap();
+    tenon_drawing::views::project(&ev.view(ViewId(view as u32)).unwrap().frame, p)
+}
+
+/// A view's hatch against a floor's area by hand: its length is the area over the 3 between lines.
+fn hatched(g: &Graphics, view: u64, area: f64, what: &str) {
+    let h = hatch_length(g, view);
+    assert!((h - area / 3.0).abs() < area / 3.0 * 0.03, "{what}: {h} against {}", area / 3.0);
+}
+
+#[test]
+fn a_break_out_goes_down_from_the_model_itself_and_says_when_it_cuts_nothing() {
+    let dir = scratch("break-out-near");
+    let mut e = Engine::new(kernel(), &dir);
+    let (top, aux) = wedge_drawing(&mut e);
+    // Seen along (1, 1, 0) / root 2 the nearest of the block is the inclined face at 130 / root 2 =
+    // 91.92; the corner of its box, at (100, 60), is at 160 / root 2 = 113.14, 21.2 clear of it. A
+    // 10 x 10 square in the middle of the face is cut square to it: 100 of floor, however deep.
+    let c = seen_in(&e, aux, Vec3::new(85.0, 45.0, 12.5));
+    let rect = json!([[c.x - 5.0, c.y - 5.0], [c.x + 5.0, c.y + 5.0]]);
+    let before = num(&view_info(&mut e, aux)["visible_curves"]);
+    let m = run(&mut e, "drw.break_out", json!({ "view": aux, "rect": rect, "depth": 5 }))["modifier"].clone();
+    let i = view_info(&mut e, aux);
+    assert!(i["error"].is_null(), "{i}");
+    assert!(num(&i["visible_curves"]) > before, "the cut's rim is drawn: {i}");
+    hatched(&sheet(&e), aux, 100.0, "5 down");
+    for depth in [0.5, 10.0, 21.2, 22.0] {
+        run(&mut e, "drw.break_out", json!({ "view": aux, "modifier": m, "depth": depth }));
+        assert!(view_info(&mut e, aux)["error"].is_null());
+        hatched(&sheet(&e), aux, 100.0, &format!("{depth} down"));
+    }
+    // The hatching lies over the square, where the view draws it.
+    let (lo, hi) = extent(&strokes(&sheet(&e), aux, Pen::Hatch));
+    let (p, q) = (on_sheet(&mut e, aux, c.x - 5.0, c.y - 5.0), on_sheet(&mut e, aux, c.x + 5.0, c.y + 5.0));
+    assert!(lo.x >= p.x - 1e-6 && lo.y >= p.y - 1e-6 && hi.x <= q.x + 1e-6 && hi.y <= q.y + 1e-6, "{lo:?} {hi:?} {p:?} {q:?}");
+
+    // From above, the corner taken off the block is inside the view's box and has nothing in it: the
+    // cut takes nothing away and the view says so.
+    let m = run(&mut e, "drw.break_out", json!({ "view": top, "rect": [[92, 52], [99, 59]], "depth": 5 }))["modifier"].clone();
+    let i = view_info(&mut e, top);
+    assert!(i["error"].as_str().is_some_and(|t| t.contains("cuts nothing") && t.contains("Break Out 1")), "{i}");
+    assert_eq!(hatch_length(&sheet(&e), top), 0.0);
+    // Through, the same. Moved over the part it says nothing, and hatches.
+    run(&mut e, "drw.break_out", json!({ "view": top, "modifier": m, "through": true }));
+    assert!(view_info(&mut e, top)["error"].as_str().is_some_and(|t| t.contains("cuts nothing")));
+    run(&mut e, "drw.break_out", json!({ "view": top, "modifier": m, "rect": [[10, 10], [30, 30]], "depth": 5 }));
+    assert!(view_info(&mut e, top)["error"].is_null());
+    hatched(&sheet(&e), top, 400.0, "moved over the part");
+}
+
+/// A step, 100 x 60: 30 high for x under 50, 10 high beyond. Its volume is 120000. In a drawing, seen
+/// from above at 1:1, the middle of the view (50, 30) at (150, 150).
+fn step_drawing(e: &mut Engine) -> u64 {
+    run(e, "file.new", json!({ "name": "Step" }));
+    let sk = run(e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    run(e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 100, "y2": 60 }));
+    run(e, "model.extrude", json!({ "sketch": sk, "distance": 10 }));
+    let sk = run(e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    run(e, "sketch.rectangle", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 50, "y2": 60 }));
+    run(e, "model.extrude", json!({ "sketch": sk, "distance": 30 }));
+    near(num(&run(e, "model.mass", json!({}))["bodies"][0]["volume"]), 120_000.0, "the step");
+    run(e, "file.save", json!({ "path": "step.tenon" }));
+    run(e, "drw.new", json!({ "name": "Step" }));
+    run(e, "drw.view.base", json!({ "model": "step.tenon", "orientation": "top", "scale": 1, "at": [150, 150], "hidden": false }))["view"]
+        .as_u64()
+        .unwrap()
+}
+
+#[test]
+fn a_break_out_hatches_what_it_cut_and_not_what_was_already_there() {
+    let dir = scratch("break-out-floor");
+    let mut e = Engine::new(kernel(), &dir);
+    let v = step_drawing(&mut e);
+    // Over the step, x 30 to 70, y 10 to 50. 5 down the floor is at 25, and only the high part (x 30 to
+    // 50) reaches it: 20 x 40.
+    let m = run(&mut e, "drw.break_out", json!({ "view": v, "rect": [[30, 10], [70, 50]], "depth": 5 }))["modifier"].clone();
+    let g = sheet(&e);
+    hatched(&g, v, 800.0, "5 down");
+    assert!(extent(&strokes(&g, v, Pen::Hatch)).1.x <= 150.0 + 1e-3, "up to x = 50");
+    // 20 down the floor is level with the step's own top at 10: that was never cut, and is not hatched.
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "depth": 20 }));
+    let g = sheet(&e);
+    hatched(&g, v, 800.0, "20 down, level with the step's top");
+    let (lo, hi) = extent(&strokes(&g, v, Pen::Hatch));
+    assert!(lo.x >= 130.0 - 1e-6 && hi.x <= 150.0 + 1e-3, "{lo:?} {hi:?}");
+    // 25 down it is under that top too: all of the 40 x 40.
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "depth": 25 }));
+    let g = sheet(&e);
+    hatched(&g, v, 1600.0, "25 down");
+    let (lo, hi) = extent(&strokes(&g, v, Pen::Hatch));
+    assert!(lo.x >= 130.0 - 1e-6 && hi.x <= 170.0 + 1e-6, "{lo:?} {hi:?}");
+
+    // Over the low part alone, x 60 to 90: down to the high part's depth it is over air; level with
+    // the low part's top it only touches it; below that it cuts.
+    let rect = json!([[60, 10], [90, 50]]);
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "rect": rect, "depth": 5 }));
+    assert!(view_info(&mut e, v)["error"].as_str().is_some_and(|t| t.contains("cuts nothing")), "over air");
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "depth": 20 }));
+    assert!(view_info(&mut e, v)["error"].as_str().is_some_and(|t| t.contains("cuts nothing")), "touching");
+    assert_eq!(hatch_length(&sheet(&e), v), 0.0, "what it only touches is not hatched");
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "depth": 25 }));
+    assert!(view_info(&mut e, v)["error"].is_null());
+    hatched(&sheet(&e), v, 1200.0, "25 down, in the low part");
+}
+
+#[test]
+fn an_auxiliary_view_is_of_a_straight_edge_and_a_curve_is_refused_in_words() {
+    let dir = scratch("aux-curve");
+    let mut e = Engine::new(kernel(), &dir);
+    // A plate whose top edge is a curve from (100, 50) to (0, 50), rising in the middle.
+    run(&mut e, "file.new", json!({ "name": "Curvy" }));
+    let sk = run(&mut e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    let a = run(&mut e, "sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 50, "x2": 0, "y2": 0 }));
+    let b = run(&mut e, "sketch.line", json!({ "sketch": sk, "start": a["end"], "x2": 100, "y2": 0 }));
+    let c = run(&mut e, "sketch.line", json!({ "sketch": sk, "start": b["end"], "x2": 100, "y2": 50 }));
+    run(&mut e, "sketch.spline", json!({ "sketch": sk, "points": [c["end"], [75, 62], [25, 62], a["start"]] }));
+    run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": 10 }));
+    run(&mut e, "file.save", json!({ "path": "curvy.tenon" }));
+    run(&mut e, "drw.new", json!({ "name": "Curvy" }));
+    let v =
+        run(&mut e, "drw.view.base", json!({ "model": "curvy.tenon", "orientation": "top", "scale": 1, "at": [150, 150], "hidden": false }))["view"]
+            .as_u64()
+            .unwrap();
+    // Find where the curve runs: above the chord, at the middle of the view.
+    let curve = (0..200)
+        .map(|i| 52.0 + f64::from(i) * 0.1)
+        .find_map(|y| e.exec("drw.pick", &json!({ "view": v, "view_at": [50, y] })).ok())
+        .expect("the curve is there to pick");
+    assert_eq!(curve["kind"], "curve", "{curve}");
+    let refused = e.exec("drw.auxiliary", &json!({ "parent": v, "edge": curve })).unwrap_err();
+    assert!(refused.contains("curve") && refused.contains("straight"), "{refused}");
+    // The straight one beside it is fine, and it cannot be changed for the curve.
+    let bottom = run(&mut e, "drw.pick", json!({ "view": v, "view_at": [50, 0] }));
+    assert_eq!(bottom["kind"], "line");
+    let aux = run(&mut e, "drw.auxiliary", json!({ "parent": v, "edge": bottom }))["view"].clone();
+    let refused = e.exec("drw.view.edit", &json!({ "view": aux, "edge": curve })).unwrap_err();
+    assert!(refused.contains("curve"), "{refused}");
+    // Its chord can still be measured, as it always could.
+    near(num(&run(&mut e, "drw.dimension", json!({ "view": v, "type": "horizontal", "a": curve, "by": [0, 20] }))["value"]), 100.0, "the chord");
+}
+
+#[test]
+fn a_slanted_edge_across_a_break_is_picked_where_it_is_drawn() {
+    let dir = scratch("break-slant");
+    let mut e = Engine::new(kernel(), &dir);
+    // A triangle (0, 0), (120, 0), (120, 80): its long edge is 144.22 and slants across the band.
+    run(&mut e, "file.new", json!({ "name": "Tri" }));
+    let sk = run(&mut e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    let a = run(&mut e, "sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 0, "x2": 120, "y2": 0 }));
+    let b = run(&mut e, "sketch.line", json!({ "sketch": sk, "start": a["end"], "x2": 120, "y2": 80 }));
+    run(&mut e, "sketch.line", json!({ "sketch": sk, "start": b["end"], "end": a["start"] }));
+    run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": 10 }));
+    run(&mut e, "file.save", json!({ "path": "tri.tenon" }));
+    run(&mut e, "drw.new", json!({ "name": "Tri" }));
+    let v =
+        run(&mut e, "drw.view.base", json!({ "model": "tri.tenon", "orientation": "top", "scale": 1, "at": [150, 150], "hidden": false }))["view"]
+            .as_u64()
+            .unwrap();
+    let long = (120.0_f64 * 120.0 + 80.0 * 80.0).sqrt();
+    near(num(&run(&mut e, "drw.pick", json!({ "view": v, "view_at": [20, 13.333_333] }))["length"]), long, "before the break");
+    run(&mut e, "drw.break", json!({ "view": v, "lines": "vertical", "from": 40, "to": 80, "gap": 6 }));
+    // On each stroke as drawn, on both sides of the band, near it and far from it.
+    for x in [20.0, 35.0, 85.0, 100.0] {
+        let p = run(&mut e, "drw.pick", json!({ "view": v, "view_at": [x, x * 2.0 / 3.0] }));
+        near(num(&p["length"]), long, "the edge, by a click on what is drawn");
+    }
+    // And by the sheet: the middle of the stroke beyond the band, which runs (80, 53.33) to (120, 80).
+    let on = on_sheet(&mut e, v, 100.0, 200.0 / 3.0);
+    near(num(&run(&mut e, "drw.pick", json!({ "view": v, "at": [on.x, on.y] }))["length"]), long, "by the sheet");
+    // In the band nothing is drawn, so nothing is there to pick: the two strokes end 6 across and 26.67
+    // up apart, either end well out of reach of the gap's middle.
+    assert!(e.exec("drw.pick", &json!({ "view": v, "view_at": [60, 40] })).unwrap_err().contains("no edge"));
+    // A dimension of it from there keeps its true length.
+    let p = run(&mut e, "drw.pick", json!({ "view": v, "view_at": [100, 200.0 / 3.0] }));
+    near(num(&run(&mut e, "drw.dimension", json!({ "view": v, "type": "aligned", "a": p, "by": [-10, 20] }))["value"]), long, "its dimension");
+}
+
+#[test]
+fn what_is_projected_from_an_auxiliary_view_goes_with_it_when_it_turns_or_flips() {
+    let dir = scratch("aux-child");
+    let mut e = Engine::new(kernel(), &dir);
+    let v = plate_drawing(&mut e);
+    let bottom = run(&mut e, "drw.pick", json!({ "view": v, "view_at": [20, 0] }));
+    let aux = run(&mut e, "drw.auxiliary", json!({ "parent": v, "edge": bottom, "at": [150, 70] }))["view"].as_u64().unwrap();
+    let child = run(&mut e, "drw.view.projected", json!({ "parent": aux, "side": "right", "at": [300, 70] }))["view"].as_u64().unwrap();
+    let centre = |e: &mut Engine, id: u64| pt(&view_info(e, id)["center"]);
+    assert!(centre(&mut e, aux).near(Vec2::new(150.0, 70.0), 1e-9));
+    assert!(centre(&mut e, child).near(Vec2::new(300.0, 70.0), 1e-9));
+    // Seen from the other side: 80 below its parent's middle becomes 80 above; the view projected from
+    // it stays beside it.
+    run(&mut e, "drw.view.edit", json!({ "view": aux, "flip": true }));
+    assert!(centre(&mut e, aux).near(Vec2::new(150.0, 230.0), 1e-9), "{:?}", centre(&mut e, aux));
+    assert!(centre(&mut e, child).near(Vec2::new(300.0, 230.0), 1e-9), "{:?}", centre(&mut e, child));
+    // Dragged, it still only slides along.
+    run(&mut e, "drw.view.edit", json!({ "view": child, "by": [10, 25] }));
+    assert!(centre(&mut e, child).near(Vec2::new(310.0, 230.0), 1e-9));
+    run(&mut e, "drw.undo", json!({}));
+    run(&mut e, "drw.undo", json!({}));
+    assert!(centre(&mut e, child).near(Vec2::new(300.0, 70.0), 1e-9), "one undo brings both back");
+    // Another edge: the left one, x = 0. The view goes the same 80 from its parent, now across the
+    // sheet, and the view from it goes by as much: 150 to the right of it still.
+    let left = run(&mut e, "drw.pick", json!({ "view": v, "view_at": [0, 20] }));
+    run(&mut e, "drw.view.edit", json!({ "view": aux, "edge": left }));
+    let (a, c) = (centre(&mut e, aux), centre(&mut e, child));
+    near((a - Vec2::new(150.0, 150.0)).len(), 80.0, "as far from its parent");
+    near(a.y, 150.0, "across the sheet from it");
+    assert!((c - a).near(Vec2::new(150.0, 0.0), 1e-9), "{a:?} {c:?}");
+}
+
+#[test]
+fn an_overlay_needs_no_part_shown_to_solve_its_position() {
+    let dir = scratch("overlay-hidden");
+    let mut e = Engine::new(kernel(), &dir);
+    let (joint, mate) = pivot(&mut e);
+    run(&mut e, "drw.new", json!({ "name": "Pivot" }));
+    let top = run(&mut e, "drw.view.base", json!({ "model": "pivot.tenonasm", "orientation": "top", "scale": 1, "at": [150, 150], "hidden": false }))
+        ["view"]
+        .as_u64()
+        .unwrap();
+    let front = run(&mut e, "drw.view.projected", json!({ "parent": top, "side": "below", "at": [150, 60] }))["view"].as_u64().unwrap();
+    // The cube lifted 40 off the base, seen from the front.
+    let ov = run(&mut e, "drw.overlay", json!({ "parent": front, "values": [{ "relationship": mate, "offset": 40 }] }))["view"].as_u64().unwrap();
+    let (lo0, hi0) = extent(&strokes(&sheet(&e), ov, Pen::Phantom));
+
+    // The base, which the cube is mated to, hidden in the assembly: the cube still goes there.
+    run(&mut e, "asm.open", json!({ "path": "pivot.tenonasm" }));
+    run(&mut e, "asm.visible", json!({ "component": 1, "visible": false }));
+    run(&mut e, "asm.save", json!({ "path": "pivot.tenonasm" }));
+    run(&mut e, "drw.update", json!({}));
+    let i = view_info(&mut e, ov);
+    assert!(i["error"].is_null(), "{i}");
+    let g = sheet(&e);
+    let (lo, hi) = extent(&strokes(&g, ov, Pen::Phantom));
+    near(hi.y - lo.y, hi0.y - lo0.y, "the cube, its 10 high");
+    near(hi.x - lo.x, 20.0, "the cube, its 20 across");
+    // The base is hidden, so nothing of it is drawn: from above, the arm from x 15 to 75 and the cube
+    // from 60 to 80.
+    let (plo, phi) = extent(&strokes(&g, top, Pen::Visible));
+    near(phi.x - plo.x, 80.0 - 15.0, "the arm and the cube, seen from above");
+
+    // The arm hidden as well, and a new position of its joint: read and made as it would be with it
+    // shown, with nothing of it to draw.
+    run(&mut e, "asm.open", json!({ "path": "pivot.tenonasm" }));
+    run(&mut e, "asm.visible", json!({ "component": 2, "visible": false }));
+    run(&mut e, "asm.save", json!({ "path": "pivot.tenonasm" }));
+    run(&mut e, "drw.update", json!({}));
+    let rows = run(&mut e, "drw.overlay.values", json!({ "view": top }));
+    let a0 = num(&rows["values"][0]["angle"]);
+    let turned =
+        run(&mut e, "drw.overlay", json!({ "parent": top, "values": [{ "relationship": joint, "angle": a0 + 1.0 }] }))["view"].as_u64().unwrap();
+    assert!(view_info(&mut e, turned)["error"].is_null());
+    assert!(strokes(&sheet(&e), turned, Pen::Phantom).is_empty(), "the arm is hidden");
+    // Shown again, it is drawn.
+    run(&mut e, "asm.open", json!({ "path": "pivot.tenonasm" }));
+    run(&mut e, "asm.visible", json!({ "component": 2, "visible": true }));
+    run(&mut e, "asm.save", json!({ "path": "pivot.tenonasm" }));
+    run(&mut e, "drw.update", json!({}));
+    assert!(view_info(&mut e, turned)["error"].is_null());
+    assert!(!strokes(&sheet(&e), turned, Pen::Phantom).is_empty());
+}
+
+#[test]
+fn breaks_that_clash_are_refused_saying_which() {
+    let dir = scratch("break-clash");
+    let mut e = Engine::new(kernel(), &dir);
+    let v = plate_drawing(&mut e);
+    let m = run(&mut e, "drw.break", json!({ "view": v, "lines": "vertical", "from": 40, "to": 80, "gap": 6 }))["modifier"].clone();
+    let err = e.exec("drw.break", &json!({ "view": v, "lines": "vertical", "from": 60, "to": 100 })).unwrap_err();
+    assert!(err.contains("Break 1") && err.contains("40") && err.contains("80") && err.contains("elsewhere"), "{err}");
+    // The other way is another matter; and a change of its own does not clash with itself.
+    run(&mut e, "drw.break", json!({ "view": v, "lines": "horizontal", "from": 20, "to": 60, "gap": 6 }));
+    run(&mut e, "drw.break", json!({ "view": v, "modifier": m, "to": 90 }));
+    run(&mut e, "drw.undo", json!({}));
+    // Suppressed it still holds its place, and the words say why that is in the way.
+    run(&mut e, "drw.break", json!({ "view": v, "modifier": m, "suppressed": true }));
+    let err = e.exec("drw.break", &json!({ "view": v, "lines": "vertical", "from": 60, "to": 100 })).unwrap_err();
+    assert!(err.contains("Break 1") && err.contains("suppressed"), "{err}");
+}
+
+#[test]
+fn a_break_never_makes_a_view_longer() {
+    let dir = scratch("break-scale");
+    let mut e = Engine::new(kernel(), &dir);
+    let v = plate_drawing(&mut e);
+    run(&mut e, "drw.break", json!({ "view": v, "lines": "vertical", "from": 40, "to": 80, "gap": 6 }));
+    // 120 wide, a band of 40 and a gap of 6 of paper. At 1:1: 120 - 40 + 6. At 1:5 the band is 8 of paper:
+    // 24 - 8 + 6. At 1:10 the band is 4 of paper, under its gap: it stays as it is, and the view is
+    // as long as it was whole, not longer; at 1:20 too.
+    for (scale, size) in [(1.0, 86.0), (0.2, 22.0), (0.1, 12.0), (0.05, 6.0)] {
+        run(&mut e, "drw.view.edit", json!({ "view": v, "scale": scale }));
+        near(pt(&view_info(&mut e, v)["size"]).x, size, &format!("across at {scale}"));
+        // Nothing of it runs wider than that.
+        let (lo, hi) = extent(&strokes(&sheet(&e), v, Pen::Visible));
+        assert!(hi.x - lo.x <= size + 1e-9, "{lo:?} {hi:?} at {scale}");
+    }
+    // And back: the gap is kept.
+    run(&mut e, "drw.view.edit", json!({ "view": v, "scale": 1 }));
+    near(pt(&view_info(&mut e, v)["size"]).x, 86.0, "back at 1:1");
+    run(&mut e, "drw.save", json!({ "path": "scaled.tenondrw" }));
+    assert!(std::fs::read_to_string(dir.join("scaled.tenondrw")).unwrap().contains("gap = 6.0"));
+}
+
+#[test]
+fn an_overlay_is_told_plainly_what_it_takes_from_its_parent() {
+    let dir = scratch("overlay-words");
+    let mut e = Engine::new(kernel(), &dir);
+    let (joint, _) = pivot(&mut e);
+    run(&mut e, "drw.new", json!({ "name": "Pivot" }));
+    let top = run(&mut e, "drw.view.base", json!({ "model": "pivot.tenonasm", "orientation": "top", "scale": 1, "at": [150, 150], "hidden": false }))
+        ["view"]
+        .as_u64()
+        .unwrap();
+    let a0 = num(&run(&mut e, "drw.overlay.values", json!({ "view": top }))["values"][0]["angle"]);
+    let ov = run(&mut e, "drw.overlay", json!({ "parent": top, "values": [{ "relationship": joint, "angle": a0 + 1.0 }] }))["view"].clone();
+    // Whatever the shape, and wherever: the same words as a break out gets.
+    for (id, p) in [
+        ("drw.crop", json!({ "view": ov, "rect": [[0, 0], [10, 10]] })),
+        ("drw.crop", json!({ "view": ov, "rect": [[900, 900], [910, 910]] })),
+        ("drw.break", json!({ "view": ov, "lines": "vertical", "from": 0, "to": 900 })),
+        ("drw.break", json!({ "view": ov, "lines": "vertical", "from": 900, "to": 950 })),
+        ("drw.break_out", json!({ "view": ov, "rect": [[0, 0], [10, 10]], "depth": 5 })),
+    ] {
+        let err = e.exec(id, &p).unwrap_err();
+        assert!(err.contains("modify the parent view"), "{id}: {err}");
+    }
+    // What it is drawn with is its parent's.
+    for key in
+        [json!({ "scale": 2 }), json!({ "label": true }), json!({ "hidden": true }), json!({ "tangent": true }), json!({ "centerlines": true })]
+    {
+        let mut p = key.clone();
+        p["view"] = ov.clone();
+        let err = e.exec("drw.view.edit", &p).unwrap_err();
+        assert!(err.contains("parent"), "{key}: {err}");
+    }
+    let i = view_info(&mut e, ov.as_u64().unwrap());
+    assert_eq!(i["scale"], 1.0);
+    // Nothing is written with it.
+    let g = sheet(&e);
+    assert!(!g.texts.iter().any(|(o, _)| *o == Owner::View(ViewId(ov.as_u64().unwrap() as u32))));
+    // The parent's scale still goes to it.
+    run(&mut e, "drw.view.edit", json!({ "view": top, "scale": 2 }));
+    assert_eq!(view_info(&mut e, ov.as_u64().unwrap())["scale"], 2.0);
+}
+
+#[test]
+fn a_break_out_away_from_the_view_is_refused_and_through_is_not_undone_without_a_depth() {
+    let dir = scratch("break-out-words");
+    let mut e = Engine::new(kernel(), &dir);
+    let v = plate_drawing(&mut e);
+    let err = e.exec("drw.break_out", &json!({ "view": v, "rect": [[500, 500], [600, 600]], "depth": 5 })).unwrap_err();
+    assert!(err.contains("outside the view"), "{err}");
+    let err = e.exec("drw.break_out", &json!({ "view": v, "center": [500, 500], "radius": 5, "through": true })).unwrap_err();
+    assert!(err.contains("outside the view"), "{err}");
+    // Through false on one that goes through wants a depth; on one with a depth it keeps it.
+    let m = run(&mut e, "drw.break_out", json!({ "view": v, "rect": [[10, 10], [50, 50]], "through": true }))["modifier"].clone();
+    let err = e.exec("drw.break_out", &json!({ "view": v, "modifier": m, "through": false })).unwrap_err();
+    assert!(err.contains("depth"), "{err}");
+    assert!(view_info(&mut e, v)["modifiers"][0]["depth"].is_null());
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "depth": 4 }));
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "through": false }));
+    assert_eq!(view_info(&mut e, v)["modifiers"][0]["depth"], 4.0);
+    assert!(e.exec("drw.break_out", &json!({ "view": v, "rect": [[0, 0], [5, 5]], "through": false })).unwrap_err().contains("depth"));
+}
+
+/// How many times a word is written on the sheet.
+fn written(g: &Graphics, t: &str) -> usize {
+    g.texts.iter().filter(|(_, x)| x.text == t).count()
+}
+
+#[test]
+fn what_a_view_leaves_out_takes_its_marks_with_it() {
+    let dir = scratch("marks");
+    let mut e = Engine::new(kernel(), &dir);
+    let v = plate_drawing(&mut e);
+    // A centre mark by hand on the hole at (90, 60), which is at (180, 170) on the sheet: 5 + 2 each way.
+    let hole = run(&mut e, "drw.pick", json!({ "view": v, "view_at": [95, 60] }));
+    let mark = run(&mut e, "drw.center_mark", json!({ "view": v, "a": hole }))["annotation"].as_u64().unwrap() as u32;
+    let of_mark = |g: &Graphics| -> Vec<Vec<Vec2>> {
+        g.strokes.iter().filter(|s| s.0 == Owner::Annotation(tenon_drawing::AnnotId(mark))).map(|s| s.2.clone()).collect()
+    };
+    let (lo, hi) = extent(&of_mark(&sheet(&e)));
+    assert!(lo.near(Vec2::new(173.0, 163.0), 1e-6) && hi.near(Vec2::new(187.0, 177.0), 1e-6), "{lo:?} {hi:?}");
+    // Its hole cropped away: the mark goes with it. drw.info tells the same.
+    let c = run(&mut e, "drw.crop", json!({ "view": v, "rect": [[-5, -5], [50, 85]], "outline": false }))["modifier"].clone();
+    assert!(of_mark(&sheet(&e)).is_empty());
+    let info = run(&mut e, "drw.info", json!({}));
+    assert_eq!(info["annotations"][0]["segments"], json!([]), "{info}");
+    // A crop down the side of the hole: of the mark, what lies inside: to x = 93, sheet 183.
+    run(&mut e, "drw.crop", json!({ "view": v, "rect": [[-5, -5], [93, 85]], "outline": false }));
+    let (lo, hi) = extent(&of_mark(&sheet(&e)));
+    assert!(lo.near(Vec2::new(173.0, 163.0), 1e-6) && hi.near(Vec2::new(183.0, 177.0), 1e-6), "{lo:?} {hi:?}");
+    // Suppressed: whole. Then deleted.
+    run(&mut e, "drw.crop", json!({ "view": v, "suppressed": true }));
+    assert!((extent(&of_mark(&sheet(&e))).1.x - 187.0).abs() < 1e-6);
+    run(&mut e, "drw.modifier.delete", json!({ "view": v, "modifier": c }));
+    // The hole in the band of a break: gone too.
+    let b = run(&mut e, "drw.break", json!({ "view": v, "lines": "vertical", "from": 80, "to": 100, "gap": 6 }))["modifier"].clone();
+    assert!(of_mark(&sheet(&e)).is_empty());
+    // Beyond the band, it goes with what it marks: the band 60 to 80 takes 14 out.
+    run(&mut e, "drw.break", json!({ "view": v, "modifier": b, "from": 60, "to": 80 }));
+    let s = on_sheet(&mut e, v, 90.0, 60.0);
+    let (lo, hi) = extent(&of_mark(&sheet(&e)));
+    assert!(lo.near(s - Vec2::new(7.0, 7.0), 1e-6) && hi.near(s + Vec2::new(7.0, 7.0), 1e-6), "{lo:?} {hi:?} {s:?}");
+    run(&mut e, "drw.modifier.delete", json!({ "view": v, "modifier": b }));
+    // A centre line by hand between the two holes: across a band it is broken as the view's lines are.
+    let other = run(&mut e, "drw.pick", json!({ "view": v, "view_at": [35, 20] }));
+    let line = run(&mut e, "drw.centerline", json!({ "view": v, "a": other, "b": hole }))["annotation"].as_u64().unwrap() as u32;
+    let band = run(&mut e, "drw.break", json!({ "view": v, "lines": "vertical", "from": 50, "to": 70, "gap": 6 }))["modifier"].clone();
+    let g = sheet(&e);
+    let pieces: Vec<Vec<Vec2>> = g.strokes.iter().filter(|s| s.0 == Owner::Annotation(tenon_drawing::AnnotId(line))).map(|s| s.2.clone()).collect();
+    assert_eq!(pieces.len(), 2, "{pieces:?}");
+    // The sides of the band are 6 apart on the sheet: nothing of the line in there.
+    let (s0, s1) = (on_sheet(&mut e, v, 50.0, 0.0).x, on_sheet(&mut e, v, 70.0, 0.0).x);
+    near(s1 - s0, 6.0, "the gap");
+    assert!(pieces.iter().flatten().all(|p| p.x <= s0 + 1e-6 || p.x >= s1 - 1e-6), "{pieces:?}");
+    run(&mut e, "drw.modifier.delete", json!({ "view": v, "modifier": band }));
+
+    // A hole table's tag: a through cut takes a hole away, and its tag; a shallow one leaves it, as
+    // the hole goes on down below the floor.
+    run(&mut e, "drw.hole_table", json!({ "view": v, "at": [260, 250] }));
+    assert_eq!(written(&sheet(&e), "A1"), 2, "in the table and on the hole");
+    let cut = run(&mut e, "drw.break_out", json!({ "view": v, "center": [30, 20], "radius": 15, "through": true }))["modifier"].clone();
+    assert_eq!(written(&sheet(&e), "A1"), 1, "in the table");
+    assert_eq!(written(&sheet(&e), "A2"), 2, "the other hole is as it was");
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": cut, "depth": 5 }));
+    assert_eq!(written(&sheet(&e), "A1"), 2, "the hole goes on below the floor");
+}
+
+#[test]
+fn a_cropped_detail_keeps_its_circle_inside_and_a_break_left_behind_says_so() {
+    let dir = scratch("detail-crop");
+    let mut e = Engine::new(kernel(), &dir);
+    let v = plate_drawing(&mut e);
+    // A detail of radius 20 about the hole at (30, 20), at 2:1, at (320, 60): its circle 280 to 360.
+    let det = run(&mut e, "drw.view.detail", json!({ "parent": v, "center": [30, 20], "radius": 20, "scale": 2, "at": [320, 60] }))["view"]
+        .as_u64()
+        .unwrap();
+    let (lo, hi) = extent(&strokes(&sheet(&e), det, Pen::Thin));
+    assert!(lo.near(Vec2::new(280.0, 20.0), 0.02) && hi.near(Vec2::new(360.0, 100.0), 0.02), "{lo:?} {hi:?}");
+    // Cropped to its left half, to x = 30: on the sheet to x = 320; so is what is left of the circle.
+    run(&mut e, "drw.crop", json!({ "view": det, "rect": [[5, -5], [30, 45]], "outline": false }));
+    let (lo, hi) = extent(&strokes(&sheet(&e), det, Pen::Thin));
+    assert!(lo.near(Vec2::new(280.0, 20.0), 0.02) && hi.near(Vec2::new(320.0, 100.0), 0.02), "{lo:?} {hi:?}");
+    run(&mut e, "drw.undo", json!({}));
+    run(&mut e, "drw.view.delete", json!({ "view": det }));
+
+    // A plate made 35 wide leaves a band 40 to 80 beyond its end: no lines stand out there, and the
+    // view says what to do.
+    let b = run(&mut e, "drw.break", json!({ "view": v, "lines": "vertical", "from": 40, "to": 80, "gap": 6 }))["modifier"].as_u64().unwrap();
+    assert!(view_info(&mut e, v)["error"].is_null());
+    let symbols = |g: &Graphics| g.strokes.iter().filter(|s| s.0 == Owner::Mod(ViewId(v as u32), b as u32)).count();
+    assert_eq!(symbols(&sheet(&e)), 2);
+    run(&mut e, "file.open", json!({ "path": "plate.tenon" }));
+    run(&mut e, "param.set", json!({ "name": "w", "equation": "35" }));
+    run(&mut e, "file.save", json!({ "path": "plate.tenon" }));
+    run(&mut e, "drw.update", json!({}));
+    assert_eq!(symbols(&sheet(&e)), 0);
+    let i = view_info(&mut e, v);
+    assert!(i["error"].as_str().is_some_and(|t| t.contains("Break 1") && t.contains("no longer crosses")), "{i}");
+    // Back at 120 it is at work again and says nothing.
+    run(&mut e, "file.open", json!({ "path": "plate.tenon" }));
+    run(&mut e, "param.set", json!({ "name": "w", "equation": "120" }));
+    run(&mut e, "file.save", json!({ "path": "plate.tenon" }));
+    run(&mut e, "drw.update", json!({}));
+    assert!(view_info(&mut e, v)["error"].is_null());
+    assert_eq!(symbols(&sheet(&e)), 2);
+}
+
+#[test]
+fn a_break_out_goes_down_from_a_curved_face_and_from_the_top_of_an_assembly() {
+    let dir = scratch("break-out-round");
+    let mut e = Engine::new(kernel(), &dir);
+    // A round bar 40 across and 60 long, its axis up Z, seen from the front. Its nearest is the line
+    // down its front, 20 from the axis. 5 down, the floor cuts it 2 root(400 - 15 x 15) = 26.46 wide.
+    run(&mut e, "file.new", json!({ "name": "Bar" }));
+    let sk = run(&mut e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    run(&mut e, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": 20 }));
+    run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": 60 }));
+    run(&mut e, "file.save", json!({ "path": "bar.tenon" }));
+    run(&mut e, "drw.new", json!({ "name": "Bar" }));
+    let v =
+        run(&mut e, "drw.view.base", json!({ "model": "bar.tenon", "orientation": "front", "scale": 1, "at": [150, 150], "hidden": false }))["view"]
+            .as_u64()
+            .unwrap();
+    // 40 long, wider than the bar.
+    run(&mut e, "drw.break_out", json!({ "view": v, "rect": [[-30, 10], [30, 50]], "depth": 5 }));
+    assert!(view_info(&mut e, v)["error"].is_null());
+    hatched(&sheet(&e), v, 40.0 * 2.0 * (400.0_f64 - 225.0).sqrt(), "5 down from the front of the bar");
+
+    // An assembly: the base's top at 10, the arm on it from 10 to 15 (x 15 to 75, y 15 to 25), the cube
+    // on it from 10 to 20 (x 60 to 80). From above the nearest is the cube's top at 20. 7 down is 13:
+    // through the arm's top only, 20 x 6 of it, the parts are placed and not at their origins.
+    let _ = pivot(&mut e);
+    run(&mut e, "drw.new", json!({ "name": "Pivot" }));
+    let top = run(&mut e, "drw.view.base", json!({ "model": "pivot.tenonasm", "orientation": "top", "scale": 1, "at": [150, 150], "hidden": false }))
+        ["view"]
+        .as_u64()
+        .unwrap();
+    let m = run(&mut e, "drw.break_out", json!({ "view": top, "rect": [[30, 17], [50, 23]], "depth": 7 }))["modifier"].clone();
+    assert!(view_info(&mut e, top)["error"].is_null());
+    hatched(&sheet(&e), top, 120.0, "7 down, in the arm");
+    // 5 down is 15: level with the arm's top, which is no cut face, and it takes nothing away.
+    run(&mut e, "drw.break_out", json!({ "view": top, "modifier": m, "depth": 5 }));
+    assert!(view_info(&mut e, top)["error"].as_str().is_some_and(|t| t.contains("cuts nothing")));
+    assert_eq!(hatch_length(&sheet(&e), top), 0.0);
+    // 12 down is 8: through the arm, into the base.
+    run(&mut e, "drw.break_out", json!({ "view": top, "modifier": m, "depth": 12 }));
+    assert!(view_info(&mut e, top)["error"].is_null());
+    hatched(&sheet(&e), top, 120.0, "12 down, in the base");
+}
+
+#[test]
+fn a_break_out_can_be_moved_over_what_it_cut_away_and_a_mark_stays_on_a_hole_left_below_it() {
+    let dir = scratch("break-out-moved");
+    let mut e = Engine::new(kernel(), &dir);
+    let v = plate_drawing(&mut e);
+    // Through, all of the plate above y = 40: the view's lines stop there, the model does not.
+    let m = run(&mut e, "drw.break_out", json!({ "view": v, "rect": [[-5, 40], [125, 85]], "through": true }))["modifier"].clone();
+    // Moved to where it has cut already: not off the view, as the view is the model's.
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": m, "rect": [[10, 50], [50, 70]] }));
+    assert!(view_info(&mut e, v)["error"].is_null());
+    run(&mut e, "drw.modifier.delete", json!({ "view": v, "modifier": m }));
+
+    // A centre mark by hand on the hole at (90, 60). A cut 5 deep takes the circle it is on off the top;
+    // the hole goes on below the floor, so the mark stays. Through, there is no hole there.
+    let hole = run(&mut e, "drw.pick", json!({ "view": v, "view_at": [95, 60] }));
+    let mark = run(&mut e, "drw.center_mark", json!({ "view": v, "a": hole }))["annotation"].as_u64().unwrap() as u32;
+    let drawn = |e: &Engine| sheet(e).strokes.iter().filter(|s| s.0 == Owner::Annotation(tenon_drawing::AnnotId(mark))).count();
+    assert_eq!(drawn(&e), 2);
+    let c = run(&mut e, "drw.break_out", json!({ "view": v, "center": [90, 60], "radius": 12, "depth": 5 }))["modifier"].clone();
+    assert_eq!(drawn(&e), 2, "the hole goes on");
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": c, "through": true }));
+    assert_eq!(drawn(&e), 0, "the hole is gone");
 }

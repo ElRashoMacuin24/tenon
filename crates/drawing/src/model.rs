@@ -650,7 +650,9 @@ fn validate_mods(v: &View) -> Result<(), String> {
                 boundary.is_valid()
             }
             ModKind::Break { lines, from, to, gap } => {
-                let clash = bands.iter().any(|(l, a, b)| l == lines && from < b && a < to);
+                if bands.iter().any(|(l, a, b)| l == lines && from < b && a < to) {
+                    return Err(format!("{} has two breaks that overlap", v.name));
+                }
                 bands.push((*lines, *from, *to));
                 from.is_finite()
                     && to.is_finite()
@@ -659,7 +661,6 @@ fn validate_mods(v: &View) -> Result<(), String> {
                     && to - from > tol::LINEAR
                     && gap.is_finite()
                     && (0.0..=1000.0).contains(gap)
-                    && !clash
             }
             ModKind::BreakOut { boundary, depth } => {
                 boundary.is_valid() && depth.is_none_or(|d| d.is_finite() && d > tol::LINEAR && d < tol::MAX_SIZE)
