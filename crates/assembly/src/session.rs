@@ -365,6 +365,19 @@ pub fn failing_parts(parts: &Parts) -> Vec<(&str, String)> {
     parts.iter().filter(|(_, p)| !of_file(p)).filter_map(|(k, p)| p.failing().map(|why| (crate::model::key_file(k), why))).collect()
 }
 
+/// What an answer for the whole assembly would leave out: of each shown component whose part cannot
+/// be had or does not build, what is the matter, in the words [`crate::interfere::placed_parts`]
+/// has. (What does not build is not known until its geometry has come.)
+pub fn left_out<'a>(asm: &'a Assembly, parts: &'a Parts) -> impl Iterator<Item = String> + 'a {
+    asm.shown().filter_map(|c| {
+        let part = parts.get(&c.key())?;
+        match &part.missing {
+            Some(why) => Some(format!("{} is missing: {why}", c.name)),
+            None => part.failing().map(|why| format!("{} does not build: {why}", c.name)),
+        }
+    })
+}
+
 /// How to place `source` again in its position mirrored in `plane`, for a part that is the same
 /// as its mirror image: `about` its own middle plane square to that axis or, with none given, the
 /// one that turns it least (of those it is the same about).

@@ -188,7 +188,12 @@ impl Workbench {
         match job {
             PartJob::File { path, kind } => {
                 let written = result.downcast::<Result<Written, String>>().map_or_else(|_| unexpected(), |b| *b);
-                match written.and_then(|w| std::fs::write(&path, &w.data).map(|()| w).map_err(|e| format!("cannot write {}: {e}", path.display()))) {
+                // (Of an assembly, what was on its way when it was asked for has come by now.)
+                match self
+                    .assembly_whole()
+                    .and(written)
+                    .and_then(|w| std::fs::write(&path, &w.data).map(|()| w).map_err(|e| format!("cannot write {}: {e}", path.display())))
+                {
                     Ok(w) if w.watertight => self.set_status(format!("Exported {} ({} triangles)", path.display(), w.triangles)),
                     // Written all the same: the file is what was asked for, and says what is wrong with the part.
                     Ok(_) => self.set_error(format!(
@@ -253,7 +258,10 @@ impl Workbench {
                 let items = crate::assembly::slot_items_at(a, &frames);
                 self.step_seq += 1;
                 self.part_jobs.insert(self.step_seq, job);
-                w.job(self.step_seq, Box::new(move |k, slots| Box::new(write(k, &crate::assembly::placed_from_slots(&items, slots)))));
+                w.job(
+                    self.step_seq,
+                    Box::new(move |k, slots| Box::new(crate::assembly::placed_from_slots(&items, slots).and_then(|placed| write(k, &placed)))),
+                );
                 self.set_status(format!("Exporting {}...", kind.name()));
                 return Ok(());
             }

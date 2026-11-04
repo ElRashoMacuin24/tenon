@@ -11,7 +11,7 @@ use tenon_model::schema::arg;
 use tenon_model::{CmdError, CmdResult, FaceOrigin, FeatureId, OriginAxis, OriginPlane};
 
 use crate::model::{Assembly, ComponentId, Geom, JointKind, MAX_COUNT, PatternId, PatternKind, RelKind, RelationshipId, Run, Target, Tweak};
-use crate::session::{self, AsmSession, Part, auto_explode, bom, dof, exploded, relate, scene_of, solve_assembly};
+use crate::session::{self, AsmSession, Part, auto_explode, bom, dof, exploded, left_out, relate, scene_of, solve_assembly};
 
 pub type AsmFn = fn(&mut AsmSession, Option<&mut dyn Kernel>, &Value) -> CmdResult;
 
@@ -214,14 +214,11 @@ fn asm_mass(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
     // Each component at its own part's density (g/cm^3; a part without a material is at 1).
     let (mut volume, mut mass, mut moment) = (0.0, 0.0, Vec3::ZERO);
     let mut rows = Vec::new();
+    // (Not 0, as if all were well, for a part that is not there or does not build.)
+    if let Some(why) = left_out(asm, &s.parts).next() {
+        return Err(CmdError(why));
+    }
     for c in asm.shown() {
-        // (Not 0, as if all were well, for a part that is not there or does not build.)
-        if let Some(why) = s.parts.get(&c.key()).and_then(|p| p.missing.clone()) {
-            return Err(CmdError(format!("{} is missing: {why}", c.name)));
-        }
-        if let Some(why) = s.parts.get(&c.key()).and_then(Part::failing) {
-            return Err(CmdError(format!("{} does not build: {why}", c.name)));
-        }
         let scene = scene_of(&s.parts, c).ok_or_else(|| CmdError(format!("{}: the part's geometry is not available", c.name)))?;
         let doc = s.parts.get(&c.key()).map(|p| p.session.document());
         let density = doc.map_or(tenon_model::materials::DEFAULT_DENSITY, tenon_model::Document::density);

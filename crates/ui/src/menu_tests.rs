@@ -1113,3 +1113,121 @@ fn nothing_in_the_ribbon_or_the_strips_is_painted_as_if_out_of_use() {
         }
     }
 }
+
+/// With the kernel on its own thread, as the app runs, Interference, Properties and every export
+/// answered for the components that built and said nothing of the one that did not; the same with its
+/// file gone. And what is only found out once the part has come, after it was asked for.
+#[test]
+fn an_assembly_with_a_part_left_out_says_so_on_the_geometry_thread() {
+    let dir = scratch("left-out");
+    let (shaft, marked, good, asm) = (dir.join("shaft.tenon"), dir.join("marked.tenon"), dir.join("good.tenon"), dir.join("h.tenonasm"));
+    let mut made = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    made.exec("model.box", json!({ "width": 40, "depth": 40, "height": 40 })).unwrap();
+    made.save(&good).unwrap();
+    made.run_unprompted("file.new").unwrap();
+    made.exec("model.cylinder", json!({ "diameter": 30, "height": 100 })).unwrap();
+    made.save(&shaft).unwrap();
+    made.run_unprompted("file.new").unwrap();
+    made.exec("model.derive", json!({ "path": shaft.to_string_lossy() })).unwrap();
+    made.save(&marked).unwrap();
+    made.run_unprompted("file.new_assembly").unwrap();
+    made.place_file(&good).unwrap();
+    d.settle(&mut made);
+    made.panel = None;
+    made.asm_exec("asm.insert", json!({ "path": marked.to_string_lossy(), "at": [20, 20, 0] })).unwrap();
+    d.settle(&mut made);
+    made.save_assembly(&asm).unwrap();
+    drop(made);
+
+    let mut wb = window(&dir);
+    let exports = ["export.step", "export.stl", "export.3mf"];
+    let written = dir.join("written");
+    let files = || std::fs::read_dir(&written).unwrap().count();
+    let open = |wb: &mut Workbench, d: &mut Driver| {
+        wb.chrome.mass = false;
+        wb.open(&asm).unwrap();
+        idle(d, wb);
+        d.frame(wb, vec![]);
+    };
+    // What the Properties window says of what its figures leave out, in red.
+    let note = |wb: &mut Workbench, d: &mut Driver| {
+        wb.command("inspect.mass");
+        d.frame(wb, vec![]);
+        d.frame(wb, vec![]);
+        let note = d.texts().into_iter().find(|t| t.contains("Not in these figures"));
+        if let Some(note) = &note {
+            assert_eq!(d.text_color(note), Some(crate::theme::Tokens::of(wb.chrome.theme).history_marker));
+        }
+        note
+    };
+
+    // Whole: they overlap by the shaft's first 40 mm, and all of it is written.
+    open(&mut wb, &mut d);
+    wb.command("asm.interference");
+    idle(&mut d, &mut wb);
+    let overlap = 40.0 * std::f64::consts::PI * 225.0;
+    assert!(matches!(&wb.asm.as_ref().unwrap().clashes, Some(Ok(c)) if c.len() == 1 && (c[0].volume - overlap).abs() < 1e-3), "{}", wb.status());
+    for (i, id) in exports.into_iter().enumerate() {
+        wb.command(id);
+        idle(&mut d, &mut wb);
+        assert!(wb.status().starts_with("Exported") && !wb.status_error, "{id}: {}", wb.status());
+        assert_eq!(files(), i + 1, "{id}");
+    }
+    assert_eq!(note(&mut wb, &mut d), None);
+    std::fs::remove_dir_all(&written).unwrap();
+    std::fs::create_dir_all(&written).unwrap();
+
+    // Nothing goes on without what is left out, it is said, and nothing is written.
+    let refuses = |wb: &mut Workbench, d: &mut Driver, words: &str| {
+        wb.command("asm.interference");
+        idle(d, wb);
+        d.frame(wb, vec![]);
+        assert!(wb.status_error && wb.status().contains(words), "{}", wb.status());
+        assert!(matches!(&wb.asm.as_ref().unwrap().clashes, Some(Err(e)) if e.contains(words)), "{}", wb.status());
+        assert!(d.texts().iter().any(|t| t.contains(words)) && !d.texts().iter().any(|t| t == "No interference."), "{:?}", d.texts());
+        wb.asm.as_mut().unwrap().clashes = None;
+        for id in exports {
+            wb.set_status("Before");
+            wb.command(id);
+            idle(d, wb);
+            assert!(wb.status_error && wb.status().contains(words), "{id}: {}", wb.status());
+            assert_eq!(files(), 0, "{id} wrote its file");
+        }
+    };
+
+    // What it derives from gone.
+    std::fs::remove_file(&shaft).unwrap();
+    let words = "marked:1 does not build: Derive1: The file shaft.tenon is missing";
+    open(&mut wb, &mut d);
+    refuses(&mut wb, &mut d, words);
+    // The figures are of what is there.
+    let said = note(&mut wb, &mut d).expect("the window says what its figures leave out");
+    assert!(said.contains(words), "{said}");
+    assert!(d.texts().iter().any(|t| t == "64000 mm³"), "{:?}", d.texts());
+
+    // Asked for before the part has come: it is not known yet, the answer waits for it, and is the same.
+    wb.chrome.mass = false;
+    for id in std::iter::once("asm.interference").chain(exports) {
+        wb.open(&asm).unwrap();
+        d.frame(&mut wb, vec![]);
+        assert_eq!(wb.assembly_whole(), Ok(()), "{id}: {}", wb.status());
+        wb.command(id);
+        idle(&mut d, &mut wb);
+        assert!(wb.status_error && wb.status().contains("does not build: Derive1"), "{id}: {}", wb.status());
+        assert_eq!(files(), 0, "{id} wrote its file");
+        if id == "asm.interference" {
+            assert!(matches!(&wb.asm.as_ref().unwrap().clashes, Some(Err(e)) if e.contains(words)), "{}", wb.status());
+            wb.asm.as_mut().unwrap().clashes = None;
+        }
+    }
+
+    // Its part file gone.
+    std::fs::remove_file(&marked).unwrap();
+    open(&mut wb, &mut d);
+    refuses(&mut wb, &mut d, "marked:1 is missing");
+    let said = note(&mut wb, &mut d).expect("the window says what its figures leave out");
+    assert!(said.contains("marked:1 is missing"), "{said}");
+    assert!(d.texts().iter().any(|t| t == "64000 mm³"), "{:?}", d.texts());
+    let _ = std::fs::remove_dir_all(dir);
+}

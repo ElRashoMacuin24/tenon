@@ -262,7 +262,11 @@ impl Driver {
     pub(crate) fn text_color(&self, text: &str) -> Option<egui::Color32> {
         fn walk(s: &egui::Shape, text: &str) -> Option<egui::Color32> {
             match s {
-                egui::Shape::Text(t) if t.galley.text() == text => Some(t.fallback_color),
+                // (Its own colour, if it was written with one.)
+                egui::Shape::Text(t) if t.galley.text() == text => {
+                    let own = t.galley.job.sections.first().map(|s| s.format.color).filter(|c| *c != egui::Color32::PLACEHOLDER);
+                    Some(own.unwrap_or(t.fallback_color))
+                }
                 egui::Shape::Vec(v) => v.iter().find_map(|x| walk(x, text)),
                 _ => None,
             }

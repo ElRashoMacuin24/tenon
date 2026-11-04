@@ -133,9 +133,10 @@ views and Baseline and Ordinate dimensions.
 - **Keys:** L, C, A, D, X and O outside a sketch ask for a plane, as their buttons do. **Esc** leaves windows,
   topmost first, the navigation bar's tools and Free Rotate, whose button now lights. The File menu closes on a
   press elsewhere, and a second click closes what it opened.
-- **A part that does not build** said nothing where it was used: the component was not there, with a mass of 0
-  and no interference. It is now red in the browser and on the status line, what needs it names it, and each
-  drawing view says so, as a drawing of an assembly with a part file gone now does too. `asm.open`, `drw.open`,
+- **A part that does not build, or a part file gone,** said nothing where it was used: the component was not
+  there, with a mass of 0, no interference, and exports written without it. It is now red in the browser and on the
+  status line, Interference and the exports refuse and name it, the Properties window says what its figures leave
+  out, and each drawing view says so, as a drawing of an assembly with a part file gone now does too. `asm.open`, `drw.open`,
   `asm.tree` and `asm.bom` gain `failing`.
 - **Undo:** `asm.undo` takes back `asm.edit_part`, where it took back the step before it. Undo after deleting
   the last component of a part brings its part back too. Ctrl+Z with a panel open leaves the panel.

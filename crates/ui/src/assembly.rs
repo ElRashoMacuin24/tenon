@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use egui::{Align2, Color32, Pos2, Rect, Shape, Stroke, Ui, vec2};
 use serde_json::{Value, json};
-use tenon_assembly::interfere::{Clash, Placed};
+use tenon_assembly::interfere::{Clash, Placed, clashes};
 use tenon_assembly::math::M3;
 use tenon_assembly::session::{self as asm_session, solve_assembly};
 use tenon_assembly::solve::{BodyDof, Motion};
@@ -1252,17 +1252,16 @@ impl Workbench {
                 a.clashes = Some(tenon_assembly::interfere::interference(k.as_mut(), &asm, &mut a.session.parts, None));
             }
             Geo::Worker(w) => {
+                if let Err(why) = whole(a) {
+                    a.clashes = Some(Err(why));
+                    self.report_clashes();
+                    return Ok(());
+                }
                 let items = slot_items(a);
                 self.step_seq += 1;
                 let request = self.step_seq;
                 a.jobs.insert(request, AsmJob::Interference);
-                w.job(
-                    request,
-                    Box::new(move |k, slots| {
-                        let placed = placed_from_slots(&items, slots);
-                        Box::new(tenon_assembly::interfere::clashes(k, &placed, None))
-                    }),
-                );
+                w.job(request, Box::new(move |k, slots| Box::new(placed_from_slots(&items, slots).and_then(|placed| clashes(k, &placed, None)))));
                 self.set_status("Checking interference...");
                 return Ok(());
             }
@@ -1277,10 +1276,20 @@ impl Workbench {
         let msg = match &a.clashes {
             Some(Ok(c)) if c.is_empty() => "No interference.".to_string(),
             Some(Ok(c)) => format!("{} interference(s), {:.3} mm^3 in all.", c.len(), c.iter().map(|x| x.volume).sum::<f64>()),
-            Some(Err(e)) => format!("Interference check failed: {e}"),
+            Some(Err(e)) => {
+                let said = format!("Interference check failed: {e}");
+                self.set_error(said);
+                return;
+            }
             None => return,
         };
         self.set_status(msg);
+    }
+
+    /// The open assembly can be answered for whole, as far as is known here: if not, what is left
+    /// out, as [`placed_parts`](tenon_assembly::interfere::placed_parts) says it.
+    pub(crate) fn assembly_whole(&self) -> Result<(), String> {
+        self.asm.as_deref().filter(|_| self.in_assembly()).map_or(Ok(()), whole)
     }
 
     /// STEP export of the assembly: on the worker, or here.
@@ -1307,8 +1316,7 @@ impl Workbench {
                 w.job(
                     request,
                     Box::new(move |k, slots| {
-                        let placed = placed_from_slots(&items, slots);
-                        Box::new(tenon_assembly::interfere::step_of(k, &placed))
+                        Box::new(placed_from_slots(&items, slots).and_then(|placed| tenon_assembly::interfere::step_of(k, &placed)))
                     }),
                 );
                 self.set_status("Exporting STEP...");
@@ -1322,15 +1330,17 @@ impl Workbench {
     pub(crate) fn asm_job(&mut self, request: u64, result: Box<dyn std::any::Any + Send>) -> bool {
         let Some(a) = self.asm.as_mut() else { return false };
         let Some(job) = a.jobs.remove(&request) else { return false };
+        // (What was on its way when it was asked for has come by now, and may be what does not build.)
+        let so_far = whole(a);
         match job {
             AsmJob::Interference => {
-                a.clashes =
-                    Some(result.downcast::<Result<Vec<Clash>, String>>().map(|b| *b).unwrap_or_else(|_| Err("internal: unexpected result".into())));
+                let found = result.downcast::<Result<Vec<Clash>, String>>().map(|b| *b).unwrap_or_else(|_| Err("internal: unexpected result".into()));
+                a.clashes = Some(so_far.and(found));
                 self.report_clashes();
             }
             AsmJob::Step(path) => {
                 let r = result.downcast::<Result<Vec<u8>, String>>().map(|b| *b).unwrap_or_else(|_| Err("internal: unexpected result".into()));
-                match r.and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
+                match so_far.and(r).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
                     Ok(()) => self.set_status(format!("Exported {}", path.display())),
                     Err(e) => self.set_error(format!("STEP export failed: {e}")),
                 }
@@ -1541,6 +1551,11 @@ impl Workbench {
 /// What a worker job needs to find each component's solids: component, slot, placement, box.
 pub(crate) type SlotItem = (ComponentId, u64, Frame, Option<Aabb3>);
 
+/// Whether what comes of the shown components is of all of them.
+fn whole(a: &AsmDoc) -> Result<(), String> {
+    asm_session::left_out(a.session.assembly(), &a.session.parts).next().map_or(Ok(()), Err)
+}
+
 fn slot_items(a: &AsmDoc) -> Vec<SlotItem> {
     a.session
         .assembly()
@@ -1549,11 +1564,12 @@ fn slot_items(a: &AsmDoc) -> Vec<SlotItem> {
         .collect()
 }
 
-pub(crate) fn placed_from_slots(items: &[SlotItem], slots: &BTreeMap<u64, tenon_model::Regen>) -> Vec<Placed> {
+pub(crate) fn placed_from_slots(items: &[SlotItem], slots: &BTreeMap<u64, tenon_model::Regen>) -> Result<Vec<Placed>, String> {
     items
         .iter()
-        .filter_map(|(c, slot, frame, bbox)| {
-            slots.get(slot).map(|r| Placed { component: *c, shapes: r.bodies.iter().map(|b| b.shape).collect(), frame: *frame, bbox: *bbox })
+        .map(|(c, slot, frame, bbox)| {
+            let r = slots.get(slot).ok_or_else(|| format!("{c}: the part's geometry is not available"))?;
+            Ok(Placed { component: *c, shapes: r.bodies.iter().map(|b| b.shape).collect(), frame: *frame, bbox: *bbox })
         })
         .collect()
 }

@@ -80,6 +80,12 @@ impl Workbench {
         let strength = self.document().strength();
         // Each shown component's name, material and mass in grams.
         let mut components: Vec<(tenon_assembly::ComponentId, String, String, f64)> = Vec::new();
+        // What is not in the figures, for its part cannot be had or does not build.
+        let left_out: Vec<String> = self
+            .asm
+            .as_ref()
+            .filter(|_| !part)
+            .map_or_else(Vec::new, |a| tenon_assembly::session::left_out(a.session.assembly(), &a.session.parts).collect());
         if let Some(a) = self.asm.as_ref().filter(|_| !part) {
             for (i, b) in self.scene.bodies.iter().enumerate() {
                 let Some((id, _)) = a.map.get(i) else { continue };
@@ -248,6 +254,11 @@ impl Workbench {
                         });
                         ui.end_row();
                     });
+                    ui.separator();
+                }
+                if let Some(first) = left_out.first() {
+                    let more = if left_out.len() > 1 { format!(" And {} more.", left_out.len() - 1) } else { String::new() };
+                    ui.label(RichText::new(format!("Not in these figures: {first}{more}")).color(t.history_marker));
                     ui.separator();
                 }
                 if self.scene.bodies.is_empty() {

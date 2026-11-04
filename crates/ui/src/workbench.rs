@@ -559,11 +559,13 @@ impl Workbench {
                     return Ok(());
                 }
                 "export.step" => {
+                    self.assembly_whole()?;
                     let name = format!("{}.step", self.asm.as_ref().map_or("Assembly1".into(), |a| a.session.assembly().name.clone()));
                     let path = self.services.pick_save.as_ref().and_then(|f| f(&name, "step")).ok_or("no file chosen")?;
                     return self.export_assembly_step(&path);
                 }
                 "export.stl" | "export.3mf" => {
+                    self.assembly_whole()?;
                     let kind = if id == "export.stl" { MeshFile::Stl } else { MeshFile::Mf3 };
                     let name =
                         format!("{}.{}", self.asm.as_ref().map_or("Assembly1".into(), |a| a.session.assembly().name.clone()), kind.extension());

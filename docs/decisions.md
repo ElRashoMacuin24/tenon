@@ -4800,4 +4800,7 @@ An audit by real pointer and keyboard, after DEC-139 had run every entry by its 
   of the two): measuring along the view's own axes means laying the whole set out turned.
 - **A part that does not build fails what needs its solid** (`asm.mass`, interference, exports), as a part's own
   export does: a figure without the part reads as if all were well. A parts list goes on listing it, with
-  `failing`.
+  `failing`. In the window the kernel is on its own thread and these are its jobs: they are refused before they
+  start, and again when they end, for a part on its way when they were asked for is only known then. The
+  Properties window keeps its figures of what is there, as it can only ever show what has come, and says in red
+  what they leave out.
