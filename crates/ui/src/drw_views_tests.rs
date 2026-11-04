@@ -115,7 +115,6 @@ fn plate_view(wb: &mut Workbench, d: &mut Driver, path: &Path) {
     settle(d, wb, 2);
 }
 
-/// Near a point of the view (model mm) but off to the right of the sheet's panel: fields there.
 #[test]
 fn an_auxiliary_view_is_placed_by_clicking_and_changed_from_its_row() {
     let _quiet = crate::tests::timing_lock();
@@ -142,8 +141,8 @@ fn an_auxiliary_view_is_placed_by_clicking_and_changed_from_its_row() {
     wb.drw.as_mut().unwrap().selected = None;
     settle(&mut d, &mut wb, 2);
 
-    // Place Views > Auxiliary, the view, a circle is refused nowhere here: a click off any edge says
-    // what to do, then the inclined edge, then up and to the right of it.
+    // Place Views > Auxiliary, the view; a click off any edge says what to do; then the inclined
+    // edge, then up and to the right of it.
     wb.run_ui("drw.auxiliary").unwrap();
     assert!(matches!(tool(&wb), Some(DrwTool::Auxiliary { parent: None, .. })));
     let inside = in_view(&mut wb, 1, 30.0, 30.0);
@@ -202,13 +201,8 @@ fn an_auxiliary_view_is_placed_by_clicking_and_changed_from_its_row() {
 
     // Dragging it only slides it square to its edge.
     let before = view(&mut wb, 1);
-    let g = sheet_of(&wb);
-    let (lo, hi) = g.bounds_of(Owner::View(ViewId(2))).unwrap();
-    let (mid, _) = (lo + (hi - lo) * 0.5, 0);
-    // (A corner of it, by the edges it draws.)
     let lines = drawn(&wb, 2, Pen::Visible);
     let on = lines[0][0] + (lines[0][1] - lines[0][0]) * 0.5;
-    let _ = mid;
     let grab = wb.sheet_on_screen(on);
     d.drag(&mut wb, grab, grab + vec2(40.0, 0.0), egui::PointerButton::Primary);
     let after = view(&mut wb, 1);
@@ -519,8 +513,7 @@ fn an_overlay_is_typed_in_its_panel_with_what_it_comes_to_on_the_sheet() {
     let (a, b) = (lo - center + Vec2::new(50.0, 30.0), hi - center + Vec2::new(50.0, 30.0));
     assert!((a.x - 15.0).abs() < 1e-6 && (b.x - 25.0).abs() < 1e-6 && (a.y - 15.0).abs() < 1e-6 && (b.y - 75.0).abs() < 1e-6, "{a:?} {b:?}");
 
-    // Clicking the phantom part of the sheet with a tool means the view under it; its row opens the
-    // panel with the value in it; another value, OK; one undo.
+    // Its row opens the panel with the value in it; another value, OK; one undo.
     settle(&mut d, &mut wb, 2);
     let row = browser_row(&d, "Overlay VIEW2");
     double_click(&mut d, &mut wb, row.center());
@@ -547,8 +540,50 @@ fn an_overlay_is_typed_in_its_panel_with_what_it_comes_to_on_the_sheet() {
     let c1 = view(&mut wb, 1)["center"].clone();
     assert_ne!(c0, c1, "{}", wb.status());
     assert_eq!(view(&mut wb, 0)["center"], c1, "it stays over its parent");
-    // A view of a part has no position; the panel does not open and says why.
+    // Deleted from the sheet like any view: its row goes, its parent stays.
     d.tap(&mut wb, egui::Key::Escape);
+    wb.drw.as_mut().unwrap().selected = Some(Owner::View(ViewId(2)));
+    d.tap(&mut wb, egui::Key::Delete);
+    assert_eq!(info(&mut wb)["views"].as_array().unwrap().len(), 1, "{}", wb.status());
+    ctrl(&mut d, &mut wb, egui::Key::Z);
+    assert_eq!(info(&mut wb)["views"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn a_break_out_is_cut_on_the_geometry_thread_and_a_crop_needs_nothing_of_it() {
+    let _quiet = crate::tests::timing_lock();
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/m4-plate");
+    let dir = scratch("worker");
+    for f in ["plate.tenon", "pin.tenon", "plate-pins.tenonasm", "plate.tenondrw"] {
+        std::fs::copy(src.join(f), dir.join(f)).unwrap();
+    }
+    let mut wb = Workbench::new(|| Box::new(OcctKernel::new()), None, crate::Services::default());
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    let idle = |d: &mut Driver, wb: &mut Workbench| {
+        for _ in 0..600 {
+            d.frame(wb, vec![]);
+            if !wb.is_busy() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("the geometry thread never finished");
+    };
+    wb.open(&dir.join("plate.tenondrw")).unwrap();
+    idle(&mut d, &mut wb);
+    let i = info(&mut wb);
+    let top = i["views"].as_array().unwrap().iter().find(|v| v["direction"] == json!([0.0, 0.0, 1.0])).unwrap()["id"].as_u64().unwrap();
+    // A crop: at once, with the views current all the while.
+    wb.drw_exec("drw.crop", json!({ "view": top, "rect": [[-5, -5], [125, 85]], "outline": false })).unwrap();
+    assert!(wb.drawing().unwrap().evaluation().is_some(), "a crop computes nothing");
+    // A break out: the views go out of date until the thread is done, then it is hatched.
+    let before = i["views"].as_array().unwrap().iter().find(|v| v["id"] == top).unwrap()["hatch"].as_u64().unwrap();
+    wb.drw_exec("drw.break_out", json!({ "view": top, "center": [60, 40], "radius": 30, "depth": 4 })).unwrap();
+    assert!(wb.drawing().unwrap().evaluation().is_none());
+    idle(&mut d, &mut wb);
+    let i = info(&mut wb);
+    let v = i["views"].as_array().unwrap().iter().find(|v| v["id"] == top).unwrap().clone();
+    assert!(v["error"].is_null() && v["hatch"].as_u64().unwrap() > before, "{v}");
 }
 
 #[test]

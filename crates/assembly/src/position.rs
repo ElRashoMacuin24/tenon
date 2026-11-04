@@ -141,3 +141,70 @@ pub fn readings(asm: &Assembly, parts: &Parts) -> Vec<Reading> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Geom, Target};
+
+    fn joint(joint: JointKind) -> RelKind {
+        let t = Target { component: None, geom: Geom::Origin };
+        RelKind::Joint { joint, a: t.clone(), b: t, flip: false, offset: 1.0, angle: 0.25 }
+    }
+
+    fn value(offset: Option<f64>, angle: Option<f64>) -> JointValue {
+        JointValue { relationship: RelationshipId(1), offset, angle }
+    }
+
+    /// The joint a joint comes to with these values, its offset and its angle.
+    fn set_on(j: JointKind, offset: Option<f64>, angle: Option<f64>) -> Result<(JointKind, f64, f64), &'static str> {
+        let mut k = joint(j);
+        set(&mut k, &value(offset, angle))?;
+        match k {
+            RelKind::Joint { joint, offset, angle, .. } => Ok((joint, offset, angle)),
+            _ => Err("not a joint"),
+        }
+    }
+
+    #[test]
+    fn a_value_on_a_free_motion_holds_it() {
+        use JointKind::{Ball, Cylindrical, Planar, Revolute, Rigid, Slider};
+        // What each value does: the motion it names is held; what is not given stays free or as it is.
+        assert_eq!(set_on(Revolute, None, Some(2.0)), Ok((Rigid, 1.0, 2.0)));
+        assert_eq!(set_on(Revolute, Some(3.0), None), Ok((Revolute, 3.0, 0.25)), "its turn stays free");
+        assert_eq!(set_on(Slider, Some(3.0), None), Ok((Rigid, 3.0, 0.25)));
+        assert_eq!(set_on(Slider, None, Some(2.0)), Ok((Slider, 1.0, 2.0)), "its slide stays free");
+        assert_eq!(set_on(Cylindrical, Some(3.0), Some(2.0)), Ok((Rigid, 3.0, 2.0)));
+        assert_eq!(set_on(Cylindrical, Some(3.0), None), Ok((Revolute, 3.0, 0.25)));
+        assert_eq!(set_on(Cylindrical, None, Some(2.0)), Ok((Slider, 1.0, 2.0)));
+        assert_eq!(set_on(Rigid, Some(3.0), Some(2.0)), Ok((Rigid, 3.0, 2.0)));
+        assert_eq!(set_on(Planar, Some(3.0), None), Ok((Planar, 3.0, 0.25)));
+        assert!(set_on(Planar, None, Some(2.0)).is_err());
+        assert!(set_on(Ball, Some(3.0), None).is_err());
+    }
+
+    #[test]
+    fn a_value_a_relationship_does_not_have_is_refused() {
+        let t = Target { component: None, geom: Geom::Origin };
+        let mut mate = RelKind::Mate { a: t.clone(), b: t.clone(), offset: 0.0 };
+        assert!(set(&mut mate, &value(None, Some(1.0))).is_err());
+        set(&mut mate, &value(Some(4.0), None)).unwrap();
+        assert!(matches!(mate, RelKind::Mate { offset, .. } if offset == 4.0));
+        let mut angle = RelKind::Angle { a: t.clone(), b: t.clone(), angle: 0.0, reference: tenon_geom::Vec3::Z };
+        assert!(set(&mut angle, &value(Some(1.0), None)).is_err());
+        set(&mut angle, &value(None, Some(0.5))).unwrap();
+        assert!(matches!(angle, RelKind::Angle { angle, .. } if angle == 0.5));
+        let mut symmetry = RelKind::Symmetry { a: t.clone(), b: t.clone(), plane: t };
+        assert!(set(&mut symmetry, &value(Some(1.0), None)).is_err());
+    }
+
+    #[test]
+    fn a_value_is_finite_and_says_something() {
+        assert!(value(Some(1.0), None).is_valid());
+        assert!(value(None, Some(1.0)).is_valid());
+        assert!(!value(None, None).is_valid());
+        assert!(!value(Some(f64::NAN), None).is_valid());
+        assert!(!value(Some(1e30), None).is_valid());
+        assert!(!value(None, Some(f64::INFINITY)).is_valid());
+    }
+}

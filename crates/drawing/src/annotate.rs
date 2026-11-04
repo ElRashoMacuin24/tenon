@@ -681,10 +681,18 @@ fn centerlines(gr: &mut Graphics, o: Owner, v: &View, g: &ViewGeometry, m: &Mode
             gr.polyline(o, Pen::Center, run.iter().map(|p| to_sheet(v, g, *p)).collect());
         }
     };
+    // An auxiliary view stands at the angle of its edge: its marks stand with it.
+    let (along, up) = match &v.kind {
+        ViewKind::Auxiliary { a, b, .. } => {
+            let u = (*b - *a).normalized();
+            (u, Vec2::new(-u.y, u.x))
+        }
+        _ => (Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)),
+    };
     for (c, r) in marks {
         let arm = r + CENTER_OVER / v.scale;
-        draw(gr, c - Vec2::new(arm, 0.0), c + Vec2::new(arm, 0.0));
-        draw(gr, c - Vec2::new(0.0, arm), c + Vec2::new(0.0, arm));
+        draw(gr, c - along * arm, c + along * arm);
+        draw(gr, c - up * arm, c + up * arm);
     }
     for (a, b) in lines {
         draw(gr, a, b);
@@ -707,6 +715,9 @@ fn break_line(gr: &mut Graphics, o: Owner, a: Vec2, b: Vec2) {
 
 /// Draws a view's crop outline and the lines of its breaks, each its own to click.
 fn draw_mods(gr: &mut Graphics, v: &View, g: &ViewGeometry) {
+    if v.mods.is_empty() {
+        return;
+    }
     let lines_drawn = gr.bounds_of(Owner::View(v.id));
     for m in v.active_mods() {
         let o = Owner::Mod(v.id, m.id);

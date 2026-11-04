@@ -286,6 +286,11 @@ fn a_crop_draws_only_what_is_inside_and_dimensions_keep_their_true_values() {
     run(&mut e, "drw.crop", json!({ "view": v, "rect": [[50, -5], [70, 5]], "outline": false }));
     assert!(e.exec("drw.pick", &json!({ "view": v, "view_at": [60, 0] })).is_ok());
     assert_eq!(view_info(&mut e, v)["modifiers"].as_array().unwrap().len(), 1, "a view has one crop: the same one changed");
+    // So is one across a detail's circle, with both ends outside it.
+    let det = run(&mut e, "drw.view.detail", json!({ "parent": v, "center": [60, 0], "radius": 8, "at": [320, 60] }))["view"].clone();
+    assert!(e.exec("drw.pick", &json!({ "view": det, "view_at": [60, 0] })).is_ok());
+    assert!(e.exec("drw.pick", &json!({ "view": det, "view_at": [10, 0] })).unwrap_err().contains("no edge"));
+    run(&mut e, "drw.undo", json!({}));
 
     // A circle: 10 of radius about (30, 20): the hole's whole, and no edge of the plate.
     run(&mut e, "drw.crop", json!({ "view": v, "center": [30, 20], "radius": 10, "rect": null, "outline": true }));
@@ -495,7 +500,7 @@ fn a_break_out_cuts_to_a_depth_and_hatches_what_it_leaves() {
     assert_eq!(circles(&g, Pen::Visible, 12.0), 1);
     assert_eq!(circles(&g, Pen::Hidden, 5.0), 0, "the hole is gone with what it was in");
     // A depth deeper than the block goes through it, no farther.
-    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": 1, "depth": 1e6 }));
+    run(&mut e, "drw.break_out", json!({ "view": v, "modifier": 1, "depth": 5000 }));
     let g = sheet(&e);
     assert_eq!(hatch_length(&g, v), 0.0);
     assert!(view_info(&mut e, v)["error"].is_null());
@@ -787,7 +792,26 @@ fn old_drawings_read_as_they_did_and_damaged_new_fields_are_refused() {
 }
 
 #[test]
-fn a_kind_of_view_is_known_by_its_parent() {
+fn an_auxiliary_view_is_seen_as_the_drawing_projects() {
+    let dir = scratch("angles");
+    let mut e = Engine::new(kernel(), &dir);
+    plate(&mut e);
+    // Below a view from above, square to its bottom edge. Third-angle: seen from the front, the side
+    // it is on. First-angle: seen from behind, the side away from it.
+    for (standard, seen) in [("ansi", -1.0), ("iso", 1.0)] {
+        run(&mut e, "drw.new", json!({ "name": "Plate", "standard": standard }));
+        let v = run(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "top", "scale": 1, "at": [150, 170], "hidden": false }))["view"].clone();
+        let edge = run(&mut e, "drw.pick", json!({ "view": v, "view_at": [20, 0] }));
+        let aux = run(&mut e, "drw.auxiliary", json!({ "parent": v, "edge": edge, "at": [170, 60] }))["view"].as_u64().unwrap();
+        let i = view_info(&mut e, aux);
+        near(num(&i["direction"][1]), seen, standard);
+        // It slid straight down: (170, 60) is 20 off to the side of the line from its parent.
+        assert!(pt(&i["center"]).near(Vec2::new(150.0, 60.0), 1e-9), "{i}");
+    }
+}
+
+#[test]
+fn an_auxiliary_view_told_nowhere_goes_clear_of_its_parent() {
     let dir = scratch("kinds");
     let mut e = Engine::new(kernel(), &dir);
     let v = plate_drawing(&mut e);
@@ -796,8 +820,15 @@ fn a_kind_of_view_is_known_by_its_parent() {
     let d = e.drw.drawing();
     let kind = &d.view(ViewId(aux as u32)).unwrap().kind;
     assert!(matches!(kind, ViewKind::Auxiliary { .. }) && kind.parent() == Some(ViewId(v as u32)) && kind.follows_parent());
-    // Square to the bottom edge from above: third-angle, placed below the view looking at the front
-    // (nothing told): the first side, clear of the view by the gap.
+    // The plate from above is 120 x 80; square to its bottom edge it is 120 x 10. Half of 80, half of
+    // 10 and the gap of 20 from its parent's middle at (150, 150), up or down the sheet.
     let i = view_info(&mut e, aux);
     assert!(i["error"].is_null());
+    let c = pt(&i["center"]);
+    near(c.x, 150.0, "across");
+    near((c.y - 150.0).abs(), 40.0 + 5.0 + 20.0, "up or down the sheet");
+    // On the side it is seen from: from behind, up the sheet; from in front, down it.
+    let z = num(&i["direction"][1]);
+    near(z.abs(), 1.0, "it looks along Y");
+    assert_eq!(c.y > 150.0, z > 0.0, "{i}");
 }
