@@ -33,7 +33,11 @@ static PART: &[C] = &[
         &[
             req("path", Path, "the other part's file (.tenon)"),
             opt("scale", Number, "scaled by this about the origin, 0.001 to 1000 (default 1)"),
-            opt("mirror", Either(&[Word(&["xy", "yz", "xz"]), Face, Object]), "then mirrored in this plane: an origin plane, a flat face, a work plane {\"work\": id} or a plane of a UCS {\"ucs\": id, \"plane\": \"xy\"}"),
+            opt(
+                "mirror",
+                Either(&[Word(&["xy", "yz", "xz"]), Face, Object]),
+                "then mirrored in this plane: an origin plane, a flat face, a work plane {\"work\": id} or a plane of a UCS {\"ucs\": id, \"plane\": \"xy\"}",
+            ),
             opt("operation", Word(&["join", "new_body"]), "joined to the part (default) or a new solid"),
             opt("equations", Object, "equations for values of the feature: {\"/scale\": \"size / 10\"}"),
         ],

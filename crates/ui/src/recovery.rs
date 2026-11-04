@@ -390,6 +390,7 @@ impl crate::Workbench {
                             Ok(())
                         })
                         .map_err(|e| e.0)?;
+                    tenon_io::derive::follow(&mut self.session);
                     self.path = top.original.as_deref().map(PathBuf::from);
                 }
             }

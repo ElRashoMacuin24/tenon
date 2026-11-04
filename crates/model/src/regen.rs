@@ -18,8 +18,8 @@ mod sheet;
 use crate::FeatureId;
 use crate::document::{
     AxisRef, AxisSel, ChamferSize, Coil, Combine, DirectionRef, Document, Draft, Extrude, ExtrudeExtent, Feature, FeatureKind, Hole, HoleExtent,
-    HoleType, Loft, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Split, SplitKeep, Sweep,
-    Thread, ThreadLength, Ucs, WorkAxis, WorkPlane, WorkPoint,
+    HoleType, Loft, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Split, SplitKeep,
+    Sweep, Thread, ThreadLength, Ucs, WorkAxis, WorkPlane, WorkPoint,
 };
 use crate::naming::{
     CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace, edge_names, names_of_boolean, names_of_modify, names_of_sweep,
@@ -2221,7 +2221,13 @@ impl<'a> Ctx<'a> {
     }
 
     /// The same, to solid `at` when it is said which.
-    fn combine_at(&mut self, id: FeatureId, tools: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>, operation: Operation, at: Option<usize>) -> Result<(), Stop> {
+    fn combine_at(
+        &mut self,
+        id: FeatureId,
+        tools: Vec<(ShapeHandle, Vec<Option<FaceOrigin>>)>,
+        operation: Operation,
+        at: Option<usize>,
+    ) -> Result<(), Stop> {
         let kind = match operation {
             Operation::NewBody => None,
             Operation::Join if self.regen.bodies.is_empty() => None,

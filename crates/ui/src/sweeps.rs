@@ -69,6 +69,7 @@ impl CoilPanel {
             AxisChoice::Origin(a) => AxisRef::Origin(a),
             AxisChoice::Line(l) => AxisRef::SketchLine(l),
             AxisChoice::Work(w) => AxisRef::Work(w),
+            AxisChoice::Ucs(feature, axis) => AxisRef::Ucs { feature, axis },
         };
         FeatureKind::Coil(Coil {
             sketch: self.sketch,
@@ -211,6 +212,7 @@ impl Workbench {
                         AxisRef::Origin(a) => AxisChoice::Origin(a),
                         AxisRef::SketchLine(l) => AxisChoice::Line(l),
                         AxisRef::Work(w) => AxisChoice::Work(w),
+                        AxisRef::Ucs { feature, axis } => AxisChoice::Ucs(feature, axis),
                     },
                     pitch: c.pitch,
                     turns: c.turns,
@@ -370,6 +372,7 @@ impl Workbench {
                             AxisChoice::Origin(o) => format!("{o:?} Axis"),
                             AxisChoice::Line(l) => format!("Sketch line {}", l.0),
                             AxisChoice::Work(w) => work_names.iter().find(|x| x.0 == *w).map_or("Work Axis".into(), |x| x.1.clone()),
+                            AxisChoice::Ucs(u, a) => format!("{} {a:?} Axis", work_names.iter().find(|x| x.0 == *u).map_or("UCS", |x| x.1.as_str())),
                         };
                         egui::ComboBox::from_id_salt("tn_props_coil_axis").selected_text(axis_name(&p.axis)).show_ui(ui, |ui| {
                             for o in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
@@ -380,6 +383,11 @@ impl Workbench {
                             }
                             for (w, n, _) in work_names.iter().filter(|x| x.2 == "axis") {
                                 ui.selectable_value(&mut p.axis, AxisChoice::Work(*w), n);
+                            }
+                            for (w, n, _) in work_names.iter().filter(|x| x.2 == "ucs") {
+                                for o in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
+                                    ui.selectable_value(&mut p.axis, AxisChoice::Ucs(*w, o), format!("{n} {o:?} Axis"));
+                                }
                             }
                         });
                         ui.end_row();
@@ -655,6 +663,7 @@ impl Workbench {
                 tenon_model::WorkGeom::Axis(a) => Some((a.origin(), a.dir())),
                 _ => None,
             }),
+            AxisChoice::Ucs(u, a) => self.ucs_line(u, a),
         }
     }
 
@@ -711,6 +720,7 @@ impl Workbench {
             Some(Panel::Coil(p)) => Some((p.sketch, &p.regions)),
             Some(Panel::SheetFace(p)) => Some((p.sketch, &p.regions)),
             Some(Panel::SheetCut(p)) => Some((p.sketch, &p.regions)),
+            Some(Panel::Emboss(p)) => Some((p.sketch, &p.regions)),
             _ => None,
         }
     }
@@ -773,6 +783,7 @@ impl Workbench {
             Some(Panel::Coil(p)) => &mut p.regions,
             Some(Panel::SheetFace(p)) => &mut p.regions,
             Some(Panel::SheetCut(p)) => &mut p.regions,
+            Some(Panel::Emboss(p)) => &mut p.regions,
             _ => return false,
         };
         *regions = RegionSel::Keys(keys);

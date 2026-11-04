@@ -62,12 +62,21 @@ fn source_of(path: &str, home: Option<&str>, chain: &mut Vec<String>) -> Source 
         return said(format!("A part cannot derive itself, directly or through another: {}. Choose another file.", line.join(" derives ")));
     }
     if chain.len() >= MAX_DEPTH {
-        return said(format!("{} is more than {MAX_DEPTH} parts down a chain of derived parts: bring the part in from nearer the end of it.", name_of(&full)));
+        return said(format!(
+            "{} is more than {MAX_DEPTH} parts down a chain of derived parts: bring the part in from nearer the end of it.",
+            name_of(&full)
+        ));
+    }
+    if std::fs::metadata(&full).is_ok_and(|m| m.len() > project::MAX_FILE) {
+        return said(format!("The file {} cannot be brought in: it is too large.", name_of(&full)));
     }
     let bytes = match std::fs::read(&full) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return said(format!("The file {} is missing (looked for at {full}): put it back, or edit the feature and choose the file again.", name_of(&full)));
+            return said(format!(
+                "The file {} is missing (looked for at {full}): put it back, or edit the feature and choose the file again.",
+                name_of(&full)
+            ));
         }
         Err(e) => return said(format!("The file {} cannot be read: {e}", name_of(&full))),
     };

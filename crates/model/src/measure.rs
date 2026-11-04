@@ -4,10 +4,10 @@
 
 use serde::{Deserialize, Serialize};
 use tenon_geom::{Axis, Frame, Vec3};
-use tenon_kernel::{CurveKind, Kernel, Loop, Curve2, Profile, Region, ShapeHandle, SubShape, SurfaceKind, TaggedCurve2};
+use tenon_kernel::{Curve2, CurveKind, Kernel, Loop, Profile, Region, ShapeHandle, SubShape, SurfaceKind, TaggedCurve2};
 
-use crate::document::{OriginAxis, OriginPlane};
 use crate::FeatureId;
+use crate::document::{OriginAxis, OriginPlane};
 use crate::regen::{Regen, WorkGeom, ucs_axis, ucs_plane};
 
 /// What of a work feature is meant.
@@ -206,7 +206,8 @@ fn stand_in(k: &mut dyn Kernel, place: Place, round: tenon_geom::Aabb3) -> Resul
         Place::Plane(f) => {
             let n = reach(f.origin());
             let corners = [(-n, -n), (n, -n), (n, n), (-n, n)].map(|(x, y)| tenon_geom::Vec2::new(x, y));
-            let curves = (0..4).map(|i| TaggedCurve2 { tag: i as u64 + 1, curve: Curve2::Line { start: corners[i], end: corners[(i + 1) % 4] } }).collect();
+            let curves =
+                (0..4).map(|i| TaggedCurve2 { tag: i as u64 + 1, curve: Curve2::Line { start: corners[i], end: corners[(i + 1) % 4] } }).collect();
             let profile = Profile { frame: f, regions: vec![Region { outer: Loop { curves }, holes: vec![] }] };
             Ok(k.make_face(&profile).map_err(err)?.shape)
         }
@@ -250,9 +251,8 @@ fn between(k: &mut dyn Kernel, a: Place, b: Place) -> Result<(f64, Vec3, Vec3), 
             k.release(thing);
             let d = found.map_err(err)?;
             let (on_sub, on_plain_end) = (d.on_a, on_plain(plain, d.on_b));
-            let value = on_sub.dist(on_plain_end);
             // (Within the stand-in's thickness of it, the two touch.)
-            let value = if d.value <= 0.0 { 0.0 } else { value };
+            let value = if d.value <= tenon_geom::tol::LINEAR { 0.0 } else { on_sub.dist(on_plain_end) };
             Ok(if matches!(a, Place::Sub(_)) { (value, on_sub, on_plain_end) } else { (value, on_plain_end, on_sub) })
         }
         _ => {

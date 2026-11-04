@@ -329,6 +329,7 @@ fn axis_picker(ui: &mut Ui, id: &str, a: &mut Option<AxisSel>, active: bool, wor
         Some(AxisSel::Edge(_)) => "Edge".into(),
         Some(AxisSel::Face(_)) => "Cylinder".into(),
         Some(AxisSel::Work(w)) => work_name(work, *w),
+        Some(AxisSel::Ucs { feature, axis }) => format!("{} {axis:?} Axis", work_name(work, *feature)),
     };
     let clicked = slot_button(ui, active, &label, t);
     egui::ComboBox::from_id_salt(id).selected_text("").width(18.0).show_ui(ui, |ui| {
@@ -342,6 +343,14 @@ fn axis_picker(ui: &mut Ui, id: &str, a: &mut Option<AxisSel>, active: bool, wor
                 *a = Some(AxisSel::Work(*w));
             }
         }
+        for (w, n, _) in work.iter().filter(|x| x.2 == "ucs") {
+            for o in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
+                let this = AxisSel::Ucs { feature: *w, axis: o };
+                if ui.selectable_label(*a == Some(this.clone()), format!("{n} {o:?} Axis")).clicked() {
+                    *a = Some(this);
+                }
+            }
+        }
     });
     clicked
 }
@@ -353,6 +362,7 @@ pub(crate) fn plane_picker(ui: &mut Ui, id: &str, p: &mut Option<PlaneRef>, acti
         Some(PlaneRef::Origin(o)) => format!("{o:?} Plane"),
         Some(PlaneRef::Face(_)) => "Face".into(),
         Some(PlaneRef::Work(w)) => work_name(work, *w),
+        Some(PlaneRef::Ucs { feature, plane }) => format!("{} {plane:?} Plane", work_name(work, *feature)),
     };
     let clicked = slot_button(ui, active, &label, t);
     egui::ComboBox::from_id_salt(id).selected_text("").width(18.0).show_ui(ui, |ui| {
@@ -364,6 +374,14 @@ pub(crate) fn plane_picker(ui: &mut Ui, id: &str, p: &mut Option<PlaneRef>, acti
         for (w, n, _) in work.iter().filter(|x| x.2 == "plane") {
             if ui.selectable_label(*p == Some(PlaneRef::Work(*w)), n).clicked() {
                 *p = Some(PlaneRef::Work(*w));
+            }
+        }
+        for (w, n, _) in work.iter().filter(|x| x.2 == "ucs") {
+            for o in [OriginPlane::YZ, OriginPlane::XZ, OriginPlane::XY] {
+                let this = PlaneRef::Ucs { feature: *w, plane: o };
+                if ui.selectable_label(*p == Some(this.clone()), format!("{n} {o:?} Plane")).clicked() {
+                    *p = Some(this);
+                }
             }
         }
     });
@@ -385,6 +403,7 @@ fn direction_picker(
         Some(DirectionRef::Origin(a)) => format!("{a:?} Axis"),
         Some(DirectionRef::Edge(_)) => "Edge".into(),
         Some(DirectionRef::Work(w)) => name(*w),
+        Some(DirectionRef::Ucs { feature, axis }) => format!("{} {axis:?} Axis", name(*feature)),
         None => "None".into(),
     };
     let clicked = slot_button(ui, active, &label, t);
@@ -400,6 +419,14 @@ fn direction_picker(
         for (w, n, _) in work.iter().filter(|x| x.2 == "axis") {
             if ui.selectable_label(*d == Some(DirectionRef::Work(*w)), n).clicked() {
                 *d = Some(DirectionRef::Work(*w));
+            }
+        }
+        for (w, n, _) in work.iter().filter(|x| x.2 == "ucs") {
+            for a in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
+                let this = DirectionRef::Ucs { feature: *w, axis: a };
+                if ui.selectable_label(*d == Some(this.clone()), format!("{n} {a:?} Axis")).clicked() {
+                    *d = Some(this);
+                }
             }
         }
     });
@@ -460,6 +487,8 @@ impl Workbench {
                     | Panel::Split(_)
                     | Panel::Combine(_)
                     | Panel::Thread(_)
+                    | Panel::Emboss(_)
+                    | Panel::Derive(_)
                     | Panel::SheetFace(_)
                     | Panel::SheetCut(_)
                     | Panel::Flange(_)
@@ -499,6 +528,7 @@ impl Workbench {
             .filter_map(|f| match f.kind {
                 tenon_model::FeatureKind::WorkPlane(_) => Some((f.id, f.name.clone(), "plane")),
                 tenon_model::FeatureKind::WorkAxis(_) => Some((f.id, f.name.clone(), "axis")),
+                tenon_model::FeatureKind::Ucs(_) => Some((f.id, f.name.clone(), "ucs")),
                 _ => None,
             })
             .filter(|w| p_before(&panel, self, w.0))
@@ -531,6 +561,8 @@ impl Workbench {
             Panel::Split(p) => ("Split", p.editing.map(|f| self.feature_name(f))),
             Panel::Combine(p) => ("Combine", p.editing.map(|f| self.feature_name(f))),
             Panel::Thread(p) => ("Thread", p.editing.map(|f| self.feature_name(f))),
+            Panel::Emboss(p) => ("Emboss", p.editing.map(|f| self.feature_name(f))),
+            Panel::Derive(p) => ("Derive", p.editing.map(|f| self.feature_name(f))),
             Panel::SheetFace(p) => ("Face", p.editing.map(|f| self.feature_name(f))),
             Panel::SheetCut(p) => ("Cut", p.editing.map(|f| self.feature_name(f))),
             Panel::Flange(p) => ("Flange", p.editing.map(|f| self.feature_name(f))),
@@ -784,6 +816,7 @@ impl Workbench {
                                     AxisChoice::Origin(o) => format!("{o:?} Axis"),
                                     AxisChoice::Line(l) => format!("Sketch line {}", l.0),
                                     AxisChoice::Work(w) => work_names.iter().find(|x| x.0 == *w).map_or("Work Axis".into(), |x| x.1.clone()),
+                                    AxisChoice::Ucs(u, a) => format!("{} {a:?} Axis", work_names.iter().find(|x| x.0 == *u).map_or("UCS", |x| x.1.as_str())),
                                 };
                                 egui::ComboBox::from_id_salt("tn_props_axis").selected_text(axis_name(&p.axis)).show_ui(ui, |ui| {
                                     for o in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
@@ -794,6 +827,11 @@ impl Workbench {
                                     }
                                     for (w, name, _) in work_names.iter().filter(|x| x.2 == "axis") {
                                         ui.selectable_value(&mut p.axis, AxisChoice::Work(*w), name);
+                                    }
+                                    for (w, name, _) in work_names.iter().filter(|x| x.2 == "ucs") {
+                                        for o in [OriginAxis::X, OriginAxis::Y, OriginAxis::Z] {
+                                            ui.selectable_value(&mut p.axis, AxisChoice::Ucs(*w, o), format!("{name} {o:?} Axis"));
+                                        }
                                     }
                                 });
                                 ui.end_row();
@@ -1638,6 +1676,9 @@ impl Workbench {
                     p @ (Panel::Sweep(_) | Panel::Coil(_) | Panel::Loft(_)) => {
                         enter |= self.sweeps_properties(ui, p, &mut eqs, &sketches, &work_names, t);
                     }
+                    p @ (Panel::Emboss(_) | Panel::Derive(_)) => {
+                        enter |= self.emboss_properties(ui, p, &mut eqs, &sketches, &work_names, t);
+                    }
                     p @ (Panel::Draft(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Thread(_)) => {
                         let (entered, cleared) = self.bodies_properties(ui, p, &mut eqs, &work_names, t);
                         enter |= entered;
@@ -1669,10 +1710,12 @@ impl Workbench {
                         section(ui, "Selection", true, |ui| {
                             egui::Grid::new("tn_props_measure_sel").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                                 ui.label("First");
-                                ui.label(m.a.as_ref().map_or_else(|| "click a face or edge".to_string(), label));
+                                ui.label(m.work_a.as_ref().map(|w| w.1.clone()).or_else(|| m.a.as_ref().map(label)).unwrap_or_else(|| "click a face or edge".to_string()));
                                 ui.end_row();
                                 ui.label("Second");
-                                ui.label(m.b.as_ref().map_or_else(|| "click another (for distance and angle)".to_string(), label));
+                                ui.label(
+                                    m.work_b.as_ref().map(|w| w.1.clone()).or_else(|| m.b.as_ref().map(label)).unwrap_or_else(|| "click another (for distance and angle)".to_string()),
+                                );
                                 ui.end_row();
                             });
                         });
@@ -1735,6 +1778,16 @@ impl Workbench {
                                                 w.slot = WorkSlot::Axis;
                                             }
                                         }
+                                        WorkSlot::Base => {
+                                            ui.label("From");
+                                            let shown = w.base.map_or_else(|| "The part's origin".to_string(), |id| self.feature_name(id));
+                                            egui::ComboBox::from_id_salt("tn_props_ucs_base").selected_text(shown).show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut w.base, None, "The part's origin");
+                                                for (id, n, _) in work_names.iter().filter(|x| x.2 == "ucs") {
+                                                    ui.selectable_value(&mut w.base, Some(*id), n);
+                                                }
+                                            });
+                                        }
                                         WorkSlot::Edge => {
                                             ui.label("Edge");
                                             let label = if w.edge.is_some() { "1 selected" } else { "click a circular edge" };
@@ -1752,6 +1805,8 @@ impl Workbench {
                                                 Some(tenon_model::PointSel::Work(id)) => self.feature_name(id.to_owned()),
                                                 Some(tenon_model::PointSel::Center(_)) => "a circle's centre".to_string(),
                                                 Some(tenon_model::PointSel::SketchPoint { sketch, .. }) => format!("a point of {}", self.feature_name(sketch.to_owned())),
+                                                Some(tenon_model::PointSel::Ucs(id)) => format!("{}'s centre", self.feature_name(id.to_owned())),
+                                                Some(tenon_model::PointSel::Vertex { .. }) => "a corner".to_string(),
                                             };
                                             let r = slot_button(ui, w.slot == *slot, &label, t);
                                             if r {
@@ -1793,6 +1848,22 @@ impl Workbench {
                                         )
                                         .entered;
                                         ui.end_row();
+                                    }
+                                    WorkMethod::UcsOffset => {
+                                        let fields: [(&str, &str, &'static str, &str, f64, usize); 6] = [
+                                            ("X", "tn_props_ucs_x", "ucs_x", "mm", 1.0e6, 0),
+                                            ("Y", "tn_props_ucs_y", "ucs_y", "mm", 1.0e6, 1),
+                                            ("Z", "tn_props_ucs_z", "ucs_z", "mm", 1.0e6, 2),
+                                            ("About X", "tn_props_ucs_rx", "ucs_rx", "deg", 720.0, 3),
+                                            ("About Y", "tn_props_ucs_ry", "ucs_ry", "deg", 720.0, 4),
+                                            ("About Z", "tn_props_ucs_rz", "ucs_rz", "deg", 720.0, 5),
+                                        ];
+                                        for (label, id, key, unit, most, i) in fields {
+                                            ui.label(label);
+                                            let value = if i < 3 { &mut w.offsets[i] } else { &mut w.turns[i - 3] };
+                                            enter |= eq_value_field(ui, egui::Id::new(id), value, &mut eqs, key, unit, -most..=most, 110.0, t).entered;
+                                            ui.end_row();
+                                        }
                                     }
                                     _ => {}
                                 }
@@ -1896,6 +1967,7 @@ impl Workbench {
             Some(Panel::Revolve(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Sweep(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Coil(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
+            Some(Panel::Emboss(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::SheetFace(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::SheetCut(p)) => self.profile_anchor(p.sketch).map(|a| a.0),
             Some(Panel::Loft(p)) => p.sections.first().and_then(|s| self.profile_anchor(*s)).map(|a| a.0),
@@ -1922,7 +1994,7 @@ impl Workbench {
                 .first()
                 .and_then(|e| Some(self.sketch_frame(p.sketch)?.plane_point(self.document().sketch(p.sketch)?.point(*e)?)))
                 .or_else(|| self.scene.bbox().map(|b| b.center())),
-            Some(Panel::Pattern(_) | Panel::Work(_) | Panel::Rib(_) | Panel::Split(_) | Panel::Combine(_)) => {
+            Some(Panel::Pattern(_) | Panel::Work(_) | Panel::Rib(_) | Panel::Split(_) | Panel::Combine(_) | Panel::Derive(_)) => {
                 self.scene.bbox().map(|b| Vec3::new(b.max.x, b.min.y, b.max.z))
             }
             // (Beside the solid once it has a centre; not in the way of the clicks before.)
@@ -2060,6 +2132,13 @@ impl Workbench {
                                 request = Some(PanelRequest::Ok);
                             }
                         }
+                        Some(Panel::Emboss(p)) => {
+                            if eq_value_field(ui, egui::Id::new("tn_mini_emboss"), &mut p.depth, &mut eqs, "depth", "mm", 0.001..=100_000.0, 80.0, t)
+                                .entered
+                            {
+                                request = Some(PanelRequest::Ok);
+                            }
+                        }
                         Some(Panel::Rib(p)) => {
                             if eq_value_field(
                                 ui,
@@ -2129,6 +2208,7 @@ fn p_before(panel: &Panel, wb: &Workbench, id: tenon_model::FeatureId) -> bool {
         Panel::Coil(p) => p.editing,
         Panel::Draft(p) => p.editing,
         Panel::Split(p) => p.editing,
+        Panel::Derive(p) => p.editing,
         _ => None,
     };
     editing.is_none_or(|e| wb.document().index_of(id) < wb.document().index_of(e))

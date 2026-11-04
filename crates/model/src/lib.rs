@@ -29,10 +29,11 @@ pub mod worker;
 
 pub use cmd::{CmdError, CmdResult, CommandSpec, Run, Session};
 pub use document::{
-    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, Deletion, Derive, DirectionRef, Document, Draft, Emboss, EmbossStyle, Extrude,
-    ExtrudeExtent, Feature, FeatureId, FeatureKind, Fillet, Hole, HoleExtent, HoleType, Links, Loft, MAX_COPIES, MAX_DRAFT_ANGLE, MAX_FEATURES, Mirror, Operation,
-    OriginAxis, OriginPlane, PlaneRef, PointSel, RadiusAt, RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Source, Split,
-    SplitKeep, Sweep, Tapping, Thread, ThreadLength, Ucs, WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
+    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, Deletion, Derive, DirectionRef, Document, Draft, Emboss,
+    EmbossStyle, Extrude, ExtrudeExtent, Feature, FeatureId, FeatureKind, Fillet, Hole, HoleExtent, HoleType, Links, Loft, MAX_COPIES,
+    MAX_DRAFT_ANGLE, MAX_FEATURES, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RadiusAt, RectPattern, RegionSel, Revolve,
+    RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Source, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, Ucs, WorkAxis, WorkPlane,
+    WorkPoint, hole_centres, open_lines,
 };
 pub use naming::{CapEnd, EdgeFingerprint, EdgeRef, FaceOrigin, FaceRef, Fingerprint, HoleFace};
 pub use params::{ModelParam, ParamUnit, Parameters, UserParam, ValuePath};

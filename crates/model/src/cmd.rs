@@ -11,10 +11,10 @@ use tenon_kernel::{Kernel, ShapeHandle};
 use tenon_sketch::{Constraint, ConstraintId, EntityId, PointRef, Sketch, regions};
 
 use crate::document::{
-    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Emboss, EmbossStyle, Extrude, ExtrudeExtent, FeatureKind,
-    Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RadiusAt, RectPattern, RegionSel,
-    Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, Ucs, WorkAxis, WorkPlane,
-    WorkPoint, hole_centres, open_lines,
+    AxisRef, AxisSel, Chamfer, ChamferSize, CircPattern, Coil, Combine, DRILL_POINT, DirectionRef, Draft, Emboss, EmbossStyle, Extrude,
+    ExtrudeExtent, FeatureKind, Fillet, Hole, HoleExtent, HoleType, Loft, Mirror, Operation, OriginAxis, OriginPlane, PlaneRef, PointSel, RadiusAt,
+    RectPattern, RegionSel, Revolve, RevolveAngle, Rib, RibExtent, Shell, SketchCurves, Split, SplitKeep, Sweep, Tapping, Thread, ThreadLength, Ucs,
+    WorkAxis, WorkPlane, WorkPoint, hole_centres, open_lines,
 };
 use crate::naming::{self, EdgeRef, FaceOrigin, FaceRef};
 use crate::params::{ParamUnit, UserParam, ValuePath};
@@ -302,16 +302,20 @@ impl Session {
     /// no edit: there is no undo step and nothing unsaved, and a document in the undo history has
     /// it too, so that undoing does not bring back what a file no longer holds.
     pub fn set_links(&mut self, links: std::sync::Arc<crate::document::Links>) {
-        if *self.doc.links() == *links {
+        // (Only where its file is, its first save: the part is the same part.)
+        let changed = *self.doc.links() != *links;
+        if !changed && self.doc.links().home == links.home {
             return;
         }
-        let saved = !self.is_dirty();
         for d in std::iter::once(&mut self.doc).chain(&mut self.undo).chain(&mut self.redo) {
             d.set_links(links.clone());
         }
-        self.revision += 1;
-        if saved {
-            self.saved_revision = self.revision;
+        if changed {
+            let saved = !self.is_dirty();
+            self.revision += 1;
+            if saved {
+                self.saved_revision = self.revision;
+            }
         }
     }
 
@@ -1041,7 +1045,9 @@ fn shape_needs(st: &Study, r: &Regen, k: &dyn Kernel, d: &Document) -> Vec<Strin
             PlaneRef::Ucs { feature, .. } => {
                 if !matches!(r.work.get(feature), Some(WorkGeom::Ucs(_))) {
                     let name = d.feature(*feature).map_or_else(|| format!("UCS {}", feature.0), |f| f.name.clone());
-                    needs.push(format!("{name} cannot give a plane of symmetry: it is no longer on the part. Choose another (study.shape, with symmetry)"));
+                    needs.push(format!(
+                        "{name} cannot give a plane of symmetry: it is no longer on the part. Choose another (study.shape, with symmetry)"
+                    ));
                 }
             }
         }
@@ -2386,11 +2392,7 @@ fn model_revolve(s: &mut Session, p: &Value) -> CmdResult {
         _ if arg(p, "to_next").and_then(Value::as_bool).unwrap_or(false) => RevolveAngle::ToNext,
         _ if arg(p, "to").is_some() => {
             let plane = plane_value(p, "to")?;
-            if let PlaneRef::Work(id) = plane
-                && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
-            {
-                return Err(format!("{id} is not a work plane").into());
-            }
+            check_plane(s, &plane)?;
             RevolveAngle::To(plane)
         }
         (None, None) => RevolveAngle::Full,
@@ -2472,11 +2474,7 @@ fn model_hole(s: &mut Session, p: &Value) -> CmdResult {
     };
     let extent = if arg(p, "to").is_some() {
         let plane = plane_value(p, "to")?;
-        if let PlaneRef::Work(id) = plane
-            && !s.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)))
-        {
-            return Err(format!("{id} is not a work plane").into());
-        }
+        check_plane(s, &plane)?;
         HoleExtent::To(plane)
     } else if arg(p, "through_all").and_then(Value::as_bool).unwrap_or(false) {
         HoleExtent::ThroughAll
@@ -2873,7 +2871,10 @@ fn feature_visibility(s: &mut Session, p: &Value) -> CmdResult {
     let visible = field(p, "visible")?.as_bool().ok_or("`visible` must be true or false")?;
     s.edit(|d| {
         let f = d.feature_mut(id).ok_or_else(|| CmdError(format!("{id} does not exist")))?;
-        if !matches!(f.kind, FeatureKind::Sketch { .. } | FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_)) {
+        if !matches!(
+            f.kind,
+            FeatureKind::Sketch { .. } | FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_) | FeatureKind::Ucs(_)
+        ) {
             return Err(CmdError(format!("{} is no sketch or work feature: its visibility is the part's", f.name)));
         }
         f.visible = Some(visible);

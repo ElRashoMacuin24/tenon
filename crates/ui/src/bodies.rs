@@ -117,9 +117,17 @@ const BODY_OPS: [Operation; 3] = [Operation::Join, Operation::Cut, Operation::In
 
 impl Workbench {
     /// The part as shown has a solid (the scene may still be regenerating: ask the document).
-    fn has_solid(&self) -> bool {
+    pub(crate) fn has_solid(&self) -> bool {
         self.document().features().iter().any(|f| {
-            matches!(f.kind, FeatureKind::Extrude(_) | FeatureKind::Revolve(_) | FeatureKind::Sweep(_) | FeatureKind::Coil(_) | FeatureKind::Loft(_))
+            matches!(
+                f.kind,
+                FeatureKind::Extrude(_)
+                    | FeatureKind::Revolve(_)
+                    | FeatureKind::Sweep(_)
+                    | FeatureKind::Coil(_)
+                    | FeatureKind::Loft(_)
+                    | FeatureKind::Derive(_)
+            )
         })
     }
 

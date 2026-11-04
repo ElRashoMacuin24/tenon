@@ -46,12 +46,8 @@ const CORNER_RELIEF: Param = opt("relief", Word(&["round", "square", "trim"]), "
 const RELIEF_SIZE: Param = opt("relief_size", Length, "the corner relief's size (default: the rule's CornerReliefSize)");
 const X: Param = req("x", Length, "sketch coordinate");
 const Y: Param = req("y", Length, "sketch coordinate");
-const NEUTRAL_PLANE: [Param; 4] = [
-    opt("plane", ORIGIN_PLANE, "an origin plane"),
-    opt("face", Face, "a flat face"),
-    opt("work_plane", Id, "a work plane's feature id"),
-    UCS_PLANE,
-];
+const NEUTRAL_PLANE: [Param; 4] =
+    [opt("plane", ORIGIN_PLANE, "an origin plane"), opt("face", Face, "a flat face"), opt("work_plane", Id, "a work plane's feature id"), UCS_PLANE];
 /// A plane of a user coordinate system, where a command takes its plane by `plane`, `face` and
 /// `work_plane`.
 const UCS_PLANE: Param = opt("ucs_plane", Object, "a plane of a UCS, {\"ucs\": id, \"plane\": \"xy\" | \"yz\" | \"xz\"}");
@@ -672,7 +668,11 @@ static SCHEMAS: &[C] = &[
         &[
             SKETCH,
             REGIONS,
-            opt("style", Word(&["raise", "recess", "from_plane"]), "raised from the faces (default), recessed into them, or from the sketch plane: added on one side and taken away on the other"),
+            opt(
+                "style",
+                Word(&["raise", "recess", "from_plane"]),
+                "raised from the faces (default), recessed into them, or from the sketch plane: added on one side and taken away on the other",
+            ),
             req("depth", Length, "how far from the faces, or from the sketch plane"),
             opt("reverse", Bool, "the faces that look against the sketch's normal; from the plane, the sides changed over (default false)"),
             opt("taper", Angle, "how far its sides lean: what is raised narrows going up, what is recessed going down (default 0)"),
@@ -766,7 +766,11 @@ static SCHEMAS: &[C] = &[
             opt("rx", Angle, "offset: turned about its own X (default 0)"),
             opt("ry", Angle, "offset: then about the Y that gives (default 0)"),
             opt("rz", Angle, "offset: then about the Z that gives (default 0)"),
-            opt("points", THREE_POINTS, "three_points: its origin, a point on its +X, a point on the +Y side of its XY plane, each as work.plane takes one"),
+            opt(
+                "points",
+                THREE_POINTS,
+                "three_points: its origin, a point on its +X, a point on the +Y side of its XY plane, each as work.plane takes one",
+            ),
             EQUATIONS,
         ],
     ),

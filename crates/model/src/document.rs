@@ -66,7 +66,10 @@ pub enum PlaneRef {
     /// A work plane feature.
     Work(FeatureId),
     /// One of the three planes of a user coordinate system (DEC-133).
-    Ucs { feature: FeatureId, plane: OriginPlane },
+    Ucs {
+        feature: FeatureId,
+        plane: OriginPlane,
+    },
 }
 
 impl PlaneRef {
@@ -176,7 +179,10 @@ pub enum AxisRef {
     /// A work axis feature.
     Work(FeatureId),
     /// One of the three axes of a user coordinate system (DEC-133).
-    Ucs { feature: FeatureId, axis: OriginAxis },
+    Ucs {
+        feature: FeatureId,
+        axis: OriginAxis,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -791,12 +797,19 @@ impl Derive {
 /// What has been read of the part files a document's features derive from. It is given to the
 /// document from outside (this crate does not read files), travels with it to wherever it is
 /// rebuilt, and is never written to a file.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Links {
     /// The document's own file, in full, when it has one.
     pub home: Option<String>,
     /// By the path as the feature holds it.
     pub sources: std::collections::BTreeMap<String, Source>,
+}
+
+/// Two documents are the same part wherever their files are.
+impl PartialEq for Links {
+    fn eq(&self, other: &Links) -> bool {
+        self.sources == other.sources
+    }
 }
 
 /// What became of reading a part file.
@@ -823,7 +836,10 @@ pub enum DirectionRef {
     /// Along a work axis.
     Work(FeatureId),
     /// Along one of the three axes of a user coordinate system (DEC-133).
-    Ucs { feature: FeatureId, axis: OriginAxis },
+    Ucs {
+        feature: FeatureId,
+        axis: OriginAxis,
+    },
 }
 
 /// An axis to turn about: an origin axis, a straight or circular edge, a cylindrical or conical
@@ -836,7 +852,10 @@ pub enum AxisSel {
     Face(FaceRef),
     Work(FeatureId),
     /// One of the three axes of a user coordinate system (DEC-133).
-    Ucs { feature: FeatureId, axis: OriginAxis },
+    Ucs {
+        feature: FeatureId,
+        axis: OriginAxis,
+    },
 }
 
 impl AxisSel {

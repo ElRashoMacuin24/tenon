@@ -138,7 +138,9 @@ impl<'a> Ctx<'a> {
         let op = self.k.extrude(profile, extent, None)?;
         let faces = self.k.topology(op.shape)?.faces;
         let names = names_of_sweep(&op.history, id, faces);
-        let sided = |names: Vec<Option<FaceOrigin>>| -> Vec<Option<FaceOrigin>> { names.into_iter().map(|n| n.filter(|o| matches!(o, FaceOrigin::Side { .. }))).collect() };
+        let sided = |names: Vec<Option<FaceOrigin>>| -> Vec<Option<FaceOrigin>> {
+            names.into_iter().map(|n| n.filter(|o| matches!(o, FaceOrigin::Side { .. }))).collect()
+        };
         let Some((pull, angle)) = lean else { return Ok((op.shape, sided(names))) };
         let tilted = (|| -> Result<Named, Stop> {
             let topo = self.k.topology(op.shape)?;
@@ -173,6 +175,7 @@ impl<'a> Ctx<'a> {
         let look = profile.frame.z() * sign;
         let bi = self.regen.bodies.len() - 1;
         let target = self.body_shape(bi)?;
+        let before = self.k.mass_properties(target, 1.0)?.volume;
         // A positive taper opens toward the way out of a mould from the plane both ways.
         let added = self.emboss_prism(id, profile, &Extent::Distance(-sign * e.depth), Self::lean(e, look))?;
         let cut = match self.emboss_prism(id, profile, &Extent::Distance(sign * e.depth), Self::lean(e, -look)) {
@@ -212,28 +215,44 @@ impl<'a> Ctx<'a> {
                 return Err(err);
             }
         }
-        let before = self.k.mass_properties(target, 1.0)?.volume;
         if let Err(err) = self.combine_at(id, vec![added], Operation::Join, Some(bi)) {
             self.k.release(cut.0);
             return Err(err);
         }
-        let joined = self.k.mass_properties(self.body_shape(bi)?, 1.0)?.volume;
-        // (The prism on the far side may miss the part altogether: nothing to take away.)
-        let meets = self.k.min_distance(SubShape::Shape(cut.0), SubShape::Shape(self.body_shape(bi)?))?.value <= tenon_geom::tol::LINEAR * 10.0;
-        let open = meets && self.k.boolean(BoolOp::Intersect, cut.0, &[self.body_shape(bi)?]).ok().map(|op| {
-            let v = self.k.mass_properties(op.shape, 1.0).map(|m| m.volume).unwrap_or(0.0);
-            self.k.release(op.shape);
-            v
-        }).unwrap_or(0.0) > tenon_geom::tol::MIN_SIZE;
-        if open {
-            self.combine_at(id, vec![cut], Operation::Cut, Some(bi))?;
-        } else {
-            self.k.release(cut.0);
-            if (joined - before).abs() <= tenon_geom::tol::MIN_SIZE {
-                return Err("Nothing is added or taken away: the sketch plane lies on the part's surface here. Move the sketch off the face, or raise or recess the profile from it instead.".into());
+        // What the prism on the far side has to take away: it may miss the part altogether.
+        let (joined, common) = match self.taken_by(cut.0, bi) {
+            Ok(found) => found,
+            Err(err) => {
+                self.k.release(cut.0);
+                return Err(err);
             }
+        };
+        if common > tenon_geom::tol::MIN_SIZE {
+            return self.combine_at(id, vec![cut], Operation::Cut, Some(bi));
+        }
+        self.k.release(cut.0);
+        if (joined - before).abs() <= tenon_geom::tol::MIN_SIZE {
+            return Err("Nothing is added or taken away: the sketch plane lies on the part's surface here. Move the sketch off the face, or raise or recess the profile from it instead.".into());
         }
         Ok(())
+    }
+
+    /// The volume of body `bi`, and of what `tool` has in common with it.
+    fn taken_by(&mut self, tool: ShapeHandle, bi: usize) -> Result<(f64, f64), Stop> {
+        let body = self.body_shape(bi)?;
+        let volume = self.k.mass_properties(body, 1.0)?.volume;
+        if self.k.min_distance(SubShape::Shape(tool), SubShape::Shape(body))?.value > tenon_geom::tol::LINEAR * 10.0 {
+            return Ok((volume, 0.0));
+        }
+        match self.k.boolean(BoolOp::Intersect, tool, &[body]) {
+            Ok(op) => {
+                let common = self.k.mass_properties(op.shape, 1.0).map(|m| m.volume);
+                self.k.release(op.shape);
+                Ok((volume, common?))
+            }
+            Err(err) if err.to_string().contains("empty shape") => Ok((volume, 0.0)),
+            Err(err) => Err(err.into()),
+        }
     }
 
     /// Raised from, or recessed into, what the profile is seen on along the sketch's normal.
@@ -249,7 +268,12 @@ impl<'a> Ctx<'a> {
         let (lo, hi) = points.iter().fold((first, first), |(a, b), p| (a.min(*p), b.max(*p)));
         let across = self.target_bbox().map_or(0.0, |b| b.diagonal());
         let room = 2.0 * e.depth + 1.0 + across * e.taper.unwrap_or(0.0).abs().tan().min(1.0);
-        let quad = [Vec2::new(lo.x - room, lo.y - room), Vec2::new(hi.x + room, lo.y - room), Vec2::new(hi.x + room, hi.y + room), Vec2::new(lo.x - room, hi.y + room)];
+        let quad = [
+            Vec2::new(lo.x - room, lo.y - room),
+            Vec2::new(hi.x + room, lo.y - room),
+            Vec2::new(hi.x + room, hi.y + room),
+            Vec2::new(lo.x - room, hi.y + room),
+        ];
         let curves = (0..4).map(|i| TaggedCurve2 { tag: i as u64 + 1, curve: Curve2::Line { start: quad[i], end: quad[(i + 1) % 4] } }).collect();
         let wide = Profile { frame, regions: vec![Region { outer: Loop { curves }, holes: Vec::new() }] };
         // The solid it goes on: the last that it is seen on, as a feature goes on the last solid.
@@ -280,7 +304,9 @@ impl<'a> Ctx<'a> {
         self.k.release(prism);
         let op = match cut {
             Ok(op) => op,
-            Err(err) if err.to_string().contains("empty shape") => return Err("The profile does not fall on the faces it is seen on: move the sketch.".into()),
+            Err(err) if err.to_string().contains("empty shape") => {
+                return Err("The profile does not fall on the faces it is seen on: move the sketch.".into());
+            }
             Err(err) => return Err(err.into()),
         };
         let names = match self.k.topology(op.shape) {
@@ -381,7 +407,10 @@ impl<'a> Ctx<'a> {
                     let t = self.k.thicken(s.shape.face(f), if raise { -depth } else { depth })?;
                     let named = self.k.topology(t.shape).map(|topo| names_of_sweep(&t.history, id, topo.faces));
                     match named {
-                        Ok(names) => layers.push((t.shape, names.into_iter().map(|n| n.filter(|o| matches!(o, FaceOrigin::Cap { end: CapEnd::End, .. }))).collect())),
+                        Ok(names) => layers.push((
+                            t.shape,
+                            names.into_iter().map(|n| n.filter(|o| matches!(o, FaceOrigin::Cap { end: CapEnd::End, .. }))).collect(),
+                        )),
                         Err(err) => {
                             self.k.release(t.shape);
                             return Err(err.into());
@@ -466,7 +495,12 @@ impl<'a> Ctx<'a> {
             SurfaceKind::Cylinder { axis, radius } => {
                 let (out, up) = lay(axis.dir(), axis.origin())?;
                 if radius + inner <= tenon_geom::tol::MIN_SIZE {
-                    return Err(format!("A {} mm depth goes past the axis of this {} mm radius: use a smaller depth.", crate::explain::mm(e.depth), crate::explain::mm(radius)).into());
+                    return Err(format!(
+                        "A {} mm depth goes past the axis of this {} mm radius: use a smaller depth.",
+                        crate::explain::mm(e.depth),
+                        crate::explain::mm(radius)
+                    )
+                    .into());
                 }
                 let across = up.cross(out);
                 let laid = Laid { from: sketch_at(axis.origin()), x: sketch_way(across), y: sketch_way(up).normalized() };
@@ -519,7 +553,8 @@ impl<'a> Ctx<'a> {
                     Err(err) => Err(err),
                 };
                 let names = cut.as_ref().ok().map(|op| {
-                    let inputs: Vec<&[Option<FaceOrigin>]> = std::iter::once(outer_loop.1.as_slice()).chain(holes.iter().map(|h| h.1.as_slice())).collect();
+                    let inputs: Vec<&[Option<FaceOrigin>]> =
+                        std::iter::once(outer_loop.1.as_slice()).chain(holes.iter().map(|h| h.1.as_slice())).collect();
                     self.k.topology(op.shape).map(|t| names_of_boolean(&op.history, &inputs, t.faces))
                 });
                 self.k.release(outer_loop.0);
@@ -569,7 +604,12 @@ impl<'a> Ctx<'a> {
         let name = d.file_name();
         let source = match self.doc.links().sources.get(&d.path) {
             Some(s) => s.clone(),
-            None => return Err(format!("{name} has not been read: save or rebuild the part so that it is, or edit the feature and choose the file again.").into()),
+            None => {
+                return Err(format!(
+                    "{name} has not been read: save or rebuild the part so that it is, or edit the feature and choose the file again."
+                )
+                .into());
+            }
         };
         let other = source.document.map_err(Stop::Failed)?;
         let mirror = match &d.mirror {

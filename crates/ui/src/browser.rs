@@ -28,6 +28,8 @@ pub(crate) enum BrowserAction {
     Pick(FeatureId),
     /// A single click on an origin plane or axis: picks it for the open panel.
     Reference(crate::work::Reference),
+    /// A double click on a plane of a UCS.
+    SketchOnUcs(FeatureId, OriginPlane),
     /// The End of Part marker dropped just above a feature (`None`: at the end).
     EndOfPart(Option<FeatureId>),
     /// A feature dropped just above another (`None`: last).
@@ -118,6 +120,9 @@ fn feature_icon(kind: &FeatureKind) -> Icon {
         FeatureKind::WorkPlane(_) => Icon::Plane,
         FeatureKind::WorkAxis(_) => Icon::Axis,
         FeatureKind::WorkPoint(_) => Icon::Point,
+        FeatureKind::Ucs(_) => Icon::Ucs,
+        FeatureKind::Emboss(_) => Icon::Text,
+        FeatureKind::Derive(_) => Icon::Copy,
         FeatureKind::Rib(_) => Icon::Rib,
         FeatureKind::Sweep(_) => Icon::Sweep,
         FeatureKind::Coil(_) => Icon::Coil,
@@ -207,7 +212,8 @@ impl Workbench {
         if let Some(open) = expand_all {
             self.chrome.origin_open = open;
             self.chrome.bodies_open = open;
-            self.chrome.expanded = if open { owner.values().copied().collect() } else { Default::default() };
+            let ucs = self.document().features().iter().filter(|f| matches!(f.kind, FeatureKind::Ucs(_))).map(|f| f.id);
+            self.chrome.expanded = if open { owner.values().copied().chain(ucs).collect() } else { Default::default() };
         }
 
         let mut action: Option<BrowserAction> = None;
@@ -324,7 +330,9 @@ impl Workbench {
                 .iter()
                 .filter_map(|f| match f.kind {
                     FeatureKind::Sketch { .. } => Some((f.id, sketches_shown.contains(&f.id))),
-                    FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_) => Some((f.id, self.work_visible(f.id))),
+                    FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_) | FeatureKind::Ucs(_) => {
+                        Some((f.id, self.work_visible(f.id)))
+                    }
                     _ => None,
                 })
                 .collect();
@@ -340,6 +348,9 @@ impl Workbench {
             };
             let mut drag = self.chrome.browser_drag;
             let mut drawn_end = false;
+            let picking_plane = self.pick_plane;
+            let ucs_rows: Vec<FeatureId> =
+                self.document().features().iter().filter(|f| matches!(f.kind, FeatureKind::Ucs(_))).map(|f| f.id).collect();
             // Where each top-level entry is, and the first feature of it in history order.
             let mut entries: Vec<(FeatureId, Rect)> = Vec::new();
             for (id, name, icon, suppressed, is_sketch) in &features {
@@ -423,10 +434,38 @@ impl Workbench {
                     });
                 };
                 let top = ui.cursor().top();
-                draw(ui, *id, name, *icon, *suppressed, 1, (!kids.is_empty()).then_some(open));
+                let is_ucs = ucs_rows.contains(id);
+                draw(ui, *id, name, *icon, *suppressed, 1, (!kids.is_empty() || is_ucs).then_some(open));
                 if open {
                     for k in kids {
                         draw(ui, k.0, &k.1, k.2, k.3, 2, None);
+                    }
+                    // A UCS opens as the Origin folder does: its planes, axes and origin.
+                    if is_ucs {
+                        use crate::work::Reference;
+                        for (icon, label, r) in [
+                            (Icon::Plane, format!("{name}: YZ Plane"), Reference::UcsPlane(*id, OriginPlane::YZ)),
+                            (Icon::Plane, format!("{name}: XZ Plane"), Reference::UcsPlane(*id, OriginPlane::XZ)),
+                            (Icon::Plane, format!("{name}: XY Plane"), Reference::UcsPlane(*id, OriginPlane::XY)),
+                            (Icon::Axis, format!("{name}: X Axis"), Reference::UcsAxis(*id, tenon_model::OriginAxis::X)),
+                            (Icon::Axis, format!("{name}: Y Axis"), Reference::UcsAxis(*id, tenon_model::OriginAxis::Y)),
+                            (Icon::Axis, format!("{name}: Z Axis"), Reference::UcsAxis(*id, tenon_model::OriginAxis::Z)),
+                            (Icon::Point, format!("{name}: Center Point"), Reference::UcsOrigin(*id)),
+                        ] {
+                            let (resp, _) = row(ui, t, 2, icon, &label, None, RowStyle::Normal);
+                            match r {
+                                Reference::UcsPlane(u, p) => {
+                                    let resp = resp.on_hover_text("Click while starting a sketch, or double-click, to sketch on this plane");
+                                    if resp.double_clicked() || (resp.clicked() && picking_plane) {
+                                        action = Some(BrowserAction::SketchOnUcs(u, p));
+                                    } else if resp.clicked() {
+                                        action = Some(BrowserAction::Reference(r));
+                                    }
+                                }
+                                _ if resp.clicked() => action = Some(BrowserAction::Reference(r)),
+                                _ => {}
+                            }
+                        }
                     }
                 }
                 entries.push((first, Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top())));
@@ -465,6 +504,7 @@ impl Workbench {
     pub(crate) fn browser_action(&mut self, a: BrowserAction) {
         let result = match a {
             BrowserAction::SketchOn(p) => self.create_sketch(json!({ "plane": format!("{p:?}").to_lowercase() })),
+            BrowserAction::SketchOnUcs(u, p) => self.create_sketch(json!({ "ucs_plane": { "ucs": u.0, "plane": format!("{p:?}").to_lowercase() } })),
             BrowserAction::Edit(id) => self.edit_feature(id),
             BrowserAction::Repair(id) => {
                 self.start_repair(Some(id));
@@ -492,10 +532,9 @@ impl Workbench {
             }
             BrowserAction::Pick(id) => {
                 // A work feature goes into a plane or axis selector; others into pattern features.
-                let work = self
-                    .document()
-                    .feature(id)
-                    .is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_)));
+                let work = self.document().feature(id).is_some_and(|f| {
+                    matches!(f.kind, FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_) | FeatureKind::Ucs(_))
+                });
                 if work {
                     self.pick_reference(crate::work::Reference::Work(id));
                 } else if matches!(self.panel, Some(crate::panels::Panel::Pattern(_))) {

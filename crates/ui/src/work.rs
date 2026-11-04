@@ -4,7 +4,9 @@
 use egui::{Align2, Pos2, Rect, Shape, Stroke, Ui, vec2};
 use serde_json::{Value, json};
 use tenon_geom::{Axis, Frame, Vec2, Vec3};
-use tenon_model::{AxisSel, EdgeRef, FeatureId, FeatureKind, OriginAxis, OriginPlane, PlaneRef, PointSel, WorkAxis, WorkGeom, WorkPlane, WorkPoint};
+use tenon_model::{
+    AxisSel, EdgeRef, FeatureId, FeatureKind, OriginAxis, OriginPlane, PlaneRef, PointSel, Ucs, WorkAxis, WorkGeom, WorkPlane, WorkPoint,
+};
 
 use crate::panels::{Panel, PatternPanel, Slot};
 use crate::theme::{self, Tokens};
@@ -23,6 +25,10 @@ pub(crate) enum WorkMethod {
     Planes,
     Center,
     Intersection,
+    /// A UCS by typed offsets and turns, from the part's origin or another UCS (DEC-133).
+    UcsOffset,
+    /// A UCS through three picked points.
+    UcsPoints,
 }
 
 impl WorkMethod {
@@ -36,6 +42,8 @@ impl WorkMethod {
             WorkMethod::Planes => "Intersection of Two Planes",
             WorkMethod::Center => "Center of Circular Edge",
             WorkMethod::Intersection => "Axis through Plane",
+            WorkMethod::UcsOffset => "Offsets and Turns",
+            WorkMethod::UcsPoints => "Three Points",
         }
     }
     /// The methods of the same kind (plane, axis or point).
@@ -46,6 +54,7 @@ impl WorkMethod {
             }
             WorkMethod::Along | WorkMethod::Planes => &[WorkMethod::Along, WorkMethod::Planes],
             WorkMethod::Center | WorkMethod::Intersection => &[WorkMethod::Center, WorkMethod::Intersection],
+            WorkMethod::UcsOffset | WorkMethod::UcsPoints => &[WorkMethod::UcsOffset, WorkMethod::UcsPoints],
         }
     }
     /// The selectors it needs, in order.
@@ -54,7 +63,8 @@ impl WorkMethod {
             WorkMethod::Offset => &[WorkSlot::A],
             WorkMethod::Angle => &[WorkSlot::A, WorkSlot::Axis],
             WorkMethod::Midplane | WorkMethod::Planes => &[WorkSlot::A, WorkSlot::B],
-            WorkMethod::ThreePoints => &[WorkSlot::P1, WorkSlot::P2, WorkSlot::P3],
+            WorkMethod::ThreePoints | WorkMethod::UcsPoints => &[WorkSlot::P1, WorkSlot::P2, WorkSlot::P3],
+            WorkMethod::UcsOffset => &[WorkSlot::Base],
             WorkMethod::Along => &[WorkSlot::Axis],
             WorkMethod::Center => &[WorkSlot::Edge],
             WorkMethod::Intersection => &[WorkSlot::Axis, WorkSlot::A],
@@ -73,6 +83,8 @@ pub(crate) enum WorkSlot {
     P1,
     P2,
     P3,
+    /// What a UCS is measured from (nothing but a list: any is good, the part's origin too).
+    Base,
 }
 
 impl WorkSlot {
@@ -100,6 +112,11 @@ pub(crate) struct WorkPanel {
     pub distance: f64,
     pub degrees: f64,
     pub slot: WorkSlot,
+    /// A UCS by offsets and turns: what it is measured from, along its X, Y and Z, then in
+    /// degrees about its own X, Y and Z.
+    pub base: Option<FeatureId>,
+    pub offsets: [f64; 3],
+    pub turns: [f64; 3],
 }
 
 impl WorkPanel {
@@ -115,6 +132,9 @@ impl WorkPanel {
             distance: 10.0,
             degrees: 90.0,
             slot: method.slots()[0],
+            base: None,
+            offsets: [0.0; 3],
+            turns: [0.0; 3],
         }
     }
 
@@ -140,6 +160,13 @@ impl WorkPanel {
             FeatureKind::WorkPoint(WorkPoint::Intersection { axis, plane }) => {
                 WorkPanel { axis: Some(axis.clone()), a: Some(plane.clone()), ..WorkPanel::new(WorkMethod::Intersection) }
             }
+            FeatureKind::Ucs(Ucs::Offset { base, x, y, z, rx, ry, rz }) => WorkPanel {
+                base: *base,
+                offsets: [*x, *y, *z],
+                turns: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
+                ..WorkPanel::new(WorkMethod::UcsOffset)
+            },
+            FeatureKind::Ucs(Ucs::ThreePoints { points }) => WorkPanel { points: points.clone().map(Some), ..WorkPanel::new(WorkMethod::UcsPoints) },
             _ => return None,
         };
         p.editing = editing;
@@ -151,6 +178,7 @@ impl WorkPanel {
             WorkMethod::Offset | WorkMethod::Angle | WorkMethod::Midplane | WorkMethod::ThreePoints => "Work Plane",
             WorkMethod::Along | WorkMethod::Planes => "Work Axis",
             WorkMethod::Center | WorkMethod::Intersection => "Work Point",
+            WorkMethod::UcsOffset | WorkMethod::UcsPoints => "UCS",
         }
     }
 
@@ -158,6 +186,7 @@ impl WorkPanel {
         match self.title() {
             "Work Plane" => "work.plane",
             "Work Axis" => "work.axis",
+            "UCS" => "work.ucs",
             _ => "work.point",
         }
     }
@@ -178,6 +207,19 @@ impl WorkPanel {
             WorkMethod::Planes => FeatureKind::WorkAxis(WorkAxis::Planes { a: self.a.clone()?, b: self.b.clone()? }),
             WorkMethod::Center => FeatureKind::WorkPoint(WorkPoint::Center { edge: self.edge.clone()? }),
             WorkMethod::Intersection => FeatureKind::WorkPoint(WorkPoint::Intersection { axis: self.axis.clone()?, plane: self.a.clone()? }),
+            WorkMethod::UcsOffset => FeatureKind::Ucs(Ucs::Offset {
+                base: self.base,
+                x: self.offsets[0],
+                y: self.offsets[1],
+                z: self.offsets[2],
+                rx: self.turns[0].to_radians(),
+                ry: self.turns[1].to_radians(),
+                rz: self.turns[2].to_radians(),
+            }),
+            WorkMethod::UcsPoints => {
+                let [a, b, c] = &self.points;
+                FeatureKind::Ucs(Ucs::ThreePoints { points: [a.clone()?, b.clone()?, c.clone()?] })
+            }
         })
     }
 
@@ -189,6 +231,7 @@ impl WorkPanel {
             WorkSlot::Axis => self.axis.is_some(),
             WorkSlot::Edge => self.edge.is_some(),
             WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => s.point().is_some_and(|i| self.points[i].is_some()),
+            WorkSlot::Base => true,
         };
         if let Some(next) = self.method.slots().iter().find(|s| !filled(s)) {
             self.slot = *next;
@@ -200,7 +243,7 @@ impl WorkPanel {
         match self.slot {
             WorkSlot::A | WorkSlot::B => (true, false),
             WorkSlot::Axis => (false, true),
-            WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 => (false, false),
+            WorkSlot::Edge | WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3 | WorkSlot::Base => (false, false),
         }
     }
 
@@ -219,6 +262,7 @@ pub(crate) fn plane_json(p: &PlaneRef) -> Value {
         PlaneRef::Origin(o) => json!(format!("{o:?}").to_lowercase()),
         PlaneRef::Face(f) => json!(f),
         PlaneRef::Work(id) => json!({ "work": id.0 }),
+        PlaneRef::Ucs { feature, plane } => json!({ "ucs": feature.0, "plane": format!("{plane:?}").to_lowercase() }),
     }
 }
 
@@ -229,6 +273,7 @@ pub(crate) fn axis_json(a: &AxisSel) -> Value {
         AxisSel::Edge(e) => json!(e),
         AxisSel::Face(f) => json!(f),
         AxisSel::Work(id) => json!({ "work": id.0 }),
+        AxisSel::Ucs { feature, axis } => json!({ "ucs": feature.0, "axis": format!("{axis:?}").to_lowercase() }),
     }
 }
 
@@ -249,6 +294,14 @@ pub(crate) fn work_params(kind: &FeatureKind) -> Option<(&'static str, Value)> {
         FeatureKind::WorkPoint(WorkPoint::Intersection { axis, plane }) => {
             ("work.point", json!({ "axis": axis_json(axis), "plane": plane_json(plane) }))
         }
+        FeatureKind::Ucs(Ucs::Offset { base, x, y, z, rx, ry, rz }) => {
+            let mut p = json!({ "by": "offset", "x": x, "y": y, "z": z, "rx": rx, "ry": ry, "rz": rz });
+            if let Some(id) = base {
+                p["base"] = json!(id.0);
+            }
+            ("work.ucs", p)
+        }
+        FeatureKind::Ucs(Ucs::ThreePoints { points }) => ("work.ucs", json!({ "by": "three_points", "points": points })),
         _ => return None,
     })
 }
@@ -328,6 +381,118 @@ impl Workbench {
         best
     }
 
+    /// What of a UCS is drawn where, each as it stands on the screen: its origin, the end of each
+    /// axis, and the square of each plane at the corner of the triad.
+    fn ucs_marks(&self, f: &Frame, rect: Rect) -> Option<(Pos2, [Pos2; 3], [[Pos2; 4]; 3])> {
+        let size = (self.work_half() * 0.45).max(1.0);
+        let o = self.to_screen(f.origin(), rect)?;
+        let tip = |a: Vec3| self.to_screen(f.origin() + a * size, rect);
+        let square = |u: Vec3, v: Vec3| -> Option<[Pos2; 4]> {
+            let s = size * 0.4;
+            Some([
+                o,
+                self.to_screen(f.origin() + u * s, rect)?,
+                self.to_screen(f.origin() + u * s + v * s, rect)?,
+                self.to_screen(f.origin() + v * s, rect)?,
+            ])
+        };
+        Some((o, [tip(f.x())?, tip(f.y())?, tip(f.z())?], [square(f.x(), f.y())?, square(f.y(), f.z())?, square(f.x(), f.z())?]))
+    }
+
+    /// The part of a UCS under a screen point among planes, axes and origins.
+    pub(crate) fn ucs_at(&self, p: Pos2, rect: Rect, planes: bool, axes: bool, points: bool) -> Option<Reference> {
+        const AXES: [OriginAxis; 3] = [OriginAxis::X, OriginAxis::Y, OriginAxis::Z];
+        const PLANES: [OriginPlane; 3] = [OriginPlane::XY, OriginPlane::YZ, OriginPlane::XZ];
+        for (id, g) in &self.scene.work {
+            let WorkGeom::Ucs(f) = g else { continue };
+            if !self.work_visible(*id) {
+                continue;
+            }
+            let Some((o, tips, squares)) = self.ucs_marks(f, rect) else { continue };
+            if points && o.distance(p) <= 8.0 {
+                return Some(Reference::UcsOrigin(*id));
+            }
+            if axes {
+                for (tip, a) in tips.iter().zip(AXES) {
+                    let seg = *tip - o;
+                    let k = ((p - o).dot(seg) / seg.length_sq().max(1e-6)).clamp(0.0, 1.0);
+                    if (o + seg * k).distance(p) <= 6.0 {
+                        return Some(Reference::UcsAxis(*id, a));
+                    }
+                }
+            }
+            if planes {
+                for (square, plane) in squares.iter().zip(PLANES) {
+                    let side = |a: Pos2, b: Pos2| (b - a).x * (p - a).y - (b - a).y * (p - a).x;
+                    let s: Vec<f32> = (0..4).map(|i| side(square[i], square[(i + 1) % 4])).collect();
+                    if s.iter().all(|v| *v >= 0.0) || s.iter().all(|v| *v <= 0.0) {
+                        return Some(Reference::UcsPlane(*id, plane));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The part of a UCS under the pointer, among what is asked for: lit, and picked by a click.
+    /// Returns whether there is one.
+    pub(crate) fn pick_ucs_part(&mut self, resp: &egui::Response, rect: Rect, planes: bool, axes: bool, points: bool) -> bool {
+        self.view.ucs_hover = None;
+        let Some(r) = resp.hover_pos().and_then(|pos| self.ucs_at(pos, rect, planes, axes, points)) else { return false };
+        self.view.hover = None;
+        self.view.ucs_hover = Some(r);
+        if resp.clicked() {
+            self.pick_reference(r);
+        }
+        true
+    }
+
+    /// An axis of UCS `id` as the part has it now: a point on it and its direction.
+    pub(crate) fn ucs_line(&self, id: FeatureId, axis: OriginAxis) -> Option<(Vec3, Vec3)> {
+        self.scene.work.iter().find(|(w, _)| *w == id).and_then(|(_, g)| match g {
+            WorkGeom::Ucs(f) => tenon_model::regen::ucs_axis(f, axis).map(|a| (a.origin(), a.dir())),
+            _ => None,
+        })
+    }
+
+    /// Draws a UCS: three axes in their colours with their letters, the corner of each plane, and
+    /// its name at its origin. The part under the pointer stands out.
+    fn draw_ucs(&self, painter: &egui::Painter, id: FeatureId, f: &Frame, hot: bool, rect: Rect, t: &Tokens) {
+        const COLORS: [egui::Color32; 3] =
+            [egui::Color32::from_rgb(0xe0, 0x50, 0x50), egui::Color32::from_rgb(0x50, 0xb8, 0x60), egui::Color32::from_rgb(0x50, 0x80, 0xe8)];
+        const LETTERS: [&str; 3] = ["X", "Y", "Z"];
+        let Some((o, tips, squares)) = self.ucs_marks(f, rect) else { return };
+        let lit = self.view.ucs_hover;
+        for (square, plane) in squares.iter().zip([OriginPlane::XY, OriginPlane::YZ, OriginPlane::XZ]) {
+            let on = lit == Some(Reference::UcsPlane(id, plane));
+            painter.add(Shape::convex_polygon(
+                square.to_vec(),
+                t.tint_work.gamma_multiply(if on { 0.6 } else { 0.18 }),
+                Stroke::new(if on { 2.0 } else { 0.8 }, t.tint_work),
+            ));
+        }
+        for ((tip, color), (letter, axis)) in tips.iter().zip(COLORS).zip(LETTERS.into_iter().zip([OriginAxis::X, OriginAxis::Y, OriginAxis::Z])) {
+            let on = lit == Some(Reference::UcsAxis(id, axis));
+            painter.line_segment(
+                [o, *tip],
+                Stroke::new(
+                    if on {
+                        4.0
+                    } else if hot {
+                        3.0
+                    } else {
+                        2.0
+                    },
+                    color,
+                ),
+            );
+            painter.text(*tip + vec2(3.0, -3.0), Align2::LEFT_BOTTOM, letter, theme::small(), color);
+        }
+        let on = lit == Some(Reference::UcsOrigin(id));
+        painter.circle_filled(o, if on { 6.0 } else { 3.5 }, t.tint_work);
+        painter.text(o + vec2(6.0, 6.0), Align2::LEFT_TOP, self.feature_name(id), theme::small(), if hot || on { t.text } else { t.viewport_text });
+    }
+
     /// Draws the work features; the one under the pointer, and those picked in a panel, stand out.
     pub(crate) fn draw_work(&self, ui: &Ui, rect: Rect, t: &Tokens) {
         if self.scene.work.is_empty() {
@@ -364,6 +529,7 @@ impl Workbench {
                         painter.text(s + vec2(6.0, -6.0), Align2::LEFT_BOTTOM, name, theme::small(), if hot { t.text } else { t.viewport_text });
                     }
                 }
+                WorkGeom::Ucs(f) => self.draw_ucs(&painter, *id, f, hot, rect, t),
             }
         }
     }
@@ -376,15 +542,16 @@ impl Workbench {
     /// Work features the open panel refers to (to highlight them).
     fn panel_work_refs(&self) -> Vec<FeatureId> {
         let plane = |p: &Option<PlaneRef>| match p {
-            Some(PlaneRef::Work(id)) => Some(*id),
+            Some(PlaneRef::Work(id) | PlaneRef::Ucs { feature: id, .. }) => Some(*id),
             _ => None,
         };
         let axis = |a: &Option<AxisSel>| match a {
-            Some(AxisSel::Work(id)) => Some(*id),
+            Some(AxisSel::Work(id) | AxisSel::Ucs { feature: id, .. }) => Some(*id),
             _ => None,
         };
         match &self.panel {
-            Some(Panel::Work(w)) => [plane(&w.a), plane(&w.b), axis(&w.axis)].into_iter().flatten().collect(),
+            Some(Panel::Work(w)) => [plane(&w.a), plane(&w.b), axis(&w.axis), w.base].into_iter().flatten().collect(),
+            Some(Panel::Derive(d)) => plane(&d.mirror).into_iter().collect(),
             Some(Panel::Pattern(p)) => [plane(&Some(p.plane.clone())), axis(&Some(p.axis.clone()))].into_iter().flatten().collect(),
             _ => Vec::new(),
         }
@@ -414,14 +581,59 @@ impl Workbench {
     pub(crate) fn pick_reference(&mut self, r: Reference) -> bool {
         let is_plane = |wb: &Workbench, id: FeatureId| wb.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkPlane(_)));
         let is_axis = |wb: &Workbench, id: FeatureId| wb.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::WorkAxis(_)));
+        let is_ucs = |wb: &Workbench, id: FeatureId| wb.document().feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::Ucs(_)));
+        // Measure takes a work feature, or a part of a UCS, as what to measure.
+        if matches!(self.panel, Some(Panel::Measure(_))) {
+            use tenon_model::measure::{Entity, WorkPart};
+            let work = match r {
+                Reference::Work(id) => Some((Entity::Work { feature: id, part: WorkPart::Whole }, self.feature_name(id))),
+                Reference::UcsOrigin(id) => {
+                    Some((Entity::Work { feature: id, part: WorkPart::Whole }, format!("{}'s centre", self.feature_name(id))))
+                }
+                Reference::UcsPlane(id, p) => {
+                    Some((Entity::Work { feature: id, part: WorkPart::Plane(p) }, format!("{} {p:?} Plane", self.feature_name(id))))
+                }
+                Reference::UcsAxis(id, a) => {
+                    Some((Entity::Work { feature: id, part: WorkPart::Axis(a) }, format!("{} {a:?} Axis", self.feature_name(id))))
+                }
+                _ => None,
+            };
+            return match (work, &mut self.panel) {
+                (Some(w), Some(Panel::Measure(m))) => {
+                    m.take(None, Some(w));
+                    self.request_measure();
+                    true
+                }
+                _ => false,
+            };
+        }
+        // What a UCS is measured from.
+        if let Some(Panel::Work(w)) = &self.panel
+            && w.slot == WorkSlot::Base
+        {
+            let base = match r {
+                Reference::Point => Some(None),
+                Reference::Work(id) | Reference::UcsOrigin(id) if is_ucs(self, id) => Some(Some(id)),
+                _ => None,
+            };
+            return match (base, &mut self.panel) {
+                (Some(b), Some(Panel::Work(w))) => {
+                    w.base = b;
+                    true
+                }
+                _ => false,
+            };
+        }
         let plane = match r {
             Reference::Plane(o) => Some(PlaneRef::Origin(o)),
             Reference::Work(id) if is_plane(self, id) => Some(PlaneRef::Work(id)),
+            Reference::UcsPlane(feature, plane) => Some(PlaneRef::Ucs { feature, plane }),
             _ => None,
         };
         let axis = match r {
             Reference::Axis(o) => Some(AxisSel::Origin(o)),
             Reference::Work(id) if is_axis(self, id) => Some(AxisSel::Work(id)),
+            Reference::UcsAxis(feature, axis) => Some(AxisSel::Ucs { feature, axis }),
             _ => None,
         };
         if self.picking_direction() {
@@ -431,6 +643,7 @@ impl Workbench {
                 Some(AxisSel::Origin(tenon_model::OriginAxis::Y)) => Some((tenon_geom::Vec3::Y, tenon_geom::Vec3::ZERO)),
                 Some(AxisSel::Origin(tenon_model::OriginAxis::Z)) => Some((tenon_geom::Vec3::Z, tenon_geom::Vec3::ZERO)),
                 Some(AxisSel::Work(id)) => self.work_axis_line(id),
+                Some(AxisSel::Ucs { feature, axis }) => self.ucs_line(feature, axis).map(|(at, way)| (way, at)),
                 _ => None,
             };
             return d.is_some_and(|(d, through)| self.set_load_direction(d, Some(through)));
@@ -449,6 +662,8 @@ impl Workbench {
             let point = match r {
                 Reference::Point => Some(PointSel::Origin),
                 Reference::Work(id) if is_point(self, id) => Some(PointSel::Work(id)),
+                Reference::UcsOrigin(id) => Some(PointSel::Ucs(id)),
+                Reference::Work(id) if is_ucs(self, id) => Some(PointSel::Ucs(id)),
                 _ => None,
             };
             return match (point, &mut self.panel) {
@@ -473,6 +688,7 @@ impl Workbench {
             Some(Panel::Revolve(_) | Panel::Coil(_)) => match axis {
                 Some(AxisSel::Origin(o)) => self.set_panel_axis(crate::panels::AxisChoice::Origin(o)),
                 Some(AxisSel::Work(w)) => self.set_panel_axis(crate::panels::AxisChoice::Work(w)),
+                Some(AxisSel::Ucs { feature, axis }) => self.set_panel_axis(crate::panels::AxisChoice::Ucs(feature, axis)),
                 _ => false,
             },
             _ => false,
@@ -521,6 +737,9 @@ impl Workbench {
         self.set_status(match panel.title() {
             "Work Plane" => "Work Plane: click a face or plane (origin planes are in the browser), set the offset, then OK.",
             "Work Axis" => "Work Axis: click an edge, a cylinder or an axis, then OK.",
+            "UCS" => {
+                "UCS: type how far it is moved and turned from the part's origin or another UCS, or choose Three Points and click them, then OK."
+            }
             _ => "Work Point: click a circular edge, then OK.",
         });
         self.panel = Some(Panel::Work(Box::new(panel)));
@@ -537,6 +756,18 @@ impl Workbench {
                 matches!(self.scene.bodies.get(body).and_then(|b| b.curves.get(edge as usize)), Some(tenon_kernel::CurveKind::Circle { .. }))
             }
             Pick::Face { .. } => false,
+        };
+        // The end of the edge nearer the pointer: where it was clicked.
+        let near = match p {
+            Pick::Edge { body, edge } => {
+                let ends = self.scene.bodies.get(body).and_then(|b| b.ends.get(edge as usize)).copied();
+                let pointer = self.view.pointer;
+                ends.and_then(|[a, b]| {
+                    let (sa, sb) = (self.to_screen(a, self.view.rect)?, self.to_screen(b, self.view.rect)?);
+                    Some(if pointer.is_none_or(|q| q.distance(sa) <= q.distance(sb)) { a } else { b })
+                })
+            }
+            Pick::Face { .. } => None,
         };
         let (fref, eref, surface) = match p {
             Pick::Face { body, face } => {
@@ -555,8 +786,13 @@ impl Workbench {
             }
             (WorkSlot::Axis, _, Some(e), _) => w.axis = Some(AxisSel::Edge(e)),
             (WorkSlot::Edge, _, Some(e), _) => w.edge = Some(e),
-            // A point: a circular edge's centre.
+            // A point: a circular edge's centre, or the corner of a straight edge nearer where it
+            // was clicked.
             (WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3, _, Some(e), _) if circle => return w.put_point(PointSel::Center(e)),
+            (WorkSlot::P1 | WorkSlot::P2 | WorkSlot::P3, _, Some(edge), _) => {
+                let Some(near) = near else { return false };
+                return w.put_point(PointSel::Vertex { edge, near });
+            }
             _ => return false,
         }
         w.advance();
@@ -604,6 +840,12 @@ pub(crate) enum Reference {
     Work(FeatureId),
     /// The origin's centre point.
     Point,
+    /// A plane of a UCS.
+    UcsPlane(FeatureId, OriginPlane),
+    /// An axis of a UCS.
+    UcsAxis(FeatureId, OriginAxis),
+    /// The origin of a UCS.
+    UcsOrigin(FeatureId),
 }
 
 fn set_pattern_ref(p: &mut PatternPanel, plane: Option<PlaneRef>, axis: Option<AxisSel>) -> bool {
@@ -613,12 +855,14 @@ fn set_pattern_ref(p: &mut PatternPanel, plane: Option<PlaneRef>, axis: Option<A
         (Slot::Dir1, _, Some(a)) => match a {
             AxisSel::Origin(o) => p.dir1 = tenon_model::DirectionRef::Origin(o),
             AxisSel::Work(id) => p.dir1 = tenon_model::DirectionRef::Work(id),
+            AxisSel::Ucs { feature, axis } => p.dir1 = tenon_model::DirectionRef::Ucs { feature, axis },
             _ => return false,
         },
         (Slot::Dir2, _, Some(a)) => {
             p.dir2 = match a {
                 AxisSel::Origin(o) => Some(tenon_model::DirectionRef::Origin(o)),
                 AxisSel::Work(id) => Some(tenon_model::DirectionRef::Work(id)),
+                AxisSel::Ucs { feature, axis } => Some(tenon_model::DirectionRef::Ucs { feature, axis }),
                 _ => return false,
             };
             if p.count2 < 2.0 {

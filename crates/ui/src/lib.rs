@@ -22,6 +22,7 @@ pub mod crash;
 mod cube;
 mod dims;
 mod drawing;
+mod emboss;
 pub mod icons;
 mod library_dialog;
 mod modify;
@@ -61,6 +62,8 @@ mod control_tests;
 mod drw_tests;
 #[cfg(test)]
 mod explore_tests;
+#[cfg(test)]
+mod part_tests;
 #[cfg(test)]
 mod primitive_tests;
 #[cfg(test)]

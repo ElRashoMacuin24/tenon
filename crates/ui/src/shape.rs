@@ -151,6 +151,8 @@ pub(crate) struct SymmetryPanel {
     pub origin: [bool; 3],
     /// The part's work planes: which, what it is called, and whether it is ticked.
     pub work: Vec<(FeatureId, String, bool)>,
+    /// The planes of the part's user coordinate systems, likewise.
+    pub ucs: Vec<(PlaneRef, String, bool)>,
     /// What it holds that cannot be a plane of symmetry (a work plane that is gone, a face from
     /// a file): what it is called, and whether it is still ticked. It goes when it is unticked.
     pub lost: Vec<(PlaneRef, String, bool)>,
@@ -162,7 +164,8 @@ impl SymmetryPanel {
     pub(crate) fn planes(&self) -> Vec<PlaneRef> {
         let origin = ORIGINS.iter().zip(self.origin).filter(|(_, on)| *on).map(|(o, _)| PlaneRef::Origin(*o));
         let work = self.work.iter().filter(|w| w.2).map(|w| PlaneRef::Work(w.0));
-        origin.chain(work).chain(self.lost.iter().filter(|l| l.2).map(|l| l.0.clone())).collect()
+        let ucs = self.ucs.iter().filter(|u| u.2).map(|u| u.0.clone());
+        origin.chain(work).chain(ucs).chain(self.lost.iter().filter(|l| l.2).map(|l| l.0.clone())).collect()
     }
 }
 
@@ -385,6 +388,16 @@ pub(crate) fn symmetry_fields(ui: &mut Ui, p: &mut SymmetryPanel) {
                 }
             });
             ui.end_row();
+            if !p.ucs.is_empty() {
+                ui.label("UCS planes");
+                ui.vertical(|ui| {
+                    for (i, (_, name, on)) in p.ucs.iter_mut().enumerate() {
+                        let r = ui.checkbox(on, name.as_str());
+                        crate::drawing::remember(ui, &format!("tn_symmetry_ucs_{i}"), r.rect);
+                    }
+                });
+                ui.end_row();
+            }
             if !p.lost.is_empty() {
                 ui.label("Lost").on_hover_text("These cannot be planes of symmetry: untick them, then OK");
                 ui.vertical(|ui| {
@@ -461,6 +474,7 @@ impl Workbench {
             PlaneRef::Origin(_) => false,
             PlaneRef::Face(_) => true,
             PlaneRef::Work(id) => !self.work_plane_there(*id),
+            PlaneRef::Ucs { feature, .. } => !self.scene.work.iter().any(|(w, g)| w == feature && matches!(g, WorkGeom::Ucs(_))),
         }
     }
 
@@ -470,8 +484,20 @@ impl Workbench {
         let study = self.study_for_new()?;
         let features = self.document().features().iter();
         let work = features.filter(|f| self.work_plane_there(f.id)).map(|f| (f.id, f.name.clone(), false)).collect();
-        let mut p = SymmetryPanel { study, origin: [false; 3], work, lost: Vec::new() };
+        let mut ucs = Vec::new();
+        for (id, g) in &self.scene.work {
+            if matches!(g, WorkGeom::Ucs(_)) {
+                for plane in ORIGINS {
+                    ucs.push((PlaneRef::Ucs { feature: *id, plane }, format!("{} {plane:?}", self.feature_name(*id)), false));
+                }
+            }
+        }
+        let mut p = SymmetryPanel { study, origin: [false; 3], work, ucs, lost: Vec::new() };
         for plane in &self.shape_settings(study).symmetry {
+            if let Some(u) = p.ucs.iter_mut().find(|u| u.0 == *plane) {
+                u.2 = true;
+                continue;
+            }
             let listed = p.work.iter_mut().find(|w| PlaneRef::Work(w.0) == *plane);
             match (plane, listed) {
                 (_, Some(w)) => w.2 = true,
@@ -483,6 +509,11 @@ impl Workbench {
                 (PlaneRef::Face(_), None) => p.lost.push((plane.clone(), "A face of the part".to_owned(), true)),
                 (PlaneRef::Work(id), None) => {
                     let name = self.document().feature(*id).map_or_else(|| format!("Work plane {}", id.0), |f| f.name.clone());
+                    p.lost.push((plane.clone(), name, true));
+                }
+                // (A UCS no longer on the part.)
+                (PlaneRef::Ucs { feature, plane: of }, None) => {
+                    let name = self.document().feature(*feature).map_or_else(|| format!("UCS {}", feature.0), |f| format!("{} {of:?} Plane", f.name));
                     p.lost.push((plane.clone(), name, true));
                 }
             }

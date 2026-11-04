@@ -125,8 +125,20 @@ pub const RIBBON: &[RibbonTab] = &[
                     small("model.loft", "Loft", "Blend between two or more profiles", Icon::Loft, 0),
                     small("model.coil", "Coil", "Helical sweep", Icon::Coil, 0),
                     small("model.rib", "Rib", "A thin wall from an open profile", Icon::Rib, 0),
-                    small("model.emboss", "Emboss", "Raise or recess a profile on a face", Icon::Text, LATER),
-                    small("model.derive", "Derive", "Bring in another part", Icon::Copy, LATER),
+                    small(
+                        "model.emboss",
+                        "Emboss",
+                        "A profile or text raised from or recessed into the part's faces, following them where they curve, or laid round a cylinder or cone",
+                        Icon::Text,
+                        0,
+                    ),
+                    small(
+                        "model.derive",
+                        "Derive",
+                        "Bring in the solid of another part file, scaled and mirrored as you say: it follows that file when the part is rebuilt",
+                        Icon::Copy,
+                        0,
+                    ),
                 ],
             },
             RibbonPanel {
@@ -148,7 +160,13 @@ pub const RIBBON: &[RibbonTab] = &[
                     large("work.plane", "Plane", "Construction plane: offset, angled or mid-plane", Icon::Plane, 0),
                     small("work.axis", "Axis", "Construction axis: on an edge or cylinder, or where two planes meet", Icon::Axis, 0),
                     small("work.point", "Point", "Construction point: a circle centre, or where an axis meets a plane", Icon::Point, 0),
-                    small("work.ucs", "UCS", "User coordinate system", Icon::Ucs, LATER),
+                    small(
+                        "work.ucs",
+                        "UCS",
+                        "A coordinate system of your own, by offsets and turns or three points: its planes, axes and origin serve as work features",
+                        Icon::Ucs,
+                        0,
+                    ),
                 ],
             },
             RibbonPanel {

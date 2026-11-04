@@ -49,7 +49,7 @@ fn a_flat_face_thickens_to_a_prism_either_way() {
 #[test]
 fn a_round_face_thickens_to_a_ring() {
     let mut k = OcctKernel::new();
-    let c = k.make_cylinder(&Axis::Z, 10.0, 30.0, ).unwrap().shape;
+    let c = k.make_cylinder(&Axis::Z, 10.0, 30.0).unwrap().shape;
     let side = face_where(&k, c, |s| matches!(s, SurfaceKind::Cylinder { .. }));
     let n = k.face_normal(c.face(side)).unwrap();
     assert!(n.z.abs() < 1e-9 && (n.len() - 1.0).abs() < 1e-9, "it looks out from the axis: {n:?}");
@@ -165,8 +165,12 @@ fn what_cannot_be_laid_round_a_cone_is_refused() {
     let whole = TaggedCurve2 { tag: 1, curve: Curve2::Circle { center: Vec2::new(0.0, 30.0), radius: 3.0 } };
     let p = Profile { frame: cone_frame(), regions: vec![Region { outer: Loop { curves: vec![whole] }, holes: vec![] }] };
     assert!(k.roll_cone(&p, FRAC_PI_4, 0.0, 1.0).is_err());
-    let half = |tag: u64, start_angle: f64, end_angle: f64| TaggedCurve2 { tag, curve: Curve2::Arc { center: Vec2::new(0.0, 30.0), radius: 3.0, start_angle, end_angle } };
-    let p = Profile { frame: cone_frame(), regions: vec![Region { outer: Loop { curves: vec![half(1, 0.0, PI), half(2, PI, TAU)] }, holes: vec![] }] };
+    let half = |tag: u64, start_angle: f64, end_angle: f64| TaggedCurve2 {
+        tag,
+        curve: Curve2::Arc { center: Vec2::new(0.0, 30.0), radius: 3.0, start_angle, end_angle },
+    };
+    let p =
+        Profile { frame: cone_frame(), regions: vec![Region { outer: Loop { curves: vec![half(1, 0.0, PI), half(2, PI, TAU)] }, holes: vec![] }] };
     let op = k.roll_cone(&p, FRAC_PI_4, 0.0, 1.0).unwrap();
     assert!(k.is_valid(op.shape).unwrap());
     // What the disc holds: as a rectangle's, the integral of 1 + 1 / (2 rho) over the disc. (Not

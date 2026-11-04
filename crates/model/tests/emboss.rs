@@ -431,6 +431,91 @@ fn text_is_raised_on_a_flat_face_and_on_a_round_one_and_wrapped() {
 }
 
 #[test]
+fn it_is_copied_by_a_pattern_and_a_mirror_and_its_faces_are_built_on() {
+    // Mirrored in the middle of the block: another of them.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    block(&mut s, &mut k);
+    let wp = feature(&run(&mut s, &mut k, "work.plane", json!({ "base": "yz", "distance": 20 })));
+    let sk = rect_above(&mut s, &mut k, 10.0, [5.0, 5.0, 15.0, 11.0]);
+    let e = feature(&run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 2 })));
+    run(&mut s, &mut k, "model.mirror", json!({ "features": [e], "work_plane": wp }));
+    near(volume(&mut s, &mut k), 16000.0 + 240.0, 1e-6);
+
+    // From the plane, what it adds and what it takes both go with it: one side of a plane in
+    // the block goes down to it (recessed 2), copied twice more along X by 30... but a plane is
+    // copied with it, all at 8 up.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let sk0 = feature(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })));
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk0, "x1": 0, "y1": 0, "x2": 100, "y2": 40 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk0, "distance": 10 }));
+    let sk = rect_above(&mut s, &mut k, 8.0, [5.0, 5.0, 15.0, 11.0]);
+    let e = feature(&run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 5, "style": "from_plane" })));
+    run(&mut s, &mut k, "model.pattern.rect", json!({ "features": [e], "direction": "x", "count": 3, "spacing": 30 }));
+    near(volume(&mut s, &mut k), 40000.0 - 3.0 * 120.0, 1e-6);
+
+    // Wrapped text round a shaft, four times about its axis: four times what one adds.
+    let (r, d) = (20.0, 1.0);
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    shaft(&mut s, &mut k, r, 60.0);
+    let v0 = PI * r * r * 60.0;
+    let face = run(&mut s, &mut k, "model.face_ref", json!({ "at": [30.0, r, 0.0] }));
+    let sk = rect_above(&mut s, &mut k, 25.0, [10.0, -3.0, 20.0, 3.0]);
+    let e = feature(&run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": d, "wrap": face })));
+    let one = 10.0 * (6.0 / r) * ((r + d) * (r + d) - r * r) / 2.0;
+    near(volume(&mut s, &mut k), v0 + one, 1e-2);
+    run(&mut s, &mut k, "model.pattern.circular", json!({ "features": [e], "axis": "x", "count": 4 }));
+    near(volume(&mut s, &mut k), v0 + 4.0 * one, 1e-2);
+
+    // Its top and its sides can be picked and hold on: a chamfer round the top of what is raised
+    // follows when it is made deeper. A sketch goes on the top.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    block(&mut s, &mut k);
+    let sk = rect_above(&mut s, &mut k, 10.0, [5.0, 5.0, 15.0, 11.0]);
+    let e = feature(&run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 2 })));
+    near(volume(&mut s, &mut k), 16120.0, 1e-6);
+    let edge = run(&mut s, &mut k, "model.edge_ref", json!({ "at": [10.0, 5.0, 12.0] }));
+    assert_eq!(edge["faces"].as_array().unwrap().len(), 2);
+    let ch = feature(&run(&mut s, &mut k, "model.chamfer", json!({ "edges": [edge], "distance": 0.5 })));
+    near(volume(&mut s, &mut k), 16120.0 - 0.5 * 0.5 * 0.5 * 10.0, 1e-6);
+    let kind = json!({ "type": "emboss", "sketch": sk, "depth": 4.0 });
+    run(&mut s, &mut k, "feature.update", json!({ "feature": e, "kind": kind }));
+    near(volume(&mut s, &mut k), 16240.0 - 0.5 * 0.5 * 0.5 * 10.0, 1e-6);
+    let _ = ch;
+    let top = run(&mut s, &mut k, "model.face_ref", json!({ "origin": { "type": "cap", "feature": e, "end": "end" } }));
+    let sk2 = feature(&run(&mut s, &mut k, "sketch.create", json!({ "face": top })));
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk2, "cx": 10, "cy": 8, "r": 1 }));
+    run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "distance": 3 }));
+    near(volume(&mut s, &mut k), 16240.0 - 0.5 * 0.5 * 0.5 * 10.0 + PI * 3.0, 1e-6);
+}
+
+#[test]
+fn it_leaves_nothing_in_the_kernel_however_it_ends() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    shaft(&mut s, &mut k, 10.0, 50.0);
+    let face = run(&mut s, &mut k, "model.face_ref", json!({ "at": [25.0, 10.0, 0.0] }));
+    let sk = rect_above(&mut s, &mut k, 15.0, [10.0, -3.0, 20.0, 3.0]);
+    for p in [
+        json!({ "sketch": sk, "depth": 1.0 }),
+        json!({ "sketch": sk, "depth": 1.0, "style": "recess" }),
+        json!({ "sketch": sk, "depth": 1.0, "style": "recess", "taper": 0.1 }),
+        json!({ "sketch": sk, "depth": 7.0, "style": "from_plane" }),
+        json!({ "sketch": sk, "depth": 1.0, "wrap": face }),
+        json!({ "sketch": sk, "depth": 1.0, "style": "recess", "wrap": face }),
+        // These fail.
+        json!({ "sketch": sk, "depth": 1.0, "style": "from_plane" }),
+        json!({ "sketch": sk, "depth": 1.0, "reverse": true, "wrap": { "origin": { "type": "cap", "feature": 2, "end": "end" }, "fingerprint": { "surface": "plane", "direction": { "x": 1.0, "y": 0.0, "z": 0.0 }, "centroid": { "x": 50.0, "y": 0.0, "z": 0.0 }, "area": 314.0 } } }),
+    ] {
+        let mut t = Session::new(s.document().clone());
+        let (mut k2, q) = (OcctKernel::new(), p.clone());
+        run(&mut t, &mut k2, "model.emboss", q);
+        let mut r = tenon_model::regenerate(t.document(), &mut k2);
+        r.release(&mut k2);
+        assert_eq!(tenon_kernel::Kernel::live_shapes(&k2), 0, "{p}");
+    }
+    let _ = k;
+}
+
+#[test]
 fn what_cannot_be_embossed_says_what_to_do() {
     let (mut s, mut k) = (Session::default(), OcctKernel::new());
     let sk = rect_above(&mut s, &mut k, 0.0, [0.0, 0.0, 10.0, 10.0]);

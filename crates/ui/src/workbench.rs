@@ -505,6 +505,8 @@ impl Workbench {
             "view.perspective" => self.view.camera.projection = tenon_render::Projection::Perspective,
             "tools.options" => self.chrome.options = true,
             "model.rebuild" => {
+                // What it derives from is read again: rebuilding takes what those files now hold.
+                tenon_io::derive::reload(&mut self.session);
                 // Forget what is shown so the whole tree regenerates, from scratch.
                 self.shown = None;
                 self.shown_key = None;
@@ -604,6 +606,8 @@ impl Workbench {
             "model.split" => self.open_split(None)?,
             "model.combine" => self.open_combine(None)?,
             "model.thread" => self.open_thread(None)?,
+            "model.emboss" => self.open_emboss(None)?,
+            "model.derive" => self.open_derive(None)?,
             "model.pattern.rect" => self.open_pattern(crate::panels::CopyKind::Rect, None)?,
             "model.pattern.circular" => self.open_pattern(crate::panels::CopyKind::Circular, None)?,
             "model.mirror" => self.open_pattern(crate::panels::CopyKind::Mirror, None)?,
@@ -636,6 +640,7 @@ impl Workbench {
             "work.plane" => self.open_work(crate::work::WorkMethod::Offset, None)?,
             "work.axis" => self.open_work(crate::work::WorkMethod::Along, None)?,
             "work.point" => self.open_work(crate::work::WorkMethod::Center, None)?,
+            "work.ucs" => self.open_work(crate::work::WorkMethod::UcsOffset, None)?,
             "ui.ok" | "ui.cancel" => {
                 if id == "ui.cancel" && std::mem::take(&mut self.chrome.sheet.pick_a_side) {
                     self.set_status("Ready");
@@ -722,8 +727,8 @@ impl Workbench {
             crate::viewport::Pick::Face { body, face } => tenon_model::measure::Entity::Face { body, face },
             crate::viewport::Pick::Edge { body, edge } => tenon_model::measure::Entity::Edge { body, edge },
         };
-        let Some(a) = m.a.as_ref().map(entity) else { return };
-        let b = m.b.as_ref().map(entity);
+        let Some(a) = m.work_a.as_ref().map(|w| w.0).or_else(|| m.a.as_ref().map(entity)) else { return };
+        let b = m.work_b.as_ref().map(|w| w.0).or_else(|| m.b.as_ref().map(entity));
         self.step_seq += 1;
         let id = self.step_seq;
         let result = match &mut self.geo {
@@ -731,7 +736,7 @@ impl Workbench {
                 w.measure(id, a, b);
                 None
             }
-            Geo::Sync(k) => Some(tenon_model::measure::measure(k.as_ref(), &self.sync_regen, a, b)),
+            Geo::Sync(k) => Some(tenon_model::measure::measure(k.as_mut(), &self.sync_regen, a, b)),
             Geo::Off => Some(Err("there is no geometry kernel".into())),
         };
         if let Some(Panel::Measure(m)) = &mut self.panel {
@@ -1130,6 +1135,8 @@ impl Workbench {
             Some(FeatureKind::Split(_)) => self.open_split(Some(id)),
             Some(FeatureKind::Combine(_)) => self.open_combine(Some(id)),
             Some(FeatureKind::Thread(_)) => self.open_thread(Some(id)),
+            Some(FeatureKind::Emboss(_)) => self.open_emboss(Some(id)),
+            Some(FeatureKind::Derive(_)) => self.open_derive(Some(id)),
             Some(FeatureKind::SheetFace(_)) => self.open_sheet_face(Some(id)),
             Some(FeatureKind::Flange(_)) => self.open_flange(Some(id)),
             Some(FeatureKind::Hem(_)) => self.open_hem(Some(id)),
@@ -1141,7 +1148,7 @@ impl Workbench {
             Some(FeatureKind::PatternRect(_)) => self.open_pattern(crate::panels::CopyKind::Rect, Some(id)),
             Some(FeatureKind::PatternCircular(_)) => self.open_pattern(crate::panels::CopyKind::Circular, Some(id)),
             Some(FeatureKind::Mirror(_)) => self.open_pattern(crate::panels::CopyKind::Mirror, Some(id)),
-            Some(FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_)) => {
+            Some(FeatureKind::WorkPlane(_) | FeatureKind::WorkAxis(_) | FeatureKind::WorkPoint(_) | FeatureKind::Ucs(_)) => {
                 self.open_work(crate::work::WorkMethod::Offset, Some(id))
             }
             None => Err(format!("{id} does not exist")),
