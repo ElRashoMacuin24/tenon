@@ -69,6 +69,7 @@ fn as_left(p: &AsmPanel, a: &AsmDoc) -> Result<Option<Assembly>, String> {
     if !solve_assembly(&mut asm, parts, None).converged {
         return Err("the relationships cannot all hold with this".into());
     }
+    asm.check_reach()?;
     asm.validate()?;
     Ok(Some(asm))
 }

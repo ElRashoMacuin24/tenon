@@ -892,6 +892,53 @@ fn a_source_deleted_from_its_row_and_brought_back_by_undo_is_drawn_again() {
 }
 
 #[test]
+fn a_second_direction_along_the_first_and_a_pattern_too_long_are_said_in_the_panel() {
+    let dir = scratch("words");
+    box_part(&dir.join("plate.tenon"), "Plate", 200.0, 100.0, 10.0);
+    box_part(&dir.join("block.tenon"), "Block", 10.0, 10.0, 10.0);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    opened(&mut wb, &mut d, &[(&dir.join("plate.tenon"), [0.0, 0.0, 0.0]), (&dir.join("block.tenon"), [10.0, 10.0, 10.0])]);
+    d.click(&mut wb, pressable(&d, "ribbon asm.pattern"));
+    d.frame(&mut wb, vec![]);
+    click_at(&mut d, &mut wb, Vec3::new(15.0, 15.0, 20.0));
+    d.click(&mut wb, pressable(&d, "tn_pattern_first"));
+    d.frame(&mut wb, vec![]);
+    let edge = Vec3::new(100.0, 0.0, 10.0);
+    click_at(&mut d, &mut wb, edge);
+    typed(&mut d, &mut wb, "tn_pattern_count", "3");
+    typed(&mut d, &mut wb, "tn_pattern_spacing", "30");
+
+    // The same edge for the second direction: the panel says what to do, the view shows no more
+    // than what is there, and OK will not make it.
+    d.click(&mut wb, pressable(&d, "tn_pattern_second"));
+    d.frame(&mut wb, vec![]);
+    click_at(&mut d, &mut wb, edge);
+    typed(&mut d, &mut wb, "tn_pattern_count2", "2");
+    typed(&mut d, &mut wb, "tn_pattern_spacing2", "30");
+    d.frame(&mut wb, vec![]);
+    let says = |d: &Driver, words: &str| d.texts().iter().any(|t| t.contains(words));
+    assert!(says(&d, "pick a second direction across the first"), "{:?}", d.texts());
+    assert_eq!(wb.scene().bodies.len(), 2, "nothing is shown of what cannot be made");
+    press_ok(&mut d, &mut wb);
+    assert!(wb.panel.is_some());
+    assert!(wb.status_error && wb.status().contains("across the first"), "{}", wb.status());
+    assert_eq!(wb.assembly().unwrap().assembly().components.len(), 2);
+
+    // Without it, as far as the panel's boxes go: too long for any placement, said in words.
+    d.click(&mut wb, pressable(&d, "tn_pattern_no_second"));
+    d.frame(&mut wb, vec![]);
+    typed(&mut d, &mut wb, "tn_pattern_count", "20");
+    typed(&mut d, &mut wb, "tn_pattern_spacing", "100000");
+    d.frame(&mut wb, vec![]);
+    assert!(says(&d, "more than 1000 m from the origin"), "{:?}", d.texts());
+    assert!(says(&d, "lower the spacing or the count"), "{:?}", d.texts());
+    press_ok(&mut d, &mut wb);
+    assert!(wb.status_error && wb.status().contains("lower the spacing"), "{}", wb.status());
+    assert_eq!(wb.assembly().unwrap().assembly().components.len(), 2);
+}
+
+#[test]
 fn a_part_of_a_suppressed_chain_of_patterns_is_out_of_the_view_and_hidden_stays_hidden() {
     let dir = scratch("chain");
     box_part(&dir.join("block.tenon"), "Block", 10.0, 10.0, 10.0);

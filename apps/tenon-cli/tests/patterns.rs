@@ -1328,6 +1328,58 @@ fn a_source_deleted_and_brought_back_by_undo_has_its_part_again() {
 }
 
 #[test]
+fn a_second_direction_along_the_first_is_refused_in_words() {
+    let dir = scratch("along-one-line");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    let (_, block) = rail_and_block(e);
+    let (x, y) = (run(e, "asm.geom", json!({ "axis": "x" })), run(e, "asm.geom", json!({ "axis": "y" })));
+    // 3 x 2 along one line would be six components, of which some stand on others.
+    let params = json!({ "components": [block], "type": "rectangular", "direction": x, "count": 3, "spacing": 20, "direction2": x, "count2": 2, "spacing2": 20 });
+    let err = e.exec("asm.pattern", &params).unwrap_err();
+    assert!(err.contains("across the first"), "{err}");
+    assert_eq!(run(e, "asm.tree", json!({}))["components"].as_array().unwrap().len(), 2, "nothing is made");
+    // The same changed to it, by an edit, stays as it was.
+    let made = run(
+        e,
+        "asm.pattern",
+        json!({ "components": [block], "type": "rectangular", "direction": x, "count": 3, "spacing": 20, "direction2": y, "count2": 2, "spacing2": 20 }),
+    );
+    let err = e.exec("asm.edit_pattern", &json!({ "pattern": made["pattern"], "direction2": x })).unwrap_err();
+    assert!(err.contains("across the first"), "{err}");
+    assert_eq!(made["elements"], 5);
+    // With one in either direction it is only one row: nothing lies on anything.
+    let none = run(e, "asm.edit_pattern", json!({ "pattern": made["pattern"], "direction2": x, "count2": 1 }));
+    assert_eq!(none["elements"], 2);
+    assert_eq!(run(e, "asm.interference", json!({}))["count"], 0);
+}
+
+#[test]
+fn what_would_go_out_of_reach_is_refused_in_words() {
+    let dir = scratch("reach");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    let (_, block) = rail_and_block(e);
+    let x = run(e, "asm.geom", json!({ "axis": "x" }));
+    let says = |err: String| {
+        assert!(err.contains("more than 1000 m from the origin") && err.contains("lower the spacing or the count"), "{err}");
+        assert!(!err.contains("bad placement"), "{err}");
+    };
+    // 4 x 400 m is 1600 m; 19 x 100 m is 1900 m.
+    for (count, spacing) in [(5, 400_000.0), (20, 100_000.0)] {
+        let p = json!({ "components": [block], "type": "rectangular", "direction": x, "count": count, "spacing": spacing });
+        says(e.exec("asm.pattern", &p).unwrap_err());
+    }
+    let made = run(e, "asm.pattern", json!({ "components": [block], "type": "rectangular", "direction": x, "count": 2, "spacing": 900_000 }));
+    says(e.exec("asm.edit_pattern", &json!({ "pattern": made["pattern"], "count": 3 })).unwrap_err());
+    // A copy of the element, 900 m along, by 200 m more; and a move of the source that takes its
+    // element as far.
+    says(e.exec("asm.copy", &json!({ "components": [made["components"][0]], "by": [200_000, 0, 0] })).unwrap_err());
+    says(e.exec("asm.move", &json!({ "component": block, "by": [200_000, 0, 0] })).unwrap_err());
+    same(origin(e, &block), [0.0, 0.0, 5.0]);
+}
+
+#[test]
 fn what_repeats_a_suppressed_patterns_elements_is_out_with_them_and_hidden_stays_hidden() {
     let dir = scratch("suppress-chain");
     let mut e = Engine::new(kernel(), &dir);

@@ -264,14 +264,16 @@ fn step_along(asm: &Assembly, parts: &Parts, run: &Run) -> Result<Vec3, String> 
 fn rule_of(asm: &Assembly, parts: &Parts, kind: &PatternKind) -> Result<Rule, String> {
     match kind {
         PatternKind::Rectangular { first, second } => {
-            let (first, second) = (first, second.as_ref());
-            Ok(Rule::Rows {
-                first: step_along(asm, parts, first)?,
-                second: match second {
-                    Some(s) if s.count > 1 => step_along(asm, parts, s)?,
-                    _ => Vec3::ZERO,
-                },
-            })
+            let along = step_along(asm, parts, first)?;
+            let across = match second {
+                Some(s) if s.count > 1 => step_along(asm, parts, s)?,
+                _ => Vec3::ZERO,
+            };
+            // Rows of rows along one line would stand on one another, and be counted.
+            if first.count > 1 && across != Vec3::ZERO && along.normalized().cross(across.normalized()).len() < tol::UNIT {
+                return Err("the two directions are along one line: pick a second direction across the first".into());
+            }
+            Ok(Rule::Rows { first: along, second: across })
         }
         PatternKind::Circular { axis, reverse, count, angle } => {
             let (point, dir) = match world_prim(asm, parts, axis)? {
@@ -949,7 +951,7 @@ impl AsmSession {
     /// Applies `f` as one undoable step; on error nothing changes.
     pub fn edit<T>(&mut self, f: impl FnOnce(&mut Assembly, &Parts) -> Result<T, CmdError>) -> Result<T, CmdError> {
         let before = self.asm.clone();
-        match f(&mut self.asm, &self.parts).and_then(|v| self.asm.validate().map(|()| v).map_err(CmdError)) {
+        match f(&mut self.asm, &self.parts).and_then(|v| self.asm.check_reach().and_then(|()| self.asm.validate()).map(|()| v).map_err(CmdError)) {
             Ok(v) => {
                 if self.asm != before {
                     self.undo.push(before);
