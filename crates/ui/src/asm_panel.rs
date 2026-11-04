@@ -1,7 +1,8 @@
 //! The assembly panels in the properties area: Constrain (mate, flush, angle, insert), Joint
 //! (rigid, rotational, slider, cylindrical, planar, ball), editing a relationship's values, and
 //! Tweak (an exploded-view step). Geometry is picked in the view, faces and edges of components;
-//! while both picks are made the view shows where the relationship would put things.
+//! while both picks are made the view shows where the relationship would put things. Pattern,
+//! Mirror and Copy are tools of the same panel (`asm_pattern`).
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -9,7 +10,7 @@ use std::hash::{Hash, Hasher};
 use egui::{Color32, Rect, RichText, Ui, vec2};
 use serde_json::json;
 use tenon_assembly::session::{self as asm_session, relate};
-use tenon_assembly::{ComponentId, Geom, JointKind, RelKind, RelationshipId, Target};
+use tenon_assembly::{ComponentId, Geom, JointKind, PatternId, RelKind, RelationshipId, Target};
 use tenon_geom::{Frame, Vec3};
 use tenon_render::pick::{pick_edge_in, pick_face_in};
 
@@ -23,6 +24,9 @@ pub(crate) enum AsmTool {
     Constrain,
     Joint,
     Tweak,
+    Pattern,
+    Mirror,
+    Copy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -102,6 +106,23 @@ pub(crate) struct AsmPanel {
     /// Where the relationship would put the components: what it was worked out from, and the
     /// placements or why it cannot hold.
     pub preview: Option<(u64, Result<BTreeMap<ComponentId, Frame>, String>)>,
+    /// Pattern: round an axis (`a`) instead of in rows (along `a`, and `b` when there is one);
+    /// how many and how far apart along each, the second's `reverse`.
+    pub circular: bool,
+    pub count: f64,
+    pub spacing: f64,
+    pub count2: f64,
+    pub spacing2: f64,
+    pub reverse2: bool,
+    /// Mirror: those placed again in the mirrored position, not reflected.
+    pub reuse: Vec<ComponentId>,
+    /// Copy: how far from what is copied; whether that is still the panel's own choice (beside
+    /// it) and not yet the user's; a new part file for each part file copied.
+    pub by: [f64; 3],
+    pub by_auto: bool,
+    pub new_files: bool,
+    /// The pattern or mirror being changed.
+    pub pattern: Option<PatternId>,
 }
 
 impl AsmPanel {
@@ -125,12 +146,32 @@ impl AsmPanel {
             reverse: false,
             distance: 20.0,
             preview: None,
+            circular: false,
+            count: 2.0,
+            spacing: 20.0,
+            count2: 2.0,
+            spacing2: 20.0,
+            reverse2: false,
+            reuse: Vec::new(),
+            by: [0.0; 3],
+            by_auto: true,
+            new_files: false,
+            pattern: None,
         }
     }
 
     /// A pick into the selection being filled; the next is then the following one (symmetry's
     /// plane after the second).
     pub(crate) fn put(&mut self, t: (Target, String)) {
+        if self.is_repeat() {
+            match self.slot {
+                crate::asm_pattern::SLOT_FIRST => self.a = Some(t),
+                crate::asm_pattern::SLOT_SECOND => self.b = Some(t),
+                _ => return,
+            }
+            self.slot = crate::asm_pattern::SLOT_NONE;
+            return;
+        }
         match self.slot {
             0 => {
                 self.a = Some(t);
@@ -151,6 +192,9 @@ impl AsmPanel {
             AsmTool::Constrain => "Constrain",
             AsmTool::Joint => "Joint",
             AsmTool::Tweak => "Tweak Components",
+            AsmTool::Pattern => "Pattern Components",
+            AsmTool::Mirror => "Mirror Components",
+            AsmTool::Copy => "Copy Components",
         }
     }
 
@@ -168,7 +212,7 @@ impl AsmPanel {
                 ConstraintType::Symmetry => RelKind::Symmetry { a, b, plane: self.c.as_ref()?.0.clone() },
             },
             AsmTool::Joint => RelKind::Joint { joint: self.joint, a, b, flip: self.flip, offset: self.offset, angle },
-            AsmTool::Tweak => return None,
+            AsmTool::Tweak | AsmTool::Pattern | AsmTool::Mirror | AsmTool::Copy => return None,
         })
     }
 
@@ -206,18 +250,23 @@ impl Workbench {
             AsmTool::Constrain => "Constrain: click a face or edge of one component, then of another.",
             AsmTool::Joint => "Joint: click where the first component's joint origin is (a face, circular edge or axis), then the second's.",
             AsmTool::Tweak => "Tweak: click the components to move, choose a direction and distance.",
+            AsmTool::Pattern | AsmTool::Mirror | AsmTool::Copy => return self.open_repeat_panel(tool),
         });
+    }
+
+    /// A target with its description, as a selection of a panel shows it.
+    pub(crate) fn labelled(&self, t: &Target) -> (Target, String) {
+        let Some(a) = self.asm.as_ref() else { return (t.clone(), String::new()) };
+        let name = t.component.and_then(|c| a.session.assembly().component(c)).map_or_else(|| "Assembly".to_string(), |c| c.name.clone());
+        let kind = asm_session::resolve_target(a.session.assembly(), &a.session.parts, t).map_or("", |e| e.prim.kind());
+        (t.clone(), describe(t, &name, kind))
     }
 
     /// Opens the panel on an existing relationship, to change its values.
     pub(crate) fn edit_relationship(&mut self, id: RelationshipId) -> Result<(), String> {
         let a = self.asm.as_ref().ok_or("no assembly")?;
         let r = a.session.assembly().relationship(id).ok_or_else(|| format!("{id} does not exist"))?.clone();
-        let label = |t: &Target| {
-            let name = t.component.and_then(|c| a.session.assembly().component(c)).map_or_else(|| "Assembly".to_string(), |c| c.name.clone());
-            let kind = asm_session::resolve_target(a.session.assembly(), &a.session.parts, t).map_or("", |e| e.prim.kind());
-            (t.clone(), describe(t, &name, kind))
-        };
+        let label = |t: &Target| self.labelled(t);
         let mut p = AsmPanel::new(if r.kind.is_joint() { AsmTool::Joint } else { AsmTool::Constrain });
         let [ta, tb] = r.kind.targets();
         (p.a, p.b) = (Some(label(ta)), Some(label(tb)));
@@ -241,6 +290,9 @@ impl Workbench {
     /// Works out where a new relationship would put things (each time its picks or values
     /// change), so the view shows it before OK.
     pub(crate) fn asm_panel_preview(&mut self) {
+        if self.repeat_preview() {
+            return;
+        }
         let Some(Panel::Asm(p)) = &self.panel else { return };
         if p.editing.is_none() && p.kind().is_none() {
             if p.preview.is_some()
@@ -283,7 +335,7 @@ impl Workbench {
     }
 
     /// The target a pick in the shown scene means, and its description.
-    fn target_of_pick(&self, pick: Pick) -> Result<(Target, String), String> {
+    pub(crate) fn target_of_pick(&self, pick: Pick) -> Result<(Target, String), String> {
         let a = self.asm.as_ref().ok_or("no assembly")?;
         let body = match pick {
             Pick::Face { body, .. } | Pick::Edge { body, .. } => body,
@@ -303,8 +355,9 @@ impl Workbench {
     /// The shown-scene picks of the panel's targets (to highlight them).
     pub(crate) fn asm_panel_picks(&self) -> Vec<Pick> {
         let (Some(Panel::Asm(p)), Some(a)) = (&self.panel, self.asm.as_ref()) else { return Vec::new() };
-        if p.tool == AsmTool::Tweak {
-            return a
+        let mut out: Vec<Pick> = Vec::new();
+        if p.tool == AsmTool::Tweak || p.is_repeat() {
+            out = a
                 .map
                 .iter()
                 .enumerate()
@@ -315,7 +368,9 @@ impl Workbench {
                 })
                 .collect();
         }
-        let mut out = Vec::new();
+        if p.tool == AsmTool::Tweak {
+            return out;
+        }
         for (t, _) in [&p.a, &p.b].into_iter().flatten() {
             let Some(c) = t.component else { continue };
             let Some(comp) = a.session.assembly().component(c) else { continue };
@@ -345,6 +400,10 @@ impl Workbench {
     /// Picking for an assembly panel: faces and edges of components (or whole components for
     /// Tweak).
     pub(crate) fn asm_panel_pointer(&mut self, _ui: &Ui, resp: &egui::Response, rect: Rect) {
+        if matches!(&self.panel, Some(Panel::Asm(p)) if p.is_repeat()) {
+            self.repeat_pointer(resp, rect);
+            return;
+        }
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
         let (meshes, tree) = (self.scene.placed(), self.body_tree());
         let tweak = matches!(&self.panel, Some(Panel::Asm(p)) if p.tool == AsmTool::Tweak);
@@ -395,6 +454,10 @@ impl Workbench {
 
     /// The panel's controls.
     pub(crate) fn asm_panel_ui(&self, ui: &mut Ui, p: &mut AsmPanel, t: &Tokens) {
+        if p.is_repeat() {
+            self.repeat_panel_ui(ui, p, t);
+            return;
+        }
         let section = |ui: &mut Ui, title: &str, body: &mut dyn FnMut(&mut Ui)| {
             egui::CollapsingHeader::new(RichText::new(title).font(theme::body()).strong()).default_open(true).show(ui, |ui| body(ui));
         };
@@ -442,7 +505,7 @@ impl Workbench {
                     });
                 });
             }
-            AsmTool::Tweak => {}
+            AsmTool::Tweak | AsmTool::Pattern | AsmTool::Mirror | AsmTool::Copy => {}
         }
         if p.tool != AsmTool::Tweak {
             section(ui, "Selections", &mut |ui| {
@@ -575,6 +638,9 @@ impl Workbench {
     /// OK on an assembly panel: makes (or changes) the relationship, or adds the exploded-view
     /// step. True when done.
     pub(crate) fn commit_asm_panel(&mut self, p: &AsmPanel) -> bool {
+        if p.is_repeat() {
+            return self.commit_repeat_panel(p);
+        }
         let result = match (p.tool, p.editing) {
             (AsmTool::Tweak, _) => {
                 if p.components.is_empty() {

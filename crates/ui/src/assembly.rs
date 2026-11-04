@@ -18,7 +18,7 @@ use tenon_assembly::interfere::{Clash, Placed};
 use tenon_assembly::math::M3;
 use tenon_assembly::session::{self as asm_session, solve_assembly};
 use tenon_assembly::solve::{BodyDof, Motion};
-use tenon_assembly::{AsmSession, Assembly, ComponentId};
+use tenon_assembly::{AsmSession, Assembly, ComponentId, PatternId};
 use tenon_geom::{Aabb3, Axis, Frame, Vec3};
 use tenon_kernel::{CurveKind, FaceInfo, Mesh, SurfaceKind};
 use tenon_model::{BodyView, EdgeFingerprint, Scene};
@@ -121,6 +121,8 @@ pub(crate) struct AsmDoc {
     /// Relationships open in the browser.
     pub relationships_open: bool,
     pub expanded: std::collections::BTreeSet<ComponentId>,
+    /// Patterns whose elements are not listed in the browser.
+    pub patterns_closed: std::collections::BTreeSet<PatternId>,
 }
 
 impl AsmDoc {
@@ -152,15 +154,17 @@ impl AsmDoc {
             dof: None,
             relationships_open: true,
             expanded: Default::default(),
+            patterns_closed: Default::default(),
         }
     }
 
-    /// The assembly as it is shown: while dragging, the dragged state.
+    /// The assembly as it is shown: while dragging, the dragged state; with Pattern, Mirror or
+    /// Copy open, what it would make.
     pub(crate) fn shown_assembly(&self) -> &Assembly {
         match (&self.drag, &self.placing) {
             (Some(d), _) => &d.working,
             (None, Some(p)) => &p.working,
-            (None, None) => self.session.assembly(),
+            (None, None) => self.session.preview().unwrap_or(self.session.assembly()),
         }
     }
 
@@ -458,6 +462,15 @@ impl Workbench {
                 }
             }
             Geo::Worker(w) => {
+                // (A part no component needs now, such as the mirror image a preview showed, is
+                // gone from the session: made again it starts over, in a slot of its own.)
+                a.slots.retain(|key, (slot, _)| {
+                    let used = a.session.parts.contains_key(key);
+                    if !used {
+                        w.drop_slot(*slot);
+                    }
+                    used
+                });
                 for (key, p) in &a.session.parts {
                     if p.missing.is_some() || p.is_current() || editing.as_ref() == Some(key) {
                         continue;
@@ -729,6 +742,9 @@ impl Workbench {
     fn component_note(&self, c: ComponentId) -> String {
         let Some(a) = self.asm.as_ref() else { return String::new() };
         let Some(comp) = a.session.assembly().component(c) else { return String::new() };
+        if let Some(p) = a.session.assembly().pattern_of(c) {
+            return format!("Selected {}, an element of {}. It follows what it repeats; double-click to edit its part.", comp.name, p.name);
+        }
         let dof = self
             .asm_dof()
             .and_then(|(per, _)| a.session.assembly().components.iter().position(|x| x.id == c).and_then(|i| per.get(i)).map(BodyDof::count));
@@ -741,6 +757,11 @@ impl Workbench {
         let Some(comp) = a.session.assembly().component(c).cloned() else { return };
         if comp.grounded {
             self.set_status(format!("{} is grounded; unground it (Assemble > Grounded) to move it.", comp.name));
+            return;
+        }
+        if let Some(p) = a.session.assembly().pattern_of(c) {
+            let note = format!("{} is an element of {}: it stands where the pattern puts it. Drag what it repeats.", comp.name, p.name);
+            self.set_status(note);
             return;
         }
         let center = asm_session::local_bbox(&a.session.parts, &comp).map_or(comp.placement.origin(), |b| comp.placement.to_world(b.center()));
@@ -837,6 +858,13 @@ impl Workbench {
             return Err("a part is already being edited; Return first".into());
         }
         let c = a.session.assembly().component(id).cloned().ok_or_else(|| format!("{id} does not exist"))?;
+        // A mirrored occurrence follows its part: the part is edited as itself, from an occurrence
+        // of it that is not reflected if there is one, for the rest to be seen round it.
+        if c.mirrored
+            && let Some(other) = a.session.assembly().components.iter().find(|o| o.part == c.part && !o.mirrored).map(|o| o.id)
+        {
+            return self.edit_in_place(other);
+        }
         let part = a.session.parts.get_mut(&c.part).ok_or("the component's part is not loaded")?;
         if let Some(why) = &part.missing {
             return Err(format!("{} is missing: {why}", c.name));
@@ -845,7 +873,7 @@ impl Workbench {
         let scene = part.scene.as_ref().map(|(_, s)| (**s).clone());
         // The rest, moved into the part's coordinates.
         let mut context = Vec::new();
-        for o in a.session.assembly().components.iter().filter(|o| o.visible && o.id != id) {
+        for o in a.session.assembly().components.iter().filter(|o| o.visible && o.id != id && !c.mirrored) {
             let Some(s) = asm_session::scene_of(&a.session.parts, o) else { continue };
             let seen = frame_seen_from(&o.placement, &c.placement);
             let mut kh = std::collections::hash_map::DefaultHasher::new();
@@ -963,6 +991,9 @@ impl Workbench {
             }
             "asm.constrain" => self.open_asm_panel(crate::asm_panel::AsmTool::Constrain),
             "asm.joint" => self.open_asm_panel(crate::asm_panel::AsmTool::Joint),
+            "asm.pattern" => self.open_asm_panel(crate::asm_panel::AsmTool::Pattern),
+            "asm.mirror" => self.open_asm_panel(crate::asm_panel::AsmTool::Mirror),
+            "asm.copy" => self.open_asm_panel(crate::asm_panel::AsmTool::Copy),
             "asm.explode.tweak" => self.open_asm_panel(crate::asm_panel::AsmTool::Tweak),
             "asm.explode.toggle" => {
                 let a = self.asm.as_mut().ok_or("no assembly")?;

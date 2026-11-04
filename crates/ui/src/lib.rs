@@ -12,6 +12,7 @@
 mod analysis;
 mod asm_browser;
 mod asm_panel;
+mod asm_pattern;
 mod assembly;
 mod bodies;
 mod browser;

@@ -322,7 +322,7 @@ impl Workbench {
     pub(crate) fn command(&mut self, id: &str) {
         let repeatable = commands::find(id)
             .filter(|c| ["sketch.", "model.", "work.", "inspect."].iter().any(|p| c.id.starts_with(p)) && c.id != "sketch.finish")
-            .or_else(|| commands::find(id).filter(|c| ["asm.constrain", "asm.joint", "asm.place"].contains(&c.id)))
+            .or_else(|| commands::find(id).filter(|c| ["asm.constrain", "asm.joint", "asm.place", "asm.pattern", "asm.mirror", "asm.copy"].contains(&c.id)))
             .map(|c| c.id);
         match self.run_ui(id) {
             Ok(()) => {

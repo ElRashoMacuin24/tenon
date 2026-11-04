@@ -838,7 +838,8 @@ impl Workbench {
     pub(crate) fn highlights(&self) -> Vec<(Pick, Color32)> {
         if self.in_assembly() {
             if matches!(self.panel, Some(crate::panels::Panel::Asm(_))) {
-                let mut v: Vec<(Pick, Color32)> = self.asm_panel_picks().into_iter().map(|p| (p, SELECTED)).collect();
+                let mut v: Vec<(Pick, Color32)> = self.repeat_highlights();
+                v.extend(self.asm_panel_picks().into_iter().map(|p| (p, SELECTED)));
                 v.extend(self.view.hover.map(|p| (p, HOVER)));
                 return v;
             }
