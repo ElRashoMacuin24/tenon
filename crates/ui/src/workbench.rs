@@ -574,6 +574,9 @@ impl Workbench {
         if let Some(done) = self.analysis_command(id) {
             return done;
         }
+        if self.flat_shown() && crate::sheet::on_the_folded_part(id) {
+            return Err("That is on the folded part: Go to Folded Part first.".into());
+        }
         if let Some(done) = self.sheet_command(id) {
             return done;
         }
@@ -1232,9 +1235,14 @@ impl Workbench {
     /// Opens a feature for editing: a sketch in sketch mode, others in their panel.
     pub(crate) fn edit_feature(&mut self, id: FeatureId) -> Result<(), String> {
         self.open_feature(id)?;
-        // (A panel opened over a sketch has the same clicks to take as one opened from the ribbon.)
+        // (A panel opened over a sketch has the same clicks to take as one opened from the ribbon,
+        // and one opened over the flat pattern has a part to show.)
         if self.is_sketching() && self.panel.is_some() {
             self.leave_sketch_for_panel();
+        }
+        if self.flat_shown() && self.panel.is_some() {
+            self.chrome.sheet.flat_view = false;
+            self.chrome.tab = self.home_tab();
         }
         Ok(())
     }

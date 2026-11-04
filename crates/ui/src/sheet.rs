@@ -798,6 +798,28 @@ pub(crate) const NOT_SHEET: &str =
     "This is not a sheet metal part yet: use Convert to Sheet Metal on the 3D Model tab, or File > New Sheet Metal Part.";
 pub(crate) const NO_SHEET: &str = "there is no sheet yet: make a Face from a sketch first (or a Contour Flange)";
 
+/// Commands that change or pick on the part, whose faces and edges are not on the screen while the
+/// flat pattern is. They come by keys, by command search and by the title bar, the ribbon there
+/// offering only what fits the pattern.
+pub(crate) fn on_the_folded_part(id: &str) -> bool {
+    const THE_PATTERN_S_OWN: &[&str] = &[
+        "sheet.flat_view",
+        "sheet.folded",
+        "sheet.delete_flat",
+        "sheet.export_dxf",
+        "sheet.export_svg",
+        "sheet.show_bends",
+        "sheet.show_extents",
+        // (These two have no need of the view: one is a window, and the other goes to the part.)
+        "sheet.defaults",
+        "sheet.a_side",
+    ];
+    id == "inspect.measure"
+        || ["sketch.", "sketch3d.", "work."].iter().any(|p| id.starts_with(p))
+        || (id.starts_with("model.") && id != "model.rebuild")
+        || (id.starts_with("sheet.") && !THE_PATTERN_S_OWN.contains(&id))
+}
+
 impl Workbench {
     /// The part has a feature that makes sheet (whether or not it is shown yet).
     pub(crate) fn has_sheet(&self) -> bool {

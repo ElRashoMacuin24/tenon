@@ -591,6 +591,58 @@ fn start_2d_sketch_in_a_sketch_finishes_it_and_then_asks_for_a_plane() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// The flat pattern's ribbon offers what fits it, and keys, search and the title bar reached the
+/// part's commands behind it: panels asked for clicks on faces not on the screen, and E then Enter
+/// made a feature unseen. They are refused in words, as a study's environment refuses them.
+#[test]
+fn the_flat_pattern_refuses_in_words_what_is_on_the_folded_part() {
+    let _quiet = crate::tests::timing_lock();
+    let dir = scratch("flat-keys");
+    let sheet = dir.join("sheet.tenon");
+    sheet_file(&sheet);
+    let mut wb = window(&dir);
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.open(&sheet).unwrap();
+    idle(&mut d, &mut wb);
+    wb.run_ui("sheet.flat_view").unwrap();
+    idle(&mut d, &mut wb);
+    assert!(wb.flat_shown());
+    let count = wb.document().features().len();
+    let middle = wb.view.rect.center();
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(middle)]);
+    for key in [egui::Key::S, egui::Key::E, egui::Key::R, egui::Key::F, egui::Key::H] {
+        wb.set_status("Before");
+        d.tap(&mut wb, key);
+        d.frame(&mut wb, vec![]);
+        assert!(wb.panel.is_none() && !wb.pick_plane && wb.flat_shown(), "{key:?}: {}", wb.status());
+        assert!(wb.status().contains("Go to Folded Part"), "{key:?}: {}", wb.status());
+    }
+    d.tap(&mut wb, egui::Key::Enter);
+    idle(&mut d, &mut wb);
+    assert_eq!(wb.document().features().len(), count, "nothing is made unseen");
+    // The title bar's Measure, by the pointer: the last of the fourth group of its buttons.
+    let groups = crate::commands::QUICK_ACCESS;
+    let before: f32 = groups[..3].iter().map(|g| g.len() as f32 * 26.0).sum();
+    let x = 8.0 + 20.0 + 12.0 + before + 7.0 * 3.0 + 26.0 + 12.0;
+    d.click(&mut wb, egui::pos2(x, crate::chrome::TITLE_H / 2.0));
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_none() && wb.status().contains("Go to Folded Part"), "{}", wb.status());
+    // By search, the same; and what fits the pattern is not refused.
+    for id in ["sheet.flange", "model.extrude", "work.plane", "sketch.new_3d"] {
+        assert!(wb.run_ui(id).unwrap_err().contains("Go to Folded Part"), "{id}");
+    }
+    wb.run_ui("view.fit").unwrap();
+    wb.run_ui("sheet.show_bends").unwrap();
+    wb.run_ui("model.rebuild").unwrap();
+    idle(&mut d, &mut wb);
+    // A feature opened from the browser is opened on the part, with the part shown.
+    let face = wb.document().features().iter().find(|f| f.name == "Flange1").unwrap().id;
+    wb.edit_feature(face).unwrap();
+    d.frame(&mut wb, vec![]);
+    assert!(wb.panel.is_some() && !wb.flat_shown());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// The disabled colours of a theme, as a frame's shapes are written out.
 fn disabled_colours(theme: crate::theme::ThemeName) -> [String; 2] {
     let t = crate::theme::Tokens::of(theme);

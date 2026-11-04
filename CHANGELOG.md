@@ -267,6 +267,9 @@ views and Baseline and Ordinate dimensions.
 
 ### Fixed
 
+- On the flat pattern, keys, command search and the title bar still reached the part behind it: Measure
+  and Extrude's panels asked for clicks on faces not on the screen, and E then Enter made a feature
+  unseen. What is on the folded part now says so.
 - Start 2D Sketch (S) inside a sketch asked for a plane and said Esc cancels, but neither Esc nor a click
   did anything; it waited on past Finish Sketch, and the next click on the part started a sketch nobody
   asked for. It now finishes the sketch first, and then asks.
