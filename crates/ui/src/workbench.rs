@@ -458,11 +458,14 @@ impl Workbench {
                 "edit.undo" | "edit.redo" => {
                     let undo = id == "edit.undo";
                     let a = self.asm.as_mut().ok_or("no assembly")?;
+                    // (Nothing to undo is not a fault: it is said, plainly, as in a part.)
                     if !(if undo { a.session.undo() } else { a.session.redo() }) {
-                        return Err(format!("nothing to {}", if undo { "undo" } else { "redo" }));
+                        self.set_status(if undo { "Nothing to undo." } else { "Nothing to redo." });
+                        return Ok(());
                     }
                     a.selected.retain(|c| a.session.assembly().component(*c).is_some());
                     self.panel = None;
+                    self.set_status(if undo { "Undone." } else { "Redone." });
                     return Ok(());
                 }
                 "export.step" => {
@@ -584,6 +587,7 @@ impl Workbench {
                     return Ok(());
                 }
                 self.after_undo();
+                self.set_status("Undone.");
             }
             "edit.redo" => {
                 if !self.session.redo() {
@@ -591,6 +595,7 @@ impl Workbench {
                     return Ok(());
                 }
                 self.after_undo();
+                self.set_status("Redone.");
             }
             "sketch.new" => self.new_sketch()?,
             "sketch.finish" => self.finish_sketch(),

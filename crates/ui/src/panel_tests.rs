@@ -589,3 +589,36 @@ fn a_ribbon_wider_than_the_window_is_gone_along_by_its_arrows() {
     d.frame(&mut wb, vec![]);
     assert!(!has_button(&d, "tn_ribbon_on") && !has_button(&d, "tn_ribbon_back"));
 }
+
+#[test]
+fn after_undo_the_status_does_not_go_on_saying_what_was_undone() {
+    let (mut wb, mut d, sk) = block_and_a_sketch_on_top();
+    wb.exec("sketch.circle", json!({ "sketch": sk.0, "cx": 20, "cy": 20, "r": 5 })).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    d.tap(&mut wb, egui::Key::E);
+    d.frame(&mut wb, vec![]);
+    ok(&mut d, &mut wb);
+    assert!(wb.status().starts_with("Made"), "{}", wb.status());
+    crate::tests::ctrl(&mut d, &mut wb, egui::Key::Z);
+    d.settle(&mut wb);
+    assert_eq!(wb.status(), "Undone.");
+    crate::tests::ctrl(&mut d, &mut wb, egui::Key::Y);
+    d.settle(&mut wb);
+    assert_eq!(wb.status(), "Redone.");
+}
+
+#[test]
+fn nothing_to_undo_is_no_fault_in_an_assembly_or_a_drawing() {
+    for example in ["m3-pivot/pivot.tenonasm", "m4-plate/plate.tenondrw"] {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples").join(example);
+        let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+        let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+        wb.open(&file).unwrap();
+        d.settle(&mut wb);
+        crate::tests::ctrl(&mut d, &mut wb, egui::Key::Z);
+        d.frame(&mut wb, vec![]);
+        assert!(!wb.status_error, "{example}: {}", wb.status());
+        assert_eq!(wb.status(), "Nothing to undo.", "{example}");
+    }
+}

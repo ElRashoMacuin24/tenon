@@ -850,10 +850,18 @@ impl Workbench {
 
     /// Undo or redo in the drawing.
     pub(crate) fn drw_undo(&mut self, undo: bool) -> Result<(), String> {
-        self.drw_exec(if undo { "drw.undo" } else { "drw.redo" }, json!({}))?;
+        // (Nothing to undo is not a fault: it is said, plainly, as in a part.)
+        if let Err(e) = self.drw_exec(if undo { "drw.undo" } else { "drw.redo" }, json!({})) {
+            if e.starts_with("nothing to ") {
+                self.set_status(if undo { "Nothing to undo." } else { "Nothing to redo." });
+                return Ok(());
+            }
+            return Err(e);
+        }
         if let Some(d) = self.drw.as_mut() {
             d.tool = None;
         }
+        self.set_status(if undo { "Undone." } else { "Redone." });
         Ok(())
     }
 

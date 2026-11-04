@@ -116,6 +116,9 @@ shows it in [ROADMAP.md](https://github.com/ElRashoMacuin24/tenon/blob/main/ROAD
 
 ### Fixed
 
+- After Undo or Redo the status bar went on saying what had been undone, and in a new sketch the
+  tool's instruction after the sketch had gone. "Nothing to undo" was still an error in an assembly
+  and a drawing, as it no longer is in a part.
 - `tenon-cli info` and `convert` died with no word on some damaged STEP files, a changed byte being
   enough. They now say the file could not be read.
 - The close button did nothing while the geometry thread was inside one long operation of the
