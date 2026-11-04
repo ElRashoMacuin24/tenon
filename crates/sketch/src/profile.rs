@@ -865,7 +865,8 @@ pub fn regions(sketch: &Sketch) -> Vec<SketchRegion> {
 /// What the sketch draws itself comes before what it only shows of the part: when the sketch
 /// has closed geometry of its own, the default is that, as if the reference geometry (edges of
 /// the part projected into it) were not there. A circle drawn on a face is the circle, not the
-/// face with a hole in it. With no closed geometry of its own, it is everything in the sketch.
+/// face with a hole in it. With no closed geometry of its own, it is its text if it has one (none
+/// of these: the letters are meant, not the face they are on), else everything in the sketch.
 pub fn default_regions<'r>(sketch: &Sketch, all: &'r [SketchRegion]) -> Vec<&'r SketchRegion> {
     let even = |list: &'r [SketchRegion]| -> Vec<&'r SketchRegion> { list.iter().filter(|r| r.depth % 2 == 0).collect() };
     let curves = || sketch.entities().filter(|(_, e)| !e.construction && e.geometry.is_curve());
@@ -876,6 +877,9 @@ pub fn default_regions<'r>(sketch: &Sketch, all: &'r [SketchRegion]) -> Vec<&'r 
     let own_regions = arrangement(sketch, Some(&own));
     let chosen: Vec<&SketchRegion> = own_regions.iter().filter(|r| r.depth % 2 == 0).collect();
     if chosen.is_empty() {
+        if sketch.texts().any(|t| sketch.entity(t).is_some_and(|e| !e.construction)) {
+            return Vec::new();
+        }
         return even(all);
     }
     // (Reference curves may cut an own region in pieces: all its pieces are meant.)

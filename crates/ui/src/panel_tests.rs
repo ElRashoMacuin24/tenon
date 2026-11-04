@@ -3,11 +3,12 @@
 
 use serde_json::{Value, json};
 use tenon_kernel_occt::OcctKernel;
-use tenon_model::{Feature, FeatureId, FeatureKind};
+use tenon_model::{CapEnd, FaceOrigin, Feature, FeatureId, FeatureKind};
 
 use crate::Workbench;
 use crate::panels::{Fit, Panel};
 use crate::tests::{Driver, pressable, type_into};
+use crate::viewport::Pick;
 use crate::workbench::Mode;
 
 fn sketching(wb: &Workbench) -> FeatureId {
@@ -267,4 +268,60 @@ fn a_thread_on_a_size_of_its_own_opens_as_tapped_and_keeps_both() {
     assert!(matches!(screw(&wb), Some((_, Fit::TapDrill))));
     d.tap(&mut wb, egui::Key::Escape);
     assert_eq!(threads(&wb), ["M8x1"]);
+}
+
+/// A block 80 x 40 x 10, in a new sketch on its top.
+fn block_and_a_sketch_on_top() -> (Workbench, Driver, FeatureId) {
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    wb.exec("sketch.rectangle", json!({ "sketch": f.0, "x1": 0, "y1": 0, "x2": 80, "y2": 40 })).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 10 })).unwrap();
+    d.frame(&mut wb, vec![]);
+    let top = wb.scene().bodies[0].faces.iter().position(|(n, _)| matches!(n, Some(FaceOrigin::Cap { end: CapEnd::End, .. }))).unwrap() as u32;
+    wb.view.selection = vec![Pick::Face { body: 0, face: top }];
+    wb.run_ui("sketch.new").unwrap();
+    let sk = sketching(&wb);
+    (wb, d, sk)
+}
+
+fn volume(wb: &Workbench) -> f64 {
+    wb.scene().bodies.iter().map(|b| b.volume).sum()
+}
+
+#[test]
+fn text_alone_on_a_face_is_its_letters_and_not_the_face() {
+    // How much the letters come to, on a plane of their own.
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(egui::vec2(1400.0, 860.0));
+    wb.create_sketch(json!({ "plane": "xy" })).unwrap();
+    let f = sketching(&wb);
+    let words = json!({ "sketch": f.0, "x": 10, "y": 10, "text": "TENON", "height": 10 });
+    wb.exec("sketch.text", words).unwrap();
+    wb.finish_sketch();
+    wb.exec("model.extrude", json!({ "sketch": f.0, "distance": 2 })).unwrap();
+    d.settle(&mut wb);
+    let letters = volume(&wb);
+    assert!(letters > 100.0 && letters < 2000.0, "{letters}");
+
+    // On a face. The panel says five letters, and the preview raises them and not the face.
+    let (mut wb, mut d, sk) = block_and_a_sketch_on_top();
+    let words = json!({ "sketch": sk.0, "x": 10, "y": 10, "text": "TENON", "height": 10 });
+    wb.exec("sketch.text", words).unwrap();
+    wb.finish_sketch();
+    d.settle(&mut wb);
+    let block = volume(&wb);
+    d.tap(&mut wb, egui::Key::E);
+    d.frame(&mut wb, vec![]);
+    d.frame(&mut wb, vec![]);
+    assert!(d.text_pos("5 selected").is_some(), "{:?}", d.texts());
+    d.tap(&mut wb, egui::Key::Escape);
+    d.settle(&mut wb);
+
+    // Cut into the block: the letters alone are gone.
+    wb.exec("model.extrude", json!({ "sketch": sk.0, "distance": 2, "operation": "cut", "reverse": true })).unwrap();
+    d.settle(&mut wb);
+    assert!((block - volume(&wb) - letters).abs() < 1.0, "removed {} where the letters are {letters}", block - volume(&wb));
 }
