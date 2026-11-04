@@ -119,11 +119,11 @@ fn seen_edges(ev: &Evaluation, v: &View) -> Result<Vec<Seen>, String> {
 /// The suggestions for a view, minus what its dimensions already give.
 pub fn suggest(d: &Drawing, ev: &Evaluation, view: ViewId) -> Result<Vec<Suggestion>, String> {
     let v = d.view(view).ok_or("no such view")?;
-    match &v.kind {
-        ViewKind::Detail { .. } => return Err("suggestions are for whole views; dimension a detail by hand".into()),
-        ViewKind::Base { orientation: crate::model::Orientation::Iso } => return Err("an isometric view is not dimensioned".into()),
-        ViewKind::Projected { side, .. } if side.diagonal() => return Err("an isometric view is not dimensioned".into()),
-        _ => {}
+    if matches!(v.kind, ViewKind::Detail { .. }) {
+        return Err("suggestions are for whole views; dimension a detail by hand".into());
+    }
+    if d.is_isometric(view) {
+        return Err("an isometric view, or a view made from one, is not dimensioned".into());
     }
     let g = ev.view(view).ok_or("the view is not computed yet")?;
     let (lo, hi) = g.bounds.ok_or("the view shows nothing")?;

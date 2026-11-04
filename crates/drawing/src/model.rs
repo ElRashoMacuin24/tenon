@@ -634,6 +634,22 @@ impl Drawing {
         self.views.iter().filter(move |v| v.sheet == sheet)
     }
 
+    /// Whether a view is isometric or made from one, however many views back: what it shows of a
+    /// length then depends on how the length lies, so it is not dimensioned.
+    pub fn is_isometric(&self, id: ViewId) -> bool {
+        let mut next = Some(id);
+        // (As many steps as there are views: a view refers to earlier ones when a file is valid.)
+        for _ in 0..self.views.len() {
+            let Some(v) = next.and_then(|n| self.view(n)) else { return false };
+            match &v.kind {
+                ViewKind::Base { orientation } => return *orientation == Orientation::Iso,
+                ViewKind::Projected { side, .. } if side.diagonal() => return true,
+                kind => next = kind.parent(),
+            }
+        }
+        false
+    }
+
     /// A view and every view made from it, at any depth.
     pub fn family(&self, id: ViewId) -> Vec<ViewId> {
         let mut out = vec![id];

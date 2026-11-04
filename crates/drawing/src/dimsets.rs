@@ -17,7 +17,7 @@ use tenon_geom::Vec2;
 
 use crate::annotate::{Resolved, format_number, pick_point, resolve_pick, to_sheet};
 use crate::graphics::{ARROW_LENGTH, Align, EXT_GAP, EXT_OVER, Graphics, Owner, Pen, TEXT};
-use crate::model::{AnnotKind, Annotation, Drawing, GeomPick, Orientation, PickPoint, SetAxis, View, ViewId, ViewKind};
+use crate::model::{AnnotKind, Annotation, Drawing, GeomPick, PickPoint, SetAxis, View, ViewId};
 use crate::stroke::text_width;
 use crate::views::{Evaluation, ModelGeometry, ViewGeometry, project};
 
@@ -359,16 +359,15 @@ pub fn layout(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetLayout,
     Ok(out)
 }
 
-/// A set that can be made: in a view that is not isometric, every place can be found, none is where
-/// the datum or origin is, and no two are in one place along what is measured. Returns how it lies.
+/// What is said of a set in a view that is isometric or made from one.
+pub const ISOMETRIC: &str = "an isometric view, or a view made from one, is not dimensioned: pick in a view that looks square on";
+
+/// A set that can be made: in a view that is not isometric or made from one, every place can be
+/// found, none is where the datum or origin is, and no two are in one place along what is measured.
+/// Returns how it lies.
 pub fn check(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetLayout, String> {
-    let on_iso = a.kind.view().and_then(|v| d.view(v)).is_some_and(|v| match &v.kind {
-        ViewKind::Base { orientation: Orientation::Iso } => true,
-        ViewKind::Projected { side, .. } => side.diagonal(),
-        _ => false,
-    });
-    if on_iso {
-        return Err("an isometric view is not dimensioned: pick in a view that looks square on".into());
+    if a.kind.view().is_some_and(|v| d.is_isometric(v)) {
+        return Err(ISOMETRIC.into());
     }
     let l = layout(d, ev, a)?;
     if let Some(p) = l.problem() {

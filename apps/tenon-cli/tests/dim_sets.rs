@@ -460,3 +460,54 @@ fn a_set_in_an_assembly_view_measures_across_its_parts() {
     let r = run(&mut e, "drw.ordinate", json!({ "view": view, "origin": left, "targets": [far, near], "axis": "horizontal", "at": [150, 60] }));
     assert_eq!(rows(&r).iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["0", "15", "105"], "{r}");
 }
+
+fn annotation_count(e: &mut Engine) -> usize {
+    run(e, "drw.info", json!({}))["annotations"].as_array().unwrap().len()
+}
+
+#[test]
+fn a_view_made_from_an_isometric_one_is_not_dimensioned_either() {
+    let dir = scratch("iso");
+    let mut e = Engine::new(Box::new(OcctKernel::new()), &dir);
+    plate(&mut e);
+    run(&mut e, "drw.new", json!({ "name": "Sets", "size": "C" }));
+    let top = run(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "top", "scale": 1, "at": [100, 300] }))["view"].clone();
+    // The plate's two sides, 100 apart: picks of the model, good in any of its views.
+    let (left, right) = (pick(&mut e, &top, 0.0, 30.0), pick(&mut e, &top, 100.0, 30.0));
+    let view = |e: &mut Engine, id: &str, p: Value| run(e, id, p)["view"].clone();
+    let iso = view(&mut e, "drw.view.base", json!({ "model": "plate.tenon", "orientation": "iso", "scale": 1, "at": [100, 150] }));
+    let diagonal = view(&mut e, "drw.view.projected", json!({ "parent": top, "side": "above_right", "at": [300, 330] }));
+    let slanting = [
+        ("an isometric view", iso.clone()),
+        ("a detail of one", view(&mut e, "drw.view.detail", json!({ "parent": iso, "center": [0, 0], "radius": 200, "scale": 1, "at": [320, 150] }))),
+        ("a section of one", view(&mut e, "drw.view.section", json!({ "parent": iso, "a": [-100, 0], "b": [100, 0], "at": [520, 100] }))),
+        ("a projection of one", view(&mut e, "drw.view.projected", json!({ "parent": iso, "side": "right", "at": [320, 330] }))),
+        ("a diagonal projection", diagonal.clone()),
+        ("a detail of that", view(&mut e, "drw.view.detail", json!({ "parent": diagonal, "center": [0, 0], "radius": 200, "scale": 1, "at": [520, 330] }))),
+    ];
+    let count = annotation_count(&mut e);
+    for (what, v) in &slanting {
+        for (id, from) in [("drw.baseline", "datum"), ("drw.ordinate", "origin")] {
+            let err = e.exec(id, &json!({ "view": v, from: left, "targets": [right], "axis": "horizontal", "at": [100, 220] })).unwrap_err();
+            assert!(err.contains("isometric"), "{id} on {what}: {err}");
+        }
+    }
+    assert_eq!(annotation_count(&mut e), count, "nothing made");
+    // Asked for no place at all, the refusal is still that one.
+    let err = e.exec("drw.baseline", &json!({ "view": iso, "datum": left, "targets": [right], "axis": "horizontal" })).unwrap_err();
+    assert!(err.contains("isometric"), "{err}");
+    // Suggest Dimensions goes by the same test.
+    for v in [&slanting[2].1, &slanting[3].1] {
+        let err = e.exec("drw.dimension.suggest", &json!({ "view": v })).unwrap_err();
+        assert!(err.contains("isometric"), "{err}");
+    }
+
+    // A view made from a square one is measured, and reads the true 100 (not 100 x cos 45 = 70.71).
+    let detail = view(&mut e, "drw.view.detail", json!({ "parent": top, "center": [50, 30], "radius": 200, "scale": 1, "at": [320, 40] }));
+    let section = view(&mut e, "drw.view.section", json!({ "parent": top, "a": [-10, 20], "b": [110, 20], "at": [100, 40] }));
+    let front = view(&mut e, "drw.view.projected", json!({ "parent": top, "side": "below", "at": [520, 40] }));
+    for v in [&top, &detail, &section, &front] {
+        let r = run(&mut e, "drw.baseline", json!({ "view": v, "datum": left, "targets": [right], "axis": "horizontal", "at": [100, 220] }));
+        assert_eq!(rows(&r)[0].0, "100", "{r}");
+    }
+}

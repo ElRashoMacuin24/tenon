@@ -163,6 +163,13 @@ impl Workbench {
 
     /// A click on the sheet with the panel open (`over`: the view under it).
     pub(crate) fn set_click(&mut self, mut panel: SetPanel, at: Vec2, over: Option<ViewId>) -> Result<(), String> {
+        // Nothing is taken in an isometric view, so that the next click can be in a square one.
+        if panel.view.is_none()
+            && let Some(v) = over
+            && self.drw.as_ref().is_some_and(|d| d.session.drawing().is_isometric(v))
+        {
+            return Err(dimsets::ISOMETRIC.into());
+        }
         // An edge where the click is: picked; elsewhere, the set goes there.
         let picked = match panel.view.or(over) {
             Some(v) if panel.view.is_none() || over == panel.view => match self.drw_exec("drw.pick", json!({ "view": v.0, "at": [at.x, at.y] })) {

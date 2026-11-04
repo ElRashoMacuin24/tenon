@@ -459,3 +459,44 @@ fn a_set_follows_the_model_edited_from_the_drawing() {
     let i = info(&mut wb);
     assert_eq!(shown(&i["annotations"][0]), ["20"], "{i}");
 }
+
+/// Where edge number `index` of a view is on the screen.
+fn edge_of(wb: &mut Workbench, view: u32, index: usize) -> egui::Pos2 {
+    let e = wb.drw_exec("drw.pick", json!({ "view": view, "edge": { "index": index } })).unwrap();
+    wb.sheet_on_screen(Vec2::new(e["at"][0].as_f64().unwrap(), e["at"][1].as_f64().unwrap()))
+}
+
+/// Where view 1's centre is on the sheet.
+fn center_of_view_1(wb: &mut Workbench) -> Vec2 {
+    let c = info(wb)["views"][0]["center"].clone();
+    Vec2::new(c[0].as_f64().unwrap(), c[1].as_f64().unwrap())
+}
+
+#[test]
+fn an_isometric_view_is_refused_at_the_first_click_and_the_next_can_be_square() {
+    let _quiet = crate::tests::timing_lock();
+    let (mut wb, mut d) = drawing_of_plate("iso", Orientation::Top, 0.5);
+    let c = center_of_view_1(&mut wb);
+    wb.drw_exec("drw.view.projected", json!({ "parent": 1, "side": "above_right", "at": [c.x + 120.0, c.y + 80.0] })).unwrap();
+    wb.drw_exec("drw.view.detail", json!({ "parent": 2, "center": [0, 0], "radius": 200, "scale": 0.25, "at": [c.x + 120.0, c.y - 50.0] })).unwrap();
+    settle(&mut d, &mut wb, 2);
+    press(&mut d, &mut wb, "ribbon drw.baseline");
+    // On an edge of the isometric view, and of a detail made from it: nothing is taken.
+    for view in [2, 3] {
+        let edge = edge_of(&mut wb, view, 0);
+        d.click(&mut wb, edge);
+        assert!(wb.status().contains("isometric"), "{}", wb.status());
+        let p = panel(&wb).expect("still open");
+        assert!(p.view.is_none() && p.from.is_none() && p.targets.is_empty(), "{p:?}");
+    }
+    // As it says, the next is in a view that looks square on. Nothing is lost by the refusals.
+    let (datum, hole) = (in_view(&mut wb, 0.0, 40.0), in_view(&mut wb, 19.0, 15.0));
+    d.click(&mut wb, datum);
+    d.click(&mut wb, hole);
+    let p = panel(&wb).unwrap();
+    assert_eq!((p.view, p.targets.len()), (Some(ViewId(1)), 1), "{}", wb.status());
+    let place = in_view(&mut wb, 60.0, 110.0);
+    d.click(&mut wb, place);
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["15"]);
+}
