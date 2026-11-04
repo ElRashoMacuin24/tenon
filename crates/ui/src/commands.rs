@@ -132,7 +132,7 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Modify",
                 commands: &[
-                    large("model.hole", "Hole", "Simple, counterbore or countersink holes", Icon::Hole, 0).key("H"),
+                    large("model.hole", "Hole", "Simple, clearance or tapped; with a counterbore, a spotface or a countersink", Icon::Hole, 0).key("H"),
                     large("model.fillet", "Fillet", "Round edges", Icon::Fillet, 0).key("F").more(&["model.fillet", "model.face_fillet"]),
                     small("model.chamfer", "Chamfer", "Bevel edges", Icon::Chamfer, 0),
                     small("model.shell", "Shell", "Hollow a solid, removing faces", Icon::Shell, 0),
@@ -145,7 +145,7 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Work Features",
                 commands: &[
-                    large("work.plane", "Plane", "Construction plane: offset, angled or mid-plane", Icon::Plane, 0),
+                    large("work.plane", "Plane", "Construction plane: offset, angled, mid-plane or through three points", Icon::Plane, 0),
                     small("work.axis", "Axis", "Construction axis: on an edge or cylinder, or where two planes meet", Icon::Axis, 0),
                     small("work.point", "Point", "Construction point: a circle centre, or where an axis meets a plane", Icon::Point, 0),
                     small("work.ucs", "UCS", "User coordinate system", Icon::Ucs, LATER),
@@ -468,7 +468,7 @@ pub const RIBBON: &[RibbonTab] = &[
                 title: "Modify",
                 commands: &[
                     large("sheet.cut", "Cut", "Cut a profile through the sheet", Icon::SheetCut, 0),
-                    small("model.hole", "Hole", "Simple, counterbore or countersink holes", Icon::Hole, 0).key("H"),
+                    small("model.hole", "Hole", "Simple, clearance or tapped; with a counterbore, a spotface or a countersink", Icon::Hole, 0).key("H"),
                     small("sheet.corner_round", "Corner Round", "Round the corners of the sheet's outline", Icon::CornerRound, 0),
                     small("sheet.corner_chamfer", "Corner Chamfer", "Cut the corners of the sheet's outline off", Icon::CornerChamfer, 0),
                     small(
@@ -487,7 +487,7 @@ pub const RIBBON: &[RibbonTab] = &[
             RibbonPanel {
                 title: "Work Features",
                 commands: &[
-                    large("work.plane", "Plane", "Construction plane: offset, angled or mid-plane", Icon::Plane, 0),
+                    large("work.plane", "Plane", "Construction plane: offset, angled, mid-plane or through three points", Icon::Plane, 0),
                     small("work.axis", "Axis", "Construction axis: on an edge or cylinder, or where two planes meet", Icon::Axis, 0),
                     small("work.point", "Point", "Construction point: a circle centre, or where an axis meets a plane", Icon::Point, 0),
                 ],
@@ -696,7 +696,7 @@ pub const ASM_RIBBON: &[RibbonTab] = &[
                 commands: &[
                     large("asm.joint", "Joint", "Rigid, rotational, slider, cylindrical, planar or ball joint between two origins", Icon::Joint, 0)
                         .key("J"),
-                    large("asm.constrain", "Constrain", "Mate, flush, angle or insert", Icon::Constrain, 0).key("C"),
+                    large("asm.constrain", "Constrain", "Mate (or flush), angle, insert, tangent or symmetry", Icon::Constrain, 0).key("C"),
                 ],
             },
             RibbonPanel {
@@ -1117,11 +1117,13 @@ pub fn search(query: &str) -> Vec<&'static UiCommand> {
         .filter(|c| seen.insert(c.id))
         .filter_map(|c| {
             let name = c.name().to_lowercase();
-            let rank = if name.starts_with(&q) {
+            // (What the button may read instead, as the part changes: see `ribbon_label`.)
+            let also = if c.id == "sheet.flat_view" { "go to flat pattern" } else { "" };
+            let rank = if name.starts_with(&q) || also.starts_with(&q) {
                 0
             } else if name.split(' ').any(|w| w.starts_with(&q)) {
                 1
-            } else if name.contains(&q) || c.id.contains(&q) || c.tip.to_lowercase().contains(&q) {
+            } else if name.contains(&q) || also.contains(&q) || c.id.contains(&q) || c.tip.to_lowercase().contains(&q) {
                 2
             } else {
                 return None;

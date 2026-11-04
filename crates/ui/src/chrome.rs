@@ -578,10 +578,15 @@ impl Workbench {
         if resp.changed() {
             self.chrome.search_pick = 0;
         }
-        let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        // (Enter here is for the search, whatever it finds, and not for a panel that is open.)
+        let enter = resp.lost_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
         let mut run: Option<&'static str> = None;
         if enter {
             run = results.get(self.chrome.search_pick).map(|c| c.id);
+        }
+        // Left with nothing found: what was typed goes, so that the next search starts afresh.
+        if resp.lost_focus() && results.is_empty() {
+            self.chrome.search.clear();
         }
         if (focused || resp.has_focus()) && !results.is_empty() {
             egui::Area::new(egui::Id::new("tn_search_results")).order(egui::Order::Foreground).fixed_pos(rect.left_bottom() + vec2(0.0, 2.0)).show(
@@ -847,10 +852,9 @@ impl Workbench {
 
     pub(crate) fn doc_tabs(&mut self, ui: &mut Ui, t: &Tokens) {
         let r = ui.max_rect();
-        icons::paint(ui.painter(), Rect::from_min_size(pos2(r.left() + 8.0, r.top() + 5.0), vec2(16.0, 16.0)), Icon::Home, t.icon_disabled);
         let (label, _) = self.document_label();
         let w = text_width(ui, &label, theme::small()) + 34.0;
-        let tab = Rect::from_min_size(pos2(r.left() + 32.0, r.top()), vec2(w, r.height()));
+        let tab = Rect::from_min_size(pos2(r.left() + 8.0, r.top()), vec2(w, r.height()));
         ui.painter().rect_filled(tab, 0.0, t.panel);
         ui.painter().hline(tab.x_range(), tab.top() + 0.5, Stroke::new(2.0, t.accent));
         icons::paint_colored(
@@ -868,7 +872,6 @@ impl Workbench {
             true,
         );
         ui.painter().text(pos2(tab.left() + 24.0, tab.center().y), Align2::LEFT_CENTER, label, theme::small(), t.text);
-        icons::paint(ui.painter(), Rect::from_min_size(pos2(r.right() - 24.0, r.top() + 5.0), vec2(16.0, 16.0)), Icon::Menu, t.icon_disabled);
         ui.painter().hline(r.x_range(), r.top() + 0.5, Stroke::new(1.0, t.border));
     }
 

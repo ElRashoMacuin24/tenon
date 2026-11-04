@@ -1415,8 +1415,8 @@ fn smooth_joins_a_spline_to_a_line_or_an_arc_without_a_kink_or_a_jump_in_bending
 #[test]
 fn a_sketch_reaches_as_far_as_its_curves() {
     let mut s = Sketch::new();
-    s.add_circle((20.0, 0.0), 30.0).unwrap();
-    let reach = s.extent();
+    s.add_circle(Vec2::new(20.0, 0.0), 30.0).unwrap();
+    let reach = s.reach();
     let most = reach.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
     let least = reach.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
     assert!(most > 49.0 && least < -9.0, "{least} to {most}");

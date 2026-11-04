@@ -768,7 +768,7 @@ impl Workbench {
         let Mode::Sketch(s) = &self.mode else { return None };
         let frame = self.sketch_frame(s.feature)?;
         let sk = self.document().sketch(s.feature)?;
-        Aabb3::from_points(sk.extent().into_iter().map(|p| frame.plane_point(p)))
+        Aabb3::from_points(sk.reach().into_iter().map(|p| frame.plane_point(p)))
     }
 
     /// The Polygon tool's box: how many sides it draws.

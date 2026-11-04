@@ -319,15 +319,18 @@ impl Sketch {
         }
     }
 
-    /// Where the sketch reaches: its points, its curves, and the corners of its texts' boxes.
+    /// Where the sketch is: its points, and the corners of its texts' boxes.
     pub fn extent(&self) -> Vec<Vec2> {
         let points = self.entities().filter_map(|(id, _)| self.point(id));
-        // (A circle's or an ellipse's points are its centre, far from where it reaches.)
-        let curves = self.entities().filter(|(_, e)| e.geometry.is_curve()).flat_map(|(id, e)| {
-            let size = e.geometry.points().first().and_then(|p| self.point(*p)).map_or(1.0, |at| at.x.abs().max(at.y.abs()).max(1.0));
-            self.tessellate(id, size * 0.01)
-        });
-        points.chain(curves).chain(self.texts().filter_map(|t| self.text_corners(t)).flatten()).collect()
+        points.chain(self.texts().filter_map(|t| self.text_corners(t)).flatten()).collect()
+    }
+
+    /// How far the sketch reaches, for framing it: [`Sketch::extent`], and points along its curves.
+    /// (A circle's or an ellipse's own points are its centre, far from where it reaches.)
+    pub fn reach(&self) -> Vec<Vec2> {
+        let size = |e: &crate::entity::Entity| e.geometry.points().first().and_then(|p| self.point(*p)).map_or(1.0, |at| at.x.abs().max(at.y.abs()).max(1.0));
+        let curves = self.entities().filter(|(_, e)| e.geometry.is_curve()).flat_map(|(id, e)| self.tessellate(id, size(e) * 0.01));
+        self.extent().into_iter().chain(curves).collect()
     }
 
     /// The texts of the sketch.

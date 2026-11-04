@@ -152,7 +152,6 @@ impl Workbench {
         if header_button(ui, pos2(tab.right() - 12.0, tab.center().y), Icon::Close, "Hide the browser", t, "close") {
             self.chrome.show_browser = false;
         }
-        let _ = header_button(ui, pos2(tab.right() + 12.0, tab.center().y), Icon::Plus, "More browsers arrive with assemblies (M3)", t, "plus");
         if header_button(ui, pos2(header.right() - 38.0, header.center().y), Icon::Search, "Find in the browser", t, "search") {
             self.chrome.browser_filter = if self.chrome.browser_filter.is_some() { None } else { Some(String::new()) };
         }
