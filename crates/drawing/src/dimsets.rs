@@ -366,6 +366,16 @@ pub const ISOMETRIC: &str = "an isometric view, or a view made from one, is not 
 /// found, none is where the datum or origin is, and no two are in one place along what is measured.
 /// Returns how it lies.
 pub fn check(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetLayout, String> {
+    checked(d, ev, a, None)
+}
+
+/// The same for a set whose direction went by where it was put: then it is not the picks that will
+/// not do, and the words say so.
+pub fn check_placed(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetLayout, String> {
+    checked(d, ev, a, Some("put the set on another side of the view, or choose Horizontal or Vertical (`axis` in a script)"))
+}
+
+fn checked(d: &Drawing, ev: &Evaluation, a: &Annotation, instead: Option<&str>) -> Result<SetLayout, String> {
     if a.kind.view().is_some_and(|v| d.is_isometric(v)) {
         return Err(ISOMETRIC.into());
     }
@@ -378,10 +388,12 @@ pub fn check(d: &Drawing, ev: &Evaluation, a: &Annotation) -> Result<SetLayout, 
     for r in &l.rows {
         let Some(n) = r.place.map(|p| p + 1) else { continue };
         if r.position.abs() <= SAME {
-            return Err(format!("place {n} is where the {what} is, along this direction: pick another"));
+            let to_do = instead.unwrap_or("pick another");
+            return Err(format!("place {n} is where the {what} is, along this direction: {to_do}"));
         }
         if let Some((other, _)) = seen.iter().find(|(_, x)| (x - r.position).abs() <= SAME) {
-            return Err(format!("places {other} and {n} are in one place along this direction: leave one out"));
+            let to_do = instead.unwrap_or("leave one out");
+            return Err(format!("places {other} and {n} are in one place along this direction: {to_do}"));
         }
         seen.push((n, r.position));
     }

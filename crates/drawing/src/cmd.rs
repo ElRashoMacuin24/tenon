@@ -711,7 +711,8 @@ fn add_set(s: &mut DrwSession, p: &Value, from: &GeomPick, make: impl FnOnce(Set
     }
     let at = opt_vec2(p, "at")?;
     let ev = s.current()?;
-    let axis = match set_axis(p)? {
+    let told = set_axis(p)?;
+    let axis = match told {
         Some(a) => a,
         None => dimsets::axis_for(s.drawing(), ev, vid, at, from, &targets).map_err(CmdError)?,
     };
@@ -720,7 +721,7 @@ fn add_set(s: &mut DrwSession, p: &Value, from: &GeomPick, make: impl FnOnce(Set
         dimsets::put_at(&mut probe.kind, v.center, at);
     }
     // Refuse what cannot be measured, wherever it goes.
-    dimsets::check(s.drawing(), ev, &probe).map_err(CmdError)?;
+    if told.is_some() { dimsets::check(s.drawing(), ev, &probe) } else { dimsets::check_placed(s.drawing(), ev, &probe) }.map_err(CmdError)?;
     if at.is_none() {
         let place = dimsets::default_at(s.drawing(), ev, &probe).map_err(CmdError)?;
         dimsets::put_at(&mut probe.kind, v.center, place);

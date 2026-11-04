@@ -783,3 +783,24 @@ fn deleting_what_the_panel_is_on_closes_it() {
     assert!(panel(&wb).is_none(), "{}", wb.status());
     assert!(wb.status().contains("gone"), "{}", wb.status());
 }
+
+#[test]
+fn a_set_refused_for_where_it_was_put_is_told_to_go_elsewhere() {
+    let _quiet = crate::tests::timing_lock();
+    let (mut wb, mut d) = drawing_of_plate("words", Orientation::Top, 1.0);
+    press(&mut d, &mut wb, "ribbon drw.baseline");
+    let (a, b) = (in_view(&mut wb, 60.0, 0.0), in_view(&mut wb, 60.0, 80.0));
+    d.click(&mut wb, a);
+    d.click(&mut wb, b);
+    // Bottom edge to top edge, put above the view: it would measure across, where they are level.
+    let above = in_view(&mut wb, 60.0, 110.0);
+    d.click(&mut wb, above);
+    let s = wb.status();
+    assert!(s.contains("another side") && s.contains("Horizontal or Vertical") && !s.contains("pick another"), "{s}");
+    assert_eq!(panel(&wb).expect("still open").targets.len(), 1);
+    // As it says.
+    let beside = in_view(&mut wb, 150.0, 40.0);
+    d.click(&mut wb, beside);
+    assert!(panel(&wb).is_none(), "{}", wb.status());
+    assert_eq!(shown(&info(&mut wb)["annotations"][0]), ["80"]);
+}

@@ -715,3 +715,25 @@ fn a_place_has_one_number_in_what_is_said_what_is_listed_and_what_is_taken_away(
     assert_eq!(r["rows"][1]["place"], 1, "{r}");
     assert!(run(&mut e, "drw.info", json!({}))["annotations"][0]["problem"].is_null());
 }
+
+#[test]
+fn a_direction_that_went_by_where_the_set_is_put_is_what_a_refusal_blames() {
+    let dir = scratch("words");
+    let mut e = Engine::new(Box::new(OcctKernel::new()), &dir);
+    plate(&mut e);
+    let view = top_view(&mut e, 1.0);
+    let (bottom, top) = (pick(&mut e, &view, 50.0, 0.0), pick(&mut e, &view, 50.0, 60.0));
+    // Bottom edge to top edge, both with their middles at x = 50: nothing across the sheet to measure.
+    let p = json!({ "view": view, "datum": bottom, "targets": [top], "at": [150, 180] });
+    let err = e.exec("drw.baseline", &p).unwrap_err();
+    assert!(err.contains("where the datum is") && err.contains("another side") && !err.contains("pick another"), "{err}");
+    // Told the direction, it is the pick that will not do.
+    let mut told = p.clone();
+    told["axis"] = json!("horizontal");
+    let err = e.exec("drw.baseline", &told).unwrap_err();
+    assert!(err.contains("where the datum is") && err.contains("pick another"), "{err}");
+    // The other side: it reads the 60 between them.
+    let mut beside = p.clone();
+    beside["at"] = json!([220, 130]);
+    assert_eq!(rows(&run(&mut e, "drw.baseline", beside))[0].0, "60");
+}
