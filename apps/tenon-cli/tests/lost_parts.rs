@@ -106,3 +106,33 @@ fn a_part_file_gone_is_said_by_a_drawing_of_its_assembly() {
     assert!(view["error"].as_str().unwrap_or_else(|| panic!("no word from {view}")).contains("wedge.tenon"), "{view}");
     assert!(view["visible_curves"].as_u64().unwrap() > 0, "what is there is still drawn: {view}");
 }
+
+/// When the component a balloon points at goes from the assembly, the balloon goes from the sheet; and
+/// `drw.info` says so of it, as it does of a dimension on the same component.
+#[test]
+fn a_balloon_on_a_component_that_has_gone_says_so() {
+    let (mut e, _dir) = engine("balloon");
+    for (name, width) in [("plate", 60), ("wedge", 20)] {
+        run(&mut e, "file.new", json!({ "name": name }));
+        run(&mut e, "model.box", json!({ "width": width, "depth": 20, "height": 10 }));
+        run(&mut e, "file.save", json!({ "path": format!("{name}.tenon") }));
+    }
+    run(&mut e, "asm.new", json!({ "name": "G" }));
+    run(&mut e, "asm.insert", json!({ "path": "plate.tenon", "grounded": true }));
+    let wedge = run(&mut e, "asm.insert", json!({ "path": "wedge.tenon", "at": [0, 0, 20] }))["component"].clone();
+    run(&mut e, "asm.save", json!({ "path": "g.tenonasm" }));
+    run(&mut e, "drw.new", json!({ "name": "D", "size": "C" }));
+    let view = run(&mut e, "drw.view.base", json!({ "model": "g.tenonasm", "orientation": "front", "scale": 1, "at": [200, 200] }))["view"].clone();
+    run(&mut e, "drw.balloon", json!({ "view": view, "component": wedge, "at": [300, 300] }));
+    run(&mut e, "drw.save", json!({ "path": "g.tenondrw" }));
+    let info = run(&mut e, "drw.info", json!({}));
+    let balloon = info["annotations"].as_array().unwrap().iter().find(|a| a["type"] == "balloon").unwrap();
+    assert!(balloon["problem"].is_null(), "{balloon}");
+    run(&mut e, "asm.open", json!({ "path": "g.tenonasm" }));
+    run(&mut e, "asm.delete", json!({ "component": wedge }));
+    run(&mut e, "asm.save", json!({ "path": "g.tenonasm" }));
+    run(&mut e, "drw.open", json!({ "path": "g.tenondrw" }));
+    let info = run(&mut e, "drw.info", json!({}));
+    let balloon = info["annotations"].as_array().unwrap().iter().find(|a| a["type"] == "balloon").unwrap();
+    assert_eq!(balloon["problem"], "the component is not in the model", "{balloon}");
+}

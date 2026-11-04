@@ -1505,3 +1505,41 @@ fn a_set_is_refused_on_a_view_turned_on_the_sheet() {
     let made = info["annotations"].as_array().unwrap().iter().find(|x| x["id"] == set["annotation"]).unwrap();
     near(num(&made["rows"][0]["value"]), 60.0, "the width of the block");
 }
+
+/// An auxiliary view placed by a point on the sheet slides square to its edge, and could land off the
+/// paper with no word, and its label and view were clipped from the PDF. It stays on the sheet.
+#[test]
+fn an_auxiliary_view_stays_on_the_paper() {
+    let mut e = Engine::new(kernel(), scratch("auxiliary-on-paper"));
+    run(&mut e, "file.new", json!({ "name": "Wedge" }));
+    let sk = run(&mut e, "sketch.create", json!({ "plane": "xy" }))["feature"].clone();
+    let first = run(&mut e, "sketch.line", json!({ "sketch": sk, "x1": 0, "y1": 60, "x2": 0, "y2": 0 }));
+    let mut last = first["end"].clone();
+    for (x, y) in [(100, 0), (100, 30), (70, 60)] {
+        last = run(&mut e, "sketch.line", json!({ "sketch": sk, "start": last, "x2": x, "y2": y }))["end"].clone();
+    }
+    run(&mut e, "sketch.line", json!({ "sketch": sk, "start": last, "end": first["start"] }));
+    run(&mut e, "model.extrude", json!({ "sketch": sk, "distance": 25 }));
+    run(&mut e, "file.save", json!({ "path": "wedge.tenon" }));
+    run(&mut e, "drw.new", json!({ "name": "Wedge", "size": "C" }));
+    let top =
+        run(&mut e, "drw.view.base", json!({ "model": "wedge.tenon", "orientation": "top", "scale": 1, "at": [150, 300], "hidden": false }))["view"]
+            .as_u64()
+            .unwrap();
+    let edge = run(&mut e, "drw.pick", json!({ "view": top, "view_at": [85, 45] }));
+    // Far up the sheet, past its top along the line it slides on.
+    let made = run(&mut e, "drw.auxiliary", json!({ "parent": top, "edge": edge, "at": [350, 420] }));
+    assert_eq!(made["slid"], true, "{made}");
+    let info = run(&mut e, "drw.info", json!({}));
+    let v = info["views"].as_array().unwrap().iter().find(|v| v["id"] == made["view"]).unwrap();
+    let (cx, cy) = (num(&v["center"][0]), num(&v["center"][1]));
+    let (w, h) = (num(&v["size"][0]) / 2.0, num(&v["size"][1]) / 2.0);
+    let sheet = &info["sheets"][0];
+    let (sw, sh) = (num(&sheet["width"]), num(&sheet["height"]));
+    assert!(cx - w >= 0.0 && cx + w <= sw && cy - h >= 0.0 && cy + h <= sh, "{v} on a sheet {sw} x {sh}");
+    // Near the parent, it goes where it was asked, as ever.
+    let mut e2 = Engine::new(kernel(), scratch("auxiliary-near"));
+    let (_, aux) = wedge_drawing(&mut e2);
+    let info = run(&mut e2, "drw.info", json!({}));
+    assert!(info["views"].as_array().unwrap().iter().any(|v| v["id"] == aux));
+}

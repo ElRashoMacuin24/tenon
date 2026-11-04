@@ -1591,7 +1591,12 @@ impl Workbench {
                     .drw_exec("drw.auxiliary", json!({ "parent": p.0, "edge": edge, "at": v2(at) }))
                     .map_err(|e| if e.contains("computed") { STILL_COMPUTING.to_string() } else { e })?;
                 next(self, None);
-                self.set_status(format!("View {} placed.", r["name"].as_str().unwrap_or("")));
+                let name = r["name"].as_str().unwrap_or("");
+                self.set_status(if r["slid"] == true {
+                    format!("View {name} placed, along its line as near there as stays on the sheet.")
+                } else {
+                    format!("View {name} placed.")
+                });
             }
             DrwTool::Modify { .. } => {}
             DrwTool::Overlay => {

@@ -223,6 +223,10 @@ fn drw_info(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, _p: &Value) -> CmdR
                     (AnnotKind::Balloon { view, component, .. }, Some(e)) => {
                         if let Some(m) = d.view(*view).and_then(|v| e.models.get(&v.model)) {
                             o.insert("item".into(), json!(annotate::item_of(m, *component)));
+                            // (It is not drawn then: said as of a dimension on what has gone.)
+                            if m.instance(Some(*component)).is_none() {
+                                o.insert("problem".into(), json!("the component is not in the model"));
+                            }
                         }
                     }
                     (AnnotKind::Baseline { .. } | AnnotKind::Ordinate { .. }, Some(e)) => match dimsets::layout(d, e, a) {
@@ -591,6 +595,34 @@ fn auxiliary_distance(s: &DrwSession, parent: &View, f: &tenon_geom::Frame, scal
     along(half_size(s, parent)) + along(own) + VIEW_GAP
 }
 
+/// How far from its parent, along `toward`, a view of frame `f` goes for it to be on the sheet with room
+/// for its label, as near `asked` as can be. A view that cannot be, however far it slides, stays there.
+fn on_the_paper(s: &DrwSession, parent: &View, f: &tenon_geom::Frame, scale: f64, toward: Vec2, asked: f64) -> f64 {
+    /// What the sheet's edge and a view's label take up (sheet mm).
+    const MARGIN: f64 = 10.0;
+    let Some(size) = s.drawing().sheet(parent.sheet).map(|sheet| Vec2::new(sheet.size.width, sheet.size.height)) else { return asked };
+    let half = s
+        .last_evaluation()
+        .and_then(|e| e.models.get(&parent.model))
+        .and_then(|m| seen_size(m, f))
+        .map_or(Vec2::new(30.0, 30.0), |z| z * (0.5 * scale));
+    let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
+    for (at, way, reach, room) in [(parent.center.x, toward.x, half.x, size.x), (parent.center.y, toward.y, half.y, size.y)] {
+        let (low, high) = (MARGIN + reach - at, room - MARGIN - reach - at);
+        if low > high {
+            return asked;
+        }
+        if way.abs() > 1e-9 {
+            let (a, b) = (low / way, high / way);
+            lo = lo.max(a.min(b));
+            hi = hi.min(a.max(b));
+        } else if !(low..=high).contains(&0.0) {
+            return asked;
+        }
+    }
+    if lo > hi { asked } else { asked.clamp(lo, hi) }
+}
+
 fn drw_auxiliary(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdResult {
     let parent = view_id(p, "parent")?;
     let pv = drawn_view(s.drawing(), parent)?.clone();
@@ -610,13 +642,14 @@ fn drw_auxiliary(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
     };
     let toward = auxiliary_toward(third, a, b, flip);
     // Square to the edge from its parent, however near the point it was told.
-    let distance = match at {
+    let (f, _, _) = crate::views::section_frame(&frame_of(s, parent), a, b, flip);
+    let asked = match at {
         Some(at) => (at - pv.center).dot(toward),
-        None => {
-            let (f, _, _) = crate::views::section_frame(&frame_of(s, parent), a, b, flip);
-            auxiliary_distance(s, &pv, &f, scale, toward)
-        }
+        None => auxiliary_distance(s, &pv, &f, scale, toward),
     };
+    // It slides along that line only: and stays on the paper, its label too, where it can.
+    let distance = on_the_paper(s, &pv, &f, scale, toward, asked);
+    let slid = (distance - asked).abs() > tol::LINEAR;
     let vid = s.edit(|d| {
         let id = d.take_view_id();
         let name = d.next_view_name(true);
@@ -637,7 +670,7 @@ fn drw_auxiliary(s: &mut DrwSession, _k: Option<&mut dyn Kernel>, p: &Value) -> 
         Ok(id)
     })?;
     let name = view(s.drawing(), vid)?.name.clone();
-    Ok(json!({ "view": vid.0, "name": name, "flip": flip, "length": a.dist(b) }))
+    Ok(json!({ "view": vid.0, "name": name, "flip": flip, "length": a.dist(b), "slid": slid }))
 }
 
 /// A position's values from a command's parameters.
