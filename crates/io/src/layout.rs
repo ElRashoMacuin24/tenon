@@ -116,6 +116,7 @@ pub(crate) fn to_file(head: &Map<String, Value>, shape: &Shape, version: u32) ->
                 *r = flatten(r, own).map_err(|e| format!("{name}: {e}"))?;
                 if shape.what == "part" {
                     sketch_out(r).map_err(|e| format!("{name}: {e}"))?;
+                    type_out(r);
                 }
             }
         }
@@ -163,6 +164,7 @@ pub(crate) fn from_file(file: Map<String, Value>, shape: &Shape) -> Map<String, 
             for r in v.as_array_mut().into_iter().flatten() {
                 if shape.what == "part" {
                     sketch_in(r);
+                    type_in(r);
                 }
                 *r = unflatten(r, own);
             }
@@ -208,6 +210,33 @@ fn unflatten(r: &Value, own: &[&str]) -> Value {
     }
     out.insert("kind".into(), Value::Object(kind));
     Value::Object(out)
+}
+
+/// Features written under a type of their own for what they hold, though in memory they are the
+/// type named last. A build that does not know an optional field reads the file without it, and
+/// without these it would be another part: a revolution on the other side of its sketch, a constant
+/// fillet, a fillet of nothing. A build that does not know a type refuses the file (DEC-124).
+const OWN_TYPES: &[(&str, &str)] = &[("flipped_revolve", "revolve"), ("variable_fillet", "fillet"), ("face_fillet", "fillet")];
+
+/// A feature (flattened) with the type its fields call for: see [`OWN_TYPES`].
+fn type_out(r: &mut Value) {
+    let Some(o) = r.as_object_mut() else { return };
+    let own = match o.get("type").and_then(Value::as_str) {
+        Some("revolve") if o.get("reverse") == Some(&Value::Bool(true)) => "flipped_revolve",
+        Some("fillet") if o.contains_key("faces") => "face_fillet",
+        Some("fillet") if o.contains_key("radii") => "variable_fillet",
+        _ => return,
+    };
+    o.insert("type".into(), Value::from(own));
+}
+
+/// The reverse of [`type_out`].
+fn type_in(r: &mut Value) {
+    let Some(o) = r.as_object_mut() else { return };
+    let own = o.get("type").and_then(Value::as_str);
+    if let Some((_, memory)) = OWN_TYPES.iter().find(|(file, _)| Some(*file) == own) {
+        o.insert("type".into(), Value::from(*memory));
+    }
 }
 
 /// A sketch feature (flattened) with its sketch's fields in place of it: entities and

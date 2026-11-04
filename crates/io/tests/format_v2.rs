@@ -583,6 +583,49 @@ fn a_text_and_the_letters_cut_from_it_are_written_and_read_back() {
 }
 
 #[test]
+fn what_an_older_build_would_misbuild_is_written_as_a_type_it_refuses() {
+    // A revolution turned the other way.
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, "sketch.rectangle", json!({ "sketch": sk, "x1": 10, "y1": 0, "x2": 20, "y2": 10 }));
+    run(&mut s, "model.revolve", json!({ "sketch": sk, "axis": "y", "angle": 1.5, "reverse": true }));
+    let extra = Map::new();
+    let bytes = project::to_bytes(s.document(), &extra).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(text.contains("type = \"flipped_revolve\"\n"), "{text}");
+    assert!(text.contains("reverse = true\n"), "{text}");
+    let (back, _) = project::from_bytes(&bytes).unwrap();
+    assert_eq!(&back, s.document());
+    assert_eq!(project::to_bytes(&back, &extra).unwrap(), bytes);
+
+    // One the default way is a plain revolve, as ever.
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();
+    run(&mut s, "sketch.rectangle", json!({ "sketch": sk, "x1": 10, "y1": 0, "x2": 20, "y2": 10 }));
+    run(&mut s, "model.revolve", json!({ "sketch": sk, "axis": "y", "angle": 1.5 }));
+    let text = String::from_utf8(project::to_bytes(s.document(), &extra).unwrap()).unwrap();
+    assert!(text.contains("type = \"revolve\"\n"), "{text}");
+
+    // A variable fillet and a face fillet, from a constant one, in the file and back; and such a
+    // fillet held as `fillet` still reads, as it did before this.
+    let constant = enclosure_text();
+    assert!(constant.contains("type = \"fillet\"\n"));
+    let radii = constant.replacen("type = \"fillet\"\n", "type = \"variable_fillet\"\nradii = [{ at = 1.0, radius = 3.0 }]\n", 1);
+    let (doc, _) = project::from_bytes(radii.as_bytes()).unwrap();
+    assert!(doc.features().iter().any(|f| matches!(&f.kind, tenon_model::FeatureKind::Fillet(x) if x.radii.len() == 1)));
+    let written = String::from_utf8(project::to_bytes(&doc, &extra).unwrap()).unwrap();
+    assert!(written.contains("type = \"variable_fillet\"\n") && !written.contains("type = \"fillet\"\n"), "{written}");
+    let plain = radii.replacen("type = \"variable_fillet\"\n", "type = \"fillet\"\n", 1);
+    assert_eq!(project::from_bytes(plain.as_bytes()).unwrap().0, doc);
+
+    let faces = constant.replacen("type = \"fillet\"\n", "type = \"face_fillet\"\nfaces = [[], []]\n", 1);
+    let (doc, _) = project::from_bytes(faces.as_bytes()).unwrap();
+    assert!(doc.features().iter().any(|f| matches!(&f.kind, tenon_model::FeatureKind::Fillet(x) if x.faces.is_some())));
+    let written = String::from_utf8(project::to_bytes(&doc, &extra).unwrap()).unwrap();
+    assert!(written.contains("type = \"face_fillet\"\n"), "{written}");
+}
+
+#[test]
 fn a_sketch_shown_by_the_user_says_so_on_its_record() {
     let mut s = Session::default();
     let sk = run(&mut s, "sketch.create", json!({ "plane": "xy", "project_origin": false }))["feature"].as_u64().unwrap();

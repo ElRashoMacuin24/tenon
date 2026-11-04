@@ -3515,3 +3515,23 @@ against the code as it was before it:
   way to one they all lie on to within the chords. Only then, so as not to move a surface off a flat
   face whose edges the kernel holds loosely. Below about a millionth of the plate's width the two
   heights cannot be told from the drawing's rounding, and it is as it was.
+
+## DEC-124 A file with what 0.1.0 would misbuild is one it refuses (2026-11-03)
+
+A build that does not know a new optional field reads the file without it (DEC-029). For most of
+what came after 0.1.0 that costs nothing or a detail. For three it makes another part, with no
+word: a revolution with `reverse = true` opened on the other side of its sketch, a variable fillet
+as a constant one, and a face fillet failed with "select at least one edge"; and a save there
+lost them. A file that is refused can be opened in the right build; one that opens wrong may be
+machined.
+
+**Now:** those three are written under a type of their own, `flipped_revolve`, `variable_fillet`
+and `face_fillet`, with the same fields. 0.1.0 refuses a type it does not know, as it does To Next
+and the rest. In memory, in commands and in the pointers of parameters they are still a
+`revolve` and a `fillet`: the change is in `crates/io/src/layout.rs`, where the file's layout is
+kept, which also still reads the plain types with these fields. It was done now because these
+encodings had not shipped. Files that use nothing new are as they were, to the byte.
+
+A tapped hole, sketch points, shown sketches and `[study.optimize]` stay optional fields: 0.1.0
+builds the same solid from them, so refusing the file would cost more than the loss, which
+`docs/file-format.md` and the changelog list.

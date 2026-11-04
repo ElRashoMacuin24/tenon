@@ -239,8 +239,8 @@ shows until a feature uses it and a work feature shows.
 |---|---|
 | `sketch` | `plane`, `next_entity`, `next_constraint`, `entities`, `constraints`; optional `projections` (all below) |
 | `extrude` | `sketch`, `regions`, `extent`, `reverse`, `operation`; optional `taper` (radians the sides lean in as they leave the sketch, negative to lean out; one distance or through-all only) |
-| `revolve` | `sketch`, `regions`, `axis` (revolve axis), `angle`, `operation` |
-| `fillet` | `edges` (edge references), `radius`; optional `radii` (a variable radius: `[{ at, radius }, ...]`, `at` from 0 at each edge's start to 1 at its end, `radius` being the start's) and `faces` (a face fillet: two lists of face references, `edges` then empty; DEC-122) |
+| `revolve` | `sketch`, `regions`, `axis` (revolve axis), `angle`, `operation`. Turned the other way (`reverse = true`), its type is `flipped_revolve`, so that a build that does not know `reverse` refuses the file rather than build it on the other side (DEC-124) |
+| `fillet` | `edges` (edge references), `radius`; optional `radii` (a variable radius: `[{ at, radius }, ...]`, `at` from 0 at each edge's start to 1 at its end, `radius` being the start's; its type is then `variable_fillet`) and `faces` (a face fillet: two lists of face references, `edges` then empty; its type is then `face_fillet`; DEC-122, DEC-124) |
 | `chamfer` | `edges`, `size` |
 | `shell` | `remove` (face references), `thickness`, `outside` |
 | `hole` | `sketch`, `points` (sketch point ids), `diameter`, `kind`, `extent`, optional `tip_angle`, `reverse` |
@@ -850,8 +850,15 @@ document, and regenerates the same solids (`crates/io/tests/format_v2.rs`).
 - **New feature types and new optional fields** join a version without a bump (DEC-029, DEC-035),
   before it has shipped in a release and, as this has gone since 0.1.0, after: files without them
   are unchanged, and a build that does not know a type refuses the file naming the record. A build
-  that does not know an optional field or table of a record opens the file and drops it when it
-  saves (a 0.1.0 build does that to a study's `[study.optimize]`, and so loses those settings).
+  that does not know an optional field or table of a record opens the file without it and drops
+  it when it saves, so what would make another part without it gets a type of its own (DEC-124).
+  A 0.1.0 build refuses, in the words "the project is damaged", a file using text, an ellipse or
+  a Smooth constraint; To, To Next, Between or two distances of an extrusion; To, To Next or two
+  angles of a revolution, or one turned the other way; a spotface or To hole; a variable or face
+  fillet; or a Tangent or Symmetry relationship. It opens the part the same and silently loses, on
+  a save, a tapped hole's thread (`tapped`; the drawing's note and the Threads list lose it at
+  once), which points are sketch points (`sketch_point`), which sketches are shown (`visible`)
+  and a study's `[study.optimize]`.
   Version 2 has gained the M6 feature types
   this way (`sweep`, `coil`, `loft`, `draft`, `split`, `combine`, `thread`), the optional
   `taper` of an extrusion, the optional `at` and `driven` of a sketch dimension, region keys by
