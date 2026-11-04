@@ -133,8 +133,8 @@ fn a_path_typed_and_bent_makes_a_tube_of_the_volume_of_its_length() {
     wb.run_ui("view.home").unwrap();
     wb.view.camera.fit(&tenon_geom::Aabb3::from_points(s.extent()).unwrap());
     settle(&mut d, &mut wb);
-    // (Twelve for the four points, less two for each line typed along an axis.)
-    assert!(d.texts().iter().any(|t| t.contains("6 degrees of freedom")), "the status bar says: {:?}", d.texts());
+    // (Nine for the three points away from the origin, less two for each line typed along an axis.)
+    assert!(d.texts().iter().any(|t| t.contains("3 degrees of freedom")), "the status bar says: {:?}", d.texts());
     // Bend both corners: click each, say the radius.
     wb.run_ui("sketch3d.bend").unwrap();
     d.frame(&mut wb, vec![]);
@@ -1201,7 +1201,7 @@ fn a_path_typed_axis_by_axis_is_held_to_its_axes() {
     let info = wb.exec("sketch3d.info", json!({ "sketch": f.0 })).unwrap();
     let held: Vec<&str> = info["constraints"].as_array().unwrap().iter().filter_map(|c| c["axis"].as_str()).collect();
     assert_eq!(held, ["z", "x", "y"], "{info}");
-    assert_eq!(info["dof"], 6, "twelve for the four points, less two for each line held: {info}");
+    assert_eq!(info["dof"], 3, "nine for the three points away from the origin, less two for each line held: {info}");
     // A length on the middle line. The others stay on their axes, at their lengths.
     let lines: Vec<EntityId> = sk(&wb).entities().filter(|(_, e)| matches!(e.geometry, Geometry3::Line { .. })).map(|(id, _)| id).collect();
     wb.exec("sketch3d.constrain", json!({ "sketch": f.0, "constraint": { "type": "length", "line": lines[1].0, "value": 60.0 } })).unwrap();
@@ -1213,6 +1213,9 @@ fn a_path_typed_axis_by_axis_is_held_to_its_axes() {
     assert!(way(0).near(Vec3::new(0.0, 0.0, 50.0), 1e-6), "{:?}", way(0));
     assert!((way(1).len() - 60.0).abs() < 1e-6 && way(1).y.abs() < 1e-6 && way(1).z.abs() < 1e-6, "{:?}", way(1));
     assert!(way(2).near(Vec3::new(0.0, 50.0, 0.0), 1e-6), "{:?}", way(2));
+    // And it stays where it was typed from: at the origin, not half the change away from it.
+    assert!(s.line(lines[0]).unwrap().0.near(Vec3::ZERO, 1e-9), "{:?}", s.line(lines[0]));
+    assert!(s.line(lines[2]).unwrap().1.near(Vec3::new(60.0, 50.0, 50.0), 1e-6), "{:?}", s.line(lines[2]));
     // Off an axis it is not held; nor is a point typed for a spline.
     wb.run_ui("sketch3d.line").unwrap();
     wb.run_ui("sketch3d.line").unwrap();
@@ -1221,4 +1224,56 @@ fn a_path_typed_axis_by_axis_is_held_to_its_axes() {
     add_xyz(&mut d, &mut wb, 110.0, 5.0, 0.0);
     let info = wb.exec("sketch3d.info", json!({ "sketch": f.0 })).unwrap();
     assert_eq!(info["constraints"].as_array().unwrap().iter().filter(|c| c["axis"].is_string()).count(), 3, "{info}");
+}
+
+/// A tube along a path typed from the origin, round a profile sketched there. A length on the path moved
+/// the whole path by half the change, away from the profile, and the tube came out another solid, with
+/// no word.
+#[test]
+fn a_path_typed_from_the_origin_stays_on_what_was_sketched_there() {
+    let (mut wb, mut d) = app();
+    wb.run_ui("sketch.new_3d").unwrap();
+    settle(&mut d, &mut wb);
+    wb.run_ui("sketch3d.line").unwrap();
+    d.frame(&mut wb, vec![]);
+    for p in [[0.0, 0.0, 0.0], [0.0, 0.0, 50.0], [50.0, 0.0, 50.0], [50.0, 50.0, 50.0]] {
+        add_xyz(&mut d, &mut wb, p[0], p[1], p[2]);
+    }
+    // Back to the origin it is the same point, and a line of no length says so.
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    add_xyz(&mut d, &mut wb, 0.0, 0.0, 0.0);
+    add_xyz(&mut d, &mut wb, 0.0, 0.0, 0.0);
+    assert!(wb.status_error, "{}", wb.status());
+    let f = sketch_open(&wb);
+    let info = wb.exec("sketch3d.info", json!({ "sketch": f.0 })).unwrap();
+    let of = |kind: &str| -> Vec<u64> {
+        info["entities"].as_array().unwrap().iter().filter(|e| e["type"] == kind).map(|e| e["id"].as_u64().unwrap()).collect()
+    };
+    let (points, lines) = (of("point"), of("line"));
+    assert_eq!((points.len(), lines.len()), (4, 3), "{info}");
+    d.tap(&mut wb, egui::Key::Escape);
+    d.frame(&mut wb, vec![]);
+    wb.run_ui("sketch3d.finish").unwrap();
+    settle(&mut d, &mut wb);
+    for point in &points[1..3] {
+        wb.exec("sketch3d.bend", json!({ "sketch": f.0, "point": point, "radius": 10 })).unwrap();
+    }
+    let profile = wb.exec("sketch.create", json!({ "plane": "xy" })).unwrap()["feature"].clone();
+    wb.exec("sketch.circle", json!({ "sketch": profile, "cx": 0, "cy": 0, "r": 5 })).unwrap();
+    wb.exec("model.sweep", json!({ "sketch": profile, "path_sketch": f.0 })).unwrap();
+    let mut volume = |wb: &mut Workbench| {
+        d.frame(wb, vec![]);
+        assert!(!wb.status_error, "{}", wb.status());
+        wb.exec("model.mass", json!({})).unwrap()["bodies"].as_array().unwrap().iter().map(|b| b["volume"].as_f64().unwrap()).sum::<f64>()
+    };
+    let pi = std::f64::consts::PI;
+    let by_hand = |middle: f64| pi * 25.0 * (40.0 + middle + 40.0 + pi * 10.0);
+    assert!((volume(&mut wb) - by_hand(30.0)).abs() < 1e-3);
+    let length =
+        wb.exec("sketch3d.constrain", json!({ "sketch": f.0, "constraint": { "type": "length", "line": lines[1], "value": 30.0 } })).unwrap();
+    for middle in [40.0, 30.0, 20.0] {
+        wb.exec("sketch3d.set_dimension", json!({ "sketch": f.0, "constraint": length["constraint"], "value": middle })).unwrap();
+        assert!((volume(&mut wb) - by_hand(middle)).abs() < 1e-3, "{middle}");
+    }
 }

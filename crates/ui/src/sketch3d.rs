@@ -903,7 +903,10 @@ impl Workbench {
         if let Some([x, y, z]) = typed {
             let at = Vec3::new(x, y, z);
             let axis = self.typed_along(at);
-            self.place3(feature, Click3 { at, target: Target::Free, axis });
+            // (Typed exactly where it is, the origin is what is meant, as a click on it means: a path
+            // from it stays there when it is dimensioned, and on what was sketched there.)
+            let target = if at == Vec3::ZERO { Target::Origin } else { Target::Free };
+            self.place3(feature, Click3 { at, target, axis });
             if !self.screen3(at, rect).is_some_and(|q| rect.contains(q)) {
                 self.frame_with(at);
             }

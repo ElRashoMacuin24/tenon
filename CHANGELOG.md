@@ -69,7 +69,8 @@ views and Baseline and Ordinate dimensions.
 ### Sketches
 
 - **3D sketches:** a sketch on no plane, with lines, splines, bends and points through vertices, work
-  points or typed coordinates, staying on an axis when near one or typed along one; Include Geometry;
+  points or typed coordinates, staying on an axis when near one or typed along one, and on the origin when
+  typed there; Include Geometry;
   constraints and dimensions; a Sweep runs along it, and work features come from its points and lines.
   `sketch.new_3d`, `sketch3d.*`, `work.point_at`.
 - **Text:** its letters are profiles, in one built-in font, so that a part is the same everywhere.
