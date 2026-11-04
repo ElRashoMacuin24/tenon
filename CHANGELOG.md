@@ -139,6 +139,19 @@ a face, and variable and face fillets. Assemblies gain Tangent, Symmetry and pla
 
 ### Fixed
 
+- OK with nothing touched changes nothing now, on any feature: a through cut stays through, and an
+  angle comes back to the bit. A window's panel asks for no more once it has closed, in Stress
+  Analysis and assemblies as in a part. Keep Faces and Symmetry no longer put a stress result out of
+  date. The Format Text box refuses what a field refused, closes on Esc, and Finish keeps what was
+  typed; characters the font lacks are named. A conflict in a sketch says what it is with, in words.
+  Projected no longer stacks a view on one already there. Command search finds what a button reads,
+  and its Enter stays its own.
+- From the command line: `tenon --help` says how and ends, where it opened a window. `--size` holds
+  against the saved window size. `tenon-cli bench --out` takes a relative folder and finds the examples
+  in a package; `tenon-cli upgrade` no longer calls what is no document current; `tenon-cli diff`
+  sees a sketch shown or hidden, and does not call a marked point moved. Fields a later build put at
+  the top of a file are kept by the window and by scripts, as the format's page said they were.
+- The control port limits what a connection may do before it gives its token.
 - A change while Simulate runs now stops it, as it does Optimize Shape. Define A-Side gives up on
   Esc, as it says. Finish Analysis closes Mesh Settings. A long status is cut at the counts, with all
   of it under the pointer.
