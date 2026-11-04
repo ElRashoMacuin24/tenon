@@ -134,7 +134,9 @@ each face's normal, so that on a shaft the top follows the round; Direction says
 faces look. **From Sketch Plane** adds material on one side of the plane and takes it away on the
 other, each as far as the depth: the shape ends on the plane. A taper leans the sides so that the
 shape comes out of a mould. Tick **Wrap to Face** and click a cylinder or a cone to lay the profile
-round it with its lengths kept: a word as long as the round it covers.
+round it with its lengths kept: a word as long as the round it covers. It reads as the sketch does
+from the side its normal looks to, so face the sketch outward. On a cone a straight line stays
+straight as the cone would be laid out flat, so a long line of text bends down at its ends.
 
 **Derive** brings in the solid of another part file: choose the file, then a scale and a mirror
 plane if it needs them, joined to the part or as a new solid. Nothing of that file is copied into

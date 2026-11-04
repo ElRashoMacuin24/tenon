@@ -3522,10 +3522,10 @@ commonly understood.
 **Emboss.** Three ways, as a feature with a sketch, a depth, a direction and a taper:
 
 - *Raise and Recess* go on what the profile is seen on along the sketch's normal, the first faces
-  met looking from that side. Tried first: the whole part offset by the depth
+  met looking from that side. Weighed first and not built: the whole part offset by the depth
   (`BRepOffsetAPI_MakeOffsetShape`), cut to the profile. That offsets every face, walls too, so
-  that a letter near a wall went up the wall, and OCCT's offset of a whole part with small fillets
-  is the least dependable of its operations. Instead: a box round the profile is taken through the
+  that a letter near a wall would go up the wall, and OCCT's offset of a whole part with small
+  fillets is a known weak point. Built instead: a box round the profile is taken through the
   part; the faces of the part that bound the space above it, and look the way the feature looks
   (more than about a degree), are each thickened by the depth along their own normal
   (`Kernel::thicken`, OCCT's simple offset, no intersections to go wrong), and what comes of it is
@@ -3538,8 +3538,9 @@ commonly understood.
 - *From Sketch Plane* is the sketch plane made a land: on the side the feature looks, the prism is
   taken out of the part; on the other it is added; each as far as the depth. Where the plane lies
   off the part the shape stands up to it, where it lies in the part it goes down to it, and at a
-  slope both, in one feature. The alternative read, a symmetric difference of one prism with the part,
-  leaves material floating over a pocket wherever the prism straddles the surface. What is added
+  slope both, in one feature. The other reading, also weighed and not built, a symmetric difference
+  of one prism with the part, would leave material floating over a pocket wherever the prism
+  straddles the surface. What is added
   must reach the part: a solid left floating is refused in words, and so is a plane on the part's
   surface, with which nothing would change.
 - *Wrap to Face* lays the profile round one cylinder or cone with its lengths kept. On a cylinder
