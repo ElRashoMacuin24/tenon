@@ -11,8 +11,8 @@ use tenon_model::{CmdError, Document, Fingerprint, OriginAxis, Scene, Session};
 use crate::geometry::{self, Prim};
 use crate::math::M3;
 use crate::model::{
-    Assembly, Component, ComponentId, Element, Geom, MAX_COMPONENTS, Pattern, PatternId, PatternKind, RelKind, Relationship, RelationshipId, Reused,
-    Run, Target, Tweak,
+    Assembly, Component, ComponentId, Element, Geom, MAX_COMPONENTS, PLACEMENT_KEPT, Pattern, PatternId, PatternKind, RelKind, Relationship,
+    RelationshipId, Reused, Run, Target, Tweak,
 };
 use crate::solve::{self, Body, BodyDof, End, Law, Motion, Rel};
 
@@ -178,6 +178,13 @@ pub fn system(asm: &Assembly, parts: &Parts) -> System {
     System { bodies, rels, ids, unresolved }
 }
 
+/// Whether two placements are one, as far as a file can tell: what is read back is not moved, and so
+/// not changed. A file keeps nine decimals, of a direction too, so what is worked out from a
+/// direction read back and stands `reach` along it is that much less sure.
+fn same_placement(a: &Frame, b: &Frame, reach: f64) -> bool {
+    a.origin().near(b.origin(), PLACEMENT_KEPT * (1.0 + reach)) && a.x().near(b.x(), PLACEMENT_KEPT) && a.z().near(b.z(), PLACEMENT_KEPT)
+}
+
 /// How many times a solve and the patterns may answer each other before they are given up on: a
 /// relationship on an element moves what is held by it, which may move the element's source.
 const SOLVE_ROUNDS: usize = 8;
@@ -195,7 +202,7 @@ pub fn solve_assembly(asm: &mut Assembly, parts: &Parts, drag: Option<ComponentI
         let sys = system(asm, parts);
         let sol = solve::solve(&sys.bodies, &sys.rels, dragged);
         for (c, f) in asm.components.iter_mut().zip(&sol.frames) {
-            if !c.grounded && !elements.contains(&c.id) {
+            if !c.grounded && !elements.contains(&c.id) && !same_placement(&c.placement, f, 0.0) {
                 c.placement = *f;
             }
         }
@@ -416,12 +423,7 @@ pub fn place_elements(asm: &mut Assembly, parts: &Parts) -> bool {
                 };
                 let Some(frame) = frame else { continue };
                 let Some(c) = asm.component_mut(*c) else { continue };
-                // (Nearer than what a file keeps of a placement is where it is: what is read back
-                // is not moved, and so not changed.)
-                let near = 1e-8;
-                let moved = !c.placement.origin().near(frame.origin(), near)
-                    || !c.placement.x().near(frame.x(), near)
-                    || !c.placement.z().near(frame.z(), near);
+                let moved = !same_placement(&c.placement, &frame, frame.origin().dist(source.placement.origin()));
                 if moved || c.part != source.part || c.row != source.row || c.mirrored != mirrored {
                     changed = true;
                     c.placement = frame;

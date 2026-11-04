@@ -1013,3 +1013,44 @@ fn a_part_of_a_suppressed_chain_of_patterns_is_out_of_the_view_and_hidden_stays_
     assert_eq!(wb.scene().bodies.len(), 3, "it stays hidden");
     assert!(!wb.assembly().unwrap().assembly().component(ComponentId(3)).unwrap().visible);
 }
+
+#[test]
+fn opening_turned_components_in_the_app_changes_nothing_and_saves_the_same_bytes() {
+    use std::time::{Duration, Instant};
+    let dir = scratch("same-bytes");
+    post_part(&dir.join("post.tenon"));
+    // The assembly on disk: a post at no axis in particular, a long row of it, its mirror image
+    // (which, coming from the worker, has the app solve the assembly again), and a turn of seven.
+    let mut s = tenon_assembly::AsmSession::default();
+    let mut k = OcctKernel::new();
+    let mut run = |s: &mut tenon_assembly::AsmSession, id: &str, p: serde_json::Value| tenon_io::asm::run(s, id, &p, Some(&mut k)).unwrap();
+    let post = dir.join("post.tenon").to_string_lossy().into_owned();
+    run(&mut s, "asm.insert", json!({ "path": post, "grounded": false }));
+    run(&mut s, "asm.place", json!({ "component": 1, "origin": [3.3, -7.1, 2.9], "z": [0.3, 0.5, 0.81], "x": [0.5, -0.3, 0.0] }));
+    let along = run(&mut s, "asm.geom", json!({ "component": 1, "axis": "x" }));
+    run(&mut s, "asm.pattern", json!({ "components": [1], "type": "rectangular", "direction": along, "count": 40, "spacing": 500 }));
+    let yz = run(&mut s, "asm.geom", json!({ "plane": "yz" }));
+    run(&mut s, "asm.mirror", json!({ "components": [1], "plane": yz }));
+    let z = run(&mut s, "asm.geom", json!({ "axis": "z" }));
+    run(&mut s, "asm.pattern", json!({ "components": [1], "type": "circular", "axis": z, "count": 7, "angle": 2.5 }));
+    let (a, b) = (dir.join("a.tenonasm"), dir.join("b.tenonasm"));
+    run(&mut s, "asm.save", json!({ "path": a.to_string_lossy() }));
+
+    let mut wb = Workbench::new(|| Box::new(OcctKernel::new()) as Box<dyn tenon_kernel::Kernel>, None, crate::Services::default());
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    wb.open(&a).unwrap();
+    let t = Instant::now();
+    let n = wb.assembly().unwrap().assembly().components.len();
+    while (wb.scene().bodies.len() != n || wb.is_busy()) && t.elapsed() < Duration::from_secs(60) {
+        d.frame(&mut wb, vec![]);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(wb.scene().bodies.len(), n);
+    for _ in 0..10 {
+        d.frame(&mut wb, vec![]);
+    }
+    assert!(!wb.assembly().unwrap().is_dirty(), "it has only been opened");
+    assert!(!wb.assembly().unwrap().can_undo());
+    wb.save_assembly(&b).unwrap();
+    assert!(std::fs::read(&a).unwrap() == std::fs::read(&b).unwrap(), "read back and written, it is not the same");
+}

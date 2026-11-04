@@ -17,6 +17,9 @@ pub const MAX_PATTERNS: usize = 5_000;
 /// Most occurrences a pattern may have in one direction (hostile-input cap: an assembly holds
 /// [`MAX_COMPONENTS`] in all).
 pub const MAX_COUNT: u32 = 5_000;
+/// Two directions of a placement nearer than this are the same, as far as a file can tell: it
+/// keeps nine decimals.
+pub const PLACEMENT_KEPT: f64 = 1e-8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -877,11 +880,15 @@ impl Assembly {
         Ok(())
     }
 
-    /// Fixes small drift in stored placements (re-orthonormalises them).
+    /// Fixes small drift in stored placements (re-orthonormalises them). A frame as good as a file
+    /// can write it stays as it is read: what is read is written back the same.
     pub fn tidy(&mut self) {
         for c in &mut self.components {
             if let Some(f) = Frame::new(c.placement.origin(), c.placement.z(), c.placement.x()) {
-                c.placement = f;
+                let was = &c.placement;
+                if !(f.x().near(was.x(), PLACEMENT_KEPT) && f.y().near(was.y(), PLACEMENT_KEPT) && f.z().near(was.z(), PLACEMENT_KEPT)) {
+                    c.placement = f;
+                }
             }
         }
     }

@@ -1380,6 +1380,53 @@ fn what_would_go_out_of_reach_is_refused_in_words() {
 }
 
 #[test]
+fn a_frame_at_no_axis_in_particular_is_read_back_to_the_same_bytes() {
+    let dir = scratch("turned");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    box_part(e, "block", 10.0, 10.0, 10.0);
+    run(e, "asm.new", json!({ "name": "Turned" }));
+    let turn = json!({ "origin": [3.3, -7.1, 2.9], "z": [0.3, 0.5, 0.81], "x": [0.5, -0.3, 0.0] });
+    // A plain component so; a long pattern along its own X; round an axis, seven in 2.5 radians.
+    let plain = run(e, "asm.insert", json!({ "path": "block.tenon", "grounded": false }))["component"].clone();
+    let mut place = turn.clone();
+    place["component"] = plain.clone();
+    run(e, "asm.place", place);
+    let source = run(e, "asm.insert", json!({ "path": "block.tenon", "grounded": false }))["component"].clone();
+    let mut place = turn.clone();
+    place["component"] = source.clone();
+    run(e, "asm.place", place);
+    let along = run(e, "asm.geom", json!({ "component": source, "axis": "x" }));
+    run(e, "asm.pattern", json!({ "components": [source], "type": "rectangular", "direction": along, "count": 40, "spacing": 500 }));
+    let z = run(e, "asm.geom", json!({ "axis": "z" }));
+    let round = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [100, 0, 0], "grounded": false }))["component"].clone();
+    run(e, "asm.pattern", json!({ "components": [round], "type": "circular", "axis": z, "count": 7, "angle": 2.5 }));
+    run(e, "asm.save", json!({ "path": "a.tenonasm" }));
+    let first = std::fs::read(dir.join("a.tenonasm")).unwrap();
+    run(e, "asm.open", json!({ "path": "a.tenonasm" }));
+    run(e, "asm.save", json!({ "path": "b.tenonasm" }));
+    assert!(first == std::fs::read(dir.join("b.tenonasm")).unwrap(), "read back and written, it is not the same");
+    // Solved again with nothing changed, which is what the app does when a mirror image arrives,
+    // it stays the same too; that is no step to undo.
+    run(e, "asm.update", json!({}));
+    assert!(!e.asm.can_undo(), "solving what was read changed it");
+    run(e, "asm.save", json!({ "path": "c.tenonasm" }));
+    assert!(first == std::fs::read(dir.join("c.tenonasm")).unwrap(), "solved and written, it is not the same");
+
+    // A frame that has drifted further than a file's rounding is still put right when it is read.
+    let text = String::from_utf8(first).unwrap();
+    let drifted = text.replacen("0.857492926", "0.857493026", 1);
+    assert_ne!(drifted, text, "{text}");
+    std::fs::write(dir.join("drift.tenonasm"), drifted).unwrap();
+    run(e, "asm.open", json!({ "path": "drift.tenonasm" }));
+    let tree = run(e, "asm.tree", json!({}));
+    let c = &tree["components"][0]["placement"];
+    let (x, y) = (vec3(&c["x"]), vec3(&c["y"]));
+    assert!((x[0] * y[0] + x[1] * y[1] + x[2] * y[2]).abs() < 1e-12, "{c}");
+    assert!(((x[0] * x[0] + x[1] * x[1] + x[2] * x[2]) - 1.0).abs() < 1e-12, "{c}");
+}
+
+#[test]
 fn what_repeats_a_suppressed_patterns_elements_is_out_with_them_and_hidden_stays_hidden() {
     let dir = scratch("suppress-chain");
     let mut e = Engine::new(kernel(), &dir);
