@@ -3512,3 +3512,98 @@ against the code as it was before it:
   way to one they all lie on to within the chords. Only then, so as not to move a surface off a flat
   face whose edges the kernel holds loosely. Below about a millionth of the plate's width the two
   heights cannot be told from the drawing's rounding, and it is as it was.
+
+## DEC-133 Emboss, Derive and a user coordinate system (2026-11-03)
+
+The owner said "Make sure all the features on the menu are available not grayed out". Three of the
+greyed entries are features of a part. What they should do comes from how such commands are
+commonly understood.
+
+**Emboss.** Three ways, as a feature with a sketch, a depth, a direction and a taper:
+
+- *Raise and Recess* go on what the profile is seen on along the sketch's normal, the first faces
+  met looking from that side. Tried first: the whole part offset by the depth
+  (`BRepOffsetAPI_MakeOffsetShape`), cut to the profile. That offsets every face, walls too, so
+  that a letter near a wall went up the wall, and OCCT's offset of a whole part with small fillets
+  is the least dependable of its operations. Instead: a box round the profile is taken through the
+  part; the faces of the part that bound the space above it, and look the way the feature looks
+  (more than about a degree), are each thickened by the depth along their own normal
+  (`Kernel::thicken`, OCCT's simple offset, no intersections to go wrong), and what comes of it is
+  cut to the profile's prism. So only the faces it goes on are followed, the sides of what is raised
+  run along the sketch's normal as the profile is seen, and a surface OCCT offsets exactly stays
+  exact: the volumes on a flat face, a cylinder and a sphere agree with hand figures to 1e-2 mm^3.
+  What is seen is decided from the plane itself: the plane on or above a face looks down at it; a
+  plane in the material (through a shaft) looks from where the material over it ends; the sketch's
+  normal says which way, and Flip the other.
+- *From Sketch Plane* is the sketch plane made a land: on the side the feature looks, the prism is
+  taken out of the part; on the other it is added; each as far as the depth. Where the plane lies
+  off the part the shape stands up to it, where it lies in the part it goes down to it, and at a
+  slope both, in one feature. The alternative read, a symmetric difference of one prism with the part,
+  leaves material floating over a pocket wherever the prism straddles the surface. What is added
+  must reach the part: a solid left floating is refused in words, and so is a plane on the part's
+  surface, with which nothing would change.
+- *Wrap to Face* lays the profile round one cylinder or cone with its lengths kept. On a cylinder
+  it is `Kernel::roll`, written for sheet metal bends (it now takes ellipse arcs too, exactly, as it
+  did circles): `x` along the round is the angle `x / r`. On a cone, a new `Kernel::roll_cone`: the
+  cone rolled out on the sketch's plane, which is what keeps lengths: `(x, y)` lies `hypot(x, y)` from
+  the apex, `atan2(x, y) / sin(a)` round. Lines go to curves on the cone, so each curve is a spline
+  through 25 points in the cone's (angle, distance) plane, and the sides are ruled between the two
+  cones. The tool reaches a little (`SUNK`, at most 0.05 mm) past the surface on the far side, so a
+  boolean never meets a face lying on a face. Where the sketch lies: across the axis, from the
+  axis as seen on the sketch's plane, so a letter added does not shift the others; along a cone, the
+  profile's middle stays where it is seen. A hole's wall is the same, the material outside.
+
+Positive taper is the way that lets the shape out of a mould (what is raised narrows going up, what
+is recessed going down, a land from the plane opens away from it), hinged at the sketch plane.
+Refused with Wrap to Face: the sides there are square to the surface and left so.
+
+**Derive.** A feature holding the other part's path, a scale, an optional mirror plane and join or
+new solid. Its solid is rebuilt from that file each time, in this part's kernel: nothing of its
+contents is in this file, which keeps how a file holds another's geometry open for the owner.
+
+The model crate reads no files. As an assembly session is handed its parts, a `Document` is handed
+a table (`Links`, never written, carried in an `Arc` so a snapshot for the worker costs nothing):
+what each path it names came to, a `Document` or why not in words, with a stamp that changes with
+the file or anything it derives from. `tenon_io::derive` fills it in: when a file is opened, when
+a command adds or changes a feature, when `model.regenerate` or Rebuild All runs. The stamp goes into
+the feature's prefix hash, so a rebuild starts from the checkpoint before it. The table changing is
+no edit: `Session::set_links` puts it in the undo history too, with no step and nothing unsaved.
+
+Paths are as an assembly's (DEC-024): full in memory, relative to the file on disk, rewritten when
+the file is saved elsewhere. A file missing or not readable leaves a table entry in words: the feature
+fails with them, the features after it are not computed as after any failure, and the part opens.
+
+*Deriving itself.* Files are read along a chain from the document's own file, compared by their
+canonical paths; a file already on the chain gets an entry that says so, and the chain has a length
+limit. `model.derive` and the panel refuse at once, including when the trouble is further down. A
+part told before it has a file, then saved over what it derives from, is caught when it is saved.
+
+Faces are named after the face they were there, `From { feature, source: its name's key, ordinal:
+which solid }`, so features built on a derived solid hold on as long as the other part's names do.
+Work features, sketches and parameters do not come in.
+
+**UCS.** One feature, `WorkGeom::Ucs(Frame)`, with typed offsets and turns from the origin or another
+UCS, or three points. Turns are about its own X, then the Y that gives, then the Z that gives, each in
+the file, so a change to one reads as that change. Its planes are what the origin planes are to the
+part's origin (a sketch on its YZ has its x along its Y), so the two read alike.
+
+The references are new variants of what work features already go through (`PlaneRef::Ucs { feature,
+plane }`, `AxisSel::Ucs`, `AxisRef::Ucs`, `DirectionRef::Ucs`, `PointSel::Ucs`), not a work plane and
+two more features for each UCS: three planes, three axes and a point would fill the browser. In the
+browser a UCS opens as the Origin folder does, and in the view each part of the triad is picked.
+Point picks gain corners (`PointSel::Vertex`: an edge and which end, kept as where it was picked,
+judged from the edge's own middle, so that it is the same corner after the edge has moved), for three
+points on a plain box; a three-point work plane takes them too.
+
+Measure took faces and edges only. Since a UCS "can be used wherever", `Entity::Work` measures to work
+planes, axes and points and a UCS's parts: plain geometry between themselves, and to a face or
+edge through a stand-in the kernel measures to (a face of a plane, a thin cylinder of an axis, a small
+ball of a point), with the far end then put on the line or point itself.
+
+**What was left out, said in ROADMAP.md:** Emboss: a top face's appearance of its own; one way only of
+the three directions from the plane; the wedge over an outside corner stays open (each face has its
+own layer); Wrap to Face onto one face only and with no taper. Derive: choosing which solids, sketches,
+work features or parameters come in; a scale per axis; following the file without a rebuild. An
+assembly or drawing that shows a derived part takes a change of the other file when it is opened
+again. UCS: pick by vertex for its origin and points only, no moving it with the triad's handles; no
+coordinate readout in a UCS when sketching.

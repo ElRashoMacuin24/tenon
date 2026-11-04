@@ -139,6 +139,39 @@ fn a_part_is_brought_in_scaled_mirrored_joined_or_a_new_solid() {
 }
 
 #[test]
+fn it_is_undone_and_redone_edited_and_copied_like_any_feature() {
+    let dir = folder("feature");
+    let other = dir.join("other.tenon");
+    block_file(&other, 10.0, 20.0, 10.0, 5.0);
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let d = feature(&run(&mut s, &mut k, "model.derive", json!({ "path": path(&other) })));
+    near(volume(&mut s, &mut k), 1000.0);
+    run(&mut s, &mut k, "edit.undo", json!({}));
+    assert!(s.document().features().is_empty());
+    run(&mut s, &mut k, "edit.redo", json!({}));
+    near(volume(&mut s, &mut k), 1000.0);
+    // Edited as a whole.
+    let kind = json!({ "type": "derive", "path": other.to_string_lossy(), "scale": 2.0, "operation": "new_body" });
+    run(&mut s, &mut k, "feature.update", json!({ "feature": d, "kind": kind }));
+    near(volume(&mut s, &mut k), 8000.0);
+    // Its scale is a parameter.
+    run(&mut s, &mut k, "param.add", json!({ "name": "big", "equation": "3", "unit": "ul" }));
+    run(&mut s, &mut k, "feature.update", json!({ "feature": d, "kind": kind, "equations": { "/scale": "big" } }));
+    near(volume(&mut s, &mut k), 27000.0);
+    // Copied by a pattern: three of it, 100 apart.
+    run(&mut s, &mut k, "model.pattern.rect", json!({ "features": [d], "direction": "y", "count": 3, "spacing": 100 }));
+    near(volume(&mut s, &mut k), 81000.0);
+    // Pointed at another file by the feature's own definition: it is read.
+    let second = dir.join("second.tenon");
+    block_file(&second, 0.0, 1.0, 1.0, 1.0);
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let kind = json!({ "type": "derive", "path": second.to_string_lossy() });
+    run(&mut s, &mut k, "feature.add", json!({ "kind": kind }));
+    near(volume(&mut s, &mut k), 1.0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn its_path_is_kept_relative_to_the_file_and_its_contents_are_kept_out() {
     let dir = folder("relative");
     std::fs::create_dir_all(dir.join("parts")).unwrap();

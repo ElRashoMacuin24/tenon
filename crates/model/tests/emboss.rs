@@ -142,6 +142,26 @@ fn across_a_step_each_face_has_its_own_layer() {
     near(volume(&mut s, &mut k), v0 + 20.0 * 6.0 * 2.0, 1e-6);
 }
 
+#[test]
+fn over_an_outside_corner_each_face_has_its_layer_and_the_corner_between_stays_open() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    block(&mut s, &mut k);
+    // Seen at 45 degrees over the front top edge (y = 0, z = 10): a plane looking along (0, -1, 1)
+    // from well off. A UCS turned about X gives it: its Z is (0, -sin 45, cos 45).
+    let u = feature(&run(&mut s, &mut k, "work.ucs", json!({ "x": 20, "y": -20, "z": 30, "rx": std::f64::consts::FRAC_PI_4 })));
+    let sk = feature(&run(&mut s, &mut k, "sketch.create", json!({ "ucs_plane": { "ucs": u, "plane": "xy" } })));
+    let half = 5.0 * FRAC_1_SQRT_2;
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": -5, "y1": -half, "x2": 5, "y2": half }));
+    run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 1 }));
+    // Square across the edge, each layer is what lies within the strip of half width a from the
+    // edge: integral from 0 to d of (a sqrt 2 - w) dw, a sqrt 2 being 5; twice that, 10 long.
+    near(volume(&mut s, &mut k), 16000.0 + 2.0 * (5.0 - 0.5) * 10.0, 1e-6);
+    // It stands 1 up and 1 out from the block, and no further: the corner itself stays open.
+    let t = run(&mut s, &mut k, "model.topology", json!({}));
+    near(t["bodies"][0]["bbox"]["max"][2].as_f64().unwrap(), 11.0, 1e-6);
+    near(t["bodies"][0]["bbox"]["min"][1].as_f64().unwrap(), -1.0, 1e-6);
+}
+
 /// The part of the ring between `r0` and `r1` that a strip |x| <= a of a plane above the axis
 /// shows, per unit length: the integral across the strip of sqrt(r1^2 - x^2) - sqrt(r0^2 - x^2).
 fn seen_ring(r0: f64, r1: f64, a: f64) -> f64 {
@@ -486,6 +506,68 @@ fn it_is_copied_by_a_pattern_and_a_mirror_and_its_faces_are_built_on() {
     run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk2, "cx": 10, "cy": 8, "r": 1 }));
     run(&mut s, &mut k, "model.extrude", json!({ "sketch": sk2, "distance": 3 }));
     near(volume(&mut s, &mut k), 16240.0 - 0.5 * 0.5 * 0.5 * 10.0 + PI * 3.0, 1e-6);
+}
+
+#[test]
+fn on_a_sphere_and_on_a_freeform_face_it_follows_them_too() {
+    // On a sphere, a disc seen from above: between the spheres R and R + d within the round of
+    // radius a. Each by the integral of 2 pi rho sqrt(S^2 - rho^2) from 0 to a.
+    let (r, d, a) = (20.0f64, 2.0f64, 6.0f64);
+    let cap = |s: f64| 2.0 * PI / 3.0 * (s.powi(3) - (s * s - a * a).powf(1.5));
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    run(&mut s, &mut k, "model.sphere", json!({ "diameter": 2.0 * r }));
+    let v0 = 4.0 / 3.0 * PI * r.powi(3);
+    near(volume(&mut s, &mut k), v0, 1e-2);
+    let wp = feature(&run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 30 })));
+    let sk = feature(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp })));
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": sk, "cx": 0, "cy": 0, "r": a }));
+    let e = feature(&run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": d })));
+    near(volume(&mut s, &mut k), v0 + cap(r + d) - cap(r), 1e-2);
+    let t = run(&mut s, &mut k, "model.topology", json!({}));
+    near(t["bodies"][0]["bbox"]["max"][2].as_f64().unwrap(), r + d, 1e-6);
+    // Recessed.
+    let kind = json!({ "type": "emboss", "sketch": sk, "style": "recess", "depth": d });
+    run(&mut s, &mut k, "feature.update", json!({ "feature": e, "kind": kind }));
+    near(volume(&mut s, &mut k), v0 - (cap(r) - cap(r - d)), 1e-2);
+
+    // On a smooth blend between two circles, whose face is a spline: about the area seen times
+    // the depth, and a whole solid.
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let low = feature(&run(&mut s, &mut k, "sketch.create", json!({ "plane": "xy" })));
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": low, "cx": 0, "cy": 0, "r": 20 }));
+    let wp = feature(&run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 30 })));
+    let high = feature(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp })));
+    run(&mut s, &mut k, "sketch.circle", json!({ "sketch": high, "cx": 0, "cy": 0, "r": 12 }));
+    run(&mut s, &mut k, "model.loft", json!({ "sections": [low, high] }));
+    let v0 = volume(&mut s, &mut k);
+    let front = feature(&run(&mut s, &mut k, "work.plane", json!({ "base": "xz", "distance": 40 })));
+    let sk = feature(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": front })));
+    run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": -3, "y1": 10, "x2": 3, "y2": 20 }));
+    run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 1 }));
+    let v = volume(&mut s, &mut k) - v0;
+    assert!(v > 60.0 * 0.9 && v < 60.0 * 1.3, "60 mm^2 seen, 1 up, on a slope: {v}");
+}
+
+#[test]
+fn it_follows_its_sketch_and_the_part_under_it() {
+    let (mut s, mut k) = (Session::default(), OcctKernel::new());
+    let ex = block(&mut s, &mut k);
+    let wp = feature(&run(&mut s, &mut k, "work.plane", json!({ "base": "xy", "distance": 30 })));
+    let sk = feature(&run(&mut s, &mut k, "sketch.create", json!({ "work_plane": wp })));
+    let lines = run(&mut s, &mut k, "sketch.rectangle", json!({ "sketch": sk, "x1": 5, "y1": 5, "x2": 15, "y2": 11 }));
+    let line = lines["lines"][0].as_u64().unwrap();
+    let dim = run(&mut s, &mut k, "sketch.constrain", json!({ "sketch": sk, "constraint": { "type": "length", "line": line, "value": 10.0 } }))["constraint"].as_u64().unwrap();
+    run(&mut s, &mut k, "model.emboss", json!({ "sketch": sk, "depth": 2 }));
+    near(volume(&mut s, &mut k), 16120.0, 1e-6);
+    // The profile longer: 16 x 6 x 2.
+    run(&mut s, &mut k, "sketch.set_dimension", json!({ "sketch": sk, "constraint": dim, "value": 16.0 }));
+    near(volume(&mut s, &mut k), 16000.0 + 192.0, 1e-6);
+    // The part under it taller: it stands on the new top.
+    let kind = json!({ "type": "extrude", "sketch": 1, "regions": "default", "extent": { "distance": 20.0 }, "reverse": false, "operation": "join" });
+    run(&mut s, &mut k, "feature.update", json!({ "feature": ex, "kind": kind }));
+    near(volume(&mut s, &mut k), 32000.0 + 192.0, 1e-6);
+    let t = run(&mut s, &mut k, "model.topology", json!({}));
+    near(t["bodies"][0]["bbox"]["max"][2].as_f64().unwrap(), 22.0, 1e-6);
 }
 
 #[test]

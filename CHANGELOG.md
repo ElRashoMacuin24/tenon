@@ -5,6 +5,22 @@ shows it in [ROADMAP.md](ROADMAP.md).
 
 ## Unreleased
 
+### Features on the menu
+
+- **Emboss:** a closed profile, text included, raised from or recessed into the faces it is seen
+  on, following them where they curve, or from the sketch plane (added on one side of it and taken
+  away on the other), with a direction and a taper. **Wrap to Face** lays it round a cylinder or
+  a cone with its lengths kept. New command `model.emboss`.
+- **Derive:** the solid of another part file brought in, by a path kept relative to this file,
+  scaled, mirrored, joined or a new solid. It follows that file on Rebuild All and on opening; a
+  file that is gone fails in words and the part still opens; a part cannot derive itself. New
+  command `model.derive`.
+- **UCS:** a coordinate system of your own, by offsets and turns from the origin or another UCS or
+  through three points, shown as a triad. Its planes, axes and origin serve wherever work features
+  do: sketches, Extrude To, Mirror, patterns, Revolve, Measure. Corners of the part can now be
+  clicked for three-point work planes too, and Measure measures to work features. New command
+  `work.ucs`; `ucs_plane` on the commands that name a plane by `plane`, `face` and `work_plane`.
+
 ### Stress checks
 
 - **Optimize Shape** (topology optimization): in Stress Analysis, the Optimize panel works out

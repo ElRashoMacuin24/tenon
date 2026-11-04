@@ -123,15 +123,37 @@ go with it unless you untick them.
 
 Extrude, Revolve, Sweep, Loft, Coil, Rib; Hole (simple, counterbored, countersunk), Thread,
 Fillet, Chamfer, Shell, Draft, Split, Combine; rectangular and circular patterns, Mirror;
-work planes, axes and points; Box, Cylinder, Sphere and Torus. Every one opens its panel
+work planes, axes and points; Emboss, Derive and UCS; Box, Cylinder, Sphere and Torus. Every one opens its panel
 again when its row is double-clicked. A fillet can be Variable (a radius at each end of its
 edges, marked in the view), and **Face Fillet** (under Fillet) rounds every edge between two
 sets of faces.
 
+**Emboss** puts a closed profile from a sketch on the part, its text too. **Raise from Face** and
+**Recess into Face** go on what the profile is seen on along the sketch's normal, by the depth along
+each face's normal, so that on a shaft the top follows the round; Direction says which way the
+faces look. **From Sketch Plane** adds material on one side of the plane and takes it away on the
+other, each as far as the depth: the shape ends on the plane. A taper leans the sides so that the
+shape comes out of a mould. Tick **Wrap to Face** and click a cylinder or a cone to lay the profile
+round it with its lengths kept: a word as long as the round it covers.
+
+**Derive** brings in the solid of another part file: choose the file, then a scale and a mirror
+plane if it needs them, joined to the part or as a new solid. Nothing of that file is copied into
+this one: its path is kept relative to this file, so a folder of parts can move together. When the
+other file has changed, **Manage > Rebuild All** (or opening the part again) takes the change. If
+the file is gone the feature says so, the part still opens, and a double-click on its row lets you
+choose the file again.
+
+**UCS** (Work Features) is a coordinate system of your own: typed offsets and turns from the
+part's origin or from another UCS, or Three Points clicked on the part (its origin, a point on its
+X, a point on its Y side). It is drawn as a triad, and its row in the browser opens like the Origin
+folder. Each of its planes, axes and its origin can be clicked in the view or the browser wherever
+work planes, axes and points are taken: to start a sketch, for Extrude To, for a mirror plane or
+a pattern's direction, and to measure to.
+
 **Inspect > Properties** gives the part its number and description (for parts lists) and
 its material (its colour, density and how strong it is), and says its mass, volume, centre
 of gravity and moments of inertia. **Inspect > Measure** measures
-distances, angles, lengths and areas.
+distances, angles, lengths and areas, and to work features.
 
 ## Sheet metal
 
