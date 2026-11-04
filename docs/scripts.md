@@ -562,5 +562,30 @@ while it is flat:
 `area`, the `cut_length`, the number of cut-outs (`holes`) and every bend's `angle`, `radius`,
 `allowance` and whether it is `up`; with `curves: true`, the outlines too. `sheet.export_dxf`
 and `sheet.export_svg` write it. `sheet.a_side` chooses the face that is up.
-`examples/m8-tray/tray.json` uses all of this, with every number worked out by hand in the
-README beside it.
+`examples/m8-tray/tray.json` uses faces, flanges and hems, the flat pattern and its DXF, with every
+number worked out by hand in the README beside it.
+
+## What else there is
+
+The new commands take their parameters as every other does, and [commands.md](commands.md) lists them all.
+A worked start for each:
+
+```json
+[
+  { "run": "model.box", "with": { "width": 40, "depth": 40, "height": 10 }, "as": "block" },
+  { "run": "work.ucs", "with": { "by": "offset", "x": 20, "y": 20, "z": 10 }, "as": "ucs" },
+  { "run": "sketch.create", "with": { "ucs_plane": { "ucs": "$ucs.feature", "plane": "xy" } }, "as": "label" },
+  { "run": "sketch.rectangle", "with": { "sketch": "$label.feature", "x1": -8, "y1": -4, "x2": 8, "y2": 4 } },
+  { "run": "model.emboss", "with": { "sketch": "$label.feature", "depth": 1 } },
+  { "run": "sketch.new_3d", "as": "path" },
+  { "run": "sketch3d.line", "with": { "sketch": "$path.feature", "start": [0, 0, 20], "end": [0, 0, 60], "along": "z" } }
+]
+```
+
+- **Parts:** `work.ucs`, `model.emboss`, `model.derive` (a part file brought in), `sketch.new_3d` and the
+  `sketch3d.*` commands, which a sweep's `path_sketch` takes.
+- **Sheet metal:** `sheet.contour_roll`, `sheet.lofted_flange` and `sheet.punch`, beside the rip and unfold
+  above.
+- **Assemblies:** `asm.pattern`, `asm.mirror`, `asm.copy`, with `asm.edit_pattern` to change one.
+- **Drawings:** `drw.auxiliary`, `drw.crop`, `drw.break`, `drw.break_out`, `drw.overlay`, and the baseline
+  and ordinate sets above.
