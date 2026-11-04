@@ -326,3 +326,57 @@ pub enum Transform {
         factor: f64,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use tenon_geom::Vec3;
+
+    use super::{Curve3, Path3};
+
+    fn v(x: f64, y: f64, z: f64) -> Vec3 {
+        Vec3::new(x, y, z)
+    }
+
+    fn line(a: Vec3, b: Vec3) -> Curve3 {
+        Curve3::Line { start: a, end: b }
+    }
+
+    #[test]
+    fn a_path_has_a_corner_where_one_curve_turns_from_the_next_and_where_it_closes() {
+        // Two lines on from one another: none. At a square turn: one.
+        let straight = Path3 { curves: vec![line(v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)), line(v(1.0, 0.0, 0.0), v(2.0, 0.0, 0.0))] };
+        assert!(!straight.has_corner());
+        let turn = Path3 { curves: vec![line(v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)), line(v(1.0, 0.0, 0.0), v(1.0, 1.0, 0.0))] };
+        assert!(turn.has_corner());
+        assert_eq!(turn.corner_at_curve(), None, "between lines the mitre is sound");
+        // A quarter circle and the line on from it, tangent: none; open.
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let arc = Curve3::Arc { start: v(1.0, 0.0, 0.0), mid: v(s, s, 0.0), end: v(0.0, 1.0, 0.0) };
+        let on = Path3 { curves: vec![arc.clone(), line(v(0.0, 1.0, 0.0), v(-5.0, 1.0, 0.0))] };
+        assert!(!on.has_corner());
+        // The same arc and a line that leaves it square: sharp, at a curve.
+        let off = Path3 { curves: vec![arc.clone(), line(v(0.0, 1.0, 0.0), v(0.0, 5.0, 0.0))] };
+        assert!(off.has_corner());
+        assert_eq!(off.corner_at_curve(), Some(false));
+        // A D, an arc and the line that closes it: sharp where they meet, and where it closes.
+        let half = Curve3::Arc { start: v(0.0, -1.0, 0.0), mid: v(1.0, 0.0, 0.0), end: v(0.0, 1.0, 0.0) };
+        let d = Path3 { curves: vec![half, line(v(0.0, 1.0, 0.0), v(0.0, -1.0, 0.0))] };
+        assert!(d.has_corner());
+        assert_eq!(d.corner_at_curve(), Some(false), "where the arc meets the line, first");
+        // A triangle closes sharp and between lines.
+        let (a, b, c) = (v(0.0, 0.0, 0.0), v(4.0, 0.0, 0.0), v(0.0, 3.0, 0.0));
+        let triangle = Path3 { curves: vec![line(a, b), line(b, c), line(c, a)] };
+        assert!(triangle.has_corner());
+        assert_eq!(triangle.corner_at_curve(), None);
+        // A spline that closes on itself has no meeting but that one.
+        let poles = vec![v(1.0, 0.0, 0.0), v(1.0, 1.0, 0.0), v(-1.0, 1.0, 0.0), v(1.0, 0.0, 0.0)];
+        let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        let closed = Path3 { curves: vec![Curve3::BSpline { poles, knots }] };
+        assert!(closed.has_corner());
+        assert_eq!(closed.corner_at_curve(), Some(true), "said to be where it closes");
+        // An open spline alone has none.
+        let poles = vec![v(0.0, 0.0, 0.0), v(1.0, 1.0, 0.0), v(2.0, 1.0, 0.0), v(3.0, 0.0, 0.0)];
+        let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        assert!(!Path3 { curves: vec![Curve3::BSpline { poles, knots }] }.has_corner());
+    }
+}

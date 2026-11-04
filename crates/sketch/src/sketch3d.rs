@@ -924,7 +924,8 @@ impl Sketch3d {
     }
 
     /// The sketch with the points held to `corner` become that point, as a bend makes them: a bend
-    /// rounds the corner where lines end, or where points held to one another end them.
+    /// rounds the corner where lines end, or where points held to one another end them. (Not a
+    /// point that follows the part: that is why it is held, and it goes on being so.)
     fn with_corner_joined(&self, corner: EntityId) -> Sketch3d {
         let mut s = self.clone();
         let held: Vec<EntityId> = s
@@ -935,6 +936,7 @@ impl Sketch3d {
                 Constraint3::Coincident { a, b } if *b == corner => Some(*a),
                 _ => None,
             })
+            .filter(|h| !self.is_reference(*h))
             .collect();
         for h in held {
             s.merge_points(corner, h);
@@ -1466,7 +1468,8 @@ impl Sketch3d {
                 now.insert(p);
             }
         }
-        // A bend that goes with what it was on leaves nothing of its corner.
+        // A bend that goes with what it was on leaves nothing of its corner, unless a curve was
+        // drawn from it.
         let corners: Vec<EntityId> = self
             .constraints
             .values()
@@ -1474,6 +1477,7 @@ impl Sketch3d {
                 Constraint3::Corner { point, arc } if now.contains(arc) => Some(*point),
                 _ => None,
             })
+            .filter(|p| !self.entities.iter().any(|(id, e)| !now.contains(id) && e.geometry.points().contains(p)))
             .collect();
         now.extend(corners);
         for id in &now {
@@ -1514,10 +1518,17 @@ impl Sketch3d {
             Constraint3::Corner { point, arc: a } if *a == arc => Some(*point),
             _ => None,
         })?;
-        let gone: BTreeSet<EntityId> = [arc, center, start, end].into_iter().collect();
+        // (Its centre stays if a curve was drawn from it, as a point like any other.)
+        let centre_used = self.entities.iter().any(|(id, e)| *id != arc && e.geometry.points().contains(&center));
+        let mut gone: BTreeSet<EntityId> = [arc, start, end].into_iter().collect();
+        if !centre_used {
+            gone.insert(center);
+        }
         self.constraints.retain(|_, c| c.refs().iter().all(|r| !gone.contains(r)));
         self.entities.remove(&arc);
-        self.entities.remove(&center);
+        if !centre_used {
+            self.entities.remove(&center);
+        }
         // What ended where the arc did ends at the corner now.
         self.merge_points(corner, start);
         self.merge_points(corner, end);
@@ -2380,6 +2391,33 @@ mod tests {
         assert!(s.entity(b.arc).is_none() && s.entity(l[0]).is_none());
         assert!(s.entity(b.corner).is_none(), "{s:?}");
         s.validate().unwrap();
+        // Curves drawn from its centre and its corner: those points stay for them, and all is sound.
+        for going in ["bend", "start"] {
+            let (mut s, _, p) = staircase();
+            let b = s.add_bend(p[1], 10.0).unwrap();
+            let from_centre = s.add_line(b.center, v(90.0, 0.0, 0.0)).unwrap();
+            let from_corner = s.add_line(b.corner, v(90.0, 9.0, 0.0)).unwrap();
+            s.delete(&[if going == "bend" { b.arc } else { b.start }]);
+            assert!(s.entity(b.arc).is_none(), "{going}");
+            assert!(s.line(from_centre).is_some() && s.line(from_corner).is_some(), "{going}: {s:?}");
+            s.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn a_corner_held_to_what_follows_the_part_goes_on_being_held_to_it() {
+        // Two lines of its own at a point held to a reference point: the bend keeps that held.
+        let mut s = Sketch3d::new();
+        let r = s.add_reference_point(v(0.0, 0.0, 50.0)).unwrap();
+        let a = s.add_line(v(0.0, 0.0, 0.0), v(0.0, 0.0, 50.0)).unwrap();
+        let (_, corner) = s.geometry(a).unwrap().ends().unwrap();
+        s.add_line(corner, v(50.0, 0.0, 50.0)).unwrap();
+        s.add_constraint(Constraint3::Coincident { a: corner, b: r }).unwrap();
+        s.add_bend(corner, 10.0).unwrap();
+        assert!(s.is_reference(r), "{s:?}");
+        s.set_point(r, v(0.0, 7.0, 50.0)).unwrap();
+        s.solve().unwrap();
+        assert!(s.point(corner).unwrap().dist(v(0.0, 7.0, 50.0)) < 1e-7, "{:?}", s.point(corner));
     }
 
     #[test]
