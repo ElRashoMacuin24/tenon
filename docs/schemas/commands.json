@@ -8119,7 +8119,7 @@
       "id": "asm.update",
       "label": "Update",
       "undoable": true,
-      "description": "solves again (after parts changed)",
+      "description": "solves again (after parts changed). Returns converged, failing (relationships that do not hold) and, when there are any, patterns_failing (patterns and mirrors whose rule cannot be worked out, whose elements stay where they are)",
       "params": {
         "type": "object",
         "properties": {},

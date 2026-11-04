@@ -320,12 +320,24 @@ fn asm_geom(s: &mut AsmSession, _k: Option<&mut dyn Kernel>, p: &Value) -> CmdRe
 
 // ---- editing ----------------------------------------------------------------------------------
 
+/// The patterns whose rule cannot be worked out as things stand, and why: their elements stay where
+/// they are, and a result that says all is well has to say this too.
+fn patterns_failing(s: &AsmSession) -> Vec<Value> {
+    let asm = s.assembly();
+    let failing = asm.patterns.iter().filter_map(|p| session::pattern_problem(asm, &s.parts, p).map(|m| (p, m)));
+    failing.map(|(p, m)| json!({ "pattern": p.id.0, "name": p.name, "message": m })).collect()
+}
+
 /// The result of an edit that may have moved components.
 fn after(s: &AsmSession, extra: Value) -> CmdResult {
     let (_, total) = dof(s.assembly(), &s.parts);
     let mut v = extra;
+    let failing = patterns_failing(s);
     if let Some(o) = v.as_object_mut() {
         o.insert("dof".into(), json!(total));
+        if !failing.is_empty() {
+            o.insert("patterns_failing".into(), json!(failing));
+        }
     }
     Ok(v)
 }
@@ -1008,7 +1020,14 @@ static COMMANDS: &[AsmCommand] = &[
         kernel: false,
         run: asm_place,
     },
-    AsmCommand { id: "asm.update", label: "Update", help: "solves again (after parts changed)", mutates: true, kernel: false, run: asm_update },
+    AsmCommand {
+        id: "asm.update",
+        label: "Update",
+        help: "solves again (after parts changed). Returns converged, failing (relationships that do not hold) and, when there are any, patterns_failing (patterns and mirrors whose rule cannot be worked out, whose elements stay where they are)",
+        mutates: true,
+        kernel: false,
+        run: asm_update,
+    },
     AsmCommand {
         id: "asm.dof",
         label: "Degrees of Freedom",

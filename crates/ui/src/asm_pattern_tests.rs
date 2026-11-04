@@ -1015,6 +1015,45 @@ fn a_part_of_a_suppressed_chain_of_patterns_is_out_of_the_view_and_hidden_stays_
 }
 
 #[test]
+fn what_a_mirror_cannot_follow_is_said_on_the_status_line() {
+    let dir = scratch("cannot-follow");
+    post_part(&dir.join("post.tenon"));
+    box_part(&dir.join("block.tenon"), "Block", 10.0, 10.0, 10.0);
+    let mut wb = Workbench::headless(Box::new(OcctKernel::new()));
+    let mut d = Driver::new(vec2(1400.0, 860.0));
+    opened(&mut wb, &mut d, &[(&dir.join("post.tenon"), [0.0, 0.0, 0.0]), (&dir.join("block.tenon"), [100.0, 0.0, 0.0])]);
+    wb.asm_exec("asm.ground", json!({ "component": 1, "grounded": true })).unwrap();
+    // In the post's top, which goes with the post.
+    let top = wb.asm_exec("asm.geom", json!({ "component": 1, "face": { "type": "cap", "feature": 4, "end": "end" } })).unwrap();
+    wb.asm_exec("asm.mirror", json!({ "components": [2], "plane": top })).unwrap();
+    d.settle(&mut wb);
+    wb.run_ui("view.fit").unwrap();
+    d.settle(&mut wb);
+    d.click(&mut wb, pressable(&d, "ribbon asm.update"));
+    d.settle(&mut wb);
+    assert_eq!(wb.status(), "Every relationship holds.");
+
+    wb.asm_exec("asm.edit_part", json!({ "component": 1, "run": "feature.delete", "with": { "feature": 4 } })).unwrap();
+    d.settle(&mut wb);
+    d.click(&mut wb, pressable(&d, "ribbon asm.update"));
+    d.settle(&mut wb);
+    assert!(wb.status_error, "{}", wb.status());
+    for words in ["Every relationship holds, but Mirror:1 cannot follow", "no longer exists", "double-click its row"] {
+        assert!(wb.status().contains(words), "{}", wb.status());
+    }
+
+    // Dragging its source says so too, and the element stays where it was.
+    wb.set_status("");
+    let was = placement(&wb, 3).origin();
+    let at = on_screen(&wb, placement(&wb, 2).to_world(Vec3::new(5.0, 5.0, 10.0)));
+    d.frame(&mut wb, vec![egui::Event::PointerMoved(at)]);
+    d.drag(&mut wb, at, at + vec2(30.0, 0.0), egui::PointerButton::Primary);
+    d.settle(&mut wb);
+    assert!(wb.status().contains("Mirror:1 cannot follow"), "{}", wb.status());
+    assert!(near(placement(&wb, 3).origin(), was));
+}
+
+#[test]
 fn a_part_file_gone_is_told_as_one_when_an_assembly_is_opened() {
     let dir = scratch("gone");
     post_part(&dir.join("post.tenon"));

@@ -190,7 +190,7 @@ Everything Tenon does to a part is a command with JSON parameters: the ribbon, s
 | `asm.visible` | Visibility | component, visible (default true) | yes |
 | `asm.move` | Free Move | component; by: [x, y, z]; turn: {axis, angle (rad), through: a point (default its centre)}; the relationships then pull it where they must | yes |
 | `asm.place` | Place At | component; origin: [x, y, z]; z, x: its part's Z and X directions (default unturned) | yes |
-| `asm.update` | Update | solves again (after parts changed) | yes |
+| `asm.update` | Update | solves again (after parts changed). Returns converged, failing (relationships that do not hold) and, when there are any, patterns_failing (patterns and mirrors whose rule cannot be worked out, whose elements stay where they are) | yes |
 | `asm.dof` | Degrees of Freedom | each component's free directions and axes (others held still), and the assembly's total | no |
 | `asm.bom` | Bill of Materials | one row per part: quantity, volume, material and mass (grams, of one). A mirrored part has a row of its own, with mirrored true | no |
 | `asm.mass` | Assembly Mass | total volume, mass (grams) and centre of mass of the visible components, each at its part's material | no |

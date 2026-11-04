@@ -1511,3 +1511,45 @@ fn a_part_file_gone_is_listed_once_however_many_ways_it_is_used() {
     let tree = run(e, "asm.tree", json!({}));
     assert!(tree["components"].as_array().unwrap().iter().all(|c| !c["missing"].is_null()), "{tree}");
 }
+
+#[test]
+fn what_a_mirror_cannot_follow_is_said_by_update_and_by_what_moves_its_source() {
+    let dir = scratch("lost-plane");
+    let mut e = Engine::new(kernel(), &dir);
+    let e = &mut e;
+    ell(e);
+    box_part(e, "block", 10.0, 10.0, 10.0);
+    run(e, "asm.new", json!({ "name": "Lost" }));
+    let l = run(e, "asm.insert", json!({ "path": "ell.tenon", "grounded": false }))["component"].clone();
+    let b = run(e, "asm.insert", json!({ "path": "block.tenon", "at": [100, 0, 0], "grounded": false }))["component"].clone();
+    // The post's top, at z 30, which goes with the post.
+    let top = cap(e, &l, 4, "end");
+    let made = run(e, "asm.mirror", json!({ "components": [b], "plane": top }));
+    let element = made["components"][0].clone();
+    // All is well: nothing extra is said.
+    let fine = run(e, "asm.update", json!({}));
+    assert!(fine.get("patterns_failing").is_none(), "{fine}");
+    assert!(run(e, "asm.move", json!({ "component": b, "by": [1, 0, 0] })).get("patterns_failing").is_none());
+    let at = origin(e, &element);
+
+    run(e, "asm.edit_part", json!({ "component": l, "run": "feature.delete", "with": { "feature": 4 } }));
+    let u = run(e, "asm.update", json!({}));
+    assert_eq!(u["converged"], true, "{u}");
+    let failing = &u["patterns_failing"];
+    assert_eq!(failing.as_array().unwrap().len(), 1, "{u}");
+    assert_eq!(failing[0]["name"], "Mirror:1");
+    assert!(failing[0]["message"].as_str().unwrap().contains("no longer exists"), "{u}");
+    assert_eq!(failing[0]["pattern"], made["pattern"]);
+
+    // A move of its source says so too, and the element is left where it was.
+    let moved = run(e, "asm.move", json!({ "component": b, "by": [1, 0, 0] }));
+    assert_eq!(moved["patterns_failing"][0]["name"], "Mirror:1", "{moved}");
+    same(origin(e, &element), at);
+
+    // A new plane mends it: nothing is said, and it stands in the new plane's image.
+    let yz = run(e, "asm.geom", json!({ "plane": "yz" }));
+    let mended = run(e, "asm.edit_pattern", json!({ "pattern": made["pattern"], "plane": yz }));
+    assert!(mended.get("patterns_failing").is_none(), "{mended}");
+    assert!(run(e, "asm.update", json!({})).get("patterns_failing").is_none());
+    same(origin(e, &element), [-102.0, 0.0, 0.0]);
+}

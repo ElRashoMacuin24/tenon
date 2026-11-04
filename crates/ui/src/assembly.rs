@@ -242,6 +242,11 @@ fn placed_info(info: &FaceInfo, x: &Rigid) -> FaceInfo {
     FaceInfo { surface, area: info.area, centroid: x.point(info.centroid), reversed: info.reversed }
 }
 
+/// What the status line says of a pattern whose rule cannot be worked out, and what to do.
+fn cannot_follow(name: &str, why: &str) -> String {
+    format!("{name} cannot follow ({why}): double-click its row to pick again, or delete it.")
+}
+
 /// How many visible components have their geometry, and whether that is every one that can (a
 /// part that could not be read never will, and is not waited for).
 pub(crate) fn arrived(asm: &Assembly, parts: &asm_session::Parts) -> (usize, bool) {
@@ -511,7 +516,7 @@ impl Workbench {
                         s.failing.iter().filter_map(|(r, _)| a.session.assembly().relationship(*r)).map(|r| r.name.clone()).collect();
                     self.set_error(format!("Some relationships no longer hold: {}", names.join(", ")));
                 }
-                Ok(_) => {}
+                Ok(_) => self.say_stuck_pattern(),
                 Err(e) => self.set_error(e.0),
             }
             if let Some(a) = self.asm.as_mut() {
@@ -808,11 +813,22 @@ impl Workbench {
             Ok(())
         }) {
             self.set_error(e.0);
+        } else {
+            self.say_stuck_pattern();
         }
         if let Some(a) = self.asm.as_mut() {
             a.dof = None;
             a.shown = None;
         }
+    }
+
+    /// Says on the status line that a pattern cannot follow what it depends on, its row being red
+    /// where it may not be looked at.
+    fn say_stuck_pattern(&mut self) {
+        let found = self.pattern_problems();
+        let Some((id, why)) = found.iter().next() else { return };
+        let Some(name) = self.asm.as_ref().and_then(|a| a.session.assembly().pattern(*id)).map(|p| p.name.clone()) else { return };
+        self.set_error(cannot_follow(&name, why));
     }
 
     /// Degrees of freedom of every component and the total (cached per change).
@@ -1003,7 +1019,11 @@ impl Workbench {
             }
             "asm.update" => {
                 let r = self.asm_exec("asm.update", json!({}))?;
-                if r["converged"] == true {
+                let stuck =
+                    r["patterns_failing"].get(0).map(|p| cannot_follow(p["name"].as_str().unwrap_or(""), p["message"].as_str().unwrap_or("")));
+                if let Some(said) = stuck.filter(|_| r["converged"] == true) {
+                    self.set_error(format!("Every relationship holds, but {said}"));
+                } else if r["converged"] == true {
                     self.set_status("Every relationship holds.");
                 } else {
                     let names: Vec<String> =
